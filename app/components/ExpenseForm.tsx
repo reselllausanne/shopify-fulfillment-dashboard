@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 interface ExpenseFormValues {
   id?: string;
   date: string;
-  amount: string | number;
+  amount: string;
   categoryId: string;
   accountId: string;
   note: string;
@@ -24,7 +24,7 @@ export default function ExpenseForm({ expense, categories, accounts, onSave, onC
   const [formData, setFormData] = useState<ExpenseFormValues>({
     id: expense?.id,
     date: expense?.date ? new Date(expense.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-    amount: expense?.amount || "",
+    amount: expense?.amount?.toString() || "",
     categoryId: expense?.categoryId || "",
     accountId: expense?.accountId || "",
     note: expense?.note || "",
@@ -40,7 +40,7 @@ export default function ExpenseForm({ expense, categories, accounts, onSave, onC
     setError(null);
 
     try {
-      const payload: ExpenseFormValues = {
+      const payload = {
         ...formData,
         amount: parseFloat(formData.amount),
       };
