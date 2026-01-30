@@ -53,6 +53,8 @@ interface DailyMetrics {
     costChf: number;
     marginChf: number;
     marginPct: number;
+    returnMarginLostChf: number;
+    returnedStockValueChf: number;
     adsSpendChf: number;
     netAfterAdsChf: number;
     ordersCount: number;
