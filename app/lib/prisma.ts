@@ -16,11 +16,14 @@ const prismaClientSingleton = () => {
   });
 };
 
-const prisma = globalThis.prisma ?? prismaClientSingleton();
+const prisma = (globalThis as typeof globalThis & { prisma?: PrismaClient }).prisma
+  ?? prismaClientSingleton();
 
 export default prisma;
 export { prisma };
 
 if (process.env.NODE_ENV !== "production") {
-  globalThis.prisma = prisma;
+  (globalThis as typeof globalThis & { prisma?: PrismaClient }).prisma = prisma;
 }
+
+export {};

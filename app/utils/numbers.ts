@@ -78,7 +78,7 @@ export function decimalsToNumbers<T extends Record<string, any>>(
 ): T {
   if (!obj) return obj;
   
-  const result = { ...obj };
+  const result = { ...obj } as Record<string, any>;
   const keysToConvert = fields || Object.keys(result);
   
   for (const key of keysToConvert) {

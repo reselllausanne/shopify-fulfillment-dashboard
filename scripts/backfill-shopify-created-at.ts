@@ -3,6 +3,8 @@
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
+export {};
+
 async function main() {
   console.log("[BACKFILL] Starting backfill of shopifyCreatedAt...");
 

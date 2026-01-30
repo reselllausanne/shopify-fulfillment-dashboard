@@ -21,6 +21,8 @@ type Expense = {
   isBusiness: boolean;
   date: string;
   note?: string | null;
+  category: ExpenseCategory;
+  account: ExpenseAccount;
 };
 
 export default function ExpensesPage() {
