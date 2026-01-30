@@ -225,7 +225,7 @@ function buildSwissPostPayload(
     : null;
   const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
     .split(",")
-    .map((value) => value.trim())
+    .map((value: string) => value.trim())
     .filter(Boolean);
   const przlValues = shippingOption?.serviceCodes?.length
     ? shippingOption.serviceCodes
@@ -355,7 +355,7 @@ export async function POST(req: NextRequest) {
     }
 
     const uniqueOrderIds = Array.from(
-      new Set(matches.map((m) => m.shopifyOrderId).filter(Boolean))
+      new Set(matches.map((m: OrderMatchSelection) => m.shopifyOrderId).filter(Boolean))
     );
 
     if (uniqueOrderIds.length > 1) {
@@ -401,7 +401,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const dbItems = matches.map((m) => ({
+    const dbItems = matches.map((m: OrderMatchSelection) => ({
       sku: m.shopifySku ?? null,
       title: m.shopifyProductTitle ?? null,
       sizeEU: m.shopifySizeEU ?? null,
@@ -428,8 +428,8 @@ export async function POST(req: NextRequest) {
     ) {
       const remainingCandidates = fulfillableFOs.flatMap((fo) =>
         (fo.lineItems?.nodes || [])
-          .filter((li) => Number(li.remainingQuantity ?? 0) > 0)
-          .map((li) => ({
+          .filter((li: any) => Number(li.remainingQuantity ?? 0) > 0)
+          .map((li: any) => ({
             fulfillmentOrderId: fo.id,
             lineItemId: li.id,
             remainingQuantity: Number(li.remainingQuantity ?? 0),

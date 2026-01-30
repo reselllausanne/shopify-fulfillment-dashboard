@@ -141,7 +141,7 @@ export async function GET(req: NextRequest) {
       row.returnedStockValueChf += returnedStockValue;
     }
 
-    const rows = Array.from(monthlyMap.values()).map((row) => {
+    const rows = Array.from(monthlyMap.values()).map((row: MonthlyMetricsRow) => {
       const netAfterVariableCostsChf =
         row.grossMarginChf - row.adsSpendChf - row.postageShippingCostChf - row.fulfillmentCostChf;
 
@@ -266,7 +266,7 @@ function generateCSV(data: MonthlyMetricsRow[]): string {
 
   const csvLines = [
     headers.join(","),
-    ...rows.map((row) =>
+    ...rows.map((row: MonthlyCsvRow) =>
       [
         row.month,
         row.salesChf,

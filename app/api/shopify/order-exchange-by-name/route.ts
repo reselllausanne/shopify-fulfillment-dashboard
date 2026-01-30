@@ -184,7 +184,7 @@ export async function POST(req: Request) {
       }
     }
 
-    const lineItems = exchangeLineItems.map((entry) => {
+    const lineItems = exchangeLineItems.map((entry: (typeof exchangeLineItems)[number]) => {
       const li = entry.lineItem;
       const qty = Number(li.quantity ?? 0);
       const unit = li.originalUnitPriceSet?.shopMoney;

@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const rows = matches.map((m) => {
+    const rows = matches.map((m: (typeof matches)[number]) => {
       const baseRevenue =
         toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
       const returnFeePercent = toNumberSafe(m.returnFeePercent, 0);

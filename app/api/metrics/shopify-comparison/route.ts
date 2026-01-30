@@ -178,7 +178,9 @@ export async function GET(req: NextRequest) {
       const marginAmount = metafieldValue(node.marginAmount?.value);
       const marginPercent = metafieldValue(node.marginPercent?.value);
 
-      const dbMatch = dbMatches.find((m) => m.shopifyOrderId === orderId);
+      const dbMatch = dbMatches.find(
+        (m: (typeof dbMatches)[number]) => m.shopifyOrderId === orderId
+      );
 
       if (!dbMatch && !stockxOrderNumber) continue;
 
@@ -220,7 +222,9 @@ export async function GET(req: NextRequest) {
         });
     }
 
-    const shopifyOrderIds = new Set(shopifyOrders.map((edge) => edge.node.id));
+    const shopifyOrderIds = new Set(
+      shopifyOrders.map((edge: (typeof shopifyOrders)[number]) => edge.node.id)
+    );
     for (const dbMatch of dbMatches) {
       if (shopifyOrderIds.has(dbMatch.shopifyOrderId)) continue;
         comparison.push({

@@ -155,7 +155,7 @@ export async function GET(req: NextRequest) {
 
     const rows = Array.from(dailyMap.values())
       .filter((row) => row.date !== "missing_sell_date")
-      .map((row) => {
+      .map((row: DailyRow) => {
         const marginPct = row.salesChf > 0 ? (row.marginChf / row.salesChf) * 100 : 0;
         const netAfterAds = row.marginChf - row.adsSpendChf;
         return {

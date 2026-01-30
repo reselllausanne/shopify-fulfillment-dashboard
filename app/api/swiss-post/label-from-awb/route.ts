@@ -224,7 +224,7 @@ function buildSwissPostPayload(orderInfo: Awaited<ReturnType<typeof fetchOrderSh
     : null;
   const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
     .split(",")
-    .map((value) => value.trim())
+    .map((value: string) => value.trim())
     .filter(Boolean);
   const przlValues = shippingOption?.serviceCodes?.length
     ? shippingOption.serviceCodes

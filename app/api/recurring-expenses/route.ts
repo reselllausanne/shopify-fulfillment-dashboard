@@ -42,7 +42,7 @@ export async function GET() {
       },
     });
 
-    const rows = items.map((i) => ({
+    const rows = items.map((i: (typeof items)[number]) => ({
       id: i.id,
       name: i.name,
       amount: toNumberSafe(i.amount, 0),
