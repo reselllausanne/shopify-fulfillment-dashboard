@@ -132,7 +132,6 @@ export async function GET(request: NextRequest) {
         : 0;
       
       // Use Shopify sell date for grouping (fallback to createdAt if missing)
-      // @ts-expect-error pending Prisma client regeneration
       const dateForGrouping = match.shopifyCreatedAt || match.createdAt;
       const dateKey = dateForGrouping.toISOString().split("T")[0];
 
