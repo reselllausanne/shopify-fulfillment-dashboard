@@ -72,7 +72,7 @@ type MonthlyMetricsResponse = {
   yearTotals: YearTotals;
 };
 
-const VAT_RATE = 0.021; // 2.3% TVA on all sales
+const VAT_RATE = 0.021; // 2.1% TVA on all sales
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#ff7c7c'];
 
 export default function FinancialOverviewPage() {
@@ -81,7 +81,6 @@ export default function FinancialOverviewPage() {
   const [activeTab, setActiveTab] = useState<"expenses" | "ads" | "variable" | "monthly" | "recurring">("expenses");
   
   // Data states
-  const [salesData, setSalesData] = useState<SalesRow[]>([]);
   const [expensesData, setExpensesData] = useState<Expense[]>([]);
   const [expensesByCategory, setExpensesByCategory] = useState<ExpenseCategorySummary[]>([]);
   const [dailyFinancials, setDailyFinancials] = useState<any[]>([]);
@@ -131,7 +130,6 @@ export default function FinancialOverviewPage() {
       const totalSupplierCost = sales.reduce((sum: number, d: SalesRow) => sum + toNumberSafe(d.sales - d.marginChf, 0), 0);
       const vatAmount = totalRev * VAT_RATE;
 
-      setSalesData(sales);
       setTotalSales(totalRev);
       setTotalCosts(totalSupplierCost);
       setTotalVAT(vatAmount);

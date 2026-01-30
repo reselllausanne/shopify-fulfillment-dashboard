@@ -90,8 +90,8 @@ export default function RecurringExpensesManager() {
     };
 
     const res = editingId
-      ? await putJson("/api/recurring-expenses", { ...payload, id: editingId })
-      : await postJson("/api/recurring-expenses", payload);
+      ? await putJson<{ error?: string }>("/api/recurring-expenses", { ...payload, id: editingId })
+      : await postJson<{ error?: string }>("/api/recurring-expenses", payload);
 
     if (!res.ok) {
       alert(res.data?.error || "Failed to save recurring expense");
@@ -104,7 +104,7 @@ export default function RecurringExpensesManager() {
 
   const handleDelete = async (id: string) => {
     if (!confirm("Delete this recurring expense?")) return;
-    const res = await delJson(`/api/recurring-expenses?id=${id}`);
+    const res = await delJson<{ error?: string }>(`/api/recurring-expenses?id=${id}`);
     if (res.ok) loadData();
   };
 
@@ -124,7 +124,7 @@ export default function RecurringExpensesManager() {
   };
 
   const toggleActive = async (item: RecurringExpense) => {
-    const res = await putJson("/api/recurring-expenses", {
+    const res = await putJson<{ error?: string }>("/api/recurring-expenses", {
       id: item.id,
       active: !item.active,
     });
@@ -132,7 +132,10 @@ export default function RecurringExpensesManager() {
   };
 
   const runNow = async (id?: string) => {
-    const res = await postJson("/api/recurring-expenses/run", id ? { id } : {});
+    const res = await postJson<{ error?: string; created?: number }>(
+      "/api/recurring-expenses/run",
+      id ? { id } : {}
+    );
     if (!res.ok) {
       alert(res.data?.error || "Failed to run recurring expenses");
     } else {
