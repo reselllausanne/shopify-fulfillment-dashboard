@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
     });
     
     // Convert Decimal amounts to numbers for JSON
-    const expensesJson = expenses.map(exp => ({
+    const expensesJson = expenses.map((exp: (typeof expenses)[number]) => ({
       ...exp,
       amount: exp.amount.toNumber(),
     }));
