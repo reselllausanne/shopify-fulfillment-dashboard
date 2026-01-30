@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="fr" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <title>{{email_subject}}</title>
+
+  <!--[if mso]>
+  <xml>
+    <o:OfficeDocumentSettings>
+      <o:AllowPNG/>
+      <o:PixelsPerInch>96</o:PixelsPerInch>
+    </o:OfficeDocumentSettings>
+  </xml>
+  <![endif]-->
+
+  <style type="text/css">
+    html, body { margin:0 !important; padding:0 !important; height:100% !important; width:100% !important; }
+    * { -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%; }
+    table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse !important; }
+    img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none; display:block; }
+    a { text-decoration:none; }
+    .ExternalClass { width:100%; }
+    .ExternalClass, .ExternalClass p, .ExternalClass td, .ExternalClass div, .ExternalClass span { line-height:100%; }
+
+    @media screen and (max-width: 680px){
+      .container { width:100% !important; }
+      .px { padding-left:16px !important; padding-right:16px !important; }
+      .stack { display:block !important; width:100% !important; }
+      .hero-pad { padding:18px 16px !important; }
+      .steps-col { padding-top:12px !important; }
+      .prod-img { width:140px !important; max-width:140px !important; }
+      .hero-h { height:290px !important; }
+      .hide-m { display:none !important; }
+      .step-text { font-size:20px !important; line-height:24px !important; }
+    }
+    .step-text { word-break: break-word; }
+  </style>
+</head>
+
+<body style="margin:0; padding:0; background:#eae8e3;">
+<center style="width:100%; background:#eae8e3;">
+  <!-- Preheader -->
+  <div style="display:none; font-size:1px; line-height:1px; max-height:0px; max-width:0px; opacity:0; overflow:hidden; mso-hide:all;">
+    {{preheader_text}}
+  </div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eae8e3;">
+    <tr>
+      <td align="center" style="padding:22px 10px;">
+        <table role="presentation" class="container" width="640" cellspacing="0" cellpadding="0" border="0" style="width:640px; max-width:640px;">
+
+          <!-- Top note (optional like StockX small line) -->
+          {{#top_note}}
+          <tr>
+            <td class="px" style="padding:0 24px 10px 24px; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#7b7b7b;">
+              {{top_note}}
+            </td>
+          </tr>
+          {{/top_note}}
+
+          <!-- Header -->
+          <tr>
+            <td class="px" style="padding:0 24px 14px 24px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="left" style="vertical-align:middle;">
+                    <a href="{{brand_home_url}}">
+                      <img src="https://cdn.shopify.com/s/files/1/0675/8324/6625/files/Design_sans_titre_1.svg?v=1763218127" width="140" alt="Resell Lausanne" style="height:auto;" />
+                    </a>
+                  </td>
+                  <td align="right" style="vertical-align:middle;">
+                    <span style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#6b7280;">
+                      Commande <strong style="color:#111111;">{{order_name}}</strong>
+                    </span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- HERO -->
+          <tr>
+            <td style="background:#d4d1c7; border-radius:18px; overflow:hidden;">
+              <!--[if mso]>
+              <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:320px;">
+                <v:fill type="frame" src="{{hero_image_url}}" color="#0b0b0f"/>
+                <v:textbox inset="0,0,0,0">
+              <![endif]-->
+              <div class="hero-h" style="background:url('{{hero_image_url}}') center/cover no-repeat; width:100%; height:320px;">
+                <table role="presentation" width="100%" height="320" cellspacing="0" cellpadding="0" border="0" style="height:320px;">
+                  <tr>
+                    <td class="hero-pad" style="background:rgba(0,0,0,.70); padding:38px 28px 28px 28px; vertical-align:top;">
+                      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <!-- LEFT -->
+                          <td class="stack" width="52%" style="width:52%; vertical-align:top; padding-right:14px;">
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:40px; line-height:44px; font-weight:800; color:#ffffff;">
+                              {{headline}}
+                            </div>
+                            <div style="height:8px;"></div>
+
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:22px; color:#ffffff; font-weight:700;">
+                              Arrivée estimée :
+                            </div>
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:22px; color:#ffffff; font-weight:400;">
+                              {{estimated_arrival_start}} – {{estimated_arrival_end}}
+                            </div>
+
+                            <div style="height:12px;"></div>
+
+                            <!-- Tracking (optional) -->
+                            {{#tracking_url}}
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff;">
+                              Tracking :
+                              <a href="{{tracking_url}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">
+                                {{#tracking_label}}{{tracking_label}}{{/tracking_label}}{{^tracking_label}}Suivre le colis{{/tracking_label}}
+                              </a>
+                            </div>
+                            {{/tracking_url}}
+                            {{^tracking_url}}
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff; opacity:.75;">
+                              Tracking : à venir
+                            </div>
+                            {{/tracking_url}}
+                          </td>
+
+                          <!-- RIGHT (steps) -->
+                          <td class="stack steps-col" width="46%" style="width:46%; vertical-align:top; padding-left:6px;">
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#ffffff; opacity:.9; font-weight:800; padding-bottom:12px;">
+                              Statut
+                            </div>
+
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+
+                              <!-- Step 1 -->
+                              <tr>
+                                <td style="padding:4px 0;">
+                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                    <tr>
+                                      <td width="18" style="width:18px; vertical-align:top;">
+                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
+                                          border:2px solid {{#step1_active}}#55b3f3{{/step1_active}}{{^step1_active}}rgba(255,255,255,.35){{/step1_active}};
+                                          background: {{#step1_active}}#55b3f3{{/step1_active}}{{^step1_active}}transparent{{/step1_active}};">
+                                        </div>
+                                      </td>
+                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
+                                        color: {{#step1_active}}#ffffff{{/step1_active}}{{^step1_active}}rgba(255,255,255,.55){{/step1_active}};
+                                        font-weight: {{#step1_active}}600{{/step1_active}}{{^step1_active}}400{{/step1_active}};">
+                                        {{step_1}}
+                                      </td>
+                                    </tr>
+                                  </table>
+                                </td>
+                              </tr>
+
+                              <!-- Step 2 -->
+                              <tr>
+                                <td style="padding:4px 0;">
+                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                    <tr>
+                                      <td width="18" style="width:18px; vertical-align:top;">
+                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
+                                          border:2px solid {{#step2_active}}#55b3f3{{/step2_active}}{{^step2_active}}rgba(255,255,255,.35){{/step2_active}};
+                                          background: {{#step2_active}}#55b3f3{{/step2_active}}{{^step2_active}}transparent{{/step2_active}};">
+                                        </div>
+                                      </td>
+                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
+                                        color: {{#step2_active}}#ffffff{{/step2_active}}{{^step2_active}}rgba(255,255,255,.55){{/step2_active}};
+                                        font-weight: {{#step2_active}}600{{/step2_active}}{{^step2_active}}400{{/step2_active}};">
+                                        {{step_2}}
+                                      </td>
+                                    </tr>
+                                  </table>
+                                </td>
+                              </tr>
+
+                              <!-- Step 3 -->
+                              <tr>
+                                <td style="padding:4px 0;">
+                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                    <tr>
+                                      <td width="18" style="width:18px; vertical-align:top;">
+                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
+                                          border:2px solid {{#step3_active}}#55b3f3{{/step3_active}}{{^step3_active}}rgba(255,255,255,.35){{/step3_active}};
+                                          background: {{#step3_active}}#55b3f3{{/step3_active}}{{^step3_active}}transparent{{/step3_active}};">
+                                        </div>
+                                      </td>
+                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
+                                        color: {{#step3_active}}#ffffff{{/step3_active}}{{^step3_active}}rgba(255,255,255,.55){{/step3_active}};
+                                        font-weight: {{#step3_active}}600{{/step3_active}}{{^step3_active}}400{{/step3_active}};">
+                                        {{step_3}}
+                                      </td>
+                                    </tr>
+                                  </table>
+                                </td>
+                              </tr>
+
+                              <!-- Step 4 -->
+                              <tr>
+                                <td style="padding:4px 0;">
+                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                    <tr>
+                                      <td width="18" style="width:18px; vertical-align:top;">
+                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
+                                          border:2px solid {{#step4_active}}#55b3f3{{/step4_active}}{{^step4_active}}rgba(255,255,255,.35){{/step4_active}};
+                                          background: {{#step4_active}}#55b3f3{{/step4_active}}{{^step4_active}}transparent{{/step4_active}};">
+                                        </div>
+                                      </td>
+                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
+                                        color: {{#step4_active}}#ffffff{{/step4_active}}{{^step4_active}}rgba(255,255,255,.55){{/step4_active}};
+                                        font-weight: {{#step4_active}}600{{/step4_active}}{{^step4_active}}400{{/step4_active}};">
+                                        {{step_4}}
+                                      </td>
+                                    </tr>
+                                  </table>
+                                </td>
+                              </tr>
+
+                              <!-- Step 5 -->
+                              <tr>
+                                <td style="padding:4px 0;">
+                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                    <tr>
+                                      <td width="18" style="width:18px; vertical-align:top;">
+                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
+                                          border:2px solid {{#step5_active}}#55b3f3{{/step5_active}}{{^step5_active}}rgba(255,255,255,.35){{/step5_active}};
+                                          background: {{#step5_active}}#55b3f3{{/step5_active}}{{^step5_active}}transparent{{/step5_active}};">
+                                        </div>
+                                      </td>
+                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
+                                        color: {{#step5_active}}#ffffff{{/step5_active}}{{^step5_active}}rgba(255,255,255,.55){{/step5_active}};
+                                        font-weight: {{#step5_active}}600{{/step5_active}}{{^step5_active}}400{{/step5_active}};">
+                                        {{step_5}}
+                                      </td>
+                                    </tr>
+                                  </table>
+                                </td>
+                              </tr>
+
+                            </table>
+
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </div>
+              <!--[if mso]>
+                </v:textbox>
+              </v:rect>
+              <![endif]-->
+            </td>
+          </tr>
+
+          <!-- Product section -->
+          <tr>
+            <td style="background:#ffffff; padding:0 0 14px 0; border-radius:0 0 18px 18px; overflow:hidden;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td style="padding:18px 18px 0 18px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f6f6f8; border-radius:18px;">
+                      <tr>
+                        <td style="padding:16px;">
+                          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                            <tr>
+                              <td width="160" class="stack" style="width:160px; vertical-align:top; padding-right:14px;">
+                                <img class="prod-img" src="{{product_image_url}}" width="160" alt="{{product_image_alt}}" style="border-radius:18px; height:auto;" />
+                              </td>
+                              <td class="stack" style="vertical-align:top;">
+                                <div style="font-family:Arial, Helvetica, sans-serif; font-size:18px; line-height:24px; color:#111111; font-weight:700; padding-bottom:10px;">
+                                  {{product_title}}
+                                </div>
+
+                                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                                  <tr>
+                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">ID de style</td>
+                                    <td align="right" style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#111111; font-weight:700;">{{style_id}}</td>
+                                  </tr>
+                                  <tr>
+                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">Taille</td>
+                                    <td align="right" style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#111111; font-weight:700;">{{size_label}}</td>
+                                  </tr>
+                                  <tr>
+                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">Numéro de commande</td>
+                                    <td align="right" style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#111111; font-weight:700;">{{order_name}}</td>
+                                  </tr>
+
+                                  <tr>
+                                    <td style="padding:10px 0 0 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">Prix de vente</td>
+                                    <td align="right" style="padding:10px 0 0 0; font-family:Arial, Helvetica, sans-serif; font-size:16px; color:#111111; font-weight:800;">CHF {{display_price_chf}}</td>
+                                  </tr>
+                                </table>
+
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </table>
+
+                    <div style="height:12px;"></div>
+
+                    <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#6b7280; padding:0 2px;">
+                      Des questions sur ta commande ?
+                      <a href="{{faq_url}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">Consulte notre page d’informations</a>
+                    </div>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:18px 18px 0 18px;">
+                    <div style="height:1px; background:#e6e6ea;"></div>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td style="padding:14px 18px 18px 18px;">
+                    <div style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#6b7280;">
+                      © {{current_year}} Resell Lausanne. Tous droits réservés.<br/>
+                      L'expéditeur de cet e-mail est Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Suisse.<br/>
+                      Besoin d’aide ? <a href="mailto:{{support_email}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">{{support_email}}</a>
+                    </div>
+                  </td>
+                </tr>
+
+              </table>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</center>
+</body>
+</html>

@@ -1,0 +1,306 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  schemas   = ["public"]
+}
+
+model StockXToken {
+  id        Int      @id @default(autoincrement())
+  token     String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@schema("public")
+}
+
+// Source of truth for ALL Shopify orders (booked sales)
+// Populated independently from matching
+model ShopifyOrder {
+  shopifyOrderId      String    @id
+  orderName           String
+  createdAt           DateTime  // Shopify sell date
+  totalSalesChf       Decimal   @db.Decimal(10, 2)  // Gross sales
+  currencyCode        String    @default("CHF")
+  financialStatus     String?
+  cancelledAt         DateTime?
+  refundedAmountChf   Decimal?  @db.Decimal(10, 2)
+  netSalesChf         Decimal?  @db.Decimal(10, 2)  // totalSales - refunded
+  updatedAt           DateTime  @updatedAt
+  syncedAt            DateTime  @default(now())
+
+  @@index([createdAt])
+  @@schema("public")
+}
+
+enum SupplierSource {
+  STOCKX
+  MANUAL
+  OTHER
+
+  @@schema("public")
+}
+
+enum ReturnReason {
+  STORE_CREDIT
+  EXCHANGE
+  DAMAGE
+
+  @@schema("public")
+}
+
+model OrderMatch {
+  id                      String   @id @default(uuid())
+  
+  // Shopify identifiers
+  shopifyOrderId          String
+  shopifyOrderName        String
+  shopifyLineItemId       String   @unique
+  shopifyProductTitle     String
+  shopifySku              String?
+  shopifySizeEU           String?
+  shopifyTotalPrice       Decimal  @db.Decimal(10, 2)
+  shopifyCurrencyCode     String   @default("CHF")
+  shopifyCreatedAt        DateTime?
+  shopifyCustomerEmail    String?
+  shopifyCustomerFirstName String?
+  shopifyCustomerLastName  String?
+  shopifyLineItemImageUrl String?
+  
+  // Supplier identifiers (supports StockX, manual, other)
+  supplierSource          SupplierSource @default(STOCKX)
+  stockxOrderNumber       String         // Can be used for manual ref too
+  stockxChainId           String?        // StockX long chainId (e.g. "14826275139352606543")
+  stockxOrderId           String?        // StockX orderId (often = orderNumber)
+  stockxProductName       String
+  stockxSizeEU            String?
+  stockxSkuKey            String?
+  stockxPurchaseDate      DateTime?      // Also: supplierPurchaseDate
+  
+  // Match metadata
+  matchConfidence         String
+  matchScore              Decimal  @db.Decimal(5, 2)
+  matchType               String
+  matchReasons            String
+  timeDiffHours           Decimal? @db.Decimal(10, 2)
+  
+  // StockX status & tracking
+  stockxStatus              String
+  stockxTrackingUrl         String?        // Tracking URL from shipping.shipment
+  stockxAwb                 String?        // Air Waybill / tracking number (extracted from trackingUrl)
+  stockxEstimatedDelivery   DateTime?      // Estimated delivery date (start)
+  stockxLatestEstimatedDelivery DateTime?  // Latest estimated delivery date (end)
+  stockxCheckoutType        String?
+  stockxStates              Json?
+  stockxStatesHash          String?
+  stockxStatesUpdatedAt     DateTime?
+
+  lastMilestoneKey          String?
+  lastMilestoneAt           DateTime?
+
+  stockxStatusEvents        StockXStatusEvent[]
+  
+  // Shopify metafields sync status
+  shopifyMetafieldsSynced Boolean  @default(false)
+  shopifyMetafieldsSetAt  DateTime?
+  
+  // Financial data
+  supplierCost            Decimal  @db.Decimal(10, 2)
+  marginAmount            Decimal  @db.Decimal(10, 2)
+  marginPercent           Decimal  @db.Decimal(5, 2)
+
+  // Returns handling
+  returnReason            ReturnReason?
+  returnFeePercent        Decimal? @db.Decimal(5, 2)
+  returnFeeAmountChf      Decimal? @db.Decimal(10, 2)
+  returnAppliedAt         DateTime?
+  returnedStockValueChf   Decimal? @db.Decimal(10, 2)
+  
+  // Manual overrides
+  manualCostOverride      Decimal? @db.Decimal(10, 2)
+  manualCaseStatus        String?
+  manualRevenueAdjustment Decimal? @db.Decimal(10, 2)
+  manualNote              String?
+  
+  // Timestamps
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  
+  @@index([shopifyOrderId])
+  @@index([stockxOrderNumber])
+  @@index([shopifyMetafieldsSynced])
+  @@index([stockxPurchaseDate])
+  @@schema("public")
+}
+
+model StockXStatusEvent {
+  id             String   @id @default(uuid())
+  orderMatchId   String
+  milestoneKey   String
+  milestoneTitle String
+  statesHash     String
+  createdAt      DateTime @default(now())
+
+  // Email delivery state (for reliable + deduped notifications)
+  emailTo         String?
+  emailProvider   String?  // e.g. "postmark"
+  emailProviderId String?  // provider message id
+  emailedAt       DateTime?
+  emailError      String?
+
+  orderMatch     OrderMatch @relation(fields: [orderMatchId], references: [id], onDelete: Cascade)
+
+  @@unique([orderMatchId, milestoneKey])
+  @@index([orderMatchId])
+  @@schema("public")
+}
+
+model ShopifyFulfillmentRecord {
+  id              String   @id @default(uuid())
+  shopifyOrderId  String
+  shopifyOrderName String?
+  trackingNumber  String
+  trackingUrl     String?
+  trackingCompany String?
+  status          String?
+  sourceAwb       String?
+  swissPostLabelId  String?
+  swissPostLabelUrl String?
+  swissPostBarcode  String?
+  swissPostStatus   String?
+  swissPostResponse Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([shopifyOrderId])
+  @@index([trackingNumber])
+  @@unique([shopifyOrderId, trackingNumber])
+  @@schema("public")
+}
+
+model OrderMetric {
+  shopifyOrderId String   @id
+  createdAt      DateTime
+  grossSales     Decimal  @db.Decimal(10, 2)
+  marginChf      Decimal  @db.Decimal(10, 2)
+  marginPct      Decimal  @db.Decimal(5, 2)
+  currency       String   @default("CHF")
+  updatedAt      DateTime @updatedAt
+
+  @@index([createdAt])
+  @@schema("public")
+}
+
+// ERP Models for AppSheet
+enum ExpenseType {
+  PERSONAL
+  BUSINESS
+
+  @@schema("public")
+}
+
+model ExpenseCategory {
+  id        String        @id @default(uuid())
+  name      String        @unique
+  type      ExpenseType   @default(PERSONAL)
+  createdAt DateTime      @default(now())
+  
+  expenses  PersonalExpense[]
+  recurringExpenses RecurringExpense[]
+
+  @@schema("public")
+}
+
+model PaymentAccount {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  provider  String
+  last4     String?
+  currency  String   @default("CHF")
+  createdAt DateTime @default(now())
+  
+  expenses  PersonalExpense[]
+  recurringExpenses RecurringExpense[]
+
+  @@schema("public")
+}
+
+model PersonalExpense {
+  id           String         @id @default(uuid())
+  date         DateTime
+  amount       Decimal        @db.Decimal(10, 2)
+  currencyCode String         @default("CHF")
+  categoryId   String
+  accountId    String
+  note         String?
+  isBusiness   Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  
+  category     ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  account      PaymentAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  
+  @@index([date])
+  @@index([categoryId])
+  @@index([accountId])
+  @@index([isBusiness])
+  @@schema("public")
+}
+
+model DailyAdSpend {
+  date      DateTime @id
+  amountChf Decimal  @db.Decimal(10, 2)
+  channel   String   @default("google")
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@schema("public")
+}
+
+model MonthlyVariableCosts {
+  monthKey              String   @id
+  year                  Int
+  month                 Int
+  postageShippingCostChf Decimal @db.Decimal(10, 2)
+  fulfillmentCostChf    Decimal  @db.Decimal(10, 2)
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  @@unique([year, month])
+  @@schema("public")
+}
+
+model RecurringExpense {
+  id           String   @id @default(uuid())
+  name         String
+  amount       Decimal  @db.Decimal(10, 2)
+  currencyCode String   @default("CHF")
+  categoryId   String
+  accountId    String
+  isBusiness   Boolean  @default(false)
+  dayOfMonth   Int      @default(1)
+  intervalMonths Int    @default(1) // 1=monthly, 3=quarterly, etc.
+  startDate    DateTime @default(now())
+  nextRunDate  DateTime
+  lastRunAt    DateTime?
+  active       Boolean  @default(true)
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  category     ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  account      PaymentAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([nextRunDate])
+  @@index([active])
+  @@schema("public")
+}
