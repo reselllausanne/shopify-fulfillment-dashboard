@@ -46,21 +46,18 @@ export async function GET(request: NextRequest) {
     const matches = await prisma.orderMatch.findMany({
       where: {
         // Use Shopify sell date only (no fallback)
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: {
           gte: startDateLocal,
           lte: endDateLocal,
         },
       },
       orderBy: {
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: "asc",
       },
       select: {
         shopifyOrderId: true,
         shopifyOrderName: true,
         createdAt: true,
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: true,
         shopifyTotalPrice: true,
         supplierCost: true,
@@ -89,8 +86,8 @@ export async function GET(request: NextRequest) {
           overallMarginPct: 0,
         },
         period: {
-          startDate: startDate.toISOString().split("T")[0],
-          endDate: endDate.toISOString().split("T")[0],
+          startDate: startDateLocal.toISOString().split("T")[0],
+          endDate: endDateLocal.toISOString().split("T")[0],
           days,
         },
       });

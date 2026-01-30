@@ -33,14 +33,12 @@ export async function GET(req: NextRequest) {
 
     const matches = await prisma.orderMatch.findMany({
       where: {
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: {
           gte: start,
           lte: end,
         },
       },
       orderBy: {
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: "asc",
       },
       select: {
@@ -56,7 +54,6 @@ export async function GET(req: NextRequest) {
         returnReason: true,
         returnFeePercent: true,
         returnFeeAmountChf: true,
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: true,
         stockxOrderNumber: true,
         supplierSource: true,

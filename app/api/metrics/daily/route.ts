@@ -55,7 +55,6 @@ export async function GET(req: NextRequest) {
     const matches = await prisma.orderMatch.findMany({
       where: {
         // Use Shopify sell date only (no fallback)
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: {
           gte: effectiveStartDate,
           lte: endDateLocal,
@@ -73,7 +72,6 @@ export async function GET(req: NextRequest) {
         returnFeeAmountChf: true,
         returnedStockValueChf: true,
         createdAt: true,
-        // @ts-expect-error pending Prisma client regeneration
         shopifyCreatedAt: true,
       },
     });
@@ -106,7 +104,6 @@ export async function GET(req: NextRequest) {
     };
 
     for (const m of matches) {
-      // @ts-expect-error pending Prisma client regeneration
       const sellDateRaw = m.shopifyCreatedAt;
       const cost = toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
       const baseRevenue =

@@ -39,9 +39,9 @@ export async function GET(req: NextRequest) {
     console.log(`[DB] Found ${matches.length} matches`);
 
     // Parse matchReasons back to array
-    const parsedMatches = matches.map((match) => ({
+    const parsedMatches = matches.map((match: (typeof matches)[number]) => ({
       ...match,
-      matchReasons: JSON.parse(match.matchReasons),
+      matchReasons: match.matchReasons ? JSON.parse(match.matchReasons) : [],
     }));
 
     return NextResponse.json({ matches: parsedMatches }, { status: 200 });
