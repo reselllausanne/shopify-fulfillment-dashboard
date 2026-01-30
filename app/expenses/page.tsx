@@ -190,7 +190,7 @@ export default function ExpensesPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                   required
                 >
-                  {categories.map(cat => (
+                  {categories.map((cat: ExpenseCategory) => (
                     <option key={cat.id} value={cat.id}>
                       {cat.type === 'BUSINESS' ? '🏢' : '👤'} {cat.name}
                     </option>
@@ -206,7 +206,7 @@ export default function ExpensesPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
                   required
                 >
-                  {accounts.map(acc => (
+                  {accounts.map((acc: ExpenseAccount) => (
                     <option key={acc.id} value={acc.id}>
                       💳 {acc.name} ({acc.currency})
                     </option>
@@ -256,7 +256,7 @@ export default function ExpensesPage() {
                 onClick={() => {
                   // Generate CSV
                   const header = 'Date,Amount,Category,Account,Note,Type\n';
-                  const rows = expenses.map(e => 
+                  const rows = expenses.map((e: Expense) => 
                     `${new Date(e.date).toLocaleDateString()},${e.amount.toFixed(2)},${e.category.name},${e.account.name},"${e.note || ''}",${e.isBusiness ? 'Business' : 'Personal'}`
                   ).join('\n');
                   const csv = header + rows;

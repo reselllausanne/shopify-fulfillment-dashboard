@@ -87,7 +87,7 @@ export function decimalsToNumbers<T extends Record<string, any>>(
     }
   }
   
-  return result;
+  return result as T;
 }
 
 /**

@@ -10,10 +10,10 @@ export async function POST() {
     const matches = await prisma.orderMatch.findMany({
       where: {
         supplierCost: {
-          not: null,
+          gt: 0,
         },
         marginAmount: {
-          not: null,
+          not: 0,
         },
       },
       select: {

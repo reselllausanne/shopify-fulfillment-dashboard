@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { detectMilestone } from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
+import { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
 
@@ -9,7 +10,7 @@ export async function POST(_req: NextRequest) {
   try {
     const matches = await prisma.orderMatch.findMany({
       where: {
-        stockxStates: { not: null },
+        stockxStates: { not: Prisma.DbNull },
       },
       select: {
         id: true,
