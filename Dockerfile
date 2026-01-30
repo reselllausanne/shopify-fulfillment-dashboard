@@ -1,6 +1,5 @@
 FROM node:20-bookworm-slim
 
-ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /app
@@ -8,11 +7,14 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma
 
-RUN npm install
+# Install dev deps for build (Tailwind/PostCSS live in devDependencies)
+RUN npm install --include=dev
 
 COPY . .
 
 RUN npm run build
+
+ENV NODE_ENV=production
 
 EXPOSE 3000
 
