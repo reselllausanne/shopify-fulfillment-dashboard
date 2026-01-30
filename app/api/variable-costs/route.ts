@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     });
     
     // Convert Decimals to numbers for frontend
-    const recordsWithNumbers = records.map(r => ({
+    const recordsWithNumbers = records.map((r: (typeof records)[number]) => ({
       ...r,
       postageShippingCostChf: toNumberSafe(r.postageShippingCostChf, 0),
       fulfillmentCostChf: toNumberSafe(r.fulfillmentCostChf, 0),

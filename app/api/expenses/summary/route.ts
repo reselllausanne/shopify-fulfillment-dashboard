@@ -46,16 +46,19 @@ export async function GET(req: NextRequest) {
     });
     
     // Aggregate by day
-    const dailyTotals: Record<string, { date: string; total: number; count: number; personal: number; business: number }> = {};
+    type DailyTotal = { date: string; total: number; count: number; personal: number; business: number };
+    const dailyTotals: Record<string, DailyTotal> = {};
     
     // Aggregate by category
-    const categoryTotals: Record<string, { categoryId: string; categoryName: string; type: string; total: number; count: number }> = {};
+    type CategoryTotal = { categoryId: string; categoryName: string; type: string; total: number; count: number };
+    const categoryTotals: Record<string, CategoryTotal> = {};
     
     // Aggregate by account
-    const accountTotals: Record<string, { accountId: string; accountName: string; total: number; count: number }> = {};
+    type AccountTotal = { accountId: string; accountName: string; total: number; count: number };
+    const accountTotals: Record<string, AccountTotal> = {};
     
     // Process expenses
-    for (const exp of expenses) {
+    for (const exp of expenses as Array<(typeof expenses)[number]>) {
       const dateKey = exp.date.toISOString().split("T")[0]; // YYYY-MM-DD
       const amount = exp.amount.toNumber();
       
@@ -104,17 +107,20 @@ export async function GET(req: NextRequest) {
     }
     
     // Calculate overall totals
-    const grandTotal = expenses.reduce((sum, exp) => sum + exp.amount.toNumber(), 0);
+    const grandTotal = expenses.reduce(
+      (sum: number, exp: (typeof expenses)[number]) => sum + exp.amount.toNumber(),
+      0
+    );
     const personalTotal = expenses
-      .filter(exp => !exp.isBusiness)
-      .reduce((sum, exp) => sum + exp.amount.toNumber(), 0);
+      .filter((exp: (typeof expenses)[number]) => !exp.isBusiness)
+      .reduce((sum: number, exp: (typeof expenses)[number]) => sum + exp.amount.toNumber(), 0);
     const businessTotal = expenses
-      .filter(exp => exp.isBusiness)
-      .reduce((sum, exp) => sum + exp.amount.toNumber(), 0);
+      .filter((exp: (typeof expenses)[number]) => exp.isBusiness)
+      .reduce((sum: number, exp: (typeof expenses)[number]) => sum + exp.amount.toNumber(), 0);
     
     // Format and sort results
-    const dailyArray = Object.values(dailyTotals)
-      .map(day => ({
+    const dailyArray = (Object.values(dailyTotals) as DailyTotal[])
+      .map((day: DailyTotal) => ({
         ...day,
         total: Number(day.total.toFixed(2)),
         personal: Number(day.personal.toFixed(2)),
@@ -122,15 +128,15 @@ export async function GET(req: NextRequest) {
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
     
-    const categoryArray = Object.values(categoryTotals)
-      .map(cat => ({
+    const categoryArray = (Object.values(categoryTotals) as CategoryTotal[])
+      .map((cat: CategoryTotal) => ({
         ...cat,
         total: Number(cat.total.toFixed(2)),
       }))
       .sort((a, b) => b.total - a.total); // Sort by total DESC
     
-    const accountArray = Object.values(accountTotals)
-      .map(acc => ({
+    const accountArray = (Object.values(accountTotals) as AccountTotal[])
+      .map((acc: AccountTotal) => ({
         ...acc,
         total: Number(acc.total.toFixed(2)),
       }))
