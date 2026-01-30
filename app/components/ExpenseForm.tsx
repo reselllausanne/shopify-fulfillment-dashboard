@@ -2,8 +2,18 @@
 
 import { useState, useEffect } from "react";
 
+interface ExpenseFormValues {
+  id?: string;
+  date: string;
+  amount: string | number;
+  categoryId: string;
+  accountId: string;
+  note: string;
+  isBusiness: boolean;
+}
+
 interface ExpenseFormProps {
-  expense?: any;
+  expense?: Partial<ExpenseFormValues>;
   categories: any[];
   accounts: any[];
   onSave: (expense: any) => void;
@@ -11,7 +21,8 @@ interface ExpenseFormProps {
 }
 
 export default function ExpenseForm({ expense, categories, accounts, onSave, onCancel }: ExpenseFormProps) {
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ExpenseFormValues>({
+    id: expense?.id,
     date: expense?.date ? new Date(expense.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
     amount: expense?.amount || "",
     categoryId: expense?.categoryId || "",
@@ -29,14 +40,10 @@ export default function ExpenseForm({ expense, categories, accounts, onSave, onC
     setError(null);
 
     try {
-      const payload = {
+      const payload: ExpenseFormValues = {
         ...formData,
         amount: parseFloat(formData.amount),
       };
-      
-      if (expense?.id) {
-        payload.id = expense.id;
-      }
 
       const response = await fetch("/api/expenses", {
         method: expense?.id ? "PUT" : "POST",
