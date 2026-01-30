@@ -18,7 +18,11 @@ async function main() {
   }
 
   const shopifyOrderIds = Array.from(
-    new Set(matches.map((m) => m.shopifyOrderId).filter(Boolean))
+    new Set(
+      matches
+        .map((m: (typeof matches)[number]) => m.shopifyOrderId)
+        .filter(Boolean)
+    )
   );
 
   console.log(`[BACKFILL] Unique Shopify order IDs to lookup: ${shopifyOrderIds.length}`);
