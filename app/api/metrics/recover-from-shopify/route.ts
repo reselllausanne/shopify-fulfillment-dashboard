@@ -46,7 +46,7 @@ export async function POST() {
 
     // Paginate through all orders
     while (hasNextPage && processedCount < 1000) { // Safety limit
-      const variables = {
+      const variables: { first: number; after: string | null } = {
         first: 50,
         after: endCursor,
       };
