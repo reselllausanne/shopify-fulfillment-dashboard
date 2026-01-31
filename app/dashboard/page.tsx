@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   ComposedChart,
   Bar,
@@ -103,8 +104,15 @@ function KPI({ title, value, detail, color = "gray", trendColor }: KPIProps) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [metrics, setMetrics] = useState<DailyMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+  };
+
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState(30);
   const [clearing, setClearing] = useState(false);
@@ -281,6 +289,12 @@ export default function DashboardPage() {
             >
               📈 Financial Overview
             </a>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors font-medium ml-auto"
+            >
+              🔒 Logout
+            </button>
           </nav>
         </div>
 

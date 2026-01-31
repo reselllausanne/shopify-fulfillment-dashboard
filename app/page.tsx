@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import AuthenticationCard from "@/app/components/AuthenticationCard";
 import ActionBar from "@/app/components/ActionBar";
 import QueryControls from "@/app/components/QueryControls";
@@ -21,6 +22,12 @@ import { useMatching } from "@/app/hooks/useMatching";
 import { getJson, postJson, delJson } from "@/app/lib/api";
 
 export default function Home() {
+  const router = useRouter();
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+  };
+
   const [token, setToken] = useState("");
   const [saveToken, setSaveToken] = useState(false);
   const [query, setQuery] = useState(DEFAULT_QUERY);
@@ -592,6 +599,12 @@ export default function Home() {
             >
               📈 Financial Overview
             </a>
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors font-medium ml-auto"
+            >
+              🔒 Logout
+            </button>
           </nav>
         </div>
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
@@ -30,6 +31,7 @@ type AwbListItem = {
 const ENABLE_FULFILLMENT = true; // feature flag placeholder (do not enable)
 
 export default function ScanPage() {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -129,6 +131,11 @@ export default function ScanPage() {
   };
 
 
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+  };
+
   const statusColor = useMemo(() => {
     const s = result?.status;
     if (s === "FOUND") return "bg-green-50 border-green-200 text-green-800";
@@ -139,7 +146,13 @@ export default function ScanPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
-      <div className="w-full max-w-3xl">
+      <div className="w-full max-w-3xl relative">
+        <button
+          onClick={handleLogout}
+          className="absolute right-0 top-0 px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
+        >
+          Logout
+        </button>
         <h1 className="text-3xl font-bold text-gray-900 mb-2 text-center">📦 Scan AWB / Barcode</h1>
         <p className="text-center text-gray-600 mb-6">
           Scan AWB to fulfill and print the Swiss Post label in one step.
