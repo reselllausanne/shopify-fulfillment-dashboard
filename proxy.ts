@@ -21,7 +21,7 @@ const LOGISTICS_ALLOWED_PATHS = [
   "/api/shopify/order-by-name", // Used by scanner search
 ];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // 1. Allow public paths
@@ -42,7 +42,7 @@ export async function middleware(req: NextRequest) {
     // 3. Verify JWT
     const jwtSecret = process.env.JWT_SECRET;
     if (!jwtSecret) {
-      console.error("[MIDDLEWARE] Missing JWT_SECRET");
+      console.error("[PROXY] Missing JWT_SECRET");
       return NextResponse.next(); // Fail open in case of config error to prevent lockout
     }
 
@@ -74,7 +74,7 @@ export async function middleware(req: NextRequest) {
     // Unknown role - redirect to login
     return NextResponse.redirect(new URL("/login", req.url));
   } catch (error) {
-    console.error("[MIDDLEWARE] Auth error:", error);
+    console.error("[PROXY] Auth error:", error);
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
