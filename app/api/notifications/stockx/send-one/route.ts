@@ -52,12 +52,10 @@ export async function POST(req: NextRequest) {
     let resolvedTrackingUrl = match.stockxTrackingUrl ?? null;
     let resolvedAwb = match.stockxAwb ?? null;
     if (!resolvedTrackingUrl && match.stockxChainId && match.stockxOrderNumber) {
-      const trackingRecord = await prisma.supplierOrderTracking.findUnique({
+      const trackingRecord = await prisma.supplierOrderTracking.findFirst({
         where: {
-          chainId_orderNumber: {
-            chainId: match.stockxChainId,
-            orderNumber: match.stockxOrderNumber,
-          },
+          chainId: match.stockxChainId,
+          orderNumber: match.stockxOrderNumber,
         },
         select: {
           trackingUrl: true,
