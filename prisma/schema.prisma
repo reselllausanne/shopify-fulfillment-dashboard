@@ -162,6 +162,23 @@ model StockXStatusEvent {
   @@schema("public")
 }
 
+model SupplierOrderTracking {
+  id              String   @id @default(uuid())
+  chainId         String
+  orderNumber     String
+  trackingUrl     String?
+  returnTrackingUrl String?
+  deliveryDate    DateTime?
+  statusKey       String?
+  awb             String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([chainId, orderNumber], name: "SupplierOrderTracking_chainId_orderNumber_key")
+  @@index([orderNumber])
+  @@schema("public")
+}
+
 model ShopifyFulfillmentRecord {
   id              String   @id @default(uuid())
   shopifyOrderId  String
