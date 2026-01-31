@@ -36,6 +36,11 @@
       .step-text { font-size:20px !important; line-height:24px !important; }
     }
     .step-text { word-break: break-word; }
+    .step-dot { width:10px; height:10px; border-radius:999px; margin-top:6px; }
+    .step-dot-active { border:2px solid #55b3f3; background:#55b3f3; }
+    .step-dot-inactive { border:2px solid rgba(255,255,255,.35); background:transparent; }
+    .step-text-active { color:#ffffff; font-weight:600; }
+    .step-text-inactive { color:rgba(255,255,255,.55); font-weight:400; }
   </style>
 </head>
 
@@ -114,8 +119,18 @@
                             {{#tracking_url}}
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff;">
                               Tracking :
-                              <a href="{{tracking_url}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">
-                                {{#tracking_label}}{{tracking_label}}{{/tracking_label}}{{^tracking_label}}Suivre le colis{{/tracking_label}}
+                            </div>
+                            <div style="height:6px;"></div>
+                            <a href="{{.}}" target="_blank" rel="noopener noreferrer"
+                              style="font-size:14px; font-family:Arial, Helvetica, sans-serif; color:#ffffff; text-decoration:none; border-radius:4px; background:#55b3f3; display:inline-block; line-height:36px; padding:0 14px; font-weight:700;">
+                              Suivre ma commande
+                            </a>
+                            <div style="height:6px;"></div>
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#ffffff;">
+                              Lien direct :
+                              <a href="{{.}}" target="_blank" rel="noopener noreferrer"
+                                style="color:#55b3f3; text-decoration:underline; font-weight:700;">
+                                {{.}}
                               </a>
                             </div>
                             {{/tracking_url}}
@@ -140,14 +155,10 @@
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
-                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
-                                          border:2px solid {{#step1_active}}#55b3f3{{/step1_active}}{{^step1_active}}rgba(255,255,255,.35){{/step1_active}};
-                                          background: {{#step1_active}}#55b3f3{{/step1_active}}{{^step1_active}}transparent{{/step1_active}};">
-                                        </div>
+                                        <div class="step-dot {{#step1_active}}step-dot-active{{/step1_active}}{{^step1_active}}step-dot-inactive{{/step1_active}}"></div>
                                       </td>
-                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
-                                        color: {{#step1_active}}#ffffff{{/step1_active}}{{^step1_active}}rgba(255,255,255,.55){{/step1_active}};
-                                        font-weight: {{#step1_active}}600{{/step1_active}}{{^step1_active}}400{{/step1_active}};">
+                                      <td class="step-text {{#step1_active}}step-text-active{{/step1_active}}{{^step1_active}}step-text-inactive{{/step1_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;">
                                         {{step_1}}
                                       </td>
                                     </tr>
@@ -161,14 +172,10 @@
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
-                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
-                                          border:2px solid {{#step2_active}}#55b3f3{{/step2_active}}{{^step2_active}}rgba(255,255,255,.35){{/step2_active}};
-                                          background: {{#step2_active}}#55b3f3{{/step2_active}}{{^step2_active}}transparent{{/step2_active}};">
-                                        </div>
+                                        <div class="step-dot {{#step2_active}}step-dot-active{{/step2_active}}{{^step2_active}}step-dot-inactive{{/step2_active}}"></div>
                                       </td>
-                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
-                                        color: {{#step2_active}}#ffffff{{/step2_active}}{{^step2_active}}rgba(255,255,255,.55){{/step2_active}};
-                                        font-weight: {{#step2_active}}600{{/step2_active}}{{^step2_active}}400{{/step2_active}};">
+                                      <td class="step-text {{#step2_active}}step-text-active{{/step2_active}}{{^step2_active}}step-text-inactive{{/step2_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;">
                                         {{step_2}}
                                       </td>
                                     </tr>
@@ -182,14 +189,10 @@
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
-                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
-                                          border:2px solid {{#step3_active}}#55b3f3{{/step3_active}}{{^step3_active}}rgba(255,255,255,.35){{/step3_active}};
-                                          background: {{#step3_active}}#55b3f3{{/step3_active}}{{^step3_active}}transparent{{/step3_active}};">
-                                        </div>
+                                        <div class="step-dot {{#step3_active}}step-dot-active{{/step3_active}}{{^step3_active}}step-dot-inactive{{/step3_active}}"></div>
                                       </td>
-                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
-                                        color: {{#step3_active}}#ffffff{{/step3_active}}{{^step3_active}}rgba(255,255,255,.55){{/step3_active}};
-                                        font-weight: {{#step3_active}}600{{/step3_active}}{{^step3_active}}400{{/step3_active}};">
+                                      <td class="step-text {{#step3_active}}step-text-active{{/step3_active}}{{^step3_active}}step-text-inactive{{/step3_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;">
                                         {{step_3}}
                                       </td>
                                     </tr>
@@ -203,14 +206,10 @@
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
-                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
-                                          border:2px solid {{#step4_active}}#55b3f3{{/step4_active}}{{^step4_active}}rgba(255,255,255,.35){{/step4_active}};
-                                          background: {{#step4_active}}#55b3f3{{/step4_active}}{{^step4_active}}transparent{{/step4_active}};">
-                                        </div>
+                                        <div class="step-dot {{#step4_active}}step-dot-active{{/step4_active}}{{^step4_active}}step-dot-inactive{{/step4_active}}"></div>
                                       </td>
-                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
-                                        color: {{#step4_active}}#ffffff{{/step4_active}}{{^step4_active}}rgba(255,255,255,.55){{/step4_active}};
-                                        font-weight: {{#step4_active}}600{{/step4_active}}{{^step4_active}}400{{/step4_active}};">
+                                      <td class="step-text {{#step4_active}}step-text-active{{/step4_active}}{{^step4_active}}step-text-inactive{{/step4_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;">
                                         {{step_4}}
                                       </td>
                                     </tr>
@@ -224,14 +223,10 @@
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
-                                        <div style="width:10px; height:10px; border-radius:999px; margin-top:6px;
-                                          border:2px solid {{#step5_active}}#55b3f3{{/step5_active}}{{^step5_active}}rgba(255,255,255,.35){{/step5_active}};
-                                          background: {{#step5_active}}#55b3f3{{/step5_active}}{{^step5_active}}transparent{{/step5_active}};">
-                                        </div>
+                                        <div class="step-dot {{#step5_active}}step-dot-active{{/step5_active}}{{^step5_active}}step-dot-inactive{{/step5_active}}"></div>
                                       </td>
-                                      <td class="step-text" style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;
-                                        color: {{#step5_active}}#ffffff{{/step5_active}}{{^step5_active}}rgba(255,255,255,.55){{/step5_active}};
-                                        font-weight: {{#step5_active}}600{{/step5_active}}{{^step5_active}}400{{/step5_active}};">
+                                      <td class="step-text {{#step5_active}}step-text-active{{/step5_active}}{{^step5_active}}step-text-inactive{{/step5_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:22px; line-height:26px;">
                                         {{step_5}}
                                       </td>
                                     </tr>
@@ -240,6 +235,7 @@
                               </tr>
 
                             </table>
+
 
                           </td>
                         </tr>

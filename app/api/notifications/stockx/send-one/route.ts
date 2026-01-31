@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
         shopifyCustomerFirstName: true,
         shopifyCustomerLastName: true,
         shopifyLineItemImageUrl: true,
+        stockxChainId: true,
+        stockxOrderNumber: true,
         stockxTrackingUrl: true,
         stockxAwb: true,
         stockxEstimatedDelivery: true,
@@ -44,6 +46,30 @@ export async function POST(req: NextRequest) {
 
     if (!match) {
       return NextResponse.json({ ok: false, error: "Match not found" }, { status: 404 });
+    }
+
+    // Fallback: if tracking URL is missing on OrderMatch, try SupplierOrderTracking
+    let resolvedTrackingUrl = match.stockxTrackingUrl ?? null;
+    let resolvedAwb = match.stockxAwb ?? null;
+    if (!resolvedTrackingUrl && match.stockxChainId && match.stockxOrderNumber) {
+      const trackingRecord = await prisma.supplierOrderTracking.findUnique({
+        where: {
+          chainId_orderNumber: {
+            chainId: match.stockxChainId,
+            orderNumber: match.stockxOrderNumber,
+          },
+        },
+        select: {
+          trackingUrl: true,
+          awb: true,
+        },
+      });
+      if (trackingRecord?.trackingUrl) {
+        resolvedTrackingUrl = trackingRecord.trackingUrl;
+      }
+      if (!resolvedAwb && trackingRecord?.awb) {
+        resolvedAwb = trackingRecord.awb;
+      }
     }
 
     const toNumberMaybe = (v: any): number | null => {
@@ -127,8 +153,8 @@ export async function POST(req: NextRequest) {
         stockxCheckoutType: match.stockxCheckoutType ?? null,
         stockxSkuKey: match.stockxSkuKey ?? null,
         stockxSizeEU: match.stockxSizeEU ?? null,
-        stockxTrackingUrl: match.stockxTrackingUrl ?? null,
-        stockxAwb: match.stockxAwb ?? null,
+        stockxTrackingUrl: resolvedTrackingUrl,
+        stockxAwb: resolvedAwb,
         stockxEstimatedDelivery: match.stockxEstimatedDelivery ?? null,
         stockxLatestEstimatedDelivery: match.stockxLatestEstimatedDelivery ?? null,
       },
@@ -176,7 +202,13 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json(
-      { ok: false, sent: false, eventId: event.id, milestoneKey, error: sendRes.error },
+      {
+        ok: false,
+        sent: false,
+        eventId: event.id,
+        milestoneKey,
+        error: sendRes.error,
+      },
       { status: 500 }
     );
   } catch (error: any) {
