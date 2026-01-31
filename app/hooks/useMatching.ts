@@ -44,6 +44,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
   const [manualShopifyOrder, setManualShopifyOrder] = useState("");
   const [manualSupplierOrder, setManualSupplierOrder] = useState("");
   const [manualMatchLoading, setManualMatchLoading] = useState(false);
+  const [manualFetchOrder, setManualFetchOrder] = useState("");
+  const [manualFetchLoading, setManualFetchLoading] = useState(false);
   const [manualOverrideExpanded, setManualOverrideExpanded] = useState<Record<string, boolean>>({});
   const [manualOverrideData, setManualOverrideData] = useState<
     Record<
@@ -144,7 +146,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
   const loadShopifyOrders = async (sinceDays = 30) => {
     setLoadingShopify(true);
     try {
-      const res = await postJson<any>("/api/shopify/orders", { sinceDays });
+      const res = await postJson<any>("/api/shopify/orders", { sinceDays, first: 100 });
       if (!res.ok) {
         alert(`Shopify error: ${res.data?.error || "Unknown error"}`);
         return;
@@ -157,6 +159,65 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     } finally {
       setLoadingShopify(false);
     }
+  };
+
+  const appendShopifyItemsAndMatches = async (fetchedLineItems: ShopifyLineItem[]) => {
+    if (!fetchedLineItems.length) return;
+
+    const sourceOrders = enrichedOrders || orders;
+    const normalizedSupplier: NormalizedSupplierOrder[] = sourceOrders.map((o: any) => {
+      const supplierCostFromB = (o as any).supplierCost ?? null;
+      const supplierCostFromPricing =
+        o.orderNumber && pricingByOrder[o.orderNumber]?.total != null ? pricingByOrder[o.orderNumber]!.total : null;
+      const finalTotalTTC = supplierCostFromB ?? supplierCostFromPricing;
+      const stockxCheckoutType = (o as any).stockxCheckoutType || (o as any).buyOrder?.checkoutType || null;
+      const stockxStates = (o as any).stockxStates || (o as any).buyOrder?.states || null;
+
+      return {
+        supplierOrderNumber: o.orderNumber || "",
+        chainId: o.chainId || "",
+        orderId: o.orderId || "",
+        purchaseDate: o.purchaseDate || "",
+        offerAmount: o.amount,
+        totalTTC: finalTotalTTC,
+        productTitle: o.displayName,
+        skuKey: o.skuKey,
+        sizeEU: o.size,
+        statusKey: o.statusKey,
+        statusTitle: o.statusTitle,
+        currencyCode: o.currencyCode,
+        awb: (o as any).awb || null,
+        trackingUrl: (o as any).trackingUrl || null,
+        stockxCheckoutType,
+        stockxStates,
+      };
+    });
+
+    // Filter out already matched supplier orders (DB)
+    let availableSupplier = normalizedSupplier;
+    try {
+      const dbRes = await getJson<any>("/api/db/matches");
+      if (dbRes.ok) {
+        const usedSupplierNumbers = new Set(dbRes.data?.matches?.map((m: any) => m.supplierOrderNumber));
+        availableSupplier = normalizedSupplier.filter((order) => !usedSupplierNumbers.has(order.supplierOrderNumber));
+      }
+    } catch (err) {
+      console.warn("Error fetching DB matches, proceeding without filtering", err);
+    }
+
+    const newMatchResults = fetchedLineItems.map((item) => matchShopifyToSupplier(item, availableSupplier));
+
+    setShopifyItems((prev) => {
+      const existingIds = new Set(prev.map((p) => p.lineItemId));
+      const uniqueNew = fetchedLineItems.filter((item) => !existingIds.has(item.lineItemId));
+      return uniqueNew.length ? [...prev, ...uniqueNew] : prev;
+    });
+
+    setMatchResults((prev) => {
+      const existingIds = new Set(prev.map((p) => p.shopifyItem.lineItemId));
+      const uniqueNew = newMatchResults.filter((r) => !existingIds.has(r.shopifyItem.lineItemId));
+      return uniqueNew.length ? [...prev, ...uniqueNew] : prev;
+    });
   };
 
   const loadExchangeOrderByName = async (orderName: string) => {
@@ -311,8 +372,6 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
           return;
         }
 
-        setShopifyItems((prev) => [...prev, ...fetchedLineItems]);
-
         if (fetchedLineItems.length > 1) {
           const proceed = confirm(
             `ℹ️ Order #${cleanShopifyNum} has ${fetchedLineItems.length} line items.\n\n` +
@@ -323,41 +382,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
           if (!proceed) return;
         }
 
+        await appendShopifyItemsAndMatches(fetchedLineItems);
         shopifyItem = fetchedLineItems[0];
-
-        const sourceOrders = enrichedOrders || orders;
-        const normalizedSupplier: NormalizedSupplierOrder[] = sourceOrders.map((o: any) => {
-          const supplierCostFromB = (o as any).supplierCost ?? null;
-          const supplierCostFromPricing =
-            o.orderNumber && pricingByOrder[o.orderNumber]?.total != null ? pricingByOrder[o.orderNumber]!.total : null;
-          const finalTotalTTC = supplierCostFromB ?? supplierCostFromPricing;
-          const stockxCheckoutType = (o as any).stockxCheckoutType || (o as any).buyOrder?.checkoutType || null;
-          const stockxStates = (o as any).stockxStates || (o as any).buyOrder?.states || null;
-
-          return {
-            supplierOrderNumber: o.orderNumber || "",
-            chainId: o.chainId || "",
-            orderId: o.orderId || "",
-            purchaseDate: o.purchaseDate || "",
-            offerAmount: o.amount,
-            totalTTC: finalTotalTTC,
-            productTitle: o.displayName,
-            skuKey: o.skuKey,
-            sizeEU: o.size,
-            statusKey: o.statusKey,
-            statusTitle: o.statusTitle,
-            currencyCode: o.currencyCode,
-            awb: (o as any).awb || null,
-            trackingUrl: (o as any).trackingUrl || null,
-            stockxCheckoutType,
-            stockxStates,
-          };
-        });
-
-        const newMatchResults = fetchedLineItems.map((item: ShopifyLineItem) =>
-          matchShopifyToSupplier(item, normalizedSupplier)
-        );
-        setMatchResults((prev) => [...prev, ...newMatchResults]);
       }
 
       if (!shopifyItem) {
@@ -402,6 +428,46 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       alert(`❌ Error creating manual match:\n\n${error.message}`);
     } finally {
       setManualMatchLoading(false);
+    }
+  };
+
+  const handleFetchShopifyOrder = async (manualShopifyOrderInput: string) => {
+    const cleanShopifyNum = manualShopifyOrderInput.replace("#", "").trim();
+    if (!cleanShopifyNum) {
+      alert("Please enter a Shopify order number");
+      return;
+    }
+
+    const existing = shopifyItems.find((item) => item.orderName.replace("#", "") === cleanShopifyNum);
+    if (existing) {
+      alert(`Order #${cleanShopifyNum} is already loaded in the list.`);
+      return;
+    }
+
+    setManualFetchLoading(true);
+    try {
+      const fetchRes = await postJson<any>("/api/shopify/order-by-name", { orderName: `#${cleanShopifyNum}` });
+      if (!fetchRes.ok) {
+        alert(
+          `❌ Failed to fetch Shopify order #${cleanShopifyNum}\n\n` +
+            `Error: ${fetchRes.data?.error || "Unknown error"}\n\n` +
+            `Make sure the order number is correct and exists in your Shopify store.`
+        );
+        return;
+      }
+      const fetchedLineItems = fetchRes.data?.lineItems || [];
+      if (fetchedLineItems.length === 0) {
+        alert(`❌ Shopify order #${cleanShopifyNum} has no line items`);
+        return;
+      }
+
+      await appendShopifyItemsAndMatches(fetchedLineItems);
+      alert(`✅ Loaded Shopify order #${cleanShopifyNum} (${fetchedLineItems.length} line item(s))`);
+      setManualFetchOrder("");
+    } catch (err: any) {
+      alert(`❌ Failed to fetch order: ${err?.message || "Unknown error"}`);
+    } finally {
+      setManualFetchLoading(false);
     }
   };
 
@@ -675,10 +741,14 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     manualSupplierOrder,
     setManualSupplierOrder,
     manualMatchLoading,
+    manualFetchOrder,
+    setManualFetchOrder,
+    manualFetchLoading,
     loadShopifyOrders,
     loadExchangeOrderByName,
     clearManualOverrides,
     handleManualMatch,
+    handleFetchShopifyOrder,
     createManualCostEntry,
     handleSetMetafields: async (shopifyItem: ShopifyLineItem, supplierOrderNumber: string) => {
       const lineItemId = shopifyItem.lineItemId;

@@ -236,8 +236,8 @@ query OrderExchangeLineItems($orderId: ID!) {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const requestedFirst = Number(body?.first) > 0 ? Number(body.first) : 60;
-    const first = Math.min(60, requestedFirst);
+    const requestedFirst = Number(body?.first) > 0 ? Number(body.first) : 100;
+    const first = Math.min(100, requestedFirst);
     const orderQuery = typeof body?.orderQuery === "string" ? body.orderQuery : null;
     const includeReturns = Boolean(body?.includeExchanges);
 

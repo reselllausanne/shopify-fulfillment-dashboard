@@ -131,14 +131,11 @@ export default function Home() {
     setConfirmedMatches,
     manualCostOverrides,
     setManualCostOverrides,
-    manualShopifyOrder,
-    setManualShopifyOrder,
-    manualSupplierOrder,
-    setManualSupplierOrder,
-    manualMatchLoading,
+    manualFetchOrder,
+    setManualFetchOrder,
+    manualFetchLoading,
     loadShopifyOrders,
-    clearManualOverrides,
-    handleManualMatch,
+    handleFetchShopifyOrder,
     createManualCostEntry,
     handleSetMetafields,
     autoSetAllHighMatches,
@@ -164,8 +161,8 @@ export default function Home() {
     await loadFromDB();
   };
 
-  const handleManualMatchWrapper = async () => {
-    await handleManualMatch(manualShopifyOrder, manualSupplierOrder);
+  const handleFetchShopifyOrderWrapper = async () => {
+    await handleFetchShopifyOrder(manualFetchOrder);
   };
 
   const applyManualOverrideWrapper = async (matchId: string, match: any) => {
@@ -692,15 +689,10 @@ export default function Home() {
         />
 
         <ManualMatchingOverride
-          manualShopifyOrder={manualShopifyOrder}
-          manualSupplierOrder={manualSupplierOrder}
-          manualMatchLoading={manualMatchLoading}
-          manualOverrides={manualOverrides}
-          shopifyItems={shopifyItems}
-          setManualShopifyOrder={setManualShopifyOrder}
-          setManualSupplierOrder={setManualSupplierOrder}
-          handleManualMatch={handleManualMatchWrapper}
-          clearManualOverrides={clearManualOverrides}
+          manualFetchOrder={manualFetchOrder}
+          manualFetchLoading={manualFetchLoading}
+          setManualFetchOrder={setManualFetchOrder}
+          handleFetchShopifyOrder={handleFetchShopifyOrderWrapper}
         />
 
         <DatabaseAutoSync
