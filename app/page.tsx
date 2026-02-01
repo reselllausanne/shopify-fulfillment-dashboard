@@ -62,6 +62,16 @@ export default function Home() {
   const [dbLoading, setDbLoading] = useState(false);
   const [orderTestResult, setOrderTestResult] = useState<string | null>(null);
   const [orderTestLoading, setOrderTestLoading] = useState(false);
+  const [trackingAlert, setTrackingAlert] = useState<{
+    count: number;
+    goatCount: number;
+    criticalCount: number;
+    items: any[];
+    goatItems: any[];
+    criticalItems: any[];
+  } | null>(null);
+  const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
+  const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
 
   const loadFromDB = async () => {
     setDbLoading(true);
@@ -78,6 +88,31 @@ export default function Home() {
       alert(`❌ Error loading from DB:\n\n${error.message}`);
     } finally {
       setDbLoading(false);
+    }
+  };
+
+  const loadTrackingAlert = async () => {
+    setTrackingAlertLoading(true);
+    setTrackingAlertError(null);
+    try {
+      const res = await fetch("/api/notifications/missing-tracking");
+      const data = await res.json();
+      if (res.ok && data?.ok) {
+        setTrackingAlert({
+          count: data.count || 0,
+          goatCount: data.goatCount || 0,
+          criticalCount: data.criticalCount || 0,
+          items: data.items || [],
+          goatItems: data.goatItems || [],
+          criticalItems: data.criticalItems || [],
+        });
+      } else {
+        setTrackingAlertError(data?.error || "Failed to load tracking alerts");
+      }
+    } catch (error: any) {
+      setTrackingAlertError(error?.message || "Failed to load tracking alerts");
+    } finally {
+      setTrackingAlertLoading(false);
     }
   };
 
@@ -199,6 +234,19 @@ export default function Home() {
       localStorage.removeItem("supplier_token");
     }
   }, [saveToken, token]);
+
+  useEffect(() => {
+    loadTrackingAlert();
+  }, []);
+
+  const formatDate = (value?: string | null) => {
+    if (!value) return "—";
+    try {
+      return new Date(value).toLocaleDateString("fr-CH");
+    } catch {
+      return "—";
+    }
+  };
 
   const handleFetchFirstPage = async () => {
     await fetchPage({
@@ -604,6 +652,73 @@ export default function Home() {
             </button>
           </nav>
         </div>
+
+        {(trackingAlert?.goatCount || trackingAlert?.criticalCount || trackingAlertError) && (
+          <div className="mb-6 space-y-3">
+            {(trackingAlert?.goatCount || 0) > 0 && (
+              <div className="border rounded-lg p-4 bg-amber-50 border-amber-200">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-amber-800">
+                    🐐 GOAT orders missing tracking: {trackingAlert?.goatCount || 0}
+                  </div>
+                  <button
+                    onClick={loadTrackingAlert}
+                    disabled={trackingAlertLoading}
+                    className="text-xs px-2 py-1 bg-amber-200 text-amber-900 rounded hover:bg-amber-300 disabled:opacity-60"
+                  >
+                    {trackingAlertLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+                <div className="mt-2 space-y-1 text-xs text-amber-900">
+                  {trackingAlert?.goatItems?.map((item: any) => (
+                    <div key={item.id} className="flex flex-wrap gap-2">
+                      <span className="font-semibold">{item.shopifyOrderName}</span>
+                      <span>Ref: {item.stockxOrderNumber}</span>
+                      <span>Age: {item.ageDays ?? "—"}d</span>
+                      <span>ETA: {formatDate(item.deliveryDate)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(trackingAlert?.criticalCount || 0) > 0 && (
+              <div className="border rounded-lg p-4 bg-red-50 border-red-200">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-red-800">
+                    ⚠️ Orders missing tracking near/past delivery or older than 14 days:{" "}
+                    {trackingAlert?.criticalCount || 0}
+                  </div>
+                  <button
+                    onClick={loadTrackingAlert}
+                    disabled={trackingAlertLoading}
+                    className="text-xs px-2 py-1 bg-red-200 text-red-900 rounded hover:bg-red-300 disabled:opacity-60"
+                  >
+                    {trackingAlertLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+                <div className="mt-2 space-y-1 text-xs text-red-900">
+                  {trackingAlert?.criticalItems?.map((item: any) => (
+                    <div key={item.id} className="flex flex-wrap gap-2">
+                      <span className="font-semibold">{item.shopifyOrderName}</span>
+                      <span>Ref: {item.stockxOrderNumber}</span>
+                      <span>Age: {item.ageDays ?? "—"}d</span>
+                      <span>ETA: {formatDate(item.deliveryDate)}</span>
+                      {item.isOverdue && <span className="font-semibold">OVERDUE</span>}
+                      {!item.isOverdue && item.isDueSoon && <span className="font-semibold">DUE SOON</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {trackingAlertError && (
+              <div className="border rounded-lg p-4 bg-yellow-50 border-yellow-200 text-xs text-yellow-900">
+                Failed to load tracking alerts: {trackingAlertError}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <h2 className="text-lg font-semibold mb-2">Shopify Order Fetch Test</h2>
