@@ -18,6 +18,22 @@ type HistoryItem = {
   awb: string;
   status: ScanStatus;
   orderName?: string | null;
+  durationMs?: number;
+  gapMs?: number;
+};
+
+type GoatTrackingItem = {
+  id: string;
+  shopifyOrderName: string;
+  shopifyLineItemId: string;
+  shopifyCustomerEmail: string | null;
+  shopifyCustomerFirstName: string | null;
+  shopifyCustomerLastName: string | null;
+  shopifyCreatedAt: string | null;
+  stockxOrderNumber: string;
+  stockxAwb: string | null;
+  stockxTrackingUrl: string | null;
+  supplierSource: string | null;
 };
 
 type AwbListItem = {
@@ -42,6 +58,9 @@ export default function ScanPage() {
   const [awbList, setAwbList] = useState<AwbListItem[]>([]);
   const [awbFilter, setAwbFilter] = useState("");
   const [forceFulfill, setForceFulfill] = useState(false);
+  const [goatLoading, setGoatLoading] = useState(false);
+  const [goatError, setGoatError] = useState<string | null>(null);
+  const [goatTracking, setGoatTracking] = useState<{ count: number; items: GoatTrackingItem[] } | null>(null);
 
   useEffect(() => {
     focusInput();
@@ -60,6 +79,28 @@ export default function ScanPage() {
     loadAwbList();
   }, []);
 
+  const loadGoatTracking = async () => {
+    setGoatLoading(true);
+    setGoatError(null);
+    try {
+      const res = await fetch("/api/notifications/goat-tracking");
+      const data = await res.json();
+      if (res.ok && data?.ok) {
+        setGoatTracking({ count: data.count || 0, items: data.items || [] });
+      } else {
+        setGoatError(data?.error || "Failed to load GOAT tracking");
+      }
+    } catch (err: any) {
+      setGoatError(err?.message || "Failed to load GOAT tracking");
+    } finally {
+      setGoatLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadGoatTracking();
+  }, []);
+
   const focusInput = () => {
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -68,6 +109,7 @@ export default function ScanPage() {
   };
 
   const handleSubmit = async () => {
+    const startedAt = Date.now();
     if (!code.trim()) {
       setResult({
         ok: false,
@@ -86,13 +128,19 @@ export default function ScanPage() {
       });
       const data: ScanResult = await res.json();
       setResult(data);
-      const entry: HistoryItem = {
-        ts: new Date().toISOString(),
-        awb: data.awb,
-        status: data.status,
-        orderName: data.match?.shopifyOrderName,
-      };
-      setHistory((prev) => [entry, ...prev].slice(0, 20));
+      const finishedAt = Date.now();
+      setHistory((prev) => {
+        const prevTs = prev[0]?.ts ? new Date(prev[0].ts).getTime() : null;
+        const entry: HistoryItem = {
+          ts: new Date().toISOString(),
+          awb: data.awb,
+          status: data.status,
+          orderName: data.match?.shopifyOrderName,
+          durationMs: finishedAt - startedAt,
+          gapMs: prevTs ? startedAt - prevTs : undefined,
+        };
+        return [entry, ...prev].slice(0, 20);
+      });
     } catch (err: any) {
       setResult({
         ok: false,
@@ -105,6 +153,16 @@ export default function ScanPage() {
       setLoading(false);
       focusInput();
     }
+  };
+
+  const formatDuration = (ms?: number) => {
+    if (ms == null) return "—";
+    if (ms < 1000) return `${ms}ms`;
+    const sec = ms / 1000;
+    if (sec < 60) return `${sec.toFixed(1)}s`;
+    const min = Math.floor(sec / 60);
+    const rem = sec % 60;
+    return `${min}m ${rem.toFixed(0)}s`;
   };
 
   const handleFulfill = async () => {
@@ -157,6 +215,42 @@ export default function ScanPage() {
         <p className="text-center text-gray-600 mb-6">
           Scan AWB to fulfill and print the Swiss Post label in one step.
         </p>
+
+        {(goatTracking?.count || goatError) && (
+          <div className="mb-6 border rounded-lg p-4 bg-amber-50 border-amber-200">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-amber-800">
+                🐐 GOAT / Manual orders missing tracking: {goatTracking?.count || 0}
+              </div>
+              <button
+                onClick={loadGoatTracking}
+                disabled={goatLoading}
+                className="text-xs px-2 py-1 bg-amber-200 text-amber-900 rounded hover:bg-amber-300 disabled:opacity-60"
+              >
+                {goatLoading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+            {goatError && (
+              <div className="text-xs text-red-700 mt-2">{goatError}</div>
+            )}
+            {!goatError && (goatTracking?.items?.length || 0) > 0 && (
+              <div className="mt-2 space-y-1 text-xs text-amber-900">
+                {goatTracking!.items.map((item) => (
+                  <div key={item.id} className="flex flex-wrap gap-2">
+                    <span className="font-semibold">{item.shopifyOrderName}</span>
+                    <span>Ref: {item.stockxOrderNumber}</span>
+                    {item.shopifyCreatedAt && (
+                      <span>
+                        {new Date(item.shopifyCreatedAt).toLocaleDateString("fr-CH")}
+                      </span>
+                    )}
+                    {item.shopifyCustomerEmail && <span>{item.shopifyCustomerEmail}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center gap-4">
           <input
@@ -323,12 +417,15 @@ export default function ScanPage() {
             </div>
             <div className="space-y-2 text-sm">
               {history.map((h, idx) => (
-                <div key={`${h.ts}-${idx}`} className="flex justify-between border-b pb-1">
+                <div key={`${h.ts}-${idx}`} className="flex flex-col md:flex-row md:justify-between border-b pb-1 gap-1">
                   <div className="text-gray-700">
                     {new Date(h.ts).toLocaleTimeString()} — {h.awb}
                   </div>
                   <div className="text-right text-gray-600">
                     {h.status} {h.orderName ? `(${h.orderName})` : ""}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Processing: {formatDuration(h.durationMs)} • Gap: {formatDuration(h.gapMs)}
                   </div>
                 </div>
               ))}
