@@ -84,8 +84,12 @@ export default function ScanPage() {
     setGoatError(null);
     try {
       const res = await fetch("/api/notifications/goat-tracking");
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `HTTP ${res.status}`);
+      }
       const data = await res.json();
-      if (res.ok && data?.ok) {
+      if (data?.ok) {
         setGoatTracking({ count: data.count || 0, items: data.items || [] });
       } else {
         setGoatError(data?.error || "Failed to load GOAT tracking");
@@ -205,12 +209,22 @@ export default function ScanPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
-        <button
-          onClick={handleLogout}
-          className="absolute right-0 top-0 px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
-        >
-          Logout
-        </button>
+        <div className="absolute right-0 top-0 flex items-center gap-2">
+          <a
+            href="https://admin.shopify.com/store/resell-lausanne"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1 text-sm bg-blue-100 text-blue-800 rounded hover:bg-blue-200 transition-colors"
+          >
+            Shopify Login
+          </a>
+          <button
+            onClick={handleLogout}
+            className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition-colors"
+          >
+            Logout
+          </button>
+        </div>
         <h1 className="text-3xl font-bold text-gray-900 mb-2 text-center">📦 Scan AWB / Barcode</h1>
         <p className="text-center text-gray-600 mb-6">
           Scan AWB to fulfill and print the Swiss Post label in one step.

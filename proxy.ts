@@ -19,6 +19,7 @@ const LOGISTICS_ALLOWED_PATHS = [
   "/api/fulfill-from-awb",
   "/api/swiss-post/label-from-awb",
   "/api/shopify/order-by-name", // Used by scanner search
+  "/api/notifications/goat-tracking",
 ];
 
 export async function proxy(req: NextRequest) {
