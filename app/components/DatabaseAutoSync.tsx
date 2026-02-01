@@ -35,6 +35,7 @@ export default function DatabaseAutoSync({
   openManualEntryModalForEdit,
 }: Props) {
   const [emailLoading, setEmailLoading] = React.useState<Record<string, boolean>>({});
+  const [bulkLoading, setBulkLoading] = React.useState(false);
 
   const sendMilestoneEmail = async (matchId: string, force: boolean) => {
     setEmailLoading((prev) => ({ ...prev, [matchId]: true }));
@@ -67,6 +68,37 @@ export default function DatabaseAutoSync({
     }
   };
 
+  const sendLimitedEmails = async (limit: number) => {
+    setBulkLoading(true);
+    try {
+      const res = await fetch("/api/notifications/stockx/send-limited", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          limit,
+          force: false,
+          skipIfFulfilled: true,
+          skipIfEtaPassed: true,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        throw new Error(json?.error || `HTTP ${res.status}`);
+      }
+
+      alert(
+        `✅ Limited send complete\n\n` +
+          `Attempted: ${json?.attempted || 0}\n` +
+          `Sent: ${json?.sent || 0}\n` +
+          `Skipped: ${json?.skipped || 0}`
+      );
+    } catch (err: any) {
+      alert(`❌ Limited send failed:\n\n${err?.message || "Unknown error"}`);
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   return (
     <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg shadow-lg p-6 mt-6 border-2 border-purple-200">
       <div className="flex items-center justify-between mb-4">
@@ -75,6 +107,22 @@ export default function DatabaseAutoSync({
           <p className="text-sm text-gray-600 mt-1">
             Persistent storage + background workers for automatic matching
           </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => sendLimitedEmails(2)}
+            disabled={bulkLoading}
+            className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400 text-xs font-semibold"
+          >
+            {bulkLoading ? "Sending..." : "📧 Send 2 updates"}
+          </button>
+          <button
+            onClick={() => sendLimitedEmails(1)}
+            disabled={bulkLoading}
+            className="px-3 py-2 bg-indigo-100 text-indigo-900 rounded-md hover:bg-indigo-200 disabled:bg-gray-100 text-xs font-semibold"
+          >
+            Send 1
+          </button>
         </div>
       </div>
 
