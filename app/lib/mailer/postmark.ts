@@ -114,6 +114,14 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
   const estimatedStart = input.match.stockxEstimatedDelivery;
   const estimatedEnd = input.match.stockxLatestEstimatedDelivery || input.match.stockxEstimatedDelivery;
   const estimatedEndPlus2 = addBusinessDays(estimatedEnd, 2);
+  let trackingUrl = (input.match.stockxTrackingUrl || "").trim();
+  if (trackingUrl) {
+    trackingUrl = trackingUrl.replace(/\s+/g, "");
+    if (!/^https?:\/\//i.test(trackingUrl)) {
+      trackingUrl = `https://${trackingUrl}`;
+    }
+  }
+  const hasTracking = Boolean(trackingUrl);
 
   return {
     // Header
@@ -131,8 +139,9 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     estimated_arrival_end: toFrDate(estimatedEndPlus2),
     hero_image_url: input.match.shopifyLineItemImageUrl || brandHeroImageUrl,
     top_note: "",
-    tracking_url: input.match.stockxTrackingUrl || "",
+    tracking_url: trackingUrl,
     tracking_label: "",
+    has_tracking: hasTracking,
 
     // Status
     active_step_title: stepLabels[activeIndex - 1],

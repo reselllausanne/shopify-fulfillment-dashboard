@@ -29,8 +29,6 @@ export async function POST(req: NextRequest) {
         shopifyCustomerFirstName: true,
         shopifyCustomerLastName: true,
         shopifyLineItemImageUrl: true,
-        stockxChainId: true,
-        stockxOrderNumber: true,
         stockxTrackingUrl: true,
         stockxAwb: true,
         stockxEstimatedDelivery: true,
@@ -48,27 +46,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Match not found" }, { status: 404 });
     }
 
-    // Fallback: if tracking URL is missing on OrderMatch, try SupplierOrderTracking
-    let resolvedTrackingUrl = match.stockxTrackingUrl ?? null;
-    let resolvedAwb = match.stockxAwb ?? null;
-    if (!resolvedTrackingUrl && match.stockxChainId && match.stockxOrderNumber) {
-      const trackingRecord = await prisma.supplierOrderTracking.findFirst({
-        where: {
-          chainId: match.stockxChainId,
-          orderNumber: match.stockxOrderNumber,
-        },
-        select: {
-          trackingUrl: true,
-          awb: true,
-        },
-      });
-      if (trackingRecord?.trackingUrl) {
-        resolvedTrackingUrl = trackingRecord.trackingUrl;
-      }
-      if (!resolvedAwb && trackingRecord?.awb) {
-        resolvedAwb = trackingRecord.awb;
-      }
-    }
+    const resolvedTrackingUrl = match.stockxTrackingUrl ?? null;
+    const resolvedAwb = match.stockxAwb ?? null;
 
     const toNumberMaybe = (v: any): number | null => {
       if (v == null) return null;

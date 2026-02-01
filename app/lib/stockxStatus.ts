@@ -11,28 +11,27 @@ const STANDARD_SEQUENCE: MilestoneDefinition[] = [
   {
     key: "PURCHASE_CONFIRMED",
     title: "Order Confirmed",
-    description: "Nous avons réussi à mettre la paire en commande.",
+    description: "Commande confirmée.",
   },
   {
     key: "SELLER_SHIPPED_TO_STOCKX",
     title: "Waiting for Seller to Ship to StockX",
-    description: "Le vendeur prépare l’envoi vers le hub d’authentification.",
+    description: "En attente d’expédition vers le centre d’authentification.",
   },
   {
     key: "STOCKX_VERIFIED_AND_SHIPPED",
     title: "Awaiting StockX Verification",
-    description:
-      "La paire est en cours d’authentification et part vers la Suisse. Prévois ~2 jours ouvrables après la date estimée DHL.",
+    description: "Contrôle d’authenticité en cours.",
   },
   {
     key: "DELIVERED_TO_SWISS_DISTRIBUTOR",
     title: "Awaiting Packaging",
-    description: "Le colis arrive prochainement dans notre centre Suisse avant le relais Poste.",
+    description: "En préparation avant remise à La Poste.",
   },
   {
     key: "SWISS_POST_TRACKING_AVAILABLE",
     title: "Awaiting Order Delivery",
-    description: "Le suivi Poste Suisse est disponible et bientôt livré.",
+    description: "En cours de livraison.",
   },
 ];
 
@@ -40,25 +39,26 @@ const EXPRESS_SEQUENCE: MilestoneDefinition[] = [
   {
     key: "EXPRESS_CONFIRMED",
     title: "Order Confirmed",
-    description: "Votre commande Express est confirmée.",
+    description: "Commande Express confirmée.",
   },
   {
     key: "EXPRESS_SHIPPED_TO_SWISS",
     title: "Seller Preparing Shipment",
-    description:
-      "La paire est en route vers la Suisse. Compte 2 à 3 jours ouvrables au-delà de la date estimée DHL.",
+    description: "Acheminement accéléré vers la Suisse.",
   },
   {
     key: "EXPRESS_DELIVERED_TO_SWISS",
     title: "Order On Its Way To You",
-    description: "Arrivée au centre Suisse, le relais Swiss Post sera très bientôt disponible.",
+    description: "Arrivé en Suisse, en préparation.",
   },
   {
     key: "SWISS_POST_TRACKING_AVAILABLE_EXPRESS",
     title: "Awaiting Order Delivery",
-    description: "Le suivi Poste Suisse est là, préparation de la livraison finale.",
+    description: "En cours de livraison.",
   },
 ];
+
+
 
 function sequenceForCheckout(checkoutType: string | null): MilestoneDefinition[] {
   if (!checkoutType) return STANDARD_SEQUENCE;
