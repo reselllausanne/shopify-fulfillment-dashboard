@@ -404,6 +404,16 @@ model GalaxusOrder {
   customerCity        String
   customerCountry     String
   customerVatId       String?
+  recipientName       String?
+  recipientAddress1   String?
+  recipientAddress2   String?
+  recipientPostalCode String?
+  recipientCity       String?
+  recipientCountry    String?
+  recipientPhone      String?
+  referencePerson     String?
+  yourReference       String?
+  afterSalesHandling  Boolean  @default(false)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -462,6 +472,10 @@ model Shipment {
   id             String   @id @default(uuid())
   orderId        String?
   shipmentId     String   @unique
+  deliveryNoteNumber String? @unique
+  deliveryNoteCreatedAt DateTime?
+  incoterms      String?
+  sscc           String?  @unique
   carrier        String?
   trackingNumber String?
   shippedAt      DateTime?

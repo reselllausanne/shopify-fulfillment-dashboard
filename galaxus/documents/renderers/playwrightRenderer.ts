@@ -14,7 +14,7 @@ export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer>
   try {
     const page = await browser.newPage();
     await page.setContent(options.html, { waitUntil: "networkidle" });
-    await page.emulateMediaType("print");
+    await page.emulateMedia({ media: "print" });
 
     const footerTemplate = options.showPageNumbers
       ? `

@@ -41,7 +41,10 @@ export const labelStyles = `
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; }
   .label { border: 1px solid #000; padding: 10px; height: 100%; }
   .title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
-  .section { margin-bottom: 10px; }
-  .qr { text-align: center; margin-top: 8px; }
-  .qr img { width: 120px; height: 120px; }
+  .section { margin-bottom: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .address { border: 1px solid #000; padding: 8px; min-height: 72px; }
+  .barcode { border: 1px solid #000; padding: 8px; text-align: center; margin-top: 10px; }
+  .barcode img { width: 100%; height: 50px; object-fit: contain; }
+  .barcode-text { font-size: 11px; margin-top: 6px; }
 `;

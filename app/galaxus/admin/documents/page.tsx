@@ -17,9 +17,11 @@ export default function GalaxusDocumentsPage() {
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [status, setStatus] = useState<string>("");
 
-  const handleSeed = async () => {
-    setStatus("Seeding mock order...");
-    const res = await postJson<{ orderId: string; galaxusOrderId: string }>("/api/galaxus/seed", {});
+  const handleSeed = async (lineCount: number) => {
+    setStatus(`Seeding mock order (${lineCount} lines)...`);
+    const res = await postJson<{ orderId: string; galaxusOrderId: string }>("/api/galaxus/seed", {
+      lineCount,
+    });
     if (!res.ok) {
       setStatus("Failed to seed order.");
       return;
@@ -70,7 +72,13 @@ export default function GalaxusDocumentsPage() {
         <div className="rounded-lg bg-white p-4 shadow-sm space-y-4">
           <div className="flex flex-wrap gap-3">
             <button
-              onClick={handleSeed}
+              onClick={() => handleSeed(5)}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
+            >
+              Seed 5-line order
+            </button>
+            <button
+              onClick={() => handleSeed(120)}
               className="rounded-md bg-black px-4 py-2 text-sm font-medium text-white"
             >
               Seed mock order (120 lines)

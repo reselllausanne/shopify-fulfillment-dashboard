@@ -5,9 +5,9 @@ import { escapeHtml, formatDate, formatMoney, formatNumber, formatVatRate } from
 function renderLine(line: OrderLine): string {
   const descriptionParts = [
     `<strong>${escapeHtml(line.description)}</strong>`,
+    line.sku ? `<div class="small muted">SKU: ${escapeHtml(line.sku)}</div>` : "",
     line.size ? `<div class="small muted">Size: ${escapeHtml(line.size)}</div>` : "",
     line.gtin ? `<div class="small muted">GTIN: ${escapeHtml(line.gtin)}</div>` : "",
-    line.providerKey ? `<div class="small muted">ProviderKey: ${escapeHtml(line.providerKey)}</div>` : "",
   ].filter(Boolean);
 
   return `
@@ -29,7 +29,7 @@ export function renderInvoiceHtml(data: InvoiceData): string {
     data.buyer.line2,
     `${data.buyer.postalCode} ${data.buyer.city}`,
     data.buyer.country,
-  ].filter(Boolean);
+  ].filter((line): line is string => Boolean(line));
 
   const supplierAddressLines = data.supplier.addressLines.filter(Boolean);
 

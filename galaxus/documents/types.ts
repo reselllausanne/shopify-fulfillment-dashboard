@@ -29,6 +29,7 @@ export type OrderLine = {
   size?: string | null;
   gtin?: string | null;
   providerKey?: string | null;
+  sku?: string | null;
   quantity: number;
   vatRate: number;
   unitNetPrice: number;
@@ -68,14 +69,24 @@ export type DeliveryNoteOrderGroup = {
 export type DeliveryNoteData = {
   shipmentId: string;
   createdAt: Date;
+  deliveryNoteNumber: string;
+  incoterms?: string | null;
   buyer: Address;
   supplier: Company;
+  orderReference?: string | null;
+  referencePerson?: string | null;
+  yourReference?: string | null;
+  buyerPhone?: string | null;
+  afterSalesHandling?: boolean;
+  legalNotice?: string | null;
   groups: DeliveryNoteOrderGroup[];
 };
 
 export type LabelData = {
   shipmentId: string;
   orderNumbers: string[];
-  buyer: Address;
-  qrDataUrl: string;
+  sender: Address;
+  recipient: Address;
+  sscc: string;
+  barcodeDataUrl: string;
 };

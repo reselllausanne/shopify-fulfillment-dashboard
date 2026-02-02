@@ -15,7 +15,7 @@ import {
   GALAXUS_SUPPLIER_VAT_ID,
   GALAXUS_SUPPLIER_WEBSITE,
 } from "../config";
-import { createQrDataUrl } from "../qr/qr";
+import { createSsccBarcodeDataUrl } from "../barcodes/barcode";
 import { getStorageAdapter } from "../storage/storage";
 import { renderDeliveryNoteHtml } from "./templates/deliveryNote";
 import { renderInvoiceHtml } from "./templates/invoice";
@@ -54,7 +54,7 @@ export class DocumentService {
     const results = [];
 
     const needsShipment = types.includes(DocumentType.DELIVERY_NOTE) || types.includes(DocumentType.LABEL);
-    const shipmentId = needsShipment ? await resolveShipmentId(order) : null;
+    const shipment = needsShipment ? await resolveShipment(order) : null;
 
     for (const type of types) {
       let html = "";
@@ -65,10 +65,11 @@ export class DocumentService {
         const data = buildInvoiceData(order, order.lines);
         html = renderInvoiceHtml(data);
       } else if (type === DocumentType.DELIVERY_NOTE) {
-        const data = buildDeliveryNoteData(order, order.lines, shipmentId ?? "");
+        const data = buildDeliveryNoteData(order, order.lines, shipment);
         html = renderDeliveryNoteHtml(data);
+        showPageNumbers = true;
       } else if (type === DocumentType.LABEL) {
-        const data = await buildLabelData(order, shipmentId ?? "");
+        const data = await buildLabelData(order, shipment);
         html = renderLabelHtml(data);
         pdfFormat = "A6";
       }
@@ -83,7 +84,7 @@ export class DocumentService {
       const document = await prisma.document.create({
         data: {
           orderId: order.id,
-          shipmentId: type === DocumentType.LABEL ? shipmentId : null,
+          shipmentId: type === DocumentType.LABEL ? shipment?.id ?? null : null,
           type,
           version,
           storageUrl: stored.storageUrl,
@@ -120,14 +121,46 @@ function buildBuyer() {
   };
 }
 
+function buildSupplierAddress() {
+  const [line1, postalLine, countryLine] = GALAXUS_SUPPLIER_ADDRESS_LINES;
+  const { postalCode, city } = parsePostalLine(postalLine);
+  return {
+    name: GALAXUS_SUPPLIER_NAME,
+    line1: line1 ?? "",
+    line2: null,
+    postalCode,
+    city,
+    country: countryLine ?? "",
+  };
+}
+
+function parsePostalLine(line?: string) {
+  if (!line) return { postalCode: "", city: "" };
+  const parts = line.split(" ");
+  const postalCode = parts.shift() ?? "";
+  return { postalCode, city: parts.join(" ") };
+}
+
+function buildRecipient(order: GalaxusOrder) {
+  return {
+    name: order.recipientName ?? GALAXUS_BUYER_NAME,
+    line1: order.recipientAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+    line2: order.recipientAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+    postalCode: order.recipientPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+    city: order.recipientCity ?? GALAXUS_BUYER_CITY,
+    country: order.recipientCountry ?? GALAXUS_BUYER_COUNTRY,
+  };
+}
+
 function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
   return lines.map((line) => ({
     lineNumber: line.lineNumber,
-    articleNumber: line.supplierSku ?? line.supplierVariantId ?? "",
+    articleNumber: line.gtin ?? line.providerKey ?? "",
     description: line.productName,
     size: line.size,
     gtin: line.gtin,
     providerKey: line.providerKey,
+    sku: line.supplierSku ?? line.supplierVariantId ?? null,
     quantity: line.quantity,
     vatRate: Number(line.vatRate),
     unitNetPrice: Number(line.unitNetPrice),
@@ -156,13 +189,28 @@ function buildInvoiceData(order: GalaxusOrder, lines: GalaxusOrderLine[]): Invoi
 function buildDeliveryNoteData(
   order: GalaxusOrder,
   lines: GalaxusOrderLine[],
-  shipmentId: string
+  shipment: {
+    shipmentId: string;
+    deliveryNoteNumber: string;
+    deliveryNoteCreatedAt: Date;
+    incoterms: string | null;
+    createdAt: Date;
+  } | null
 ): DeliveryNoteData {
   return {
-    shipmentId,
-    createdAt: new Date(),
-    buyer: buildBuyer(),
+    shipmentId: shipment?.shipmentId ?? "",
+    createdAt: shipment?.deliveryNoteCreatedAt ?? new Date(),
+    deliveryNoteNumber: shipment?.deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
+    incoterms: shipment?.incoterms ?? null,
+    buyer: buildRecipient(order),
     supplier: buildSupplier(),
+    orderReference: order.orderNumber ?? order.galaxusOrderId,
+    referencePerson: order.referencePerson ?? null,
+    yourReference: order.yourReference ?? null,
+    buyerPhone: order.recipientPhone ?? null,
+    afterSalesHandling: order.afterSalesHandling ?? false,
+    legalNotice:
+      "Payment has already been made directly to Galaxus. In the event of a return, please use the returns process in your customer account on digitec.ch or galaxus.ch. Orders placed via digitec.ch and galaxus.ch are subject to the General Terms and Conditions of Digitec Galaxus AG. For questions, visit https://www.galaxus.ch/help",
     groups: [
       {
         orderNumber: order.orderNumber ?? order.galaxusOrderId,
@@ -173,14 +221,20 @@ function buildDeliveryNoteData(
   };
 }
 
-async function buildLabelData(order: GalaxusOrder, shipmentId: string): Promise<LabelData> {
-  const qrDataUrl = await createQrDataUrl(shipmentId);
+async function buildLabelData(
+  order: GalaxusOrder,
+  shipment: { shipmentId: string; sscc: string | null } | null
+): Promise<LabelData> {
+  const sscc = shipment?.sscc ?? buildSscc(order);
+  const barcodeDataUrl = await createSsccBarcodeDataUrl(sscc);
 
   return {
-    shipmentId,
+    shipmentId: shipment?.shipmentId ?? "",
     orderNumbers: [order.orderNumber ?? order.galaxusOrderId],
-    buyer: buildBuyer(),
-    qrDataUrl,
+    sender: buildSupplierAddress(),
+    recipient: buildRecipient(order),
+    sscc,
+    barcodeDataUrl,
   };
 }
 
@@ -233,23 +287,89 @@ function buildInvoiceNumber(order: GalaxusOrder): string {
   return `GX-INV-${stamp}-${suffix}`;
 }
 
+function buildDeliveryNoteNumber(order: GalaxusOrder): string {
+  const stampSource = order.createdAt ?? order.orderDate;
+  const stamp = formatInvoiceTimestamp(stampSource);
+  const suffix = order.id.replace(/-/g, "").slice(0, 6).toUpperCase();
+  return `DN-${stamp}-${suffix}`;
+}
+
+function buildSscc(order: GalaxusOrder): string {
+  const numericSeed = order.id.replace(/\D/g, "");
+  const base = `${Date.now()}${numericSeed}`;
+  return base.slice(0, 18).padEnd(18, "0");
+}
+
 function formatInvoiceTimestamp(date: Date): string {
   const iso = date.toISOString().replace(/[-:]/g, "").split(".")[0];
   const [datePart, timePart] = iso.split("T");
   return `${datePart}-${timePart}`;
 }
 
-async function resolveShipmentId(order: GalaxusOrder & { shipments?: { shipmentId: string }[] }): Promise<string> {
+async function resolveShipment(
+  order: GalaxusOrder & {
+    shipments?: {
+      id: string;
+      shipmentId: string;
+      createdAt: Date;
+    }[];
+  }
+): Promise<{
+  id: string;
+  shipmentId: string;
+  deliveryNoteNumber: string;
+  deliveryNoteCreatedAt: Date;
+  incoterms: string | null;
+  sscc: string | null;
+  createdAt: Date;
+}> {
   if (order.shipments && order.shipments.length > 0) {
-    return order.shipments[0].shipmentId;
+    const existing = order.shipments[0];
+    const full = await prisma.shipment.findUnique({
+      where: { id: existing.id },
+    });
+    const deliveryNoteNumber = full?.deliveryNoteNumber ?? buildDeliveryNoteNumber(order);
+    const deliveryNoteCreatedAt = full?.deliveryNoteCreatedAt ?? existing.createdAt;
+
+    if (!full?.deliveryNoteNumber || !full?.deliveryNoteCreatedAt || !full?.sscc) {
+      await prisma.shipment.update({
+        where: { id: existing.id },
+        data: {
+          deliveryNoteNumber,
+          deliveryNoteCreatedAt,
+          sscc: full?.sscc ?? buildSscc(order),
+        },
+      });
+    }
+
+    return {
+      id: existing.id,
+      shipmentId: existing.shipmentId,
+      deliveryNoteNumber,
+      deliveryNoteCreatedAt,
+      incoterms: full?.incoterms ?? null,
+      sscc: full?.sscc ?? buildSscc(order),
+      createdAt: existing.createdAt,
+    };
   }
 
   const shipment = await prisma.shipment.create({
     data: {
       orderId: order.id,
       shipmentId: `SHIP-${order.galaxusOrderId}-${Date.now()}`,
+      deliveryNoteNumber: buildDeliveryNoteNumber(order),
+      deliveryNoteCreatedAt: new Date(),
+      sscc: buildSscc(order),
     },
   });
 
-  return shipment.shipmentId;
+  return {
+    id: shipment.id,
+    shipmentId: shipment.shipmentId,
+    deliveryNoteNumber: shipment.deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
+    deliveryNoteCreatedAt: shipment.deliveryNoteCreatedAt ?? shipment.createdAt,
+    incoterms: shipment.incoterms ?? null,
+    sscc: shipment.sscc ?? null,
+    createdAt: shipment.createdAt,
+  };
 }

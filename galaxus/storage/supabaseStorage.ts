@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { GALAXUS_DOCS_BUCKET, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL } from "../config";
+import { SUPABASE_DOCS_BUCKET, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_URL } from "../config";
 import type { StorageAdapter, StoredFile, StorageFileResult } from "./types";
 
 export function createSupabaseStorage(bucketOverride?: string): StorageAdapter {
@@ -7,11 +7,11 @@ export function createSupabaseStorage(bucketOverride?: string): StorageAdapter {
     throw new Error("Supabase storage env vars are missing.");
   }
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  const supabase = createClient(normalizeSupabaseUrl(SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
   });
 
-  const bucket = bucketOverride ?? GALAXUS_DOCS_BUCKET;
+  const bucket = bucketOverride ?? SUPABASE_DOCS_BUCKET;
 
   return {
     async uploadPdf(key: string, content: Buffer): Promise<StoredFile> {
@@ -50,4 +50,16 @@ export function parseSupabaseUrl(storageUrl: string): { bucket: string; key: str
     throw new Error(`Invalid supabase storage url: ${storageUrl}`);
   }
   return { bucket, key: keyParts.join("/") };
+}
+
+function normalizeSupabaseUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.includes(".storage.supabase.co")
+      ? parsed.hostname.replace(".storage.supabase.co", ".supabase.co")
+      : parsed.hostname;
+    return `${parsed.protocol}//${host}`;
+  } catch {
+    return rawUrl;
+  }
 }
