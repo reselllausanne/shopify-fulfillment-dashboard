@@ -39,6 +39,9 @@ next-env.d.ts
 dev.db
 dev.db-journal
 
+# Galaxus documents (local dev storage)
+galaxus-docs/
+
 # IDE
 .vscode/
 .idea/

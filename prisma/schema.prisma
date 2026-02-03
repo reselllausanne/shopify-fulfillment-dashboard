@@ -305,3 +305,218 @@ model RecurringExpense {
   @@index([active])
   @@schema("public")
 }
+
+enum DocumentType {
+  INVOICE
+  DELIVERY_NOTE
+  LABEL
+
+  @@schema("public")
+}
+
+model SupplierVariant {
+  id                String   @id @default(uuid())
+  supplierVariantId String   @unique
+  supplierSku       String
+  price             Decimal  @db.Decimal(10, 2)
+  stock             Int
+  sizeRaw           String?
+  images            Json?
+  leadTimeDays      Int?
+  lastSyncAt        DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  mappings          VariantMapping[]
+
+  @@index([supplierSku])
+  @@schema("public")
+}
+
+model KickDBProduct {
+  id              String   @id @default(uuid())
+  kickdbProductId String   @unique
+  urlKey          String?
+  styleId         String?
+  name            String?
+  brand           String?
+  imageUrl        String?
+  lastFetchedAt   DateTime?
+  notFound        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  variants        KickDBVariant[]
+
+  @@schema("public")
+}
+
+model KickDBVariant {
+  id              String   @id @default(uuid())
+  kickdbVariantId String   @unique
+  productId       String
+  sizeUs          String?
+  sizeEu          String?
+  gtin            String?
+  ean             String?
+  providerKey     String?
+  lastFetchedAt   DateTime?
+  notFound        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  product         KickDBProduct  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  mappings        VariantMapping[]
+
+  @@index([productId])
+  @@schema("public")
+}
+
+model VariantMapping {
+  id               String   @id @default(uuid())
+  supplierVariantId String  @unique
+  kickdbVariantId  String?
+  gtin             String?
+  providerKey      String?
+  confidenceScore  Decimal? @db.Decimal(5, 2)
+  status           String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  supplierVariant  SupplierVariant @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  kickdbVariant    KickDBVariant?  @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
+
+  @@index([kickdbVariantId])
+  @@schema("public")
+}
+
+model GalaxusOrder {
+  id                  String   @id @default(uuid())
+  galaxusOrderId      String   @unique
+  orderNumber         String?
+  orderDate           DateTime
+  deliveryDate        DateTime?
+  currencyCode        String   @default("CHF")
+  customerName        String
+  customerAddress1    String
+  customerAddress2    String?
+  customerPostalCode  String
+  customerCity        String
+  customerCountry     String
+  customerVatId       String?
+  recipientName       String?
+  recipientAddress1   String?
+  recipientAddress2   String?
+  recipientPostalCode String?
+  recipientCity       String?
+  recipientCountry    String?
+  recipientPhone      String?
+  referencePerson     String?
+  yourReference       String?
+  afterSalesHandling  Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  lines               GalaxusOrderLine[]
+  documents           Document[]
+  shipments           Shipment[]
+  supplierOrders      SupplierOrder[]
+  statusEvents        OrderStatusEvent[]
+
+  @@index([orderDate])
+  @@schema("public")
+}
+
+model GalaxusOrderLine {
+  id              String   @id @default(uuid())
+  orderId         String
+  lineNumber      Int
+  supplierSku     String?
+  supplierVariantId String?
+  productName     String
+  description     String?
+  size            String?
+  gtin            String?
+  providerKey     String?
+  quantity        Int
+  vatRate         Decimal  @db.Decimal(5, 2)
+  unitNetPrice    Decimal  @db.Decimal(10, 2)
+  lineNetAmount   Decimal  @db.Decimal(10, 2)
+  currencyCode    String   @default("CHF")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  order           GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@schema("public")
+}
+
+model SupplierOrder {
+  id                String   @id @default(uuid())
+  supplierOrderRef  String   @unique
+  orderId           String?
+  status            String
+  payloadJson       Json?
+  confirmedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  order             GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@schema("public")
+}
+
+model Shipment {
+  id             String   @id @default(uuid())
+  orderId        String?
+  shipmentId     String   @unique
+  deliveryNoteNumber String? @unique
+  deliveryNoteCreatedAt DateTime?
+  incoterms      String?
+  sscc           String?  @unique
+  carrier        String?
+  trackingNumber String?
+  shippedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order          GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  documents      Document[]
+
+  @@index([orderId])
+  @@schema("public")
+}
+
+model OrderStatusEvent {
+  id         String   @id @default(uuid())
+  orderId    String
+  source     String
+  type       String
+  payloadJson Json?
+  createdAt  DateTime @default(now())
+
+  order      GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@schema("public")
+}
+
+model Document {
+  id         String   @id @default(uuid())
+  orderId    String?
+  shipmentId String?
+  type       DocumentType
+  version    Int      @default(1)
+  storageUrl String
+  checksum   String?
+  createdAt  DateTime @default(now())
+
+  order      GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment   Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([shipmentId])
+  @@schema("public")
+}

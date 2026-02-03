@@ -16,7 +16,7 @@ const STANDARD_SEQUENCE: MilestoneDefinition[] = [
   {
     key: "SELLER_SHIPPED_TO_STOCKX",
     title: "Waiting for Seller to Ship to StockX",
-    description: "En attente d’expédition vers le centre d’authentification.",
+    description: "Commande expédiée en direction de notre centre.",
   },
   {
     key: "STOCKX_VERIFIED_AND_SHIPPED",
@@ -26,12 +26,12 @@ const STANDARD_SEQUENCE: MilestoneDefinition[] = [
   {
     key: "DELIVERED_TO_SWISS_DISTRIBUTOR",
     title: "Awaiting Packaging",
-    description: "En préparation avant remise à La Poste.",
+    description: "Préparation et expédition vers la Suisse.",
   },
   {
     key: "SWISS_POST_TRACKING_AVAILABLE",
     title: "Awaiting Order Delivery",
-    description: "En cours de livraison.",
+    description: "Livraison en cours.",
   },
 ];
 
