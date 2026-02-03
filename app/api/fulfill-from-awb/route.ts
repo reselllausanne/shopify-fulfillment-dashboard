@@ -7,6 +7,7 @@ import { prisma } from "@/app/lib/prisma";
 import {
   buildLineItemsByFulfillmentOrder,
   createFulfillment,
+  createFulfillmentEvent,
   fetchOrderFulfillmentMap,
   fetchOrderIdByName,
   fetchOrderShippingInfo,
@@ -613,6 +614,19 @@ export async function POST(req: NextRequest) {
         { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, awb, error: "Missing fulfillment" },
         { status: 500 }
       );
+    }
+
+    if (shouldCallSwissPost && swissPostLabelId) {
+      try {
+        await createFulfillmentEvent({
+          fulfillmentId: fulfillment.id,
+          status: "LABEL_PRINTED",
+          message: "Etiquette Swiss Post créée",
+          happenedAt: new Date().toISOString(),
+        });
+      } catch (eventError: any) {
+        console.error("[FULFILL-FROM-AWB] Swiss Post event failed:", eventError?.message || eventError);
+      }
     }
 
     const record = await prisma.shopifyFulfillmentRecord.create({

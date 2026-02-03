@@ -16,6 +16,7 @@ export type StockXMilestoneEmailInput = {
     shopifyCustomerFirstName: string | null;
     shopifyCustomerLastName: string | null;
     stockxCheckoutType?: string | null;
+    stockxOrderNumber?: string | null;
     stockxSkuKey?: string | null;
     stockxSizeEU?: string | null;
     stockxTrackingUrl: string | null;

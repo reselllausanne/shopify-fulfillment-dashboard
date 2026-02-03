@@ -68,7 +68,7 @@ export default function DatabaseAutoSync({
     }
   };
 
-  const sendLimitedEmails = async (limit: number) => {
+  const sendLimitedEmails = async (limit: number, onlyToday = false) => {
     setBulkLoading(true);
     try {
       const res = await fetch("/api/notifications/stockx/send-limited", {
@@ -79,6 +79,7 @@ export default function DatabaseAutoSync({
           force: false,
           skipIfFulfilled: true,
           skipIfEtaPassed: true,
+          onlyToday,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -110,11 +111,11 @@ export default function DatabaseAutoSync({
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => sendLimitedEmails(2)}
+            onClick={() => sendLimitedEmails(2, true)}
             disabled={bulkLoading}
             className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400 text-xs font-semibold"
           >
-            {bulkLoading ? "Sending..." : "📧 Send 2 updates"}
+            {bulkLoading ? "Sending..." : "📧 Send today (2)"}
           </button>
           <button
             onClick={() => sendLimitedEmails(1)}
