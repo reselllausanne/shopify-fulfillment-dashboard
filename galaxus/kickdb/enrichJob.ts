@@ -314,7 +314,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       debugInfo.variantSizes = summarizeVariantSizes(productRecord?.variants ?? []);
     }
 
-    const gtin = extractVariantGtin(matchedVariant);
+    const gtin = extractVariantGtin(matchedVariant ?? undefined);
     const providerKey = buildProviderKey(gtin ?? null, variant.supplierVariantId);
 
     await prisma.variantMapping.upsert({
