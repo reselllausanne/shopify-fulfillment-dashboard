@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { detectMilestone } from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
@@ -13,16 +14,21 @@ export async function POST(req: NextRequest) {
     const force = Boolean(body?.force);
     const skipIfFulfilled = body?.skipIfFulfilled !== false;
     const skipIfEtaPassed = body?.skipIfEtaPassed !== false;
+    const onlyToday = Boolean(body?.onlyToday);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
     const matches = await prisma.orderMatch.findMany({
       where: {
-        stockxStates: { not: null },
+        stockxStates: { not: Prisma.DbNull },
+        ...(onlyToday ? { stockxPurchaseDate: { gte: startOfToday } } : {}),
       },
       select: {
         id: true,
         stockxCheckoutType: true,
         stockxStates: true,
         lastMilestoneKey: true,
+        stockxOrderNumber: true,
       },
       orderBy: { stockxPurchaseDate: "desc" },
       take: 200,
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest) {
     const candidates: string[] = [];
     for (const m of matches) {
       const states = (m.stockxStates as StockXState[]) || null;
-      const milestone = detectMilestone(m.stockxCheckoutType || null, states);
+      const milestone = detectMilestone(m.stockxCheckoutType || null, states, m.stockxOrderNumber || null);
       const milestoneKey = milestone?.key || null;
       if (!milestoneKey) continue;
       if (!force && milestoneKey === m.lastMilestoneKey) continue;
