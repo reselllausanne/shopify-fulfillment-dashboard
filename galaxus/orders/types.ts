@@ -1,5 +1,8 @@
 export type GalaxusOrderLineInput = {
   lineNumber: number;
+  supplierPid?: string;
+  buyerPid?: string;
+  orderUnit?: string;
   supplierSku?: string;
   supplierVariantId?: string;
   productName: string;
@@ -9,8 +12,10 @@ export type GalaxusOrderLineInput = {
   providerKey?: string;
   quantity: number;
   vatRate: string;
+  taxAmountPerUnit?: string;
   unitNetPrice: string;
   lineNetAmount: string;
+  priceLineAmount?: string;
   currencyCode?: string;
 };
 
@@ -36,6 +41,8 @@ export type GalaxusOrderInput = {
   galaxusOrderId: string;
   orderNumber?: string;
   orderDate: string;
+  generationDate?: string;
+  language?: string;
   deliveryDate?: string;
   currencyCode?: string;
   customerName: string;
@@ -44,6 +51,8 @@ export type GalaxusOrderInput = {
   customerPostalCode: string;
   customerCity: string;
   customerCountry: string;
+  customerCountryCode?: string;
+  customerEmail?: string;
   customerVatId?: string;
   recipientName?: string;
   recipientAddress1?: string;
@@ -51,10 +60,25 @@ export type GalaxusOrderInput = {
   recipientPostalCode?: string;
   recipientCity?: string;
   recipientCountry?: string;
+  recipientCountryCode?: string;
+  recipientEmail?: string;
   recipientPhone?: string;
   referencePerson?: string;
   yourReference?: string;
   afterSalesHandling?: boolean;
+  customerType?: string;
+  deliveryType?: string;
+  isCollectiveOrder?: boolean;
+  physicalDeliveryNoteRequired?: boolean;
+  saturdayDeliveryAllowed?: boolean;
+  endCustomerOrderReference?: string;
+  buyerIdRef?: string;
+  supplierIdRef?: string;
+  buyerPartyId?: string;
+  buyerPartyGln?: string;
+  supplierPartyId?: string;
+  deliveryPartyId?: string;
+  marketplacePartyId?: string;
   lines: GalaxusOrderLineInput[];
   shipments?: GalaxusShipmentInput[];
   statusEvents?: GalaxusOrderStatusEventInput[];

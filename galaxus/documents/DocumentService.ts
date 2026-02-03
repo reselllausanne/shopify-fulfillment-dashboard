@@ -15,13 +15,14 @@ import {
   GALAXUS_SUPPLIER_VAT_ID,
   GALAXUS_SUPPLIER_WEBSITE,
 } from "../config";
-import { createSsccBarcodeDataUrl } from "../barcodes/barcode";
+import { createSsccBarcodeDataUrl, normalizeSscc } from "../barcodes/barcode";
 import { getStorageAdapter } from "../storage/storage";
 import { renderDeliveryNoteHtml } from "./templates/deliveryNote";
 import { renderInvoiceHtml } from "./templates/invoice";
 import { renderLabelHtml } from "./templates/label";
 import { renderPdfFromHtml } from "./renderers/playwrightRenderer";
 import type { Company, DeliveryNoteData, InvoiceData, LabelData, OrderLine, VatSummaryLine } from "./types";
+import { buildProviderKey } from "../supplier/providerKey";
 import crypto from "crypto";
 
 type GenerateOptions = {
@@ -155,11 +156,11 @@ function buildRecipient(order: GalaxusOrder) {
 function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
   return lines.map((line) => ({
     lineNumber: line.lineNumber,
-    articleNumber: line.gtin ?? line.providerKey ?? "",
+    articleNumber: buildProviderKey(line.gtin, line.supplierVariantId) ?? line.gtin ?? "",
     description: line.productName,
     size: line.size,
     gtin: line.gtin,
-    providerKey: line.providerKey,
+    providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
     sku: line.supplierSku ?? line.supplierVariantId ?? null,
     quantity: line.quantity,
     vatRate: Number(line.vatRate),
@@ -197,6 +198,7 @@ function buildDeliveryNoteData(
     createdAt: Date;
   } | null
 ): DeliveryNoteData {
+  const deliveryLines = buildOrderLines(lines);
   return {
     shipmentId: shipment?.shipmentId ?? "",
     createdAt: shipment?.deliveryNoteCreatedAt ?? new Date(),
@@ -209,23 +211,23 @@ function buildDeliveryNoteData(
     yourReference: order.yourReference ?? null,
     buyerPhone: order.recipientPhone ?? null,
     afterSalesHandling: order.afterSalesHandling ?? false,
-    legalNotice:
-      "Payment has already been made directly to Galaxus. In the event of a return, please use the returns process in your customer account on digitec.ch or galaxus.ch. Orders placed via digitec.ch and galaxus.ch are subject to the General Terms and Conditions of Digitec Galaxus AG. For questions, visit https://www.galaxus.ch/help",
+    legalNotice: null,
     groups: [
       {
         orderNumber: order.orderNumber ?? order.galaxusOrderId,
         deliveryDate: order.deliveryDate,
-        lines: buildOrderLines(lines),
+        lines: deliveryLines,
       },
     ],
   };
 }
 
+
 async function buildLabelData(
   order: GalaxusOrder,
   shipment: { shipmentId: string; sscc: string | null } | null
 ): Promise<LabelData> {
-  const sscc = shipment?.sscc ?? buildSscc(order);
+  const sscc = normalizeSscc(shipment?.sscc ?? buildSscc(order));
   const barcodeDataUrl = await createSsccBarcodeDataUrl(sscc);
 
   return {
@@ -280,7 +282,7 @@ function getNextVersion(documents: { type: DocumentType; version: number }[], ty
   return versions.length === 0 ? 1 : Math.max(...versions) + 1;
 }
 
-function buildInvoiceNumber(order: GalaxusOrder): string {
+export function buildInvoiceNumber(order: GalaxusOrder): string {
   const stampSource = order.createdAt ?? order.orderDate;
   const stamp = formatInvoiceTimestamp(stampSource);
   const suffix = order.id.replace(/-/g, "").slice(0, 6).toUpperCase();

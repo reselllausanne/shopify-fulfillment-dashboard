@@ -42,6 +42,7 @@ function normalizeOrder(order: GalaxusOrderInput) {
   const galaxusOrderId = requireString(order.galaxusOrderId, "galaxusOrderId");
   const orderDate = parseRequiredDate(order.orderDate, "orderDate");
   const deliveryDate = parseDate(order.deliveryDate, "deliveryDate");
+  const generationDate = parseDate(order.generationDate, "generationDate");
   const customerName = requireString(order.customerName, "customerName");
   const customerAddress1 = requireString(order.customerAddress1, "customerAddress1");
   const customerPostalCode = requireString(order.customerPostalCode, "customerPostalCode");
@@ -54,6 +55,8 @@ function normalizeOrder(order: GalaxusOrderInput) {
   return {
     galaxusOrderId,
     orderDate,
+    generationDate,
+    language: order.language ?? null,
     deliveryDate,
     currencyCode: order.currencyCode ?? "CHF",
     customerName,
@@ -62,6 +65,8 @@ function normalizeOrder(order: GalaxusOrderInput) {
     customerPostalCode,
     customerCity,
     customerCountry,
+    customerCountryCode: order.customerCountryCode ?? null,
+    customerEmail: order.customerEmail ?? null,
     customerVatId: order.customerVatId ?? null,
     recipientName: order.recipientName ?? null,
     recipientAddress1: order.recipientAddress1 ?? null,
@@ -69,11 +74,26 @@ function normalizeOrder(order: GalaxusOrderInput) {
     recipientPostalCode: order.recipientPostalCode ?? null,
     recipientCity: order.recipientCity ?? null,
     recipientCountry: order.recipientCountry ?? null,
+    recipientCountryCode: order.recipientCountryCode ?? null,
+    recipientEmail: order.recipientEmail ?? null,
     recipientPhone: order.recipientPhone ?? null,
     referencePerson: order.referencePerson ?? null,
     yourReference: order.yourReference ?? null,
     afterSalesHandling: order.afterSalesHandling ?? false,
     orderNumber: order.orderNumber ?? null,
+    customerType: order.customerType ?? null,
+    deliveryType: order.deliveryType ?? null,
+    isCollectiveOrder: order.isCollectiveOrder ?? null,
+    physicalDeliveryNoteRequired: order.physicalDeliveryNoteRequired ?? false,
+    saturdayDeliveryAllowed: order.saturdayDeliveryAllowed ?? null,
+    endCustomerOrderReference: order.endCustomerOrderReference ?? null,
+    buyerIdRef: order.buyerIdRef ?? null,
+    supplierIdRef: order.supplierIdRef ?? null,
+    buyerPartyId: order.buyerPartyId ?? null,
+    buyerPartyGln: order.buyerPartyGln ?? null,
+    supplierPartyId: order.supplierPartyId ?? null,
+    deliveryPartyId: order.deliveryPartyId ?? null,
+    marketplacePartyId: order.marketplacePartyId ?? null,
   };
 }
 
@@ -88,6 +108,9 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
     const normalized = normalizeOrder(order);
     const lines = order.lines.map((line) => ({
       lineNumber: requireNumber(line.lineNumber, "lineNumber"),
+      supplierPid: line.supplierPid ?? null,
+      buyerPid: line.buyerPid ?? null,
+      orderUnit: line.orderUnit ?? null,
       supplierSku: line.supplierSku ?? null,
       supplierVariantId: line.supplierVariantId ?? null,
       productName: requireString(line.productName, "productName"),
@@ -97,8 +120,10 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
       providerKey: line.providerKey ?? null,
       quantity: requireNumber(line.quantity, "quantity"),
       vatRate: requireString(line.vatRate, "vatRate"),
+      taxAmountPerUnit: line.taxAmountPerUnit ?? null,
       unitNetPrice: requireString(line.unitNetPrice, "unitNetPrice"),
       lineNetAmount: requireString(line.lineNetAmount, "lineNetAmount"),
+      priceLineAmount: line.priceLineAmount ?? null,
       currencyCode: line.currencyCode ?? normalized.currencyCode,
     }));
 
@@ -114,6 +139,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
         update: {
           orderNumber: normalized.orderNumber,
           orderDate: normalized.orderDate,
+          generationDate: normalized.generationDate,
+          language: normalized.language,
           deliveryDate: normalized.deliveryDate,
           currencyCode: normalized.currencyCode,
           customerName: normalized.customerName,
@@ -122,6 +149,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           customerPostalCode: normalized.customerPostalCode,
           customerCity: normalized.customerCity,
           customerCountry: normalized.customerCountry,
+          customerCountryCode: normalized.customerCountryCode,
+          customerEmail: normalized.customerEmail,
           customerVatId: normalized.customerVatId,
           recipientName: normalized.recipientName,
           recipientAddress1: normalized.recipientAddress1,
@@ -129,10 +158,25 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           recipientPostalCode: normalized.recipientPostalCode,
           recipientCity: normalized.recipientCity,
           recipientCountry: normalized.recipientCountry,
+          recipientCountryCode: normalized.recipientCountryCode,
+          recipientEmail: normalized.recipientEmail,
           recipientPhone: normalized.recipientPhone,
           referencePerson: normalized.referencePerson,
           yourReference: normalized.yourReference,
           afterSalesHandling: normalized.afterSalesHandling,
+          customerType: normalized.customerType,
+          deliveryType: normalized.deliveryType,
+          isCollectiveOrder: normalized.isCollectiveOrder,
+          physicalDeliveryNoteRequired: normalized.physicalDeliveryNoteRequired,
+          saturdayDeliveryAllowed: normalized.saturdayDeliveryAllowed,
+          endCustomerOrderReference: normalized.endCustomerOrderReference,
+          buyerIdRef: normalized.buyerIdRef,
+          supplierIdRef: normalized.supplierIdRef,
+          buyerPartyId: normalized.buyerPartyId,
+          buyerPartyGln: normalized.buyerPartyGln,
+          supplierPartyId: normalized.supplierPartyId,
+          deliveryPartyId: normalized.deliveryPartyId,
+          marketplacePartyId: normalized.marketplacePartyId,
         },
       });
 
@@ -143,6 +187,9 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
         data: lines.map((line) => ({
           orderId: savedOrder.id,
           lineNumber: line.lineNumber,
+          supplierPid: line.supplierPid,
+          buyerPid: line.buyerPid,
+          orderUnit: line.orderUnit,
           supplierSku: line.supplierSku,
           supplierVariantId: line.supplierVariantId,
           productName: line.productName,
@@ -152,8 +199,10 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           providerKey: line.providerKey,
           quantity: line.quantity,
           vatRate: line.vatRate,
+          taxAmountPerUnit: line.taxAmountPerUnit,
           unitNetPrice: line.unitNetPrice,
           lineNetAmount: line.lineNetAmount,
+          priceLineAmount: line.priceLineAmount,
           currencyCode: line.currencyCode,
         })),
       });

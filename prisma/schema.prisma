@@ -395,6 +395,8 @@ model GalaxusOrder {
   galaxusOrderId      String   @unique
   orderNumber         String?
   orderDate           DateTime
+  generationDate      DateTime?
+  language            String?
   deliveryDate        DateTime?
   currencyCode        String   @default("CHF")
   customerName        String
@@ -403,6 +405,8 @@ model GalaxusOrder {
   customerPostalCode  String
   customerCity        String
   customerCountry     String
+  customerCountryCode String?
+  customerEmail       String?
   customerVatId       String?
   recipientName       String?
   recipientAddress1   String?
@@ -410,10 +414,25 @@ model GalaxusOrder {
   recipientPostalCode String?
   recipientCity       String?
   recipientCountry    String?
+  recipientCountryCode String?
+  recipientEmail      String?
   recipientPhone      String?
   referencePerson     String?
   yourReference       String?
   afterSalesHandling  Boolean  @default(false)
+  customerType        String?
+  deliveryType        String?
+  isCollectiveOrder   Boolean?
+  physicalDeliveryNoteRequired Boolean? @default(false)
+  saturdayDeliveryAllowed Boolean?
+  endCustomerOrderReference String?
+  buyerIdRef          String?
+  supplierIdRef       String?
+  buyerPartyId        String?
+  buyerPartyGln       String?
+  supplierPartyId     String?
+  deliveryPartyId     String?
+  marketplacePartyId  String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -422,6 +441,7 @@ model GalaxusOrder {
   shipments           Shipment[]
   supplierOrders      SupplierOrder[]
   statusEvents        OrderStatusEvent[]
+  ediFiles            GalaxusEdiFile[]
 
   @@index([orderDate])
   @@schema("public")
@@ -431,6 +451,9 @@ model GalaxusOrderLine {
   id              String   @id @default(uuid())
   orderId         String
   lineNumber      Int
+  supplierPid     String?
+  buyerPid        String?
+  orderUnit       String?
   supplierSku     String?
   supplierVariantId String?
   productName     String
@@ -440,8 +463,10 @@ model GalaxusOrderLine {
   providerKey     String?
   quantity        Int
   vatRate         Decimal  @db.Decimal(5, 2)
+  taxAmountPerUnit Decimal? @db.Decimal(10, 2)
   unitNetPrice    Decimal  @db.Decimal(10, 2)
   lineNetAmount   Decimal  @db.Decimal(10, 2)
+  priceLineAmount Decimal? @db.Decimal(10, 2)
   currencyCode    String   @default("CHF")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -518,5 +543,47 @@ model Document {
 
   @@index([orderId])
   @@index([shipmentId])
+  @@schema("public")
+}
+
+enum GalaxusEdiDirection {
+  IN
+  OUT
+
+  @@schema("public")
+}
+
+enum GalaxusEdiDocType {
+  ORDP
+  ORDR
+  DELR
+  EXPINV
+  INVO
+  EOLN
+  CANP
+  CANR
+
+  @@schema("public")
+}
+
+model GalaxusEdiFile {
+  id           String              @id @default(uuid())
+  direction    GalaxusEdiDirection
+  docType      GalaxusEdiDocType
+  orderId      String?
+  orderRef     String?
+  filename     String              @unique
+  checksum     String?
+  status       String
+  errorMessage String?
+  payloadJson  Json?
+  processedAt  DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  order        GalaxusOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([direction, docType])
+  @@index([orderRef])
   @@schema("public")
 }

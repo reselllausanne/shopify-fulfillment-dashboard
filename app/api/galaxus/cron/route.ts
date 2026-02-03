@@ -3,6 +3,7 @@ import { runJob } from "@/galaxus/jobs/jobRunner";
 import { runCatalogSync } from "@/galaxus/jobs/catalogSync";
 import { runStockSync } from "@/galaxus/jobs/stockSync";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
+import { pollIncomingEdi, sendPendingOutgoingEdi } from "@/galaxus/edi/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +37,14 @@ export async function GET(request: Request) {
 
     if (task === "kickdb" || task === "all") {
       results.kickdb = await runJob("kickdb-enrich", () => runKickdbEnrich({ limit, offset }));
+    }
+
+    if (task === "edi-in" || task === "all") {
+      results.ediIn = await runJob("edi-in", () => pollIncomingEdi());
+    }
+
+    if (task === "edi-out" || task === "all") {
+      results.ediOut = await runJob("edi-out", () => sendPendingOutgoingEdi(5));
     }
 
     return NextResponse.json({ ok: true, task, limit, offset, results });
