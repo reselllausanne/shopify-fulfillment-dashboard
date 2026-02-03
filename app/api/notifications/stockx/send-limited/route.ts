@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     const candidates: string[] = [];
     for (const m of matches) {
       const states = (m.stockxStates as StockXState[]) || null;
-      const milestone = detectMilestone(m.stockxCheckoutType || null, states, m.stockxOrderNumber || null);
+      const milestone = detectMilestone(m.stockxCheckoutType || null, states);
       const milestoneKey = milestone?.key || null;
       if (!milestoneKey) continue;
       if (!force && milestoneKey === m.lastMilestoneKey) continue;

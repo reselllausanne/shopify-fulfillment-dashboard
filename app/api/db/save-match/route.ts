@@ -23,6 +23,7 @@ type EmailMatch = {
   shopifyCustomerLastName: string | null;
   shopifyLineItemImageUrl: string | null;
   stockxCheckoutType: string | null;
+  stockxOrderNumber: string | null;
   stockxSkuKey: string | null;
   stockxSizeEU: string | null;
   stockxTrackingUrl: string | null;
@@ -67,6 +68,7 @@ function pickEmailMatch(m: any): EmailMatch {
     shopifyCustomerLastName: m.shopifyCustomerLastName ?? null,
     shopifyLineItemImageUrl: m.shopifyLineItemImageUrl ?? null,
     stockxCheckoutType: m.stockxCheckoutType ?? null,
+    stockxOrderNumber: m.stockxOrderNumber ?? null,
     stockxSkuKey: m.stockxSkuKey ?? null,
     stockxSizeEU: m.stockxSizeEU ?? null,
     stockxTrackingUrl: m.stockxTrackingUrl ?? null,
