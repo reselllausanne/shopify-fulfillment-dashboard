@@ -274,6 +274,7 @@ export default function RecurringExpensesManager() {
                 <th className="px-3 py-2 text-left">Next Run</th>
                 <th className="px-3 py-2 text-left">Interval</th>
                 <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Type</th>
                 <th className="px-3 py-2 text-left">Actions</th>
               </tr>
             </thead>
@@ -289,6 +290,7 @@ export default function RecurringExpensesManager() {
                   </td>
                   <td className="px-3 py-2">{i.intervalMonths} mo</td>
                   <td className="px-3 py-2">{i.active ? "Active" : "Paused"}</td>
+                  <td className="px-3 py-2">{i.isBusiness ? "Business" : "Personal"}</td>
                   <td className="px-3 py-2 flex gap-2">
                     <button
                       onClick={() => handleEdit(i)}

@@ -15,6 +15,10 @@ export async function POST(req: NextRequest) {
     const skipIfFulfilled = body?.skipIfFulfilled !== false;
     const skipIfEtaPassed = body?.skipIfEtaPassed !== false;
     const onlyToday = Boolean(body?.onlyToday);
+    const sinceDateRaw = typeof body?.sinceDate === "string" ? body.sinceDate : null;
+    const sinceDateParsed = sinceDateRaw ? new Date(sinceDateRaw) : null;
+    const sinceDate =
+      sinceDateParsed && !isNaN(sinceDateParsed.getTime()) ? sinceDateParsed : null;
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -22,6 +26,7 @@ export async function POST(req: NextRequest) {
       where: {
         stockxStates: { not: Prisma.DbNull },
         ...(onlyToday ? { stockxPurchaseDate: { gte: startOfToday } } : {}),
+        ...(sinceDate ? { stockxPurchaseDate: { gte: sinceDate } } : {}),
       },
       select: {
         id: true,
@@ -37,7 +42,11 @@ export async function POST(req: NextRequest) {
     const candidates: string[] = [];
     for (const m of matches) {
       const states = (m.stockxStates as StockXState[]) || null;
-      const milestone = detectMilestone(m.stockxCheckoutType || null, states);
+      const milestone = detectMilestone(
+        m.stockxCheckoutType || null,
+        states,
+        m.stockxOrderNumber || null
+      );
       const milestoneKey = milestone?.key || null;
       if (!milestoneKey) continue;
       if (!force && milestoneKey === m.lastMilestoneKey) continue;

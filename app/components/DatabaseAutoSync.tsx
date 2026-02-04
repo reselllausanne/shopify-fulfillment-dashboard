@@ -68,7 +68,7 @@ export default function DatabaseAutoSync({
     }
   };
 
-  const sendLimitedEmails = async (limit: number, onlyToday = false) => {
+  const sendLimitedEmails = async (limit: number, onlyToday = false, sinceDate?: string) => {
     setBulkLoading(true);
     try {
       const res = await fetch("/api/notifications/stockx/send-limited", {
@@ -80,6 +80,7 @@ export default function DatabaseAutoSync({
           skipIfFulfilled: true,
           skipIfEtaPassed: true,
           onlyToday,
+          sinceDate,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -116,6 +117,13 @@ export default function DatabaseAutoSync({
             className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400 text-xs font-semibold"
           >
             {bulkLoading ? "Sending..." : "📧 Send today (2)"}
+          </button>
+          <button
+            onClick={() => sendLimitedEmails(10, false, "2026-02-01")}
+            disabled={bulkLoading}
+            className="px-3 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 disabled:bg-gray-100 text-xs font-semibold"
+          >
+            Send since Feb (10)
           </button>
           <button
             onClick={() => sendLimitedEmails(1)}
