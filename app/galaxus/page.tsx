@@ -49,6 +49,67 @@ type EnrichResult = {
   debug?: EnrichDebugInfo;
 };
 
+type OrderSummary = {
+  id: string;
+  galaxusOrderId: string;
+  orderNumber?: string | null;
+  orderDate: string;
+  deliveryType?: string | null;
+  customerName?: string | null;
+  recipientName?: string | null;
+  createdAt: string;
+  ordrSentAt?: string | null;
+  ordrMode?: string | null;
+  _count: { lines: number; shipments: number };
+};
+
+type OrderLine = {
+  id: string;
+  lineNumber: number;
+  productName: string;
+  quantity: number;
+  gtin?: string | null;
+  supplierPid?: string | null;
+  buyerPid?: string | null;
+};
+
+type ShipmentItem = {
+  id: string;
+  supplierPid: string;
+  gtin14: string;
+  buyerPid?: string | null;
+  quantity: number;
+};
+
+type Shipment = {
+  id: string;
+  shipmentId: string;
+  dispatchNotificationId?: string | null;
+  packageId?: string | null;
+  trackingNumber?: string | null;
+  carrierFinal?: string | null;
+  delrStatus?: string | null;
+  delrFileName?: string | null;
+  labelPdfUrl?: string | null;
+  labelZpl?: string | null;
+  shippedAt?: string | null;
+  createdAt: string;
+  items: ShipmentItem[];
+};
+
+type OrderDetail = {
+  id: string;
+  galaxusOrderId: string;
+  orderNumber?: string | null;
+  deliveryType?: string | null;
+  createdAt: string;
+  ordrSentAt?: string | null;
+  ordrMode?: string | null;
+  lines: OrderLine[];
+  shipments: Shipment[];
+  statusEvents: Array<{ id: string; type: string; createdAt: string }>;
+};
+
 export default function GalaxusDashboardPage() {
   const [preview, setPreview] = useState<PreviewItem[]>([]);
   const [previewTotal, setPreviewTotal] = useState<number | null>(null);
@@ -62,6 +123,14 @@ export default function GalaxusDashboardPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exportCheckReport, setExportCheckReport] = useState<string | null>(null);
+  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [ordersNextOffset, setOrdersNextOffset] = useState<number | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+  const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
+  const [opsLog, setOpsLog] = useState<string | null>(null);
+  const [seedLineCount, setSeedLineCount] = useState<number>(5);
+  const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
+  const [allowSplit, setAllowSplit] = useState<boolean>(true);
 
   const fetchPreview = async () => {
     setBusy("preview");
@@ -168,6 +237,230 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const fetchOrders = async (offset = 0) => {
+    setBusy("orders");
+    setError(null);
+    try {
+      const response = await fetch(`/api/galaxus/orders?limit=20&offset=${offset}`, {
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Failed to load orders");
+      setOrders(data.items ?? []);
+      setOrdersNextOffset(data.nextOffset ?? null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const loadOrderDetail = async (orderId: string) => {
+    if (!orderId) return;
+    setBusy("order-detail");
+    setError(null);
+    try {
+      const response = await fetch(`/api/galaxus/orders/${orderId}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Failed to load order");
+      setSelectedOrder(data.order ?? null);
+      setSelectedOrderId(data.order?.id ?? orderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const seedOrder = async () => {
+    setBusy("seed");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lineCount: seedLineCount }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Seed failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      if (data.orderId) {
+        await loadOrderDetail(data.orderId);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const pollEdiIn = async () => {
+    setBusy("edi-in");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/cron?task=edi-in", { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "EDI IN failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const uploadFeeds = async () => {
+    setBusy("feeds");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/feeds/upload", { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Feed upload failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendPendingEdiOut = async () => {
+    setBusy("edi-out");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/cron?task=edi-out", { cache: "no-store" });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "EDI OUT failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const packShipments = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    setBusy("pack");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/shipments/pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: selectedOrderId,
+          maxPairsPerParcel: packMaxPairs,
+          allowSplit,
+        }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Packing failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendOrdr = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    setBusy("ordr");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/edi/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: selectedOrderId, types: ["ORDR"] }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "ORDR failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sendInvoice = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    setBusy("invoice");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/edi/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: selectedOrderId, types: ["INVO", "EXPINV"] }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Invoice send failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const uploadDelrForShipment = async (shipmentId: string) => {
+    setBusy(`delr-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/delr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "DELR upload failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const regenerateLabel = async (shipmentId: string) => {
+    setBusy(`label-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/label`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Label generation failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -178,6 +471,286 @@ export default function GalaxusDashboardPage() {
       </div>
 
       {error && <div className="text-sm text-red-600">{error}</div>}
+
+      <div className="space-y-4 border rounded p-4 bg-white">
+        <div>
+          <h2 className="text-lg font-semibold">Galaxus Ops Dashboard</h2>
+          <p className="text-sm text-gray-500">Run the full flow without the terminal.</p>
+        </div>
+
+        <div className="flex gap-3 flex-wrap items-center">
+          <button
+            className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
+            onClick={pollEdiIn}
+            disabled={busy !== null}
+          >
+            {busy === "edi-in" ? "Polling…" : "Poll EDI IN (ORDP)"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
+            onClick={uploadFeeds}
+            disabled={busy !== null}
+          >
+            {busy === "feeds" ? "Uploading…" : "Upload Feeds to FTP"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
+            onClick={sendPendingEdiOut}
+            disabled={busy !== null}
+          >
+            {busy === "edi-out" ? "Sending…" : "Send Pending EDI OUT"}
+          </button>
+          <div className="flex items-center gap-2">
+            <input
+              className="px-2 py-2 border rounded text-sm w-20"
+              type="number"
+              min={1}
+              max={200}
+              value={seedLineCount}
+              onChange={(event) => setSeedLineCount(Number(event.target.value || 0))}
+            />
+            <button
+              className="px-3 py-2 rounded bg-purple-600 text-white disabled:opacity-50"
+              onClick={seedOrder}
+              disabled={busy !== null}
+            >
+              {busy === "seed" ? "Seeding…" : "Create Test Order"}
+            </button>
+          </div>
+          <button
+            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+            onClick={() => fetchOrders(0)}
+            disabled={busy !== null}
+          >
+            {busy === "orders" ? "Loading…" : "Refresh Orders"}
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Orders</div>
+          <div className="overflow-auto border rounded">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-2 py-1 text-left">Order ID</th>
+                  <th className="px-2 py-1 text-left">PO</th>
+                  <th className="px-2 py-1 text-left">Delivery Type</th>
+                  <th className="px-2 py-1 text-right">Lines</th>
+                  <th className="px-2 py-1 text-right">Shipments</th>
+                  <th className="px-2 py-1 text-left">ORDR</th>
+                  <th className="px-2 py-1"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => (
+                  <tr key={order.id} className="border-t">
+                    <td className="px-2 py-1">{order.galaxusOrderId}</td>
+                    <td className="px-2 py-1">{order.orderNumber ?? ""}</td>
+                    <td className="px-2 py-1">{order.deliveryType ?? ""}</td>
+                    <td className="px-2 py-1 text-right">{order._count.lines}</td>
+                    <td className="px-2 py-1 text-right">{order._count.shipments}</td>
+                    <td className="px-2 py-1">
+                      {order.ordrSentAt ? new Date(order.ordrSentAt).toLocaleString() : "—"}
+                    </td>
+                    <td className="px-2 py-1 text-right">
+                      <button
+                        className="px-2 py-1 rounded bg-gray-200"
+                        onClick={() => loadOrderDetail(order.id)}
+                        disabled={busy !== null}
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {orders.length === 0 && (
+                  <tr>
+                    <td className="px-2 py-3 text-gray-500" colSpan={7}>
+                      No orders loaded.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {ordersNextOffset !== null && (
+            <button
+              className="px-3 py-2 rounded bg-gray-100 text-black"
+              onClick={() => fetchOrders(ordersNextOffset)}
+              disabled={busy !== null}
+            >
+              Load More Orders
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Order Detail</div>
+          <div className="flex gap-2 flex-wrap items-center">
+            <input
+              className="px-2 py-2 border rounded text-sm w-72"
+              value={selectedOrderId}
+              onChange={(event) => setSelectedOrderId(event.target.value)}
+              placeholder="Order ID (DB or Galaxus ID)"
+            />
+            <button
+              className="px-3 py-2 rounded bg-gray-200"
+              onClick={() => loadOrderDetail(selectedOrderId)}
+              disabled={busy !== null}
+            >
+              Load Order
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Max pairs/parcel</span>
+              <input
+                className="px-2 py-2 border rounded text-sm w-20"
+                type="number"
+                min={1}
+                max={50}
+                value={packMaxPairs}
+                onChange={(event) => setPackMaxPairs(Number(event.target.value || 0))}
+              />
+              <label className="text-xs text-gray-500 flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={allowSplit}
+                  onChange={(event) => setAllowSplit(event.target.checked)}
+                />
+                Allow split
+              </label>
+              <button
+                className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
+                onClick={packShipments}
+                disabled={busy !== null}
+              >
+                {busy === "pack" ? "Packing…" : "Pack + Create Shipments"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
+                onClick={sendOrdr}
+                disabled={busy !== null}
+              >
+                {busy === "ordr" ? "Sending…" : "Send ORDR"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
+                onClick={sendInvoice}
+                disabled={busy !== null}
+              >
+                {busy === "invoice" ? "Sending…" : "Send INVO + EXPINV"}
+              </button>
+            </div>
+          </div>
+
+          {selectedOrder && (
+            <div className="space-y-3 border rounded p-3 bg-gray-50">
+              <div className="text-xs text-gray-600">
+                {selectedOrder.galaxusOrderId} · {selectedOrder.orderNumber ?? "—"} ·{" "}
+                {selectedOrder.deliveryType ?? "—"}
+              </div>
+
+              <div className="overflow-auto border rounded bg-white">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Line</th>
+                      <th className="px-2 py-1 text-left">Product</th>
+                      <th className="px-2 py-1 text-left">Supplier PID</th>
+                      <th className="px-2 py-1 text-left">GTIN</th>
+                      <th className="px-2 py-1 text-right">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedOrder.lines.map((line) => (
+                      <tr key={line.id} className="border-t">
+                        <td className="px-2 py-1">{line.lineNumber}</td>
+                        <td className="px-2 py-1">{line.productName}</td>
+                        <td className="px-2 py-1">{line.supplierPid ?? ""}</td>
+                        <td className="px-2 py-1">{line.gtin ?? ""}</td>
+                        <td className="px-2 py-1 text-right">{line.quantity}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Shipments</div>
+                {selectedOrder.shipments.map((shipment) => (
+                  <div key={shipment.id} className="border rounded bg-white p-2 space-y-2">
+                    <div className="text-xs text-gray-600">
+                      {shipment.shipmentId} · SSCC {shipment.packageId ?? "—"} · DELR{" "}
+                      {shipment.delrStatus ?? "—"}
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        className="px-2 py-1 rounded bg-gray-200"
+                        onClick={() => regenerateLabel(shipment.id)}
+                        disabled={busy !== null}
+                      >
+                        {busy === `label-${shipment.id}` ? "Generating…" : "Re-generate Label"}
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded bg-blue-600 text-white"
+                        onClick={() => uploadDelrForShipment(shipment.id)}
+                        disabled={busy !== null}
+                      >
+                        {busy === `delr-${shipment.id}` ? "Uploading…" : "Upload DELR"}
+                      </button>
+                      {shipment.labelPdfUrl && (
+                        <a
+                          className="px-2 py-1 rounded bg-gray-100"
+                          href={shipment.labelPdfUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Label PDF
+                        </a>
+                      )}
+                    </div>
+                    <div className="overflow-auto border rounded">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-2 py-1 text-left">Supplier PID</th>
+                            <th className="px-2 py-1 text-left">GTIN</th>
+                            <th className="px-2 py-1 text-right">Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {shipment.items.map((item) => (
+                            <tr key={item.id} className="border-t">
+                              <td className="px-2 py-1">{item.supplierPid}</td>
+                              <td className="px-2 py-1">{item.gtin14}</td>
+                              <td className="px-2 py-1 text-right">{item.quantity}</td>
+                            </tr>
+                          ))}
+                          {shipment.items.length === 0 && (
+                            <tr>
+                              <td className="px-2 py-2 text-gray-500" colSpan={3}>
+                                No shipment items.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+                {selectedOrder.shipments.length === 0 && (
+                  <div className="text-xs text-gray-500">No shipments yet.</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {opsLog && (
+          <div className="border rounded bg-gray-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
+            {opsLog}
+          </div>
+        )}
+      </div>
 
       <div className="flex gap-3 flex-wrap items-center">
         <button

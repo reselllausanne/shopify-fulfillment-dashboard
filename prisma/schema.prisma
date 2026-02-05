@@ -457,6 +457,7 @@ model GalaxusOrder {
   lines               GalaxusOrderLine[]
   documents           Document[]
   shipments           Shipment[]
+  shipmentItems       ShipmentItem[]
   supplierOrders      SupplierOrder[]
   statusEvents        OrderStatusEvent[]
   ediFiles            GalaxusEdiFile[]
