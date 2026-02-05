@@ -1,6 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
 import { createGoldenSupplierClient } from "../supplier/client";
-import type { SupplierCatalogItem } from "../supplier/types";
 
 type StockSyncResult = {
   processed: number;

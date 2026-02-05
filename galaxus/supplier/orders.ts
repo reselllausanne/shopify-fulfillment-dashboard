@@ -38,8 +38,8 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
   if (!order) {
     return { status: "error", message: `Order not found: ${orderId}` };
   }
-  if (order.supplierOrderId || order.supplierOrders.length > 0) {
-    return { status: "skipped", supplierOrderId: order.supplierOrderId ?? undefined, message: "supplier order exists" };
+  if (order.supplierOrders.length > 0) {
+    return { status: "skipped", message: "supplier order exists" };
   }
 
   try {
@@ -62,22 +62,15 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
     const { lineUpdates, ordrMode } = buildArrivalUpdates(resolvedLines);
 
     await prisma.$transaction(async (tx) => {
+      const safeResponse = { ...response, raw: undefined };
       await tx.supplierOrder.create({
         data: {
           supplierOrderRef: supplierOrderId,
           orderId: order.id,
           status: "CREATED",
-          payloadJson: { request, response },
+          payloadJson: { request, response: safeResponse },
         },
       });
-      await tx.galaxusOrder.update({
-        where: { id: order.id },
-        data: {
-          supplierOrderId,
-          ordrMode,
-        },
-      });
-
       for (const update of lineUpdates) {
         await tx.galaxusOrderLine.update({
           where: { id: update.id },
@@ -90,7 +83,7 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
           orderId: order.id,
           source: "supplier",
           type: "SUPPLIER_ORDER_CREATED",
-          payloadJson: { supplierOrderId, response },
+          payloadJson: { supplierOrderId, response: safeResponse },
         },
       });
     });
@@ -150,7 +143,7 @@ async function resolveSupplierVariant(line: GalaxusOrderLine): Promise<SupplierV
     if (variant) return variant;
   }
 
-  const providerKey = line.providerKey ?? line.supplierPid ?? null;
+  const providerKey = line.providerKey ?? null;
   if (providerKey) {
     const mapping = await prisma.variantMapping.findFirst({
       where: { providerKey },
@@ -197,7 +190,8 @@ function buildArrivalUpdates(lines: ResolvedLine[]) {
       },
     };
   });
-  const ordrMode = lineUpdates.length > 0 ? "WITH_ARRIVAL_DATES" : "WITHOUT_POSITIONS";
+  const ordrMode: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS" =
+    lineUpdates.length > 0 ? "WITH_ARRIVAL_DATES" : "WITHOUT_POSITIONS";
   return { lineUpdates, ordrMode };
 }
 
@@ -207,12 +201,9 @@ function buildDeliveryAddress(order: GalaxusOrder) {
   const zipCode = order.recipientPostalCode ?? order.customerPostalCode;
   const street1 = order.recipientAddress1 ?? order.customerAddress1;
   const street2 = order.recipientAddress2 ?? order.customerAddress2 ?? "";
-  const countryCode = normalizeCountryCode(
-    order.recipientCountryCode ?? order.customerCountryCode ?? null,
-    order.recipientCountry ?? order.customerCountry
-  );
+  const countryCode = normalizeCountryCode(null, order.recipientCountry ?? order.customerCountry);
   const phone = order.recipientPhone ?? GALAXUS_SUPPLIER_PHONE ?? "";
-  const email = order.recipientEmail ?? order.customerEmail ?? GALAXUS_SUPPLIER_EMAIL ?? "";
+  const email = GALAXUS_SUPPLIER_EMAIL ?? "";
 
   return {
     name: requireField(name, "recipient name"),

@@ -137,7 +137,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
     const shipments = order.shipments ?? [];
     const statusEvents = order.statusEvents ?? [];
 
-    const result = await prisma.$transaction(async (tx) => {
+    const prismaAny = prisma as any;
+    const result = await prismaAny.$transaction(async (tx: any) => {
       const savedOrder = await tx.galaxusOrder.upsert({
         where: { galaxusOrderId: normalized.galaxusOrderId },
         create: {

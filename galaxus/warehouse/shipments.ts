@@ -28,6 +28,7 @@ type CreateShipmentsResult = {
 };
 
 export async function createShipmentsForOrder(options: CreateShipmentsOptions): Promise<CreateShipmentsResult> {
+  const prismaAny = prisma as any;
   const order = await resolveOrder(options.orderId);
   if (!order) {
     return { status: "error", shipments: [], message: "Order not found" };
@@ -40,9 +41,10 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     }
   }
 
-  validateOrderLines(order.lines);
+  const orderAny = order as any;
+  validateOrderLines(orderAny.lines);
 
-  const packed = packOrderLines(order.lines, {
+  const packed = packOrderLines(orderAny.lines, {
     maxPairsPerParcel: options.maxPairsPerParcel,
     allowSplit: options.allowSplit,
   });
@@ -57,7 +59,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     const trackingNumber = options.trackingNumbers?.[index] ?? null;
     const packageType = options.packageType ?? "PARCEL";
 
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prismaAny.$transaction(async (tx: any) => {
       const shipment = await tx.shipment.create({
         data: {
           orderId: order.id,
@@ -66,7 +68,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
           dispatchNotificationCreatedAt: new Date(),
           incoterms: null,
           packageId,
-          deliveryType: options.deliveryType ?? order.deliveryType ?? "warehouse_delivery",
+          deliveryType: options.deliveryType ?? orderAny.deliveryType ?? "warehouse_delivery",
           carrierRaw: options.carrierRaw ?? "eurosender",
           carrierFinal: options.carrierFinal ?? null,
           trackingNumber,
@@ -80,9 +82,9 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
         data: packed[index].items.map((item) => ({
           shipmentId: shipment.id,
           orderId: order.id,
-          supplierPid: item.line.supplierPid ?? "",
+          supplierPid: (item.line as any).supplierPid ?? "",
           gtin14: item.line.gtin ?? "",
-          buyerPid: item.line.buyerPid ?? null,
+          buyerPid: (item.line as any).buyerPid ?? null,
           quantity: item.quantity,
         })),
       });
@@ -94,7 +96,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
     const stored = await storage.uploadPdf(key, label.pdf);
 
-    const updated = await prisma.shipment.update({
+    const updated = await prismaAny.shipment.update({
       where: { id: created.id },
       data: {
         labelZpl: label.zpl,
@@ -121,7 +123,7 @@ async function resolveOrder(orderIdOrRef: string) {
   });
 }
 
-function validateOrderLines(lines: GalaxusOrderLine[]) {
+function validateOrderLines(lines: Array<any>) {
   for (const line of lines) {
     if (!line.supplierPid) {
       throw new Error(`Missing supplier PID for line ${line.lineNumber}`);

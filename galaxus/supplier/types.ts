@@ -36,4 +36,37 @@ export type SupplierClient = {
   supplierKey: string;
   fetchCatalog(): Promise<SupplierCatalogItem[]>;
   fetchStockAndPrice(): Promise<SupplierCatalogItem[]>;
+  createDropshipOrder?: (
+    request: SupplierDropshipOrderRequest
+  ) => Promise<SupplierDropshipOrderResponse>;
+};
+
+export type SupplierDropshipOrderAddress = {
+  name: string;
+  city: string;
+  zipCode: string;
+  street: string;
+  countryCode: string;
+  phone: string;
+  email: string;
+};
+
+export type SupplierDropshipOrderItem = {
+  sizeId?: number;
+  sku?: string;
+  sizeUs?: string;
+  quantity: number;
+};
+
+export type SupplierDropshipOrderRequest = {
+  deliveryAddress: SupplierDropshipOrderAddress;
+  clientProvidesShippingLabel?: boolean;
+  items: SupplierDropshipOrderItem[];
+};
+
+export type SupplierDropshipOrderResponse = {
+  orderId: string;
+  totalPrice?: number | null;
+  dropshipPackageId?: string | null;
+  raw?: unknown;
 };

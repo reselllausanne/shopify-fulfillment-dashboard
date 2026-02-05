@@ -28,30 +28,36 @@ export async function uploadDelrForShipment(
 ): Promise<UploadResult> {
   assertSftpConfig();
 
-  const shipment = await prisma.shipment.findUnique({
+  const prismaAny = prisma as any;
+  const shipment = (await prismaAny.shipment.findUnique({
     where: { id: shipmentId },
-    include: {
-      items: true,
-      order: { include: { lines: true } },
-    },
-  });
+    include: { order: { include: { lines: true } } },
+  })) as any;
 
   if (!shipment || !shipment.order) {
     return { shipmentId, status: "error", message: "Shipment not found" };
   }
+
+  const items = (await prismaAny.shipmentItem.findMany({
+    where: { shipmentId: shipment.id },
+  })) as Array<{ supplierPid: string; gtin14: string; quantity: number }>;
 
   if (shipment.delrSentAt && !options.force) {
     return { shipmentId, status: "skipped", filename: shipment.delrFileName ?? undefined, message: "already sent" };
   }
 
   try {
-    validateShipment(shipment);
-    const carrier = resolveCarrier(shipment.carrierFinal);
+    validateShipment({
+      dispatchNotificationId: shipment.dispatchNotificationId ?? null,
+      packageId: shipment.packageId ?? null,
+      items,
+    });
+    const carrier = resolveCarrier(shipment.carrierFinal ?? null);
     const dispatch = buildDispatchNotification(
       shipment.order,
       shipment.order.lines,
       { ...shipment, carrierFinal: carrier },
-      shipment.items,
+      items,
       { supplierId: GALAXUS_SUPPLIER_ID }
     );
 
@@ -67,7 +73,7 @@ export async function uploadDelrForShipment(
       }
     );
 
-    await prisma.shipment.update({
+    await prismaAny.shipment.update({
       where: { id: shipment.id },
       data: {
         delrFileName: dispatch.filename,
@@ -88,7 +94,7 @@ export async function uploadDelrForShipment(
 
     return { shipmentId, status: "uploaded", filename: dispatch.filename };
   } catch (error: any) {
-    await prisma.shipment.update({
+    await prismaAny.shipment.update({
       where: { id: shipment.id },
       data: {
         delrStatus: "ERROR",

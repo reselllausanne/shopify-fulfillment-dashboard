@@ -6,6 +6,7 @@ type SeedOptions = {
 };
 
 export async function seedGalaxusOrder(options: SeedOptions = {}) {
+  const prismaAny = prisma as any;
   const lineCount = options.lineCount ?? 120;
   const orderId = `GX-${Date.now()}`;
   const now = new Date();
@@ -36,7 +37,7 @@ export async function seedGalaxusOrder(options: SeedOptions = {}) {
     };
   });
 
-  const order = await prisma.galaxusOrder.create({
+  const order = await prismaAny.galaxusOrder.create({
     data: {
       galaxusOrderId: orderId,
       orderNumber: `PO-${orderId}`,

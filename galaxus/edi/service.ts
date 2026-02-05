@@ -16,7 +16,7 @@ import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
 import { upsertEdiFile } from "./ediFiles";
 import { GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
-import { placeSupplierOrderForGalaxusOrder } from "@/galaxus/supplier/orders";
+import { placeSupplierOrderForGalaxusOrder } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
 type IncomingResult = {
@@ -53,7 +53,7 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
     async (client) => {
       const files = await listRemoteFiles(client, GALAXUS_SFTP_IN_DIR);
       for (const file of files) {
-        const existing = await prisma.galaxusEdiFile.findUnique({
+        const existing = await (prisma as any).galaxusEdiFile.findUnique({
           where: { filename: file.name },
           select: { id: true, status: true },
         });
@@ -177,7 +177,7 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
 
-          const alreadySent = await prisma.galaxusEdiFile.findFirst({
+          const alreadySent = await (prisma as any).galaxusEdiFile.findFirst({
             where: {
               direction: "OUT",
               docType: type,
@@ -219,7 +219,7 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
 
-          const edi = buildOutgoingXml(type, order, order.lines, shipment, options.ordrMode);
+          const edi = buildOutgoingXml(type, order, order.lines);
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
           await upsertEdiFile({
             filename: edi.filename,
@@ -234,7 +234,9 @@ export async function sendOutgoingEdi(options: {
             const ordrMode = options.ordrMode ?? null;
             await prisma.galaxusOrder.update({
               where: { id: order.id },
-              data: ordrMode ? { ordrSentAt: new Date(), ordrMode } : { ordrSentAt: new Date() },
+              data: (ordrMode
+                ? { ordrSentAt: new Date(), ordrMode }
+                : { ordrSentAt: new Date() }) as unknown as Record<string, unknown>,
             });
           }
         } catch (error: any) {
@@ -269,9 +271,11 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
     if (hasCancel) types.push("CANR");
     if (hasOutOfStock) types.push("EOLN");
 
+    const rawOrdrMode =
+      "ordrMode" in order ? (order as { ordrMode?: string | null }).ordrMode : null;
     const ordrMode =
-      order.ordrMode === "WITH_ARRIVAL_DATES" || order.ordrMode === "WITHOUT_POSITIONS"
-        ? (order.ordrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")
+      rawOrdrMode === "WITH_ARRIVAL_DATES" || rawOrdrMode === "WITHOUT_POSITIONS"
+        ? (rawOrdrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")
         : undefined;
     const res = await sendOutgoingEdi({ orderId: order.id, types, ordrMode });
     results.push(...res);
@@ -280,13 +284,7 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
   return results;
 }
 
-function buildOutgoingXml(
-  docType: EdiDocType,
-  order: any,
-  lines: any[],
-  shipment: any,
-  ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS"
-) {
+function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
   if (docType === "ORDR") {
     return buildOrderResponse(order, lines, {
       supplierId: GALAXUS_SUPPLIER_ID,
@@ -549,22 +547,6 @@ function parseBoolean(value: string | null): boolean | null {
   if (normalized === "true") return true;
   if (normalized === "false") return false;
   return null;
-}
-
-function findAll(data: any, key: string, acc: any[] = []): any[] {
-  if (!data || typeof data !== "object") return acc;
-  if (data[key]) {
-    const value = data[key];
-    if (Array.isArray(value)) {
-      acc.push(...value);
-    } else {
-      acc.push(value);
-    }
-  }
-  for (const value of Object.values(data)) {
-    if (typeof value === "object") findAll(value, key, acc);
-  }
-  return acc;
 }
 
 function findValue(data: any, key: string): string | null {
