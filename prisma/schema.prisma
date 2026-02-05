@@ -314,6 +314,21 @@ enum DocumentType {
   @@schema("public")
 }
 
+enum ShipmentPackageType {
+  PARCEL
+  PALLET
+
+  @@schema("public")
+}
+
+enum ShipmentDelrStatus {
+  PENDING
+  UPLOADED
+  ERROR
+
+  @@schema("public")
+}
+
 model SupplierVariant {
   id                String   @id @default(uuid())
   supplierVariantId String   @unique
@@ -428,6 +443,9 @@ model GalaxusOrder {
   endCustomerOrderReference String?
   buyerIdRef          String?
   supplierIdRef       String?
+  supplierOrderId     String?
+  ordrSentAt          DateTime?
+  ordrMode            String?
   buyerPartyId        String?
   buyerPartyGln       String?
   supplierPartyId     String?
@@ -462,11 +480,14 @@ model GalaxusOrderLine {
   gtin            String?
   providerKey     String?
   quantity        Int
+  qtyConfirmed    Int?
   vatRate         Decimal  @db.Decimal(5, 2)
   taxAmountPerUnit Decimal? @db.Decimal(10, 2)
   unitNetPrice    Decimal  @db.Decimal(10, 2)
   lineNetAmount   Decimal  @db.Decimal(10, 2)
   priceLineAmount Decimal? @db.Decimal(10, 2)
+  arrivalDateStart DateTime?
+  arrivalDateEnd   DateTime?
   currencyCode    String   @default("CHF")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -497,20 +518,58 @@ model Shipment {
   id             String   @id @default(uuid())
   orderId        String?
   shipmentId     String   @unique
-  deliveryNoteNumber String? @unique
-  deliveryNoteCreatedAt DateTime?
+  dispatchNotificationId String? @unique @map("deliveryNoteNumber")
+  dispatchNotificationCreatedAt DateTime? @map("deliveryNoteCreatedAt")
   incoterms      String?
-  sscc           String?  @unique
-  carrier        String?
+  packageId      String?  @unique @map("sscc")
+  deliveryType   String?
+  carrierRaw     String?
+  carrierFinal   String?
   trackingNumber String?
+  packageType    ShipmentPackageType @default(PARCEL)
   shippedAt      DateTime?
+  delrFileName   String?
+  delrSentAt     DateTime?
+  delrStatus     ShipmentDelrStatus?
+  delrError      String?
+  labelZpl       String?
+  labelPdfUrl    String?
+  labelGeneratedAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   order          GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
   documents      Document[]
+  items          ShipmentItem[]
 
   @@index([orderId])
+  @@schema("public")
+}
+
+model ShipmentItem {
+  id          String   @id @default(uuid())
+  shipmentId  String
+  orderId     String?
+  supplierPid String
+  gtin14      String
+  buyerPid    String?
+  quantity    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shipment    Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  order       GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([shipmentId])
+  @@index([orderId])
+  @@schema("public")
+}
+
+model GalaxusSsccCounter {
+  id         String   @id
+  lastSerial Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
   @@schema("public")
 }
 

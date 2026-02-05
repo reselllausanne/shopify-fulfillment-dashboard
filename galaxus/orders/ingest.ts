@@ -43,6 +43,7 @@ function normalizeOrder(order: GalaxusOrderInput) {
   const orderDate = parseRequiredDate(order.orderDate, "orderDate");
   const deliveryDate = parseDate(order.deliveryDate, "deliveryDate");
   const generationDate = parseDate(order.generationDate, "generationDate");
+  const ordrSentAt = parseDate(order.ordrSentAt, "ordrSentAt");
   const customerName = requireString(order.customerName, "customerName");
   const customerAddress1 = requireString(order.customerAddress1, "customerAddress1");
   const customerPostalCode = requireString(order.customerPostalCode, "customerPostalCode");
@@ -89,6 +90,9 @@ function normalizeOrder(order: GalaxusOrderInput) {
     endCustomerOrderReference: order.endCustomerOrderReference ?? null,
     buyerIdRef: order.buyerIdRef ?? null,
     supplierIdRef: order.supplierIdRef ?? null,
+    supplierOrderId: order.supplierOrderId ?? null,
+    ordrSentAt: ordrSentAt ?? null,
+    ordrMode: order.ordrMode ?? null,
     buyerPartyId: order.buyerPartyId ?? null,
     buyerPartyGln: order.buyerPartyGln ?? null,
     supplierPartyId: order.supplierPartyId ?? null,
@@ -119,11 +123,14 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
       gtin: line.gtin ?? null,
       providerKey: line.providerKey ?? null,
       quantity: requireNumber(line.quantity, "quantity"),
+      qtyConfirmed: line.qtyConfirmed ?? null,
       vatRate: requireString(line.vatRate, "vatRate"),
       taxAmountPerUnit: line.taxAmountPerUnit ?? null,
       unitNetPrice: requireString(line.unitNetPrice, "unitNetPrice"),
       lineNetAmount: requireString(line.lineNetAmount, "lineNetAmount"),
       priceLineAmount: line.priceLineAmount ?? null,
+      arrivalDateStart: line.arrivalDateStart ? parseDate(line.arrivalDateStart, "arrivalDateStart") ?? null : null,
+      arrivalDateEnd: line.arrivalDateEnd ? parseDate(line.arrivalDateEnd, "arrivalDateEnd") ?? null : null,
       currencyCode: line.currencyCode ?? normalized.currencyCode,
     }));
 
@@ -172,6 +179,9 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           endCustomerOrderReference: normalized.endCustomerOrderReference,
           buyerIdRef: normalized.buyerIdRef,
           supplierIdRef: normalized.supplierIdRef,
+          supplierOrderId: normalized.supplierOrderId,
+          ordrSentAt: normalized.ordrSentAt,
+          ordrMode: normalized.ordrMode,
           buyerPartyId: normalized.buyerPartyId,
           buyerPartyGln: normalized.buyerPartyGln,
           supplierPartyId: normalized.supplierPartyId,
@@ -198,41 +208,80 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           gtin: line.gtin,
           providerKey: line.providerKey,
           quantity: line.quantity,
+          qtyConfirmed: line.qtyConfirmed,
           vatRate: line.vatRate,
           taxAmountPerUnit: line.taxAmountPerUnit,
           unitNetPrice: line.unitNetPrice,
           lineNetAmount: line.lineNetAmount,
           priceLineAmount: line.priceLineAmount,
+          arrivalDateStart: line.arrivalDateStart,
+          arrivalDateEnd: line.arrivalDateEnd,
           currencyCode: line.currencyCode,
         })),
       });
 
       for (const shipment of shipments) {
         const shipmentId = requireString(shipment.shipmentId, "shipmentId");
-        await tx.shipment.upsert({
+        const savedShipment = await tx.shipment.upsert({
           where: { shipmentId },
           create: {
             orderId: savedOrder.id,
             shipmentId,
-            deliveryNoteNumber: shipment.deliveryNoteNumber ?? null,
-            deliveryNoteCreatedAt: parseDate(shipment.deliveryNoteCreatedAt, "deliveryNoteCreatedAt") ?? null,
+            dispatchNotificationId: shipment.dispatchNotificationId ?? null,
+            dispatchNotificationCreatedAt:
+              parseDate(shipment.dispatchNotificationCreatedAt, "dispatchNotificationCreatedAt") ?? null,
             incoterms: shipment.incoterms ?? null,
-            sscc: shipment.sscc ?? null,
-            carrier: shipment.carrier ?? null,
+            packageId: shipment.packageId ?? null,
+            deliveryType: shipment.deliveryType ?? null,
+            carrierRaw: shipment.carrierRaw ?? null,
+            carrierFinal: shipment.carrierFinal ?? null,
             trackingNumber: shipment.trackingNumber ?? null,
+            packageType: shipment.packageType ?? undefined,
             shippedAt: parseDate(shipment.shippedAt, "shippedAt") ?? null,
+            delrFileName: shipment.delrFileName ?? null,
+            delrSentAt: parseDate(shipment.delrSentAt, "delrSentAt") ?? null,
+            delrStatus: shipment.delrStatus ?? null,
+            delrError: shipment.delrError ?? null,
+            labelZpl: shipment.labelZpl ?? null,
+            labelPdfUrl: shipment.labelPdfUrl ?? null,
+            labelGeneratedAt: parseDate(shipment.labelGeneratedAt, "labelGeneratedAt") ?? null,
           },
           update: {
             orderId: savedOrder.id,
-            deliveryNoteNumber: shipment.deliveryNoteNumber ?? null,
-            deliveryNoteCreatedAt: parseDate(shipment.deliveryNoteCreatedAt, "deliveryNoteCreatedAt") ?? null,
+            dispatchNotificationId: shipment.dispatchNotificationId ?? null,
+            dispatchNotificationCreatedAt:
+              parseDate(shipment.dispatchNotificationCreatedAt, "dispatchNotificationCreatedAt") ?? null,
             incoterms: shipment.incoterms ?? null,
-            sscc: shipment.sscc ?? null,
-            carrier: shipment.carrier ?? null,
+            packageId: shipment.packageId ?? null,
+            deliveryType: shipment.deliveryType ?? null,
+            carrierRaw: shipment.carrierRaw ?? null,
+            carrierFinal: shipment.carrierFinal ?? null,
             trackingNumber: shipment.trackingNumber ?? null,
+            packageType: shipment.packageType ?? undefined,
             shippedAt: parseDate(shipment.shippedAt, "shippedAt") ?? null,
+            delrFileName: shipment.delrFileName ?? null,
+            delrSentAt: parseDate(shipment.delrSentAt, "delrSentAt") ?? null,
+            delrStatus: shipment.delrStatus ?? null,
+            delrError: shipment.delrError ?? null,
+            labelZpl: shipment.labelZpl ?? null,
+            labelPdfUrl: shipment.labelPdfUrl ?? null,
+            labelGeneratedAt: parseDate(shipment.labelGeneratedAt, "labelGeneratedAt") ?? null,
           },
         });
+
+        if (shipment.items && shipment.items.length > 0) {
+          await tx.shipmentItem.deleteMany({ where: { shipmentId: savedShipment.id } });
+          await tx.shipmentItem.createMany({
+            data: shipment.items.map((item) => ({
+              shipmentId: savedShipment.id,
+              orderId: savedOrder.id,
+              supplierPid: requireString(item.supplierPid, "shipment.items.supplierPid"),
+              gtin14: requireString(item.gtin14, "shipment.items.gtin14"),
+              buyerPid: item.buyerPid ?? null,
+              quantity: requireNumber(item.quantity, "shipment.items.quantity"),
+            })),
+          });
+        }
       }
 
       if (statusEvents.length > 0) {

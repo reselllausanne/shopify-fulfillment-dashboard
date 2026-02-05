@@ -23,6 +23,11 @@ export type EdiOrderLine = {
   orderUnit?: string | null;
   providerKey?: string | null;
   gtin?: string | null;
+  orderReferenceId?: string | null;
+  dispatchPackages?: Array<{
+    packageId: string;
+    quantity: number;
+  }>;
 };
 
 export type EdiTotals = {
@@ -57,11 +62,13 @@ export type EdiOrderResponseDocument = EdiBaseDocument & {
 };
 
 export type EdiDispatchDocument = EdiBaseDocument & {
+  generationDate: Date;
+  dispatchNotificationId: string;
   dispatchDate: Date;
   lines: EdiOrderLine[];
-  trackingNumber?: string | null;
-  carrier?: string | null;
   shipmentId?: string | null;
+  shipmentCarrier?: string | null;
+  deliveryParty?: EdiParty | null;
 };
 
 export type EdiInvoiceDocument = EdiBaseDocument & {

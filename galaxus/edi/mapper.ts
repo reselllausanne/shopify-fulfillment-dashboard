@@ -1,4 +1,4 @@
-import type { GalaxusOrder, GalaxusOrderLine, Shipment } from "@prisma/client";
+import type { GalaxusOrder, GalaxusOrderLine } from "@prisma/client";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import {
   GALAXUS_BUYER_ADDRESS1,
@@ -28,6 +28,29 @@ export function buildBuyerParty(order: GalaxusOrder): EdiParty {
   };
 }
 
+export function buildDeliveryParty(order: GalaxusOrder): EdiParty {
+  const deliveryPartyId =
+    "deliveryPartyId" in order
+      ? (order as { deliveryPartyId?: string | null }).deliveryPartyId
+      : null;
+  const recipientEmail =
+    "recipientEmail" in order ? (order as { recipientEmail?: string | null }).recipientEmail : null;
+  const recipientPhone =
+    "recipientPhone" in order ? (order as { recipientPhone?: string | null }).recipientPhone : null;
+  return {
+    id: deliveryPartyId ?? "delivery",
+    name: order.recipientName ?? "",
+    street: order.recipientAddress1 ?? "",
+    street2: order.recipientAddress2 ?? null,
+    postalCode: order.recipientPostalCode ?? "",
+    city: order.recipientCity ?? "",
+    country: order.recipientCountry ?? "",
+    vatId: null,
+    email: recipientEmail ?? null,
+    phone: recipientPhone ?? null,
+  };
+}
+
 export function buildSupplierParty(): EdiParty {
   const [line1, postalLine, countryLine] = GALAXUS_SUPPLIER_ADDRESS_LINES;
   const { postalCode, city } = parsePostalLine(postalLine);
@@ -53,9 +76,10 @@ export function buildEdiLines(lines: GalaxusOrderLine[]): EdiOrderLine[] {
     unitNetPrice: Number(line.unitNetPrice),
     lineNetAmount: Number(line.lineNetAmount),
     vatRate: Number(line.vatRate),
-    supplierPid: line.supplierPid ?? null,
-    buyerPid: line.buyerPid ?? null,
-    orderUnit: line.orderUnit ?? null,
+    supplierPid:
+      ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ?? null,
+    buyerPid: ("buyerPid" in line ? (line as { buyerPid?: string | null }).buyerPid : null) ?? null,
+    orderUnit: ("orderUnit" in line ? (line as { orderUnit?: string | null }).orderUnit : null) ?? null,
     providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
     gtin: line.gtin ?? null,
   }));
@@ -94,12 +118,42 @@ export function calculateTotals(lines: EdiOrderLine[]): { totals: EdiTotals; vat
   };
 }
 
-export function buildDispatchInfo(shipment: Shipment | null) {
-  return {
-    shipmentId: shipment?.shipmentId ?? null,
-    trackingNumber: shipment?.trackingNumber ?? null,
-    carrier: shipment?.carrier ?? null,
-  };
+type ShipmentItemLike = {
+  supplierPid: string;
+  gtin14: string;
+  buyerPid?: string | null;
+  quantity: number;
+};
+
+export function buildDispatchLines(
+  items: ShipmentItemLike[],
+  orderId: string,
+  packageId: string,
+  metaBySupplierPid: Record<string, { description: string; lineNumber: number }>
+): EdiOrderLine[] {
+  return items.map((item, index) => {
+    const meta = metaBySupplierPid[item.supplierPid];
+    return {
+      lineNumber: meta?.lineNumber ?? index + 1,
+      description: meta?.description ?? "Item",
+    quantity: item.quantity,
+    unitNetPrice: 0,
+    lineNetAmount: 0,
+    vatRate: 0,
+    supplierPid: item.supplierPid,
+    buyerPid: item.buyerPid ?? null,
+    orderUnit: null,
+    providerKey: item.supplierPid ?? null,
+    gtin: item.gtin14,
+    orderReferenceId: orderId,
+    dispatchPackages: [
+      {
+        packageId,
+        quantity: item.quantity,
+      },
+    ],
+    };
+  });
 }
 
 function parsePostalLine(line?: string) {

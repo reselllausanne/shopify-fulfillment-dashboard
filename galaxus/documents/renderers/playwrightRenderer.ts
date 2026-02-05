@@ -3,6 +3,8 @@ import { chromium } from "playwright";
 type RenderOptions = {
   html: string;
   format?: "A4" | "A6";
+  width?: string;
+  height?: string;
   showPageNumbers?: boolean;
 };
 
@@ -25,7 +27,9 @@ export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer>
       : "<div></div>";
 
     const pdfBuffer = await page.pdf({
-      format: options.format ?? "A4",
+      format: options.width || options.height ? undefined : options.format ?? "A4",
+      width: options.width,
+      height: options.height,
       printBackground: true,
       displayHeaderFooter: options.showPageNumbers ?? false,
       headerTemplate: "<div></div>",

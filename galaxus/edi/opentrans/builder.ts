@@ -108,16 +108,46 @@ export function buildOrderResponseXml(doc: EdiOrderResponseDocument): string {
   return root.end({ prettyPrint: true });
 }
 
+function addDispatchLineItem(parent: any, line: EdiOrderLine, orderId: string) {
+  const item = parent.ele("DISPATCHNOTIFICATION_ITEM");
+  item.ele("LINE_ITEM_ID").txt(line.lineNumber.toString());
+
+  const product = item.ele("PRODUCT_ID", { xmlns: "http://www.bmecat.org/bmecat/2005" });
+  if (line.supplierPid) product.ele("SUPPLIER_PID").txt(line.supplierPid);
+  if (!line.supplierPid && line.providerKey) product.ele("SUPPLIER_PID").txt(line.providerKey);
+  if (line.gtin) product.ele("INTERNATIONAL_PID").txt(line.gtin);
+  if (line.buyerPid) product.ele("BUYER_PID").txt(line.buyerPid);
+
+  item.ele("QUANTITY").txt(line.quantity.toString());
+  if (line.orderUnit) item.ele("ORDER_UNIT").txt(line.orderUnit);
+
+  const orderRef = item.ele("ORDER_REFERENCE");
+  orderRef.ele("ORDER_ID").txt(line.orderReferenceId ?? orderId);
+
+  if (line.dispatchPackages && line.dispatchPackages.length > 0) {
+    const logistics = item.ele("LOGISTIC_DETAILS");
+    const packageInfo = logistics.ele("PACKAGE_INFO");
+    for (const pack of line.dispatchPackages) {
+      const pkg = packageInfo.ele("PACKAGE");
+      pkg.ele("PACKAGE_ID").txt(pack.packageId);
+      pkg.ele("PACKAGE_ORDER_UNIT_QUANTITY").txt(pack.quantity.toString());
+    }
+  }
+}
+
 export function buildDispatchXml(doc: EdiDispatchDocument): string {
   const root = create({ version: "1.0", encoding: "UTF-8" })
     .ele("DISPATCHNOTIFICATION", {
       xmlns: OPENTRANS_NS,
       "xmlns:xsi": XSI_NS,
+      version: "2.1",
     });
 
   const header = root.ele("DISPATCHNOTIFICATION_HEADER");
+  const control = header.ele("CONTROL_INFO");
+  control.ele("GENERATION_DATE").txt(formatDateTime(doc.generationDate));
   const info = header.ele("DISPATCHNOTIFICATION_INFO");
-  info.ele("DISPATCHNOTIFICATION_ID").txt(doc.docId);
+  info.ele("DISPATCHNOTIFICATION_ID").txt(doc.dispatchNotificationId);
   info.ele("DISPATCHNOTIFICATION_DATE").txt(formatDateTime(doc.dispatchDate));
   info.ele("ORDER_ID").txt(doc.orderId);
   if (doc.orderNumber) info.ele("ORDER_NUMBER").txt(doc.orderNumber);
@@ -127,17 +157,22 @@ export function buildDispatchXml(doc: EdiDispatchDocument): string {
   const parties = info.ele("PARTIES");
   addParty(parties, doc.buyer, "buyer");
   addParty(parties, doc.supplier, "supplier");
-
-  if (doc.shipmentId || doc.trackingNumber || doc.carrier) {
-    const shipment = info.ele("SHIPMENT");
-    if (doc.shipmentId) shipment.ele("SHIPMENT_ID").txt(doc.shipmentId);
-    if (doc.carrier) shipment.ele("CARRIER").txt(doc.carrier);
-    if (doc.trackingNumber) shipment.ele("TRACKING_NUMBER").txt(doc.trackingNumber);
+  if (doc.deliveryParty) {
+    addParty(parties, doc.deliveryParty, "delivery");
+  } else {
+    addParty(
+      parties,
+      { id: "delivery", name: "", street: "", postalCode: "", city: "", country: "" },
+      "delivery"
+    );
   }
+
+  if (doc.shipmentId) info.ele("SHIPMENT_ID").txt(doc.shipmentId);
+  if (doc.shipmentCarrier) info.ele("SHIPMENT_CARRIER").txt(doc.shipmentCarrier);
 
   const items = root.ele("DISPATCHNOTIFICATION_ITEM_LIST");
   for (const line of doc.lines) {
-    addLineItem(items, line);
+    addDispatchLineItem(items, line, doc.orderId);
   }
 
   return root.end({ prettyPrint: true });

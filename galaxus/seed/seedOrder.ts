@@ -66,8 +66,8 @@ export async function seedGalaxusOrder(options: SeedOptions = {}) {
       shipments: {
         create: {
           shipmentId: `SHIP-${orderId}-${Date.now()}`,
-          deliveryNoteNumber: `DN-${orderId}`,
-          deliveryNoteCreatedAt: now,
+          dispatchNotificationId: `DN-${orderId}`,
+          dispatchNotificationCreatedAt: now,
           incoterms: "DDP",
         },
       },

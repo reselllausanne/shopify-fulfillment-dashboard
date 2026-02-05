@@ -8,7 +8,8 @@ import {
 } from "./opentrans/builder";
 import {
   buildBuyerParty,
-  buildDispatchInfo,
+  buildDeliveryParty,
+  buildDispatchLines,
   buildEdiLines,
   buildSupplierParty,
   calculateTotals,
@@ -57,25 +58,56 @@ export function buildOrderResponse(
 export function buildDispatchNotification(
   order: GalaxusOrder,
   lines: GalaxusOrderLine[],
-  shipment: Shipment | null,
+  shipment: Shipment & {
+    packageId?: string | null;
+    dispatchNotificationId?: string | null;
+    carrierFinal?: string | null;
+  },
+  items: Array<{
+    supplierPid: string;
+    gtin14: string;
+    buyerPid?: string | null;
+    quantity: number;
+  }>,
   options: { supplierId: string }
 ): EdiOutput {
-  const docId = buildDocNumber("GDELR");
-  const ediLines = buildEdiLines(lines);
-  const dispatch = buildDispatchInfo(shipment);
+  const metaBySupplierPid = new Map<string, { description: string; lineNumber: number }>();
+  for (const line of lines) {
+    const supplierPid =
+      ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ??
+      line.providerKey ??
+      null;
+    if (supplierPid) {
+      metaBySupplierPid.set(supplierPid, {
+        description: line.productName,
+        lineNumber: line.lineNumber,
+      });
+    }
+  }
+
+  const packageId = shipment.packageId ?? "";
+  const ediLines = buildDispatchLines(
+    items,
+    order.galaxusOrderId,
+    packageId,
+    Object.fromEntries(metaBySupplierPid)
+  );
+  const dispatchNotificationId = shipment.dispatchNotificationId ?? buildDocNumber("GDELR");
   const xml = buildDispatchXml({
-    docId,
+    docId: dispatchNotificationId,
     orderId: order.galaxusOrderId,
     orderNumber: order.orderNumber ?? null,
     orderDate: order.orderDate,
-    dispatchDate: shipment?.shippedAt ?? new Date(),
+    generationDate: new Date(),
+    dispatchNotificationId,
+    dispatchDate: shipment.shippedAt ?? new Date(),
     currency: order.currencyCode,
     buyer: buildBuyerParty(order),
     supplier: buildSupplierParty(),
     lines: ediLines,
-    trackingNumber: dispatch.trackingNumber,
-    carrier: dispatch.carrier,
-    shipmentId: dispatch.shipmentId,
+    shipmentId: shipment.trackingNumber ?? shipment.shipmentId,
+    shipmentCarrier: shipment.carrierFinal ?? null,
+    deliveryParty: buildDeliveryParty(order),
   });
 
   return {
@@ -84,7 +116,7 @@ export function buildDispatchNotification(
       docType: "DELR",
       supplierId: options.supplierId,
       orderId: order.galaxusOrderId,
-      docNo: docId,
+      docNo: dispatchNotificationId,
     }),
     content: xml,
   };

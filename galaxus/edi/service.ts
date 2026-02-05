@@ -6,7 +6,6 @@ import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { XMLParser } from "fast-xml-parser";
 import {
   buildCancelResponse,
-  buildDispatchNotification,
   buildInvoice,
   buildOrderResponse,
   buildOutOfStockNotice,
@@ -15,6 +14,10 @@ import {
 import { EdiDocType } from "./filenames";
 import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_OUT_DIR, GALAXUS_SFTP_PASSWORD, GALAXUS_SFTP_PORT, GALAXUS_SFTP_USER, GALAXUS_SUPPLIER_ID } from "./config";
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
+import { upsertEdiFile } from "./ediFiles";
+import { GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
+import { placeSupplierOrderForGalaxusOrder } from "@/galaxus/supplier/orders";
+import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
 type IncomingResult = {
   file: string;
@@ -27,6 +30,7 @@ type OutgoingResult = {
   filename: string;
   status: "uploaded" | "skipped" | "error";
   message?: string;
+  shipmentId?: string;
 };
 
 const parser = new XMLParser({
@@ -77,7 +81,17 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           const orderIdFromName = extractOrderId(file.name);
           if (docType === "ORDP") {
             const orderInput = parseOrderFromXml(xml, orderIdFromName);
-            await ingestGalaxusOrders([orderInput]);
+            const [ingestResult] = await ingestGalaxusOrders([orderInput]);
+            if (ingestResult) {
+              const supplierResult = await placeSupplierOrderForGalaxusOrder(ingestResult.orderId);
+              if (supplierResult.status === "created" && GALAXUS_SUPPLIER_AUTO_SEND_ORDR) {
+                await sendOutgoingEdi({
+                  orderId: ingestResult.orderId,
+                  types: ["ORDR"],
+                  ordrMode: supplierResult.ordrMode,
+                });
+              }
+            }
           } else if (docType === "CANP") {
             await recordCancelRequest(orderIdFromName, xml);
           } else {
@@ -123,6 +137,8 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
 export async function sendOutgoingEdi(options: {
   orderId: string;
   types: EdiDocType[];
+  ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS";
+  forceDelr?: boolean;
 }): Promise<OutgoingResult[]> {
   assertSftpConfig();
   const order = await prisma.galaxusOrder.findUnique({
@@ -147,6 +163,20 @@ export async function sendOutgoingEdi(options: {
     async (client) => {
       for (const type of options.types) {
         try {
+          if (type === "DELR") {
+            const delrResults = await uploadDelrForOrder(order.id, { force: options.forceDelr });
+            results.push(
+              ...delrResults.map((res) => ({
+                docType: "DELR" as const,
+                filename: res.filename ?? "",
+                status: res.status,
+                message: res.message,
+                shipmentId: res.shipmentId,
+              }))
+            );
+            continue;
+          }
+
           const alreadySent = await prisma.galaxusEdiFile.findFirst({
             where: {
               direction: "OUT",
@@ -189,7 +219,7 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
 
-          const edi = buildOutgoingXml(type, order, order.lines, shipment);
+          const edi = buildOutgoingXml(type, order, order.lines, shipment, options.ordrMode);
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
           await upsertEdiFile({
             filename: edi.filename,
@@ -200,6 +230,13 @@ export async function sendOutgoingEdi(options: {
             status: "uploaded",
           });
           results.push({ docType: type, filename: edi.filename, status: "uploaded" });
+          if (type === "ORDR") {
+            const ordrMode = options.ordrMode ?? null;
+            await prisma.galaxusOrder.update({
+              where: { id: order.id },
+              data: ordrMode ? { ordrSentAt: new Date(), ordrMode } : { ordrSentAt: new Date() },
+            });
+          }
         } catch (error: any) {
           results.push({ docType: type, filename: "", status: "error", message: error?.message });
         }
@@ -232,7 +269,11 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
     if (hasCancel) types.push("CANR");
     if (hasOutOfStock) types.push("EOLN");
 
-    const res = await sendOutgoingEdi({ orderId: order.id, types });
+    const ordrMode =
+      order.ordrMode === "WITH_ARRIVAL_DATES" || order.ordrMode === "WITHOUT_POSITIONS"
+        ? (order.ordrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")
+        : undefined;
+    const res = await sendOutgoingEdi({ orderId: order.id, types, ordrMode });
     results.push(...res);
   }
 
@@ -243,17 +284,13 @@ function buildOutgoingXml(
   docType: EdiDocType,
   order: any,
   lines: any[],
-  shipment: any
+  shipment: any,
+  ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS"
 ) {
   if (docType === "ORDR") {
     return buildOrderResponse(order, lines, {
       supplierId: GALAXUS_SUPPLIER_ID,
       status: "ACCEPTED",
-    });
-  }
-  if (docType === "DELR") {
-    return buildDispatchNotification(order, lines, shipment, {
-      supplierId: GALAXUS_SUPPLIER_ID,
     });
   }
   if (docType === "CANR") {
@@ -290,6 +327,7 @@ function parseOrderFromXml(xml: string, fallbackOrderId: string) {
   const root = data.ORDER ?? data;
   const orderId = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_ID"]) ?? fallbackOrderId;
   const orderNumber = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_NUMBER"]) ?? null;
+  const supplierOrderId = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "SUPPLIER_ORDER_ID"]) ?? null;
   const orderDateValue =
     findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_DATE"]) ?? new Date().toISOString();
   const generationDateValue =
@@ -321,6 +359,7 @@ function parseOrderFromXml(xml: string, fallbackOrderId: string) {
   return {
     galaxusOrderId: orderId,
     orderNumber: orderNumber ?? undefined,
+    supplierOrderId: supplierOrderId ?? undefined,
     orderDate: orderDate.toISOString(),
     generationDate: generationDate ? generationDate.toISOString() : undefined,
     language: language ?? undefined,
@@ -389,6 +428,13 @@ function extractLines(data: any) {
     const taxAmount = getNestedValue(item, ["PRODUCT_PRICE_FIX", "TAX_DETAILS_FIX", "TAX_AMOUNT"]) ?? getNestedValue(item, ["TAX_AMOUNT"]);
     const priceLineAmount = getNestedValue(item, ["PRICE_LINE_AMOUNT"]);
     const orderUnit = getNestedValue(item, ["ORDER_UNIT"]);
+    const deliveryStartRaw = getNestedValue(item, ["DELIVERY_DATE", "DELIVERY_START_DATE"]);
+    const deliveryEndRaw = getNestedValue(item, ["DELIVERY_DATE", "DELIVERY_END_DATE"]);
+    const deliveryStart = deliveryStartRaw && deliveryStartRaw.trim() ? deliveryStartRaw : undefined;
+    const deliveryEnd = deliveryEndRaw && deliveryEndRaw.trim() ? deliveryEndRaw : undefined;
+
+    const qtyRaw = getNestedValue(item, ["QUANTITY"]);
+    const qtyConfirmed = qtyRaw ? Number(qtyRaw) : undefined;
 
     return {
       lineNumber: Number(getNestedValue(item, ["LINE_ITEM_ID"]) ?? index + 1),
@@ -408,6 +454,9 @@ function extractLines(data: any) {
       unitNetPrice: unitPrice ?? "0",
       lineNetAmount: priceLineAmount ?? getNestedValue(item, ["LINE_TOTAL_AMOUNT"]) ?? "0",
       priceLineAmount: priceLineAmount ?? undefined,
+      qtyConfirmed: Number.isNaN(qtyConfirmed) ? undefined : qtyConfirmed,
+      arrivalDateStart: deliveryStart,
+      arrivalDateEnd: deliveryEnd,
       currencyCode: getNestedValue(item, ["CURRENCY"]) ?? "CHF",
     };
   });
@@ -533,36 +582,3 @@ function findValue(data: any, key: string): string | null {
   return null;
 }
 
-async function upsertEdiFile(options: {
-  filename: string;
-  direction: "IN" | "OUT";
-  docType: EdiDocType;
-  status: string;
-  message?: string;
-  orderId?: string;
-  orderRef?: string;
-  payloadJson?: unknown;
-}) {
-  await prisma.galaxusEdiFile.upsert({
-    where: { filename: options.filename },
-    create: {
-      filename: options.filename,
-      direction: options.direction,
-      docType: options.docType,
-      status: options.status,
-      orderId: options.orderId,
-      orderRef: options.orderRef,
-      errorMessage: options.message ?? null,
-      payloadJson: options.payloadJson ?? undefined,
-      processedAt: options.status === "processed" ? new Date() : null,
-    },
-    update: {
-      status: options.status,
-      orderId: options.orderId,
-      orderRef: options.orderRef,
-      errorMessage: options.message ?? null,
-      payloadJson: options.payloadJson ?? undefined,
-      processedAt: options.status === "processed" ? new Date() : null,
-    },
-  });
-}

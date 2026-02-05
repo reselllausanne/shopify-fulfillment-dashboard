@@ -192,8 +192,8 @@ function buildDeliveryNoteData(
   lines: GalaxusOrderLine[],
   shipment: {
     shipmentId: string;
-    deliveryNoteNumber: string;
-    deliveryNoteCreatedAt: Date;
+    dispatchNotificationId: string;
+    dispatchNotificationCreatedAt: Date;
     incoterms: string | null;
     createdAt: Date;
   } | null
@@ -201,8 +201,8 @@ function buildDeliveryNoteData(
   const deliveryLines = buildOrderLines(lines);
   return {
     shipmentId: shipment?.shipmentId ?? "",
-    createdAt: shipment?.deliveryNoteCreatedAt ?? new Date(),
-    deliveryNoteNumber: shipment?.deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
+    createdAt: shipment?.dispatchNotificationCreatedAt ?? new Date(),
+    deliveryNoteNumber: shipment?.dispatchNotificationId ?? buildDeliveryNoteNumber(order),
     incoterms: shipment?.incoterms ?? null,
     buyer: buildRecipient(order),
     supplier: buildSupplier(),
@@ -225,9 +225,9 @@ function buildDeliveryNoteData(
 
 async function buildLabelData(
   order: GalaxusOrder,
-  shipment: { shipmentId: string; sscc: string | null } | null
+  shipment: { shipmentId: string; packageId: string | null } | null
 ): Promise<LabelData> {
-  const sscc = normalizeSscc(shipment?.sscc ?? buildSscc(order));
+  const sscc = normalizeSscc(shipment?.packageId ?? buildSscc(order));
   const barcodeDataUrl = await createSsccBarcodeDataUrl(sscc);
 
   return {
@@ -319,10 +319,10 @@ async function resolveShipment(
 ): Promise<{
   id: string;
   shipmentId: string;
-  deliveryNoteNumber: string;
-  deliveryNoteCreatedAt: Date;
+  dispatchNotificationId: string;
+  dispatchNotificationCreatedAt: Date;
   incoterms: string | null;
-  sscc: string | null;
+  packageId: string | null;
   createdAt: Date;
 }> {
   if (order.shipments && order.shipments.length > 0) {
@@ -330,16 +330,16 @@ async function resolveShipment(
     const full = await prisma.shipment.findUnique({
       where: { id: existing.id },
     });
-    const deliveryNoteNumber = full?.deliveryNoteNumber ?? buildDeliveryNoteNumber(order);
-    const deliveryNoteCreatedAt = full?.deliveryNoteCreatedAt ?? existing.createdAt;
+    const dispatchNotificationId = full?.dispatchNotificationId ?? buildDeliveryNoteNumber(order);
+    const dispatchNotificationCreatedAt = full?.dispatchNotificationCreatedAt ?? existing.createdAt;
 
-    if (!full?.deliveryNoteNumber || !full?.deliveryNoteCreatedAt || !full?.sscc) {
+    if (!full?.dispatchNotificationId || !full?.dispatchNotificationCreatedAt || !full?.packageId) {
       await prisma.shipment.update({
         where: { id: existing.id },
         data: {
-          deliveryNoteNumber,
-          deliveryNoteCreatedAt,
-          sscc: full?.sscc ?? buildSscc(order),
+          dispatchNotificationId,
+          dispatchNotificationCreatedAt,
+          packageId: full?.packageId ?? buildSscc(order),
         },
       });
     }
@@ -347,10 +347,10 @@ async function resolveShipment(
     return {
       id: existing.id,
       shipmentId: existing.shipmentId,
-      deliveryNoteNumber,
-      deliveryNoteCreatedAt,
+      dispatchNotificationId,
+      dispatchNotificationCreatedAt,
       incoterms: full?.incoterms ?? null,
-      sscc: full?.sscc ?? buildSscc(order),
+      packageId: full?.packageId ?? buildSscc(order),
       createdAt: existing.createdAt,
     };
   }
@@ -359,19 +359,19 @@ async function resolveShipment(
     data: {
       orderId: order.id,
       shipmentId: `SHIP-${order.galaxusOrderId}-${Date.now()}`,
-      deliveryNoteNumber: buildDeliveryNoteNumber(order),
-      deliveryNoteCreatedAt: new Date(),
-      sscc: buildSscc(order),
+      dispatchNotificationId: buildDeliveryNoteNumber(order),
+      dispatchNotificationCreatedAt: new Date(),
+      packageId: buildSscc(order),
     },
   });
 
   return {
     id: shipment.id,
     shipmentId: shipment.shipmentId,
-    deliveryNoteNumber: shipment.deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
-    deliveryNoteCreatedAt: shipment.deliveryNoteCreatedAt ?? shipment.createdAt,
+    dispatchNotificationId: shipment.dispatchNotificationId ?? buildDeliveryNoteNumber(order),
+    dispatchNotificationCreatedAt: shipment.dispatchNotificationCreatedAt ?? shipment.createdAt,
     incoterms: shipment.incoterms ?? null,
-    sscc: shipment.sscc ?? null,
+    packageId: shipment.packageId ?? null,
     createdAt: shipment.createdAt,
   };
 }

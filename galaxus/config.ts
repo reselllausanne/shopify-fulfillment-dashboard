@@ -17,6 +17,19 @@ export const GOLDEN_SUPPLIER_API_KEY_HEADER =
 export const GOLDEN_SUPPLIER_API_KEY_PREFIX =
   process.env.GOLDEN_SUPPLIER_API_KEY_PREFIX ?? "Bearer ";
 
+export const GALAXUS_SUPPLIER_AUTO_ORDER = process.env.GALAXUS_SUPPLIER_AUTO_ORDER === "true";
+export const GALAXUS_SUPPLIER_AUTO_SEND_ORDR = process.env.GALAXUS_SUPPLIER_AUTO_SEND_ORDR === "true";
+const DEFAULT_LEAD_DAYS = 7;
+const DEFAULT_ETA_WINDOW_DAYS = 0;
+const parsedLeadDays = Number.parseInt(process.env.GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS ?? "", 10);
+const parsedWindowDays = Number.parseInt(process.env.GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS ?? "", 10);
+export const GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS = Number.isFinite(parsedLeadDays)
+  ? parsedLeadDays
+  : DEFAULT_LEAD_DAYS;
+export const GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS = Number.isFinite(parsedWindowDays)
+  ? parsedWindowDays
+  : DEFAULT_ETA_WINDOW_DAYS;
+
 export const KICKDB_API_BASE_URL = process.env.KICKDB_API_BASE_URL ?? "https://api.kicks.dev/v3";
 export const KICKDB_API_KEY = process.env.KICKDB_API_KEY ?? "";
 export const KICKDB_API_KEY_HEADER = process.env.KICKDB_API_KEY_HEADER ?? "Authorization";
@@ -32,6 +45,11 @@ export const GALAXUS_SUPPLIER_PHONE = process.env.GALAXUS_SUPPLIER_PHONE ?? "";
 export const GALAXUS_SUPPLIER_EMAIL = process.env.GALAXUS_SUPPLIER_EMAIL ?? "";
 export const GALAXUS_SUPPLIER_WEBSITE = process.env.GALAXUS_SUPPLIER_WEBSITE ?? "";
 export const GALAXUS_SUPPLIER_VAT_ID = process.env.GALAXUS_SUPPLIER_VAT_ID ?? "";
+
+export const GALAXUS_GS1_COMPANY_PREFIX = process.env.GALAXUS_GS1_COMPANY_PREFIX ?? "";
+export const GALAXUS_GS1_EXTENSION_DIGIT = process.env.GALAXUS_GS1_EXTENSION_DIGIT ?? "0";
+export const GALAXUS_SHIPMENT_CARRIER_ALLOWLIST =
+  process.env.GALAXUS_SHIPMENT_CARRIER_ALLOWLIST ?? "";
 
 // Galaxus buyer address is fixed for PDF invoices.
 export const GALAXUS_BUYER_NAME = "Digitec Galaxus AG";
