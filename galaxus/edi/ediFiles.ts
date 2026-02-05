@@ -11,7 +11,7 @@ export async function upsertEdiFile(options: {
   orderRef?: string;
   payloadJson?: unknown;
 }) {
-  await prisma.galaxusEdiFile.upsert({
+  await (prisma as any).galaxusEdiFile.upsert({
     where: { filename: options.filename },
     create: {
       filename: options.filename,

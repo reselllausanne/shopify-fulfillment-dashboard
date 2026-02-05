@@ -325,16 +325,17 @@ async function resolveShipment(
   packageId: string | null;
   createdAt: Date;
 }> {
+  const prismaAny = prisma as any;
   if (order.shipments && order.shipments.length > 0) {
     const existing = order.shipments[0];
-    const full = await prisma.shipment.findUnique({
+    const full = (await prismaAny.shipment.findUnique({
       where: { id: existing.id },
-    });
+    })) as any;
     const dispatchNotificationId = full?.dispatchNotificationId ?? buildDeliveryNoteNumber(order);
     const dispatchNotificationCreatedAt = full?.dispatchNotificationCreatedAt ?? existing.createdAt;
 
     if (!full?.dispatchNotificationId || !full?.dispatchNotificationCreatedAt || !full?.packageId) {
-      await prisma.shipment.update({
+      await prismaAny.shipment.update({
         where: { id: existing.id },
         data: {
           dispatchNotificationId,
@@ -355,7 +356,7 @@ async function resolveShipment(
     };
   }
 
-  const shipment = await prisma.shipment.create({
+  const shipment = (await prismaAny.shipment.create({
     data: {
       orderId: order.id,
       shipmentId: `SHIP-${order.galaxusOrderId}-${Date.now()}`,
@@ -363,7 +364,7 @@ async function resolveShipment(
       dispatchNotificationCreatedAt: new Date(),
       packageId: buildSscc(order),
     },
-  });
+  })) as any;
 
   return {
     id: shipment.id,

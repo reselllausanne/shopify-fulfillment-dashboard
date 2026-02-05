@@ -20,7 +20,7 @@ export async function allocateSscc(): Promise<string> {
     throw new Error("GS1 company prefix is too long to generate SSCC");
   }
 
-  const counter = await prisma.galaxusSsccCounter.upsert({
+  const counter = await (prisma as any).galaxusSsccCounter.upsert({
     where: { id: COUNTER_ID },
     create: { id: COUNTER_ID, lastSerial: 1 },
     update: { lastSerial: { increment: 1 } },
