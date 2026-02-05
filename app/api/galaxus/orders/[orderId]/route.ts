@@ -6,10 +6,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   _request: Request,
-  { params }: { params: { orderId: string } }
+  { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
-    const orderId = params.orderId;
+    const { orderId } = await params;
     const order =
       (await prisma.galaxusOrder.findUnique({
         where: { id: orderId },
