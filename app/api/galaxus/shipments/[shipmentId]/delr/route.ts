@@ -6,10 +6,10 @@ export const dynamic = "force-dynamic";
 
 export async function POST(
   request: Request,
-  { params }: { params: { shipmentId: string } }
+  { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
-    const shipmentId = params.shipmentId;
+    const { shipmentId } = await params;
     const body = await request.json().catch(() => ({}));
     const force = Boolean(body?.force);
     const result = await uploadDelrForShipment(shipmentId, { force });
