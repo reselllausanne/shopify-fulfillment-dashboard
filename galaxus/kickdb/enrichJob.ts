@@ -101,6 +101,81 @@ function summarizeVariantSizes(variants: any[] = []) {
   return values.filter((value) => typeof value === "string");
 }
 
+function pickString(...values: Array<unknown>) {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function extractBrand(productRecord: any): string | null {
+  const direct = pickString(productRecord?.brand, productRecord?.manufacturer, productRecord?.make);
+  if (direct) return direct;
+  const traits = productRecord?.traits;
+  if (Array.isArray(traits)) {
+    for (const t of traits) {
+      const key = pickString(t?.key, t?.name, t?.trait, t?.type)?.toLowerCase();
+      if (key && ["brand", "manufacturer"].includes(key)) {
+        const value = pickString(t?.value, t?.label, t?.text);
+        if (value) return value;
+      }
+    }
+  }
+  if (traits && typeof traits === "object") {
+    return pickString(traits.brand, traits.Brand, traits.manufacturer, traits.Manufacturer);
+  }
+  return null;
+}
+
+function extractImageUrl(productRecord: any): string | null {
+  return pickString(
+    productRecord?.image,
+    productRecord?.image_url,
+    productRecord?.imageUrl,
+    productRecord?.media?.image,
+    productRecord?.media?.imageUrl
+  );
+}
+
+function normalizeSkuForCompare(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+function selectBestKickdbHit(options: {
+  hits: any[];
+  supplierSku: string | null;
+  supplierName: string | null;
+}) {
+  const hits = options.hits ?? [];
+  if (!hits.length) return null;
+
+  const targetSku = normalizeSkuForCompare(options.supplierSku);
+  if (targetSku) {
+    const exact = hits.find((h) => normalizeSkuForCompare(h?.sku) === targetSku);
+    if (exact) return exact;
+  }
+
+  // Fallback: if supplier name is available, pick first hit that shares strong token overlap.
+  const name = (options.supplierName ?? "").toLowerCase();
+  if (name) {
+    const tokens = new Set(name.split(/[^a-z0-9]+/g).filter((t) => t.length >= 4));
+    const scored = hits
+      .map((h) => {
+        const title = String(h?.title ?? "").toLowerCase();
+        let score = 0;
+        for (const t of tokens) {
+          if (title.includes(t)) score += 1;
+        }
+        return { h, score };
+      })
+      .sort((a, b) => b.score - a.score);
+    if (scored[0]?.score > 0) return scored[0].h;
+  }
+
+  return hits[0];
+}
+
 export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   const limit = Math.min(Number(options.limit ?? 50), 200);
   const offset = Math.max(Number(options.offset ?? 0), 0);
@@ -179,8 +254,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       continue;
     }
 
-    const productName = productNameByVariantId.get(variant.supplierVariantId) ?? null;
-    const query = variant.supplierSku || productName;
+    const supplierProductName = productNameByVariantId.get(variant.supplierVariantId) ?? null;
+    const query = variant.supplierSku || supplierProductName;
     const debugInfo: DebugInfo | undefined = debug
       ? {
           query: query ?? undefined,
@@ -188,7 +263,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
           raw,
           sizeRaw: variant.sizeRaw,
           supplierSku: variant.supplierSku,
-          productName: productName ?? null,
+          productName: supplierProductName ?? null,
         }
       : undefined;
 
@@ -227,7 +302,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       continue;
     }
 
-    const productHit = response.data?.[0];
+    const hits = response.data ?? [];
+    const productHit = selectBestKickdbHit({
+      hits,
+      supplierSku: variant.supplierSku ?? null,
+      supplierName: supplierProductName ?? null,
+    });
     const productIdOrSlug = productHit?.id ?? productHit?.slug;
     if (debugInfo) {
       debugInfo.searchMeta = response.meta;
@@ -317,15 +397,79 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const gtin = extractVariantGtin(matchedVariant ?? undefined);
     const providerKey = buildProviderKey(gtin ?? null, variant.supplierVariantId);
 
+    // Persist KickDB product + variant so Stage-2 exports can use brand/title/category/images.
+    const now = new Date();
+    const kickdbProductId = pickString(productRecord?.id, productIdOrSlug) ?? productIdOrSlug;
+    const kickdbProductName = pickString(productRecord?.title, productRecord?.name);
+    const styleId = pickString(productRecord?.sku, productRecord?.style_id, productRecord?.styleId);
+    const urlKey = pickString(productRecord?.slug, productRecord?.url_key, productRecord?.urlKey);
+    const brand = extractBrand(productRecord);
+    const imageUrl = extractImageUrl(productRecord);
+
+    const savedProduct = await (prisma as any).kickDBProduct.upsert({
+      where: { kickdbProductId },
+      create: {
+        kickdbProductId,
+        urlKey,
+        styleId,
+        name: kickdbProductName,
+        brand,
+        imageUrl,
+        traitsJson: productRecord?.traits ?? null,
+        lastFetchedAt: now,
+        notFound: false,
+      },
+      update: {
+        urlKey,
+        styleId,
+        name: kickdbProductName,
+        brand,
+        imageUrl,
+        traitsJson: productRecord?.traits ?? null,
+        lastFetchedAt: now,
+        notFound: false,
+      },
+    });
+
+    const kickdbVariantExternalId =
+      pickString(matchedVariant?.id) ??
+      (kickdbProductId ? `${kickdbProductId}:${variant.supplierVariantId}` : variant.supplierVariantId);
+    const savedVariant = await prisma.kickDBVariant.upsert({
+      where: { kickdbVariantId: kickdbVariantExternalId },
+      create: {
+        kickdbVariantId: kickdbVariantExternalId,
+        productId: savedProduct.id,
+        sizeUs: pickString(matchedVariant?.size_us),
+        sizeEu: pickString(matchedVariant?.size_eu),
+        gtin: pickString(gtin),
+        ean: pickString(matchedVariant?.ean),
+        providerKey: providerKey ?? null,
+        lastFetchedAt: now,
+        notFound: false,
+      },
+      update: {
+        productId: savedProduct.id,
+        sizeUs: pickString(matchedVariant?.size_us),
+        sizeEu: pickString(matchedVariant?.size_eu),
+        gtin: pickString(gtin),
+        ean: pickString(matchedVariant?.ean),
+        providerKey: providerKey ?? null,
+        lastFetchedAt: now,
+        notFound: false,
+      },
+    });
+
     await prisma.variantMapping.upsert({
       where: { supplierVariantId: variant.supplierVariantId },
       create: {
         supplierVariantId: variant.supplierVariantId,
+        kickdbVariantId: savedVariant.id,
         gtin: gtin ?? null,
         providerKey: providerKey ?? null,
         status: gtin ? "MATCHED" : "NOT_FOUND",
       },
       update: {
+        kickdbVariantId: savedVariant.id,
         gtin: gtin ?? null,
         providerKey: providerKey ?? null,
         status: gtin ? "MATCHED" : "NOT_FOUND",

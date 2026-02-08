@@ -9,12 +9,27 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 500);
-    const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
+    const maxParam = searchParams.get("max");
+    const max = maxParam ? Math.max(Number(maxParam) || 0, 0) : null;
+
+    const limit = all
+      ? undefined
+      : max !== null
+        ? Math.min(Math.max(max, 1), 10000)
+        : Math.min(Number(searchParams.get("limit") ?? "50"), 500);
+    const offset = all || max !== null ? 0 : Math.max(Number(searchParams.get("offset") ?? "0"), 0);
 
     const catalog = await runJob("catalog-sync", () => runCatalogSync({ limit, offset }));
     const stock = await runJob("stock-sync", () => runStockSync({ limit, offset }));
-    return NextResponse.json({ ok: true, limit, offset, catalog, stock });
+    return NextResponse.json({
+      ok: true,
+      mode: all ? "all" : "max",
+      limit: limit ?? null,
+      offset,
+      catalog,
+      stock,
+    });
   } catch (error: any) {
     console.error("[GALAXUS][SUPPLIER][SYNC] Failed:", error);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

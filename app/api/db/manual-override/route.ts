@@ -71,10 +71,14 @@ export async function POST(req: NextRequest) {
     const revenue = Number(existingMatch.shopifyTotalPrice);
     const defaultFeePercent =
       returnReason === "STORE_CREDIT" ? 25 : returnReason === "EXCHANGE" ? 15 : returnReason === "DAMAGE" ? 0 : null;
-    const feePercent =
+    const rawFeePercent =
       returnReason && returnFeePercent !== undefined && returnFeePercent !== null
         ? Number(returnFeePercent)
         : defaultFeePercent;
+    const feePercent =
+      rawFeePercent === null || rawFeePercent === undefined || Number.isNaN(rawFeePercent)
+        ? null
+        : clampDecimal(rawFeePercent, 999.99);
     const returnFeeAmountChf =
       returnReason && feePercent !== null && !isNaN(feePercent)
         ? Number(((revenue * feePercent) / 100).toFixed(2))
@@ -104,9 +108,10 @@ export async function POST(req: NextRequest) {
         : null;
     
     const newMarginAmount = effectiveRevenue - effectiveCost;
-    const newMarginPercent = effectiveRevenue > 0 
+    const rawMarginPercent = effectiveRevenue > 0 
       ? (newMarginAmount / effectiveRevenue) * 100 
       : 0;
+    const newMarginPercent = clampDecimal(rawMarginPercent, 999.99);
 
     console.log(`[MANUAL_OVERRIDE] 💰 Recalculated: Revenue ${effectiveRevenue.toFixed(2)} - Cost ${effectiveCost.toFixed(2)} = Margin ${newMarginAmount.toFixed(2)} (${newMarginPercent.toFixed(1)}%)`);
 
@@ -152,5 +157,12 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function clampDecimal(value: number, maxAbs: number) {
+  if (!Number.isFinite(value)) return 0;
+  if (value > maxAbs) return maxAbs;
+  if (value < -maxAbs) return -maxAbs;
+  return Math.round(value * 100) / 100;
 }
 

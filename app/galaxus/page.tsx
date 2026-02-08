@@ -26,6 +26,29 @@ type SupplierVariant = {
   updatedAt: string;
 };
 
+type MappingRow = {
+  id: string;
+  status: string | null;
+  updatedAt: string | null;
+  supplierVariantId: string;
+  providerKey: string | null;
+  gtin: string | null;
+  supplierSku: string | null;
+  supplierBrand: string | null;
+  supplierProductName: string | null;
+  sizeRaw: string | null;
+  price: any;
+  stock: any;
+  lastSyncAt: string | null;
+  kickdbProductId: string | null;
+  kickdbBrand: string | null;
+  kickdbName: string | null;
+  kickdbStyleId: string | null;
+  kickdbImageUrl: string | null;
+  kickdbLastFetchedAt: string | null;
+  kickdbNotFound: boolean | null;
+};
+
 type EnrichDebugInfo = {
   reason?: string;
   query?: string;
@@ -115,10 +138,12 @@ export default function GalaxusDashboardPage() {
   const [previewTotal, setPreviewTotal] = useState<number | null>(null);
   const [dbItems, setDbItems] = useState<SupplierVariant[]>([]);
   const [dbNextOffset, setDbNextOffset] = useState<number | null>(null);
+  const [dbMappings, setDbMappings] = useState<MappingRow[]>([]);
+  const [dbMappingsNextOffset, setDbMappingsNextOffset] = useState<number | null>(null);
   const [enrichResults, setEnrichResults] = useState<EnrichResult[]>([]);
   const [enrichDebugRaw, setEnrichDebugRaw] = useState<string | null>(null);
-  const [batchLimit, setBatchLimit] = useState<number>(100);
-  const [batchOffset, setBatchOffset] = useState<number>(0);
+  const [batchLimit] = useState<number>(100);
+  const [batchOffset] = useState<number>(0);
   const [supplierFilter, setSupplierFilter] = useState<string>("golden");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,18 +156,22 @@ export default function GalaxusDashboardPage() {
   const [seedLineCount, setSeedLineCount] = useState<number>(5);
   const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
+  const [syncMax, setSyncMax] = useState<number>(1000);
+  const [syncAll, setSyncAll] = useState<boolean>(false);
 
-  const fetchPreview = async () => {
-    setBusy("preview");
+  const syncSupplier = async () => {
+    setBusy("sync");
     setError(null);
     try {
-      const response = await fetch(`/api/galaxus/supplier/preview?limit=${batchLimit}`, {
-        cache: "no-store",
-      });
+      const params = new URLSearchParams();
+      if (syncAll) {
+        params.set("all", "1");
+      } else {
+        params.set("max", String(Math.max(syncMax, 1)));
+      }
+      const response = await fetch(`/api/galaxus/supplier/sync?${params.toString()}`, { method: "POST" });
       const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Preview failed");
-      setPreview(data.items ?? []);
-      setPreviewTotal(data.total ?? null);
+      if (!data.ok) throw new Error(data.error ?? "Sync failed");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -150,16 +179,25 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const syncSupplier = async () => {
-    setBusy("sync");
+  const clearSupplierData = async (includeKickdb: boolean) => {
+    const confirmed = (window.prompt('This will DELETE supplier data. Type "YES" to confirm.') ?? "").trim().toUpperCase();
+    if (confirmed !== "YES") {
+      setOpsLog("Clear cancelled (confirmation not provided).");
+      return;
+    }
+    setBusy(includeKickdb ? "supplier-clear-kickdb" : "supplier-clear");
     setError(null);
+    setOpsLog(null);
     try {
-      const response = await fetch(
-        `/api/galaxus/supplier/sync?limit=${batchLimit}&offset=${batchOffset}`,
-        { method: "POST" }
-      );
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Sync failed");
+      const params = new URLSearchParams({ confirm: "YES" });
+      if (includeKickdb) params.set("includeKickdb", "1");
+      const response = await fetch(`/api/galaxus/supplier/clear?${params.toString()}`, {
+        method: "POST",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Clear supplier data failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadDb(0);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -188,12 +226,32 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const loadMappings = async (offset = 0) => {
+    setBusy("db-mappings");
+    setError(null);
+    try {
+      const supplierValue = encodeURIComponent(supplierFilter);
+      const response = await fetch(
+        `/api/galaxus/supplier/mappings?limit=${batchLimit}&offset=${offset}&supplier=${supplierValue}`,
+        { cache: "no-store" }
+      );
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Load mappings failed");
+      setDbMappings(data.items ?? []);
+      setDbMappingsNextOffset(data.nextOffset ?? null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const enrichKickDb = async (debug = false, force = false) => {
     setBusy("enrich");
     setError(null);
     try {
       const response = await fetch(
-        `/api/galaxus/kickdb/enrich?limit=${batchLimit}&offset=${batchOffset}&debug=${debug ? 1 : 0}&force=${force ? 1 : 0}`,
+        `/api/galaxus/kickdb/enrich?all=1&debug=${debug ? 1 : 0}&force=${force ? 1 : 0}`,
         {
           method: "POST",
         }
@@ -215,21 +273,61 @@ export default function GalaxusDashboardPage() {
     setExportCheckReport(null);
     const supplierValue = encodeURIComponent(supplierFilter);
     const exportUrls = [
-      `/api/galaxus/export/master?limit=${batchLimit}&offset=${batchOffset}&supplier=${supplierValue}`,
-      `/api/galaxus/export/stock?limit=${batchLimit}&offset=${batchOffset}&supplier=${supplierValue}`,
-      `/api/galaxus/export/specifications?limit=${batchLimit}&offset=${batchOffset}&supplier=${supplierValue}`,
+      `/api/galaxus/export/master?all=1&supplier=${supplierValue}`,
+      `/api/galaxus/export/stock?all=1&supplier=${supplierValue}`,
+      `/api/galaxus/export/specifications?all=1&supplier=${supplierValue}`,
     ];
     exportUrls.forEach((url) => {
       window.open(url, "_blank", "noopener,noreferrer");
     });
     try {
       const response = await fetch(
-        `/api/galaxus/export/check-all?limit=${batchLimit}&offset=${batchOffset}&supplier=${supplierValue}`,
+        `/api/galaxus/export/check-all?all=1&supplier=${supplierValue}`,
         { cache: "no-store" }
       );
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Export checks failed");
       setExportCheckReport(JSON.stringify(data.report ?? {}, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const checkStage1 = async () => {
+    setBusy("stage1-check");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const supplierValue = encodeURIComponent(supplierFilter);
+      const response = await fetch(
+        `/api/galaxus/export/stage1-check?all=1&supplier=${supplierValue}`,
+        { cache: "no-store" }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Stage 1 check failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const checkStage2 = async () => {
+    setBusy("stage2-check");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const supplierValue = encodeURIComponent(supplierFilter);
+      const response = await fetch(
+        `/api/galaxus/export/stage2-check?all=1&supplier=${supplierValue}`,
+        { cache: "no-store" }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Stage 2 check failed");
+      setOpsLog(JSON.stringify(data, null, 2));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -288,6 +386,27 @@ export default function GalaxusDashboardPage() {
       if (data.orderId) {
         await loadOrderDetail(data.orderId);
       }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const clearSeedOrders = async () => {
+    setBusy("seed-clear");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/seed/clear", {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Seed cleanup failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await fetchOrders(0);
+      setSelectedOrder(null);
+      setSelectedOrderId("");
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -515,6 +634,13 @@ export default function GalaxusDashboardPage() {
               disabled={busy !== null}
             >
               {busy === "seed" ? "Seeding…" : "Create Test Order"}
+            </button>
+            <button
+              className="px-3 py-2 rounded bg-red-600 text-white disabled:opacity-50"
+              onClick={clearSeedOrders}
+              disabled={busy !== null}
+            >
+              {busy === "seed-clear" ? "Clearing…" : "Clear Test Orders"}
             </button>
           </div>
           <button
@@ -754,25 +880,42 @@ export default function GalaxusDashboardPage() {
 
       <div className="flex gap-3 flex-wrap items-center">
         <button
-          className="px-3 py-2 rounded bg-black text-white disabled:opacity-50"
-          onClick={fetchPreview}
-          disabled={busy !== null}
-        >
-          {busy === "preview" ? "Loading…" : "Fetch Supplier Preview"}
-        </button>
-        <button
           className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
           onClick={syncSupplier}
           disabled={busy !== null}
         >
           {busy === "sync" ? "Syncing…" : "Sync Catalog + Stock"}
         </button>
+        <input
+          className="px-2 py-2 border rounded text-sm w-28"
+          type="number"
+          min={1}
+          value={syncMax}
+          onChange={(event) => setSyncMax(Number(event.target.value || 0))}
+          disabled={syncAll}
+          placeholder="Max products"
+        />
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={syncAll}
+            onChange={(event) => setSyncAll(event.target.checked)}
+          />
+          Get all
+        </label>
         <button
           className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
           onClick={() => loadDb(0)}
           disabled={busy !== null}
         >
           {busy === "db" ? "Loading…" : "Load DB Variants"}
+        </button>
+        <button
+          className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+          onClick={() => loadMappings(0)}
+          disabled={busy !== null}
+        >
+          {busy === "db-mappings" ? "Loading…" : "Load DB Mappings"}
         </button>
         <button
           className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
@@ -788,23 +931,20 @@ export default function GalaxusDashboardPage() {
         >
           {busy === "enrich" ? "Enriching…" : "Enrich GTIN (Debug + Force)"}
         </button>
-        <input
-          className="px-2 py-2 border rounded text-sm w-24"
-          type="number"
-          min={1}
-          max={500}
-          value={batchLimit}
-          onChange={(event) => setBatchLimit(Number(event.target.value || 0))}
-          placeholder="Limit"
-        />
-        <input
-          className="px-2 py-2 border rounded text-sm w-24"
-          type="number"
-          min={0}
-          value={batchOffset}
-          onChange={(event) => setBatchOffset(Number(event.target.value || 0))}
-          placeholder="Offset"
-        />
+        <button
+          className="px-3 py-2 rounded bg-red-700 text-white disabled:opacity-50"
+          onClick={() => clearSupplierData(false)}
+          disabled={busy !== null}
+        >
+          {busy === "supplier-clear" ? "Clearing…" : "Clear Supplier Data"}
+        </button>
+        <button
+          className="px-3 py-2 rounded bg-red-100 text-red-900 disabled:opacity-50"
+          onClick={() => clearSupplierData(true)}
+          disabled={busy !== null}
+        >
+          {busy === "supplier-clear-kickdb" ? "Clearing…" : "Clear Supplier + KickDB"}
+        </button>
         <input
           className="px-2 py-2 border rounded text-sm w-28"
           value={supplierFilter}
@@ -818,29 +958,45 @@ export default function GalaxusDashboardPage() {
         >
           {busy === "export-check" ? "Exporting…" : "Export All + Run Checks"}
         </button>
+        <button
+          className="px-3 py-2 rounded bg-indigo-100 text-indigo-900 disabled:opacity-50"
+          onClick={checkStage1}
+          disabled={busy !== null}
+        >
+          {busy === "stage1-check" ? "Checking…" : "Stage 1 Check"}
+        </button>
+        <button
+          className="px-3 py-2 rounded bg-indigo-50 text-indigo-900 disabled:opacity-50"
+          onClick={checkStage2}
+          disabled={busy !== null}
+        >
+          {busy === "stage2-check" ? "Checking…" : "Stage 2 Check"}
+        </button>
         <a
           className="px-3 py-2 rounded bg-indigo-600 text-white"
-          href={`/api/galaxus/export/master?limit=${batchLimit}&offset=${batchOffset}&supplier=${encodeURIComponent(supplierFilter)}`}
+          href={`/api/galaxus/export/master?all=1&supplier=${encodeURIComponent(supplierFilter)}`}
           target="_blank"
           rel="noreferrer"
         >
           Export Master CSV
         </a>
         <a
+          className="px-3 py-2 rounded bg-indigo-500 text-white"
+          href={`/api/galaxus/export/master?stage=2&all=1&supplier=${encodeURIComponent(
+            supplierFilter
+          )}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Export Master Stage 2
+        </a>
+        <a
           className="px-3 py-2 rounded bg-indigo-100 text-indigo-900"
-          href={`/api/galaxus/export/stock?limit=${batchLimit}&offset=${batchOffset}&supplier=${encodeURIComponent(supplierFilter)}`}
+          href={`/api/galaxus/export/stock?all=1&supplier=${encodeURIComponent(supplierFilter)}`}
           target="_blank"
           rel="noreferrer"
         >
           Export Stock CSV
-        </a>
-        <a
-          className="px-3 py-2 rounded bg-indigo-50 text-indigo-900"
-          href={`/api/galaxus/export/specifications?limit=${batchLimit}&offset=${batchOffset}&supplier=${encodeURIComponent(supplierFilter)}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Export Specs CSV
         </a>
       </div>
 
@@ -927,6 +1083,70 @@ export default function GalaxusDashboardPage() {
             disabled={busy !== null}
           >
             Load Next Page
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-sm font-medium">DB Mappings (Enriched)</div>
+        <div className="overflow-auto border rounded">
+          <table className="min-w-full text-xs">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-2 py-1 text-left">Status</th>
+                <th className="px-2 py-1 text-left">ProviderKey</th>
+                <th className="px-2 py-1 text-left">GTIN</th>
+                <th className="px-2 py-1 text-left">Variant ID</th>
+                <th className="px-2 py-1 text-left">Supplier Name</th>
+                <th className="px-2 py-1 text-left">KickDB Name</th>
+                <th className="px-2 py-1 text-left">KickDB Brand</th>
+                <th className="px-2 py-1 text-left">Image</th>
+                <th className="px-2 py-1 text-right">Price</th>
+                <th className="px-2 py-1 text-right">Stock</th>
+                <th className="px-2 py-1 text-left">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dbMappings.map((row) => (
+                <tr key={row.id} className="border-t align-top">
+                  <td className="px-2 py-1">{row.status ?? ""}</td>
+                  <td className="px-2 py-1">{row.providerKey ?? ""}</td>
+                  <td className="px-2 py-1">{row.gtin ?? ""}</td>
+                  <td className="px-2 py-1">{row.supplierVariantId}</td>
+                  <td className="px-2 py-1">{row.supplierProductName ?? ""}</td>
+                  <td className="px-2 py-1">{row.kickdbName ?? ""}</td>
+                  <td className="px-2 py-1">{row.kickdbBrand ?? row.supplierBrand ?? ""}</td>
+                  <td className="px-2 py-1">
+                    {row.kickdbImageUrl ? (
+                      <a className="underline" href={row.kickdbImageUrl} target="_blank" rel="noreferrer">
+                        open
+                      </a>
+                    ) : (
+                      ""
+                    )}
+                  </td>
+                  <td className="px-2 py-1 text-right">{row.price ?? ""}</td>
+                  <td className="px-2 py-1 text-right">{row.stock ?? ""}</td>
+                  <td className="px-2 py-1">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : ""}</td>
+                </tr>
+              ))}
+              {dbMappings.length === 0 && (
+                <tr>
+                  <td className="px-2 py-3 text-gray-500" colSpan={11}>
+                    No mappings loaded.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {dbMappingsNextOffset !== null && (
+          <button
+            className="px-3 py-2 rounded bg-gray-100 text-black"
+            onClick={() => loadMappings(dbMappingsNextOffset)}
+            disabled={busy !== null}
+          >
+            Load more mappings
           </button>
         )}
       </div>

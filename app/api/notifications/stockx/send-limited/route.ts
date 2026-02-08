@@ -10,7 +10,8 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const limit = Math.min(Math.max(Number(body?.limit) || 2, 1), 10);
+    const limit = Math.min(Math.max(Number(body?.limit) || 2, 1), 200);
+    const scanLimit = Math.min(Math.max(Number(body?.scanLimit) || 500, 50), 2000);
     const force = Boolean(body?.force);
     const skipIfFulfilled = body?.skipIfFulfilled !== false;
     const skipIfEtaPassed = body?.skipIfEtaPassed !== false;
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
         stockxOrderNumber: true,
       },
       orderBy: { stockxPurchaseDate: "desc" },
-      take: 200,
+      take: scanLimit,
     });
 
     const candidates: string[] = [];
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       limit,
+      scanLimit,
       attempted: candidates.length,
       sent: results.filter((r: any) => r.sent).length,
       skipped: results.filter((r: any) => r.skipped).length,

@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const limit = Number(searchParams.get("limit") ?? "50");
     const offset = Number(searchParams.get("offset") ?? "0");
     const debug = searchParams.get("debug") === "1";
@@ -14,6 +15,34 @@ export async function POST(request: Request) {
     const raw = searchParams.get("raw") === "1";
     const supplierVariantId = searchParams.get("supplierVariantId")?.trim() || null;
     const supplierSku = searchParams.get("supplierSku")?.trim() || null;
+
+    if (all && !supplierVariantId && !supplierSku) {
+      const batchSize = 200;
+      let currentOffset = 0;
+      let totalProcessed = 0;
+      let lastBatchCount = 0;
+      const collected: any[] = [];
+      do {
+        const { results } = await runKickdbEnrich({
+          limit: batchSize,
+          offset: currentOffset,
+          debug,
+          force,
+          raw,
+        });
+        lastBatchCount = results.length;
+        totalProcessed += lastBatchCount;
+        if (debug) collected.push(...results);
+        currentOffset += batchSize;
+      } while (lastBatchCount === batchSize);
+
+      return NextResponse.json({
+        ok: true,
+        mode: "all",
+        processed: totalProcessed,
+        results: debug ? collected : [],
+      });
+    }
 
     const { results } = await runKickdbEnrich({
       limit,

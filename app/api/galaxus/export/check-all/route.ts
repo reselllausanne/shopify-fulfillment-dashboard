@@ -634,6 +634,7 @@ function validateSpecs(rows: ExportRow[]): Issue[] {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
@@ -642,24 +643,36 @@ export async function GET(request: Request) {
       ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
       : {};
 
-    const mappings = await prisma.variantMapping.findMany({
-      where: {
-        status: "MATCHED",
-        gtin: { not: null },
-        ...whereSupplier,
-      },
-      include: {
-        supplierVariant: true,
-        kickdbVariant: { include: { product: true } },
-      },
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-      skip: offset,
-    });
+    const masterRows: ExportRow[] = [];
+    const stockRows: ExportRow[] = [];
+    const specsRows: ExportRow[] = [];
+    const pageSize = all ? 500 : limit;
+    let currentOffset = all ? 0 : offset;
+    let lastBatch = 0;
 
-    const masterRows = buildMasterRows(mappings);
-    const stockRows = buildStockRows(mappings);
-    const specsRows = buildSpecsRows(mappings);
+    do {
+      const mappings = await prisma.variantMapping.findMany({
+        where: {
+          status: "MATCHED",
+          gtin: { not: null },
+          ...whereSupplier,
+        },
+        include: {
+          supplierVariant: true,
+          kickdbVariant: { include: { product: true } },
+        },
+        orderBy: { updatedAt: "desc" },
+        take: pageSize,
+        skip: currentOffset,
+      });
+      lastBatch = mappings.length;
+
+      masterRows.push(...buildMasterRows(mappings));
+      stockRows.push(...buildStockRows(mappings));
+      specsRows.push(...buildSpecsRows(mappings));
+
+      currentOffset += pageSize;
+    } while (all && lastBatch === pageSize);
 
     const masterIssues = validateMaster(masterRows);
     const stockIssues = validateStock(stockRows);

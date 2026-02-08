@@ -336,6 +336,9 @@ model SupplierVariant {
   price             Decimal  @db.Decimal(10, 2)
   stock             Int
   sizeRaw           String?
+  supplierBrand     String?
+  supplierProductName String?
+  weightGrams       Int?
   images            Json?
   leadTimeDays      Int?
   lastSyncAt        DateTime?
@@ -356,6 +359,7 @@ model KickDBProduct {
   name            String?
   brand           String?
   imageUrl        String?
+  traitsJson      Json?
   lastFetchedAt   DateTime?
   notFound        Boolean  @default(false)
   createdAt       DateTime @default(now())

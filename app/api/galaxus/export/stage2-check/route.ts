@@ -1,12 +1,25 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
-import { toCsv } from "@/galaxus/exports/csv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ExportRow = Record<string, string>;
+type Issue = {
+  row: number;
+  field:
+    | "ProviderKey"
+    | "Gtin"
+    | "Price"
+    | "Stock"
+    | "BrandName"
+    | "ProductTitle_de"
+    | "ProductCategory"
+    | "MainImageUrl"
+    | "ProductWeight";
+  message: string;
+  value?: string;
+};
 
 type KickDbPayload = {
   title?: string;
@@ -22,6 +35,14 @@ type KickDbPayload = {
   breadcrumbs?: Array<{ value?: string }>;
   gallery?: string[];
   image?: string;
+};
+
+type Stage2Report = {
+  ok: boolean;
+  total: number;
+  valid: number;
+  invalid: number;
+  issues: Issue[];
 };
 
 function sanitizeText(value?: string | null): string {
@@ -108,14 +129,6 @@ function buildProductTitle(
   return truncate(base, 100);
 }
 
-function buildVariantName(
-  payload: KickDbPayload | null,
-  fallbackSku?: string | null,
-  fallbackName?: string | null
-): string {
-  return buildProductTitle(payload, fallbackSku, fallbackName);
-}
-
 function buildProductCategory(payload: KickDbPayload | null): string {
   if (!payload) return "";
   const breadcrumb = payload.breadcrumbs
@@ -128,15 +141,6 @@ function buildProductCategory(payload: KickDbPayload | null): string {
   const secondary = sanitizeText(payload.secondary_category ?? "");
   if (category && secondary) return truncate(`${category} > ${secondary}`, 200);
   return truncate(category || sanitizeText(payload.product_type ?? ""), 200);
-}
-
-function cleanDescription(value?: string | null): string {
-  if (!value) return "";
-  let text = value.replace(/<[^>]*>/g, " ");
-  text = text.replace(/https?:\/\/\S+/g, "");
-  text = text.replace(/our team[^.]*\./gi, "");
-  text = sanitizeText(text);
-  return truncate(text, 4000);
 }
 
 function extractProductImages(
@@ -162,41 +166,44 @@ function extractProductImages(
     .filter((value) => isAbsoluteUrl(value));
 }
 
+function isAsciiPrintable(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 32 || code > 126) return false;
+  }
+  return true;
+}
+
+function isValidGtin(value: string): boolean {
+  if (!/^\d+$/.test(value)) return false;
+  if (![8, 12, 13, 14].includes(value.length)) return false;
+  const digits = value.split("").map((d) => Number(d));
+  const checkDigit = digits.pop() ?? 0;
+  let sum = 0;
+  let weight = 3;
+  for (let i = digits.length - 1; i >= 0; i -= 1) {
+    sum += digits[i] * weight;
+    weight = weight === 3 ? 1 : 3;
+  }
+  const calculated = (10 - (sum % 10)) % 10;
+  return calculated === checkDigit;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
-  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
+  const limit = Math.min(Number(searchParams.get("limit") ?? "200"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
-  const stage = searchParams.get("stage") ?? "1";
-  const includeWeight = stage === "2";
 
   const whereSupplier = supplier
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
     : {};
 
-  const headers = [
-    "ProviderKey",
-    "Gtin",
-    "ManufacturerKey",
-    "BrandName",
-    "ProductCategory",
-    "ProductTitle_de",
-    "VariantName",
-    "LongDescription_de",
-    "MainImageUrl",
-    "ImageUrl_1",
-    "ImageUrl_2",
-    "ImageUrl_3",
-    "ImageUrl_4",
-    "ImageUrl_5",
-    "ImageUrl_6",
-    "ImageUrl_7",
-    "ImageUrl_8",
-  ];
-  if (includeWeight) headers.push("ProductWeight");
+  const issues: Issue[] = [];
+  let valid = 0;
+  let total = 0;
 
-  const rows: ExportRow[] = [];
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -217,81 +224,142 @@ export async function GET(request: Request) {
       skip: currentOffset,
     });
     lastBatch = mappings.length;
+    total += mappings.length;
 
-    mappings.forEach((mapping) => {
-      const supplierVariant = mapping.supplierVariant;
-      const supplierVariantAny = supplierVariant as any;
-      const product = mapping.kickdbVariant?.product;
-      const payload = product?.name || product?.brand
-        ? ({
-            title: product?.name ?? undefined,
-            brand: product?.brand ?? undefined,
-            sku: product?.styleId ?? supplierVariant?.supplierSku ?? undefined,
-          } as KickDbPayload)
-        : null;
-      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-      const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
-      const fallbackName = supplierVariantAny?.supplierProductName ?? null;
-      const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? null, fallbackName);
-      const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? null, fallbackName);
+    mappings.forEach((mapping, index) => {
+      const row = currentOffset + index + 1;
+    const supplierVariant = mapping.supplierVariant;
+    const supplierVariantAny = supplierVariant as any;
+    const product = mapping.kickdbVariant?.product;
+    const payload = product?.name || product?.brand
+      ? ({
+          title: product?.name ?? undefined,
+          brand: product?.brand ?? undefined,
+          sku: product?.styleId ?? supplierVariant?.supplierSku ?? undefined,
+        } as KickDbPayload)
+      : null;
+    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+    const gtin = String(mapping.gtin ?? "");
+    const priceRaw = supplierVariant?.price ?? null;
+    const stockRaw = supplierVariant?.stock ?? null;
+    const price = priceRaw === null || priceRaw === undefined ? NaN : Number(priceRaw);
+    const stock = stockRaw === null || stockRaw === undefined ? NaN : Number(stockRaw);
+    const brand = normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariantAny?.supplierBrand ?? "");
+    const title = buildProductTitle(
+      payload,
+      supplierVariant?.supplierSku ?? null,
+      supplierVariantAny?.supplierProductName ?? null
+    );
+    const category = buildProductCategory(payload) || "Sneakers";
+    const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
+    const weightRaw = supplierVariantAny?.weightGrams ?? 1000;
+    const weight = weightRaw === null || weightRaw === undefined ? NaN : Number(weightRaw);
 
-      const manufacturerBase = sanitizeText(payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? "");
-      const manufacturerKey = truncate(
-        manufacturerBase ? `${manufacturerBase}-${mapping.gtin ?? ""}` : mapping.gtin ?? "",
-        50
-      );
+    let rowValid = true;
 
-      const row: ExportRow = {
-        ProviderKey: providerKey,
-        Gtin: mapping.gtin ?? "",
-        ManufacturerKey: manufacturerKey,
-        BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariantAny?.supplierBrand ?? ""),
-        ProductCategory: buildProductCategory(payload) || "Sneakers",
-        ProductTitle_de: title,
-        VariantName: variantName,
-        LongDescription_de: cleanDescription(payload?.description ?? ""),
-        MainImageUrl: images[0] ?? "",
-        ImageUrl_1: images[1] ?? "",
-        ImageUrl_2: images[2] ?? "",
-        ImageUrl_3: images[3] ?? "",
-        ImageUrl_4: images[4] ?? "",
-        ImageUrl_5: images[5] ?? "",
-        ImageUrl_6: images[6] ?? "",
-        ImageUrl_7: images[7] ?? "",
-        ImageUrl_8: images[8] ?? "",
-      };
-      if (includeWeight) {
-        const weightValue = supplierVariantAny?.weightGrams ?? 1000;
-        row.ProductWeight = Number.isFinite(weightValue) ? String(weightValue) : "1000";
-      }
-      rows.push(row);
+    if (!providerKey || providerKey.length > 100 || !isAsciiPrintable(providerKey)) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "ProviderKey",
+        message: "ProviderKey is missing, too long, or contains non-ASCII characters.",
+        value: providerKey,
+      });
+    }
+
+    if (!gtin || !isValidGtin(gtin)) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "Gtin",
+        message: "GTIN is missing or invalid.",
+        value: gtin,
+      });
+    }
+
+    if (!Number.isFinite(price) || price <= 0) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "Price",
+        message: "Price is missing or not greater than zero.",
+        value: priceRaw === null || priceRaw === undefined ? "" : String(priceRaw),
+      });
+    }
+
+    if (!Number.isFinite(stock) || stock < 0 || !Number.isInteger(stock)) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "Stock",
+        message: "Stock is missing or not a non-negative integer.",
+        value: stockRaw === null || stockRaw === undefined ? "" : String(stockRaw),
+      });
+    }
+
+    if (!brand) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "BrandName",
+        message: "Brand name is missing.",
+        value: brand,
+      });
+    }
+
+    if (!title) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "ProductTitle_de",
+        message: "Product title is missing.",
+        value: title,
+      });
+    }
+
+    if (!category) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "ProductCategory",
+        message: "Product category is missing.",
+        value: category,
+      });
+    }
+
+    if (!images[0]) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "MainImageUrl",
+        message: "Main image URL is missing.",
+        value: images[0] ?? "",
+      });
+    }
+
+    if (!Number.isFinite(weight) || weight <= 0) {
+      rowValid = false;
+      issues.push({
+        row,
+        field: "ProductWeight",
+        message: "Product weight (grams) is missing or not greater than zero.",
+        value: weightRaw === null || weightRaw === undefined ? "" : String(weightRaw),
+      });
+    }
+
+    if (rowValid) valid += 1;
     });
 
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
-  const uniqueRows: ExportRow[] = [];
-  const seenProviderKeys = new Set<string>();
-  const seenGtins = new Set<string>();
-  for (const row of rows) {
-    const providerKey = row.ProviderKey;
-    const gtin = row.Gtin;
-    if (providerKey && seenProviderKeys.has(providerKey)) continue;
-    if (gtin && seenGtins.has(gtin)) continue;
-    if (providerKey) seenProviderKeys.add(providerKey);
-    if (gtin) seenGtins.add(gtin);
-    uniqueRows.push(row);
-  }
+  const report: Stage2Report = {
+    ok: issues.length === 0,
+    total,
+    valid,
+    invalid: total - valid,
+    issues: issues.slice(0, 200),
+  };
 
-  const csv = toCsv(headers, uniqueRows);
-  const filename = `galaxus-master-${supplier ?? "all"}-${Date.now()}.csv`;
-
-  return new NextResponse(csv, {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Total-Rows": uniqueRows.length.toString(),
-      "X-Offset": offset.toString(),
-    },
-  });
+  return NextResponse.json(report);
 }

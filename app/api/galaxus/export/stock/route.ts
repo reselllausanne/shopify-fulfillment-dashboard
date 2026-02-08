@@ -17,6 +17,7 @@ function decimalToString(value: unknown): string {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+  const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
@@ -25,20 +26,6 @@ export async function GET(request: Request) {
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
     : {};
 
-  const mappings = await prisma.variantMapping.findMany({
-    where: {
-      status: "MATCHED",
-      gtin: { not: null },
-      ...whereSupplier,
-    },
-    include: {
-      supplierVariant: true,
-    },
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-    skip: offset,
-  });
-
   const headers = [
     "ProviderKey",
     "PurchasePriceExclVat",
@@ -46,19 +33,43 @@ export async function GET(request: Request) {
     "QuantityOnStock",
   ];
 
-  const rows: ExportRow[] = mappings.map((mapping) => {
-    const supplierVariant = mapping.supplierVariant;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-    const price = decimalToString(supplierVariant?.price ?? "");
-    const stock = supplierVariant?.stock ?? 0;
+  const rows: ExportRow[] = [];
+  const pageSize = all ? 500 : limit;
+  let currentOffset = all ? 0 : offset;
+  let lastBatch = 0;
 
-    return {
-      ProviderKey: providerKey,
-      PurchasePriceExclVat: price,
-      PurchasePriceExclVatAndFee: price,
-      QuantityOnStock: stock.toString(),
-    };
-  });
+  do {
+    const mappings = await prisma.variantMapping.findMany({
+      where: {
+        status: "MATCHED",
+        gtin: { not: null },
+        ...whereSupplier,
+      },
+      include: {
+        supplierVariant: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      take: pageSize,
+      skip: currentOffset,
+    });
+    lastBatch = mappings.length;
+
+    mappings.forEach((mapping) => {
+      const supplierVariant = mapping.supplierVariant;
+      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+      const price = decimalToString(supplierVariant?.price ?? "");
+      const stock = supplierVariant?.stock ?? 0;
+
+      rows.push({
+        ProviderKey: providerKey,
+        PurchasePriceExclVat: price,
+        PurchasePriceExclVatAndFee: price,
+        QuantityOnStock: stock.toString(),
+      });
+    });
+
+    currentOffset += pageSize;
+  } while (all && lastBatch === pageSize);
 
   const csv = toCsv(headers, rows);
   const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;

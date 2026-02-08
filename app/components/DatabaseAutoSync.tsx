@@ -68,7 +68,13 @@ export default function DatabaseAutoSync({
     }
   };
 
-  const sendLimitedEmails = async (limit: number, onlyToday = false, sinceDate?: string) => {
+  const sendLimitedEmails = async (
+    limit: number,
+    onlyToday = false,
+    sinceDate?: string,
+    force = false,
+    scanLimit?: number
+  ) => {
     setBulkLoading(true);
     try {
       const res = await fetch("/api/notifications/stockx/send-limited", {
@@ -76,11 +82,12 @@ export default function DatabaseAutoSync({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           limit,
-          force: false,
+          force,
           skipIfFulfilled: true,
           skipIfEtaPassed: true,
           onlyToday,
           sinceDate,
+          scanLimit,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -119,11 +126,21 @@ export default function DatabaseAutoSync({
             {bulkLoading ? "Sending..." : "📧 Send today (2)"}
           </button>
           <button
-            onClick={() => sendLimitedEmails(10, false, "2026-02-01")}
+            onClick={() => sendLimitedEmails(200, false, "2026-02-01", false, 2000)}
             disabled={bulkLoading}
             className="px-3 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 disabled:bg-gray-100 text-xs font-semibold"
           >
-            Send since Feb (10)
+            Send since Feb (200)
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm("Force resend all milestones since Feb?")) return;
+              sendLimitedEmails(200, false, "2026-02-01", true, 2000);
+            }}
+            disabled={bulkLoading}
+            className="px-3 py-2 bg-amber-200 text-amber-900 rounded-md hover:bg-amber-300 disabled:bg-gray-100 text-xs font-semibold"
+          >
+            Force since Feb (200)
           </button>
           <button
             onClick={() => sendLimitedEmails(1)}

@@ -26,6 +26,8 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     const updateData: Record<string, unknown> = {
       lastSyncAt: new Date(),
     };
+    if (item.sourcePayload.brand_name) updateData.supplierBrand = item.sourcePayload.brand_name;
+    if (item.sourcePayload.product_name) updateData.supplierProductName = item.sourcePayload.product_name;
     if (item.price !== null) updateData.price = item.price;
     if (item.stock !== null) updateData.stock = item.stock;
 
@@ -48,6 +50,8 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
           price: item.price ?? 0,
           stock: item.stock ?? 0,
           sizeRaw: item.sizeRaw,
+          supplierBrand: item.sourcePayload.brand_name ?? null,
+          supplierProductName: item.sourcePayload.product_name ?? null,
           images: item.images.length ? item.images : undefined,
           leadTimeDays: item.leadTimeDays,
           lastSyncAt: new Date(),
