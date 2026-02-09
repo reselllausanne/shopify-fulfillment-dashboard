@@ -134,8 +134,7 @@ export function renderInvoiceHtml(data: InvoiceData): string {
 
         <div class="footer">
           <div class="mb8">
-            <strong>Payment reference:</strong> ${escapeHtml(data.invoiceNumber)}
-            ${data.orderNumber ? ` | <strong>PO:</strong> ${escapeHtml(data.orderNumber)}` : ""}
+            ${data.orderNumber ? `<strong>PO:</strong> ${escapeHtml(data.orderNumber)}` : ""}
           </div>
         </div>
       </body>

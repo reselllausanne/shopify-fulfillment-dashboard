@@ -42,6 +42,7 @@ dev.db-journal
 # Galaxus documents (local dev storage)
 galaxus-docs/
 swiss-post-labels/*.pdf
+local-sftp/
 
 # IDE
 .vscode/

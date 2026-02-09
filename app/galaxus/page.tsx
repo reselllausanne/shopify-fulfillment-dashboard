@@ -375,17 +375,14 @@ export default function GalaxusDashboardPage() {
     setError(null);
     setOpsLog(null);
     try {
-      const response = await fetch("/api/galaxus/seed", {
+      const response = await fetch("/api/galaxus/edi/mock-ordp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lineCount: seedLineCount }),
       });
       const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Seed failed");
+      if (!data.ok) throw new Error(data.error ?? "Mock ORDP failed");
       setOpsLog(JSON.stringify(data, null, 2));
-      if (data.orderId) {
-        await loadOrderDetail(data.orderId);
-      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -603,7 +600,7 @@ export default function GalaxusDashboardPage() {
             onClick={pollEdiIn}
             disabled={busy !== null}
           >
-            {busy === "edi-in" ? "Polling…" : "Poll EDI IN (ORDP)"}
+              {busy === "edi-in" ? "Polling…" : "Poll EDI IN (Orders)"}
           </button>
           <button
             className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
@@ -633,7 +630,7 @@ export default function GalaxusDashboardPage() {
               onClick={seedOrder}
               disabled={busy !== null}
             >
-              {busy === "seed" ? "Seeding…" : "Create Test Order"}
+              {busy === "seed" ? "Creating…" : "Create Test ORDP (SFTP)"}
             </button>
             <button
               className="px-3 py-2 rounded bg-red-600 text-white disabled:opacity-50"

@@ -1,0 +1,9 @@
+services:
+  sftp:
+    image: atmoz/sftp:latest
+    ports:
+      - "2222:22"
+    volumes:
+      - ./local-sftp:/home/galaxus
+    command: galaxus:galaxus:1001:1001:dg2partner,partner2dg
+    restart: unless-stopped

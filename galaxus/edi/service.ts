@@ -39,6 +39,11 @@ const parser = new XMLParser({
   removeNSPrefix: true,
 });
 
+function clampXml(xml: string, max = 200_000): string {
+  if (xml.length <= max) return xml;
+  return xml.slice(0, max);
+}
+
 export async function pollIncomingEdi(): Promise<IncomingResult[]> {
   assertSftpConfig();
   const results: IncomingResult[] = [];
@@ -62,8 +67,10 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           continue;
         }
 
+        let payloadJson: any = { filename: file.name };
         try {
           const xml = await downloadRemoteFile(client, file.path);
+          payloadJson = { filename: file.name, rawXml: clampXml(xml), size: xml.length };
           const docType = detectDocType(file.name);
           if (!docType) {
             await upsertEdiFile({
@@ -72,7 +79,7 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
               docType: "ORDP",
               status: "error",
               message: "Unknown doc type",
-              payloadJson: { filename: file.name },
+              payloadJson,
             });
             results.push({ file: file.name, status: "error", message: "Unknown doc type" });
             continue;
@@ -81,6 +88,16 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           const orderIdFromName = extractOrderId(file.name);
           if (docType === "ORDP") {
             const orderInput = parseOrderFromXml(xml, orderIdFromName);
+            const missingGtins = orderInput.lines.filter(
+              (line) => !line.gtin || String(line.gtin).trim().length === 0
+            );
+            if (missingGtins.length > 0) {
+              const missingLines = missingGtins
+                .map((line) => line.lineNumber ?? "?")
+                .slice(0, 20)
+                .join(", ");
+              throw new Error(`Missing GTIN on ORDP lines: ${missingLines}`);
+            }
             const [ingestResult] = await ingestGalaxusOrders([orderInput]);
             if (ingestResult) {
               const supplierResult = await placeSupplierOrderForGalaxusOrder(ingestResult.orderId);
@@ -111,7 +128,7 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
             docType,
             status: "processed",
             orderRef: orderIdFromName,
-            payloadJson: { filename: file.name },
+            payloadJson,
           });
 
           await client.delete(file.path);
@@ -123,7 +140,7 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
             docType: "ORDP",
             status: "error",
             message: error?.message,
-            payloadJson: { filename: file.name },
+            payloadJson,
           });
           results.push({ file: file.name, status: "error", message: error?.message });
         }
