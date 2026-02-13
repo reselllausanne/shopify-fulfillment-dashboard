@@ -263,12 +263,27 @@ function sizeMatch(size1: string | null, size2: string | null): boolean {
   
   // Both have sizes: normalize and compare
   const normalize = (size: string) => {
-    return size
-      .replace(/^(EU|US|UK|ASIA)\s*(M|W)?\s*/i, "") // Remove EU/US/UK/ASIA + optional M/W
-      .replace(/\s/g, "") // Remove spaces
-      .replace(/ONE\s*SIZE/i, "OS") // Normalize "One Size" to "OS"
-      .replace(/O\/S/i, "OS") // Normalize "O/S" to "OS"
-      .toUpperCase();
+    let normalized = size.trim().toUpperCase();
+
+    // Normalize "One Size" variants early
+    normalized = normalized.replace(/ONE\s*SIZE/g, "OS").replace(/O\/S/g, "OS");
+
+    // Collapse whitespace for predictable parsing
+    normalized = normalized.replace(/\s+/g, " ");
+
+    // Remove regional prefix only (keep size info that follows)
+    // Examples:
+    // - "US M" -> "M"
+    // - "EU 42" -> "42"
+    normalized = normalized.replace(/^(EU|US|UK|ASIA)\s+/i, "");
+
+    // If gender marker precedes numeric size, drop it: "M 9" -> "9", "W10" -> "10"
+    normalized = normalized.replace(/^(M|W)\s*(?=\d)/i, "");
+
+    // Remove spaces for final comparison
+    normalized = normalized.replace(/\s/g, "");
+
+    return normalized;
   };
   
   const s1 = normalize(cleanSize1);
