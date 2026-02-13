@@ -1,9 +1,14 @@
 import "server-only";
 
 import type { GalaxusOrder, GalaxusOrderLine, SupplierVariant } from "@prisma/client";
+import type { EdiDocType } from "@/galaxus/edi/filenames";
 import { prisma } from "@/app/lib/prisma";
 import { createGoldenSupplierClient } from "./client";
-import type { SupplierDropshipOrderItem, SupplierDropshipOrderRequest } from "./types";
+import type {
+  SupplierDropshipOrderDetails,
+  SupplierDropshipOrderItem,
+  SupplierDropshipOrderRequest,
+} from "./types";
 import {
   GALAXUS_SUPPLIER_AUTO_ORDER,
   GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS,
@@ -17,6 +22,17 @@ type SupplierOrderPlacementResult = {
   supplierOrderId?: string;
   ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS";
   message?: string;
+};
+
+type SupplierGateResult = {
+  ok: boolean;
+  reason?: string;
+  statusByOrderRef: Array<{
+    supplierOrderRef: string;
+    supplierKey: string;
+    status: string;
+  }>;
+  allowedTypes: Set<EdiDocType>;
 };
 
 type ResolvedLine = {
@@ -56,6 +72,13 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
 
   try {
     const resolvedLines = await resolveLines(order.lines);
+    const unsupported = resolvedLines.find((line) => line.supplierKey !== "golden");
+    if (unsupported) {
+      return {
+        status: "error",
+        message: `Unsupported supplier ${unsupported.supplierKey} for order ${order.galaxusOrderId}`,
+      };
+    }
     const deliveryAddress = buildDeliveryAddress(order);
     const batches = splitBySupplierAndMaxPairs(resolvedLines, 12);
     const { lineUpdates, ordrMode } = buildArrivalUpdates(resolvedLines);
@@ -130,6 +153,96 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
   }
 }
 
+export async function getSupplierGateForOrder(orderId: string): Promise<SupplierGateResult> {
+  const order = await prisma.galaxusOrder.findUnique({
+    where: { id: orderId },
+    include: { lines: true, supplierOrders: true },
+  });
+  if (!order) {
+    return {
+      ok: false,
+      reason: `Order not found: ${orderId}`,
+      statusByOrderRef: [],
+      allowedTypes: new Set(),
+    };
+  }
+
+  const supplierKeys = await resolveSupplierKeysForLines(order.lines);
+  const nonGolden = supplierKeys.filter((key) => key !== "golden");
+  if (nonGolden.length > 0) {
+    return {
+      ok: false,
+      reason: `Order has unsupported suppliers: ${nonGolden.join(", ")}`,
+      statusByOrderRef: [],
+      allowedTypes: new Set(),
+    };
+  }
+
+  if (order.supplierOrders.length === 0) {
+    return {
+      ok: false,
+      reason: "No supplier order created yet",
+      statusByOrderRef: [],
+      allowedTypes: new Set(),
+    };
+  }
+
+  const statusByOrderRef: SupplierGateResult["statusByOrderRef"] = [];
+  const statuses: string[] = [];
+
+  for (const supplierOrder of order.supplierOrders) {
+    const payload = (supplierOrder.payloadJson ?? {}) as any;
+    const supplierKey = payload.supplierKey ?? "golden";
+    const client = resolveSupplierClient(supplierKey);
+    if (!client.getDropshipOrderDetails) {
+      return {
+        ok: false,
+        reason: `Supplier client does not support status checks: ${supplierKey}`,
+        statusByOrderRef,
+        allowedTypes: new Set(),
+      };
+    }
+
+    const details: SupplierDropshipOrderDetails = await client.getDropshipOrderDetails(
+      supplierOrder.supplierOrderRef
+    );
+    statuses.push(details.status);
+    statusByOrderRef.push({
+      supplierOrderRef: supplierOrder.supplierOrderRef,
+      supplierKey,
+      status: details.status,
+    });
+
+    await prisma.supplierOrder.update({
+      where: { id: supplierOrder.id },
+      data: {
+        payloadJson: {
+          ...payload,
+          supplierStatus: details.status,
+          dropshipPackageId: details.dropshipPackageId ?? null,
+          trackingNumbers: details.trackingNumbers ?? [],
+          lastStatusAt: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
+  const all = (candidates: string[]) => statuses.every((status) => candidates.includes(status));
+  const allowedTypes = new Set<EdiDocType>();
+  if (all(["TO_SHIP", "WAITING_FOR_INVOICE", "ENDED"])) {
+    allowedTypes.add("ORDR");
+  }
+  if (all(["TO_SHIP", "ENDED"])) {
+    allowedTypes.add("DELR");
+  }
+  if (all(["WAITING_FOR_INVOICE", "ENDED"])) {
+    allowedTypes.add("INVO");
+    allowedTypes.add("EXPINV");
+  }
+
+  return { ok: true, statusByOrderRef, allowedTypes };
+}
+
 async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> {
   const resolved: ResolvedLine[] = [];
   for (const line of lines) {
@@ -177,6 +290,40 @@ function resolveSupplierKey(supplierVariantId: string | null | undefined): strin
   if (!supplierVariantId) return "unknown";
   const [key] = supplierVariantId.split(":");
   return key || "unknown";
+}
+
+async function resolveSupplierKeysForLines(lines: GalaxusOrderLine[]) {
+  const keys = new Set<string>();
+  for (const line of lines) {
+    if (line.supplierVariantId) {
+      keys.add(resolveSupplierKey(line.supplierVariantId));
+      continue;
+    }
+    const providerKey = line.providerKey ?? null;
+    if (providerKey) {
+      const mapping = await prisma.variantMapping.findFirst({
+        where: { providerKey },
+        select: { supplierVariant: { select: { supplierVariantId: true } } },
+      });
+      if (mapping?.supplierVariant?.supplierVariantId) {
+        keys.add(resolveSupplierKey(mapping.supplierVariant.supplierVariantId));
+        continue;
+      }
+    }
+    const gtin = line.gtin ?? null;
+    if (gtin) {
+      const mapping = await prisma.variantMapping.findFirst({
+        where: { gtin },
+        select: { supplierVariant: { select: { supplierVariantId: true } } },
+      });
+      if (mapping?.supplierVariant?.supplierVariantId) {
+        keys.add(resolveSupplierKey(mapping.supplierVariant.supplierVariantId));
+        continue;
+      }
+    }
+    keys.add("unknown");
+  }
+  return Array.from(keys);
 }
 
 function splitBySupplierAndMaxPairs(lines: ResolvedLine[], maxPairs: number): SupplierBatch[] {

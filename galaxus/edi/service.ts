@@ -16,7 +16,7 @@ import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
 import { upsertEdiFile } from "./ediFiles";
 import { GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
-import { placeSupplierOrderForGalaxusOrder } from "../supplier/orders";
+import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
 type IncomingResult = {
@@ -112,11 +112,14 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
             if (ingestResult) {
               const supplierResult = await placeSupplierOrderForGalaxusOrder(ingestResult.orderId);
               if (supplierResult.status === "created" && GALAXUS_SUPPLIER_AUTO_SEND_ORDR) {
-                await sendOutgoingEdi({
-                  orderId: ingestResult.orderId,
-                  types: ["ORDR"],
-                  ordrMode: supplierResult.ordrMode,
-                });
+                const gate = await getSupplierGateForOrder(ingestResult.orderId);
+                if (gate.ok && gate.allowedTypes.has("ORDR")) {
+                  await sendOutgoingEdi({
+                    orderId: ingestResult.orderId,
+                    types: ["ORDR"],
+                    ordrMode: supplierResult.ordrMode,
+                  });
+                }
               }
             }
           } else if (docType === "CANP") {
@@ -180,6 +183,8 @@ export async function sendOutgoingEdi(options: {
   const shipment = order.shipments[0] ?? null;
   const results: OutgoingResult[] = [];
 
+  const gate = await getSupplierGateForOrder(order.id);
+  const lockAll = !gate.ok && (gate.reason ?? "").toLowerCase().includes("unsupported supplier");
   await withSftp(
     {
       host: GALAXUS_SFTP_HOST,
@@ -190,6 +195,16 @@ export async function sendOutgoingEdi(options: {
     async (client) => {
       for (const type of options.types) {
         try {
+          const gatedTypes: EdiDocType[] = ["ORDR", "DELR", "INVO", "EXPINV"];
+          if (lockAll || (gatedTypes.includes(type) && (!gate.ok || !gate.allowedTypes.has(type)))) {
+            results.push({
+              docType: type,
+              filename: "",
+              status: "skipped",
+              message: gate.reason ?? "Supplier order not ready",
+            });
+            continue;
+          }
           if (type === "DELR") {
             const delrResults = await uploadDelrForOrder(order.id, { force: options.forceDelr });
             results.push(

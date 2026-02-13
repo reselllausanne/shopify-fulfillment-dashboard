@@ -11,6 +11,7 @@ import type {
   SupplierClient,
   SupplierDropshipOrderRequest,
   SupplierDropshipOrderResponse,
+  SupplierDropshipOrderDetails,
 } from "./types";
 
 const GOLDEN_SUPPLIER_KEY = "golden";
@@ -97,6 +98,17 @@ type GoldenDropshipCreateResponse = {
   dropship_package_id?: number | null;
 };
 
+type GoldenDropshipDetailsResponse = {
+  order_id: number;
+  status: string;
+  total_amount?: number | null;
+  currency?: string | null;
+  created_at?: string | null;
+  dropship_package_id?: number | null;
+  tracking_numbers?: string[];
+  items?: unknown[];
+};
+
 async function createDropshipOrder(
   auth: SupplierAuthConfig,
   request: SupplierDropshipOrderRequest
@@ -132,6 +144,27 @@ async function createDropshipOrder(
   };
 }
 
+async function getDropshipOrderDetails(
+  auth: SupplierAuthConfig,
+  orderId: string
+): Promise<SupplierDropshipOrderDetails> {
+  const url = `${auth.baseUrl}/orders-dropship/order-details/${orderId}/`;
+  const response = await fetchJson<GoldenDropshipDetailsResponse>(url, auth);
+  return {
+    orderId: String(response.order_id),
+    status: response.status,
+    totalAmount: response.total_amount ?? null,
+    currency: response.currency ?? null,
+    createdAt: response.created_at ?? null,
+    dropshipPackageId:
+      response.dropship_package_id !== null && response.dropship_package_id !== undefined
+        ? String(response.dropship_package_id)
+        : null,
+    trackingNumbers: response.tracking_numbers ?? [],
+    raw: response,
+  };
+}
+
 export function createGoldenSupplierClient(): SupplierClient {
   const auth = buildAuthConfig();
   return {
@@ -146,6 +179,9 @@ export function createGoldenSupplierClient(): SupplierClient {
     },
     async createDropshipOrder(request) {
       return createDropshipOrder(auth, request);
+    },
+    async getDropshipOrderDetails(orderId: string) {
+      return getDropshipOrderDetails(auth, orderId);
     },
   };
 }

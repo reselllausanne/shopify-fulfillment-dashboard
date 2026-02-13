@@ -39,6 +39,7 @@ export type SupplierClient = {
   createDropshipOrder?: (
     request: SupplierDropshipOrderRequest
   ) => Promise<SupplierDropshipOrderResponse>;
+  getDropshipOrderDetails?: (orderId: string) => Promise<SupplierDropshipOrderDetails>;
 };
 
 export type SupplierDropshipOrderAddress = {
@@ -68,5 +69,22 @@ export type SupplierDropshipOrderResponse = {
   orderId: string;
   totalPrice?: number | null;
   dropshipPackageId?: string | null;
+  raw?: unknown;
+};
+
+export type SupplierDropshipOrderDetails = {
+  orderId: string;
+  status:
+    | "UNCONFIRMED"
+    | "TO_SHIP"
+    | "ENDED"
+    | "CANCELED"
+    | "WAITING_FOR_INVOICE"
+    | string;
+  totalAmount?: number | null;
+  currency?: string | null;
+  createdAt?: string | null;
+  dropshipPackageId?: string | null;
+  trackingNumbers?: string[];
   raw?: unknown;
 };
