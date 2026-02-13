@@ -200,6 +200,33 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const syncAllData = async () => {
+    setBusy("sync-all");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
+      const syncData = await syncResponse.json();
+      if (!syncResponse.ok || !syncData.ok) {
+        throw new Error(syncData.error ?? "Supplier sync failed");
+      }
+
+      const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
+      const enrichData = await enrichResponse.json();
+      if (!enrichResponse.ok || !enrichData.ok) {
+        throw new Error(enrichData.error ?? "KickDB enrich failed");
+      }
+
+      setOpsLog(JSON.stringify({ supplier: syncData, kickdb: enrichData }, null, 2));
+      await loadDb(0);
+      await loadMappings(0);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const clearSupplierData = async (includeKickdb: boolean) => {
     const confirmed = (window.prompt('This will DELETE supplier data. Type "YES" to confirm.') ?? "").trim().toUpperCase();
     if (confirmed !== "YES") {
@@ -989,6 +1016,13 @@ export default function GalaxusDashboardPage() {
           disabled={busy !== null}
         >
           {busy === "sync" ? "Syncing…" : "Sync Catalog + Stock"}
+        </button>
+        <button
+          className="px-3 py-2 rounded bg-blue-800 text-white disabled:opacity-50"
+          onClick={syncAllData}
+          disabled={busy !== null}
+        >
+          {busy === "sync-all" ? "Syncing all…" : "Sync All Data"}
         </button>
         <input
           className="px-2 py-2 border rounded text-sm w-28"
