@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AuthenticationCard from "@/app/components/AuthenticationCard";
-import ActionBar from "@/app/components/ActionBar";
 import QueryControls from "@/app/components/QueryControls";
 import FetchActions from "@/app/components/FetchActions";
 import DebugPanel from "@/app/components/DebugPanel";
@@ -14,7 +13,7 @@ import DatabaseAutoSync from "@/app/components/DatabaseAutoSync";
 import OrderMatchingSection from "@/app/components/OrderMatchingSection";
 import { type ShopifyLineItem } from "./utils/matching";
 import { DEFAULT_QUERY, DEFAULT_VARIABLES } from "@/app/lib/constants";
-import type { PageInfo, PricingResult, OrderNode } from "@/app/types";
+import type { OrderNode } from "@/app/types";
 import { toNumber } from "@/app/utils/format";
 import { useSupplierOrders } from "@/app/hooks/useSupplierOrders";
 import { exportOrdersToCSV } from "@/app/utils/csv";

@@ -5,6 +5,8 @@ import { jwtVerify } from "jose";
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
+  "/api/galaxus/feeds",
+  "/api/galaxus/export",
   "/_next",
   "/static",
   "/favicon.ico",

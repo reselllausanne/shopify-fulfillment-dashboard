@@ -4,6 +4,12 @@ export const GALAXUS_SFTP_USER = process.env.GALAXUS_SFTP_USER ?? "";
 export const GALAXUS_SFTP_PASSWORD = process.env.GALAXUS_SFTP_PASSWORD ?? "";
 export const GALAXUS_SFTP_IN_DIR = process.env.GALAXUS_SFTP_IN_DIR ?? "/dg2partner";
 export const GALAXUS_SFTP_OUT_DIR = process.env.GALAXUS_SFTP_OUT_DIR ?? "/partner2dg";
+export const GALAXUS_SFTP_FEEDS_DIR =
+  process.env.GALAXUS_SFTP_FEEDS_DIR ?? GALAXUS_SFTP_OUT_DIR;
+export const GALAXUS_PROVIDER_NAME = process.env.GALAXUS_PROVIDER_NAME ?? "digitecgalaxus";
+export const GALAXUS_PRICE_MODEL = process.env.GALAXUS_PRICE_MODEL ?? "retail";
+export const GALAXUS_PRICE_CURRENCY = process.env.GALAXUS_PRICE_CURRENCY ?? "CHF";
+export const GALAXUS_ASSORTMENT_FILE = process.env.GALAXUS_ASSORTMENT_FILE ?? "price";
 export const GALAXUS_SUPPLIER_ID = process.env.GALAXUS_SUPPLIER_ID ?? "";
 
 export function assertSftpConfig() {

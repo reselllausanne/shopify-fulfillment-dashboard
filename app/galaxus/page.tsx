@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type PreviewItem = {
   supplierVariantId: string;
@@ -47,6 +47,12 @@ type MappingRow = {
   kickdbImageUrl: string | null;
   kickdbLastFetchedAt: string | null;
   kickdbNotFound: boolean | null;
+  kickdbDescription?: string | null;
+  kickdbGender?: string | null;
+  kickdbColorway?: string | null;
+  kickdbCountryOfManufacture?: string | null;
+  kickdbReleaseDate?: string | null;
+  kickdbRetailPrice?: number | string | null;
 };
 
 type EnrichDebugInfo = {
@@ -114,6 +120,7 @@ type Shipment = {
   delrStatus?: string | null;
   delrFileName?: string | null;
   labelPdfUrl?: string | null;
+  deliveryNotePdfUrl?: string | null;
   labelZpl?: string | null;
   shippedAt?: string | null;
   createdAt: string;
@@ -158,6 +165,20 @@ export default function GalaxusDashboardPage() {
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
   const [syncMax, setSyncMax] = useState<number>(1000);
   const [syncAll, setSyncAll] = useState<boolean>(false);
+  const [sftpConfig, setSftpConfig] = useState<{
+    host?: string;
+    outDir?: string;
+    feedsDir?: string;
+    isRealGalaxus?: boolean;
+    warning?: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/galaxus/edi/config")
+      .then((response) => response.json())
+      .then((data) => setSftpConfig(data))
+      .catch(() => setSftpConfig(null));
+  }, []);
 
   const syncSupplier = async () => {
     setBusy("sync");
@@ -443,6 +464,10 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const downloadFeed = (type: "product" | "price" | "stock") => {
+    window.open(`/api/galaxus/feeds/preview?type=${type}&download=1`, "_blank", "noopener,noreferrer");
+  };
+
   const sendPendingEdiOut = async () => {
     setBusy("edi-out");
     setError(null);
@@ -505,6 +530,31 @@ export default function GalaxusDashboardPage() {
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "ORDR failed");
       setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const placeSupplierOrder = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    setBusy("supplier-order");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/supplier/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: selectedOrderId }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Supplier order failed");
+      setOpsLog(JSON.stringify(data.result ?? data, null, 2));
       await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);
@@ -588,6 +638,25 @@ export default function GalaxusDashboardPage() {
 
       {error && <div className="text-sm text-red-600">{error}</div>}
 
+      {sftpConfig && (
+        <div
+          className={`rounded p-3 text-sm ${
+            sftpConfig.warning ? "bg-amber-100 border border-amber-300" : "bg-gray-50 border"
+          }`}
+        >
+          <strong>SFTP Target (Feeds):</strong> {sftpConfig.host ?? "—"}:{sftpConfig.feedsDir ?? sftpConfig.outDir ?? "—"}
+          {sftpConfig.feedsDir && sftpConfig.outDir && sftpConfig.feedsDir !== sftpConfig.outDir && (
+            <span className="ml-2 text-gray-600">EDI OUT: {sftpConfig.outDir}</span>
+          )}
+          {sftpConfig.isRealGalaxus && (
+            <span className="ml-2 text-green-700">✓ Real Galaxus</span>
+          )}
+          {sftpConfig.warning && (
+            <div className="mt-1 text-amber-800 font-medium">{sftpConfig.warning}</div>
+          )}
+        </div>
+      )}
+
       <div className="space-y-4 border rounded p-4 bg-white">
         <div>
           <h2 className="text-lg font-semibold">Galaxus Ops Dashboard</h2>
@@ -608,6 +677,27 @@ export default function GalaxusDashboardPage() {
             disabled={busy !== null}
           >
             {busy === "feeds" ? "Uploading…" : "Upload Feeds to FTP"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+            onClick={() => downloadFeed("product")}
+            disabled={busy !== null}
+          >
+            Download ProductData
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+            onClick={() => downloadFeed("price")}
+            disabled={busy !== null}
+          >
+            Download PriceData
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+            onClick={() => downloadFeed("stock")}
+            disabled={busy !== null}
+          >
+            Download StockData
           </button>
           <button
             className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
@@ -748,6 +838,13 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "pack" ? "Packing…" : "Pack + Create Shipments"}
               </button>
+          <button
+            className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+            onClick={placeSupplierOrder}
+            disabled={busy !== null}
+          >
+            {busy === "supplier-order" ? "Ordering…" : "Place Supplier Order (12 pairs max)"}
+          </button>
               <button
                 className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
                 onClick={sendOrdr}
@@ -828,6 +925,16 @@ export default function GalaxusDashboardPage() {
                           rel="noreferrer"
                         >
                           Label PDF
+                        </a>
+                      )}
+                      {shipment.deliveryNotePdfUrl && (
+                        <a
+                          className="px-2 py-1 rounded bg-gray-100"
+                          href={shipment.deliveryNotePdfUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Delivery Note PDF
                         </a>
                       )}
                     </div>
@@ -955,46 +1062,6 @@ export default function GalaxusDashboardPage() {
         >
           {busy === "export-check" ? "Exporting…" : "Export All + Run Checks"}
         </button>
-        <button
-          className="px-3 py-2 rounded bg-indigo-100 text-indigo-900 disabled:opacity-50"
-          onClick={checkStage1}
-          disabled={busy !== null}
-        >
-          {busy === "stage1-check" ? "Checking…" : "Stage 1 Check"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-indigo-50 text-indigo-900 disabled:opacity-50"
-          onClick={checkStage2}
-          disabled={busy !== null}
-        >
-          {busy === "stage2-check" ? "Checking…" : "Stage 2 Check"}
-        </button>
-        <a
-          className="px-3 py-2 rounded bg-indigo-600 text-white"
-          href={`/api/galaxus/export/master?all=1&supplier=${encodeURIComponent(supplierFilter)}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Export Master CSV
-        </a>
-        <a
-          className="px-3 py-2 rounded bg-indigo-500 text-white"
-          href={`/api/galaxus/export/master?stage=2&all=1&supplier=${encodeURIComponent(
-            supplierFilter
-          )}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Export Master Stage 2
-        </a>
-        <a
-          className="px-3 py-2 rounded bg-indigo-100 text-indigo-900"
-          href={`/api/galaxus/export/stock?all=1&supplier=${encodeURIComponent(supplierFilter)}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Export Stock CSV
-        </a>
       </div>
 
       <div className="space-y-2">
@@ -1100,6 +1167,11 @@ export default function GalaxusDashboardPage() {
                 <th className="px-2 py-1 text-left">Image</th>
                 <th className="px-2 py-1 text-right">Price</th>
                 <th className="px-2 py-1 text-right">Stock</th>
+                <th className="px-2 py-1 text-right">RRP</th>
+                <th className="px-2 py-1 text-left">Colorway</th>
+                <th className="px-2 py-1 text-left">Gender</th>
+                <th className="px-2 py-1 text-left">Country</th>
+                <th className="px-2 py-1 text-left">Release</th>
                 <th className="px-2 py-1 text-left">Updated</th>
               </tr>
             </thead>
@@ -1124,12 +1196,19 @@ export default function GalaxusDashboardPage() {
                   </td>
                   <td className="px-2 py-1 text-right">{row.price ?? ""}</td>
                   <td className="px-2 py-1 text-right">{row.stock ?? ""}</td>
+                  <td className="px-2 py-1 text-right">{row.kickdbRetailPrice ?? ""}</td>
+                  <td className="px-2 py-1">{row.kickdbColorway ?? ""}</td>
+                  <td className="px-2 py-1">{row.kickdbGender ?? ""}</td>
+                  <td className="px-2 py-1">{row.kickdbCountryOfManufacture ?? ""}</td>
+                  <td className="px-2 py-1">
+                    {row.kickdbReleaseDate ? new Date(row.kickdbReleaseDate).toLocaleDateString() : ""}
+                  </td>
                   <td className="px-2 py-1">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : ""}</td>
                 </tr>
               ))}
               {dbMappings.length === 0 && (
                 <tr>
-                  <td className="px-2 py-3 text-gray-500" colSpan={11}>
+                  <td className="px-2 py-3 text-gray-500" colSpan={16}>
                     No mappings loaded.
                   </td>
                 </tr>

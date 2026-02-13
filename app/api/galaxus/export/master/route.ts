@@ -165,6 +165,7 @@ function extractProductImages(
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
+  const minimal = ["1", "true", "yes"].includes((searchParams.get("minimal") ?? "").toLowerCase());
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
@@ -175,26 +176,22 @@ export async function GET(request: Request) {
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
     : {};
 
-  const headers = [
-    "ProviderKey",
-    "Gtin",
-    "ManufacturerKey",
-    "BrandName",
-    "ProductCategory",
-    "ProductTitle_de",
-    "VariantName",
-    "LongDescription_de",
-    "MainImageUrl",
-    "ImageUrl_1",
-    "ImageUrl_2",
-    "ImageUrl_3",
-    "ImageUrl_4",
-    "ImageUrl_5",
-    "ImageUrl_6",
-    "ImageUrl_7",
-    "ImageUrl_8",
-  ];
-  if (includeWeight) headers.push("ProductWeight");
+  const headers = minimal
+    ? ["ProviderKey", "Gtin", "BrandName"]
+    : [
+        "ProviderKey",
+        "Gtin",
+        "ManufacturerKey",
+        "BrandName",
+        "ProductCategory",
+        "ProductTitle_de",
+        "ProductTitle_en",
+        "ProductTitle_ch",
+        "VariantName",
+        "LongDescription_de",
+        "MainImageUrl",
+      ];
+  if (!minimal && includeWeight) headers.push("ProductWeight");
 
   const rows: ExportRow[] = [];
   const pageSize = all ? 500 : limit;
@@ -210,7 +207,7 @@ export async function GET(request: Request) {
       },
       include: {
         supplierVariant: true,
-        kickdbVariant: { include: { product: true } },
+        ...(minimal ? {} : { kickdbVariant: { include: { product: true } } }),
       },
       orderBy: { updatedAt: "desc" },
       take: pageSize,
@@ -220,16 +217,29 @@ export async function GET(request: Request) {
 
     mappings.forEach((mapping) => {
       const supplierVariant = mapping.supplierVariant;
+      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+      if (minimal) {
+        const supplierVariantAny = supplierVariant as any;
+        const product = (mapping as any).kickdbVariant?.product as any;
+        rows.push({
+          ProviderKey: providerKey,
+          Gtin: mapping.gtin ?? "",
+          BrandName: normalizeBrand(
+            product?.brand ?? supplierVariantAny?.supplierBrand ?? ""
+          ),
+        });
+        return;
+      }
       const supplierVariantAny = supplierVariant as any;
-      const product = mapping.kickdbVariant?.product;
-      const payload = product?.name || product?.brand
+      const product = (mapping as any).kickdbVariant?.product as any;
+      const payload = product?.name || product?.brand || product?.description
         ? ({
             title: product?.name ?? undefined,
             brand: product?.brand ?? undefined,
             sku: product?.styleId ?? supplierVariant?.supplierSku ?? undefined,
+            description: product?.description ?? undefined,
           } as KickDbPayload)
         : null;
-      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
       const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
       const fallbackName = supplierVariantAny?.supplierProductName ?? null;
       const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? null, fallbackName);
@@ -248,17 +258,11 @@ export async function GET(request: Request) {
         BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariantAny?.supplierBrand ?? ""),
         ProductCategory: buildProductCategory(payload) || "Sneakers",
         ProductTitle_de: title,
+        ProductTitle_en: title,
+        ProductTitle_ch: title,
         VariantName: variantName,
         LongDescription_de: cleanDescription(payload?.description ?? ""),
         MainImageUrl: images[0] ?? "",
-        ImageUrl_1: images[1] ?? "",
-        ImageUrl_2: images[2] ?? "",
-        ImageUrl_3: images[3] ?? "",
-        ImageUrl_4: images[4] ?? "",
-        ImageUrl_5: images[5] ?? "",
-        ImageUrl_6: images[6] ?? "",
-        ImageUrl_7: images[7] ?? "",
-        ImageUrl_8: images[8] ?? "",
       };
       if (includeWeight) {
         const weightValue = supplierVariantAny?.weightGrams ?? 1000;

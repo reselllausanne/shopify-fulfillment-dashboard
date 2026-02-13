@@ -360,6 +360,12 @@ model KickDBProduct {
   brand           String?
   imageUrl        String?
   traitsJson      Json?
+  description     String?
+  gender          String?
+  colorway        String?
+  countryOfManufacture String?
+  releaseDate     DateTime?
+  retailPrice     Float?
   lastFetchedAt   DateTime?
   notFound        Boolean  @default(false)
   createdAt       DateTime @default(now())

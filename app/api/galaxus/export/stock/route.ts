@@ -28,9 +28,15 @@ export async function GET(request: Request) {
 
   const headers = [
     "ProviderKey",
-    "PurchasePriceExclVat",
-    "PurchasePriceExclVatAndFee",
     "QuantityOnStock",
+    "RestockTime",
+    "RestockDate",
+    "MinimumOrderQuantity",
+    "OrderQuantitySteps",
+    "TradeUnit",
+    "LogisticUnit",
+    "WarehouseCountry",
+    "DirectDeliverySupported",
   ];
 
   const rows: ExportRow[] = [];
@@ -57,14 +63,19 @@ export async function GET(request: Request) {
     mappings.forEach((mapping) => {
       const supplierVariant = mapping.supplierVariant;
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-      const price = decimalToString(supplierVariant?.price ?? "");
       const stock = supplierVariant?.stock ?? 0;
 
       rows.push({
         ProviderKey: providerKey,
-        PurchasePriceExclVat: price,
-        PurchasePriceExclVatAndFee: price,
         QuantityOnStock: stock.toString(),
+        RestockTime: "",
+        RestockDate: "",
+        MinimumOrderQuantity: "1",
+        OrderQuantitySteps: "1",
+        TradeUnit: "",
+        LogisticUnit: "",
+        WarehouseCountry: "Poland",
+        DirectDeliverySupported: "no",
       });
     });
 

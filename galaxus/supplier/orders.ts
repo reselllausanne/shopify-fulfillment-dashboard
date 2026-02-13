@@ -24,6 +24,18 @@ type ResolvedLine = {
   supplierVariant: SupplierVariant;
   item: SupplierDropshipOrderItem;
   leadDays: number;
+  supplierKey: string;
+};
+
+type SplitItem = {
+  line: GalaxusOrderLine;
+  supplierVariant: SupplierVariant;
+  item: SupplierDropshipOrderItem;
+};
+
+type SupplierBatch = {
+  supplierKey: string;
+  items: SplitItem[];
 };
 
 export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promise<SupplierOrderPlacementResult> {
@@ -43,52 +55,68 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
   }
 
   try {
-    const client = createGoldenSupplierClient();
-    if (!client.createDropshipOrder) {
-      throw new Error("Supplier client does not support order creation");
-    }
-
     const resolvedLines = await resolveLines(order.lines);
     const deliveryAddress = buildDeliveryAddress(order);
-    const request: SupplierDropshipOrderRequest = {
-      deliveryAddress,
-      clientProvidesShippingLabel: false,
-      items: resolvedLines.map((line) => line.item),
-    };
-
-    const response = await client.createDropshipOrder(request);
-    const supplierOrderId = response.orderId;
-
+    const batches = splitBySupplierAndMaxPairs(resolvedLines, 12);
     const { lineUpdates, ordrMode } = buildArrivalUpdates(resolvedLines);
 
-    await prisma.$transaction(async (tx) => {
-      const safeResponse = { ...response, raw: undefined };
-      await tx.supplierOrder.create({
-        data: {
-          supplierOrderRef: supplierOrderId,
-          orderId: order.id,
-          status: "CREATED",
-          payloadJson: { request, response: safeResponse },
-        },
-      });
-      for (const update of lineUpdates) {
-        await tx.galaxusOrderLine.update({
-          where: { id: update.id },
-          data: update.data,
-        });
+    let lastOrderId: string | undefined;
+    for (let index = 0; index < batches.length; index += 1) {
+      const batch = batches[index];
+      const client = resolveSupplierClient(batch.supplierKey);
+      if (!client.createDropshipOrder) {
+        throw new Error(`Supplier client does not support order creation: ${batch.supplierKey}`);
       }
 
-      await tx.orderStatusEvent.create({
-        data: {
-          orderId: order.id,
-          source: "supplier",
-          type: "SUPPLIER_ORDER_CREATED",
-          payloadJson: { supplierOrderId, response: safeResponse },
-        },
-      });
-    });
+      const request: SupplierDropshipOrderRequest = {
+        deliveryAddress,
+        clientProvidesShippingLabel: false,
+        items: batch.items.map((item) => item.item),
+      };
 
-    return { status: "created", supplierOrderId, ordrMode };
+      const response = await client.createDropshipOrder(request);
+      const supplierOrderId = response.orderId;
+      lastOrderId = supplierOrderId;
+
+      await prisma.$transaction(async (tx) => {
+        const safeResponse = { ...response, raw: undefined };
+        await tx.supplierOrder.create({
+          data: {
+            supplierOrderRef: supplierOrderId,
+            orderId: order.id,
+            status: "CREATED",
+            payloadJson: {
+              request,
+              response: safeResponse,
+              supplierKey: batch.supplierKey,
+              batchIndex: index + 1,
+              batchSize: batch.items.reduce((sum, item) => sum + item.item.quantity, 0),
+            },
+          },
+        });
+        for (const update of lineUpdates) {
+          await tx.galaxusOrderLine.update({
+            where: { id: update.id },
+            data: update.data,
+          });
+        }
+
+        await tx.orderStatusEvent.create({
+          data: {
+            orderId: order.id,
+            source: "supplier",
+            type: "SUPPLIER_ORDER_CREATED",
+            payloadJson: {
+              supplierOrderId,
+              supplierKey: batch.supplierKey,
+              response: safeResponse,
+            },
+          },
+        });
+      });
+    }
+
+    return { status: "created", supplierOrderId: lastOrderId, ordrMode };
   } catch (error: any) {
     await prisma.orderStatusEvent.create({
       data: {
@@ -109,6 +137,7 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
     if (!supplierVariant) {
       throw new Error(`Missing supplier variant mapping for line ${line.lineNumber}`);
     }
+    const supplierKey = resolveSupplierKey(supplierVariant.supplierVariantId);
 
     const sizeId = parseGoldenSizeId(supplierVariant.supplierVariantId);
     if (sizeId) {
@@ -117,6 +146,7 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
         supplierVariant,
         item: { sizeId, quantity: line.quantity },
         leadDays: supplierVariant.leadTimeDays ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
+        supplierKey,
       });
       continue;
     }
@@ -130,9 +160,60 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
       supplierVariant,
       item: { sku: supplierVariant.supplierSku, sizeUs, quantity: line.quantity },
       leadDays: supplierVariant.leadTimeDays ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
+      supplierKey,
     });
   }
   return resolved;
+}
+
+function resolveSupplierClient(supplierKey: string) {
+  if (supplierKey === "golden") {
+    return createGoldenSupplierClient();
+  }
+  throw new Error(`Unsupported supplier: ${supplierKey}`);
+}
+
+function resolveSupplierKey(supplierVariantId: string | null | undefined): string {
+  if (!supplierVariantId) return "unknown";
+  const [key] = supplierVariantId.split(":");
+  return key || "unknown";
+}
+
+function splitBySupplierAndMaxPairs(lines: ResolvedLine[], maxPairs: number): SupplierBatch[] {
+  const bySupplier = new Map<string, ResolvedLine[]>();
+  for (const line of lines) {
+    const key = line.supplierKey || "unknown";
+    const group = bySupplier.get(key) ?? [];
+    group.push(line);
+    bySupplier.set(key, group);
+  }
+
+  const batches: SupplierBatch[] = [];
+  for (const [supplierKey, group] of bySupplier.entries()) {
+    let current: SupplierBatch | null = null;
+    let currentQty = 0;
+    for (const entry of group) {
+      let remaining = entry.item.quantity;
+      while (remaining > 0) {
+        if (!current || currentQty >= maxPairs) {
+          current = { supplierKey, items: [] };
+          batches.push(current);
+          currentQty = 0;
+        }
+        const capacity = maxPairs - currentQty;
+        const quantity = Math.min(remaining, capacity);
+        current.items.push({
+          line: entry.line,
+          supplierVariant: entry.supplierVariant,
+          item: { ...entry.item, quantity },
+        });
+        currentQty += quantity;
+        remaining -= quantity;
+      }
+    }
+  }
+
+  return batches;
 }
 
 async function resolveSupplierVariant(line: GalaxusOrderLine): Promise<SupplierVariant | null> {

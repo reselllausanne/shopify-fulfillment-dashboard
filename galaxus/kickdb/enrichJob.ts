@@ -137,6 +137,27 @@ function extractImageUrl(productRecord: any): string | null {
   );
 }
 
+function pickTraitValue(traits: unknown, keys: string[]): string | null {
+  if (!traits) return null;
+  const list = Array.isArray(traits) ? traits : (traits as any)?.traits ?? traits;
+  const traitArray = Array.isArray(list) ? list : [];
+  const lowerKeys = keys.map((key) => key.toLowerCase());
+  for (const entry of traitArray) {
+    const entryKey = pickString(entry?.key, entry?.name, entry?.trait, entry?.type)?.toLowerCase() ?? "";
+    if (!entryKey) continue;
+    if (lowerKeys.some((key) => entryKey.includes(key))) {
+      return pickString(entry?.value, entry?.label, entry?.text, entry?.displayValue);
+    }
+  }
+  return null;
+}
+
+function parseDateValue(value: string | null): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function normalizeSkuForCompare(value: unknown): string {
   if (typeof value !== "string") return "";
   return value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -406,6 +427,23 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const brand = extractBrand(productRecord);
     const imageUrl = extractImageUrl(productRecord);
 
+    const traits = productRecord?.traits ?? null;
+    const retailPriceRaw = pickTraitValue(traits, ["retail price", "rrp", "msrp"]);
+    const releaseDateRaw = pickTraitValue(traits, ["release date"]);
+    const colorway = pickTraitValue(traits, ["colorway", "colourway", "color"]);
+    const countryOfManufacture =
+      pickString(productRecord?.country_of_manufacture, productRecord?.countryOfManufacture) ??
+      pickTraitValue(traits, ["country of manufacture", "country"]) ??
+      null;
+    const gender = pickString(productRecord?.gender, productRecord?.sex) ?? pickTraitValue(traits, ["gender"]);
+    const description = pickString(
+      productRecord?.description,
+      productRecord?.short_description,
+      productRecord?.product_description
+    );
+    const retailPrice = retailPriceRaw ? Number(retailPriceRaw) : null;
+    const releaseDate = parseDateValue(releaseDateRaw);
+
     const savedProduct = await (prisma as any).kickDBProduct.upsert({
       where: { kickdbProductId },
       create: {
@@ -415,7 +453,13 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         name: kickdbProductName,
         brand,
         imageUrl,
-        traitsJson: productRecord?.traits ?? null,
+        traitsJson: traits,
+        description,
+        gender,
+        colorway,
+        countryOfManufacture,
+        releaseDate,
+        retailPrice: Number.isFinite(retailPrice ?? NaN) ? retailPrice : null,
         lastFetchedAt: now,
         notFound: false,
       },
@@ -425,7 +469,13 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         name: kickdbProductName,
         brand,
         imageUrl,
-        traitsJson: productRecord?.traits ?? null,
+        traitsJson: traits,
+        description,
+        gender,
+        colorway,
+        countryOfManufacture,
+        releaseDate,
+        retailPrice: Number.isFinite(retailPrice ?? NaN) ? retailPrice : null,
         lastFetchedAt: now,
         notFound: false,
       },

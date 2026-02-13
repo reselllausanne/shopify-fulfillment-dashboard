@@ -18,6 +18,7 @@ export async function GET(
           shipments: {
             include: {
               items: true,
+              documents: true,
             },
           },
           statusEvents: true,
@@ -30,6 +31,7 @@ export async function GET(
           shipments: {
             include: {
               items: true,
+              documents: true,
             },
           },
           statusEvents: true,
@@ -40,7 +42,18 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ ok: true, order });
+    const normalized = {
+      ...order,
+      shipments: order.shipments.map((shipment: any) => {
+        const deliveryNote = shipment.documents?.find((doc: any) => doc.type === "DELIVERY_NOTE");
+        return {
+          ...shipment,
+          deliveryNotePdfUrl: deliveryNote?.storageUrl ?? null,
+        };
+      }),
+    };
+
+    return NextResponse.json({ ok: true, order: normalized });
   } catch (error: any) {
     console.error("[GALAXUS][ORDERS] Detail failed:", error);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

@@ -121,7 +121,7 @@ function buildMockOrderXml(orderId: string, lines: MockLine[]): string {
 
   const udx = info.ele("HEADER_UDX");
   udx.ele("UDX.DG.CUSTOMER_TYPE").txt("private_customer");
-  udx.ele("UDX.DG.DELIVERY_TYPE").txt("direct_delivery");
+  udx.ele("UDX.DG.DELIVERY_TYPE").txt("warehouse_delivery");
   udx.ele("UDX.DG.IS_COLLECTIVE_ORDER").txt("false");
   udx.ele("UDX.DG.PHYSICAL_DELIVERY_NOTE_REQUIRED").txt("false");
   udx.ele("UDX.DG.SATURDAY_DELIVERY_ALLOWED").txt("false");
@@ -186,6 +186,7 @@ export async function POST(request: Request) {
       );
     }
 
+    const defaultVatRate = 7.7;
     const lines: MockLine[] = validMappings.map((mapping, index) => {
       const mappingAny = mapping as any;
       const supplierVariant = mapping.supplierVariant as any;
@@ -194,6 +195,8 @@ export async function POST(request: Request) {
       const unitPrice = Number(priceRaw) || 0;
       const quantity = 1;
       const lineNetAmount = unitPrice * quantity;
+      const taxRate = Number.isFinite(mappingAny.vatRate) ? Number(mappingAny.vatRate) : defaultVatRate;
+      const taxAmount = (unitPrice * taxRate) / 100;
       return {
         lineNumber: index + 1,
         supplierPid: providerKey,
@@ -207,8 +210,8 @@ export async function POST(request: Request) {
         quantity,
         orderUnit: "C62",
         unitNetPrice: unitPrice,
-        taxAmount: 0,
-        taxRate: 0,
+        taxAmount,
+        taxRate,
         lineNetAmount,
       };
     });

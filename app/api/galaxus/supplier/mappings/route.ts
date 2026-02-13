@@ -58,6 +58,12 @@ export async function GET(request: Request) {
       kickdbImageUrl: kp?.imageUrl ?? null,
       kickdbLastFetchedAt: kp?.lastFetchedAt ?? null,
       kickdbNotFound: kp?.notFound ?? null,
+      kickdbDescription: kp?.description ?? null,
+      kickdbGender: kp?.gender ?? null,
+      kickdbColorway: kp?.colorway ?? null,
+      kickdbCountryOfManufacture: kp?.countryOfManufacture ?? null,
+      kickdbReleaseDate: kp?.releaseDate ?? null,
+      kickdbRetailPrice: kp?.retailPrice ?? null,
     };
   });
 

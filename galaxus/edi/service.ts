@@ -96,7 +96,17 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
                 .map((line) => line.lineNumber ?? "?")
                 .slice(0, 20)
                 .join(", ");
-              throw new Error(`Missing GTIN on ORDP lines: ${missingLines}`);
+              payloadJson = {
+                ...payloadJson,
+                missingGtins: missingGtins.length,
+                missingLineNumbers: missingLines,
+              };
+              orderInput.lines = orderInput.lines.filter(
+                (line) => line.gtin && String(line.gtin).trim().length > 0
+              );
+            }
+            if (orderInput.lines.length === 0) {
+              throw new Error("ORDP has no lines with GTIN.");
             }
             const [ingestResult] = await ingestGalaxusOrders([orderInput]);
             if (ingestResult) {
@@ -434,7 +444,22 @@ async function recordCancelRequest(orderRef: string, xml: string) {
 }
 
 function extractLines(data: any) {
-  const items = findAllByPath(data, ["ORDER_ITEM_LIST", "ORDER_ITEM"]);
+  const itemListNode = getNestedNode(data, ["ORDER_ITEM_LIST"]);
+  const listNodes = Array.isArray(itemListNode)
+    ? itemListNode
+    : itemListNode
+    ? [itemListNode]
+    : [];
+  const items: any[] = [];
+  for (const listNode of listNodes) {
+    const listItems = listNode?.ORDER_ITEM;
+    if (Array.isArray(listItems)) {
+      items.push(...listItems);
+    } else if (listItems) {
+      items.push(listItems);
+    }
+  }
+
   return items.map((item: any, index: number) => {
     const supplierPid = getNestedValue(item, ["PRODUCT_ID", "SUPPLIER_PID"]);
     const buyerPid = getNestedValue(item, ["PRODUCT_ID", "BUYER_PID"]);

@@ -7,6 +7,18 @@ import { allocateSscc } from "@/galaxus/sscc/generator";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { packOrderLines } from "./packing";
+import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { renderDeliveryNoteHtml } from "@/galaxus/documents/templates/deliveryNote";
+import { renderPdfFromHtml } from "@/galaxus/documents/renderers/playwrightRenderer";
+import type { DeliveryNoteData, DeliveryNoteOrderGroup, OrderLine } from "@/galaxus/documents/types";
+import {
+  GALAXUS_SUPPLIER_ADDRESS_LINES,
+  GALAXUS_SUPPLIER_EMAIL,
+  GALAXUS_SUPPLIER_NAME,
+  GALAXUS_SUPPLIER_PHONE,
+  GALAXUS_SUPPLIER_VAT_ID,
+  GALAXUS_SUPPLIER_WEBSITE,
+} from "@/galaxus/config";
 
 type CreateShipmentsOptions = {
   orderId: string;
@@ -44,71 +56,222 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
   const orderAny = order as any;
   validateOrderLines(orderAny.lines);
 
-  const packed = packOrderLines(orderAny.lines, {
-    maxPairsPerParcel: options.maxPairsPerParcel,
-    allowSplit: options.allowSplit,
-  });
-
+  const groupedLines = await groupLinesBySupplier(orderAny.lines);
   const shipments: Shipment[] = [];
   const shippedAt = options.shippedAt ?? new Date();
   const storage = getStorageAdapter();
+  let shipmentIndex = 0;
 
-  for (let index = 0; index < packed.length; index += 1) {
-    const packageId = await allocateSscc();
-    const dispatchNotificationId = buildDispatchNotificationId(order.galaxusOrderId, index);
-    const trackingNumber = options.trackingNumbers?.[index] ?? null;
-    const packageType = options.packageType ?? "PARCEL";
+  for (const group of groupedLines) {
+    const packed = packOrderLines(group.lines, {
+      maxPairsPerParcel: options.maxPairsPerParcel,
+      allowSplit: options.allowSplit,
+    });
 
-    const created = await prismaAny.$transaction(async (tx: any) => {
-      const shipment = await tx.shipment.create({
+    for (let index = 0; index < packed.length; index += 1) {
+      const packageId = await allocateSscc();
+      const dispatchNotificationId = buildDispatchNotificationId(order.galaxusOrderId, shipmentIndex);
+      const trackingNumber = options.trackingNumbers?.[shipmentIndex] ?? null;
+      const packageType = options.packageType ?? "PARCEL";
+
+      const created = await prismaAny.$transaction(async (tx: any) => {
+        const shipment = await tx.shipment.create({
+          data: {
+            orderId: order.id,
+            shipmentId: `SHIP-${order.galaxusOrderId}-${group.supplierKey}-${Date.now()}-${shipmentIndex + 1}`,
+            dispatchNotificationId,
+            dispatchNotificationCreatedAt: new Date(),
+            incoterms: null,
+            packageId,
+            deliveryType: options.deliveryType ?? orderAny.deliveryType ?? "warehouse_delivery",
+            carrierRaw: options.carrierRaw ?? "eurosender",
+            carrierFinal: options.carrierFinal ?? null,
+            trackingNumber,
+            packageType,
+            shippedAt,
+            delrStatus: "PENDING",
+          },
+        });
+
+        await tx.shipmentItem.createMany({
+          data: packed[index].items.map((item) => ({
+            shipmentId: shipment.id,
+            orderId: order.id,
+            supplierPid: (item.line as any).supplierPid ?? "",
+            gtin14: item.line.gtin ?? "",
+            buyerPid: (item.line as any).buyerPid ?? null,
+            quantity: item.quantity,
+          })),
+        });
+
+        return shipment;
+      });
+
+      const deliveryNotePdf = await renderPdfFromHtml({
+        html: renderDeliveryNoteHtml(
+          buildDeliveryNoteData(
+            orderAny,
+            packed[index].items,
+            created.dispatchNotificationId,
+            created.incoterms,
+            created.shipmentId
+          )
+        ),
+        format: "A4",
+        showPageNumbers: true,
+      });
+      const deliveryKey = `galaxus/${order.galaxusOrderId}/delivery_note/${created.id}.pdf`;
+      const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
+      await prismaAny.document.create({
         data: {
           orderId: order.id,
-          shipmentId: `SHIP-${order.galaxusOrderId}-${Date.now()}-${index + 1}`,
-          dispatchNotificationId,
-          dispatchNotificationCreatedAt: new Date(),
-          incoterms: null,
-          packageId,
-          deliveryType: options.deliveryType ?? orderAny.deliveryType ?? "warehouse_delivery",
-          carrierRaw: options.carrierRaw ?? "eurosender",
-          carrierFinal: options.carrierFinal ?? null,
-          trackingNumber,
-          packageType,
-          shippedAt,
-          delrStatus: "PENDING",
+          shipmentId: created.id,
+          type: "DELIVERY_NOTE",
+          version: 1,
+          storageUrl: deliveryStored.storageUrl,
         },
       });
 
-      await tx.shipmentItem.createMany({
-        data: packed[index].items.map((item) => ({
-          shipmentId: shipment.id,
-          orderId: order.id,
-          supplierPid: (item.line as any).supplierPid ?? "",
-          gtin14: item.line.gtin ?? "",
-          buyerPid: (item.line as any).buyerPid ?? null,
-          quantity: item.quantity,
-        })),
+      const label = await generateSsccLabelPdf(order, packageId);
+      const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
+      const stored = await storage.uploadPdf(key, label.pdf);
+
+      const updated = await prismaAny.shipment.update({
+        where: { id: created.id },
+        data: {
+          labelZpl: label.zpl,
+          labelPdfUrl: stored.storageUrl,
+          labelGeneratedAt: new Date(),
+        },
       });
 
-      return shipment;
-    });
-
-    const label = await generateSsccLabelPdf(order, packageId);
-    const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
-    const stored = await storage.uploadPdf(key, label.pdf);
-
-    const updated = await prismaAny.shipment.update({
-      where: { id: created.id },
-      data: {
-        labelZpl: label.zpl,
-        labelPdfUrl: stored.storageUrl,
-        labelGeneratedAt: new Date(),
-      },
-    });
-
-    shipments.push(updated);
+      shipments.push(updated);
+      shipmentIndex += 1;
+    }
   }
 
   return { status: "created", shipments };
+}
+
+async function groupLinesBySupplier(lines: Array<any>) {
+  const groups = new Map<string, any[]>();
+  for (const line of lines) {
+    const supplierKey = await resolveSupplierKeyForLine(line);
+    const existing = groups.get(supplierKey) ?? [];
+    existing.push(line);
+    groups.set(supplierKey, existing);
+  }
+
+  return Array.from(groups.entries()).map(([supplierKey, groupLines]) => ({
+    supplierKey,
+    lines: groupLines,
+  }));
+}
+
+async function resolveSupplierKeyForLine(line: any): Promise<string> {
+  const variantId = line.supplierVariantId ?? null;
+  if (variantId) {
+    const [key] = String(variantId).split(":");
+    return key || "unknown";
+  }
+
+  const providerKey = line.providerKey ?? null;
+  if (providerKey) {
+    const mapping = await prisma.variantMapping.findFirst({
+      where: { providerKey },
+      select: { supplierVariant: { select: { supplierVariantId: true } } },
+    });
+    const mappedId = mapping?.supplierVariant?.supplierVariantId ?? null;
+    if (mappedId) {
+      const [key] = String(mappedId).split(":");
+      return key || "unknown";
+    }
+  }
+
+  const gtin = line.gtin ?? null;
+  if (gtin) {
+    const mapping = await prisma.variantMapping.findFirst({
+      where: { gtin },
+      select: { supplierVariant: { select: { supplierVariantId: true } } },
+    });
+    const mappedId = mapping?.supplierVariant?.supplierVariantId ?? null;
+    if (mappedId) {
+      const [key] = String(mappedId).split(":");
+      return key || "unknown";
+    }
+  }
+
+  return "unknown";
+}
+
+function buildDeliveryNoteData(
+  order: GalaxusOrder,
+  items: Array<{ line: GalaxusOrderLine; quantity: number }>,
+  deliveryNoteNumber: string | null,
+  incoterms: string | null,
+  shipmentId: string
+): DeliveryNoteData {
+  const lines: OrderLine[] = items.map((item) => {
+    const line = item.line as any;
+    const providerKey = buildProviderKey(line.gtin, line.supplierVariantId) ?? line.gtin ?? "";
+    const unitNetPrice = Number(line.unitNetPrice ?? 0);
+    const lineNetAmount = unitNetPrice * item.quantity;
+    return {
+      lineNumber: line.lineNumber,
+      articleNumber: providerKey,
+      description: line.productName ?? "Item",
+      size: line.size ?? null,
+      gtin: line.gtin ?? null,
+      providerKey,
+      sku: line.supplierSku ?? line.supplierVariantId ?? null,
+      quantity: item.quantity,
+      vatRate: Number(line.vatRate ?? 0),
+      unitNetPrice,
+      lineNetAmount,
+    };
+  });
+
+  const group: DeliveryNoteOrderGroup = {
+    orderNumber: order.orderNumber ?? order.galaxusOrderId,
+    deliveryDate: order.deliveryDate,
+    lines,
+  };
+
+  return {
+    shipmentId,
+    createdAt: new Date(),
+    deliveryNoteNumber: deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
+    incoterms: incoterms ?? null,
+    buyer: {
+      name: order.recipientName ?? "",
+      line1: order.recipientAddress1 ?? "",
+      line2: order.recipientAddress2 ?? null,
+      postalCode: order.recipientPostalCode ?? "",
+      city: order.recipientCity ?? "",
+      country: order.recipientCountry ?? "",
+    },
+    supplier: {
+      name: GALAXUS_SUPPLIER_NAME,
+      addressLines: GALAXUS_SUPPLIER_ADDRESS_LINES,
+      phone: GALAXUS_SUPPLIER_PHONE ?? null,
+      email: GALAXUS_SUPPLIER_EMAIL ?? null,
+      website: GALAXUS_SUPPLIER_WEBSITE ?? null,
+      vatId: GALAXUS_SUPPLIER_VAT_ID ?? null,
+    },
+    orderReference: order.orderNumber ?? order.galaxusOrderId,
+    referencePerson: order.referencePerson ?? null,
+    yourReference: order.yourReference ?? null,
+    buyerPhone: order.recipientPhone ?? null,
+    afterSalesHandling: order.afterSalesHandling ?? false,
+    legalNotice: null,
+    groups: [group],
+  };
+}
+
+function buildDeliveryNoteNumber(order: GalaxusOrder): string {
+  const base = buildDocNumber("GDN");
+  const normalized = order.galaxusOrderId.replace(/[^A-Za-z0-9]/g, "");
+  return `${base}-${normalized}`;
 }
 
 async function resolveOrder(orderIdOrRef: string) {
