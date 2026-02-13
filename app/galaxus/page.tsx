@@ -227,6 +227,74 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const syncCheckAndUploadFeeds = async () => {
+    setBusy("sync-upload");
+    setError(null);
+    setOpsLog(null);
+    setExportCheckReport(null);
+    try {
+      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
+      const syncData = await syncResponse.json();
+      if (!syncResponse.ok || !syncData.ok) {
+        throw new Error(syncData.error ?? "Supplier sync failed");
+      }
+
+      const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
+      const enrichData = await enrichResponse.json();
+      if (!enrichResponse.ok || !enrichData.ok) {
+        throw new Error(enrichData.error ?? "KickDB enrich failed");
+      }
+
+      const supplierValue = encodeURIComponent(supplierFilter);
+      const checkResponse = await fetch(
+        `/api/galaxus/export/check-all?all=1&supplier=${supplierValue}`,
+        { cache: "no-store" }
+      );
+      const checkData = await checkResponse.json();
+      if (!checkResponse.ok || !checkData.ok) {
+        throw new Error(checkData.error ?? "Export checks failed");
+      }
+      const report = checkData.report ?? {};
+      setExportCheckReport(JSON.stringify(report, null, 2));
+
+      const totalIssues =
+        (report.summary?.master?.totalIssues ?? 0) +
+        (report.summary?.stock?.totalIssues ?? 0) +
+        (report.summary?.specs?.totalIssues ?? 0);
+      if (totalIssues > 0) {
+        setOpsLog(JSON.stringify({ sync: syncData, kickdb: enrichData, checks: report.summary }, null, 2));
+        throw new Error(`Export checks found ${totalIssues} issues. Fix before uploading feeds.`);
+      }
+
+      const uploadResponse = await fetch(`/api/galaxus/feeds/upload?supplier=${supplierValue}`, {
+        cache: "no-store",
+      });
+      const uploadData = await uploadResponse.json();
+      if (!uploadResponse.ok || !uploadData.ok) {
+        throw new Error(uploadData.error ?? "Feed upload failed");
+      }
+
+      setOpsLog(
+        JSON.stringify(
+          {
+            sync: syncData,
+            kickdb: enrichData,
+            checks: report.summary ?? null,
+            upload: uploadData,
+          },
+          null,
+          2
+        )
+      );
+      await loadDb(0);
+      await loadMappings(0);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const clearSupplierData = async (includeKickdb: boolean) => {
     const confirmed = (window.prompt('This will DELETE supplier data. Type "YES" to confirm.') ?? "").trim().toUpperCase();
     if (confirmed !== "YES") {
@@ -491,6 +559,30 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const uploadFeed = async (type: "product" | "price" | "stock") => {
+    setBusy(`feed-${type}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const params = new URLSearchParams();
+      const supplierValue = supplierFilter.trim();
+      if (supplierValue) params.set("supplier", supplierValue);
+      if (type === "product") params.set("type", "master");
+      if (type === "price") params.set("type", "offer");
+      if (type === "stock") params.set("type", "stock");
+      const response = await fetch(`/api/galaxus/feeds/upload?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Feed upload failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const downloadFeed = (type: "product" | "price" | "stock") => {
     window.open(`/api/galaxus/feeds/preview?type=${type}&download=1`, "_blank", "noopener,noreferrer");
   };
@@ -704,6 +796,34 @@ export default function GalaxusDashboardPage() {
             disabled={busy !== null}
           >
             {busy === "feeds" ? "Uploading…" : "Upload Feeds to FTP"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+            onClick={() => uploadFeed("product")}
+            disabled={busy !== null}
+          >
+            {busy === "feed-product" ? "Uploading…" : "Upload ProductData"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+            onClick={() => uploadFeed("price")}
+            disabled={busy !== null}
+          >
+            {busy === "feed-price" ? "Uploading…" : "Upload PriceData"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+            onClick={() => uploadFeed("stock")}
+            disabled={busy !== null}
+          >
+            {busy === "feed-stock" ? "Uploading…" : "Upload StockData"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"
+            onClick={syncCheckAndUploadFeeds}
+            disabled={busy !== null}
+          >
+            {busy === "sync-upload" ? "Syncing…" : "Sync + Check + Upload Feeds"}
           </button>
           <button
             className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
