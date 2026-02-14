@@ -165,19 +165,41 @@ export default function GalaxusDashboardPage() {
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
   const [syncMax, setSyncMax] = useState<number>(1000);
   const [syncAll, setSyncAll] = useState<boolean>(false);
-  const [sftpConfig, setSftpConfig] = useState<{
-    host?: string;
-    outDir?: string;
-    feedsDir?: string;
-    isRealGalaxus?: boolean;
-    warning?: string | null;
-  } | null>(null);
+  const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
+  const [schedulerBusy, setSchedulerBusy] = useState(false);
+
+  const loadSchedulerStatus = async () => {
+    try {
+      const res = await fetch("/api/galaxus/feeds/scheduler", { cache: "no-store" });
+      const data = await res.json();
+      if (data?.ok) setSchedulerStatus(data.status ?? null);
+    } catch {
+      // silent
+    }
+  };
+
+  const toggleScheduler = async (action: "start" | "stop") => {
+    setSchedulerBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/galaxus/feeds/scheduler?action=${action}`, {
+        method: "POST",
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (!data?.ok) throw new Error(data?.error ?? "Scheduler action failed");
+      setSchedulerStatus(data.status ?? null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSchedulerBusy(false);
+    }
+  };
 
   useEffect(() => {
-    fetch("/api/galaxus/edi/config")
-      .then((response) => response.json())
-      .then((data) => setSftpConfig(data))
-      .catch(() => setSftpConfig(null));
+    loadSchedulerStatus();
+    const t = setInterval(loadSchedulerStatus, 30000);
+    return () => clearInterval(t);
   }, []);
 
   const syncSupplier = async () => {
@@ -266,9 +288,10 @@ export default function GalaxusDashboardPage() {
         throw new Error(`Export checks found ${totalIssues} issues. Fix before uploading feeds.`);
       }
 
-      const uploadResponse = await fetch(`/api/galaxus/feeds/upload?supplier=${supplierValue}`, {
-        cache: "no-store",
-      });
+      const uploadResponse = await fetch(
+        `/api/galaxus/feeds/upload?supplier=${supplierValue}&type=offer-stock`,
+        { cache: "no-store" }
+      );
       const uploadData = await uploadResponse.json();
       if (!uploadResponse.ok || !uploadData.ok) {
         throw new Error(uploadData.error ?? "Feed upload failed");
@@ -548,7 +571,7 @@ export default function GalaxusDashboardPage() {
     setError(null);
     setOpsLog(null);
     try {
-      const response = await fetch("/api/galaxus/feeds/upload", { cache: "no-store" });
+      const response = await fetch("/api/galaxus/feeds/upload?type=offer-stock", { cache: "no-store" });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Feed upload failed");
       setOpsLog(JSON.stringify(data, null, 2));
@@ -757,133 +780,253 @@ export default function GalaxusDashboardPage() {
 
       {error && <div className="text-sm text-red-600">{error}</div>}
 
-      {sftpConfig && (
-        <div
-          className={`rounded p-3 text-sm ${
-            sftpConfig.warning ? "bg-amber-100 border border-amber-300" : "bg-gray-50 border"
-          }`}
-        >
-          <strong>SFTP Target (Feeds):</strong> {sftpConfig.host ?? "—"}:{sftpConfig.feedsDir ?? sftpConfig.outDir ?? "—"}
-          {sftpConfig.feedsDir && sftpConfig.outDir && sftpConfig.feedsDir !== sftpConfig.outDir && (
-            <span className="ml-2 text-gray-600">EDI OUT: {sftpConfig.outDir}</span>
-          )}
-          {sftpConfig.isRealGalaxus && (
-            <span className="ml-2 text-green-700">✓ Real Galaxus</span>
-          )}
-          {sftpConfig.warning && (
-            <div className="mt-1 text-amber-800 font-medium">{sftpConfig.warning}</div>
-          )}
-        </div>
-      )}
-
       <div className="space-y-4 border rounded p-4 bg-white">
         <div>
           <h2 className="text-lg font-semibold">Galaxus Ops Dashboard</h2>
           <p className="text-sm text-gray-500">Run the full flow without the terminal.</p>
         </div>
 
-        <div className="flex gap-3 flex-wrap items-center">
-          <button
-            className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
-            onClick={pollEdiIn}
-            disabled={busy !== null}
-          >
-              {busy === "edi-in" ? "Polling…" : "Poll EDI IN (Orders)"}
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
-            onClick={uploadFeeds}
-            disabled={busy !== null}
-          >
-            {busy === "feeds" ? "Uploading…" : "Upload Feeds to FTP"}
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-            onClick={() => uploadFeed("product")}
-            disabled={busy !== null}
-          >
-            {busy === "feed-product" ? "Uploading…" : "Upload ProductData"}
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-            onClick={() => uploadFeed("price")}
-            disabled={busy !== null}
-          >
-            {busy === "feed-price" ? "Uploading…" : "Upload PriceData"}
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-            onClick={() => uploadFeed("stock")}
-            disabled={busy !== null}
-          >
-            {busy === "feed-stock" ? "Uploading…" : "Upload StockData"}
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"
-            onClick={syncCheckAndUploadFeeds}
-            disabled={busy !== null}
-          >
-            {busy === "sync-upload" ? "Syncing…" : "Sync + Check + Upload Feeds"}
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-            onClick={() => downloadFeed("product")}
-            disabled={busy !== null}
-          >
-            Download ProductData
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-            onClick={() => downloadFeed("price")}
-            disabled={busy !== null}
-          >
-            Download PriceData
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-            onClick={() => downloadFeed("stock")}
-            disabled={busy !== null}
-          >
-            Download StockData
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
-            onClick={sendPendingEdiOut}
-            disabled={busy !== null}
-          >
-            {busy === "edi-out" ? "Sending…" : "Send Pending EDI OUT"}
-          </button>
-          <div className="flex items-center gap-2">
-            <input
-              className="px-2 py-2 border rounded text-sm w-20"
-              type="number"
-              min={1}
-              max={200}
-              value={seedLineCount}
-              onChange={(event) => setSeedLineCount(Number(event.target.value || 0))}
-            />
-            <button
-              className="px-3 py-2 rounded bg-purple-600 text-white disabled:opacity-50"
-              onClick={seedOrder}
-              disabled={busy !== null}
-            >
-              {busy === "seed" ? "Creating…" : "Create Test ORDP (SFTP)"}
-            </button>
-            <button
-              className="px-3 py-2 rounded bg-red-600 text-white disabled:opacity-50"
-              onClick={clearSeedOrders}
-              disabled={busy !== null}
-            >
-              {busy === "seed-clear" ? "Clearing…" : "Clear Test Orders"}
-            </button>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded border bg-gray-50 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium">Operations</div>
+              <div className="text-xs text-gray-500">
+                Auto-upload: {schedulerStatus?.running ? "ON" : "OFF"}
+              </div>
+            </div>
+            <div className="rounded border bg-white p-2 text-xs text-gray-600">
+              <div>Price + stock every 2 hours</div>
+              <div>Master data every 12 hours</div>
+              {schedulerStatus?.nextOfferStockAt ? (
+                <div>Next price/stock: {new Date(schedulerStatus.nextOfferStockAt).toLocaleString()}</div>
+              ) : null}
+              {schedulerStatus?.nextMasterAt ? (
+                <div>Next master: {new Date(schedulerStatus.nextMasterAt).toLocaleString()}</div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
+                onClick={() => toggleScheduler("start")}
+                disabled={schedulerBusy}
+              >
+                {schedulerBusy ? "Working…" : "Enable auto-upload"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+                onClick={() => toggleScheduler("stop")}
+                disabled={schedulerBusy}
+              >
+                Disable auto-upload
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
+                onClick={pollEdiIn}
+                disabled={busy !== null}
+              >
+                {busy === "edi-in" ? "Polling…" : "Poll EDI IN"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
+                onClick={sendPendingEdiOut}
+                disabled={busy !== null}
+              >
+                {busy === "edi-out" ? "Sending…" : "Send EDI OUT"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+                onClick={uploadFeeds}
+                disabled={busy !== null}
+              >
+                {busy === "feeds" ? "Uploading…" : "Upload Price + Stock"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                onClick={() => fetchOrders(0)}
+                disabled={busy !== null}
+              >
+                {busy === "orders" ? "Loading…" : "Refresh Orders"}
+              </button>
+            </div>
+            <details className="rounded border bg-white p-3">
+              <summary className="cursor-pointer text-sm font-medium">Advanced operations</summary>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+                  onClick={() => uploadFeed("product")}
+                  disabled={busy !== null}
+                >
+                  {busy === "feed-product" ? "Uploading…" : "Upload ProductData"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+                  onClick={() => uploadFeed("price")}
+                  disabled={busy !== null}
+                >
+                  {busy === "feed-price" ? "Uploading…" : "Upload PriceData"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
+                  onClick={() => uploadFeed("stock")}
+                  disabled={busy !== null}
+                >
+                  {busy === "feed-stock" ? "Uploading…" : "Upload StockData"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                  onClick={() => downloadFeed("product")}
+                  disabled={busy !== null}
+                >
+                  Download ProductData
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                  onClick={() => downloadFeed("price")}
+                  disabled={busy !== null}
+                >
+                  Download PriceData
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                  onClick={() => downloadFeed("stock")}
+                  disabled={busy !== null}
+                >
+                  Download StockData
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"
+                  onClick={syncCheckAndUploadFeeds}
+                  disabled={busy !== null}
+                >
+                  {busy === "sync-upload" ? "Running…" : "Full pipeline (sync + check + price/stock upload)"}
+                </button>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  className="px-2 py-2 border rounded text-sm w-20"
+                  type="number"
+                  min={1}
+                  max={200}
+                  value={seedLineCount}
+                  onChange={(event) => setSeedLineCount(Number(event.target.value || 0))}
+                />
+                <button
+                  className="px-3 py-2 rounded bg-purple-600 text-white disabled:opacity-50"
+                  onClick={seedOrder}
+                  disabled={busy !== null}
+                >
+                  {busy === "seed" ? "Creating…" : "Create Test ORDP"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-red-600 text-white disabled:opacity-50"
+                  onClick={clearSeedOrders}
+                  disabled={busy !== null}
+                >
+                  {busy === "seed-clear" ? "Clearing…" : "Clear Test Orders"}
+                </button>
+              </div>
+            </details>
           </div>
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-            onClick={() => fetchOrders(0)}
-            disabled={busy !== null}
-          >
-            {busy === "orders" ? "Loading…" : "Refresh Orders"}
-          </button>
+          <div className="rounded border bg-gray-50 p-3 space-y-3">
+            <div className="text-sm font-medium">Catalog & Feeds</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className="px-2 py-2 border rounded text-sm w-28"
+                value={supplierFilter}
+                onChange={(event) => setSupplierFilter(event.target.value)}
+                placeholder="Supplier key"
+              />
+              <input
+                className="px-2 py-2 border rounded text-sm w-28"
+                type="number"
+                min={1}
+                value={syncMax}
+                onChange={(event) => setSyncMax(Number(event.target.value || 0))}
+                disabled={syncAll}
+                placeholder="Max products"
+              />
+              <label className="flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={syncAll}
+                  onChange={(event) => setSyncAll(event.target.checked)}
+                />
+                Get all
+              </label>
+              <button
+                className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
+                onClick={syncSupplier}
+                disabled={busy !== null}
+              >
+                {busy === "sync" ? "Syncing…" : "Sync catalog"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-blue-800 text-white disabled:opacity-50"
+                onClick={syncAllData}
+                disabled={busy !== null}
+              >
+                {busy === "sync-all" ? "Refreshing…" : "Full refresh"}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
+                onClick={() => enrichKickDb(false, false)}
+                disabled={busy !== null}
+              >
+                {busy === "enrich" ? "Enriching…" : "Enrich GTIN"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-green-100 text-green-900 disabled:opacity-50"
+                onClick={() => enrichKickDb(true, true)}
+                disabled={busy !== null}
+              >
+                {busy === "enrich" ? "Enriching…" : "Enrich GTIN (debug)"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+                onClick={() => loadDb(0)}
+                disabled={busy !== null}
+              >
+                {busy === "db" ? "Loading…" : "Load DB variants"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+                onClick={() => loadMappings(0)}
+                disabled={busy !== null}
+              >
+                {busy === "db-mappings" ? "Loading…" : "Load DB mappings"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                onClick={exportAllWithChecks}
+                disabled={busy !== null}
+              >
+                {busy === "export-check" ? "Exporting…" : "Export + checks"}
+              </button>
+            </div>
+            <details className="rounded border bg-white p-3">
+              <summary className="cursor-pointer text-sm font-medium">Data cleanup</summary>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="px-3 py-2 rounded bg-red-700 text-white disabled:opacity-50"
+                  onClick={() => clearSupplierData(false)}
+                  disabled={busy !== null}
+                >
+                  {busy === "supplier-clear" ? "Clearing…" : "Clear supplier data"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-red-100 text-red-900 disabled:opacity-50"
+                  onClick={() => clearSupplierData(true)}
+                  disabled={busy !== null}
+                >
+                  {busy === "supplier-clear-kickdb" ? "Clearing…" : "Clear supplier + KickDB"}
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -1129,135 +1272,49 @@ export default function GalaxusDashboardPage() {
         )}
       </div>
 
-      <div className="flex gap-3 flex-wrap items-center">
-        <button
-          className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
-          onClick={syncSupplier}
-          disabled={busy !== null}
-        >
-          {busy === "sync" ? "Syncing…" : "Sync Catalog + Stock"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-blue-800 text-white disabled:opacity-50"
-          onClick={syncAllData}
-          disabled={busy !== null}
-        >
-          {busy === "sync-all" ? "Syncing all…" : "Sync All Data"}
-        </button>
-        <input
-          className="px-2 py-2 border rounded text-sm w-28"
-          type="number"
-          min={1}
-          value={syncMax}
-          onChange={(event) => setSyncMax(Number(event.target.value || 0))}
-          disabled={syncAll}
-          placeholder="Max products"
-        />
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={syncAll}
-            onChange={(event) => setSyncAll(event.target.checked)}
-          />
-          Get all
-        </label>
-        <button
-          className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
-          onClick={() => loadDb(0)}
-          disabled={busy !== null}
-        >
-          {busy === "db" ? "Loading…" : "Load DB Variants"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
-          onClick={() => loadMappings(0)}
-          disabled={busy !== null}
-        >
-          {busy === "db-mappings" ? "Loading…" : "Load DB Mappings"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
-          onClick={() => enrichKickDb(false, false)}
-          disabled={busy !== null}
-        >
-          {busy === "enrich" ? "Enriching…" : "Enrich GTIN (KickDB)"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-green-100 text-green-900 disabled:opacity-50"
-          onClick={() => enrichKickDb(true, true)}
-          disabled={busy !== null}
-        >
-          {busy === "enrich" ? "Enriching…" : "Enrich GTIN (Debug + Force)"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-red-700 text-white disabled:opacity-50"
-          onClick={() => clearSupplierData(false)}
-          disabled={busy !== null}
-        >
-          {busy === "supplier-clear" ? "Clearing…" : "Clear Supplier Data"}
-        </button>
-        <button
-          className="px-3 py-2 rounded bg-red-100 text-red-900 disabled:opacity-50"
-          onClick={() => clearSupplierData(true)}
-          disabled={busy !== null}
-        >
-          {busy === "supplier-clear-kickdb" ? "Clearing…" : "Clear Supplier + KickDB"}
-        </button>
-        <input
-          className="px-2 py-2 border rounded text-sm w-28"
-          value={supplierFilter}
-          onChange={(event) => setSupplierFilter(event.target.value)}
-          placeholder="Supplier key"
-        />
-        <button
-          className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
-          onClick={exportAllWithChecks}
-          disabled={busy !== null}
-        >
-          {busy === "export-check" ? "Exporting…" : "Export All + Run Checks"}
-        </button>
-      </div>
-
-      <div className="space-y-2">
-        <div className="text-sm font-medium">
-          Supplier Preview {previewTotal !== null ? `(${preview.length} of ${previewTotal})` : ""}
-        </div>
-        <div className="overflow-auto border rounded">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-2 py-1 text-left">Variant ID</th>
-                <th className="px-2 py-1 text-left">SKU</th>
-                <th className="px-2 py-1 text-left">Product</th>
-                <th className="px-2 py-1 text-left">Size</th>
-                <th className="px-2 py-1 text-left">GTIN</th>
-                <th className="px-2 py-1 text-right">Price</th>
-                <th className="px-2 py-1 text-right">Stock</th>
-              </tr>
-            </thead>
-            <tbody>
-              {preview.map((item) => (
-                <tr key={item.supplierVariantId} className="border-t">
-                  <td className="px-2 py-1">{item.supplierVariantId}</td>
-                  <td className="px-2 py-1">{item.supplierSku}</td>
-                  <td className="px-2 py-1">{item.productName}</td>
-                  <td className="px-2 py-1">{item.sizeEu ?? item.sizeUs}</td>
-                  <td className="px-2 py-1">{item.barcode ?? ""}</td>
-                  <td className="px-2 py-1 text-right">{item.price ?? ""}</td>
-                  <td className="px-2 py-1 text-right">{item.stock ?? ""}</td>
-                </tr>
-              ))}
-              {preview.length === 0 && (
-                <tr>
-                  <td className="px-2 py-3 text-gray-500" colSpan={7}>
-                    No preview loaded.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <details className="border rounded bg-white p-4">
+        <summary className="cursor-pointer text-sm font-medium">Data tables</summary>
+        <div className="mt-4 space-y-6">
+          <div className="space-y-2">
+            <div className="text-sm font-medium">
+              Supplier Preview {previewTotal !== null ? `(${preview.length} of ${previewTotal})` : ""}
+            </div>
+            <div className="overflow-auto border rounded">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-2 py-1 text-left">Variant ID</th>
+                    <th className="px-2 py-1 text-left">SKU</th>
+                    <th className="px-2 py-1 text-left">Product</th>
+                    <th className="px-2 py-1 text-left">Size</th>
+                    <th className="px-2 py-1 text-left">GTIN</th>
+                    <th className="px-2 py-1 text-right">Price</th>
+                    <th className="px-2 py-1 text-right">Stock</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.map((item) => (
+                    <tr key={item.supplierVariantId} className="border-t">
+                      <td className="px-2 py-1">{item.supplierVariantId}</td>
+                      <td className="px-2 py-1">{item.supplierSku}</td>
+                      <td className="px-2 py-1">{item.productName}</td>
+                      <td className="px-2 py-1">{item.sizeEu ?? item.sizeUs}</td>
+                      <td className="px-2 py-1">{item.barcode ?? ""}</td>
+                      <td className="px-2 py-1 text-right">{item.price ?? ""}</td>
+                      <td className="px-2 py-1 text-right">{item.stock ?? ""}</td>
+                    </tr>
+                  ))}
+                  {preview.length === 0 && (
+                    <tr>
+                      <td className="px-2 py-3 text-gray-500" colSpan={7}>
+                        No preview loaded.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
       <div className="space-y-2">
         <div className="text-sm font-medium">DB Variants</div>
@@ -1424,6 +1481,8 @@ export default function GalaxusDashboardPage() {
           </div>
         )}
       </div>
+        </div>
+      </details>
 
       {exportCheckReport && (
         <div className="space-y-2">

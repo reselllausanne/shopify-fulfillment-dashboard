@@ -137,7 +137,25 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       console.warn("Error fetching DB matches, proceeding without filtering", err);
     }
 
-    const results = items.map((item: ShopifyLineItem) => matchShopifyToSupplier(item, availableSupplier));
+    // Enforce 1:1 matching across Shopify items (FIFO by order time)
+    const usedSupplierNumbers = new Set<string>();
+    const sortedItems = [...items].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const resultsById = new Map<string, MatchResult>();
+
+    for (const item of sortedItems) {
+      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+      const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
+      if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+      resultsById.set(item.lineItemId, result);
+    }
+
+    const results = items.map((item) => resultsById.get(item.lineItemId) || {
+      shopifyItem: item,
+      bestMatch: null,
+      allCandidates: [],
+    });
 
     setMatchResults(results);
     console.log(`Matched ${results.length} Shopify items`);
@@ -205,7 +223,18 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       console.warn("Error fetching DB matches, proceeding without filtering", err);
     }
 
-    const newMatchResults = fetchedLineItems.map((item) => matchShopifyToSupplier(item, availableSupplier));
+    const usedSupplierNumbers = new Set<string>();
+    for (const result of matchResults) {
+      const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
+      if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+    }
+
+    const newMatchResults = fetchedLineItems.map((item) => {
+      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+      const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
+      if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+      return result;
+    });
 
     setShopifyItems((prev) => {
       const existingIds = new Set(prev.map((p) => p.lineItemId));

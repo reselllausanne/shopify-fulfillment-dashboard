@@ -20,6 +20,7 @@ export async function GET(request: Request) {
     : {};
 
   const rows: ExportRow[] = [];
+  const seenGtins = new Set<string>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -59,6 +60,9 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
 
     for (const mapping of mappings) {
+      const gtin = mapping.gtin ?? "";
+      if (gtin && seenGtins.has(gtin)) continue;
+      if (gtin) seenGtins.add(gtin);
       const supplierVariant = mapping.supplierVariant;
       const product = mapping.kickdbVariant?.product as any;
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId);

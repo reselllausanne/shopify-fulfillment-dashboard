@@ -194,6 +194,7 @@ export async function GET(request: Request) {
   if (!minimal && includeWeight) headers.push("ProductWeight");
 
   const rows: ExportRow[] = [];
+  const seenGtins = new Set<string>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -216,6 +217,9 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
 
     mappings.forEach((mapping) => {
+      const gtin = mapping.gtin ?? "";
+      if (gtin && seenGtins.has(gtin)) return;
+      if (gtin) seenGtins.add(gtin);
       const supplierVariant = mapping.supplierVariant;
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
       if (minimal) {
@@ -274,27 +278,14 @@ export async function GET(request: Request) {
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
-  const uniqueRows: ExportRow[] = [];
-  const seenProviderKeys = new Set<string>();
-  const seenGtins = new Set<string>();
-  for (const row of rows) {
-    const providerKey = row.ProviderKey;
-    const gtin = row.Gtin;
-    if (providerKey && seenProviderKeys.has(providerKey)) continue;
-    if (gtin && seenGtins.has(gtin)) continue;
-    if (providerKey) seenProviderKeys.add(providerKey);
-    if (gtin) seenGtins.add(gtin);
-    uniqueRows.push(row);
-  }
-
-  const csv = toCsv(headers, uniqueRows);
+  const csv = toCsv(headers, rows);
   const filename = `galaxus-master-${supplier ?? "all"}-${Date.now()}.csv`;
 
   return new NextResponse(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Total-Rows": uniqueRows.length.toString(),
+      "X-Total-Rows": rows.length.toString(),
       "X-Offset": offset.toString(),
     },
   });

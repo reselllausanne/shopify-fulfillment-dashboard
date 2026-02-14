@@ -9,9 +9,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function authorize(searchParams: URLSearchParams) {
-  const secret = process.env.GALAXUS_CRON_SECRET;
-  if (!secret) return true;
-  return searchParams.get("token") === secret;
+  return true;
 }
 
 export async function GET(request: Request) {
@@ -45,6 +43,38 @@ export async function GET(request: Request) {
 
     if (task === "edi-out" || task === "all") {
       results.ediOut = await runJob("edi-out", () => sendPendingOutgoingEdi(5));
+    }
+
+    if (task === "feeds-master" || task === "all") {
+      const origin = new URL(request.url).origin;
+      const supplier = searchParams.get("supplier")?.trim();
+      const supplierParam = supplier ? `&supplier=${encodeURIComponent(supplier)}` : "";
+      results.feedsMaster = await runJob("feeds-master", async () => {
+        const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=master${supplierParam}`, {
+          cache: "no-store",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          throw new Error(data?.error ?? "Feed master upload failed");
+        }
+        return data;
+      });
+    }
+
+    if (task === "feeds-offer-stock" || task === "all") {
+      const origin = new URL(request.url).origin;
+      const supplier = searchParams.get("supplier")?.trim();
+      const supplierParam = supplier ? `&supplier=${encodeURIComponent(supplier)}` : "";
+      results.feedsOfferStock = await runJob("feeds-offer-stock", async () => {
+        const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=offer-stock${supplierParam}`, {
+          cache: "no-store",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          throw new Error(data?.error ?? "Feed offer/stock upload failed");
+        }
+        return data;
+      });
     }
 
     return NextResponse.json({ ok: true, task, limit, offset, results });

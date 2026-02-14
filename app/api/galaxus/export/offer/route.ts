@@ -23,6 +23,15 @@ const DEFAULT_TARGET_MARGIN = 0.08;
 const DEFAULT_BUFFER = 0;
 const DEFAULT_ROUND_TO = 0.05;
 const DEFAULT_VAT_RATE = 0.081;
+const DEFAULT_TARGET_MARGIN_KEYS = [
+  "GALAXUS_TARGET_MARGIN",
+  "GALAXUS_TARGET_NET_MARGIN",
+  "GALAXUS_PRICE_TARGET_MARGIN",
+];
+const DEFAULT_SHIPPING_KEYS = ["GALAXUS_PRICE_SHIPPING_CHF", "GALAXUS_SHIPPING_CHF"];
+const DEFAULT_BUFFER_KEYS = ["GALAXUS_PRICE_BUFFER_CHF", "GALAXUS_BUFFER_CHF"];
+const DEFAULT_ROUND_TO_KEYS = ["GALAXUS_PRICE_ROUND_TO", "GALAXUS_ROUND_TO"];
+const DEFAULT_VAT_RATE_KEYS = ["GALAXUS_PRICE_VAT_RATE", "GALAXUS_VAT_RATE"];
 
 function decimalToString(value: unknown): string {
   if (value === null || value === undefined) return "";
@@ -35,6 +44,16 @@ function roundUpToIncrement(value: number, increment: number): number {
   if (increment <= 0) return value;
   const scale = 1 / increment;
   return Math.ceil((value + 1e-12) * scale) / scale;
+}
+
+function readNumberEnv(keys: string[], fallback: number): number {
+  for (const key of keys) {
+    const raw = process.env[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }
 
 function computeGalaxusSellPriceExVat(input: PricingInput) {
@@ -87,6 +106,7 @@ function parseNumber(value: unknown): number | null {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
+  const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
@@ -95,23 +115,19 @@ export async function GET(request: Request) {
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
     : {};
 
-  const mappings = await prisma.variantMapping.findMany({
-    where: {
-      status: "MATCHED",
-      gtin: { not: null },
-      ...whereSupplier,
-    },
-    include: {
-      supplierVariant: true,
-      kickdbVariant: { include: { product: true } },
-    },
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-    skip: offset,
-  });
+  const rows: ExportRow[] = [];
+  const seenGtins = new Set<string>();
+  const pageSize = all ? 500 : limit;
+  let currentOffset = all ? 0 : offset;
+  let lastBatch = 0;
 
   const currency = GALAXUS_PRICE_CURRENCY.toUpperCase();
   const isMerchant = GALAXUS_PRICE_MODEL.toLowerCase() === "merchant";
+  const targetMargin = readNumberEnv(DEFAULT_TARGET_MARGIN_KEYS, DEFAULT_TARGET_MARGIN);
+  const shippingPerPair = readNumberEnv(DEFAULT_SHIPPING_KEYS, DEFAULT_SHIPPING);
+  const bufferPerPair = readNumberEnv(DEFAULT_BUFFER_KEYS, DEFAULT_BUFFER);
+  const roundTo = readNumberEnv(DEFAULT_ROUND_TO_KEYS, DEFAULT_ROUND_TO);
+  const vatRateDefault = readNumberEnv(DEFAULT_VAT_RATE_KEYS, DEFAULT_VAT_RATE);
   const priceHeader = isMerchant
     ? `SalesPriceExclVat_${currency}`
     : `PurchasePriceExclVat_${currency}`;
@@ -124,43 +140,68 @@ export async function GET(request: Request) {
         "VatRatePercentage",
       ];
 
-  const rows: ExportRow[] = mappings.map((mapping) => {
-    const supplierVariant = mapping.supplierVariant as any;
-    const product = (mapping as any).kickdbVariant?.product as any;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-    const buyPrice = parseNumber(supplierVariant?.price);
-    const computedPrice =
-      buyPrice && !isMerchant
-        ? computeGalaxusSellPriceExVat({
-            buyPriceExVatCHF: buyPrice,
-            shippingPerPairCHF: 6,
-            targetNetMargin: 0.08,
-            bufferPerPairCHF: 0,
-            roundTo: 0.05,
-            vatRate: 0.081,
-          })
-        : null;
-    const price = computedPrice
-      ? computedPrice.sellPriceExVatCHF.toFixed(2)
-      : decimalToString(supplierVariant?.price ?? "");
-    const vatRate = supplierVariant?.vatRate ?? 8.1;
-    const rrp = product?.retailPrice ?? "";
+  do {
+    const mappings = await prisma.variantMapping.findMany({
+      where: {
+        status: "MATCHED",
+        gtin: { not: null },
+        ...whereSupplier,
+      },
+      include: {
+        supplierVariant: true,
+        kickdbVariant: { include: { product: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: pageSize,
+      skip: currentOffset,
+    });
+    lastBatch = mappings.length;
 
-    if (isMerchant) {
-      return {
+    for (const mapping of mappings) {
+      const gtin = mapping.gtin ?? "";
+      if (gtin && seenGtins.has(gtin)) continue;
+      if (gtin) seenGtins.add(gtin);
+
+      const supplierVariant = mapping.supplierVariant as any;
+      const product = (mapping as any).kickdbVariant?.product as any;
+      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+      const buyPrice = parseNumber(supplierVariant?.price);
+      const computedPrice =
+        buyPrice && !isMerchant
+          ? computeGalaxusSellPriceExVat({
+              buyPriceExVatCHF: buyPrice,
+              shippingPerPairCHF: shippingPerPair,
+              targetNetMargin: targetMargin,
+              bufferPerPairCHF: bufferPerPair,
+              roundTo,
+              vatRate: vatRateDefault,
+            })
+          : null;
+      const price = computedPrice
+        ? computedPrice.sellPriceExVatCHF.toFixed(2)
+        : decimalToString(supplierVariant?.price ?? "");
+      const vatRate = supplierVariant?.vatRate ?? 8.1;
+      const rrp = product?.retailPrice ?? "";
+
+      if (isMerchant) {
+        rows.push({
+          ProviderKey: providerKey,
+          [priceHeader]: price,
+          VatRatePercentage: vatRate ? String(vatRate) : "8.1",
+        });
+        continue;
+      }
+
+      rows.push({
         ProviderKey: providerKey,
         [priceHeader]: price,
+        SuggestedRetailPriceInclVat_CHF: rrp ? String(rrp) : "",
         VatRatePercentage: vatRate ? String(vatRate) : "8.1",
-      };
+      });
     }
 
-    return {
-      ProviderKey: providerKey,
-      [priceHeader]: price,
-      SuggestedRetailPriceInclVat_CHF: rrp ? String(rrp) : "",
-      VatRatePercentage: vatRate ? String(vatRate) : "8.1",
-    };
-  });
+    currentOffset += pageSize;
+  } while (all && lastBatch === pageSize);
 
   const csv = toCsv(headers, rows);
   const filename = `galaxus-offer-${supplier ?? "all"}-${Date.now()}.csv`;

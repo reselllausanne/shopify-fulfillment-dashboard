@@ -66,31 +66,71 @@ export function extractAwb(trackingUrl: string | null | undefined): string | nul
   try {
     const url = new URL(trackingUrl);
     
-    // Try common query parameter names
-    const params = [
-      "AWB",
+    const normalizeTrackingNumber = (value: string): string | null => {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+
+      // Some providers include multiple numbers: "A,B" or "A|B"
+      const first = trimmed.split(/[,\s|;]+/)[0] || "";
+      const cleaned = first.replace(/[^A-Z0-9]/gi, "");
+      if (!cleaned) return null;
+
+      // UPS (1Z + 16 chars)
+      if (/^1Z[0-9A-Z]{16}$/i.test(cleaned)) {
+        return cleaned.toUpperCase();
+      }
+
+      // Numeric-only tracking (DHL/other): keep last 12 if very long
+      if (/^\d{13,}$/.test(cleaned)) {
+        return cleaned.slice(-12);
+      }
+
+      // Generic alphanumeric tracking
+      if (/^[A-Z0-9]{8,}$/i.test(cleaned)) {
+        return cleaned.toUpperCase();
+      }
+
+      return null;
+    };
+
+    // Try common query parameter names (case-insensitive)
+    const paramKeys = new Set([
       "awb",
-      "trackingNumber",
+      "trackingnumber",
       "tracking_number",
       "waybill",
       "consignment",
-      "shipmentNumber",
+      "shipmentnumber",
       "tracknum",
+      "tracknums",
+      "tracknumber",
       "tracknumbers",
-    ];
-    for (const param of params) {
-      const value = url.searchParams.get(param);
-      if (value && value.length >= 8) {
-        return /^\d{13,}$/.test(value) ? value.slice(-12) : value;
-      }
+    ]);
+
+    for (const [key, rawValue] of url.searchParams.entries()) {
+      const keyLower = key.toLowerCase();
+      const looksLikeTrackingKey = paramKeys.has(keyLower) || keyLower.includes("track");
+      if (!looksLikeTrackingKey) continue;
+
+      const normalized = normalizeTrackingNumber(rawValue);
+      if (normalized) return normalized;
     }
     
     // Try to extract from pathname (e.g., /track/ABC123456789)
     const pathSegments = url.pathname.split("/").filter((s) => s.length > 0);
     for (const segment of pathSegments) {
       // Look for alphanumeric segments >= 8 chars (likely tracking numbers)
-      if (/^[A-Z0-9]{8,}$/i.test(segment)) {
-        return /^\d{13,}$/.test(segment) ? segment.slice(-12) : segment;
+      const normalized = normalizeTrackingNumber(segment);
+      if (normalized) return normalized;
+    }
+
+    // Try hash fragments (some UPS links put tracking in hash)
+    const hash = url.hash ? url.hash.replace(/^#/, "") : "";
+    if (hash) {
+      const hashSegments = hash.split(/[/\s]+/).filter((s) => s.length > 0);
+      for (const segment of hashSegments) {
+        const normalized = normalizeTrackingNumber(segment);
+        if (normalized) return normalized;
       }
     }
     

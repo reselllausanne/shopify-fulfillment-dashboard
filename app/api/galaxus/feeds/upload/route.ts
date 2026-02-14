@@ -22,6 +22,13 @@ type UploadedFile = {
   size: number;
 };
 
+function countCsvRows(csv: string): number {
+  if (!csv) return 0;
+  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return 0;
+  return Math.max(0, lines.length - 1); // exclude header
+}
+
 function normalizeProviderName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase() || "digitecgalaxus";
 }
@@ -59,9 +66,8 @@ export async function POST(request: Request) {
     const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
 
     const needsMaster = type === "all" || type === "master";
-    const needsStock = type === "all" || type === "stock" || type === "offer";
-
-    const needsOffer = type === "offer" || type === "all";
+    const needsStock = type === "all" || type === "stock" || type === "offer-stock";
+    const needsOffer = type === "offer" || type === "all" || type === "offer-stock";
     const [masterRes, stockRes, offerRes] = await Promise.all([
       needsMaster ? fetch(masterUrl, { cache: "no-store" }) : Promise.resolve(null),
       needsStock ? fetch(stockUrl, { cache: "no-store" }) : Promise.resolve(null),
@@ -83,6 +89,40 @@ export async function POST(request: Request) {
       stockRes ? stockRes.text() : Promise.resolve(""),
       offerRes ? offerRes.text() : Promise.resolve(""),
     ]);
+
+    const masterCount = masterRes ? countCsvRows(masterCsv) : null;
+    const stockCount = stockRes ? countCsvRows(stockCsv) : null;
+    const offerCount = offerRes ? countCsvRows(offerCsv) : null;
+    if (needsStock && needsOffer && stockCount !== offerCount) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Stock and price feeds must have the same number of rows.",
+          counts: { stock: stockCount, offer: offerCount },
+        },
+        { status: 409 }
+      );
+    }
+    if (needsMaster && needsOffer && masterCount !== offerCount) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Master and price feeds must have the same number of rows.",
+          counts: { master: masterCount, offer: offerCount },
+        },
+        { status: 409 }
+      );
+    }
+    if (needsMaster && needsStock && masterCount !== stockCount) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Master and stock feeds must have the same number of rows.",
+          counts: { master: masterCount, stock: stockCount },
+        },
+        { status: 409 }
+      );
+    }
 
     const masterName = buildFeedFilename("product", providerName, assortmentFile);
     const stockName = buildFeedFilename("stock", providerName, assortmentFile);
@@ -146,6 +186,11 @@ export async function POST(request: Request) {
       warning: isLocal
         ? "Uploaded to LOCAL SFTP. Galaxus staff cannot see these files."
         : null,
+      counts: {
+        master: masterCount,
+        stock: stockCount,
+        offer: offerCount,
+      },
     });
   } catch (error: any) {
     console.error("[GALAXUS][FEEDS][UPLOAD] Failed:", error);

@@ -311,10 +311,18 @@ function stringSimilarity(str1: string, str2: string): number {
   return union.size > 0 ? intersection.size / union.size : 0;
 }
 
-function calculateTimeDiff(shopifyDate: string, supplierDate: string): number {
-  const d1 = new Date(shopifyDate).getTime();
-  const d2 = new Date(supplierDate).getTime();
-  return Math.abs(d1 - d2) / (1000 * 60 * 60); // hours
+function parseDateMs(value: string): number | null {
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return null;
+  return time;
+}
+
+// Signed diff: supplier - shopify (hours). Returns null if invalid.
+function calculateTimeDiff(shopifyDate: string, supplierDate: string): number | null {
+  const shopifyMs = parseDateMs(shopifyDate);
+  const supplierMs = parseDateMs(supplierDate);
+  if (shopifyMs == null || supplierMs == null) return null;
+  return (supplierMs - shopifyMs) / (1000 * 60 * 60);
 }
 
 function scoreTimeProximity(hours: number): number {
@@ -343,10 +351,18 @@ function isValidCausalOrder(
   supplierDate: string,
   toleranceMinutes: number = 5
 ): boolean {
-  const shopifyTime = new Date(shopifyDate).getTime();
-  const supplierTime = new Date(supplierDate).getTime();
+  const shopifyTime = parseDateMs(shopifyDate);
+  const supplierTime = parseDateMs(supplierDate);
   const toleranceMs = toleranceMinutes * 60 * 1000;
   
+  if (shopifyTime == null || supplierTime == null) {
+    console.log(
+      `[CAUSAL] ❌ REJECTED: Invalid date(s) ` +
+      `(shopify: "${shopifyDate}", supplier: "${supplierDate}")`
+    );
+    return false;
+  }
+
   // Supplier must be created AFTER Shopify (with tolerance for clock skew)
   // If Supplier is more than 5 minutes BEFORE Shopify → INVALID
   const isValid = supplierTime >= (shopifyTime - toleranceMs);
@@ -532,10 +548,18 @@ export function matchShopifyToSupplier(
     // 2. Time diff <= 96 hours (checked below)
     // 3. SKU match is STRONG (exact or 90%+ conservative match)
     
-    const timeDiffHours = calculateTimeDiff(
+    const timeDiffSigned = calculateTimeDiff(
       shopifyItem.createdAt,
       supplierOrder.purchaseDate
     );
+    if (timeDiffSigned == null) {
+      console.log(
+        `[MATCH] ❌ Invalid time diff for ${supplierOrder.supplierOrderNumber} ` +
+        `(shopify: "${shopifyItem.createdAt}", supplier: "${supplierOrder.purchaseDate}") - SKIPPING`
+      );
+      continue;
+    }
+    const timeDiffHours = Math.abs(timeDiffSigned);
     
     // Check if SKU override is possible
     let allowSkuOverride = false;

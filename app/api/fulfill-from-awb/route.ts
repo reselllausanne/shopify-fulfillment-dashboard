@@ -100,8 +100,17 @@ async function submitPrintJob(filePath: string): Promise<PrintJobResult> {
     const { stdout, stderr } = await execFile(PRINT_COMMAND, args);
     return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() };
   } catch (error: any) {
-    console.error("[SWISS POST] Print job failed:", error?.message || error);
-    return { ok: false, error: error?.message || String(error) };
+    const message = error?.message || String(error);
+    const code = error?.code || "";
+    if (code === "ENOENT" || /ENOENT/i.test(message)) {
+      return {
+        ok: false,
+        skipped: true,
+        message: `Print command not found (${PRINT_COMMAND}). Install CUPS/lp or set SWISS_POST_PRINT_COMMAND.`,
+      };
+    }
+    console.error("[SWISS POST] Print job failed:", message);
+    return { ok: false, error: message };
   }
 }
 
