@@ -300,6 +300,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const mapping = await prisma.variantMapping.findUnique({
       where: { supplierVariantId: variant.supplierVariantId },
     });
+    const supplierGtin =
+      mapping?.status === "SUPPLIER_GTIN" && mapping?.gtin ? mapping.gtin : null;
 
     if (
       !force
@@ -336,6 +338,15 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       : undefined;
 
     if (!query) {
+      if (supplierGtin) {
+        results.push({
+          supplierVariantId: variant.supplierVariantId,
+          status: "SUPPLIER_GTIN",
+          gtin: supplierGtin,
+          debug: debugInfo ? { ...debugInfo, reason: "NO_QUERY_SUPPLIER_GTIN" } : undefined,
+        });
+        continue;
+      }
       await prisma.variantMapping.upsert({
         where: { supplierVariantId: variant.supplierVariantId },
         create: {
@@ -393,6 +404,20 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
 
     if (!productIdOrSlug) {
+      if (supplierGtin) {
+        results.push({
+          supplierVariantId: variant.supplierVariantId,
+          status: "SUPPLIER_GTIN",
+          gtin: supplierGtin,
+          debug: debugInfo
+            ? {
+                ...debugInfo,
+                reason: variant.supplierSku ? "SKU_NO_MATCH_SUPPLIER_GTIN" : "NO_RESULTS_SUPPLIER_GTIN",
+              }
+            : undefined,
+        });
+        continue;
+      }
       await prisma.variantMapping.upsert({
         where: { supplierVariantId: variant.supplierVariantId },
         create: {
@@ -475,7 +500,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
 
     const gtin = extractVariantGtin(matchedVariant ?? undefined);
-    const providerKey = buildProviderKey(gtin ?? null, variant.supplierVariantId);
+    const resolvedGtin = supplierGtin ?? gtin ?? null;
+    const providerKey = buildProviderKey(resolvedGtin ?? null, variant.supplierVariantId);
 
     // Persist KickDB product + variant so Stage-2 exports can use brand/title/category/images.
     const now = new Date();
@@ -572,23 +598,25 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       create: {
         supplierVariantId: variant.supplierVariantId,
         kickdbVariantId: savedVariant.id,
-        gtin: gtin ?? null,
+        gtin: resolvedGtin ?? null,
         providerKey: providerKey ?? null,
-        status: gtin ? "MATCHED" : "NOT_FOUND",
+        status: supplierGtin ? "SUPPLIER_GTIN" : gtin ? "MATCHED" : "NOT_FOUND",
       },
       update: {
         kickdbVariantId: savedVariant.id,
-        gtin: gtin ?? null,
+        gtin: resolvedGtin ?? null,
         providerKey: providerKey ?? null,
-        status: gtin ? "MATCHED" : "NOT_FOUND",
+        status: supplierGtin ? "SUPPLIER_GTIN" : gtin ? "MATCHED" : "NOT_FOUND",
       },
     });
 
     results.push({
       supplierVariantId: variant.supplierVariantId,
-      status: gtin ? "MATCHED" : "NOT_FOUND",
-      gtin: gtin ?? null,
-      debug: debugInfo ? { ...debugInfo, reason: gtin ? "MATCHED" : "NO_GTIN" } : undefined,
+      status: supplierGtin ? "SUPPLIER_GTIN" : gtin ? "MATCHED" : "NOT_FOUND",
+      gtin: resolvedGtin ?? null,
+      debug: debugInfo
+        ? { ...debugInfo, reason: supplierGtin ? "SUPPLIER_GTIN_KEEP" : gtin ? "MATCHED" : "NO_GTIN" }
+        : undefined,
     });
   }
 

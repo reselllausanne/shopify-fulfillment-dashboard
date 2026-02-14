@@ -62,7 +62,7 @@ export async function GET(request: Request) {
   do {
     const mappings = await prisma.variantMapping.findMany({
       where: {
-        status: "MATCHED",
+        status: { in: ["MATCHED", "SUPPLIER_GTIN"] },
         gtin: { not: null },
         ...whereSupplier,
       },

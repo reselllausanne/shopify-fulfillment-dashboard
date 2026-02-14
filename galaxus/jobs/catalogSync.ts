@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
+import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
 import type { SupplierCatalogItem } from "../supplier/types";
 
@@ -70,6 +71,26 @@ export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<
       updated += 1;
     } else {
       created += 1;
+    }
+
+    // Persist supplier GTIN as source of truth when available.
+    const supplierGtin = item.sourcePayload?.barcode ?? null;
+    if (supplierGtin) {
+      const providerKey = buildProviderKey(supplierGtin, item.supplierVariantId);
+      await prisma.variantMapping.upsert({
+        where: { supplierVariantId: item.supplierVariantId },
+        create: {
+          supplierVariantId: item.supplierVariantId,
+          gtin: supplierGtin,
+          providerKey: providerKey ?? null,
+          status: "SUPPLIER_GTIN",
+        },
+        update: {
+          gtin: supplierGtin,
+          providerKey: providerKey ?? null,
+          status: "SUPPLIER_GTIN",
+        },
+      });
     }
   }
 
