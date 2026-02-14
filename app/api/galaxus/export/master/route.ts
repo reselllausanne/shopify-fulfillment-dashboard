@@ -139,27 +139,14 @@ function cleanDescription(value?: string | null): string {
   return truncate(text, 4000);
 }
 
-function extractProductImages(
-  payload: KickDbPayload | null,
-  supplierImages: unknown,
-  fallback?: string | null
-): string[] {
+function extractSupplierImages(supplierImages: unknown): string[] {
   const list: string[] = [];
-  if (payload?.image) list.push(payload.image);
-  if (Array.isArray(payload?.gallery)) {
-    for (const item of payload.gallery) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
-  }
-  if (fallback) list.push(fallback);
-  if (Array.isArray(supplierImages)) {
+  if (Array.isArray(supplierImages) && supplierImages.length) {
     for (const item of supplierImages) {
       if (typeof item === "string" && item.length) list.push(item);
     }
   }
-  return Array.from(new Set(list))
-    .filter(Boolean)
-    .filter((value) => isAbsoluteUrl(value));
+  return Array.from(new Set(list)).filter((value) => isAbsoluteUrl(value));
 }
 
 export async function GET(request: Request) {
@@ -222,19 +209,24 @@ export async function GET(request: Request) {
       if (gtin) seenGtins.add(gtin);
       const supplierVariant = mapping.supplierVariant;
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+      const supplierVariantAny = supplierVariant as any;
+      const supplierName = sanitizeText(supplierVariantAny?.supplierProductName ?? "");
+      const supplierBrand = normalizeBrand(supplierVariantAny?.supplierBrand ?? "");
+      const images = extractSupplierImages(supplierVariantAny?.images);
+      if (!supplierName || images.length === 0) {
+        return;
+      }
       if (minimal) {
-        const supplierVariantAny = supplierVariant as any;
         const product = (mapping as any).kickdbVariant?.product as any;
         rows.push({
           ProviderKey: providerKey,
           Gtin: mapping.gtin ?? "",
           BrandName: normalizeBrand(
-            product?.brand ?? supplierVariantAny?.supplierBrand ?? ""
+            supplierVariantAny?.supplierBrand ?? product?.brand ?? ""
           ),
         });
         return;
       }
-      const supplierVariantAny = supplierVariant as any;
       const product = (mapping as any).kickdbVariant?.product as any;
       const payload = product?.name || product?.brand || product?.description
         ? ({
@@ -244,10 +236,9 @@ export async function GET(request: Request) {
             description: product?.description ?? undefined,
           } as KickDbPayload)
         : null;
-      const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
-      const fallbackName = supplierVariantAny?.supplierProductName ?? null;
-      const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? null, fallbackName);
-      const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? null, fallbackName);
+      const title = supplierName;
+      const variantName = supplierName;
+      const description = payload?.description ? cleanDescription(payload.description) : "";
 
       const manufacturerBase = sanitizeText(payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? "");
       const manufacturerKey = truncate(
@@ -259,13 +250,13 @@ export async function GET(request: Request) {
         ProviderKey: providerKey,
         Gtin: mapping.gtin ?? "",
         ManufacturerKey: manufacturerKey,
-        BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariantAny?.supplierBrand ?? ""),
+        BrandName: supplierBrand || normalizeBrand(payload?.brand ?? product?.brand ?? ""),
         ProductCategory: buildProductCategory(payload) || "Sneakers",
         ProductTitle_de: title,
         ProductTitle_en: title,
         ProductTitle_ch: title,
         VariantName: variantName,
-        LongDescription_de: cleanDescription(payload?.description ?? ""),
+        LongDescription_de: description,
         MainImageUrl: images[0] ?? "",
       };
       if (includeWeight) {

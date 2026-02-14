@@ -4,6 +4,7 @@ import {
   KICKDB_API_KEY_HEADER,
   KICKDB_API_KEY_PREFIX,
 } from "../config";
+import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "./sizeCharts";
 
 type KickDbProduct = {
   id: string;
@@ -120,6 +121,128 @@ export function normalizeSize(value?: string | null): string | null {
   return match?.[1] ?? raw;
 }
 
+type SizeMatchContext = {
+  brand?: string | null;
+  gender?: string | null;
+};
+
+function normalizeBrandForChart(value?: string | null): string | null {
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  if (lower.includes("yeezy") && lower.includes("slide")) return "yeezyslide";
+  if (lower.includes("yeezy") || lower.includes("yeez")) return "adidas";
+  if (lower.includes("jordan")) return "air jordan";
+  return lower;
+}
+
+function normalizeGenderForChart(value?: string | null, sizeRaw?: string | null): "men" | "women" | "youth" {
+  const lower = (value ?? "").toLowerCase();
+  if (/(women|womens|woman|female|w\b)/.test(lower)) return "women";
+  if (/(youth|kids|kid|gs|grade school|child|children)/.test(lower)) return "youth";
+  const size = (sizeRaw ?? "").toUpperCase();
+  if (/(^|\b)\d+(\.\d+)?\s*Y\b/.test(size)) return "youth";
+  if (/(^|\b)GS\b/.test(size)) return "youth";
+  return "men";
+}
+
+function getChart(brand?: string | null, gender?: string | null, sizeRaw?: string | null): SizeChartEntry | null {
+  const normalizedBrand = normalizeBrandForChart(brand);
+  if (!normalizedBrand) return null;
+  const normalizedGender = normalizeGenderForChart(gender, sizeRaw);
+  return (
+    FALLBACK_SIZE_CHARTS.find(
+      (entry) => entry.brand === normalizedBrand && entry.gender === normalizedGender
+    ) ?? null
+  );
+}
+
+function normalizeFractionalSize(value: string): string[] {
+  const tokens = new Set<string>();
+  const raw = value.trim();
+  tokens.add(raw.replace(/\s+/g, ""));
+  const fraction = raw.match(/(\d+)\s*(1\/3|2\/3)/i);
+  if (fraction) {
+    const base = Number(fraction[1]);
+    const decimal = fraction[2] === "1/3" ? base + 1 / 3 : base + 2 / 3;
+    tokens.add(decimal.toFixed(2));
+    tokens.add(decimal.toFixed(1));
+  }
+  return Array.from(tokens);
+}
+
+function expandSizeTokens(value: string): string[] {
+  const cleaned = value.trim().toUpperCase();
+  if (!cleaned) return [];
+  const tokens = new Set<string>();
+
+  if (/(^|[^A-Z])(XXS|XS|S|M|L|XL|XXL|XXXL|OS|ONE SIZE|O\/S)/i.test(cleaned)) {
+    tokens.add(cleaned.replace(/\s+/g, ""));
+  }
+
+  const withoutPrefix = cleaned.replace(/^(EU|US|UK|ASIA)\s+/i, "");
+  normalizeFractionalSize(withoutPrefix).forEach((token) => tokens.add(token));
+
+  const numericMatch = withoutPrefix.match(/(\d+(\.\d+)?)/);
+  if (numericMatch?.[1]) tokens.add(numericMatch[1]);
+
+  if (/(^|[^A-Z])(\d+(\.\d+)?)(Y|GS)$/i.test(cleaned)) {
+    const youthMatch = cleaned.match(/(\d+(\.\d+)?)/);
+    if (youthMatch?.[1]) {
+      tokens.add(`${youthMatch[1]}Y`);
+      tokens.add(youthMatch[1]);
+    }
+  }
+
+  return Array.from(tokens);
+}
+
+function inferSizeSystem(value: string): "EU" | "US" | "UK" | null {
+  const upper = value.toUpperCase();
+  if (upper.includes("EU")) return "EU";
+  if (upper.includes("US")) return "US";
+  if (upper.includes("UK")) return "UK";
+  return null;
+}
+
+function convertSizeUsingChart(
+  chart: SizeChartEntry | null,
+  fromSystem: "US" | "EU",
+  value: string
+): string | null {
+  if (!chart) return null;
+  const fromList = chart.sizes[fromSystem];
+  const toList = chart.sizes[fromSystem === "US" ? "EU" : "US"];
+  const index = fromList.indexOf(value);
+  if (index < 0 || index >= toList.length) return null;
+  return toList[index] ?? null;
+}
+
+function buildTargetSizeTokens(sizeRaw?: string | null, context?: SizeMatchContext): string[] {
+  if (!sizeRaw) return [];
+  const tokens = new Set<string>(expandSizeTokens(sizeRaw));
+
+  const chart = getChart(context?.brand ?? null, context?.gender ?? null, sizeRaw);
+  const system = inferSizeSystem(sizeRaw);
+  const stripped = sizeRaw.replace(/^(EU|US|UK|ASIA)\s+/i, "").trim();
+  const normalizedValue = stripped.replace(/\s+/g, "");
+  const baseValue =
+    normalizedValue.match(/^\d+(\.\d+)?$/) || /(\d+(\.\d+)?)/.test(normalizedValue)
+      ? normalizedValue.match(/(\d+(\.\d+)?)/)?.[1]
+      : null;
+
+  if (chart && baseValue) {
+    if (system === "US") {
+      const converted = convertSizeUsingChart(chart, "US", baseValue);
+      if (converted) expandSizeTokens(converted).forEach((token) => tokens.add(token));
+    } else if (system === "EU" || system === null) {
+      const converted = convertSizeUsingChart(chart, "EU", baseValue);
+      if (converted) expandSizeTokens(converted).forEach((token) => tokens.add(token));
+    }
+  }
+
+  return Array.from(tokens);
+}
+
 function getVariantSizeCandidates(variant: KickDbVariant): string[] {
   const values: Array<string | null | undefined> = [
     variant.size_eu,
@@ -128,18 +251,25 @@ function getVariantSizeCandidates(variant: KickDbVariant): string[] {
   ];
   if (Array.isArray(variant.sizes)) {
     for (const entry of variant.sizes) {
-      values.push(entry?.size ?? null);
+      if (entry?.size) values.push(entry.size);
     }
   }
-  return values
-    .map((value) => normalizeSize(value ?? null))
-    .filter((value): value is string => Boolean(value));
+  return values.flatMap((value) => (value ? expandSizeTokens(value) : [])).filter(Boolean);
 }
 
-export function matchVariantBySize(variants: KickDbVariant[] = [], sizeRaw?: string | null): KickDbVariant | null {
-  const target = normalizeSize(sizeRaw);
+export function matchVariantBySize(
+  variants: KickDbVariant[] = [],
+  sizeRaw?: string | null,
+  context?: SizeMatchContext
+): KickDbVariant | null {
+  const targetTokens = new Set(buildTargetSizeTokens(sizeRaw ?? null, context));
   if (!variants.length) return null;
-  if (!target) return variants[0] ?? null;
-  return variants.find((variant) => getVariantSizeCandidates(variant).includes(target)) ?? null;
+  if (targetTokens.size === 0) return variants[0] ?? null;
+  return (
+    variants.find((variant) => {
+      const candidateTokens = getVariantSizeCandidates(variant);
+      return candidateTokens.some((token) => targetTokens.has(token));
+    }) ?? null
+  );
 }
 

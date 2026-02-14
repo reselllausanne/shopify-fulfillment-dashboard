@@ -42,6 +42,20 @@ export async function GET(request: Request) {
     return null;
   };
 
+  const isAbsoluteUrl = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const hasSupplierImage = (images: unknown) => {
+    if (!Array.isArray(images)) return false;
+    return images.some((value) => typeof value === "string" && value.length > 0 && isAbsoluteUrl(value));
+  };
+
   do {
     const mappings = await prisma.variantMapping.findMany({
       where: {
@@ -64,6 +78,10 @@ export async function GET(request: Request) {
       if (gtin && seenGtins.has(gtin)) continue;
       if (gtin) seenGtins.add(gtin);
       const supplierVariant = mapping.supplierVariant;
+      const supplierVariantAny = supplierVariant as any;
+      if (!supplierVariantAny?.supplierProductName || !hasSupplierImage(supplierVariantAny?.images)) {
+        continue;
+      }
       const product = mapping.kickdbVariant?.product as any;
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId);
       if (!providerKey) continue;
@@ -77,11 +95,12 @@ export async function GET(request: Request) {
           SpecificationValue: supplierVariant.sizeRaw,
         });
       }
-      if (product?.brand) {
+      const supplierBrand = (mapping as any)?.supplierVariant?.supplierBrand ?? null;
+      if (supplierBrand || product?.brand) {
         rows.push({
           ProviderKey: providerKey,
           SpecificationKey: "Brand",
-          SpecificationValue: product.brand,
+          SpecificationValue: supplierBrand || product.brand,
         });
       }
 

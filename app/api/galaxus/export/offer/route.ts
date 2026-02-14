@@ -46,6 +46,20 @@ function roundUpToIncrement(value: number, increment: number): number {
   return Math.ceil((value + 1e-12) * scale) / scale;
 }
 
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function hasSupplierImage(images: unknown): boolean {
+  if (!Array.isArray(images)) return false;
+  return images.some((value) => typeof value === "string" && value.length > 0 && isAbsoluteUrl(value));
+}
+
 function readNumberEnv(keys: string[], fallback: number): number {
   for (const key of keys) {
     const raw = process.env[key];
@@ -163,6 +177,9 @@ export async function GET(request: Request) {
       if (gtin) seenGtins.add(gtin);
 
       const supplierVariant = mapping.supplierVariant as any;
+      if (!supplierVariant?.supplierProductName || !hasSupplierImage(supplierVariant?.images)) {
+        continue;
+      }
       const product = (mapping as any).kickdbVariant?.product as any;
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
       const buyPrice = parseNumber(supplierVariant?.price);

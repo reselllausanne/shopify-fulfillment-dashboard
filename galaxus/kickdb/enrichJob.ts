@@ -163,6 +163,50 @@ function normalizeSkuForCompare(value: unknown): string {
   return value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
 
+function stripGtinSuffix(value: string): string {
+  const trimmed = value.trim();
+  const gtinMatch = trimmed.match(/^(.*?)-(\d{8,})$/);
+  if (gtinMatch?.[1]) return gtinMatch[1].trim();
+  return trimmed;
+}
+
+function stripSizeSuffix(value: string): string {
+  const trimmed = value.trim();
+  const sizeTokenMatch = trimmed.match(
+    /^(.*?)-(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|OS|O\/S|ONE\s*SIZE)$/i
+  );
+  if (sizeTokenMatch?.[1]) return sizeTokenMatch[1].trim();
+  const numericSizeMatch = trimmed.match(/^(.*?)-(EU|US|UK|ASIA)?\s*\d+(\.\d+)?$/i);
+  if (numericSizeMatch?.[1]) return numericSizeMatch[1].trim();
+  return trimmed;
+}
+
+function deriveSkuSearchQuery(value: string): string {
+  const trimmed = value.trim();
+  const noGtin = stripGtinSuffix(trimmed);
+  if (noGtin !== trimmed) return noGtin;
+  const noSize = stripSizeSuffix(trimmed);
+  if (noSize !== trimmed) return noSize;
+  return trimmed;
+}
+
+function buildSkuCandidates(value: string): string[] {
+  const candidates = new Set<string>();
+  const trimmed = value.trim();
+  const add = (v: string) => {
+    const normalized = normalizeSkuForCompare(v);
+    if (normalized) candidates.add(normalized);
+  };
+  add(trimmed);
+  const noGtin = stripGtinSuffix(trimmed);
+  if (noGtin !== trimmed) add(noGtin);
+  const noSize = stripSizeSuffix(trimmed);
+  if (noSize !== trimmed) add(noSize);
+  const noGtinNoSize = stripSizeSuffix(noGtin);
+  if (noGtinNoSize !== noGtin) add(noGtinNoSize);
+  return Array.from(candidates);
+}
+
 function selectBestKickdbHit(options: {
   hits: any[];
   supplierSku: string | null;
@@ -171,10 +215,11 @@ function selectBestKickdbHit(options: {
   const hits = options.hits ?? [];
   if (!hits.length) return null;
 
-  const targetSku = normalizeSkuForCompare(options.supplierSku);
-  if (targetSku) {
-    const exact = hits.find((h) => normalizeSkuForCompare(h?.sku) === targetSku);
-    if (exact) return exact;
+  const supplierSku = options.supplierSku;
+  if (supplierSku) {
+    const candidates = buildSkuCandidates(supplierSku);
+    const exact = hits.find((h) => candidates.includes(normalizeSkuForCompare(h?.sku)));
+    return exact ?? null;
   }
 
   // Fallback: if supplier name is available, pick first hit that shares strong token overlap.
@@ -276,7 +321,9 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
 
     const supplierProductName = productNameByVariantId.get(variant.supplierVariantId) ?? null;
-    const query = variant.supplierSku || supplierProductName;
+    const query = variant.supplierSku
+      ? deriveSkuSearchQuery(variant.supplierSku)
+      : supplierProductName;
     const debugInfo: DebugInfo | undefined = debug
       ? {
           query: query ?? undefined,
@@ -361,7 +408,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       results.push({
         supplierVariantId: variant.supplierVariantId,
         status: "NOT_FOUND",
-        debug: debugInfo ? { ...debugInfo, reason: "NO_RESULTS" } : undefined,
+        debug: debugInfo
+          ? {
+              ...debugInfo,
+              reason: variant.supplierSku ? "SKU_NO_MATCH" : "NO_RESULTS",
+            }
+          : undefined,
       });
       continue;
     }
@@ -409,7 +461,14 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       }
     }
 
-    const matchedVariant = matchVariantBySize(productRecord?.variants ?? [], variant.sizeRaw ?? undefined);
+    const traits = productRecord?.traits ?? null;
+    const brand = extractBrand(productRecord);
+    const gender =
+      pickString(productRecord?.gender, productRecord?.sex) ?? pickTraitValue(traits, ["gender"]);
+    const matchedVariant = matchVariantBySize(productRecord?.variants ?? [], variant.sizeRaw ?? undefined, {
+      brand,
+      gender,
+    });
     if (debugInfo) {
       debugInfo.matchedVariant = summarizeVariant(matchedVariant);
       debugInfo.variantSizes = summarizeVariantSizes(productRecord?.variants ?? []);
@@ -427,7 +486,6 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const brand = extractBrand(productRecord);
     const imageUrl = extractImageUrl(productRecord);
 
-    const traits = productRecord?.traits ?? null;
     const retailPriceRaw = pickTraitValue(traits, ["retail price", "rrp", "msrp"]);
     const releaseDateRaw = pickTraitValue(traits, ["release date"]);
     const colorway = pickTraitValue(traits, ["colorway", "colourway", "color"]);

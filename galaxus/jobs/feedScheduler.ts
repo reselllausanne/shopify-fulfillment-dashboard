@@ -10,40 +10,50 @@ type SchedulerState = {
   running: boolean;
   startedAt: string | null;
   lastSupplierSyncRunAt: string | null;
+  lastEdiInRunAt: string | null;
   lastOfferStockRunAt: string | null;
   lastMasterRunAt: string | null;
   lastSupplierSyncResult: FeedRunResult | null;
+  lastEdiInResult: FeedRunResult | null;
   lastOfferStockResult: FeedRunResult | null;
   lastMasterResult: FeedRunResult | null;
   supplierSyncIntervalMs: number;
+  ediInIntervalMs: number;
   offerStockIntervalMs: number;
   masterIntervalMs: number;
   origin: string | null;
   nextSupplierSyncAt: string | null;
+  nextEdiInAt: string | null;
   nextOfferStockAt: string | null;
   nextMasterAt: string | null;
 };
 
 const DEFAULT_OFFER_STOCK_INTERVAL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_MASTER_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_EDI_IN_INTERVAL_MS = 60 * 60 * 1000;
 
 let offerStockTimer: NodeJS.Timeout | null = null;
 let masterTimer: NodeJS.Timeout | null = null;
+let ediInTimer: NodeJS.Timeout | null = null;
 
 const state: SchedulerState = {
   running: false,
   startedAt: null,
   lastSupplierSyncRunAt: null,
+  lastEdiInRunAt: null,
   lastOfferStockRunAt: null,
   lastMasterRunAt: null,
   lastSupplierSyncResult: null,
+  lastEdiInResult: null,
   lastOfferStockResult: null,
   lastMasterResult: null,
   supplierSyncIntervalMs: DEFAULT_OFFER_STOCK_INTERVAL_MS,
+  ediInIntervalMs: DEFAULT_EDI_IN_INTERVAL_MS,
   offerStockIntervalMs: DEFAULT_OFFER_STOCK_INTERVAL_MS,
   masterIntervalMs: DEFAULT_MASTER_INTERVAL_MS,
   origin: null,
   nextSupplierSyncAt: null,
+  nextEdiInAt: null,
   nextOfferStockAt: null,
   nextMasterAt: null,
 };
@@ -55,11 +65,13 @@ function toIso(value: Date | number) {
 function scheduleNextRuns() {
   if (!state.running) {
     state.nextSupplierSyncAt = null;
+    state.nextEdiInAt = null;
     state.nextOfferStockAt = null;
     state.nextMasterAt = null;
     return;
   }
   state.nextSupplierSyncAt = toIso(Date.now() + state.supplierSyncIntervalMs);
+  state.nextEdiInAt = toIso(Date.now() + state.ediInIntervalMs);
   state.nextOfferStockAt = toIso(Date.now() + state.offerStockIntervalMs);
   state.nextMasterAt = toIso(Date.now() + state.masterIntervalMs);
 }
@@ -85,6 +97,12 @@ async function runSupplierSync() {
   state.lastSupplierSyncRunAt = toIso(Date.now());
   state.lastSupplierSyncResult = await runUpload("/api/galaxus/supplier/sync?all=1");
   state.nextSupplierSyncAt = toIso(Date.now() + state.supplierSyncIntervalMs);
+}
+
+async function runEdiIn() {
+  state.lastEdiInRunAt = toIso(Date.now());
+  state.lastEdiInResult = await runUpload("/api/galaxus/cron?task=edi-in");
+  state.nextEdiInAt = toIso(Date.now() + state.ediInIntervalMs);
 }
 
 async function runOfferStock() {
@@ -120,9 +138,11 @@ export async function startFeedScheduler(origin: string, runImmediately = true) 
   scheduleNextRuns();
 
   if (runImmediately) {
+    await runEdiIn();
     await runOfferStock();
   }
 
+  ediInTimer = setInterval(runEdiIn, state.ediInIntervalMs);
   offerStockTimer = setInterval(runOfferStock, state.offerStockIntervalMs);
   masterTimer = setInterval(runMaster, state.masterIntervalMs);
 
@@ -132,11 +152,14 @@ export async function startFeedScheduler(origin: string, runImmediately = true) 
 export function stopFeedScheduler() {
   if (offerStockTimer) clearInterval(offerStockTimer);
   if (masterTimer) clearInterval(masterTimer);
+  if (ediInTimer) clearInterval(ediInTimer);
   offerStockTimer = null;
   masterTimer = null;
+  ediInTimer = null;
   state.running = false;
   state.origin = null;
   state.nextSupplierSyncAt = null;
+  state.nextEdiInAt = null;
   state.nextOfferStockAt = null;
   state.nextMasterAt = null;
   return getFeedSchedulerStatus();

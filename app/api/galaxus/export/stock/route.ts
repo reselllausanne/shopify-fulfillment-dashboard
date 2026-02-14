@@ -15,6 +15,20 @@ function decimalToString(value: unknown): string {
   return String(value);
 }
 
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function hasSupplierImage(images: unknown): boolean {
+  if (!Array.isArray(images)) return false;
+  return images.some((value) => typeof value === "string" && value.length > 0 && isAbsoluteUrl(value));
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
@@ -66,6 +80,10 @@ export async function GET(request: Request) {
       if (gtin && seenGtins.has(gtin)) return;
       if (gtin) seenGtins.add(gtin);
       const supplierVariant = mapping.supplierVariant;
+      const supplierVariantAny = supplierVariant as any;
+      if (!supplierVariantAny?.supplierProductName || !hasSupplierImage(supplierVariantAny?.images)) {
+        return;
+      }
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
       const stock = supplierVariant?.stock ?? 0;
 
