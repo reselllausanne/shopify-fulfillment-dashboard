@@ -795,8 +795,12 @@ export default function GalaxusDashboardPage() {
               </div>
             </div>
             <div className="rounded border bg-white p-2 text-xs text-gray-600">
+              <div>Supplier sync every 2 hours</div>
               <div>Price + stock every 2 hours</div>
               <div>Master data every 12 hours</div>
+              {schedulerStatus?.nextSupplierSyncAt ? (
+                <div>Next supplier sync: {new Date(schedulerStatus.nextSupplierSyncAt).toLocaleString()}</div>
+              ) : null}
               {schedulerStatus?.nextOfferStockAt ? (
                 <div>Next price/stock: {new Date(schedulerStatus.nextOfferStockAt).toLocaleString()}</div>
               ) : null}

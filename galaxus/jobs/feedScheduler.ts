@@ -9,13 +9,17 @@ type FeedRunResult = {
 type SchedulerState = {
   running: boolean;
   startedAt: string | null;
+  lastSupplierSyncRunAt: string | null;
   lastOfferStockRunAt: string | null;
   lastMasterRunAt: string | null;
+  lastSupplierSyncResult: FeedRunResult | null;
   lastOfferStockResult: FeedRunResult | null;
   lastMasterResult: FeedRunResult | null;
+  supplierSyncIntervalMs: number;
   offerStockIntervalMs: number;
   masterIntervalMs: number;
   origin: string | null;
+  nextSupplierSyncAt: string | null;
   nextOfferStockAt: string | null;
   nextMasterAt: string | null;
 };
@@ -29,13 +33,17 @@ let masterTimer: NodeJS.Timeout | null = null;
 const state: SchedulerState = {
   running: false,
   startedAt: null,
+  lastSupplierSyncRunAt: null,
   lastOfferStockRunAt: null,
   lastMasterRunAt: null,
+  lastSupplierSyncResult: null,
   lastOfferStockResult: null,
   lastMasterResult: null,
+  supplierSyncIntervalMs: DEFAULT_OFFER_STOCK_INTERVAL_MS,
   offerStockIntervalMs: DEFAULT_OFFER_STOCK_INTERVAL_MS,
   masterIntervalMs: DEFAULT_MASTER_INTERVAL_MS,
   origin: null,
+  nextSupplierSyncAt: null,
   nextOfferStockAt: null,
   nextMasterAt: null,
 };
@@ -46,10 +54,12 @@ function toIso(value: Date | number) {
 
 function scheduleNextRuns() {
   if (!state.running) {
+    state.nextSupplierSyncAt = null;
     state.nextOfferStockAt = null;
     state.nextMasterAt = null;
     return;
   }
+  state.nextSupplierSyncAt = toIso(Date.now() + state.supplierSyncIntervalMs);
   state.nextOfferStockAt = toIso(Date.now() + state.offerStockIntervalMs);
   state.nextMasterAt = toIso(Date.now() + state.masterIntervalMs);
 }
@@ -71,9 +81,24 @@ async function runUpload(path: string): Promise<FeedRunResult> {
   };
 }
 
+async function runSupplierSync() {
+  state.lastSupplierSyncRunAt = toIso(Date.now());
+  state.lastSupplierSyncResult = await runUpload("/api/galaxus/supplier/sync?all=1");
+  state.nextSupplierSyncAt = toIso(Date.now() + state.supplierSyncIntervalMs);
+}
+
 async function runOfferStock() {
   state.lastOfferStockRunAt = toIso(Date.now());
-  state.lastOfferStockResult = await runUpload("/api/galaxus/feeds/upload?type=offer-stock");
+  await runSupplierSync();
+  if (state.lastSupplierSyncResult?.ok) {
+    state.lastOfferStockResult = await runUpload("/api/galaxus/feeds/upload?type=offer-stock");
+  } else {
+    state.lastOfferStockResult = {
+      ok: false,
+      status: 500,
+      error: "Supplier sync failed; skipped price/stock upload",
+    };
+  }
   state.nextOfferStockAt = toIso(Date.now() + state.offerStockIntervalMs);
 }
 
@@ -111,6 +136,7 @@ export function stopFeedScheduler() {
   masterTimer = null;
   state.running = false;
   state.origin = null;
+  state.nextSupplierSyncAt = null;
   state.nextOfferStockAt = null;
   state.nextMasterAt = null;
   return getFeedSchedulerStatus();

@@ -186,7 +186,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const defaultVatRate = 7.7;
+    const defaultVatRate = 8.1;
     const lines: MockLine[] = validMappings.map((mapping, index) => {
       const mappingAny = mapping as any;
       const supplierVariant = mapping.supplierVariant as any;
