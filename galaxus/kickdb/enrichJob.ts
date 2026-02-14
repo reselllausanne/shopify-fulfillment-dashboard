@@ -462,12 +462,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
 
     const traits = productRecord?.traits ?? null;
-    const brand = extractBrand(productRecord);
-    const gender =
+    const matchBrand = extractBrand(productRecord);
+    const matchGender =
       pickString(productRecord?.gender, productRecord?.sex) ?? pickTraitValue(traits, ["gender"]);
     const matchedVariant = matchVariantBySize(productRecord?.variants ?? [], variant.sizeRaw ?? undefined, {
-      brand,
-      gender,
+      brand: matchBrand,
+      gender: matchGender,
     });
     if (debugInfo) {
       debugInfo.matchedVariant = summarizeVariant(matchedVariant);
