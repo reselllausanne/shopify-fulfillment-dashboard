@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { toCsv } from "@/galaxus/exports/csv";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
     : {};
 
   const rows: ExportRow[] = [];
-  const seenGtins = new Set<string>();
+  const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -42,29 +42,16 @@ export async function GET(request: Request) {
     return null;
   };
 
-  const isAbsoluteUrl = (value: string) => {
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === "http:" || parsed.protocol === "https:";
-    } catch {
-      return false;
-    }
-  };
-
-  const hasSupplierImage = (images: unknown) => {
-    if (!Array.isArray(images)) return false;
-    return images.some((value) => typeof value === "string" && value.length > 0 && isAbsoluteUrl(value));
-  };
-
   do {
     const mappings = await prisma.variantMapping.findMany({
       where: {
-        status: { in: ["MATCHED", "SUPPLIER_GTIN"] },
+        status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
         gtin: { not: null },
         ...whereSupplier,
       },
       include: {
         supplierVariant: true,
+        partnerVariant: { include: { partner: true } },
         kickdbVariant: { include: { product: true } },
       },
       orderBy: { updatedAt: "desc" },
@@ -72,67 +59,62 @@ export async function GET(request: Request) {
       skip: currentOffset,
     });
     lastBatch = mappings.length;
-
-    for (const mapping of mappings) {
-      const gtin = mapping.gtin ?? "";
-      if (gtin && seenGtins.has(gtin)) continue;
-      if (gtin) seenGtins.add(gtin);
-      const supplierVariant = mapping.supplierVariant;
-      const supplierVariantAny = supplierVariant as any;
-      if (!supplierVariantAny?.supplierProductName || !hasSupplierImage(supplierVariantAny?.images)) {
-        continue;
-      }
-      const product = mapping.kickdbVariant?.product as any;
-      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId);
-      if (!providerKey) continue;
-      const traits = product?.traitsJson ?? null;
-
-      // Minimum viable specs from available data.
-      if (supplierVariant?.sizeRaw) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Size EU",
-          SpecificationValue: supplierVariant.sizeRaw,
-        });
-      }
-      const supplierBrand = (mapping as any)?.supplierVariant?.supplierBrand ?? null;
-      if (supplierBrand || product?.brand) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Brand",
-          SpecificationValue: supplierBrand || product.brand,
-        });
-      }
-
-      const color = pickTrait(traits, ["color", "colour"]);
-      const gender = pickTrait(traits, ["gender", "sex", "target"]);
-      const material = pickTrait(traits, ["material"]);
-
-      if (color) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Color",
-          SpecificationValue: color,
-        });
-      }
-      if (gender) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Target group",
-          SpecificationValue: gender,
-        });
-      }
-      if (material) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Material",
-          SpecificationValue: material,
-        });
-      }
-    }
+    accumulateBestCandidates(mappings, bestByGtin);
 
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
+
+  const candidates = Array.from(bestByGtin.values());
+  for (const candidate of candidates) {
+    const mapping = candidate.mapping;
+    const variant = candidate.variant as any;
+    const product = candidate.product as any;
+    const providerKey = candidate.providerKey;
+    if (!providerKey) continue;
+    const traits = product?.traitsJson ?? null;
+
+    if (variant?.sizeRaw) {
+      rows.push({
+        ProviderKey: providerKey,
+        SpecificationKey: "Size EU",
+        SpecificationValue: variant.sizeRaw,
+      });
+    }
+    const supplierBrand = variant?.supplierBrand ?? variant?.brand ?? null;
+    if (supplierBrand || product?.brand) {
+      rows.push({
+        ProviderKey: providerKey,
+        SpecificationKey: "Brand",
+        SpecificationValue: supplierBrand || product.brand,
+      });
+    }
+
+    const color = pickTrait(traits, ["color", "colour"]);
+    const gender = pickTrait(traits, ["gender", "sex", "target"]);
+    const material = pickTrait(traits, ["material"]);
+
+    if (color) {
+      rows.push({
+        ProviderKey: providerKey,
+        SpecificationKey: "Color",
+        SpecificationValue: color,
+      });
+    }
+    if (gender) {
+      rows.push({
+        ProviderKey: providerKey,
+        SpecificationKey: "Target group",
+        SpecificationValue: gender,
+      });
+    }
+    if (material) {
+      rows.push({
+        ProviderKey: providerKey,
+        SpecificationKey: "Material",
+        SpecificationValue: material,
+      });
+    }
+  }
 
   rows.sort((a, b) => a.ProviderKey.localeCompare(b.ProviderKey));
 

@@ -399,7 +399,8 @@ model KickDBVariant {
 
 model VariantMapping {
   id               String   @id @default(uuid())
-  supplierVariantId String  @unique
+  supplierVariantId String?  @unique
+  partnerVariantId String?  @unique
   kickdbVariantId  String?
   gtin             String?
   providerKey      String?
@@ -408,10 +409,133 @@ model VariantMapping {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  supplierVariant  SupplierVariant @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  supplierVariant  SupplierVariant? @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  partnerVariant   PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: Cascade)
   kickdbVariant    KickDBVariant?  @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
 
   @@index([kickdbVariantId])
+  @@schema("public")
+}
+
+model Partner {
+  id               String   @id @default(uuid())
+  key              String   @unique
+  name             String
+  active           Boolean  @default(true)
+  contactEmail     String?
+  contactName      String?
+  priorityRank     Int?
+
+  // Pricing overrides (null = use defaults)
+  targetMargin     Decimal? @db.Decimal(5, 4)
+  shippingPerPair  Decimal? @db.Decimal(10, 2)
+  bufferPerPair    Decimal? @db.Decimal(10, 2)
+  roundTo          Decimal? @db.Decimal(10, 4)
+  vatRate          Decimal? @db.Decimal(5, 4)
+
+  users            PartnerUser[]
+  variants         PartnerVariant[]
+  uploads          PartnerUpload[]
+  orders           PartnerOrder[]
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model PartnerUser {
+  id           String   @id @default(uuid())
+  partnerId    String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("partner")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerUpload {
+  id           String   @id @default(uuid())
+  partnerId    String
+  filename     String
+  status       String
+  totalRows    Int      @default(0)
+  importedRows Int      @default(0)
+  errorRows    Int      @default(0)
+  errorsJson   Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerVariant {
+  id               String   @id @default(uuid())
+  partnerId        String
+  partnerVariantId String
+  externalSku      String?
+  sizeRaw          String?
+  price            Decimal? @db.Decimal(10, 2)
+  stock            Int?
+  images           Json?
+  productName      String?
+  brand            String?
+  gtin             String?
+  lastSyncAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  partner          Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  mapping          VariantMapping?
+  partnerOrderLines PartnerOrderLine[]
+
+  @@unique([partnerId, partnerVariantId])
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerOrder {
+  id             String   @id @default(uuid())
+  partnerId      String
+  galaxusOrderId String
+  status         String   @default("PENDING")
+  sentAt         DateTime?
+  confirmedAt    DateTime?
+  trackingNumber String?
+  trackingUrl    String?
+  labelUrl       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  partner        Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  lines          PartnerOrderLine[]
+
+  @@unique([partnerId, galaxusOrderId])
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerOrderLine {
+  id              String   @id @default(uuid())
+  partnerOrderId  String
+  partnerVariantId String?
+  gtin            String?
+  quantity        Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  partnerOrder    PartnerOrder @relation(fields: [partnerOrderId], references: [id], onDelete: Cascade)
+  partnerVariant  PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: SetNull)
+
+  @@index([partnerOrderId])
   @@schema("public")
 }
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { toCsv } from "@/galaxus/exports/csv";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -149,6 +149,16 @@ function extractSupplierImages(supplierImages: unknown): string[] {
   return Array.from(new Set(list)).filter((value) => isAbsoluteUrl(value));
 }
 
+function pickPrimaryImages(supplierImages: unknown, kickdbImageUrl?: string | null): string[] {
+  const supplier = extractSupplierImages(supplierImages);
+  if (supplier.length > 0) return supplier;
+  const fallback =
+    typeof kickdbImageUrl === "string" && kickdbImageUrl.trim() && isAbsoluteUrl(kickdbImageUrl)
+      ? [kickdbImageUrl.trim()]
+      : [];
+  return fallback;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
@@ -181,7 +191,7 @@ export async function GET(request: Request) {
   if (!minimal && includeWeight) headers.push("ProductWeight");
 
   const rows: ExportRow[] = [];
-  const seenGtins = new Set<string>();
+  const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -189,12 +199,13 @@ export async function GET(request: Request) {
   do {
     const mappings = await prisma.variantMapping.findMany({
       where: {
-        status: { in: ["MATCHED", "SUPPLIER_GTIN"] },
+        status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
         gtin: { not: null },
         ...whereSupplier,
       },
       include: {
         supplierVariant: true,
+        partnerVariant: { include: { partner: true } },
         ...(minimal ? {} : { kickdbVariant: { include: { product: true } } }),
       },
       orderBy: { updatedAt: "desc" },
@@ -202,72 +213,73 @@ export async function GET(request: Request) {
       skip: currentOffset,
     });
     lastBatch = mappings.length;
-
-    mappings.forEach((mapping) => {
-      const gtin = mapping.gtin ?? "";
-      if (gtin && seenGtins.has(gtin)) return;
-      if (gtin) seenGtins.add(gtin);
-      const supplierVariant = mapping.supplierVariant;
-      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-      const supplierVariantAny = supplierVariant as any;
-      const supplierName = sanitizeText(supplierVariantAny?.supplierProductName ?? "");
-      const supplierBrand = normalizeBrand(supplierVariantAny?.supplierBrand ?? "");
-      const images = extractSupplierImages(supplierVariantAny?.images);
-      if (!supplierName || images.length === 0) {
-        return;
-      }
-      if (minimal) {
-        const product = (mapping as any).kickdbVariant?.product as any;
-        rows.push({
-          ProviderKey: providerKey,
-          Gtin: mapping.gtin ?? "",
-          BrandName: normalizeBrand(
-            supplierVariantAny?.supplierBrand ?? product?.brand ?? ""
-          ),
-        });
-        return;
-      }
-      const product = (mapping as any).kickdbVariant?.product as any;
-      const payload = product?.name || product?.brand || product?.description
-        ? ({
-            title: product?.name ?? undefined,
-            brand: product?.brand ?? undefined,
-            sku: product?.styleId ?? supplierVariant?.supplierSku ?? undefined,
-            description: product?.description ?? undefined,
-          } as KickDbPayload)
-        : null;
-      const title = supplierName;
-      const variantName = supplierName;
-      const description = payload?.description ? cleanDescription(payload.description) : "";
-
-      const manufacturerBase = sanitizeText(payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? "");
-      const manufacturerKey = truncate(
-        manufacturerBase ? `${manufacturerBase}-${mapping.gtin ?? ""}` : mapping.gtin ?? "",
-        50
-      );
-
-      const row: ExportRow = {
-        ProviderKey: providerKey,
-        Gtin: mapping.gtin ?? "",
-        ManufacturerKey: manufacturerKey,
-        BrandName: supplierBrand || normalizeBrand(payload?.brand ?? product?.brand ?? ""),
-        ProductCategory: buildProductCategory(payload) || "Sneakers",
-        ProductTitle_de: title,
-        ProductTitle_en: title,
-        ProductTitle_ch: title,
-        VariantName: variantName,
-        LongDescription_de: description,
-        MainImageUrl: images[0] ?? "",
-      };
-      if (includeWeight) {
-        const weightValue = supplierVariantAny?.weightGrams ?? 1000;
-        row.ProductWeight = Number.isFinite(weightValue) ? String(weightValue) : "1000";
-      }
-      rows.push(row);
-    });
-
+    accumulateBestCandidates(mappings, bestByGtin);
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
+
+  const candidates = Array.from(bestByGtin.values());
+  candidates.forEach((candidate) => {
+    const mapping = candidate.mapping;
+    const supplierVariant = candidate.variant as any;
+    const product = candidate.product as any;
+    const providerKey = candidate.providerKey ?? "";
+    const supplierName = sanitizeText(
+      supplierVariant?.supplierProductName ?? supplierVariant?.productName ?? ""
+    );
+    const supplierBrand = normalizeBrand(
+      supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand ?? ""
+    );
+    const images = pickPrimaryImages(supplierVariant?.images, product?.imageUrl ?? null);
+    if (!supplierName || images.length === 0) {
+      return;
+    }
+    if (minimal) {
+      rows.push({
+        ProviderKey: providerKey,
+        Gtin: mapping.gtin ?? "",
+        BrandName: supplierBrand,
+      });
+      return;
+    }
+    const payload = product?.name || product?.brand || product?.description
+      ? ({
+          title: product?.name ?? undefined,
+          brand: product?.brand ?? undefined,
+          sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
+          description: product?.description ?? undefined,
+        } as KickDbPayload)
+      : null;
+    const title = supplierName;
+    const variantName = supplierName;
+    const description = payload?.description ? cleanDescription(payload.description) : "";
+
+    const manufacturerBase = sanitizeText(
+      payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? ""
+    );
+    const manufacturerKey = truncate(
+      manufacturerBase ? `${manufacturerBase}-${mapping.gtin ?? ""}` : mapping.gtin ?? "",
+      50
+    );
+
+    const row: ExportRow = {
+      ProviderKey: providerKey,
+      Gtin: mapping.gtin ?? "",
+      ManufacturerKey: manufacturerKey,
+      BrandName: supplierBrand || normalizeBrand(payload?.brand ?? product?.brand ?? ""),
+      ProductCategory: buildProductCategory(payload) || "Sneakers",
+      ProductTitle_de: title,
+      ProductTitle_en: title,
+      ProductTitle_ch: title,
+      VariantName: variantName,
+      LongDescription_de: description,
+      MainImageUrl: images[0] ?? "",
+    };
+    if (includeWeight) {
+      const weightValue = supplierVariant?.weightGrams ?? 1000;
+      row.ProductWeight = Number.isFinite(weightValue) ? String(weightValue) : "1000";
+    }
+    rows.push(row);
+  });
 
   const csv = toCsv(headers, rows);
   const filename = `galaxus-master-${supplier ?? "all"}-${Date.now()}.csv`;

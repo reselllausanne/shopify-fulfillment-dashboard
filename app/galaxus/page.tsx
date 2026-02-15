@@ -167,6 +167,12 @@ export default function GalaxusDashboardPage() {
   const [syncAll, setSyncAll] = useState<boolean>(false);
   const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
   const [schedulerBusy, setSchedulerBusy] = useState(false);
+  const [enrichSku, setEnrichSku] = useState<string>("");
+  const [partnerKey, setPartnerKey] = useState<string>("self");
+  const [partnerName, setPartnerName] = useState<string>("Personal stock");
+  const [partnerAccessCode, setPartnerAccessCode] = useState<string>("");
+  const [partnerFile, setPartnerFile] = useState<File | null>(null);
+  const [partnerAssignKey, setPartnerAssignKey] = useState<string>("self");
 
   const loadSchedulerStatus = async () => {
     try {
@@ -194,6 +200,98 @@ export default function GalaxusDashboardPage() {
     } finally {
       setSchedulerBusy(false);
     }
+  };
+
+  const ensurePartnerSession = async () => {
+    const res = await fetch("/api/partners/auth/quick", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        partnerKey,
+        partnerName,
+        accessCode: partnerAccessCode || undefined,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error ?? "Partner access failed");
+    }
+    return data;
+  };
+
+  const quickPartnerAccess = async () => {
+    setBusy("partner-auth");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const data = await ensurePartnerSession();
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const uploadPartnerCsv = async () => {
+    if (!partnerFile) {
+      setError("Select a partner CSV file first.");
+      return;
+    }
+    setBusy("partner-upload");
+    setError(null);
+    setOpsLog(null);
+    try {
+      await ensurePartnerSession();
+      const formData = new FormData();
+      formData.append("file", partnerFile);
+      const res = await fetch("/api/partners/uploads", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Partner upload failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const assignOrderToPartner = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    if (!partnerAssignKey.trim()) {
+      setError("Partner key is required.");
+      return;
+    }
+    setBusy("partner-assign");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const res = await fetch("/api/partners/orders/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: selectedOrderId,
+          partnerKey: partnerAssignKey.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Partner assignment failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openPartnerDashboard = () => {
+    window.location.href = "/partners/dashboard";
   };
 
   useEffect(() => {
@@ -406,6 +504,30 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const enrichSingleSku = async () => {
+    const sku = enrichSku.trim();
+    if (!sku) {
+      setError("Enter a supplier SKU to enrich.");
+      return;
+    }
+    setBusy("enrich-single");
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/galaxus/kickdb/enrich?supplierSku=${encodeURIComponent(sku)}&debug=1&force=1`,
+        { method: "POST" }
+      );
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Single enrich failed");
+      setEnrichResults(data.results ?? []);
+      setEnrichDebugRaw(JSON.stringify(data.results ?? [], null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const exportAllWithChecks = async () => {
     setBusy("export-check");
     setError(null);
@@ -608,6 +730,13 @@ export default function GalaxusDashboardPage() {
 
   const downloadFeed = (type: "product" | "price" | "stock") => {
     window.open(`/api/galaxus/feeds/preview?type=${type}&download=1`, "_blank", "noopener,noreferrer");
+  };
+
+  const downloadMappings = () => {
+    const supplierValue = supplierFilter.trim();
+    const params = new URLSearchParams({ download: "1" });
+    if (supplierValue) params.set("supplier", supplierValue);
+    window.open(`/api/galaxus/supplier/mappings?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
   const sendPendingEdiOut = async () => {
@@ -993,6 +1122,21 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "enrich" ? "Enriching…" : "Enrich GTIN (debug)"}
               </button>
+              <div className="flex items-center gap-2">
+                <input
+                  className="px-2 py-2 border rounded text-sm w-40"
+                  value={enrichSku}
+                  onChange={(event) => setEnrichSku(event.target.value)}
+                  placeholder="Supplier SKU"
+                />
+                <button
+                  className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-50"
+                  onClick={enrichSingleSku}
+                  disabled={busy !== null}
+                >
+                  {busy === "enrich-single" ? "Enriching…" : "Enrich single SKU"}
+                </button>
+              </div>
               <button
                 className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
                 onClick={() => loadDb(0)}
@@ -1032,8 +1176,93 @@ export default function GalaxusDashboardPage() {
                 >
                   {busy === "supplier-clear-kickdb" ? "Clearing…" : "Clear supplier + KickDB"}
                 </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+                  onClick={downloadMappings}
+                  disabled={busy !== null}
+                >
+                  Download DB mappings (CSV)
+                </button>
               </div>
             </details>
+          </div>
+          <div className="rounded border bg-gray-50 p-3 space-y-3">
+            <div className="text-sm font-medium">Partner Portal</div>
+            <div className="text-xs text-gray-500">
+              Upload partner CSVs and assign orders without the terminal.
+            </div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <input
+                className="px-2 py-2 border rounded text-sm"
+                value={partnerKey}
+                onChange={(event) => setPartnerKey(event.target.value)}
+                placeholder="Partner key (3 letters)"
+              />
+              <input
+                className="px-2 py-2 border rounded text-sm"
+                value={partnerName}
+                onChange={(event) => setPartnerName(event.target.value)}
+                placeholder="Partner name"
+              />
+              <input
+                className="px-2 py-2 border rounded text-sm"
+                type="password"
+                value={partnerAccessCode}
+                onChange={(event) => setPartnerAccessCode(event.target.value)}
+                placeholder="Access code"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="px-3 py-2 rounded bg-black text-white disabled:opacity-50"
+                onClick={quickPartnerAccess}
+                disabled={busy !== null}
+              >
+                {busy === "partner-auth" ? "Connecting…" : "Quick partner login"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+                onClick={openPartnerDashboard}
+                disabled={busy !== null}
+              >
+                Open partner dashboard
+              </button>
+              <span className="text-xs text-gray-500 self-center">
+                Access code uses `PARTNER_ACCESS_{`{KEY}`}` in env.
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={(event) => setPartnerFile(event.target.files?.[0] ?? null)}
+              />
+              <button
+                className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
+                onClick={uploadPartnerCsv}
+                disabled={busy !== null}
+              >
+                {busy === "partner-upload" ? "Uploading…" : "Upload partner CSV"}
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className="px-2 py-2 border rounded text-sm w-40"
+                value={partnerAssignKey}
+                onChange={(event) => setPartnerAssignKey(event.target.value)}
+                placeholder="Partner key"
+              />
+              <button
+                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                onClick={assignOrderToPartner}
+                disabled={busy !== null}
+              >
+                {busy === "partner-assign" ? "Assigning…" : "Assign selected order"}
+              </button>
+              <span className="text-xs text-gray-500">
+                Select an order first.
+              </span>
+            </div>
           </div>
         </div>
 

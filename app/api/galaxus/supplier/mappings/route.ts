@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { toCsv } from "@/galaxus/exports/csv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,25 +10,37 @@ export async function GET(request: Request) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
+  const download = ["1", "true", "yes"].includes((searchParams.get("download") ?? "").toLowerCase());
 
   const whereSupplier = supplier
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
     : {};
 
-  const items = await (prisma as any).variantMapping.findMany({
-    where: {
-      ...whereSupplier,
-    },
-    include: {
-      supplierVariant: true,
-      kickdbVariant: { include: { product: true } },
-    },
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-    skip: offset,
-  });
+  const items = download
+    ? await (prisma as any).variantMapping.findMany({
+        where: {
+          ...whereSupplier,
+        },
+        include: {
+          supplierVariant: true,
+          kickdbVariant: { include: { product: true } },
+        },
+        orderBy: { updatedAt: "desc" },
+      })
+    : await (prisma as any).variantMapping.findMany({
+        where: {
+          ...whereSupplier,
+        },
+        include: {
+          supplierVariant: true,
+          kickdbVariant: { include: { product: true } },
+        },
+        orderBy: { updatedAt: "desc" },
+        take: limit,
+        skip: offset,
+      });
 
-  const nextOffset = items.length === limit ? offset + limit : null;
+  const nextOffset = download ? null : items.length === limit ? offset + limit : null;
 
   const mapped = (items ?? []).map((m: any) => {
     const sv = m.supplierVariant ?? null;
@@ -67,6 +80,77 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ ok: true, items: mapped, nextOffset });
+  if (!download) {
+    return NextResponse.json({ ok: true, items: mapped, nextOffset });
+  }
+
+  const headers = [
+    "status",
+    "updatedAt",
+    "supplierVariantId",
+    "providerKey",
+    "gtin",
+    "supplierSku",
+    "supplierBrand",
+    "supplierProductName",
+    "sizeRaw",
+    "price",
+    "stock",
+    "lastSyncAt",
+    "kickdbVariantId",
+    "kickdbProductId",
+    "kickdbBrand",
+    "kickdbName",
+    "kickdbStyleId",
+    "kickdbUrlKey",
+    "kickdbImageUrl",
+    "kickdbLastFetchedAt",
+    "kickdbNotFound",
+    "kickdbDescription",
+    "kickdbGender",
+    "kickdbColorway",
+    "kickdbCountryOfManufacture",
+    "kickdbReleaseDate",
+    "kickdbRetailPrice",
+  ];
+
+  const rows = mapped.map((row: (typeof mapped)[number]) => ({
+    status: row.status ?? "",
+    updatedAt: row.updatedAt ?? "",
+    supplierVariantId: row.supplierVariantId ?? "",
+    providerKey: row.providerKey ?? "",
+    gtin: row.gtin ?? "",
+    supplierSku: row.supplierSku ?? "",
+    supplierBrand: row.supplierBrand ?? "",
+    supplierProductName: row.supplierProductName ?? "",
+    sizeRaw: row.sizeRaw ?? "",
+    price: row.price ?? "",
+    stock: row.stock ?? "",
+    lastSyncAt: row.lastSyncAt ?? "",
+    kickdbVariantId: row.kickdbVariantId ?? "",
+    kickdbProductId: row.kickdbProductId ?? "",
+    kickdbBrand: row.kickdbBrand ?? "",
+    kickdbName: row.kickdbName ?? "",
+    kickdbStyleId: row.kickdbStyleId ?? "",
+    kickdbUrlKey: row.kickdbUrlKey ?? "",
+    kickdbImageUrl: row.kickdbImageUrl ?? "",
+    kickdbLastFetchedAt: row.kickdbLastFetchedAt ?? "",
+    kickdbNotFound: row.kickdbNotFound ?? "",
+    kickdbDescription: row.kickdbDescription ?? "",
+    kickdbGender: row.kickdbGender ?? "",
+    kickdbColorway: row.kickdbColorway ?? "",
+    kickdbCountryOfManufacture: row.kickdbCountryOfManufacture ?? "",
+    kickdbReleaseDate: row.kickdbReleaseDate ?? "",
+    kickdbRetailPrice: row.kickdbRetailPrice ?? "",
+  }));
+
+  const csv = toCsv(headers, rows);
+  const filename = `galaxus-mappings-${supplier ?? "all"}-${Date.now()}.csv`;
+  return new NextResponse(csv, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
 }
 

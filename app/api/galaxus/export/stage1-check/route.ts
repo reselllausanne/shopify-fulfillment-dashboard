@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,20 +58,24 @@ export async function GET(request: Request) {
   const issues: Issue[] = [];
   let valid = 0;
   let total = 0;
+  const prismaAny = prisma as any;
 
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
+  const bestByGtin = new Map<string, any>();
 
   do {
-    const mappings = await prisma.variantMapping.findMany({
+    const mappings = await prismaAny.variantMapping.findMany({
       where: {
-        status: { in: ["MATCHED", "SUPPLIER_GTIN"] },
+        status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
         gtin: { not: null },
         ...whereSupplier,
       },
       include: {
         supplierVariant: true,
+        partnerVariant: { include: { partner: true } },
+        kickdbVariant: { include: { product: true } },
       },
       orderBy: { updatedAt: "desc" },
       take: pageSize,
@@ -78,14 +83,29 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     total += mappings.length;
+    accumulateBestCandidates(mappings, bestByGtin);
 
-    mappings.forEach((mapping, index) => {
-      const row = currentOffset + index + 1;
-    const supplierVariant = mapping.supplierVariant;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+    currentOffset += pageSize;
+  } while (all && lastBatch === pageSize);
+
+  const candidates = Array.from(bestByGtin.values());
+  total = candidates.length;
+  candidates.forEach((candidate, index) => {
+    const row = index + 1;
+    const mapping = candidate.mapping;
+    const variant = candidate.variant as any;
+    const providerKey =
+      mapping?.providerKey ??
+      buildProviderKey(
+        mapping.gtin,
+        candidate.source === "supplier"
+          ? variant?.supplierVariantId
+          : `${mapping?.partnerVariant?.partner?.key ?? "PRT"}:${mapping?.partnerVariant?.partnerVariantId ?? mapping?.partnerVariant?.id}`
+      ) ??
+      "";
     const gtin = String(mapping.gtin ?? "");
-    const priceRaw = supplierVariant?.price ?? null;
-    const stockRaw = supplierVariant?.stock ?? null;
+    const priceRaw = variant?.price ?? null;
+    const stockRaw = variant?.stock ?? null;
     const price = priceRaw === null || priceRaw === undefined ? NaN : Number(priceRaw);
     const stock = stockRaw === null || stockRaw === undefined ? NaN : Number(stockRaw);
 
@@ -132,10 +152,7 @@ export async function GET(request: Request) {
     }
 
     if (rowValid) valid += 1;
-    });
-
-    currentOffset += pageSize;
-  } while (all && lastBatch === pageSize);
+  });
 
   const report: Stage1Report = {
     ok: issues.length === 0,

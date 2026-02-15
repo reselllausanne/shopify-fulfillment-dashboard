@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -149,6 +150,11 @@ function extractProductImages(
   fallback?: string | null
 ): string[] {
   const list: string[] = [];
+  if (Array.isArray(supplierImages)) {
+    for (const item of supplierImages) {
+      if (typeof item === "string" && item.length) list.push(item);
+    }
+  }
   if (payload?.image) list.push(payload.image);
   if (Array.isArray(payload?.gallery)) {
     for (const item of payload.gallery) {
@@ -156,11 +162,6 @@ function extractProductImages(
     }
   }
   if (fallback) list.push(fallback);
-  if (Array.isArray(supplierImages)) {
-    for (const item of supplierImages) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
-  }
   return Array.from(new Set(list))
     .filter(Boolean)
     .filter((value) => isAbsoluteUrl(value));
@@ -207,16 +208,18 @@ export async function GET(request: Request) {
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
+  const bestByGtin = new Map<string, any>();
 
   do {
     const mappings = await prisma.variantMapping.findMany({
       where: {
-        status: { in: ["MATCHED", "SUPPLIER_GTIN"] },
+        status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
         gtin: { not: null },
         ...whereSupplier,
       },
       include: {
         supplierVariant: true,
+        partnerVariant: { include: { partner: true } },
         kickdbVariant: { include: { product: true } },
       },
       orderBy: { updatedAt: "desc" },
@@ -226,29 +229,47 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
     total += mappings.length;
 
-    mappings.forEach((mapping, index) => {
-      const row = currentOffset + index + 1;
-    const supplierVariant = mapping.supplierVariant;
+    accumulateBestCandidates(mappings, bestByGtin);
+
+    currentOffset += pageSize;
+  } while (all && lastBatch === pageSize);
+
+  const candidates = Array.from(bestByGtin.values());
+  total = candidates.length;
+  candidates.forEach((candidate, index) => {
+    const row = index + 1;
+    const mapping = candidate.mapping;
+    const supplierVariant = candidate.variant as any;
     const supplierVariantAny = supplierVariant as any;
-    const product = mapping.kickdbVariant?.product;
+    const product = candidate.product ?? mapping.kickdbVariant?.product;
     const payload = product?.name || product?.brand
       ? ({
           title: product?.name ?? undefined,
           brand: product?.brand ?? undefined,
-          sku: product?.styleId ?? supplierVariant?.supplierSku ?? undefined,
+          sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
         } as KickDbPayload)
       : null;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+    const providerKey =
+      mapping?.providerKey ??
+      buildProviderKey(
+        mapping.gtin,
+        candidate.source === "supplier"
+          ? supplierVariant?.supplierVariantId
+          : `${mapping?.partnerVariant?.partner?.key ?? "PRT"}:${mapping?.partnerVariant?.partnerVariantId ?? mapping?.partnerVariant?.id}`
+      ) ??
+      "";
     const gtin = String(mapping.gtin ?? "");
     const priceRaw = supplierVariant?.price ?? null;
     const stockRaw = supplierVariant?.stock ?? null;
     const price = priceRaw === null || priceRaw === undefined ? NaN : Number(priceRaw);
     const stock = stockRaw === null || stockRaw === undefined ? NaN : Number(stockRaw);
-    const brand = normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariantAny?.supplierBrand ?? "");
+    const brand = normalizeBrand(
+      payload?.brand ?? product?.brand ?? supplierVariantAny?.supplierBrand ?? supplierVariantAny?.brand ?? ""
+    );
     const title = buildProductTitle(
       payload,
-      supplierVariant?.supplierSku ?? null,
-      supplierVariantAny?.supplierProductName ?? null
+      supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null,
+      supplierVariantAny?.supplierProductName ?? supplierVariantAny?.productName ?? null
     );
     const category = buildProductCategory(payload) || "Sneakers";
     const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
@@ -348,10 +369,7 @@ export async function GET(request: Request) {
     }
 
     if (rowValid) valid += 1;
-    });
-
-    currentOffset += pageSize;
-  } while (all && lastBatch === pageSize);
+  });
 
   const report: Stage2Report = {
     ok: issues.length === 0,

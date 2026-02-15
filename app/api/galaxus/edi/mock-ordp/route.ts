@@ -169,7 +169,7 @@ export async function POST(request: Request) {
     const lineCount = Math.max(1, Math.min(Number(body?.lineCount ?? 3), 100));
 
     const mappings = await prisma.variantMapping.findMany({
-      where: { status: { in: ["MATCHED", "SUPPLIER_GTIN"] }, gtin: { not: null } },
+      where: { status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] }, gtin: { not: null } },
       include: { supplierVariant: true },
       orderBy: { updatedAt: "desc" },
       take: lineCount,

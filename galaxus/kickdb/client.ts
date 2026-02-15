@@ -172,21 +172,22 @@ function normalizeFractionalSize(value: string): string[] {
 
 function expandSizeTokens(value: string): string[] {
   const cleaned = value.trim().toUpperCase();
+  const normalized = cleaned.replace(/\bWIDE\b/g, "").replace(/\s+/g, " ").trim();
   if (!cleaned) return [];
   const tokens = new Set<string>();
 
-  if (/(^|[^A-Z])(XXS|XS|S|M|L|XL|XXL|XXXL|OS|ONE SIZE|O\/S)/i.test(cleaned)) {
-    tokens.add(cleaned.replace(/\s+/g, ""));
+  if (/(^|[^A-Z])(XXS|XS|S|M|L|XL|XXL|XXXL|OS|ONE SIZE|O\/S)/i.test(normalized)) {
+    tokens.add(normalized.replace(/\s+/g, ""));
   }
 
-  const withoutPrefix = cleaned.replace(/^(EU|US|UK|ASIA)\s+/i, "");
+  const withoutPrefix = normalized.replace(/^(EU|US|UK|ASIA)\s+/i, "");
   normalizeFractionalSize(withoutPrefix).forEach((token) => tokens.add(token));
 
   const numericMatch = withoutPrefix.match(/(\d+(\.\d+)?)/);
   if (numericMatch?.[1]) tokens.add(numericMatch[1]);
 
-  if (/(^|[^A-Z])(\d+(\.\d+)?)(Y|GS)$/i.test(cleaned)) {
-    const youthMatch = cleaned.match(/(\d+(\.\d+)?)/);
+  if (/(^|[^A-Z])(\d+(\.\d+)?)(Y|GS)$/i.test(normalized)) {
+    const youthMatch = normalized.match(/(\d+(\.\d+)?)/);
     if (youthMatch?.[1]) {
       tokens.add(`${youthMatch[1]}Y`);
       tokens.add(youthMatch[1]);
@@ -198,6 +199,7 @@ function expandSizeTokens(value: string): string[] {
 
 function inferSizeSystem(value: string): "EU" | "US" | "UK" | null {
   const upper = value.toUpperCase();
+  if (/(^|[^A-Z])(\d+(\.\d+)?)(Y|GS)\b/.test(upper)) return "US";
   if (upper.includes("EU")) return "EU";
   if (upper.includes("US")) return "US";
   if (upper.includes("UK")) return "UK";

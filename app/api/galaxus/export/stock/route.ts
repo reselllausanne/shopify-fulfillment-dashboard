@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { toCsv } from "@/galaxus/exports/csv";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,20 +13,6 @@ function decimalToString(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number") return value.toString();
   return String(value);
-}
-
-function isAbsoluteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function hasSupplierImage(images: unknown): boolean {
-  if (!Array.isArray(images)) return false;
-  return images.some((value) => typeof value === "string" && value.length > 0 && isAbsoluteUrl(value));
 }
 
 export async function GET(request: Request) {
@@ -54,7 +40,7 @@ export async function GET(request: Request) {
   ];
 
   const rows: ExportRow[] = [];
-  const seenGtins = new Set<string>();
+  const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
@@ -62,47 +48,44 @@ export async function GET(request: Request) {
   do {
     const mappings = await prisma.variantMapping.findMany({
       where: {
-        status: { in: ["MATCHED", "SUPPLIER_GTIN"] },
+        status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
         gtin: { not: null },
         ...whereSupplier,
       },
       include: {
         supplierVariant: true,
+        partnerVariant: { include: { partner: true } },
+        kickdbVariant: { include: { product: true } },
       },
       orderBy: { updatedAt: "desc" },
       take: pageSize,
       skip: currentOffset,
     });
     lastBatch = mappings.length;
-
-    mappings.forEach((mapping) => {
-      const gtin = mapping.gtin ?? "";
-      if (gtin && seenGtins.has(gtin)) return;
-      if (gtin) seenGtins.add(gtin);
-      const supplierVariant = mapping.supplierVariant;
-      const supplierVariantAny = supplierVariant as any;
-      if (!supplierVariantAny?.supplierProductName || !hasSupplierImage(supplierVariantAny?.images)) {
-        return;
-      }
-      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-      const stock = supplierVariant?.stock ?? 0;
-
-      rows.push({
-        ProviderKey: providerKey,
-        QuantityOnStock: stock.toString(),
-        RestockTime: "",
-        RestockDate: "",
-        MinimumOrderQuantity: "1",
-        OrderQuantitySteps: "1",
-        TradeUnit: "",
-        LogisticUnit: "",
-        WarehouseCountry: "Poland",
-        DirectDeliverySupported: "no",
-      });
-    });
-
+    accumulateBestCandidates(mappings, bestByGtin);
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
+
+  const candidates = Array.from(bestByGtin.values());
+  candidates.forEach((candidate) => {
+    const variant = candidate.variant as any;
+    const providerKey = candidate.providerKey ?? "";
+    if (!providerKey) return;
+    const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
+
+    rows.push({
+      ProviderKey: providerKey,
+      QuantityOnStock: Number.isFinite(stock) ? stock.toString() : "0",
+      RestockTime: "",
+      RestockDate: "",
+      MinimumOrderQuantity: "1",
+      OrderQuantitySteps: "1",
+      TradeUnit: "",
+      LogisticUnit: "",
+      WarehouseCountry: "Poland",
+      DirectDeliverySupported: "no",
+    });
+  });
 
   const csv = toCsv(headers, rows);
   const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;
