@@ -3,12 +3,13 @@ import { createGoldenSupplierClient } from "@/galaxus/supplier/client";
 import {
   fetchStockxProductByIdOrSlug,
   fetchStockxProductByIdOrSlugRaw,
-  matchVariantBySize,
+  matchVariantsBySize,
   extractVariantGtin,
   searchStockxProducts,
 } from "@/galaxus/kickdb/client";
 import { buildProviderKey, normalizeProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
 import { shouldFetchKickDb } from "@/galaxus/kickdb/cache";
+import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 
 export type KickdbEnrichOptions = {
   limit?: number;
@@ -99,6 +100,66 @@ function summarizeVariantSizes(variants: any[] = []) {
     return sizes;
   });
   return values.filter((value) => typeof value === "string");
+}
+
+function collectVariantSizes(variant: any): Array<{ type: string; size: string }> {
+  const sizes: Array<{ type: string; size: string }> = [];
+  if (variant?.size_eu) sizes.push({ type: "eu", size: String(variant.size_eu) });
+  if (variant?.size_us) sizes.push({ type: "us", size: String(variant.size_us) });
+  if (variant?.size) sizes.push({ type: "raw", size: String(variant.size) });
+  if (Array.isArray(variant?.sizes)) {
+    for (const entry of variant.sizes) {
+      if (entry?.size) {
+        sizes.push({ type: String(entry?.type ?? "raw").toLowerCase(), size: String(entry.size) });
+      }
+    }
+  }
+  return sizes;
+}
+
+function normalizeSizeForCompare(value?: string | null): string | null {
+  const normalized = normalizeSize(value ?? null);
+  if (!normalized) return null;
+  return normalized.replace(/^EU/i, "").replace(/^US/i, "").trim();
+}
+
+function hasExactSizeMatch(variant: any, sizeRaw: string | null, targetType: "eu" | "us"): boolean {
+  const target = normalizeSizeForCompare(sizeRaw ?? null);
+  if (!target) return false;
+  const sizes = collectVariantSizes(variant);
+  return sizes.some((entry) => {
+    const normalized = normalizeSizeForCompare(entry.size);
+    if (!normalized) return false;
+    if (targetType === "eu" && entry.type.includes("eu")) return normalized === target;
+    if (targetType === "us" && entry.type.includes("us")) return normalized === target;
+    return false;
+  });
+}
+
+function scoreVariant(variant: any, sizeRaw: string | null): number {
+  let score = 0;
+  if (hasExactSizeMatch(variant, sizeRaw, "eu")) score += 30;
+  else if (hasExactSizeMatch(variant, sizeRaw, "us")) score += 20;
+  const gtin = extractVariantGtin(variant);
+  if (validateGtin(gtin)) score += 10;
+  return score;
+}
+
+function pickBestVariant(candidates: any[], sizeRaw: string | null): any | null {
+  if (!candidates.length) return null;
+  const scored = candidates
+    .map((variant) => ({
+      variant,
+      score: scoreVariant(variant, sizeRaw),
+      updatedAt: new Date(variant?.updated_at ?? variant?.updatedAt ?? 0).getTime(),
+      id: String(variant?.id ?? ""),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.updatedAt !== a.updatedAt) return b.updatedAt - a.updatedAt;
+      return a.id.localeCompare(b.id);
+    });
+  return scored[0]?.variant ?? null;
 }
 
 function pickString(...values: Array<unknown>) {
@@ -311,6 +372,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     supplierVariantId: string;
     status: string;
     gtin?: string | null;
+    gtinCandidates?: string[];
     error?: string;
     debug?: DebugInfo;
   }> = [];
@@ -392,16 +454,16 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         create: {
           ...(mappingCreateBase as any),
           gtin: null,
-          status: "NOT_FOUND",
+          status: "PENDING_GTIN",
         },
         update: {
           gtin: null,
-          status: "NOT_FOUND",
+          status: "PENDING_GTIN",
         },
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
-        status: "NOT_FOUND",
+        status: "PENDING_GTIN",
         debug: debugInfo ? { ...debugInfo, reason: "NO_QUERY" } : undefined,
       });
       continue;
@@ -464,16 +526,16 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         create: {
           ...(mappingCreateBase as any),
           gtin: null,
-          status: "NOT_FOUND",
+          status: "PENDING_GTIN",
         },
         update: {
           gtin: null,
-          status: "NOT_FOUND",
+          status: "PENDING_GTIN",
         },
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
-        status: "NOT_FOUND",
+        status: "PENDING_GTIN",
         debug: debugInfo
           ? {
               ...debugInfo,
@@ -504,7 +566,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     if (!productRecord) {
       results.push({
         supplierVariantId: variant.supplierVariantId,
-        status: "NOT_FOUND",
+        status: "PENDING_GTIN",
         debug: debugInfo ? { ...debugInfo, reason: "PRODUCT_EMPTY" } : undefined,
       });
       continue;
@@ -531,18 +593,31 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const matchBrand = extractBrand(productRecord);
     const matchGender =
       pickString(productRecord?.gender, productRecord?.sex) ?? pickTraitValue(traits, ["gender"]);
-    const matchedVariant = matchVariantBySize(productRecord?.variants ?? [], variant.sizeRaw ?? undefined, {
+    const matchedVariants = matchVariantsBySize(productRecord?.variants ?? [], variant.sizeRaw ?? undefined, {
       brand: matchBrand,
       gender: matchGender,
     });
+    const matchedVariant = pickBestVariant(matchedVariants, variant.sizeRaw ?? null);
+    const gtinCandidates = Array.from(
+      new Set(
+        matchedVariants
+          .map((item) => extractVariantGtin(item))
+          .filter((value): value is string => Boolean(value && validateGtin(value)))
+      )
+    );
     if (debugInfo) {
       debugInfo.matchedVariant = summarizeVariant(matchedVariant);
       debugInfo.variantSizes = summarizeVariantSizes(productRecord?.variants ?? []);
     }
 
-    const gtin = extractVariantGtin(matchedVariant ?? undefined);
-    const resolvedGtin = supplierGtin ?? gtin ?? null;
-    const providerKey = buildProviderKey(resolvedGtin ?? null, providerKeySourceId);
+    const gtin = validateGtin(extractVariantGtin(matchedVariant ?? undefined))
+      ? extractVariantGtin(matchedVariant ?? undefined)
+      : null;
+    const supplierGtinValid = supplierGtin && validateGtin(supplierGtin) ? supplierGtin : null;
+    const resolvedGtin = supplierGtinValid ?? gtin ?? null;
+    const isAmbiguous = !supplierGtinValid && gtinCandidates.length > 1;
+    const finalGtin = isAmbiguous ? null : resolvedGtin;
+    const providerKey = buildProviderKey(finalGtin ?? null, providerKeySourceId);
 
     // Persist KickDB product + variant so Stage-2 exports can use brand/title/category/images.
     const now = new Date();
@@ -641,7 +716,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         productId: savedProduct.id,
         sizeUs: pickString(matchedVariant?.size_us),
         sizeEu: pickString(matchedVariant?.size_eu),
-        gtin: pickString(gtin),
+        gtin: pickString(finalGtin),
         ean: pickString(matchedVariant?.ean),
         providerKey: providerKey ?? null,
         lastFetchedAt: now,
@@ -651,7 +726,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         productId: savedProduct.id,
         sizeUs: pickString(matchedVariant?.size_us),
         sizeEu: pickString(matchedVariant?.size_eu),
-        gtin: pickString(gtin),
+        gtin: pickString(finalGtin),
         ean: pickString(matchedVariant?.ean),
         providerKey: providerKey ?? null,
         lastFetchedAt: now,
@@ -659,29 +734,35 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       },
     });
 
-    const resolvedStatus = supplierGtin ? "SUPPLIER_GTIN" : gtin ? "MATCHED" : "NOT_FOUND";
+    const resolvedStatus = supplierGtinValid
+      ? "SUPPLIER_GTIN"
+      : isAmbiguous
+        ? "AMBIGUOUS_GTIN"
+        : finalGtin
+          ? "MATCHED"
+          : "PENDING_GTIN";
     await prismaAny.variantMapping.upsert({
       where: mappingWhere as any,
       create: {
         ...(mappingCreateBase as any),
         kickdbVariantId: savedVariant.id,
-        gtin: resolvedGtin ?? null,
+        gtin: finalGtin ?? null,
         providerKey: providerKey ?? null,
         status: resolvedStatus,
       },
       update: {
         kickdbVariantId: savedVariant.id,
-        gtin: resolvedGtin ?? null,
+        gtin: finalGtin ?? null,
         providerKey: providerKey ?? null,
         status: resolvedStatus,
       },
     });
 
-    if (resolvedGtin) {
+    if (finalGtin) {
       await prismaAny.supplierVariant.update({
         where: { supplierVariantId: variant.supplierVariantId },
         data: {
-          gtin: resolvedGtin,
+          gtin: finalGtin,
           providerKey: providerKeyShort ?? undefined,
         },
       });
@@ -690,11 +771,18 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     results.push({
       supplierVariantId: variant.supplierVariantId,
       status: resolvedStatus,
-      gtin: resolvedGtin ?? null,
+      gtin: finalGtin ?? null,
+      gtinCandidates: gtinCandidates.length ? gtinCandidates : undefined,
       debug: debugInfo
         ? {
             ...debugInfo,
-            reason: supplierGtin ? "SUPPLIER_GTIN_KEEP" : gtin ? "MATCHED" : "NO_GTIN",
+          reason: supplierGtinValid
+            ? "SUPPLIER_GTIN_KEEP"
+            : isAmbiguous
+              ? "AMBIGUOUS_GTIN"
+              : finalGtin
+                ? "MATCHED"
+                : "NO_GTIN",
           }
         : undefined,
     });

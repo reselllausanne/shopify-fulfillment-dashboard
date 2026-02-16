@@ -4,7 +4,8 @@ import {
   KICKDB_API_KEY_HEADER,
   KICKDB_API_KEY_PREFIX,
 } from "../config";
-import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "./sizeCharts";
+import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
+import { normalizeSize as normalizeSizeValue } from "@/app/lib/normalize";
 
 type KickDbProduct = {
   id: string;
@@ -112,13 +113,6 @@ export function extractVariantGtin(variant?: KickDbVariantWithIdentifiers): stri
     return typeof value === "string" ? value : null;
   }
   return null;
-}
-
-export function normalizeSize(value?: string | null): string | null {
-  if (!value) return null;
-  const raw = value.toString().trim().toUpperCase();
-  const match = raw.match(/(\d+(\.\d+)?)/);
-  return match?.[1] ?? raw;
 }
 
 type SizeMatchContext = {
@@ -300,8 +294,9 @@ function convertUsToEu(usValue: string, context?: SizeMatchContext): string | nu
 }
 
 function buildTargetSizeTokens(sizeRaw?: string | null): string[] {
-  if (!sizeRaw) return [];
-  const cleaned = stripPrefix(sizeRaw.toString(), /^EU\s*/i);
+  const normalized = normalizeSizeValue(sizeRaw ?? null);
+  if (!normalized) return [];
+  const cleaned = stripPrefix(normalized, /^EU\s*/i);
   return buildTokensFromSizeValue(cleaned);
 }
 
@@ -339,14 +334,21 @@ export function matchVariantBySize(
   sizeRaw?: string | null,
   context?: SizeMatchContext
 ): KickDbVariant | null {
+  const matches = matchVariantsBySize(variants, sizeRaw ?? null, context);
+  return matches[0] ?? null;
+}
+
+export function matchVariantsBySize(
+  variants: KickDbVariant[] = [],
+  sizeRaw?: string | null,
+  context?: SizeMatchContext
+): KickDbVariant[] {
   const targetTokens = new Set(buildTargetSizeTokens(sizeRaw ?? null));
-  if (!variants.length) return null;
-  if (targetTokens.size === 0) return variants[0] ?? null;
-  return (
-    variants.find((variant) => {
-      const candidateTokens = getVariantSizeCandidates(variant, context);
-      return candidateTokens.some((token) => targetTokens.has(token));
-    }) ?? null
-  );
+  if (!variants.length) return [];
+  if (targetTokens.size === 0) return variants.slice(0, 1);
+  return variants.filter((variant) => {
+    const candidateTokens = getVariantSizeCandidates(variant, context);
+    return candidateTokens.some((token) => targetTokens.has(token));
+  });
 }
 

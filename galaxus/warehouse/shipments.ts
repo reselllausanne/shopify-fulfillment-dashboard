@@ -157,10 +157,11 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
 async function groupLinesByProviderKey(lines: Array<any>) {
   const groups = new Map<string, any[]>();
   for (const line of lines) {
-    const providerKey = await resolveProviderKeyForLine(line);
-    const existing = groups.get(providerKey) ?? [];
+    const resolution = await resolveProviderKeyForLine(line);
+    await logRoutingDecision(line, resolution);
+    const existing = groups.get(resolution.providerKey) ?? [];
     existing.push(line);
-    groups.set(providerKey, existing);
+    groups.set(resolution.providerKey, existing);
   }
 
   return Array.from(groups.entries()).map(([providerKey, groupLines]) => ({
@@ -169,13 +170,19 @@ async function groupLinesByProviderKey(lines: Array<any>) {
   }));
 }
 
-async function resolveProviderKeyForLine(line: any): Promise<string> {
+type ProviderResolution = { providerKey: string; rule: string; assigned: boolean };
+
+async function resolveProviderKeyForLine(line: any): Promise<ProviderResolution> {
   const direct = extractProviderKeyFromOrderKey(line.providerKey ?? null);
-  if (direct) return direct;
+  if (direct) return { providerKey: direct, rule: "ORDER_PROVIDERKEY", assigned: true };
 
   const variantId = line.supplierVariantId ?? null;
   if (variantId) {
-    return normalizeProviderKey(resolveSupplierCode(variantId)) ?? "UNK";
+    return {
+      providerKey: normalizeProviderKey(resolveSupplierCode(variantId)) ?? "UNASSIGNED",
+      rule: "VARIANT_ID",
+      assigned: Boolean(normalizeProviderKey(resolveSupplierCode(variantId))),
+    };
   }
 
   const gtin = line.gtin ?? null;
@@ -194,11 +201,46 @@ async function resolveProviderKeyForLine(line: any): Promise<string> {
       const fromVariant =
         normalizeProviderKey(variant?.providerKey ?? null) ??
         (variant?.supplierVariantId ? normalizeProviderKey(resolveSupplierCode(variant.supplierVariantId)) : null);
-      if (fromVariant) return fromVariant;
+      if (fromVariant) {
+        return { providerKey: fromVariant, rule: "GTIN_CHEAPEST", assigned: true };
+      }
     }
   }
 
-  return "UNK";
+  return { providerKey: "UNASSIGNED", rule: "NO_MATCH", assigned: false };
+}
+
+async function logRoutingDecision(line: any, resolution: ProviderResolution) {
+  const prismaAny = prisma as any;
+  const orderLineId = line?.id ?? null;
+  if (!orderLineId) return;
+  await prismaAny.orderRoutingIssue.upsert({
+    where: { orderLineId },
+    create: {
+      orderId: line?.orderId ?? null,
+      orderLineId,
+      galaxusOrderId: line?.order?.galaxusOrderId ?? null,
+      gtin: line?.gtin ?? null,
+      providerKey: resolution.assigned ? resolution.providerKey : null,
+      status: resolution.assigned ? "ASSIGNED" : "UNASSIGNED",
+      rule: resolution.rule,
+      payloadJson: {
+        supplierVariantId: line?.supplierVariantId ?? null,
+        providerKeyRaw: line?.providerKey ?? null,
+        buyerPid: line?.buyerPid ?? null,
+      },
+    },
+    update: {
+      providerKey: resolution.assigned ? resolution.providerKey : null,
+      status: resolution.assigned ? "ASSIGNED" : "UNASSIGNED",
+      rule: resolution.rule,
+      payloadJson: {
+        supplierVariantId: line?.supplierVariantId ?? null,
+        providerKeyRaw: line?.providerKey ?? null,
+        buyerPid: line?.buyerPid ?? null,
+      },
+    },
+  });
 }
 
 function buildDeliveryNoteData(

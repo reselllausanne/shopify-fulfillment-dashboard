@@ -165,6 +165,7 @@ export default function GalaxusDashboardPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [opsLog, setOpsLog] = useState<string | null>(null);
+  const [unassignedCount, setUnassignedCount] = useState<number | null>(null);
   const [seedLineCount, setSeedLineCount] = useState<number>(5);
   const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
@@ -184,6 +185,18 @@ export default function GalaxusDashboardPage() {
       const res = await fetch("/api/galaxus/feeds/scheduler", { cache: "no-store" });
       const data = await res.json();
       if (data?.ok) setSchedulerStatus(data.status ?? null);
+    } catch {
+      // silent
+    }
+  };
+
+  const loadRoutingSummary = async () => {
+    try {
+      const res = await fetch("/api/galaxus/routing-issues?status=UNASSIGNED&limit=1", {
+        cache: "no-store",
+      });
+      const data = await res.json();
+      if (data?.ok) setUnassignedCount(data.unassignedCount ?? 0);
     } catch {
       // silent
     }
@@ -301,6 +314,7 @@ export default function GalaxusDashboardPage() {
 
   useEffect(() => {
     loadSchedulerStatus();
+  loadRoutingSummary();
     const t = setInterval(loadSchedulerStatus, 30000);
     return () => clearInterval(t);
   }, []);
@@ -1287,6 +1301,12 @@ export default function GalaxusDashboardPage() {
 
         <div className="space-y-2">
           <div className="text-sm font-medium">Orders</div>
+          <div className="text-xs text-gray-500 flex items-center gap-2">
+            <span>Unassigned lines: {unassignedCount ?? "—"}</span>
+            <a className="underline" href="/galaxus/routing-issues">
+              View routing issues
+            </a>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
               className="px-2 py-2 border rounded text-sm w-40 uppercase"

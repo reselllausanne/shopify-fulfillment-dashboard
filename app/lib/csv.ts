@@ -43,5 +43,8 @@ export function parseCsv(text: string): string[][] {
     rows.push(row);
   }
 
+  if (rows.length && rows[0].length) {
+    rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
+  }
   return rows;
 }

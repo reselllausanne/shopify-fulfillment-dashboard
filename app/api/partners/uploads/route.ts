@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
+import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
+import { buildDuplicateKey, computeLastRowByKey } from "@/app/lib/partnerImport";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
@@ -10,15 +12,14 @@ export const dynamic = "force-dynamic";
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
 
-function normalizeSize(value: string): string {
-  return value.trim().toUpperCase().replace(",", ".").replace(/\s+/g, "");
-}
-
 export async function POST(req: NextRequest) {
   const session = await getPartnerSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const { searchParams } = new URL(req.url);
+  const dryRun = ["1", "true", "yes"].includes((searchParams.get("dryRun") ?? "").toLowerCase());
 
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
@@ -26,13 +27,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "CSV file required" }, { status: 400 });
   }
 
-  const upload = await (prisma as any).partnerUpload.create({
-    data: {
-      partnerId: session.partnerId,
-      filename: file.name ?? "upload.csv",
-      status: "PROCESSING",
-    },
-  });
+  const prismaAny = prisma as any;
+  const upload = dryRun
+    ? null
+    : await prismaAny.partnerUpload.create({
+        data: {
+          partnerId: session.partnerId,
+          filename: file.name ?? "upload.csv",
+          status: "PROCESSING",
+        },
+      });
 
   try {
     const text = await file.text();
@@ -51,12 +55,14 @@ export async function POST(req: NextRequest) {
     const errors: Array<{ row: number; field: string; message: string }> = [];
     const rowResults: Array<{
       row: number;
-      status: "RESOLVED" | "PENDING_GTIN" | "ERROR";
+      status: "RESOLVED" | "PENDING_GTIN" | "AMBIGUOUS_GTIN" | "ERROR" | "DUPLICATE_IGNORED" | "DRY_RUN";
       gtin?: string | null;
+      gtinCandidates?: string[];
       error?: string;
+      warning?: string;
     }> = [];
     let importedRows = 0;
-    const partner = await (prisma as any).partner.findUnique({
+    const partner = await prismaAny.partner.findUnique({
       where: { id: session.partnerId },
     });
     if (!partner) {
@@ -70,16 +76,30 @@ export async function POST(req: NextRequest) {
       return `${cleanKey}:${cleanSku}-${cleanSize}`;
     };
 
+    const lastRowByKey = computeLastRowByKey(rows, headerMap);
+
     for (let i = 1; i < rows.length; i += 1) {
       const row = rows[i];
       const read = (header: string) => row[headerMap.get(header) ?? -1]?.trim() ?? "";
 
       const providerKeyRaw = read("providerKey");
-      const sku = read("sku");
+      const skuRaw = read("sku");
       const sizeRaw = read("size");
       const stockRaw = read("rawStock");
       const priceRaw = read("price");
       const rowErrors: Array<{ field: string; message: string }> = [];
+
+      const dupeKey = buildDuplicateKey(providerKeyRaw, skuRaw, sizeRaw);
+      if (dupeKey) {
+        if (lastRowByKey.get(dupeKey) !== i) {
+          rowResults.push({
+            row: i + 1,
+            status: "DUPLICATE_IGNORED",
+            warning: "Duplicate row, last occurrence wins",
+          });
+          continue;
+        }
+      }
 
       const providerKey = normalizeProviderKey(providerKeyRaw);
       if (!providerKey) {
@@ -93,15 +113,18 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      const sku = normalizeSku(skuRaw);
       if (!sku) rowErrors.push({ field: "sku", message: "Required" });
-      if (!sizeRaw) rowErrors.push({ field: "size", message: "Required" });
+      const sizeNormalized = normalizeSize(sizeRaw);
+      if (!sizeRaw || !sizeNormalized) rowErrors.push({ field: "size", message: "Required" });
 
-      const stock = Number.parseInt(stockRaw, 10);
-      if (!Number.isFinite(stock) || stock < 0) {
+      const stockValue = stockRaw.replace(/\u00A0/g, " ").trim();
+      if (!/^\d+$/.test(stockValue)) {
         rowErrors.push({ field: "rawStock", message: "Invalid number" });
       }
-      const price = Number.parseFloat(priceRaw);
-      if (!Number.isFinite(price) || price < 0) {
+      const stock = Number.parseInt(stockValue, 10);
+      const price = parsePriceSafe(priceRaw);
+      if (price === null) {
         rowErrors.push({ field: "price", message: "Invalid number" });
       }
 
@@ -115,28 +138,36 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      if (dryRun) {
+        rowResults.push({ row: i + 1, status: "DRY_RUN" });
+        importedRows += 1;
+        continue;
+      }
+
       const providerKeyValue = providerKey!;
-      const sizeNormalized = normalizeSize(sizeRaw);
-      const supplierVariantId = buildSupplierVariantId(providerKeyValue, sku, sizeNormalized);
+      const normalizedSku = sku!;
+      const normalizedSize = sizeNormalized!;
+      const supplierVariantId = buildSupplierVariantId(providerKeyValue, normalizedSku, normalizedSize);
       const now = new Date();
 
-      await (prisma as any).supplierVariant.upsert({
+      // DELTA import: rows absent from this CSV remain unchanged.
+      await prismaAny.supplierVariant.upsert({
         where: { supplierVariantId },
         create: {
           supplierVariantId,
-          supplierSku: sku,
+          supplierSku: normalizedSku,
           providerKey: providerKeyValue,
           sizeRaw,
-          sizeNormalized,
+          sizeNormalized: normalizedSize,
           stock,
           price,
           lastSyncAt: now,
         },
         update: {
-          supplierSku: sku,
+          supplierSku: normalizedSku,
           providerKey: providerKeyValue,
           sizeRaw,
-          sizeNormalized,
+          sizeNormalized: normalizedSize,
           stock,
           price,
           lastSyncAt: now,
@@ -144,13 +175,17 @@ export async function POST(req: NextRequest) {
       });
 
       let resolvedGtin: string | null = null;
+      let gtinCandidates: string[] = [];
+      let isAmbiguous = false;
       try {
         const enrich = await runKickdbEnrich({ supplierVariantId, force: true });
         const match = enrich?.results?.find((result) => result.supplierVariantId === supplierVariantId);
-        const mapping = await (prisma as any).variantMapping.findUnique({
+        const mapping = await prismaAny.variantMapping.findUnique({
           where: { supplierVariantId },
           select: { gtin: true },
         });
+        gtinCandidates = match?.gtinCandidates ?? [];
+        isAmbiguous = match?.status === "AMBIGUOUS_GTIN" || gtinCandidates.length > 1;
         resolvedGtin = match?.gtin ?? mapping?.gtin ?? null;
       } catch (err: any) {
         const message = err?.message ?? "Enrichment failed";
@@ -159,27 +194,69 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      if (!resolvedGtin) {
+      if (isAmbiguous) {
+        await prismaAny.partnerUploadRow?.create({
+          data: {
+            uploadId: upload?.id ?? null,
+            partnerId: session.partnerId,
+            providerKey: providerKeyValue,
+            sku: normalizedSku,
+            sizeRaw,
+            sizeNormalized: normalizedSize,
+            rawStock: stock,
+            price,
+            status: "AMBIGUOUS_GTIN",
+            gtinResolved: null,
+            gtinCandidatesJson: gtinCandidates,
+          },
+        });
+        rowResults.push({
+          row: i + 1,
+          status: "AMBIGUOUS_GTIN",
+          gtinCandidates,
+        });
+        importedRows += 1;
+        continue;
+      }
+
+      if (!resolvedGtin || !validateGtin(resolvedGtin)) {
+        await prismaAny.partnerUploadRow?.create({
+          data: {
+            uploadId: upload?.id ?? null,
+            partnerId: session.partnerId,
+            providerKey: providerKeyValue,
+            sku: normalizedSku,
+            sizeRaw,
+            sizeNormalized: normalizedSize,
+            rawStock: stock,
+            price,
+            status: "PENDING_GTIN",
+            gtinResolved: null,
+            errorsJson: !resolvedGtin
+              ? [{ message: "GTIN not resolved" }]
+              : [{ message: "Invalid GTIN" }],
+          },
+        });
         rowResults.push({ row: i + 1, status: "PENDING_GTIN" });
         importedRows += 1;
         continue;
       }
 
-      const offer = await (prisma as any).supplierVariant.upsert({
+      const offer = await prismaAny.supplierVariant.upsert({
         where: { providerKey_gtin: { providerKey: providerKeyValue, gtin: resolvedGtin } },
         create: {
           supplierVariantId,
-          supplierSku: sku,
+          supplierSku: normalizedSku,
           providerKey: providerKeyValue,
           gtin: resolvedGtin,
           sizeRaw,
-          sizeNormalized,
+          sizeNormalized: normalizedSize,
           stock,
           price,
           lastSyncAt: now,
         },
         update: {
-          supplierSku: sku,
+          supplierSku: normalizedSku,
           providerKey: providerKeyValue,
           gtin: resolvedGtin,
           sizeRaw,
@@ -191,21 +268,21 @@ export async function POST(req: NextRequest) {
       });
 
       if (offer.supplierVariantId !== supplierVariantId) {
-        const existingMapping = await (prisma as any).variantMapping.findUnique({
+        const existingMapping = await prismaAny.variantMapping.findUnique({
           where: { supplierVariantId: offer.supplierVariantId },
           select: { supplierVariantId: true },
         });
         if (existingMapping) {
-          await (prisma as any).variantMapping.deleteMany({
+          await prismaAny.variantMapping.deleteMany({
             where: { supplierVariantId },
           });
         } else {
-          await (prisma as any).variantMapping.updateMany({
+          await prismaAny.variantMapping.updateMany({
             where: { supplierVariantId },
             data: { supplierVariantId: offer.supplierVariantId },
           });
         }
-        await (prisma as any).supplierVariant.deleteMany({
+        await prismaAny.supplierVariant.deleteMany({
           where: { supplierVariantId },
         });
       }
@@ -214,35 +291,40 @@ export async function POST(req: NextRequest) {
       importedRows += 1;
     }
 
-    await (prisma as any).partnerUpload.update({
-      where: { id: upload.id },
-      data: {
-        status: errors.length ? "COMPLETED_WITH_ERRORS" : "COMPLETED",
-        totalRows: Math.max(rows.length - 1, 0),
-        importedRows,
-        errorRows: errors.length,
-        errorsJson: errors.length ? errors : null,
-      },
-    });
+    if (upload) {
+      await prismaAny.partnerUpload.update({
+        where: { id: upload.id },
+        data: {
+          status: errors.length ? "COMPLETED_WITH_ERRORS" : "COMPLETED",
+          totalRows: Math.max(rows.length - 1, 0),
+          importedRows,
+          errorRows: errors.length,
+          errorsJson: errors.length ? errors : null,
+        },
+      });
+    }
 
     return NextResponse.json({
       ok: true,
       result: {
-        uploadId: upload.id,
+        uploadId: upload?.id ?? null,
         importedRows,
         errorRows: errors.length,
         errors,
         rows: rowResults,
+        dryRun,
       },
     });
   } catch (error: any) {
-    await (prisma as any).partnerUpload.update({
-      where: { id: upload.id },
-      data: {
-        status: "FAILED",
-        errorsJson: [{ message: error.message ?? "Upload failed" }],
-      },
-    });
+    if (upload) {
+      await prismaAny.partnerUpload.update({
+        where: { id: upload.id },
+        data: {
+          status: "FAILED",
+          errorsJson: [{ message: error.message ?? "Upload failed" }],
+        },
+      });
+    }
     return NextResponse.json({ error: error.message ?? "Upload failed" }, { status: 500 });
   }
 }

@@ -442,6 +442,7 @@ model Partner {
   users            PartnerUser[]
   variants         PartnerVariant[]
   uploads          PartnerUpload[]
+  uploadRows       PartnerUploadRow[]
   orders           PartnerOrder[]
 
   createdAt        DateTime @default(now())
@@ -478,8 +479,37 @@ model PartnerUpload {
   updatedAt    DateTime @updatedAt
 
   partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  rows         PartnerUploadRow[]
 
   @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerUploadRow {
+  id                 String   @id @default(uuid())
+  uploadId           String?
+  partnerId          String?
+  providerKey        String
+  sku                String
+  sizeRaw            String
+  sizeNormalized     String
+  rawStock           Int
+  price              Decimal  @db.Decimal(10, 2)
+  status             String
+  gtinResolved       String?
+  gtinCandidatesJson Json?
+  errorsJson         Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  upload             PartnerUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  partner            Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  @@index([uploadId])
+  @@index([partnerId])
+  @@index([providerKey])
+  @@index([status])
+  @@index([providerKey, sku, sizeNormalized])
   @@schema("public")
 }
 
@@ -601,8 +631,30 @@ model GalaxusOrder {
   supplierOrders      SupplierOrder[]
   statusEvents        OrderStatusEvent[]
   ediFiles            GalaxusEdiFile[]
+  routingIssues       OrderRoutingIssue[]
 
   @@index([orderDate])
+  @@schema("public")
+}
+
+model OrderRoutingIssue {
+  id            String   @id @default(uuid())
+  orderId       String?
+  orderLineId   String   @unique
+  galaxusOrderId String?
+  gtin          String?
+  providerKey   String?
+  status        String
+  rule          String?
+  payloadJson   Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  order         GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([status])
+  @@index([gtin])
   @@schema("public")
 }
 

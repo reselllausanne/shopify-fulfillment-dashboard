@@ -123,6 +123,12 @@ export default function PartnerDashboardPage() {
         >
           Sign out
         </button>
+        <button
+          className="ml-2 px-3 py-2 rounded bg-gray-100 text-black text-xs"
+          onClick={() => router.push("/partners/gtin-inbox")}
+        >
+          GTIN Inbox
+        </button>
       </div>
 
       {error && <div className="text-sm text-red-600">{error}</div>}

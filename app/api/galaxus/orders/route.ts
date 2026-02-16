@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
+    const prismaAny = prisma as any;
     const { searchParams } = new URL(request.url);
     const limit = Math.min(Number(searchParams.get("limit") ?? "20"), 100);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
 
     let gtinFilter: string[] | null = null;
     if (providerKey) {
-      const offers = await prisma.supplierVariant.findMany({
+      const offers: Array<{ gtin: string | null }> = await prismaAny.supplierVariant.findMany({
         where: {
           providerKey,
           gtin: { not: null },

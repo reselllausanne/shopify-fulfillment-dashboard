@@ -10,10 +10,22 @@ export function normalizeProviderKey(value?: string | null): string | null {
   return PROVIDER_KEY_REGEX.test(cleaned) ? cleaned : null;
 }
 
+export function isValidProviderKey(value?: string | null): boolean {
+  return Boolean(normalizeProviderKey(value));
+}
+
 export function extractProviderKeyFromOrderKey(value?: string | null): string | null {
   if (!value) return null;
   const prefix = value.toString().split("_")[0]?.trim().toUpperCase();
   return PROVIDER_KEY_REGEX.test(prefix) ? prefix : null;
+}
+
+export function isValidProviderKeyWithGtin(value?: string | null): boolean {
+  if (!value) return false;
+  const [prefix, gtin] = value.toString().split("_");
+  if (!prefix || !gtin) return false;
+  if (!normalizeProviderKey(prefix)) return false;
+  return /^\d+$/.test(gtin) && [8, 12, 13, 14].includes(gtin.length);
 }
 
 export function resolveSupplierCode(supplierVariantId?: string | null): string {

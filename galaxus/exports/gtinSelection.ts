@@ -1,4 +1,4 @@
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier/providerKey";
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import {
   computeGalaxusSellPriceExVat,
@@ -98,7 +98,7 @@ export function accumulateBestCandidates(
     const updatedAt = new Date(variant?.updatedAt ?? mapping.updatedAt ?? Date.now());
 
     const providerKey = buildProviderKey(gtin, variant?.supplierVariantId) ?? mapping.providerKey;
-    if (!providerKey) continue;
+    if (!providerKey || !isValidProviderKeyWithGtin(providerKey)) continue;
 
     const candidate: VariantCandidate = {
       mapping,
