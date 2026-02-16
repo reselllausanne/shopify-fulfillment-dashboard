@@ -29,15 +29,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
     }
 
+    type SupplierVariantRow = {
+      supplierVariantId: string;
+      supplierSku: string | null;
+      sizeRaw: string | null;
+    };
+
     const prefix = `${partnerKey.toLowerCase()}:`;
-    const supplierVariants = await prismaAny.supplierVariant.findMany({
+    const supplierVariants = (await prismaAny.supplierVariant.findMany({
       where: {
         supplierVariantId: { startsWith: prefix },
         ...(supplierSku ? { supplierSku } : {}),
       },
       select: { supplierVariantId: true, supplierSku: true, sizeRaw: true },
       orderBy: { updatedAt: "desc" },
-    });
+    })) as SupplierVariantRow[];
     const skuSet = new Set(supplierVariants.map((item) => item.supplierSku));
 
     const collected: any[] = [];
