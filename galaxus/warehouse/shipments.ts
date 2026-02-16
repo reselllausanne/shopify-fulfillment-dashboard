@@ -7,7 +7,8 @@ import { allocateSscc } from "@/galaxus/sscc/generator";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { packOrderLines } from "./packing";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { buildProviderKey, extractProviderKeyFromOrderKey, normalizeProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { renderDeliveryNoteHtml } from "@/galaxus/documents/templates/deliveryNote";
 import { renderPdfFromHtml } from "@/galaxus/documents/renderers/playwrightRenderer";
 import type { DeliveryNoteData, DeliveryNoteOrderGroup, OrderLine } from "@/galaxus/documents/types";
@@ -56,7 +57,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
   const orderAny = order as any;
   validateOrderLines(orderAny.lines);
 
-  const groupedLines = await groupLinesBySupplier(orderAny.lines);
+  const groupedLines = await groupLinesByProviderKey(orderAny.lines);
   const shipments: Shipment[] = [];
   const shippedAt = options.shippedAt ?? new Date();
   const storage = getStorageAdapter();
@@ -78,7 +79,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
         const shipment = await tx.shipment.create({
           data: {
             orderId: order.id,
-            shipmentId: `SHIP-${order.galaxusOrderId}-${group.supplierKey}-${Date.now()}-${shipmentIndex + 1}`,
+            shipmentId: `SHIP-${order.galaxusOrderId}-${group.providerKey}-${Date.now()}-${shipmentIndex + 1}`,
             dispatchNotificationId,
             dispatchNotificationCreatedAt: new Date(),
             incoterms: null,
@@ -153,55 +154,51 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
   return { status: "created", shipments };
 }
 
-async function groupLinesBySupplier(lines: Array<any>) {
+async function groupLinesByProviderKey(lines: Array<any>) {
   const groups = new Map<string, any[]>();
   for (const line of lines) {
-    const supplierKey = await resolveSupplierKeyForLine(line);
-    const existing = groups.get(supplierKey) ?? [];
+    const providerKey = await resolveProviderKeyForLine(line);
+    const existing = groups.get(providerKey) ?? [];
     existing.push(line);
-    groups.set(supplierKey, existing);
+    groups.set(providerKey, existing);
   }
 
-  return Array.from(groups.entries()).map(([supplierKey, groupLines]) => ({
-    supplierKey,
+  return Array.from(groups.entries()).map(([providerKey, groupLines]) => ({
+    providerKey,
     lines: groupLines,
   }));
 }
 
-async function resolveSupplierKeyForLine(line: any): Promise<string> {
+async function resolveProviderKeyForLine(line: any): Promise<string> {
+  const direct = extractProviderKeyFromOrderKey(line.providerKey ?? null);
+  if (direct) return direct;
+
   const variantId = line.supplierVariantId ?? null;
   if (variantId) {
-    const [key] = String(variantId).split(":");
-    return key || "unknown";
-  }
-
-  const providerKey = line.providerKey ?? null;
-  if (providerKey) {
-    const mapping = await prisma.variantMapping.findFirst({
-      where: { providerKey },
-      select: { supplierVariant: { select: { supplierVariantId: true } } },
-    });
-    const mappedId = mapping?.supplierVariant?.supplierVariantId ?? null;
-    if (mappedId) {
-      const [key] = String(mappedId).split(":");
-      return key || "unknown";
-    }
+    return normalizeProviderKey(resolveSupplierCode(variantId)) ?? "UNK";
   }
 
   const gtin = line.gtin ?? null;
   if (gtin) {
-    const mapping = await prisma.variantMapping.findFirst({
-      where: { gtin },
-      select: { supplierVariant: { select: { supplierVariantId: true } } },
+    const mappings = await prisma.variantMapping.findMany({
+      where: { gtin, status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] } },
+      include: {
+        supplierVariant: true,
+        kickdbVariant: { include: { product: true } },
+      },
     });
-    const mappedId = mapping?.supplierVariant?.supplierVariantId ?? null;
-    if (mappedId) {
-      const [key] = String(mappedId).split(":");
-      return key || "unknown";
+    if (mappings.length > 0) {
+      const bestByGtin = accumulateBestCandidates(mappings, new Map());
+      const candidate = bestByGtin.get(gtin);
+      const variant = candidate?.variant ?? null;
+      const fromVariant =
+        normalizeProviderKey(variant?.providerKey ?? null) ??
+        (variant?.supplierVariantId ? normalizeProviderKey(resolveSupplierCode(variant.supplierVariantId)) : null);
+      if (fromVariant) return fromVariant;
     }
   }
 
-  return "unknown";
+  return "UNK";
 }
 
 function buildDeliveryNoteData(

@@ -57,20 +57,24 @@ export async function POST(request: Request) {
     const gtins = order.lines
       .map((line) => line.gtin)
       .filter((value): value is string => Boolean(value));
-    const partnerVariants = await (prisma as any).partnerVariant.findMany({
+    const prefix = `${partner.key.toLowerCase()}:`;
+    const mappings = await (prisma as any).variantMapping.findMany({
       where: {
-        partnerId: partner.id,
         gtin: { in: gtins },
+        supplierVariantId: { startsWith: prefix },
       },
+      include: { supplierVariant: true },
     });
 
-    const partnerVariantByGtin = new Map<string, any>();
-    for (const variant of partnerVariants) {
-      const gtin = String(variant.gtin ?? "");
+    const supplierVariantByGtin = new Map<string, any>();
+    for (const mapping of mappings) {
+      const gtin = String(mapping.gtin ?? "");
       if (!gtin) continue;
-      const existing = partnerVariantByGtin.get(gtin);
-      if (!existing || Number(variant.stock ?? 0) > Number(existing.stock ?? 0)) {
-        partnerVariantByGtin.set(gtin, variant);
+      const candidate = mapping.supplierVariant;
+      if (!candidate) continue;
+      const existing = supplierVariantByGtin.get(gtin);
+      if (!existing || Number(candidate.stock ?? 0) > Number(existing.stock ?? 0)) {
+        supplierVariantByGtin.set(gtin, candidate);
       }
     }
 
@@ -80,10 +84,10 @@ export async function POST(request: Request) {
 
     await (prisma as any).partnerOrderLine.createMany({
       data: order.lines.map((line) => {
-        const matched = line.gtin ? partnerVariantByGtin.get(String(line.gtin)) : null;
+        const matched = line.gtin ? supplierVariantByGtin.get(String(line.gtin)) : null;
         return {
           partnerOrderId: partnerOrder.id,
-          partnerVariantId: matched?.id ?? null,
+          partnerVariantId: null,
           gtin: line.gtin ?? null,
           quantity: line.quantity ?? 1,
         };

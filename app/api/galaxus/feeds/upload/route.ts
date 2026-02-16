@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     const providerName = providerParam || GALAXUS_PROVIDER_NAME || "digitecgalaxus";
     const assortmentFile = searchParams.get("assortment")?.trim() || GALAXUS_ASSORTMENT_FILE || "price";
 
-    const masterUrl = `${origin}/api/galaxus/export/master?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}&minimal=1`;
+    const masterUrl = `${origin}/api/galaxus/export/master?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
     const stockUrl = `${origin}/api/galaxus/export/stock?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
     const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
 

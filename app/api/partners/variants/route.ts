@@ -15,8 +15,15 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
 
-  const items = await (prisma as any).partnerVariant.findMany({
-    where: { partnerId: session.partnerId },
+  const partner = await (prisma as any).partner.findUnique({
+    where: { id: session.partnerId },
+  });
+  if (!partner?.key) {
+    return NextResponse.json({ error: "Partner key missing" }, { status: 400 });
+  }
+  const prefix = `${partner.key.toLowerCase()}:`;
+  const items = await prisma.supplierVariant.findMany({
+    where: { supplierVariantId: { startsWith: prefix } },
     orderBy: { updatedAt: "desc" },
     take: limit,
     skip: offset,

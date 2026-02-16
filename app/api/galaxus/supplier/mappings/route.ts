@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
+import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -114,11 +115,13 @@ export async function GET(request: Request) {
     "kickdbRetailPrice",
   ];
 
-  const rows = mapped.map((row: (typeof mapped)[number]) => ({
+  const rows = mapped.map((row: (typeof mapped)[number]) => {
+    const computedProviderKey = buildProviderKey(row.gtin ?? null, row.supplierVariantId ?? null);
+    return {
     status: row.status ?? "",
     updatedAt: row.updatedAt ?? "",
     supplierVariantId: row.supplierVariantId ?? "",
-    providerKey: row.providerKey ?? "",
+      providerKey: computedProviderKey ?? row.providerKey ?? "",
     gtin: row.gtin ?? "",
     supplierSku: row.supplierSku ?? "",
     supplierBrand: row.supplierBrand ?? "",
@@ -142,7 +145,8 @@ export async function GET(request: Request) {
     kickdbCountryOfManufacture: row.kickdbCountryOfManufacture ?? "",
     kickdbReleaseDate: row.kickdbReleaseDate ?? "",
     kickdbRetailPrice: row.kickdbRetailPrice ?? "",
-  }));
+    };
+  });
 
   const csv = toCsv(headers, rows);
   const filename = `galaxus-mappings-${supplier ?? "all"}-${Date.now()}.csv`;

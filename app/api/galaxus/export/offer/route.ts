@@ -66,6 +66,23 @@ export async function GET(request: Request) {
         "VatRatePercentage",
       ];
 
+  const partners = await prismaAny.partner.findMany();
+  const partnerByKey = new Map<string, any>(
+    partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
+  );
+  const resolvePartnerOverrides = (key: string | null) => {
+    if (!key) return null;
+    const partner = partnerByKey.get(key.toLowerCase());
+    if (!partner) return null;
+    return {
+      targetMargin: parseNumber(partner.targetMargin),
+      shippingPerPair: parseNumber(partner.shippingPerPair),
+      bufferPerPair: parseNumber(partner.bufferPerPair),
+      roundTo: parseNumber(partner.roundTo),
+      vatRate: parseNumber(partner.vatRate),
+    };
+  };
+
   do {
     const mappings = await prismaAny.variantMapping.findMany({
       where: {
@@ -75,7 +92,6 @@ export async function GET(request: Request) {
       },
       include: {
         supplierVariant: true,
-        partnerVariant: { include: { partner: true } },
         kickdbVariant: { include: { product: true } },
       },
       orderBy: { updatedAt: "desc" },
@@ -83,7 +99,7 @@ export async function GET(request: Request) {
       skip: currentOffset,
     });
     lastBatch = mappings.length;
-    accumulateBestCandidates(mappings, bestByGtin);
+    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides);
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
@@ -92,16 +108,8 @@ export async function GET(request: Request) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
     const product = candidate.product as any;
-    const partner = mapping?.partnerVariant?.partner ?? null;
-    const overrides = partner
-      ? resolvePricingOverrides({
-          targetMargin: parseNumber(partner.targetMargin),
-          shippingPerPair: parseNumber(partner.shippingPerPair),
-          bufferPerPair: parseNumber(partner.bufferPerPair),
-          roundTo: parseNumber(partner.roundTo),
-          vatRate: parseNumber(partner.vatRate),
-        })
-      : resolvePricingOverrides(null);
+    const supplierKey = String(variant?.supplierVariantId ?? "").split(":")[0] || "";
+    const overrides = resolvePricingOverrides(resolvePartnerOverrides(supplierKey));
 
     const buyPrice = parseNumber(variant?.price);
     if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
@@ -120,14 +128,7 @@ export async function GET(request: Request) {
     const rrp = parseNumber(product?.retailPrice);
     const rrpAdjusted = rrp ? (rrp + 30).toFixed(2) : "";
     const providerKey =
-      mapping?.providerKey ??
-      buildProviderKey(
-        mapping.gtin,
-        candidate.source === "supplier"
-          ? variant?.supplierVariantId
-          : `${mapping?.partnerVariant?.partner?.key ?? "PRT"}:${mapping?.partnerVariant?.partnerVariantId ?? mapping?.partnerVariant?.id}`
-      ) ??
-      "";
+      buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? mapping?.providerKey ?? "";
 
     if (!providerKey || !price) continue;
 

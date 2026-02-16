@@ -14,19 +14,16 @@ type UploadResult = {
   importedRows?: number;
   errorRows?: number;
   errors?: Array<{ row: number; field: string; message: string }>;
+  rows?: Array<{ row: number; status: "RESOLVED" | "PENDING_GTIN" | "ERROR"; gtin?: string | null; error?: string }>;
 };
 
 
 const TEMPLATE_HEADERS = [
-  "partnerVariantId",
+  "providerKey",
   "sku",
-  "productName",
-  "brand",
-  "sizeRaw",
-  "stock",
+  "size",
+  "rawStock",
   "price",
-  "imageUrls",
-  "gtin",
 ];
 
 export default function PartnerDashboardPage() {
@@ -161,8 +158,34 @@ export default function PartnerDashboardPage() {
         </div>
 
         {uploadResult && (
-          <div className="text-xs text-gray-700">
-            Imported: {uploadResult.importedRows ?? 0}, Errors: {uploadResult.errorRows ?? 0}
+          <div className="space-y-2 text-xs text-gray-700">
+            <div>
+              Imported: {uploadResult.importedRows ?? 0}, Errors: {uploadResult.errorRows ?? 0}
+            </div>
+            {uploadResult.rows && uploadResult.rows.length > 0 && (
+              <div className="overflow-auto border rounded bg-gray-50">
+                <table className="min-w-full text-xs">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Row</th>
+                      <th className="px-2 py-1 text-left">Status</th>
+                      <th className="px-2 py-1 text-left">GTIN</th>
+                      <th className="px-2 py-1 text-left">Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uploadResult.rows.map((row) => (
+                      <tr key={`${row.row}-${row.status}`} className="border-t">
+                        <td className="px-2 py-1">{row.row}</td>
+                        <td className="px-2 py-1">{row.status}</td>
+                        <td className="px-2 py-1">{row.gtin ?? ""}</td>
+                        <td className="px-2 py-1">{row.error ?? ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

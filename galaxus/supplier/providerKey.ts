@@ -2,6 +2,20 @@ const SUPPLIER_CODE_MAP: Record<string, string> = {
   golden: "GLD",
 };
 
+const PROVIDER_KEY_REGEX = /^[A-Z]{3}$/;
+
+export function normalizeProviderKey(value?: string | null): string | null {
+  if (!value) return null;
+  const cleaned = value.toString().trim().toUpperCase();
+  return PROVIDER_KEY_REGEX.test(cleaned) ? cleaned : null;
+}
+
+export function extractProviderKeyFromOrderKey(value?: string | null): string | null {
+  if (!value) return null;
+  const prefix = value.toString().split("_")[0]?.trim().toUpperCase();
+  return PROVIDER_KEY_REGEX.test(prefix) ? prefix : null;
+}
+
 export function resolveSupplierCode(supplierVariantId?: string | null): string {
   if (!supplierVariantId) return "SUP";
   const rawKey = supplierVariantId.split(":")[0]?.toLowerCase();

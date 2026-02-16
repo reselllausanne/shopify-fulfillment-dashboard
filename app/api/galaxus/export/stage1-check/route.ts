@@ -64,6 +64,26 @@ export async function GET(request: Request) {
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
   const bestByGtin = new Map<string, any>();
+  const partners = await (prismaAny as any).partner.findMany();
+  const partnerByKey = new Map<string, any>(
+    partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
+  );
+  const toNumber = (value: any) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const resolvePartnerOverrides = (key: string | null) => {
+    if (!key) return null;
+    const partner = partnerByKey.get(key.toLowerCase());
+    if (!partner) return null;
+    return {
+      targetMargin: toNumber(partner.targetMargin),
+      shippingPerPair: toNumber(partner.shippingPerPair),
+      bufferPerPair: toNumber(partner.bufferPerPair),
+      roundTo: toNumber(partner.roundTo),
+      vatRate: toNumber(partner.vatRate),
+    };
+  };
 
   do {
     const mappings = await prismaAny.variantMapping.findMany({
@@ -74,7 +94,6 @@ export async function GET(request: Request) {
       },
       include: {
         supplierVariant: true,
-        partnerVariant: { include: { partner: true } },
         kickdbVariant: { include: { product: true } },
       },
       orderBy: { updatedAt: "desc" },
@@ -83,7 +102,7 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     total += mappings.length;
-    accumulateBestCandidates(mappings, bestByGtin);
+    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides);
 
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
@@ -95,14 +114,7 @@ export async function GET(request: Request) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
     const providerKey =
-      mapping?.providerKey ??
-      buildProviderKey(
-        mapping.gtin,
-        candidate.source === "supplier"
-          ? variant?.supplierVariantId
-          : `${mapping?.partnerVariant?.partner?.key ?? "PRT"}:${mapping?.partnerVariant?.partnerVariantId ?? mapping?.partnerVariant?.id}`
-      ) ??
-      "";
+      buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? mapping?.providerKey ?? "";
     const gtin = String(mapping.gtin ?? "");
     const priceRaw = variant?.price ?? null;
     const stockRaw = variant?.stock ?? null;

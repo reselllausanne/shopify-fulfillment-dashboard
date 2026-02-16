@@ -7,7 +7,7 @@ import {
   extractVariantGtin,
   searchStockxProducts,
 } from "@/galaxus/kickdb/client";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { buildProviderKey, normalizeProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
 import { shouldFetchKickDb } from "@/galaxus/kickdb/cache";
 
 export type KickdbEnrichOptions = {
@@ -18,9 +18,6 @@ export type KickdbEnrichOptions = {
   raw?: boolean;
   supplierVariantId?: string | null;
   supplierSku?: string | null;
-  partnerId?: string | null;
-  partnerSku?: string | null;
-  partnerVariantId?: string | null;
 };
 
 type DebugInfo = {
@@ -248,7 +245,9 @@ function selectBestKickdbHit(options: {
       );
       return tokens.some((token) => candidates.includes(token));
     });
-    return exact ?? null;
+    if (exact) return exact;
+    // Fallback when search results omit sku/style fields.
+    return brandFiltered[0] ?? hits[0] ?? null;
   }
 
   // Fallback: if supplier name is available, pick first hit that shares strong token overlap.
@@ -272,6 +271,7 @@ function selectBestKickdbHit(options: {
 }
 
 export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
+  const prismaAny = prisma as any;
   const limit = Math.min(Number(options.limit ?? 50), 200);
   const offset = Math.max(Number(options.offset ?? 0), 0);
   const debug = Boolean(options.debug);
@@ -279,43 +279,10 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   const raw = Boolean(options.raw);
   const supplierVariantId = options.supplierVariantId?.trim() || null;
   const supplierSku = options.supplierSku?.trim() || null;
-  const partnerId = options.partnerId?.trim() || null;
-  const partnerSku = options.partnerSku?.trim() || null;
-  const partnerVariantId = options.partnerVariantId?.trim() || null;
 
-  const isPartner = Boolean(partnerId || partnerSku || partnerVariantId);
   let supplierVariants: any[] = [];
 
-  if (isPartner) {
-    if (partnerVariantId) {
-      const match = await (prisma as any).partnerVariant.findUnique({
-        where: { id: partnerVariantId },
-        include: { partner: true },
-      });
-      if (!match) {
-        throw new Error(`Partner variant not found: ${partnerVariantId}`);
-      }
-      supplierVariants = [match];
-    } else if (partnerSku) {
-      const matches = await (prisma as any).partnerVariant.findMany({
-        where: { externalSku: partnerSku },
-        include: { partner: true },
-        orderBy: { updatedAt: "desc" },
-      });
-      if (!matches.length) {
-        throw new Error(`Partner variant not found for SKU: ${partnerSku}`);
-      }
-      supplierVariants = matches;
-    } else {
-      supplierVariants = await (prisma as any).partnerVariant.findMany({
-        where: partnerId ? { partnerId } : {},
-        include: { partner: true },
-        orderBy: { updatedAt: "desc" },
-        take: limit,
-        skip: offset,
-      });
-    }
-  } else if (supplierVariantId) {
+  if (supplierVariantId) {
     const match = await prisma.supplierVariant.findUnique({
       where: { supplierVariantId },
     });
@@ -341,14 +308,13 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   }
 
   const results: Array<{
-    supplierVariantId?: string;
-    partnerVariantId?: string;
+    supplierVariantId: string;
     status: string;
     gtin?: string | null;
     error?: string;
     debug?: DebugInfo;
   }> = [];
-  const needsProductName = !isPartner && supplierVariants.some((variant) => !variant.supplierSku);
+  const needsProductName = supplierVariants.some((variant) => !variant.supplierSku);
   const productNameByVariantId = new Map<string, string>();
   if (needsProductName) {
     const supplierClient = createGoldenSupplierClient();
@@ -361,40 +327,30 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   }
 
   for (const variant of supplierVariants) {
-    const variantId = isPartner ? variant.id : variant.supplierVariantId;
-    const partnerVariantIdValue = isPartner ? variant.partnerVariantId ?? null : null;
-    const variantSku = isPartner
-      ? (variant.externalSku ?? variant.partnerVariantId ?? null)
-      : variant.supplierSku ?? null;
-    const variantBrand = isPartner ? variant.brand ?? null : (variant as any)?.supplierBrand ?? null;
-    const variantName = isPartner
-      ? variant.productName ?? null
-      : productNameByVariantId.get(variant.supplierVariantId) ?? null;
-    const mappingWhere = isPartner
-      ? { partnerVariantId: variantId }
-      : { supplierVariantId: variant.supplierVariantId };
+    const variantId = variant.supplierVariantId;
+    const variantSku = variant.supplierSku ?? null;
+    const variantBrand = (variant as any)?.supplierBrand ?? null;
+    const variantName = productNameByVariantId.get(variant.supplierVariantId) ?? null;
+    const mappingWhere = { supplierVariantId: variant.supplierVariantId };
 
-    const mapping = await prisma.variantMapping.findUnique({
-      where: mappingWhere,
+    const mapping = await prismaAny.variantMapping.findUnique({
+      where: mappingWhere as any,
     });
     const supplierGtin =
-      mapping?.gtin && (mapping.status === "SUPPLIER_GTIN" || mapping.status === "PARTNER_GTIN")
-        ? mapping.gtin
-        : null;
-    const mappingCreateBase = isPartner
-      ? { partnerVariantId: variantId }
-      : { supplierVariantId: variant.supplierVariantId };
-    const providerKeySourceId = isPartner
-      ? `${variant.partner?.key ?? "PRT"}:${variant.partnerVariantId}`
-      : variant.supplierVariantId;
+      mapping?.gtin && mapping.status === "SUPPLIER_GTIN" ? mapping.gtin : null;
+    const mappingCreateBase = { supplierVariantId: variant.supplierVariantId };
+    const providerKeySourceId = variant.supplierVariantId;
 
     if (
       !force
-      && !shouldFetchKickDb({ lastFetchedAt: mapping?.updatedAt ?? null, notFound: mapping?.status === "NOT_FOUND" })
+      && !shouldFetchKickDb({
+        lastFetchedAt: mapping?.updatedAt ?? null,
+        notFound: mapping?.status === "NOT_FOUND",
+        missingGtin: !mapping?.gtin,
+      })
     ) {
       results.push({
-        supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-        partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+        supplierVariantId: variant.supplierVariantId,
         status: "SKIPPED",
         debug: debug
           ? {
@@ -424,18 +380,17 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     if (!query) {
       if (supplierGtin) {
         results.push({
-          supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-          partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
-          status: isPartner ? "PARTNER_GTIN" : "SUPPLIER_GTIN",
+          supplierVariantId: variant.supplierVariantId,
+          status: "SUPPLIER_GTIN",
           gtin: supplierGtin,
           debug: debugInfo ? { ...debugInfo, reason: "NO_QUERY_SUPPLIER_GTIN" } : undefined,
         });
         continue;
       }
-      await prisma.variantMapping.upsert({
-        where: mappingWhere,
+      await prismaAny.variantMapping.upsert({
+        where: mappingWhere as any,
         create: {
-          ...mappingCreateBase,
+          ...(mappingCreateBase as any),
           gtin: null,
           status: "NOT_FOUND",
         },
@@ -445,8 +400,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         },
       });
       results.push({
-        supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-        partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+        supplierVariantId: variant.supplierVariantId,
         status: "NOT_FOUND",
         debug: debugInfo ? { ...debugInfo, reason: "NO_QUERY" } : undefined,
       });
@@ -459,8 +413,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     } catch (error: any) {
       const message = error?.message ?? "KickDB search failed";
       results.push({
-        supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-        partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+        supplierVariantId: variant.supplierVariantId,
         status: "ERROR",
         error: message,
         debug: debugInfo ? { ...debugInfo, reason: "SEARCH_ERROR", error: message } : undefined,
@@ -494,9 +447,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     if (!productIdOrSlug) {
       if (supplierGtin) {
         results.push({
-          supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-          partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
-          status: isPartner ? "PARTNER_GTIN" : "SUPPLIER_GTIN",
+          supplierVariantId: variant.supplierVariantId,
+          status: "SUPPLIER_GTIN",
           gtin: supplierGtin,
           debug: debugInfo
             ? {
@@ -507,10 +459,10 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         });
         continue;
       }
-      await prisma.variantMapping.upsert({
-        where: mappingWhere,
+      await prismaAny.variantMapping.upsert({
+        where: mappingWhere as any,
         create: {
-          ...mappingCreateBase,
+          ...(mappingCreateBase as any),
           gtin: null,
           status: "NOT_FOUND",
         },
@@ -520,8 +472,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         },
       });
       results.push({
-        supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-        partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+        supplierVariantId: variant.supplierVariantId,
         status: "NOT_FOUND",
         debug: debugInfo
           ? {
@@ -541,8 +492,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     } catch (error: any) {
       const message = error?.message ?? "KickDB product fetch failed";
       results.push({
-        supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-        partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+        supplierVariantId: variant.supplierVariantId,
         status: "ERROR",
         error: message,
         debug: debugInfo ? { ...debugInfo, reason: "PRODUCT_ERROR", error: message } : undefined,
@@ -553,8 +503,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const productRecord = productResponse?.data ?? productResponse;
     if (!productRecord) {
       results.push({
-        supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-        partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+        supplierVariantId: variant.supplierVariantId,
         status: "NOT_FOUND",
         debug: debugInfo ? { ...debugInfo, reason: "PRODUCT_EMPTY" } : undefined,
       });
@@ -657,6 +606,31 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       },
     });
 
+    // Backfill missing supplier fields from KickDB for partner CSVs.
+    const updateSupplier: Record<string, unknown> = {};
+    if (!variant.supplierProductName && kickdbProductName) {
+      updateSupplier.supplierProductName = kickdbProductName;
+    }
+    if (!variant.supplierBrand && brand) {
+      updateSupplier.supplierBrand = brand;
+    }
+    const hasImages =
+      Array.isArray(variant.images) ? variant.images.length > 0 : Boolean(variant.images);
+    if (!hasImages && imageUrl) {
+      updateSupplier.images = [imageUrl];
+    }
+    const providerKeyShort =
+      normalizeProviderKey(variant.providerKey ?? null) ?? resolveSupplierCode(variant.supplierVariantId);
+    if (providerKeyShort && !variant.providerKey) {
+      updateSupplier.providerKey = providerKeyShort;
+    }
+    if (Object.keys(updateSupplier).length > 0) {
+      await prisma.supplierVariant.update({
+        where: { supplierVariantId: variant.supplierVariantId },
+        data: updateSupplier,
+      });
+    }
+
     const kickdbVariantExternalId =
       pickString(matchedVariant?.id) ??
       (kickdbProductId ? `${kickdbProductId}:${variantId}` : variantId);
@@ -685,17 +659,11 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       },
     });
 
-    const resolvedStatus = supplierGtin
-      ? isPartner
-        ? "PARTNER_GTIN"
-        : "SUPPLIER_GTIN"
-      : gtin
-        ? "MATCHED"
-        : "NOT_FOUND";
-    await prisma.variantMapping.upsert({
-      where: mappingWhere,
+    const resolvedStatus = supplierGtin ? "SUPPLIER_GTIN" : gtin ? "MATCHED" : "NOT_FOUND";
+    await prismaAny.variantMapping.upsert({
+      where: mappingWhere as any,
       create: {
-        ...mappingCreateBase,
+        ...(mappingCreateBase as any),
         kickdbVariantId: savedVariant.id,
         gtin: resolvedGtin ?? null,
         providerKey: providerKey ?? null,
@@ -709,9 +677,18 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       },
     });
 
+    if (resolvedGtin) {
+      await prisma.supplierVariant.update({
+        where: { supplierVariantId: variant.supplierVariantId },
+        data: {
+          gtin: resolvedGtin,
+          providerKey: providerKeyShort ?? undefined,
+        },
+      });
+    }
+
     results.push({
-      supplierVariantId: isPartner ? undefined : variant.supplierVariantId,
-      partnerVariantId: isPartner ? partnerVariantIdValue ?? variantId : undefined,
+      supplierVariantId: variant.supplierVariantId,
       status: resolvedStatus,
       gtin: resolvedGtin ?? null,
       debug: debugInfo

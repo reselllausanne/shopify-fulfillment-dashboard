@@ -656,9 +656,30 @@ export async function GET(request: Request) {
     let currentOffset = all ? 0 : offset;
     let lastBatch = 0;
     const bestByGtin = new Map<string, any>();
+    const prismaAny = prisma as any;
+    const partners = await prismaAny.partner.findMany();
+    const partnerByKey = new Map<string, any>(
+      partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
+    );
+    const toNumber = (value: any) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const resolvePartnerOverrides = (key: string | null) => {
+      if (!key) return null;
+      const partner = partnerByKey.get(key.toLowerCase());
+      if (!partner) return null;
+      return {
+        targetMargin: toNumber(partner.targetMargin),
+        shippingPerPair: toNumber(partner.shippingPerPair),
+        bufferPerPair: toNumber(partner.bufferPerPair),
+        roundTo: toNumber(partner.roundTo),
+        vatRate: toNumber(partner.vatRate),
+      };
+    };
 
     do {
-      const mappings = await prisma.variantMapping.findMany({
+      const mappings = await prismaAny.variantMapping.findMany({
         where: {
           status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
           gtin: { not: null },
@@ -666,7 +687,6 @@ export async function GET(request: Request) {
         },
         include: {
           supplierVariant: true,
-        partnerVariant: { include: { partner: true } },
         kickdbVariant: { include: { product: true } },
         },
         orderBy: { updatedAt: "desc" },
@@ -675,7 +695,7 @@ export async function GET(request: Request) {
       });
       lastBatch = mappings.length;
 
-      accumulateBestCandidates(mappings, bestByGtin);
+      accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides);
 
       currentOffset += pageSize;
     } while (all && lastBatch === pageSize);

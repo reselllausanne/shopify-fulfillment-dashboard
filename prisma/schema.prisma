@@ -333,9 +333,12 @@ model SupplierVariant {
   id                String   @id @default(uuid())
   supplierVariantId String   @unique
   supplierSku       String
+  providerKey       String?
+  gtin              String?
   price             Decimal  @db.Decimal(10, 2)
   stock             Int
   sizeRaw           String?
+  sizeNormalized    String?
   supplierBrand     String?
   supplierProductName String?
   weightGrams       Int?
@@ -347,6 +350,9 @@ model SupplierVariant {
 
   mappings          VariantMapping[]
 
+  @@index([providerKey])
+  @@index([gtin])
+  @@unique([providerKey, gtin])
   @@index([supplierSku])
   @@schema("public")
 }

@@ -14,55 +14,64 @@ export async function POST(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
-    const limit = Number(searchParams.get("limit") ?? "50");
-    const offset = Number(searchParams.get("offset") ?? "0");
     const debug = searchParams.get("debug") === "1";
     const force = searchParams.get("force") === "1";
     const raw = searchParams.get("raw") === "1";
-    const partnerSku = searchParams.get("partnerSku")?.trim() || null;
-    const partnerVariantId = searchParams.get("partnerVariantId")?.trim() || null;
+    const supplierSku = searchParams.get("sku")?.trim() || null;
 
-    if (all && !partnerSku && !partnerVariantId) {
-      const batchSize = 200;
-      let currentOffset = 0;
-      let totalProcessed = 0;
-      let lastBatchCount = 0;
-      const collected: any[] = [];
-      do {
-        const { results } = await runKickdbEnrich({
-          limit: batchSize,
-          offset: currentOffset,
-          debug,
-          force,
-          raw,
-          partnerId: session.partnerId,
-        });
-        lastBatchCount = results.length;
-        totalProcessed += lastBatchCount;
-        if (debug) collected.push(...results);
-        currentOffset += batchSize;
-      } while (lastBatchCount === batchSize);
-
-      return NextResponse.json({
-        ok: true,
-        mode: "all",
-        processed: totalProcessed,
-        results: debug ? collected : [],
-      });
+    const partner = await (prisma as any).partner.findUnique({
+      where: { id: session.partnerId },
+    });
+    const partnerKey = partner?.key ?? null;
+    if (!partnerKey) {
+      return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
     }
 
-    const { results } = await runKickdbEnrich({
-      limit,
-      offset,
-      debug,
-      force,
-      raw,
-      partnerId: session.partnerId,
-      partnerSku,
-      partnerVariantId,
+    const prefix = `${partnerKey.toLowerCase()}:`;
+    const supplierVariants = await prisma.supplierVariant.findMany({
+      where: {
+        supplierVariantId: { startsWith: prefix },
+        ...(supplierSku ? { supplierSku } : {}),
+      },
+      select: { supplierVariantId: true, supplierSku: true, sizeRaw: true },
+      orderBy: { updatedAt: "desc" },
+    });
+    const skuSet = new Set(supplierVariants.map((item) => item.supplierSku));
+
+    const collected: any[] = [];
+    let processed = 0;
+    for (const sku of skuSet) {
+      const { results } = await runKickdbEnrich({
+        debug,
+        force,
+        raw,
+        supplierSku: sku,
+      });
+      processed += results.length;
+      if (debug) collected.push(...results);
+    }
+
+    const skuByVariantId = new Map(
+      supplierVariants.map((item) => [item.supplierVariantId, item])
+    );
+    const mappedResults = (debug ? collected : []).map((row: any) => {
+      const match = row.supplierVariantId ? skuByVariantId.get(row.supplierVariantId) : null;
+      return {
+        providerKey: partnerKey,
+        sku: match?.supplierSku ?? null,
+        sizeRaw: match?.sizeRaw ?? null,
+        status: row.status,
+        gtin: row.gtin ?? null,
+        debug: row.debug,
+      };
     });
 
-    return NextResponse.json({ ok: true, limit, offset, results });
+    return NextResponse.json({
+      ok: true,
+      mode: "all",
+      processed,
+      results: mappedResults,
+    });
   } catch (error: any) {
     console.error("[PARTNER][KICKDB][ENRICH] Failed:", error);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

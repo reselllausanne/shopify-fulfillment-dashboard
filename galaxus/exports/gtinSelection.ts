@@ -1,6 +1,10 @@
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
-import { computeGalaxusSellPriceExVat, resolvePricingOverrides } from "@/galaxus/exports/pricing";
+import {
+  computeGalaxusSellPriceExVat,
+  resolvePricingOverrides,
+  type PricingOverrides,
+} from "@/galaxus/exports/pricing";
 
 type VariantCandidate = {
   mapping: any;
@@ -11,7 +15,6 @@ type VariantCandidate = {
   sellPriceExVat: number;
   stock: number;
   updatedAt: Date;
-  source: "supplier" | "partner";
 };
 
 function parseNumber(value: unknown): number | null {
@@ -45,9 +48,18 @@ function hasPrimaryImage(images: unknown, fallbackUrl?: string | null): boolean 
   return typeof fallbackUrl === "string" && fallbackUrl.length > 0 && isAbsoluteUrl(fallbackUrl);
 }
 
+type ResolveOverrides = (supplierKey: string | null) => PricingOverrides | null;
+
+function extractSupplierKey(supplierVariantId?: string | null): string | null {
+  if (!supplierVariantId) return null;
+  const rawKey = supplierVariantId.split(":")[0];
+  return rawKey ? rawKey.toLowerCase() : null;
+}
+
 export function accumulateBestCandidates(
   mappings: any[],
-  bestByGtin: Map<string, VariantCandidate>
+  bestByGtin: Map<string, VariantCandidate>,
+  resolveOverrides?: ResolveOverrides
 ) {
   const isMerchant = GALAXUS_PRICE_MODEL === "merchant";
 
@@ -55,14 +67,10 @@ export function accumulateBestCandidates(
     const gtin = String(mapping.gtin ?? "").trim();
     if (!gtin) continue;
 
-    const supplierVariant = mapping.supplierVariant ?? null;
-    const partnerVariant = mapping.partnerVariant ?? null;
-    const variant = supplierVariant ?? partnerVariant;
+    const variant = mapping.supplierVariant ?? null;
     if (!variant) continue;
 
-    const source: "supplier" | "partner" = supplierVariant ? "supplier" : "partner";
-    const productName =
-      source === "supplier" ? variant?.supplierProductName ?? null : variant?.productName ?? null;
+    const productName = variant?.supplierProductName ?? null;
     if (!productName) continue;
 
     const product = mapping.kickdbVariant?.product ?? null;
@@ -73,16 +81,8 @@ export function accumulateBestCandidates(
 
     let sellPriceExVat = buyPrice;
     if (!isMerchant) {
-      const partner = source === "partner" ? partnerVariant?.partner ?? null : null;
-      const overrides = partner
-        ? resolvePricingOverrides({
-            targetMargin: parseNumber(partner.targetMargin),
-            shippingPerPair: parseNumber(partner.shippingPerPair),
-            bufferPerPair: parseNumber(partner.bufferPerPair),
-            roundTo: parseNumber(partner.roundTo),
-            vatRate: parseNumber(partner.vatRate),
-          })
-        : resolvePricingOverrides(null);
+      const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
+      const overrides = resolvePricingOverrides(resolveOverrides?.(supplierKey) ?? null);
 
       sellPriceExVat = computeGalaxusSellPriceExVat({
         buyPriceExVatCHF: buyPrice,
@@ -97,10 +97,7 @@ export function accumulateBestCandidates(
     const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
     const updatedAt = new Date(variant?.updatedAt ?? mapping.updatedAt ?? Date.now());
 
-    const providerKeySource = source === "supplier"
-      ? variant?.supplierVariantId
-      : `${partnerVariant?.partner?.key ?? "PRT"}:${partnerVariant?.partnerVariantId ?? partnerVariant?.id}`;
-    const providerKey = mapping.providerKey ?? buildProviderKey(gtin, providerKeySource);
+    const providerKey = buildProviderKey(gtin, variant?.supplierVariantId) ?? mapping.providerKey;
     if (!providerKey) continue;
 
     const candidate: VariantCandidate = {
@@ -112,7 +109,6 @@ export function accumulateBestCandidates(
       sellPriceExVat,
       stock: Number.isFinite(stock) ? stock : 0,
       updatedAt,
-      source,
     };
 
     const existing = bestByGtin.get(gtin);

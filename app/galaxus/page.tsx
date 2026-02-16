@@ -18,6 +18,8 @@ type PreviewItem = {
 type SupplierVariant = {
   supplierVariantId: string;
   supplierSku: string;
+  providerKey?: string | null;
+  gtin?: string | null;
   price: string;
   stock: number;
   sizeRaw: string | null;
@@ -100,6 +102,8 @@ type OrderLine = {
   gtin?: string | null;
   supplierPid?: string | null;
   buyerPid?: string | null;
+  providerKey?: string | null;
+  supplierVariantId?: string | null;
 };
 
 type ShipmentItem = {
@@ -157,6 +161,7 @@ export default function GalaxusDashboardPage() {
   const [exportCheckReport, setExportCheckReport] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [ordersNextOffset, setOrdersNextOffset] = useState<number | null>(null);
+  const [orderProviderKey, setOrderProviderKey] = useState<string>("");
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [opsLog, setOpsLog] = useState<string | null>(null);
@@ -600,7 +605,13 @@ export default function GalaxusDashboardPage() {
     setBusy("orders");
     setError(null);
     try {
-      const response = await fetch(`/api/galaxus/orders?limit=20&offset=${offset}`, {
+      const params = new URLSearchParams({
+        limit: "20",
+        offset: offset.toString(),
+      });
+      const providerKeyValue = orderProviderKey.trim().toUpperCase();
+      if (providerKeyValue) params.set("providerKey", providerKeyValue);
+      const response = await fetch(`/api/galaxus/orders?${params.toString()}`, {
         cache: "no-store",
       });
       const data = await response.json();
@@ -612,6 +623,14 @@ export default function GalaxusDashboardPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const resolveProviderKeyForLine = (line: OrderLine) => {
+    const direct = line.providerKey?.split("_")[0]?.trim().toUpperCase();
+    if (direct && direct.length === 3) return direct;
+    const variantKey = line.supplierVariantId?.split(":")[0]?.trim().toUpperCase();
+    if (variantKey && variantKey.length === 3) return variantKey;
+    return "";
   };
 
   const loadOrderDetail = async (orderId: string) => {
@@ -1268,6 +1287,31 @@ export default function GalaxusDashboardPage() {
 
         <div className="space-y-2">
           <div className="text-sm font-medium">Orders</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              className="px-2 py-2 border rounded text-sm w-40 uppercase"
+              value={orderProviderKey}
+              onChange={(event) => setOrderProviderKey(event.target.value)}
+              placeholder="ProviderKey (AAA)"
+            />
+            <button
+              className="px-3 py-2 rounded bg-gray-200"
+              onClick={() => fetchOrders(0)}
+              disabled={busy !== null}
+            >
+              {busy === "orders" ? "Loading…" : "Apply Filter"}
+            </button>
+            <button
+              className="px-3 py-2 rounded bg-gray-100"
+              onClick={() => {
+                setOrderProviderKey("");
+                fetchOrders(0);
+              }}
+              disabled={busy !== null}
+            >
+              Clear
+            </button>
+          </div>
           <div className="overflow-auto border rounded">
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50">
@@ -1403,6 +1447,7 @@ export default function GalaxusDashboardPage() {
                       <th className="px-2 py-1 text-left">Line</th>
                       <th className="px-2 py-1 text-left">Product</th>
                       <th className="px-2 py-1 text-left">Supplier PID</th>
+                      <th className="px-2 py-1 text-left">ProviderKey</th>
                       <th className="px-2 py-1 text-left">GTIN</th>
                       <th className="px-2 py-1 text-right">Qty</th>
                     </tr>
@@ -1413,6 +1458,7 @@ export default function GalaxusDashboardPage() {
                         <td className="px-2 py-1">{line.lineNumber}</td>
                         <td className="px-2 py-1">{line.productName}</td>
                         <td className="px-2 py-1">{line.supplierPid ?? ""}</td>
+                        <td className="px-2 py-1">{resolveProviderKeyForLine(line)}</td>
                         <td className="px-2 py-1">{line.gtin ?? ""}</td>
                         <td className="px-2 py-1 text-right">{line.quantity}</td>
                       </tr>
@@ -1561,6 +1607,7 @@ export default function GalaxusDashboardPage() {
               <tr>
                 <th className="px-2 py-1 text-left">Variant ID</th>
                 <th className="px-2 py-1 text-left">SKU</th>
+                <th className="px-2 py-1 text-left">ProviderKey</th>
                 <th className="px-2 py-1 text-left">Size</th>
                 <th className="px-2 py-1 text-right">Price</th>
                 <th className="px-2 py-1 text-right">Stock</th>
@@ -1572,6 +1619,7 @@ export default function GalaxusDashboardPage() {
                 <tr key={item.supplierVariantId} className="border-t">
                   <td className="px-2 py-1">{item.supplierVariantId}</td>
                   <td className="px-2 py-1">{item.supplierSku}</td>
+                  <td className="px-2 py-1">{item.providerKey ?? ""}</td>
                   <td className="px-2 py-1">{item.sizeRaw ?? ""}</td>
                   <td className="px-2 py-1 text-right">{item.price}</td>
                   <td className="px-2 py-1 text-right">{item.stock}</td>
@@ -1580,7 +1628,7 @@ export default function GalaxusDashboardPage() {
               ))}
               {dbItems.length === 0 && (
                 <tr>
-                  <td className="px-2 py-3 text-gray-500" colSpan={6}>
+                  <td className="px-2 py-3 text-gray-500" colSpan={7}>
                     No DB data loaded.
                   </td>
                 </tr>

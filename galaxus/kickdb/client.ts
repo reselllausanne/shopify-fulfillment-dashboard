@@ -219,44 +219,119 @@ function convertSizeUsingChart(
   return toList[index] ?? null;
 }
 
-function buildTargetSizeTokens(sizeRaw?: string | null, context?: SizeMatchContext): string[] {
-  if (!sizeRaw) return [];
-  const tokens = new Set<string>(expandSizeTokens(sizeRaw));
-
-  const chart = getChart(context?.brand ?? null, context?.gender ?? null, sizeRaw);
-  const system = inferSizeSystem(sizeRaw);
-  const stripped = sizeRaw.replace(/^(EU|US|UK|ASIA)\s+/i, "").trim();
-  const normalizedValue = stripped.replace(/\s+/g, "");
-  const baseValue =
-    normalizedValue.match(/^\d+(\.\d+)?$/) || /(\d+(\.\d+)?)/.test(normalizedValue)
-      ? normalizedValue.match(/(\d+(\.\d+)?)/)?.[1]
-      : null;
-
-  if (chart && baseValue) {
-    if (system === "US") {
-      const converted = convertSizeUsingChart(chart, "US", baseValue);
-      if (converted) expandSizeTokens(converted).forEach((token) => tokens.add(token));
-    } else if (system === "EU" || system === null) {
-      const converted = convertSizeUsingChart(chart, "EU", baseValue);
-      if (converted) expandSizeTokens(converted).forEach((token) => tokens.add(token));
-    }
-  }
-
+function buildTokensFromSizeValue(value?: string | null): string[] {
+  if (!value) return [];
+  const trimmed = value.toString().trim();
+  if (!trimmed) return [];
+  const tokens = new Set<string>();
+  tokens.add(trimmed);
+  expandSizeTokens(trimmed).forEach((token) => tokens.add(token));
   return Array.from(tokens);
 }
 
-function getVariantSizeCandidates(variant: KickDbVariant): string[] {
-  const values: Array<string | null | undefined> = [
-    variant.size_eu,
-    variant.size_us,
-    variant.size,
-  ];
+function stripPrefix(value: string, prefix: RegExp): string {
+  return value.replace(prefix, "").trim();
+}
+
+function normalizeEuSize(value: string): string {
+  return stripPrefix(value, /^EU\s*/i);
+}
+
+function normalizeUsSize(value: string): string {
+  let cleaned = value.trim();
+  cleaned = cleaned.replace(/^US\s*M\s*/i, "");
+  cleaned = cleaned.replace(/^US\s*W\s*/i, "");
+  cleaned = cleaned.replace(/^US\s*/i, "");
+  return cleaned.trim();
+}
+
+function extractEuSizes(variant: KickDbVariant): string[] {
+  const values: string[] = [];
+  const pushValue = (raw?: string | null) => {
+    if (!raw) return;
+    const cleaned = normalizeEuSize(String(raw));
+    if (cleaned) values.push(cleaned);
+  };
   if (Array.isArray(variant.sizes)) {
     for (const entry of variant.sizes) {
-      if (entry?.size) values.push(entry.size);
+      const type = String(entry?.type ?? "").toLowerCase();
+      if (type === "eu") pushValue(entry?.size ?? null);
     }
   }
-  return values.flatMap((value) => (value ? expandSizeTokens(value) : [])).filter(Boolean);
+  pushValue(variant.size_eu ?? null);
+  if (variant.size && String(variant.size_type ?? "").toLowerCase().includes("eu")) {
+    pushValue(variant.size);
+  }
+  return values;
+}
+
+function extractUsSizes(variant: KickDbVariant): string[] {
+  const values: string[] = [];
+  const pushValue = (raw?: string | null) => {
+    if (!raw) return;
+    const cleaned = normalizeUsSize(String(raw));
+    if (cleaned) values.push(cleaned);
+  };
+  if (Array.isArray(variant.sizes)) {
+    for (const entry of variant.sizes) {
+      const type = String(entry?.type ?? "").toLowerCase();
+      if (type === "us m" || type === "us w" || type === "us") {
+        pushValue(entry?.size ?? null);
+      }
+    }
+  }
+  pushValue(variant.size_us ?? null);
+  if (variant.size && String(variant.size_type ?? "").toLowerCase().includes("us")) {
+    pushValue(variant.size);
+  }
+  return values;
+}
+
+function convertUsToEu(usValue: string, context?: SizeMatchContext): string | null {
+  const chart = getChart(context?.brand ?? null, context?.gender ?? null, usValue);
+  if (!chart) return null;
+  const normalized = normalizeUsSize(usValue).replace(/\s+/g, "");
+  if (!normalized) return null;
+  const index = chart.sizes.US.findIndex(
+    (entry) => entry.replace(/\s+/g, "") === normalized
+  );
+  if (index < 0 || index >= chart.sizes.EU.length) return null;
+  return chart.sizes.EU[index] ?? null;
+}
+
+function buildTargetSizeTokens(sizeRaw?: string | null): string[] {
+  if (!sizeRaw) return [];
+  const cleaned = stripPrefix(sizeRaw.toString(), /^EU\s*/i);
+  return buildTokensFromSizeValue(cleaned);
+}
+
+function getVariantSizeCandidates(variant: KickDbVariant, context?: SizeMatchContext): string[] {
+  const euValues = extractEuSizes(variant);
+  if (euValues.length) {
+    return euValues.flatMap((value) => buildTokensFromSizeValue(value));
+  }
+
+  const usValues = extractUsSizes(variant);
+  const tokens = new Set<string>();
+  for (const usValue of usValues) {
+    const converted = convertUsToEu(usValue, context);
+    if (converted) {
+      buildTokensFromSizeValue(converted).forEach((token) => tokens.add(token));
+    }
+  }
+  if (tokens.size > 0) return Array.from(tokens);
+
+  const fallbackValues: Array<string> = [];
+  if (variant.size) fallbackValues.push(variant.size);
+  if (Array.isArray(variant.sizes)) {
+    for (const entry of variant.sizes) {
+      if (entry?.size) fallbackValues.push(String(entry.size));
+    }
+  }
+  fallbackValues.forEach((value) =>
+    buildTokensFromSizeValue(value).forEach((token) => tokens.add(token))
+  );
+  return Array.from(tokens);
 }
 
 export function matchVariantBySize(
@@ -264,12 +339,12 @@ export function matchVariantBySize(
   sizeRaw?: string | null,
   context?: SizeMatchContext
 ): KickDbVariant | null {
-  const targetTokens = new Set(buildTargetSizeTokens(sizeRaw ?? null, context));
+  const targetTokens = new Set(buildTargetSizeTokens(sizeRaw ?? null));
   if (!variants.length) return null;
   if (targetTokens.size === 0) return variants[0] ?? null;
   return (
     variants.find((variant) => {
-      const candidateTokens = getVariantSizeCandidates(variant);
+      const candidateTokens = getVariantSizeCandidates(variant, context);
       return candidateTokens.some((token) => targetTokens.has(token));
     }) ?? null
   );

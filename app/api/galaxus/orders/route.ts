@@ -9,8 +9,33 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const limit = Math.min(Number(searchParams.get("limit") ?? "20"), 100);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const providerKey = searchParams.get("providerKey")?.trim().toUpperCase() ?? "";
+
+    let gtinFilter: string[] | null = null;
+    if (providerKey) {
+      const offers = await prisma.supplierVariant.findMany({
+        where: {
+          providerKey,
+          gtin: { not: null },
+        },
+        select: { gtin: true },
+      });
+      gtinFilter = offers.map((item) => item.gtin).filter((value): value is string => Boolean(value));
+      if (gtinFilter.length === 0) {
+        return NextResponse.json({ ok: true, items: [], nextOffset: null });
+      }
+    }
 
     const orders = await prisma.galaxusOrder.findMany({
+      where: gtinFilter
+        ? {
+            lines: {
+              some: {
+                gtin: { in: gtinFilter },
+              },
+            },
+          }
+        : undefined,
       orderBy: { createdAt: "desc" },
       take: limit,
       skip: offset,
