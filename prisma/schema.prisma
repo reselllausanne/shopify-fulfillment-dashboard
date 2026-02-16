@@ -710,6 +710,7 @@ model SupplierOrder {
 model Shipment {
   id             String   @id @default(uuid())
   orderId        String?
+  providerKey    String?
   shipmentId     String   @unique
   dispatchNotificationId String? @unique @map("deliveryNoteNumber")
   dispatchNotificationCreatedAt DateTime? @map("deliveryNoteCreatedAt")
@@ -736,6 +737,7 @@ model Shipment {
   items          ShipmentItem[]
 
   @@index([orderId])
+  @@index([providerKey])
   @@schema("public")
 }
 

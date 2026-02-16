@@ -18,16 +18,7 @@ export async function GET(request: Request) {
     : {};
 
   const items = download
-    ? await (prisma as any).variantMapping.findMany({
-        where: {
-          ...whereSupplier,
-        },
-        include: {
-          supplierVariant: true,
-          kickdbVariant: { include: { product: true } },
-        },
-        orderBy: { updatedAt: "desc" },
-      })
+    ? []
     : await (prisma as any).variantMapping.findMany({
         where: {
           ...whereSupplier,
@@ -115,36 +106,60 @@ export async function GET(request: Request) {
     "kickdbRetailPrice",
   ];
 
-  const rows = mapped.map((row: (typeof mapped)[number]) => {
-    const computedProviderKey = buildProviderKey(row.gtin ?? null, row.supplierVariantId ?? null);
+  const prismaAny = prisma as any;
+  const variantWhere = supplier
+    ? { supplierVariantId: { startsWith: `${supplier}:` } }
+    : {};
+  const variants = await prismaAny.supplierVariant.findMany({
+    where: variantWhere,
+    orderBy: { updatedAt: "desc" },
+  });
+  const variantIds = variants.map((v: any) => v.supplierVariantId).filter(Boolean);
+  const mappingItems =
+    variantIds.length > 0
+      ? await prismaAny.variantMapping.findMany({
+          where: { supplierVariantId: { in: variantIds } },
+          include: { kickdbVariant: { include: { product: true } } },
+        })
+      : [];
+  const mappingByVariantId = new Map<string, any>();
+  for (const m of mappingItems) {
+    if (m.supplierVariantId) mappingByVariantId.set(m.supplierVariantId, m);
+  }
+
+  const rows = variants.map((sv: any) => {
+    const m = mappingByVariantId.get(sv.supplierVariantId) ?? null;
+    const kv = m?.kickdbVariant ?? null;
+    const kp = kv?.product ?? null;
+    const computedProviderKey = buildProviderKey(m?.gtin ?? null, sv?.supplierVariantId ?? null);
     return {
-    status: row.status ?? "",
-    updatedAt: row.updatedAt ?? "",
-    supplierVariantId: row.supplierVariantId ?? "",
-      providerKey: computedProviderKey ?? row.providerKey ?? "",
-    gtin: row.gtin ?? "",
-    supplierSku: row.supplierSku ?? "",
-    supplierBrand: row.supplierBrand ?? "",
-    supplierProductName: row.supplierProductName ?? "",
-    sizeRaw: row.sizeRaw ?? "",
-    price: row.price ?? "",
-    stock: row.stock ?? "",
-    lastSyncAt: row.lastSyncAt ?? "",
-    kickdbVariantId: row.kickdbVariantId ?? "",
-    kickdbProductId: row.kickdbProductId ?? "",
-    kickdbBrand: row.kickdbBrand ?? "",
-    kickdbName: row.kickdbName ?? "",
-    kickdbStyleId: row.kickdbStyleId ?? "",
-    kickdbUrlKey: row.kickdbUrlKey ?? "",
-    kickdbImageUrl: row.kickdbImageUrl ?? "",
-    kickdbLastFetchedAt: row.kickdbLastFetchedAt ?? "",
-    kickdbNotFound: row.kickdbNotFound ?? "",
-    kickdbDescription: row.kickdbDescription ?? "",
-    kickdbGender: row.kickdbGender ?? "",
-    kickdbColorway: row.kickdbColorway ?? "",
-    kickdbCountryOfManufacture: row.kickdbCountryOfManufacture ?? "",
-    kickdbReleaseDate: row.kickdbReleaseDate ?? "",
-    kickdbRetailPrice: row.kickdbRetailPrice ?? "",
+      status: m?.status ?? "",
+      updatedAt: m?.updatedAt ?? sv?.updatedAt ?? "",
+      supplierVariantId: sv?.supplierVariantId ?? "",
+      providerKey: computedProviderKey ?? m?.providerKey ?? "",
+      gtin: m?.gtin ?? sv?.gtin ?? "",
+      supplierSku: sv?.supplierSku ?? "",
+      supplierBrand: sv?.supplierBrand ?? "",
+      supplierProductName: sv?.supplierProductName ?? "",
+      sizeRaw: sv?.sizeRaw ?? "",
+      price: sv?.price ?? "",
+      stock: sv?.stock ?? "",
+      lastSyncAt: sv?.lastSyncAt ?? "",
+      kickdbVariantId: kv?.kickdbVariantId ?? "",
+      kickdbProductId: kp?.kickdbProductId ?? "",
+      kickdbBrand: kp?.brand ?? "",
+      kickdbName: kp?.name ?? "",
+      kickdbStyleId: kp?.styleId ?? "",
+      kickdbUrlKey: kp?.urlKey ?? "",
+      kickdbImageUrl: kp?.imageUrl ?? "",
+      kickdbLastFetchedAt: kp?.lastFetchedAt ?? "",
+      kickdbNotFound: kp?.notFound ?? "",
+      kickdbDescription: kp?.description ?? "",
+      kickdbGender: kp?.gender ?? "",
+      kickdbColorway: kp?.colorway ?? "",
+      kickdbCountryOfManufacture: kp?.countryOfManufacture ?? "",
+      kickdbReleaseDate: kp?.releaseDate ?? "",
+      kickdbRetailPrice: kp?.retailPrice ?? "",
     };
   });
 

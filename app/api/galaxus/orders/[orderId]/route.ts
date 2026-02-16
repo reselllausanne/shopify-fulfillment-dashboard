@@ -22,6 +22,7 @@ export async function GET(
             },
           },
           statusEvents: true,
+          ediFiles: true,
         },
       })) ??
       (await prisma.galaxusOrder.findUnique({
@@ -35,6 +36,7 @@ export async function GET(
             },
           },
           statusEvents: true,
+          ediFiles: true,
         },
       }));
 

@@ -16,11 +16,12 @@ function decimalToString(value: unknown): string {
 }
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
-  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
-  const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
-  const supplier = searchParams.get("supplier")?.trim();
+  try {
+    const { searchParams } = new URL(request.url);
+    const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
+    const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
+    const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const supplier = searchParams.get("supplier")?.trim();
 
   const whereSupplier = supplier
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
@@ -45,7 +46,7 @@ export async function GET(request: Request) {
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
   const prismaAny = prisma as any;
-  const partners = await prismaAny.partner.findMany();
+  const partners = prismaAny.partner?.findMany ? await prismaAny.partner.findMany() : [];
   const partnerByKey = new Map<string, any>(
     partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
   );
@@ -107,15 +108,22 @@ export async function GET(request: Request) {
     });
   });
 
-  const csv = toCsv(headers, rows);
-  const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;
+    const csv = toCsv(headers, rows);
+    const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;
 
-  return new NextResponse(csv, {
-    headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Total-Rows": rows.length.toString(),
-      "X-Offset": offset.toString(),
-    },
-  });
+    return new NextResponse(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "X-Total-Rows": rows.length.toString(),
+        "X-Offset": offset.toString(),
+      },
+    });
+  } catch (error: any) {
+    console.error("Stock export failed", error);
+    return NextResponse.json(
+      { ok: false, error: error?.message ?? "Stock export failed" },
+      { status: 500 }
+    );
+  }
 }

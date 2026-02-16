@@ -79,6 +79,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
         const shipment = await tx.shipment.create({
           data: {
             orderId: order.id,
+            providerKey: group.providerKey === "UNASSIGNED" ? null : group.providerKey,
             shipmentId: `SHIP-${order.galaxusOrderId}-${group.providerKey}-${Date.now()}-${shipmentIndex + 1}`,
             dispatchNotificationId,
             dispatchNotificationCreatedAt: new Date(),
@@ -214,6 +215,7 @@ async function logRoutingDecision(line: any, resolution: ProviderResolution) {
   const prismaAny = prisma as any;
   const orderLineId = line?.id ?? null;
   if (!orderLineId) return;
+  if (!prismaAny.orderRoutingIssue?.upsert) return;
   await prismaAny.orderRoutingIssue.upsert({
     where: { orderLineId },
     create: {

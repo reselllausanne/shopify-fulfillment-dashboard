@@ -38,6 +38,10 @@ export async function uploadDelrForShipment(
     return { shipmentId, status: "error", message: "Shipment not found" };
   }
 
+  if (!shipment.order.ordrSentAt && !options.force) {
+    return { shipmentId, status: "error", message: "ORDR not sent yet" };
+  }
+
   const items = (await prismaAny.shipmentItem.findMany({
     where: { shipmentId: shipment.id },
   })) as Array<{ supplierPid: string; gtin14: string; quantity: number }>;

@@ -759,13 +759,40 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     });
 
     if (finalGtin) {
-      await prismaAny.supplierVariant.update({
-        where: { supplierVariantId: variant.supplierVariantId },
-        data: {
-          gtin: finalGtin,
-          providerKey: providerKeyShort ?? undefined,
-        },
-      });
+      try {
+        await prismaAny.supplierVariant.update({
+          where: { supplierVariantId: variant.supplierVariantId },
+          data: {
+            gtin: finalGtin,
+            providerKey: providerKeyShort ?? undefined,
+          },
+        });
+      } catch (error: any) {
+        if (error?.code === "P2002" && providerKeyShort) {
+          const existing = await prismaAny.supplierVariant.findFirst({
+            where: { providerKey: providerKeyShort, gtin: finalGtin },
+            select: { supplierVariantId: true },
+          });
+          if (existing?.supplierVariantId && existing.supplierVariantId !== variant.supplierVariantId) {
+            const targetMappingExists = await prismaAny.variantMapping.findUnique({
+              where: { supplierVariantId: existing.supplierVariantId },
+              select: { id: true },
+            });
+            if (targetMappingExists) {
+              await prismaAny.variantMapping.deleteMany({
+                where: { supplierVariantId: variant.supplierVariantId },
+              });
+            } else {
+              await prismaAny.variantMapping.updateMany({
+                where: { supplierVariantId: variant.supplierVariantId },
+                data: { supplierVariantId: existing.supplierVariantId },
+              });
+            }
+          }
+        } else {
+          throw error;
+        }
+      }
     }
 
     results.push({

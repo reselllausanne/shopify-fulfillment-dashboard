@@ -24,6 +24,8 @@ export type EdiOrderLine = {
   providerKey?: string | null;
   gtin?: string | null;
   orderReferenceId?: string | null;
+  responseStatus?: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
+  responseReason?: string | null;
   dispatchPackages?: Array<{
     packageId: string;
     quantity: number;

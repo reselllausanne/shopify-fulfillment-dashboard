@@ -9,6 +9,7 @@ import type {
   SupplierDropshipOrderItem,
   SupplierDropshipOrderRequest,
 } from "./types";
+import { extractProviderKeyFromOrderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import {
   GALAXUS_SUPPLIER_AUTO_ORDER,
   GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS,
@@ -72,16 +73,39 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
 
   try {
     const resolvedLines = await resolveLines(order.lines);
-    const unsupported = resolvedLines.find((line) => line.supplierKey !== "golden");
-    if (unsupported) {
-      return {
-        status: "error",
-        message: `Unsupported supplier ${unsupported.supplierKey} for order ${order.galaxusOrderId}`,
-      };
-    }
+    const goldenLines = resolvedLines.filter((line) => line.supplierKey === "golden");
+    const partnerLines = resolvedLines.filter((line) => line.supplierKey !== "golden");
     const deliveryAddress = buildDeliveryAddress(order);
-    const batches = splitBySupplierAndMaxPairs(resolvedLines, 12);
     const { lineUpdates, ordrMode } = buildArrivalUpdates(resolvedLines);
+
+    if (lineUpdates.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        for (const update of lineUpdates) {
+          await tx.galaxusOrderLine.update({
+            where: { id: update.id },
+            data: update.data,
+          });
+        }
+      });
+    }
+
+    if (partnerLines.length > 0) {
+      const partnerKeys = Array.from(new Set(partnerLines.map((line) => line.supplierKey)));
+      await prisma.orderStatusEvent.create({
+        data: {
+          orderId: order.id,
+          source: "partner",
+          type: "PARTNER_LINES_ASSIGNED",
+          payloadJson: { partnerKeys },
+        },
+      });
+    }
+
+    if (goldenLines.length === 0) {
+      return { status: "created", ordrMode };
+    }
+
+    const batches = splitBySupplierAndMaxPairs(goldenLines, 12);
 
     let lastOrderId: string | undefined;
     for (let index = 0; index < batches.length; index += 1) {
@@ -117,13 +141,6 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
             },
           },
         });
-        for (const update of lineUpdates) {
-          await tx.galaxusOrderLine.update({
-            where: { id: update.id },
-            data: update.data,
-          });
-        }
-
         await tx.orderStatusEvent.create({
           data: {
             orderId: order.id,
@@ -168,13 +185,17 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
   }
 
   const supplierKeys = await resolveSupplierKeysForLines(order.lines);
-  const nonGolden = supplierKeys.filter((key) => key !== "golden");
-  if (nonGolden.length > 0) {
+  const hasGolden = supplierKeys.includes("golden");
+  const partnerKeys = supplierKeys.filter((key) => key !== "golden" && key !== "unknown");
+  if (!hasGolden) {
     return {
-      ok: false,
-      reason: `Order has unsupported suppliers: ${nonGolden.join(", ")}`,
-      statusByOrderRef: [],
-      allowedTypes: new Set(),
+      ok: true,
+      statusByOrderRef: partnerKeys.map((key) => ({
+        supplierOrderRef: `partner-${key}`,
+        supplierKey: key,
+        status: "ASSIGNED",
+      })),
+      allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "EXPINV"]),
     };
   }
 
@@ -227,6 +248,14 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
     });
   }
 
+  for (const partnerKey of partnerKeys) {
+    statusByOrderRef.push({
+      supplierOrderRef: `partner-${partnerKey}`,
+      supplierKey: partnerKey,
+      status: "ASSIGNED",
+    });
+  }
+
   const all = (candidates: string[]) => statuses.every((status) => candidates.includes(status));
   const allowedTypes = new Set<EdiDocType>();
   if (all(["TO_SHIP", "WAITING_FOR_INVOICE", "ENDED"])) {
@@ -266,7 +295,21 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
 
     const sizeUs = supplierVariant.sizeRaw ?? line.size ?? null;
     if (!supplierVariant.supplierSku || !sizeUs) {
-      throw new Error(`Missing SKU/size for line ${line.lineNumber}`);
+      if (supplierKey === "golden") {
+        throw new Error(`Missing SKU/size for line ${line.lineNumber}`);
+      }
+      resolved.push({
+        line,
+        supplierVariant,
+        item: {
+          sku: supplierVariant.supplierSku ?? line.supplierSku ?? "",
+          sizeUs: sizeUs ?? "",
+          quantity: line.quantity,
+        },
+        leadDays: supplierVariant.leadTimeDays ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
+        supplierKey,
+      });
+      continue;
     }
     resolved.push({
       line,
@@ -299,29 +342,12 @@ async function resolveSupplierKeysForLines(lines: GalaxusOrderLine[]) {
       keys.add(resolveSupplierKey(line.supplierVariantId));
       continue;
     }
-    const providerKey = line.providerKey ?? null;
-    if (providerKey) {
-      const mapping = await prisma.variantMapping.findFirst({
-        where: { providerKey },
-        select: { supplierVariant: { select: { supplierVariantId: true } } },
-      });
-      if (mapping?.supplierVariant?.supplierVariantId) {
-        keys.add(resolveSupplierKey(mapping.supplierVariant.supplierVariantId));
-        continue;
-      }
+    const resolved = await resolveSupplierVariant(line);
+    if (resolved?.supplierVariantId) {
+      keys.add(resolveSupplierKey(resolved.supplierVariantId));
+    } else {
+      keys.add("unknown");
     }
-    const gtin = line.gtin ?? null;
-    if (gtin) {
-      const mapping = await prisma.variantMapping.findFirst({
-        where: { gtin },
-        select: { supplierVariant: { select: { supplierVariantId: true } } },
-      });
-      if (mapping?.supplierVariant?.supplierVariantId) {
-        keys.add(resolveSupplierKey(mapping.supplierVariant.supplierVariantId));
-        continue;
-      }
-    }
-    keys.add("unknown");
   }
   return Array.from(keys);
 }
@@ -363,7 +389,7 @@ function splitBySupplierAndMaxPairs(lines: ResolvedLine[], maxPairs: number): Su
   return batches;
 }
 
-async function resolveSupplierVariant(line: GalaxusOrderLine): Promise<SupplierVariant | null> {
+export async function resolveSupplierVariant(line: GalaxusOrderLine): Promise<SupplierVariant | null> {
   if (line.supplierVariantId) {
     const variant = await prisma.supplierVariant.findUnique({
       where: { supplierVariantId: line.supplierVariantId },
@@ -371,10 +397,17 @@ async function resolveSupplierVariant(line: GalaxusOrderLine): Promise<SupplierV
     if (variant) return variant;
   }
 
-  const providerKey = line.providerKey ?? null;
+  const providerKey =
+    extractProviderKeyFromOrderKey(line.providerKey ?? null) ?? normalizeProviderKey(line.providerKey ?? null);
+  if (providerKey && line.gtin) {
+    const variant = await prisma.supplierVariant.findFirst({
+      where: { providerKey, gtin: line.gtin },
+    });
+    if (variant) return variant;
+  }
   if (providerKey) {
     const mapping = await prisma.variantMapping.findFirst({
-      where: { providerKey },
+      where: { providerKey, ...(line.gtin ? { gtin: line.gtin } : {}) },
       include: { supplierVariant: true },
     });
     if (mapping?.supplierVariant) return mapping.supplierVariant;

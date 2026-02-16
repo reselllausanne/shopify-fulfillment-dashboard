@@ -69,20 +69,33 @@ export function buildSupplierParty(): EdiParty {
 }
 
 export function buildEdiLines(lines: GalaxusOrderLine[]): EdiOrderLine[] {
-  return lines.map((line) => ({
-    lineNumber: line.lineNumber,
-    description: line.productName,
-    quantity: line.quantity,
-    unitNetPrice: Number(line.unitNetPrice),
-    lineNetAmount: Number(line.lineNetAmount),
-    vatRate: Number(line.vatRate),
-    supplierPid:
-      ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ?? null,
-    buyerPid: ("buyerPid" in line ? (line as { buyerPid?: string | null }).buyerPid : null) ?? null,
-    orderUnit: ("orderUnit" in line ? (line as { orderUnit?: string | null }).orderUnit : null) ?? null,
-    providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
-    gtin: line.gtin ?? null,
-  }));
+  return lines.map((line) => {
+    const responseStatus =
+      "responseStatus" in line
+        ? (line as { responseStatus?: EdiOrderLine["responseStatus"] }).responseStatus
+        : undefined;
+    const responseReason =
+      "responseReason" in line ? (line as { responseReason?: string | null }).responseReason : null;
+
+    return {
+      lineNumber: line.lineNumber,
+      description: line.productName,
+      quantity: line.quantity,
+      unitNetPrice: Number(line.unitNetPrice),
+      lineNetAmount: Number(line.lineNetAmount),
+      vatRate: Number(line.vatRate),
+      supplierPid:
+        ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ??
+        null,
+      buyerPid: ("buyerPid" in line ? (line as { buyerPid?: string | null }).buyerPid : null) ?? null,
+      orderUnit:
+        ("orderUnit" in line ? (line as { orderUnit?: string | null }).orderUnit : null) ?? null,
+      providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
+      gtin: line.gtin ?? null,
+      responseStatus: responseStatus ?? undefined,
+      responseReason: responseReason ?? null,
+    };
+  });
 }
 
 export function calculateTotals(lines: EdiOrderLine[]): { totals: EdiTotals; vatSummary: EdiVatSummaryLine[] } {

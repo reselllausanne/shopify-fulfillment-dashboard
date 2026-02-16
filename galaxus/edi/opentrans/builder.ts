@@ -101,8 +101,10 @@ export function buildOrderResponseXml(doc: EdiOrderResponseDocument): string {
     const item = items.ele("ORDERRESPONSE_ITEM");
     addLineItem(item, line);
     const status = item.ele("ORDERRESPONSE_ITEM_STATUS");
-    status.ele("RESPONSE_STATUS").txt(doc.status);
-    if (doc.statusReason) status.ele("RESPONSE_REASON").txt(doc.statusReason);
+    const responseStatus = line.responseStatus ?? doc.status;
+    const responseReason = line.responseReason ?? doc.statusReason;
+    status.ele("RESPONSE_STATUS").txt(responseStatus);
+    if (responseReason) status.ele("RESPONSE_REASON").txt(responseReason);
   }
 
   return root.end({ prettyPrint: true });

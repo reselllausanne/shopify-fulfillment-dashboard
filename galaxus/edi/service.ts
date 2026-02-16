@@ -16,7 +16,7 @@ import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
 import { upsertEdiFile } from "./ediFiles";
 import { GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
-import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder } from "../supplier/orders";
+import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder, resolveSupplierVariant } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
 type IncomingResult = {
@@ -32,6 +32,8 @@ type OutgoingResult = {
   message?: string;
   shipmentId?: string;
 };
+
+type OrderResponseStatus = "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -206,6 +208,15 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
           if (type === "DELR") {
+            if (!order.ordrSentAt && !options.forceDelr) {
+              results.push({
+                docType: "DELR",
+                filename: "",
+                status: "skipped",
+                message: "ORDR not sent yet",
+              });
+              continue;
+            }
             const delrResults = await uploadDelrForOrder(order.id, { force: options.forceDelr });
             results.push(
               ...delrResults.map((res) => ({
@@ -261,7 +272,7 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
 
-          const edi = buildOutgoingXml(type, order, order.lines);
+          const edi = await buildOutgoingXml(type, order, order.lines);
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
           await upsertEdiFile({
             filename: edi.filename,
@@ -326,11 +337,57 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
   return results;
 }
 
-function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
+async function attachOrderResponseStatus(lines: any[]): Promise<any[]> {
+  const enriched: any[] = [];
+  for (const line of lines) {
+    const existingStatus = (line as { responseStatus?: OrderResponseStatus }).responseStatus;
+    const existingReason = (line as { responseReason?: string | null }).responseReason;
+    if (existingStatus) {
+      enriched.push({ ...line, responseStatus: existingStatus, responseReason: existingReason ?? null });
+      continue;
+    }
+
+    let responseStatus: OrderResponseStatus = "ACCEPTED";
+    let responseReason: string | null = null;
+    const hasIdentifier = Boolean(line.gtin || line.providerKey || line.supplierVariantId || line.supplierSku);
+    if (!hasIdentifier) {
+      responseStatus = "REJECTED";
+      responseReason = "MISSING_PRODUCT_ID";
+    } else {
+      const variant = await resolveSupplierVariant(line);
+      if (!variant) {
+        responseStatus = "REJECTED";
+        responseReason = "NO_OFFER";
+      } else {
+        const stock = Number(variant.stock ?? 0);
+        const quantity = Number(line.quantity ?? 0);
+        if (!Number.isFinite(stock) || stock < quantity || stock <= 0) {
+          responseStatus = "OUT_OF_STOCK";
+          responseReason = "NO_STOCK";
+        }
+      }
+    }
+
+    enriched.push({ ...line, responseStatus, responseReason });
+  }
+
+  return enriched;
+}
+
+function deriveOrderResponseStatus(lines: Array<{ responseStatus?: OrderResponseStatus }>): OrderResponseStatus {
+  const statuses = lines.map((line) => line.responseStatus ?? "ACCEPTED");
+  if (statuses.some((status) => status === "ACCEPTED")) return "ACCEPTED";
+  if (statuses.some((status) => status === "OUT_OF_STOCK")) return "OUT_OF_STOCK";
+  return "REJECTED";
+}
+
+async function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
   if (docType === "ORDR") {
-    return buildOrderResponse(order, lines, {
+    const linesWithStatus = await attachOrderResponseStatus(lines);
+    const status = deriveOrderResponseStatus(linesWithStatus);
+    return buildOrderResponse(order, linesWithStatus, {
       supplierId: GALAXUS_SUPPLIER_ID,
-      status: "ACCEPTED",
+      status,
     });
   }
   if (docType === "CANR") {

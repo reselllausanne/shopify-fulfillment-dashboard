@@ -195,21 +195,50 @@ export async function POST(req: NextRequest) {
       }
 
       if (isAmbiguous) {
-        await prismaAny.partnerUploadRow?.create({
-          data: {
-            uploadId: upload?.id ?? null,
-            partnerId: session.partnerId,
+        const existingPending = await prismaAny.partnerUploadRow?.findFirst({
+          where: {
             providerKey: providerKeyValue,
             sku: normalizedSku,
-            sizeRaw,
             sizeNormalized: normalizedSize,
-            rawStock: stock,
-            price,
-            status: "AMBIGUOUS_GTIN",
-            gtinResolved: null,
-            gtinCandidatesJson: gtinCandidates,
+            status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
           },
+          orderBy: { updatedAt: "desc" },
         });
+        if (existingPending) {
+          await prismaAny.partnerUploadRow?.update({
+            where: { id: existingPending.id },
+            data: {
+              uploadId: upload?.id ?? null,
+              partnerId: session.partnerId,
+              providerKey: providerKeyValue,
+              sku: normalizedSku,
+              sizeRaw,
+              sizeNormalized: normalizedSize,
+              rawStock: stock,
+              price,
+              status: "AMBIGUOUS_GTIN",
+              gtinResolved: null,
+              gtinCandidatesJson: gtinCandidates,
+              updatedAt: now,
+            },
+          });
+        } else {
+          await prismaAny.partnerUploadRow?.create({
+            data: {
+              uploadId: upload?.id ?? null,
+              partnerId: session.partnerId,
+              providerKey: providerKeyValue,
+              sku: normalizedSku,
+              sizeRaw,
+              sizeNormalized: normalizedSize,
+              rawStock: stock,
+              price,
+              status: "AMBIGUOUS_GTIN",
+              gtinResolved: null,
+              gtinCandidatesJson: gtinCandidates,
+            },
+          });
+        }
         rowResults.push({
           row: i + 1,
           status: "AMBIGUOUS_GTIN",
@@ -220,23 +249,53 @@ export async function POST(req: NextRequest) {
       }
 
       if (!resolvedGtin || !validateGtin(resolvedGtin)) {
-        await prismaAny.partnerUploadRow?.create({
-          data: {
-            uploadId: upload?.id ?? null,
-            partnerId: session.partnerId,
+        const existingPending = await prismaAny.partnerUploadRow?.findFirst({
+          where: {
             providerKey: providerKeyValue,
             sku: normalizedSku,
-            sizeRaw,
             sizeNormalized: normalizedSize,
-            rawStock: stock,
-            price,
-            status: "PENDING_GTIN",
-            gtinResolved: null,
-            errorsJson: !resolvedGtin
-              ? [{ message: "GTIN not resolved" }]
-              : [{ message: "Invalid GTIN" }],
+            status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
           },
+          orderBy: { updatedAt: "desc" },
         });
+        const errorsJson = !resolvedGtin
+          ? [{ message: "GTIN not resolved" }]
+          : [{ message: "Invalid GTIN" }];
+        if (existingPending) {
+          await prismaAny.partnerUploadRow?.update({
+            where: { id: existingPending.id },
+            data: {
+              uploadId: upload?.id ?? null,
+              partnerId: session.partnerId,
+              providerKey: providerKeyValue,
+              sku: normalizedSku,
+              sizeRaw,
+              sizeNormalized: normalizedSize,
+              rawStock: stock,
+              price,
+              status: "PENDING_GTIN",
+              gtinResolved: null,
+              errorsJson,
+              updatedAt: now,
+            },
+          });
+        } else {
+          await prismaAny.partnerUploadRow?.create({
+            data: {
+              uploadId: upload?.id ?? null,
+              partnerId: session.partnerId,
+              providerKey: providerKeyValue,
+              sku: normalizedSku,
+              sizeRaw,
+              sizeNormalized: normalizedSize,
+              rawStock: stock,
+              price,
+              status: "PENDING_GTIN",
+              gtinResolved: null,
+              errorsJson,
+            },
+          });
+        }
         rowResults.push({ row: i + 1, status: "PENDING_GTIN" });
         importedRows += 1;
         continue;

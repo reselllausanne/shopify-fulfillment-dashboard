@@ -75,13 +75,16 @@ export async function POST(request: Request) {
     ]);
 
     if (masterRes && !masterRes.ok) {
-      throw new Error(`Master export failed: ${masterRes.status} ${masterRes.statusText}`);
+      const body = await masterRes.text().catch(() => "");
+      throw new Error(`Master export failed: ${masterRes.status} ${masterRes.statusText} ${body}`);
     }
     if (stockRes && !stockRes.ok) {
-      throw new Error(`Stock export failed: ${stockRes.status} ${stockRes.statusText}`);
+      const body = await stockRes.text().catch(() => "");
+      throw new Error(`Stock export failed: ${stockRes.status} ${stockRes.statusText} ${body}`);
     }
     if (offerRes && !offerRes.ok) {
-      throw new Error(`Offer export failed: ${offerRes.status} ${offerRes.statusText}`);
+      const body = await offerRes.text().catch(() => "");
+      throw new Error(`Offer export failed: ${offerRes.status} ${offerRes.statusText} ${body}`);
     }
 
     const [masterCsv, stockCsv, offerCsv] = await Promise.all([

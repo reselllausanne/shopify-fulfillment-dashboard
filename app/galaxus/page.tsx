@@ -117,18 +117,29 @@ type ShipmentItem = {
 type Shipment = {
   id: string;
   shipmentId: string;
+  providerKey?: string | null;
   dispatchNotificationId?: string | null;
   packageId?: string | null;
   trackingNumber?: string | null;
   carrierFinal?: string | null;
   delrStatus?: string | null;
   delrFileName?: string | null;
+  delrSentAt?: string | null;
   labelPdfUrl?: string | null;
   deliveryNotePdfUrl?: string | null;
   labelZpl?: string | null;
   shippedAt?: string | null;
   createdAt: string;
   items: ShipmentItem[];
+};
+
+type EdiFile = {
+  id: string;
+  direction: string;
+  docType: string;
+  status: string;
+  filename?: string | null;
+  createdAt: string;
 };
 
 type OrderDetail = {
@@ -142,6 +153,7 @@ type OrderDetail = {
   lines: OrderLine[];
   shipments: Shipment[];
   statusEvents: Array<{ id: string; type: string; createdAt: string }>;
+  ediFiles: EdiFile[];
 };
 
 export default function GalaxusDashboardPage() {
@@ -155,7 +167,7 @@ export default function GalaxusDashboardPage() {
   const [enrichDebugRaw, setEnrichDebugRaw] = useState<string | null>(null);
   const [batchLimit] = useState<number>(100);
   const [batchOffset] = useState<number>(0);
-  const [supplierFilter, setSupplierFilter] = useState<string>("golden");
+  const [supplierFilter, setSupplierFilter] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exportCheckReport, setExportCheckReport] = useState<string | null>(null);
@@ -169,6 +181,7 @@ export default function GalaxusDashboardPage() {
   const [seedLineCount, setSeedLineCount] = useState<number>(5);
   const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
+  const [forceRepack, setForceRepack] = useState<boolean>(true);
   const [syncMax, setSyncMax] = useState<number>(1000);
   const [syncAll, setSyncAll] = useState<boolean>(false);
   const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
@@ -647,6 +660,13 @@ export default function GalaxusDashboardPage() {
     return "";
   };
 
+  const hasEdiFile = (docType: string) => {
+    if (!selectedOrder) return false;
+    return selectedOrder.ediFiles?.some(
+      (file) => file.direction === "OUT" && file.docType === docType && file.status === "uploaded"
+    );
+  };
+
   const loadOrderDetail = async (orderId: string) => {
     if (!orderId) return;
     setBusy("order-detail");
@@ -766,9 +786,7 @@ export default function GalaxusDashboardPage() {
   };
 
   const downloadMappings = () => {
-    const supplierValue = supplierFilter.trim();
     const params = new URLSearchParams({ download: "1" });
-    if (supplierValue) params.set("supplier", supplierValue);
     window.open(`/api/galaxus/supplier/mappings?${params.toString()}`, "_blank", "noopener,noreferrer");
   };
 
@@ -804,6 +822,7 @@ export default function GalaxusDashboardPage() {
           orderId: selectedOrderId,
           maxPairsPerParcel: packMaxPairs,
           allowSplit,
+          force: forceRepack,
         }),
       });
       const data = await response.json();
@@ -1106,7 +1125,7 @@ export default function GalaxusDashboardPage() {
                 className="px-2 py-2 border rounded text-sm w-28"
                 value={supplierFilter}
                 onChange={(event) => setSupplierFilter(event.target.value)}
-                placeholder="Supplier key"
+                placeholder="Supplier key (optional)"
               />
               <input
                 className="px-2 py-2 border rounded text-sm w-28"
@@ -1422,6 +1441,14 @@ export default function GalaxusDashboardPage() {
                 />
                 Allow split
               </label>
+              <label className="text-xs text-gray-500 flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={forceRepack}
+                  onChange={(event) => setForceRepack(event.target.checked)}
+                />
+                Force repack
+              </label>
               <button
                 className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
                 onClick={packShipments}
@@ -1460,6 +1487,38 @@ export default function GalaxusDashboardPage() {
                 {selectedOrder.deliveryType ?? "—"}
               </div>
 
+              <div className="border rounded bg-white p-2 text-xs">
+                <div className="font-medium text-gray-700 mb-1">Run checklist</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div>
+                    Ingest: {selectedOrder.lines.length > 0 ? "OK" : "Missing lines"}
+                  </div>
+                  <div>
+                    ORDR:{" "}
+                    {selectedOrder.ordrSentAt || hasEdiFile("ORDR") ? "Sent" : "Not sent"}
+                  </div>
+                  <div>
+                    Pack shipments:{" "}
+                    {selectedOrder.shipments.length > 0 ? "Created" : "Not packed"}
+                  </div>
+                  <div>
+                    DELR:{" "}
+                    {selectedOrder.shipments.some(
+                      (shipment) =>
+                        shipment.delrStatus === "UPLOADED" || Boolean(shipment.delrSentAt)
+                    )
+                      ? "Uploaded"
+                      : "Pending"}
+                  </div>
+                  <div>
+                    INVO: {hasEdiFile("INVO") ? "Sent" : "Pending"}
+                  </div>
+                  <div>
+                    EXPINV: {hasEdiFile("EXPINV") ? "Sent" : "Pending"}
+                  </div>
+                </div>
+              </div>
+
               <div className="overflow-auto border rounded bg-white">
                 <table className="min-w-full text-xs">
                   <thead className="bg-gray-50">
@@ -1492,8 +1551,8 @@ export default function GalaxusDashboardPage() {
                 {selectedOrder.shipments.map((shipment) => (
                   <div key={shipment.id} className="border rounded bg-white p-2 space-y-2">
                     <div className="text-xs text-gray-600">
-                      {shipment.shipmentId} · SSCC {shipment.packageId ?? "—"} · DELR{" "}
-                      {shipment.delrStatus ?? "—"}
+                      {shipment.shipmentId} · Provider {shipment.providerKey ?? "—"} · SSCC{" "}
+                      {shipment.packageId ?? "—"} · DELR {shipment.delrStatus ?? "—"}
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       <button

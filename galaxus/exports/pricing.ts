@@ -59,16 +59,36 @@ export function getDefaultPricing() {
 export function resolvePricingOverrides(overrides?: PricingOverrides | null) {
   const defaults = getDefaultPricing();
   const normalizePercent = (value: number) => (value > 1 ? value / 100 : value);
+  const isValidTarget = (value: number) => Number.isFinite(value) && value > 0 && value < 0.5;
+  const isValidNonNegative = (value: number) => Number.isFinite(value) && value >= 0;
+  const isValidPositive = (value: number) => Number.isFinite(value) && value > 0;
   return {
-    targetMargin: overrides?.targetMargin !== null && overrides?.targetMargin !== undefined
-      ? normalizePercent(overrides.targetMargin)
-      : defaults.targetMargin,
-    shippingPerPair: overrides?.shippingPerPair ?? defaults.shippingPerPair,
-    bufferPerPair: overrides?.bufferPerPair ?? defaults.bufferPerPair,
-    roundTo: overrides?.roundTo ?? defaults.roundTo,
-    vatRate: overrides?.vatRate !== null && overrides?.vatRate !== undefined
-      ? normalizePercent(overrides.vatRate)
-      : defaults.vatRate,
+    targetMargin:
+      overrides?.targetMargin !== null && overrides?.targetMargin !== undefined
+        ? (() => {
+            const value = normalizePercent(overrides.targetMargin);
+            return isValidTarget(value) ? value : defaults.targetMargin;
+          })()
+        : defaults.targetMargin,
+    shippingPerPair:
+      overrides?.shippingPerPair !== null && overrides?.shippingPerPair !== undefined
+        ? (isValidNonNegative(overrides.shippingPerPair) ? overrides.shippingPerPair : defaults.shippingPerPair)
+        : defaults.shippingPerPair,
+    bufferPerPair:
+      overrides?.bufferPerPair !== null && overrides?.bufferPerPair !== undefined
+        ? (isValidNonNegative(overrides.bufferPerPair) ? overrides.bufferPerPair : defaults.bufferPerPair)
+        : defaults.bufferPerPair,
+    roundTo:
+      overrides?.roundTo !== null && overrides?.roundTo !== undefined
+        ? (isValidPositive(overrides.roundTo) ? overrides.roundTo : defaults.roundTo)
+        : defaults.roundTo,
+    vatRate:
+      overrides?.vatRate !== null && overrides?.vatRate !== undefined
+        ? (() => {
+            const value = normalizePercent(overrides.vatRate);
+            return isValidNonNegative(value) ? value : defaults.vatRate;
+          })()
+        : defaults.vatRate,
   };
 }
 
