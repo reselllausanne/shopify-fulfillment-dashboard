@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const prismaAny = prisma as any;
     const session = await getPartnerSession(request);
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     const raw = searchParams.get("raw") === "1";
     const supplierSku = searchParams.get("sku")?.trim() || null;
 
-    const partner = await (prisma as any).partner.findUnique({
+    const partner = await prismaAny.partner.findUnique({
       where: { id: session.partnerId },
     });
     const partnerKey = partner?.key ?? null;
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
     }
 
     const prefix = `${partnerKey.toLowerCase()}:`;
-    const supplierVariants = await prisma.supplierVariant.findMany({
+    const supplierVariants = await prismaAny.supplierVariant.findMany({
       where: {
         supplierVariantId: { startsWith: prefix },
         ...(supplierSku ? { supplierSku } : {}),
