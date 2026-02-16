@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { buildProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
 
 type StockSyncResult = {
@@ -14,6 +14,7 @@ type StockSyncOptions = {
 };
 
 export async function runStockSync(options: StockSyncOptions = {}): Promise<StockSyncResult> {
+  const prismaAny = prisma as any;
   const client = createGoldenSupplierClient();
   const items = await client.fetchStockAndPrice();
   const offset = Math.max(options.offset ?? 0, 0);
@@ -26,28 +27,30 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
   for (const item of slicedItems) {
     const updateData: Record<string, unknown> = {
       lastSyncAt: new Date(),
+      providerKey: resolveSupplierCode(item.supplierVariantId),
     };
     if (item.sourcePayload.brand_name) updateData.supplierBrand = item.sourcePayload.brand_name;
     if (item.sourcePayload.product_name) updateData.supplierProductName = item.sourcePayload.product_name;
     if (item.price !== null) updateData.price = item.price;
     if (item.stock !== null) updateData.stock = item.stock;
 
-    const existing = await prisma.supplierVariant.findUnique({
+    const existing = await prismaAny.supplierVariant.findUnique({
       where: { supplierVariantId: item.supplierVariantId },
       select: { supplierVariantId: true },
     });
 
     if (existing) {
-      await prisma.supplierVariant.update({
+      await prismaAny.supplierVariant.update({
         where: { supplierVariantId: item.supplierVariantId },
         data: updateData,
       });
       updated += 1;
     } else {
-      await prisma.supplierVariant.create({
+      await prismaAny.supplierVariant.create({
         data: {
           supplierVariantId: item.supplierVariantId,
           supplierSku: item.supplierSku,
+          providerKey: resolveSupplierCode(item.supplierVariantId),
           price: item.price ?? 0,
           stock: item.stock ?? 0,
           sizeRaw: item.sizeRaw,
@@ -65,7 +68,14 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     const supplierGtin = item.sourcePayload?.barcode ?? null;
     if (supplierGtin) {
       const providerKey = buildProviderKey(supplierGtin, item.supplierVariantId);
-      await prisma.variantMapping.upsert({
+      await prismaAny.supplierVariant.update({
+        where: { supplierVariantId: item.supplierVariantId },
+        data: {
+          gtin: supplierGtin,
+          providerKey: resolveSupplierCode(item.supplierVariantId),
+        },
+      });
+      await prismaAny.variantMapping.upsert({
         where: { supplierVariantId: item.supplierVariantId },
         create: {
           supplierVariantId: item.supplierVariantId,

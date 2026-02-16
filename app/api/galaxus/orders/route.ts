@@ -10,6 +10,9 @@ export async function GET(request: Request) {
     const limit = Math.min(Number(searchParams.get("limit") ?? "20"), 100);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const providerKey = searchParams.get("providerKey")?.trim().toUpperCase() ?? "";
+    if (providerKey && !/^[A-Z]{3}$/.test(providerKey)) {
+      return NextResponse.json({ ok: false, error: "Invalid providerKey" }, { status: 400 });
+    }
 
     let gtinFilter: string[] | null = null;
     if (providerKey) {

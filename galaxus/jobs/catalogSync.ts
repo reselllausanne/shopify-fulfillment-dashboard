@@ -1,6 +1,5 @@
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { buildProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
 import type { SupplierCatalogItem } from "../supplier/types";
 
@@ -15,10 +14,11 @@ type CatalogSyncOptions = {
   offset?: number;
 };
 
-function buildCreateData(item: SupplierCatalogItem): Prisma.SupplierVariantCreateInput {
+function buildCreateData(item: SupplierCatalogItem) {
   return {
     supplierVariantId: item.supplierVariantId,
     supplierSku: item.supplierSku,
+    providerKey: resolveSupplierCode(item.supplierVariantId),
     price: item.price ?? 0,
     stock: item.stock ?? 0,
     sizeRaw: item.sizeRaw,
@@ -30,9 +30,10 @@ function buildCreateData(item: SupplierCatalogItem): Prisma.SupplierVariantCreat
   };
 }
 
-function buildUpdateData(item: SupplierCatalogItem): Prisma.SupplierVariantUpdateInput {
-  const updateData: Prisma.SupplierVariantUpdateInput = {
+function buildUpdateData(item: SupplierCatalogItem) {
+  const updateData: Record<string, unknown> = {
     supplierSku: item.supplierSku,
+    providerKey: resolveSupplierCode(item.supplierVariantId),
     sizeRaw: item.sizeRaw,
     leadTimeDays: item.leadTimeDays,
     lastSyncAt: new Date(),
@@ -46,6 +47,7 @@ function buildUpdateData(item: SupplierCatalogItem): Prisma.SupplierVariantUpdat
 }
 
 export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<CatalogSyncResult> {
+  const prismaAny = prisma as any;
   const client = createGoldenSupplierClient();
   const items = await client.fetchCatalog();
   const offset = Math.max(options.offset ?? 0, 0);
@@ -56,12 +58,12 @@ export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<
   let updated = 0;
 
   for (const item of slicedItems) {
-    const exists = await prisma.supplierVariant.findUnique({
+    const exists = await prismaAny.supplierVariant.findUnique({
       where: { supplierVariantId: item.supplierVariantId },
       select: { supplierVariantId: true },
     });
 
-    await prisma.supplierVariant.upsert({
+    await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId: item.supplierVariantId },
       create: buildCreateData(item),
       update: buildUpdateData(item),
@@ -77,7 +79,14 @@ export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<
     const supplierGtin = item.sourcePayload?.barcode ?? null;
     if (supplierGtin) {
       const providerKey = buildProviderKey(supplierGtin, item.supplierVariantId);
-      await prisma.variantMapping.upsert({
+      await prismaAny.supplierVariant.update({
+        where: { supplierVariantId: item.supplierVariantId },
+        data: {
+          gtin: supplierGtin,
+          providerKey: resolveSupplierCode(item.supplierVariantId),
+        },
+      });
+      await prismaAny.variantMapping.upsert({
         where: { supplierVariantId: item.supplierVariantId },
         create: {
           supplierVariantId: item.supplierVariantId,

@@ -625,7 +625,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       updateSupplier.providerKey = providerKeyShort;
     }
     if (Object.keys(updateSupplier).length > 0) {
-      await prisma.supplierVariant.update({
+      await prismaAny.supplierVariant.update({
         where: { supplierVariantId: variant.supplierVariantId },
         data: updateSupplier,
       });
@@ -678,7 +678,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     });
 
     if (resolvedGtin) {
-      await prisma.supplierVariant.update({
+      await prismaAny.supplierVariant.update({
         where: { supplierVariantId: variant.supplierVariantId },
         data: {
           gtin: resolvedGtin,
