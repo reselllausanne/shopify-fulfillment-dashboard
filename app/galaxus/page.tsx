@@ -118,6 +118,8 @@ type Shipment = {
   id: string;
   shipmentId: string;
   providerKey?: string | null;
+  supplierOrderRef?: string | null;
+  boxStatus?: string | null;
   dispatchNotificationId?: string | null;
   packageId?: string | null;
   trackingNumber?: string | null;
@@ -345,6 +347,29 @@ export default function GalaxusDashboardPage() {
       const response = await fetch(`/api/galaxus/supplier/sync?${params.toString()}`, { method: "POST" });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Sync failed");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const syncTrmSupplier = async () => {
+    setBusy("sync-trm");
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (syncAll) {
+        params.set("all", "1");
+      } else {
+        params.set("max", String(Math.max(syncMax, 1)));
+      }
+      const response = await fetch(`/api/galaxus/supplier/trm/sync?${params.toString()}`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "TRM sync failed");
+      setOpsLog(JSON.stringify(data, null, 2));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -931,6 +956,44 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const placeSupplierOrderForShipment = async (shipmentId: string) => {
+    setBusy(`place-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/place-supplier-order`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Failed to place supplier order");
+      setOpsLog(JSON.stringify(data, null, 2));
+      if (selectedOrderId) await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const generateDocsForShipment = async (shipmentId: string) => {
+    setBusy(`docs-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/docs`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Failed to generate shipment docs");
+      setOpsLog(JSON.stringify(data, null, 2));
+      if (selectedOrderId) await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const regenerateLabel = async (shipmentId: string) => {
     setBusy(`label-${shipmentId}`);
     setError(null);
@@ -1150,6 +1213,13 @@ export default function GalaxusDashboardPage() {
                 disabled={busy !== null}
               >
                 {busy === "sync" ? "Syncing…" : "Sync catalog"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                onClick={syncTrmSupplier}
+                disabled={busy !== null}
+              >
+                {busy === "sync-trm" ? "Syncing…" : "Sync TRM only"}
               </button>
               <button
                 className="px-3 py-2 rounded bg-blue-800 text-white disabled:opacity-50"
@@ -1554,7 +1624,29 @@ export default function GalaxusDashboardPage() {
                       {shipment.shipmentId} · Provider {shipment.providerKey ?? "—"} · SSCC{" "}
                       {shipment.packageId ?? "—"} · DELR {shipment.delrStatus ?? "—"}
                     </div>
+                    <div className="text-xs text-gray-600">
+                      Supplier order: {shipment.supplierOrderRef ?? "—"} · Status{" "}
+                      {shipment.boxStatus ?? "—"}
+                    </div>
                     <div className="flex gap-2 flex-wrap">
+                      <button
+                        className="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-50"
+                        onClick={() => placeSupplierOrderForShipment(shipment.id)}
+                        disabled={busy !== null || (shipment.providerKey ?? "").toUpperCase() === "TRM"}
+                      >
+                        {(shipment.providerKey ?? "").toUpperCase() === "TRM"
+                          ? "TRM disabled"
+                          : busy === `place-${shipment.id}`
+                            ? "Placing…"
+                            : "Place supplier order"}
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded bg-purple-600 text-white"
+                        onClick={() => generateDocsForShipment(shipment.id)}
+                        disabled={busy !== null}
+                      >
+                        {busy === `docs-${shipment.id}` ? "Generating…" : "Generate box docs"}
+                      </button>
                       <button
                         className="px-2 py-1 rounded bg-gray-200"
                         onClick={() => regenerateLabel(shipment.id)}

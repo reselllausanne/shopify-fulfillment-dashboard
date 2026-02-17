@@ -1,5 +1,6 @@
 import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier/providerKey";
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
+import { validateGtin } from "@/app/lib/normalize";
 import {
   computeGalaxusSellPriceExVat,
   resolvePricingOverrides,
@@ -50,6 +51,27 @@ function hasPrimaryImage(images: unknown, fallbackUrl?: string | null): boolean 
 
 type ResolveOverrides = (supplierKey: string | null) => PricingOverrides | null;
 
+type CandidateExcludeReason =
+  | "MISSING_GTIN"
+  | "INVALID_GTIN"
+  | "ENRICHMENT_PENDING"
+  | "KICKDB_NOT_FOUND"
+  | "MISSING_PRODUCT_NAME"
+  | "MISSING_IMAGE"
+  | "INVALID_PRICE"
+  | "INVALID_PROVIDER_KEY"
+  | "TRM_DISABLED";
+
+type AccumulateOptions = {
+  includeTrm?: boolean;
+  onExclude?: (payload: {
+    reason: CandidateExcludeReason;
+    supplierKey: string | null;
+    mapping: any;
+    variant: any;
+  }) => void;
+};
+
 function extractSupplierKey(supplierVariantId?: string | null): string | null {
   if (!supplierVariantId) return null;
   const rawKey = supplierVariantId.split(":")[0];
@@ -59,29 +81,95 @@ function extractSupplierKey(supplierVariantId?: string | null): string | null {
 export function accumulateBestCandidates(
   mappings: any[],
   bestByGtin: Map<string, VariantCandidate>,
-  resolveOverrides?: ResolveOverrides
+  resolveOverrides?: ResolveOverrides,
+  options?: AccumulateOptions
 ) {
   const isMerchant = GALAXUS_PRICE_MODEL === "merchant";
+  const includeTrm = options?.includeTrm !== false;
 
   for (const mapping of mappings) {
-    const gtin = String(mapping.gtin ?? "").trim();
-    if (!gtin) continue;
-
     const variant = mapping.supplierVariant ?? null;
     if (!variant) continue;
+    const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
+
+    if (supplierKey === "trm" && !includeTrm) {
+      options?.onExclude?.({
+        reason: "TRM_DISABLED",
+        supplierKey,
+        mapping,
+        variant,
+      });
+      continue;
+    }
+
+    const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();
+    if (supplierKey === "trm") {
+      const status = String(mapping?.status ?? "");
+      const productNotFound =
+        Boolean(mapping?.kickdbVariant?.notFound) || Boolean(mapping?.kickdbVariant?.product?.notFound);
+      if (!gtin) {
+        const reason: CandidateExcludeReason =
+          productNotFound || status === "NOT_FOUND"
+            ? "KICKDB_NOT_FOUND"
+            : status === "PENDING_GTIN" || status === "AMBIGUOUS_GTIN"
+              ? "ENRICHMENT_PENDING"
+              : "MISSING_GTIN";
+        options?.onExclude?.({
+          reason,
+          supplierKey,
+          mapping,
+          variant,
+        });
+        continue;
+      }
+      if (!validateGtin(gtin)) {
+        options?.onExclude?.({
+          reason: "INVALID_GTIN",
+          supplierKey,
+          mapping,
+          variant,
+        });
+        continue;
+      }
+    } else if (!gtin) {
+      continue;
+    }
 
     const productName = variant?.supplierProductName ?? null;
-    if (!productName) continue;
+    if (!productName) {
+      options?.onExclude?.({
+        reason: "MISSING_PRODUCT_NAME",
+        supplierKey,
+        mapping,
+        variant,
+      });
+      continue;
+    }
 
     const product = mapping.kickdbVariant?.product ?? null;
-    if (!hasPrimaryImage(variant?.images, product?.imageUrl ?? null)) continue;
+    if (!hasPrimaryImage(variant?.images, product?.imageUrl ?? null)) {
+      options?.onExclude?.({
+        reason: "MISSING_IMAGE",
+        supplierKey,
+        mapping,
+        variant,
+      });
+      continue;
+    }
 
     const buyPrice = parseNumber(variant?.price);
-    if (!buyPrice || buyPrice <= 0) continue;
+    if (!buyPrice || buyPrice <= 0) {
+      options?.onExclude?.({
+        reason: "INVALID_PRICE",
+        supplierKey,
+        mapping,
+        variant,
+      });
+      continue;
+    }
 
     let sellPriceExVat = buyPrice;
     if (!isMerchant) {
-      const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
       const overrides = resolvePricingOverrides(resolveOverrides?.(supplierKey) ?? null);
 
       sellPriceExVat = computeGalaxusSellPriceExVat({
@@ -98,7 +186,15 @@ export function accumulateBestCandidates(
     const updatedAt = new Date(variant?.updatedAt ?? mapping.updatedAt ?? Date.now());
 
     const providerKey = buildProviderKey(gtin, variant?.supplierVariantId) ?? mapping.providerKey;
-    if (!providerKey || !isValidProviderKeyWithGtin(providerKey)) continue;
+    if (!providerKey || !isValidProviderKeyWithGtin(providerKey)) {
+      options?.onExclude?.({
+        reason: "INVALID_PROVIDER_KEY",
+        supplierKey,
+        mapping,
+        variant,
+      });
+      continue;
+    }
 
     const candidate: VariantCandidate = {
       mapping,

@@ -22,6 +22,15 @@ export default function ActionBar({
       </button>
 
       <a
+        href="/api/db/matches/export"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium shadow"
+      >
+        ⬇️ Download Matches CSV
+      </a>
+
+      <a
         href="/dashboard"
         target="_blank"
         rel="noopener noreferrer"

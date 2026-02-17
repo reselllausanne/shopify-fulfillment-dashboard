@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,13 +45,23 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
+    const placement = await getShipmentPlacementByOrder(order.id);
     const normalized = {
       ...order,
       shipments: order.shipments.map((shipment: any) => {
         const deliveryNote = shipment.documents?.find((doc: any) => doc.type === "DELIVERY_NOTE");
+        const labelNote = shipment.documents?.find((doc: any) => doc.type === "LABEL");
+        const extra = placement.get(shipment.id);
         return {
           ...shipment,
-          deliveryNotePdfUrl: deliveryNote?.storageUrl ?? null,
+          supplierOrderRef: extra?.supplierOrderRef ?? null,
+          boxStatus: extra?.status ?? null,
+          deliveryNotePdfUrl: deliveryNote ? `/api/galaxus/documents/${deliveryNote.id}` : null,
+          labelPdfUrl: labelNote
+            ? `/api/galaxus/documents/${labelNote.id}`
+            : shipment.labelPdfUrl
+              ? `/api/galaxus/shipments/${shipment.id}/label`
+              : null,
         };
       }),
     };

@@ -21,10 +21,12 @@ export async function GET(
   const storage = getStorageAdapterForUrl(document.storageUrl);
   const file = await storage.getPdf(document.storageUrl);
 
-  return new NextResponse(file.content as unknown as BodyInit, {
+  const filename = `${document.type.toLowerCase()}-v${document.version}.pdf`;
+  return new Response(file.content as unknown as BodyInit, {
     headers: {
       "content-type": "application/pdf",
-      "content-disposition": `inline; filename="${document.type.toLowerCase()}-v${document.version}.pdf"`,
+      "content-disposition": `inline; filename="${filename}"`,
+      "content-length": String(file.content.length ?? 0),
     },
   });
 }

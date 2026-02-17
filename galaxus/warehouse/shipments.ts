@@ -47,11 +47,19 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     return { status: "error", shipments: [], message: "Order not found" };
   }
 
-  if (!options.force) {
-    const existing = await prisma.shipment.findFirst({ where: { orderId: order.id } });
-    if (existing) {
-      return { status: "skipped", shipments: [], message: "Shipments already exist" };
-    }
+  const existingShipments = await prisma.shipment.findMany({
+    where: { orderId: order.id },
+    orderBy: { createdAt: "asc" },
+  });
+  if (existingShipments.length > 0) {
+    const hasPlaced = existingShipments.some((shipment) => Boolean((shipment as any).supplierOrderRef));
+    return {
+      status: "skipped",
+      shipments: existingShipments,
+      message: hasPlaced
+        ? "Shipments already exist and supplier orders were placed"
+        : "Shipments already exist",
+    };
   }
 
   const orderAny = order as any;
@@ -284,12 +292,30 @@ function buildDeliveryNoteData(
     deliveryNoteNumber: deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
     incoterms: incoterms ?? null,
     buyer: {
-      name: order.recipientName ?? "",
-      line1: order.recipientAddress1 ?? "",
-      line2: order.recipientAddress2 ?? null,
-      postalCode: order.recipientPostalCode ?? "",
-      city: order.recipientCity ?? "",
-      country: order.recipientCountry ?? "",
+      name:
+        order.recipientName ??
+        (order.deliveryType === "warehouse_delivery" ? order.customerName : null) ??
+        "",
+      line1:
+        order.recipientAddress1 ??
+        (order.deliveryType === "warehouse_delivery" ? order.customerAddress1 : null) ??
+        "",
+      line2:
+        order.recipientAddress2 ??
+        (order.deliveryType === "warehouse_delivery" ? order.customerAddress2 : null) ??
+        null,
+      postalCode:
+        order.recipientPostalCode ??
+        (order.deliveryType === "warehouse_delivery" ? order.customerPostalCode : null) ??
+        "",
+      city:
+        order.recipientCity ??
+        (order.deliveryType === "warehouse_delivery" ? order.customerCity : null) ??
+        "",
+      country:
+        order.recipientCountry ??
+        (order.deliveryType === "warehouse_delivery" ? order.customerCountry : null) ??
+        "",
     },
     supplier: {
       name: GALAXUS_SUPPLIER_NAME,

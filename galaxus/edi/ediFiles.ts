@@ -9,6 +9,7 @@ export async function upsertEdiFile(options: {
   message?: string;
   orderId?: string;
   orderRef?: string;
+  shipmentId?: string;
   payloadJson?: unknown;
 }) {
   await (prisma as any).galaxusEdiFile.upsert({
@@ -20,6 +21,7 @@ export async function upsertEdiFile(options: {
       status: options.status,
       orderId: options.orderId,
       orderRef: options.orderRef,
+      shipmentId: options.shipmentId,
       errorMessage: options.message ?? null,
       payloadJson: options.payloadJson ?? undefined,
       processedAt: options.status === "processed" ? new Date() : null,
@@ -28,6 +30,7 @@ export async function upsertEdiFile(options: {
       status: options.status,
       orderId: options.orderId,
       orderRef: options.orderRef,
+      shipmentId: options.shipmentId,
       errorMessage: options.message ?? null,
       payloadJson: options.payloadJson ?? undefined,
       processedAt: options.status === "processed" ? new Date() : null,

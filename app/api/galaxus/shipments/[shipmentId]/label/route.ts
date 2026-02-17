@@ -1,10 +1,37 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
-import { getStorageAdapter } from "@/galaxus/storage/storage";
+import { getStorageAdapter, getStorageAdapterForUrl } from "@/galaxus/storage/storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ shipmentId: string }> }
+) {
+  try {
+    const { shipmentId } = await params;
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: shipmentId },
+      select: { labelPdfUrl: true },
+    });
+    if (!shipment?.labelPdfUrl) {
+      return NextResponse.json({ ok: false, error: "Label not found" }, { status: 404 });
+    }
+    const storage = getStorageAdapterForUrl(shipment.labelPdfUrl);
+    const file = await storage.getPdf(shipment.labelPdfUrl);
+    return new Response(file.content as unknown as BodyInit, {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `inline; filename="sscc-label.pdf"`,
+      },
+    });
+  } catch (error: any) {
+    console.error("[GALAXUS][SHIPMENT][LABEL] Download failed:", error);
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+}
 
 export async function POST(
   _request: Request,

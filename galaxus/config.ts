@@ -17,6 +17,19 @@ export const GOLDEN_SUPPLIER_API_KEY_HEADER =
 export const GOLDEN_SUPPLIER_API_KEY_PREFIX =
   process.env.GOLDEN_SUPPLIER_API_KEY_PREFIX ?? "Bearer ";
 
+export const SUPPLIER_TRM_BASE_URL =
+  process.env.SUPPLIER_TRM_BASE_URL ?? "https://api.b2b.turum.pl";
+export const SUPPLIER_TRM_USERNAME = process.env.SUPPLIER_TRM_USERNAME ?? "";
+export const SUPPLIER_TRM_PASSWORD = process.env.SUPPLIER_TRM_PASSWORD ?? "";
+const parsedTrmSyncMinIntervalSec = Number.parseInt(
+  process.env.SUPPLIER_TRM_SYNC_MIN_INTERVAL_SEC ?? "",
+  10
+);
+export const SUPPLIER_TRM_SYNC_MIN_INTERVAL_SEC = Number.isFinite(parsedTrmSyncMinIntervalSec)
+  ? Math.max(parsedTrmSyncMinIntervalSec, 60)
+  : 60;
+export const GALAXUS_FEED_INCLUDE_TRM = process.env.GALAXUS_FEED_INCLUDE_TRM !== "false";
+
 export const GALAXUS_SUPPLIER_AUTO_ORDER = process.env.GALAXUS_SUPPLIER_AUTO_ORDER === "true";
 export const GALAXUS_SUPPLIER_AUTO_SEND_ORDR = process.env.GALAXUS_SUPPLIER_AUTO_SEND_ORDR === "true";
 const DEFAULT_LEAD_DAYS = 7;

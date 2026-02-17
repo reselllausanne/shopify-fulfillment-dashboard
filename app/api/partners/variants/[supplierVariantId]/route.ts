@@ -9,14 +9,18 @@ function ownsVariant(supplierVariantId: string, partnerKey: string) {
   return supplierVariantId.toLowerCase().startsWith(`${partnerKey.toLowerCase()}:`);
 }
 
-export async function PATCH(req: NextRequest, context: { params: { supplierVariantId: string } }) {
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ supplierVariantId: string }> }
+) {
   const session = await getPartnerSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supplierVariantId = decodeURIComponent(context.params.supplierVariantId ?? "");
-  if (!supplierVariantId || !ownsVariant(supplierVariantId, session.partnerKey)) {
+  const { supplierVariantId } = await params;
+  const decodedSupplierVariantId = decodeURIComponent(supplierVariantId ?? "");
+  if (!decodedSupplierVariantId || !ownsVariant(decodedSupplierVariantId, session.partnerKey)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -31,7 +35,7 @@ export async function PATCH(req: NextRequest, context: { params: { supplierVaria
   }
 
   const updated = await prisma.supplierVariant.update({
-    where: { supplierVariantId },
+    where: { supplierVariantId: decodedSupplierVariantId },
     data: {
       stock,
       price,
@@ -43,27 +47,31 @@ export async function PATCH(req: NextRequest, context: { params: { supplierVaria
   return NextResponse.json({ ok: true, item: updated });
 }
 
-export async function DELETE(req: NextRequest, context: { params: { supplierVariantId: string } }) {
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ supplierVariantId: string }> }
+) {
   const session = await getPartnerSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supplierVariantId = decodeURIComponent(context.params.supplierVariantId ?? "");
-  if (!supplierVariantId || !ownsVariant(supplierVariantId, session.partnerKey)) {
+  const { supplierVariantId } = await params;
+  const decodedSupplierVariantId = decodeURIComponent(supplierVariantId ?? "");
+  if (!decodedSupplierVariantId || !ownsVariant(decodedSupplierVariantId, session.partnerKey)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const prismaAny = prisma as any;
   const variant = await prismaAny.supplierVariant.findUnique({
-    where: { supplierVariantId },
+    where: { supplierVariantId: decodedSupplierVariantId },
     select: { supplierVariantId: true, supplierSku: true, sizeNormalized: true, providerKey: true },
   });
   if (!variant) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  await prismaAny.variantMapping.deleteMany({ where: { supplierVariantId } });
+  await prismaAny.variantMapping.deleteMany({ where: { supplierVariantId: decodedSupplierVariantId } });
   await prismaAny.partnerUploadRow?.deleteMany({
     where: {
       providerKey: variant.providerKey ?? session.partnerKey.toUpperCase(),
@@ -71,7 +79,7 @@ export async function DELETE(req: NextRequest, context: { params: { supplierVari
       sizeNormalized: variant.sizeNormalized ?? "",
     },
   });
-  await prismaAny.supplierVariant.delete({ where: { supplierVariantId } });
+  await prismaAny.supplierVariant.delete({ where: { supplierVariantId: decodedSupplierVariantId } });
 
   return NextResponse.json({ ok: true });
 }

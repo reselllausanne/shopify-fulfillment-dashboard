@@ -13,7 +13,7 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const force = Boolean(body?.force);
     const result = await uploadDelrForShipment(shipmentId, { force });
-    const status = result.status === "error" ? 500 : 200;
+    const status = result.httpStatus ?? (result.status === "error" ? 500 : 200);
     return NextResponse.json({ ok: result.status !== "error", result }, { status });
   } catch (error: any) {
     console.error("[GALAXUS][SHIPMENT][DELR] Failed:", error);

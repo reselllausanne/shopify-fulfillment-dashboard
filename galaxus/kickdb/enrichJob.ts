@@ -19,6 +19,7 @@ export type KickdbEnrichOptions = {
   raw?: boolean;
   supplierVariantId?: string | null;
   supplierSku?: string | null;
+  supplierVariantIdPrefix?: string | null;
 };
 
 type DebugInfo = {
@@ -340,6 +341,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   const raw = Boolean(options.raw);
   const supplierVariantId = options.supplierVariantId?.trim() || null;
   const supplierSku = options.supplierSku?.trim() || null;
+  const supplierVariantIdPrefix = options.supplierVariantIdPrefix?.trim() || null;
 
   let supplierVariants: any[] = [];
 
@@ -361,7 +363,14 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
     supplierVariants = matches;
   } else {
+    const where: Record<string, unknown> = {};
+    if (supplierVariantIdPrefix) {
+      where.supplierVariantId = {
+        startsWith: supplierVariantIdPrefix,
+      };
+    }
     supplierVariants = await prisma.supplierVariant.findMany({
+      where,
       orderBy: { updatedAt: "desc" },
       take: limit,
       skip: offset,

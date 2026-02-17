@@ -98,6 +98,67 @@ export class DocumentService {
 
     return results;
   }
+
+  async generateForShipment(options: { shipmentId: string; types?: DocumentType[] }) {
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: options.shipmentId },
+      include: {
+        order: { include: { lines: true, documents: true } },
+        items: true,
+        documents: true,
+      },
+    });
+
+    if (!shipment || !shipment.order) {
+      throw new Error(`Shipment not found: ${options.shipmentId}`);
+    }
+
+    const types = options.types ?? [DocumentType.DELIVERY_NOTE, DocumentType.LABEL];
+    const storage = getStorageAdapter();
+    const results = [];
+    const allDocuments = [...shipment.order.documents, ...shipment.documents];
+    const shipmentState = await ensureShipmentDocFields(shipment);
+    const deliveryLines = buildShipmentOrderLines(shipment.order.lines, shipment.items);
+
+    for (const type of types) {
+      let html = "";
+      let pdfFormat: "A4" | "A6" = "A4";
+      let showPageNumbers = false;
+
+      if (type === DocumentType.DELIVERY_NOTE) {
+        const data = buildDeliveryNoteDataFromLines(shipment.order, deliveryLines, shipmentState);
+        html = renderDeliveryNoteHtml(data);
+        showPageNumbers = true;
+      } else if (type === DocumentType.LABEL) {
+        const data = await buildLabelData(shipment.order, shipmentState);
+        html = renderLabelHtml(data);
+        pdfFormat = "A6";
+      } else {
+        continue;
+      }
+
+      const pdfBuffer = await renderPdfFromHtml({ html, format: pdfFormat, showPageNumbers });
+      const checksum = crypto.createHash("sha256").update(pdfBuffer).digest("hex");
+      const version = getNextVersion(allDocuments, type);
+      const key = `galaxus/${shipment.order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
+      const stored = await storage.uploadPdf(key, pdfBuffer);
+
+      const document = await prisma.document.create({
+        data: {
+          orderId: shipment.order.id,
+          shipmentId: shipment.id,
+          type,
+          version,
+          storageUrl: stored.storageUrl,
+          checksum,
+        },
+      });
+
+      results.push(document);
+    }
+
+    return results;
+  }
 }
 
 function buildSupplier(): Company {
@@ -143,13 +204,39 @@ function parsePostalLine(line?: string) {
 }
 
 function buildRecipient(order: GalaxusOrder) {
+  const hasRecipient =
+    Boolean(order.recipientName) ||
+    Boolean(order.recipientAddress1) ||
+    Boolean(order.recipientPostalCode) ||
+    Boolean(order.recipientCity) ||
+    Boolean(order.recipientCountry);
+  if (hasRecipient) {
+    return {
+      name: order.recipientName ?? GALAXUS_BUYER_NAME,
+      line1: order.recipientAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+      line2: order.recipientAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+      postalCode: order.recipientPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+      city: order.recipientCity ?? GALAXUS_BUYER_CITY,
+      country: order.recipientCountry ?? GALAXUS_BUYER_COUNTRY,
+    };
+  }
+  if (order.deliveryType === "warehouse_delivery") {
+    return {
+      name: order.customerName ?? GALAXUS_BUYER_NAME,
+      line1: order.customerAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+      line2: order.customerAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+      postalCode: order.customerPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+      city: order.customerCity ?? GALAXUS_BUYER_CITY,
+      country: order.customerCountry ?? GALAXUS_BUYER_COUNTRY,
+    };
+  }
   return {
-    name: order.recipientName ?? GALAXUS_BUYER_NAME,
-    line1: order.recipientAddress1 ?? GALAXUS_BUYER_ADDRESS1,
-    line2: order.recipientAddress2 ?? GALAXUS_BUYER_ADDRESS2,
-    postalCode: order.recipientPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
-    city: order.recipientCity ?? GALAXUS_BUYER_CITY,
-    country: order.recipientCountry ?? GALAXUS_BUYER_COUNTRY,
+    name: GALAXUS_BUYER_NAME,
+    line1: GALAXUS_BUYER_ADDRESS1,
+    line2: GALAXUS_BUYER_ADDRESS2,
+    postalCode: GALAXUS_BUYER_POSTAL_CODE,
+    city: GALAXUS_BUYER_CITY,
+    country: GALAXUS_BUYER_COUNTRY,
   };
 }
 
@@ -222,6 +309,40 @@ function buildDeliveryNoteData(
   };
 }
 
+function buildDeliveryNoteDataFromLines(
+  order: GalaxusOrder,
+  deliveryLines: OrderLine[],
+  shipment: {
+    shipmentId: string;
+    dispatchNotificationId: string;
+    dispatchNotificationCreatedAt: Date;
+    incoterms: string | null;
+    createdAt: Date;
+  } | null
+): DeliveryNoteData {
+  return {
+    shipmentId: shipment?.shipmentId ?? "",
+    createdAt: shipment?.dispatchNotificationCreatedAt ?? new Date(),
+    deliveryNoteNumber: shipment?.dispatchNotificationId ?? buildDeliveryNoteNumber(order),
+    incoterms: shipment?.incoterms ?? null,
+    buyer: buildRecipient(order),
+    supplier: buildSupplier(),
+    orderReference: order.orderNumber ?? order.galaxusOrderId,
+    referencePerson: order.referencePerson ?? null,
+    yourReference: order.yourReference ?? null,
+    buyerPhone: order.recipientPhone ?? null,
+    afterSalesHandling: order.afterSalesHandling ?? false,
+    legalNotice: null,
+    groups: [
+      {
+        orderNumber: order.orderNumber ?? order.galaxusOrderId,
+        deliveryDate: order.deliveryDate,
+        lines: deliveryLines,
+      },
+    ],
+  };
+}
+
 
 async function buildLabelData(
   order: GalaxusOrder,
@@ -238,6 +359,39 @@ async function buildLabelData(
     sscc,
     barcodeDataUrl,
   };
+}
+
+function buildShipmentOrderLines(
+  orderLines: GalaxusOrderLine[],
+  items: Array<{ supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>
+): OrderLine[] {
+  const lines: OrderLine[] = [];
+  for (const item of items) {
+    const line =
+      orderLines.find(
+        (candidate) =>
+          (item.supplierPid && candidate.supplierPid === item.supplierPid) ||
+          (item.buyerPid && candidate.buyerPid === item.buyerPid)
+      ) ?? orderLines.find((candidate) => candidate.gtin === item.gtin14);
+    if (!line) {
+      throw new Error(`Missing order line for shipment item ${item.gtin14}`);
+    }
+    const unitNetPrice = Number(line.unitNetPrice);
+    lines.push({
+      lineNumber: line.lineNumber,
+      articleNumber: buildProviderKey(line.gtin, line.supplierVariantId) ?? line.gtin ?? "",
+      description: line.productName,
+      size: line.size,
+      gtin: line.gtin,
+      providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
+      sku: line.supplierSku ?? line.supplierVariantId ?? null,
+      quantity: item.quantity,
+      vatRate: Number(line.vatRate),
+      unitNetPrice,
+      lineNetAmount: unitNetPrice * item.quantity,
+    });
+  }
+  return lines;
 }
 
 function calculateTotals(lines: OrderLine[]): { vatSummary: VatSummaryLine[]; totals: InvoiceData["totals"] } {
@@ -373,6 +527,35 @@ async function resolveShipment(
     dispatchNotificationCreatedAt: shipment.dispatchNotificationCreatedAt ?? shipment.createdAt,
     incoterms: shipment.incoterms ?? null,
     packageId: shipment.packageId ?? null,
+    createdAt: shipment.createdAt,
+  };
+}
+
+async function ensureShipmentDocFields(shipment: {
+  id: string;
+  shipmentId: string;
+  dispatchNotificationId?: string | null;
+  dispatchNotificationCreatedAt?: Date | null;
+  incoterms?: string | null;
+  packageId?: string | null;
+  createdAt: Date;
+  order: GalaxusOrder;
+}) {
+  const dispatchNotificationId = shipment.dispatchNotificationId ?? null;
+  const dispatchNotificationCreatedAt = shipment.dispatchNotificationCreatedAt ?? null;
+  const packageId = shipment.packageId ?? null;
+
+  if (!dispatchNotificationId || !dispatchNotificationCreatedAt || !packageId) {
+    throw new Error("Shipment is missing SSCC or delivery note fields");
+  }
+
+  return {
+    id: shipment.id,
+    shipmentId: shipment.shipmentId,
+    dispatchNotificationId,
+    dispatchNotificationCreatedAt,
+    incoterms: shipment.incoterms ?? null,
+    packageId,
     createdAt: shipment.createdAt,
   };
 }

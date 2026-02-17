@@ -166,18 +166,65 @@ export async function POST(request: Request) {
   try {
     assertSftpConfig();
     const body = await request.json().catch(() => ({}));
-    const lineCount = Math.max(1, Math.min(Number(body?.lineCount ?? 3), 100));
+    const lineCount = Math.max(3, Math.min(Number(body?.lineCount ?? 150), 200));
+
+    const baseWhere = [
+      `vm."status" IN ('MATCHED','SUPPLIER_GTIN','PARTNER_GTIN')`,
+      `vm."gtin" IS NOT NULL`,
+      `sv."stock" > 0`,
+      `sv."price" > 0`,
+      `sv."sizeRaw" IS NOT NULL`,
+    ].join(" AND ");
+
+    const queryIds = async (whereClause: string, limit: number) =>
+      prisma.$queryRawUnsafe<{ id: string }[]>(
+        `SELECT vm."id"
+         FROM "public"."VariantMapping" vm
+         JOIN "public"."SupplierVariant" sv
+           ON sv."supplierVariantId" = vm."supplierVariantId"
+         WHERE ${baseWhere} AND ${whereClause}
+         ORDER BY RANDOM()
+         LIMIT ${limit}`
+      );
+
+    const [trmIds, goldenIds, partnerIds] = await Promise.all([
+      queryIds(`sv."supplierVariantId" ILIKE 'trm:%'`, 1),
+      queryIds(`sv."supplierVariantId" ILIKE 'golden:%'`, 1),
+      queryIds(
+        `sv."supplierVariantId" NOT ILIKE 'trm:%' AND sv."supplierVariantId" NOT ILIKE 'golden:%'`,
+        1
+      ),
+    ]);
+
+    const missingBuckets: string[] = [];
+    if (!trmIds.length) missingBuckets.push("TRM");
+    if (!goldenIds.length) missingBuckets.push("GOLDEN");
+    if (!partnerIds.length) missingBuckets.push("PARTNER");
+    if (missingBuckets.length > 0) {
+      return NextResponse.json(
+        { ok: false, error: `Missing eligible variants for: ${missingBuckets.join(", ")}` },
+        { status: 400 }
+      );
+    }
+
+    const selectedIds = [trmIds[0].id, goldenIds[0].id, partnerIds[0].id];
+    const remaining = Math.max(lineCount - selectedIds.length, 0);
+    if (remaining > 0) {
+      const excluded = selectedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",");
+      const exclusionClause = excluded ? `vm."id" NOT IN (${excluded})` : "TRUE";
+      const extraIds = await queryIds(exclusionClause, remaining);
+      selectedIds.push(...extraIds.map((row) => row.id));
+    }
 
     const mappings = await prisma.variantMapping.findMany({
-      where: { status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] }, gtin: { not: null } },
+      where: { id: { in: selectedIds } },
       include: { supplierVariant: true },
-      orderBy: { updatedAt: "desc" },
-      take: lineCount,
     });
-
-    const validMappings = mappings.filter(
-      (mapping) => mapping.gtin && String(mapping.gtin).trim().length > 0
-    );
+    const mappingById = new Map(mappings.map((mapping) => [mapping.id, mapping]));
+    const validMappings = selectedIds
+      .map((id) => mappingById.get(id))
+      .filter((mapping): mapping is (typeof mappings)[number] => Boolean(mapping))
+      .filter((mapping) => mapping.gtin && String(mapping.gtin).trim().length > 0);
 
     if (!validMappings.length) {
       return NextResponse.json(

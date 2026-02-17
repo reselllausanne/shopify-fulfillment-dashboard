@@ -1,5 +1,6 @@
 const SUPPLIER_CODE_MAP: Record<string, string> = {
   golden: "GLD",
+  trm: "TRM",
 };
 
 const PROVIDER_KEY_REGEX = /^[A-Z]{3}$/;

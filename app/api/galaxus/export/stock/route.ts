@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { GALAXUS_FEED_INCLUDE_TRM } from "@/galaxus/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import {
+  buildFeedMappingsWhere,
+  createTrmFeedExclusionStats,
+  recordTrmFeedExclusion,
+  totalTrmFeedExclusions,
+  trmFeedExclusionsHeaderValue,
+} from "@/galaxus/exports/trmExport";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,9 +31,7 @@ export async function GET(request: Request) {
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
 
-  const whereSupplier = supplier
-    ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
-    : {};
+  const mappingsWhere = buildFeedMappingsWhere(supplier, all);
 
   const headers = [
     "ProviderKey",
@@ -41,6 +47,7 @@ export async function GET(request: Request) {
   ];
 
   const rows: ExportRow[] = [];
+  const trmExclusionStats = createTrmFeedExclusionStats();
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
@@ -70,9 +77,7 @@ export async function GET(request: Request) {
   do {
     const mappings = await prismaAny.variantMapping.findMany({
       where: {
-        status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
-        gtin: { not: null },
-        ...whereSupplier,
+        ...mappingsWhere,
       },
       include: {
         supplierVariant: true,
@@ -83,7 +88,14 @@ export async function GET(request: Request) {
       skip: currentOffset,
     });
     lastBatch = mappings.length;
-    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides);
+    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+      includeTrm: GALAXUS_FEED_INCLUDE_TRM,
+      onExclude: (payload) => {
+        if (payload.supplierKey === "trm") {
+          recordTrmFeedExclusion(trmExclusionStats, payload.reason);
+        }
+      },
+    });
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
@@ -110,6 +122,10 @@ export async function GET(request: Request) {
 
     const csv = toCsv(headers, rows);
     const filename = `galaxus-stock-${supplier ?? "all"}-${Date.now()}.csv`;
+    const trmExcluded = totalTrmFeedExclusions(trmExclusionStats);
+    if (trmExcluded > 0) {
+      console.info("[GALAXUS][EXPORT][STOCK][TRM] Excluded rows", trmExclusionStats);
+    }
 
     return new NextResponse(csv, {
       headers: {
@@ -117,6 +133,7 @@ export async function GET(request: Request) {
         "Content-Disposition": `attachment; filename="${filename}"`,
         "X-Total-Rows": rows.length.toString(),
         "X-Offset": offset.toString(),
+        "X-TRM-Excluded": trmFeedExclusionsHeaderValue(trmExclusionStats),
       },
     });
   } catch (error: any) {
