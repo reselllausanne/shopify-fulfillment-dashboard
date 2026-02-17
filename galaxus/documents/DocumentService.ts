@@ -112,13 +112,14 @@ export class DocumentService {
     if (!shipment || !shipment.order) {
       throw new Error(`Shipment not found: ${options.shipmentId}`);
     }
+    const order = shipment.order;
 
     const types = options.types ?? [DocumentType.DELIVERY_NOTE, DocumentType.LABEL];
     const storage = getStorageAdapter();
     const results = [];
-    const allDocuments = [...shipment.order.documents, ...shipment.documents];
-    const shipmentState = await ensureShipmentDocFields(shipment);
-    const deliveryLines = buildShipmentOrderLines(shipment.order.lines, shipment.items);
+    const allDocuments = [...order.documents, ...shipment.documents];
+    const shipmentState = await ensureShipmentDocFields({ ...shipment, order });
+    const deliveryLines = buildShipmentOrderLines(order.lines, shipment.items);
 
     for (const type of types) {
       let html = "";
@@ -126,11 +127,11 @@ export class DocumentService {
       let showPageNumbers = false;
 
       if (type === DocumentType.DELIVERY_NOTE) {
-        const data = buildDeliveryNoteDataFromLines(shipment.order, deliveryLines, shipmentState);
+        const data = buildDeliveryNoteDataFromLines(order, deliveryLines, shipmentState);
         html = renderDeliveryNoteHtml(data);
         showPageNumbers = true;
       } else if (type === DocumentType.LABEL) {
-        const data = await buildLabelData(shipment.order, shipmentState);
+        const data = await buildLabelData(order, shipmentState);
         html = renderLabelHtml(data);
         pdfFormat = "A6";
       } else {
@@ -140,12 +141,12 @@ export class DocumentService {
       const pdfBuffer = await renderPdfFromHtml({ html, format: pdfFormat, showPageNumbers });
       const checksum = crypto.createHash("sha256").update(pdfBuffer).digest("hex");
       const version = getNextVersion(allDocuments, type);
-      const key = `galaxus/${shipment.order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
+      const key = `galaxus/${order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
       const stored = await storage.uploadPdf(key, pdfBuffer);
 
       const document = await prisma.document.create({
         data: {
-          orderId: shipment.order.id,
+          orderId: order.id,
           shipmentId: shipment.id,
           type,
           version,

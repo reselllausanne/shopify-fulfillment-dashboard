@@ -741,6 +741,7 @@ model Shipment {
   documents      Document[]
   items          ShipmentItem[]
   supplierOrders SupplierOrder[]
+  ediFiles       GalaxusEdiFile[]
 
   @@index([orderId])
   @@index([providerKey])
