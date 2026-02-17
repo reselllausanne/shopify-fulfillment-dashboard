@@ -291,32 +291,42 @@ function buildDeliveryNoteData(
     createdAt: new Date(),
     deliveryNoteNumber: deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
     incoterms: incoterms ?? null,
-    buyer: {
-      name:
-        order.recipientName ??
-        (order.deliveryType === "warehouse_delivery" ? order.customerName : null) ??
-        "",
-      line1:
-        order.recipientAddress1 ??
-        (order.deliveryType === "warehouse_delivery" ? order.customerAddress1 : null) ??
-        "",
-      line2:
-        order.recipientAddress2 ??
-        (order.deliveryType === "warehouse_delivery" ? order.customerAddress2 : null) ??
-        null,
-      postalCode:
-        order.recipientPostalCode ??
-        (order.deliveryType === "warehouse_delivery" ? order.customerPostalCode : null) ??
-        "",
-      city:
-        order.recipientCity ??
-        (order.deliveryType === "warehouse_delivery" ? order.customerCity : null) ??
-        "",
-      country:
-        order.recipientCountry ??
-        (order.deliveryType === "warehouse_delivery" ? order.customerCountry : null) ??
-        "",
-    },
+    buyer: (() => {
+      const hasRecipient =
+        Boolean(order.recipientName) ||
+        Boolean(order.recipientAddress1) ||
+        Boolean(order.recipientPostalCode) ||
+        Boolean(order.recipientCity) ||
+        Boolean(order.recipientCountry);
+      if (hasRecipient) {
+        return {
+          name: order.recipientName ?? "",
+          line1: order.recipientAddress1 ?? "",
+          line2: order.recipientAddress2 ?? null,
+          postalCode: order.recipientPostalCode ?? "",
+          city: order.recipientCity ?? "",
+          country: order.recipientCountry ?? "",
+        };
+      }
+      if (order.deliveryType === "warehouse_delivery") {
+        return {
+          name: order.customerName ?? "",
+          line1: order.customerAddress1 ?? "",
+          line2: order.customerAddress2 ?? null,
+          postalCode: order.customerPostalCode ?? "",
+          city: order.customerCity ?? "",
+          country: order.customerCountry ?? "",
+        };
+      }
+      return {
+        name: "",
+        line1: "",
+        line2: null,
+        postalCode: "",
+        city: "",
+        country: "",
+      };
+    })(),
     supplier: {
       name: GALAXUS_SUPPLIER_NAME,
       addressLines: GALAXUS_SUPPLIER_ADDRESS_LINES,
