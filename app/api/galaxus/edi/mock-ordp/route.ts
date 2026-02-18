@@ -240,7 +240,9 @@ export async function POST(request: Request) {
       const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? `PK-${index + 1}`;
       const priceRaw = supplierVariant?.price ?? 0;
       const unitPrice = Number(priceRaw) || 0;
-      const quantity = 1;
+      const stockRaw = Number(supplierVariant?.stock ?? 0);
+      const stockQty = Number.isFinite(stockRaw) ? Math.max(1, Math.floor(stockRaw)) : 1;
+      const quantity = stockQty > 1 ? stockQty : 1;
       const lineNetAmount = unitPrice * quantity;
       const taxRate = Number.isFinite(mappingAny.vatRate) ? Number(mappingAny.vatRate) : defaultVatRate;
       const taxAmount = (unitPrice * taxRate) / 100;

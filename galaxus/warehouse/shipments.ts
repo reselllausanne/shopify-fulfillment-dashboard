@@ -67,7 +67,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
 
   const groupedLines = await groupLinesByProviderKey(orderAny.lines);
   const shipments: Shipment[] = [];
-  const shippedAt = options.shippedAt ?? new Date();
+  const shippedAt = options.shippedAt ?? null;
   const storage = getStorageAdapter();
   let shipmentIndex = 0;
 

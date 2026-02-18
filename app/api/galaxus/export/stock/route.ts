@@ -47,6 +47,7 @@ export async function GET(request: Request) {
   ];
 
   const rows: ExportRow[] = [];
+  const skippedProviderKeys: string[] = [];
   const trmExclusionStats = createTrmFeedExclusionStats();
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
@@ -60,6 +61,15 @@ export async function GET(request: Request) {
   const toNumber = (value: any) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+  };
+  const parsePrice = (value: unknown): number | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
   };
   const resolvePartnerOverrides = (key: string | null) => {
     if (!key) return null;
@@ -104,6 +114,11 @@ export async function GET(request: Request) {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;
+    const buyPrice = parsePrice(variant?.price);
+    if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
+      if (providerKey) skippedProviderKeys.push(providerKey);
+      return;
+    }
     const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
 
     rows.push({
@@ -125,6 +140,12 @@ export async function GET(request: Request) {
     const trmExcluded = totalTrmFeedExclusions(trmExclusionStats);
     if (trmExcluded > 0) {
       console.info("[GALAXUS][EXPORT][STOCK][TRM] Excluded rows", trmExclusionStats);
+    }
+    if (skippedProviderKeys.length > 0) {
+      console.info("[GALAXUS][EXPORT][STOCK] Skipped invalid price", {
+        count: skippedProviderKeys.length,
+        providerKeys: Array.from(new Set(skippedProviderKeys)),
+      });
     }
 
     return new NextResponse(csv, {

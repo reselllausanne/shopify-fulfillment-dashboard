@@ -52,6 +52,7 @@ export async function GET(request: Request) {
   const trmExclusionStats = createTrmFeedExclusionStats();
 
   const rows: ExportRow[] = [];
+  const skippedProviderKeys: string[] = [];
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
@@ -125,6 +126,7 @@ export async function GET(request: Request) {
 
     const buyPrice = parseNumber(variant?.price);
     if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
+      if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
     const computedPrice = computeGalaxusSellPriceExVat({
@@ -166,6 +168,12 @@ export async function GET(request: Request) {
   const trmExcluded = totalTrmFeedExclusions(trmExclusionStats);
   if (trmExcluded > 0) {
     console.info("[GALAXUS][EXPORT][OFFER][TRM] Excluded rows", trmExclusionStats);
+  }
+  if (skippedProviderKeys.length > 0) {
+    console.info("[GALAXUS][EXPORT][OFFER] Skipped invalid price", {
+      count: skippedProviderKeys.length,
+      providerKeys: Array.from(new Set(skippedProviderKeys)),
+    });
   }
 
   return new NextResponse(csv, {
