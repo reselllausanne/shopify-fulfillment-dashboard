@@ -124,6 +124,8 @@ export async function GET(request: Request) {
     const supplierKey = String(variant?.supplierVariantId ?? "").split(":")[0] || "";
     const overrides = resolvePricingOverrides(resolvePartnerOverrides(supplierKey));
 
+    const providerKey =
+      buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? mapping?.providerKey ?? "";
     const buyPrice = parseNumber(variant?.price);
     if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);
@@ -141,9 +143,6 @@ export async function GET(request: Request) {
     const vatRate = overrides.vatRate ?? vatRateDefault;
     const rrp = parseNumber(product?.retailPrice);
     const rrpAdjusted = rrp ? (rrp + 30).toFixed(2) : "";
-    const providerKey =
-      buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? mapping?.providerKey ?? "";
-
     if (!providerKey || !price) continue;
 
     if (isMerchant) {

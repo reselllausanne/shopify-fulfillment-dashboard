@@ -264,12 +264,12 @@ export async function GET(request: Request) {
     const mapping = candidate.mapping;
     const supplierVariant = candidate.variant as any;
     const product = candidate.product as any;
+    const providerKey = candidate.providerKey ?? "";
     const buyPrice = parsePrice(supplierVariant?.price);
     if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       return;
     }
-    const providerKey = candidate.providerKey ?? "";
     const supplierName = sanitizeText(
       supplierVariant?.supplierProductName ?? supplierVariant?.productName ?? ""
     );
