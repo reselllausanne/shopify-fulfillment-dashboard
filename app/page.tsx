@@ -27,7 +27,32 @@ export default function Home() {
     router.push("/login");
   };
 
-  const [token, setToken] = useState("");
+  const [stockxToken, setStockxToken] = useState("");
+  const normalizeStockxTokenInput = (value: string) => {
+    if (!value) return "";
+    let token = String(value).trim();
+    try {
+      const parsed = JSON.parse(token) as Record<string, any>;
+      const extracted =
+        parsed?.value ||
+        parsed?.token ||
+        parsed?.accessToken ||
+        parsed?.access_token ||
+        parsed?.authToken;
+      if (typeof extracted === "string" && extracted.trim()) {
+        token = extracted.trim();
+      }
+    } catch {
+      // not JSON
+    }
+    token = token.replace(/^authorization:\s*/i, "");
+    token = token.replace(/^bearer\s+/i, "");
+    token = token.replace(/^"+|"+$/g, "");
+    return token.trim();
+  };
+
+  const [goatCookie, setGoatCookie] = useState("");
+  const [goatCsrfToken, setGoatCsrfToken] = useState("");
   const [saveToken, setSaveToken] = useState(false);
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [variables, setVariables] = useState(JSON.stringify(DEFAULT_VARIABLES, null, 2));
@@ -71,6 +96,9 @@ export default function Home() {
   } | null>(null);
   const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
   const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
+  const [goatDebugLoading, setGoatDebugLoading] = useState(false);
+  const [goatDebugResult, setGoatDebugResult] = useState<string | null>(null);
+  const [stockxLoginLoading, setStockxLoginLoading] = useState(false);
 
   const loadFromDB = async () => {
     setDbLoading(true);
@@ -216,23 +244,31 @@ export default function Home() {
   const [exchangeOrderName, setExchangeOrderName] = useState("");
   const [exchangeOrderLoading, setExchangeOrderLoading] = useState(false);
 
-  // Load token from localStorage on mount
+  // Load credentials from localStorage on mount
   useEffect(() => {
-    const savedToken = localStorage.getItem("supplier_token");
-    if (savedToken) {
-      setToken(savedToken);
+    const savedStockx = localStorage.getItem("supplier_stockx_token");
+    const savedGoatCookie = localStorage.getItem("supplier_goat_cookie");
+    const savedGoatCsrf = localStorage.getItem("supplier_goat_csrf");
+    if (savedStockx || savedGoatCookie || savedGoatCsrf) {
+      setStockxToken(normalizeStockxTokenInput(savedStockx || ""));
+      setGoatCookie(savedGoatCookie || "");
+      setGoatCsrfToken(savedGoatCsrf || "");
       setSaveToken(true);
     }
   }, []);
 
-  // Save/remove token from localStorage
+  // Save/remove credentials from localStorage
   useEffect(() => {
-    if (saveToken && token) {
-      localStorage.setItem("supplier_token", token);
+    if (saveToken) {
+      localStorage.setItem("supplier_stockx_token", normalizeStockxTokenInput(stockxToken));
+      localStorage.setItem("supplier_goat_cookie", goatCookie);
+      localStorage.setItem("supplier_goat_csrf", goatCsrfToken);
     } else {
-      localStorage.removeItem("supplier_token");
+      localStorage.removeItem("supplier_stockx_token");
+      localStorage.removeItem("supplier_goat_cookie");
+      localStorage.removeItem("supplier_goat_csrf");
     }
-  }, [saveToken, token]);
+  }, [saveToken, stockxToken, goatCookie, goatCsrfToken]);
 
   useEffect(() => {
     loadTrackingAlert();
@@ -249,7 +285,7 @@ export default function Home() {
 
   const handleFetchFirstPage = async () => {
     await fetchPage({
-      token,
+      token: stockxToken,
       query,
       variablesJSON: variables,
       stateFilter,
@@ -261,7 +297,7 @@ export default function Home() {
   const handleFetchNextPage = async () => {
     if (pageInfo?.endCursor && pageInfo.hasNextPage) {
       await fetchPage({
-        token,
+        token: stockxToken,
         query,
         variablesJSON: variables,
         stateFilter,
@@ -275,15 +311,17 @@ export default function Home() {
 
   const handleFetchAllPagesWrapper = async () => {
     await handleFetchAllPages({
-      token,
+      token: stockxToken,
       query,
       variablesJSON: variables,
       stateFilter,
+      goatCookie,
+      goatCsrfToken,
     });
   };
 
   const handleFetchAllPricingWrapper = async () => {
-    await fetchAllPricing(token);
+    await fetchAllPricing(stockxToken);
   };
   const handleClearResults = () => {
     setOrders([]);
@@ -292,12 +330,82 @@ export default function Home() {
     setLastErrors([]);
   };
 
+  const handleGoatLogin = async () => {
+    setGoatDebugLoading(true);
+    try {
+      const res = await fetch("/api/goat/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headless: false, includeRaw: false }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        alert(`❌ GOAT login failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      alert(`✅ GOAT session ready. Orders: ${json?.count || 0}`);
+    } catch (error: any) {
+      alert(`❌ GOAT login error: ${error?.message || "Unknown error"}`);
+    } finally {
+      setGoatDebugLoading(false);
+    }
+  };
+
+  const handleGoatDebug = async () => {
+    setGoatDebugLoading(true);
+    setGoatDebugResult(null);
+    try {
+      const res = await fetch("/api/goat/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headless: false, includeRaw: true }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        setGoatDebugResult(JSON.stringify(json, null, 2));
+        return;
+      }
+      setGoatDebugResult(JSON.stringify(json?.rawOrders || json, null, 2));
+    } catch (error: any) {
+      setGoatDebugResult(JSON.stringify({ error: error?.message || "Unknown error" }, null, 2));
+    } finally {
+      setGoatDebugLoading(false);
+    }
+  };
+
+  const handleStockxLogin = async () => {
+    setStockxLoginLoading(true);
+    try {
+      const res = await fetch("/api/stockx/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headless: false, forceLogin: true }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        alert(`❌ StockX login failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      if (json?.token) {
+        setStockxToken(normalizeStockxTokenInput(json.token));
+        setSaveToken(true);
+        alert("✅ StockX token captured and saved");
+      } else {
+        alert("⚠️ StockX login succeeded but no token found");
+      }
+    } catch (error: any) {
+      alert(`❌ StockX login error: ${error?.message || "Unknown error"}`);
+    } finally {
+      setStockxLoginLoading(false);
+    }
+  };
+
   const handleExportCSV = () => {
     exportOrdersToCSV(orders, pricingByOrder);
   };
 
   const fetchPricingForOrderWrapper = async (order: OrderNode) => {
-    await fetchPricingForOrder(order, token);
+    await fetchPricingForOrder(order, stockxToken);
   };
 
   // Sync worker removed from UI (no-op placeholder)
@@ -757,8 +865,12 @@ export default function Home() {
         </div>
 
         <AuthenticationCard
-          token={token}
-          onTokenChange={setToken}
+          stockxToken={stockxToken}
+          onStockxTokenChange={(value) => setStockxToken(normalizeStockxTokenInput(value))}
+          goatCookie={goatCookie}
+          onGoatCookieChange={setGoatCookie}
+          goatCsrfToken={goatCsrfToken}
+          onGoatCsrfTokenChange={setGoatCsrfToken}
           saveToken={saveToken}
           onSaveTokenToggle={setSaveToken}
         />
@@ -779,6 +891,10 @@ export default function Home() {
         onFetchPricing={handleFetchAllPricingWrapper}
           onClear={handleClearResults}
           onExport={handleExportCSV}
+          onGoatLogin={handleGoatLogin}
+          onGoatDebug={handleGoatDebug}
+          onStockxLogin={handleStockxLogin}
+          stockxLoginLoading={stockxLoginLoading}
           loading={loading}
           isFetchingAll={isFetchingAll}
           isEnriching={isEnriching}
@@ -802,6 +918,17 @@ export default function Home() {
         fetchPricingForOrder={fetchPricingForOrderWrapper}
         />
 
+        {goatDebugLoading && (
+          <div className="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+            Loading GOAT debug JSON...
+          </div>
+        )}
+        {goatDebugResult && (
+          <pre className="mt-4 max-h-[60vh] overflow-auto bg-gray-900 text-xs text-white p-3 rounded">
+            {goatDebugResult}
+          </pre>
+        )}
+
         <ManualMatchingOverride
           manualFetchOrder={manualFetchOrder}
           manualFetchLoading={manualFetchLoading}
@@ -812,7 +939,7 @@ export default function Home() {
         <DatabaseAutoSync
           onLoadFromDatabase={loadFromDB}
           dbLoading={dbLoading}
-          token={token}
+          token={stockxToken}
           dbMatches={dbMatches}
           manualOverrideExpanded={manualOverrideExpanded}
           setManualOverrideExpanded={setManualOverrideExpanded}

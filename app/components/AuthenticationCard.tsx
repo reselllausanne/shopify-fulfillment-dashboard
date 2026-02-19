@@ -1,15 +1,23 @@
 import React from "react";
 
 type AuthenticationCardProps = {
-  token: string;
-  onTokenChange: (value: string) => void;
+  stockxToken: string;
+  onStockxTokenChange: (value: string) => void;
+  goatCookie: string;
+  onGoatCookieChange: (value: string) => void;
+  goatCsrfToken: string;
+  onGoatCsrfTokenChange: (value: string) => void;
   saveToken: boolean;
   onSaveTokenToggle: (value: boolean) => void;
 };
 
 export default function AuthenticationCard({
-  token,
-  onTokenChange,
+  stockxToken,
+  onStockxTokenChange,
+  goatCookie,
+  onGoatCookieChange,
+  goatCsrfToken,
+  onGoatCsrfTokenChange,
   saveToken,
   onSaveTokenToggle,
 }: AuthenticationCardProps) {
@@ -18,17 +26,49 @@ export default function AuthenticationCard({
       <h2 className="text-xl font-semibold mb-4">Authentication</h2>
       <div className="space-y-4">
         <div>
-          <label htmlFor="bearerToken" className="block text-sm font-medium text-gray-700 mb-2">
-            Bearer Token
+          <label htmlFor="stockxToken" className="block text-sm font-medium text-gray-700 mb-2">
+            StockX Bearer Token
           </label>
           <input
-            id="bearerToken"
-            name="bearerToken"
+            id="stockxToken"
+            name="stockxToken"
             type="password"
-            value={token}
-            onChange={(e) => onTokenChange(e.target.value)}
+            value={stockxToken}
+            onChange={(e) => onStockxTokenChange(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="Enter your Supplier Pro API token"
+            placeholder="eyJ..."
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label htmlFor="goatCookie" className="block text-sm font-medium text-gray-700 mb-2">
+            GOAT Cookie Header
+          </label>
+          <textarea
+            id="goatCookie"
+            name="goatCookie"
+            value={goatCookie}
+            onChange={(e) => onGoatCookieChange(e.target.value)}
+            rows={4}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-xs"
+            placeholder="OptanonAlertBoxClosed=...; _sneakers_session=...; csrf=..."
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Leave empty to use Playwright login flow (local only).
+          </p>
+        </div>
+        <div>
+          <label htmlFor="goatCsrfToken" className="block text-sm font-medium text-gray-700 mb-2">
+            GOAT X-CSRF-Token
+          </label>
+          <input
+            id="goatCsrfToken"
+            name="goatCsrfToken"
+            type="text"
+            value={goatCsrfToken}
+            onChange={(e) => onGoatCsrfTokenChange(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Tlg5RHmn-_cdxe0K-4RTxgiz86LHrz55pvfA"
             autoComplete="off"
           />
         </div>
@@ -42,7 +82,7 @@ export default function AuthenticationCard({
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label htmlFor="saveToken" className="ml-2 block text-sm text-gray-700">
-            Save token locally (localStorage)
+            Save credentials locally (localStorage)
           </label>
         </div>
       </div>

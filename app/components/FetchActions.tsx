@@ -7,6 +7,10 @@ type FetchActionsProps = {
   onFetchPricing: () => void;
   onClear: () => void;
   onExport: () => void;
+  onGoatLogin: () => void;
+  onGoatDebug: () => void;
+  onStockxLogin: () => void;
+  stockxLoginLoading: boolean;
   loading: boolean;
   isFetchingAll: boolean;
   isEnriching: boolean;
@@ -22,6 +26,10 @@ export default function FetchActions({
   onFetchPricing,
   onClear,
   onExport,
+  onGoatLogin,
+  onGoatDebug,
+  onStockxLogin,
+  stockxLoginLoading,
   loading,
   isFetchingAll,
   isEnriching,
@@ -78,6 +86,27 @@ export default function FetchActions({
           className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
           Export CSV
+        </button>
+        <button
+          onClick={onGoatLogin}
+          disabled={loading || isFetchingAll}
+          className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          🐐 GOAT Login (Playwright)
+        </button>
+        <button
+          onClick={onGoatDebug}
+          disabled={loading || isFetchingAll}
+          className="px-4 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 disabled:bg-gray-200 disabled:cursor-not-allowed"
+        >
+          🐐 GOAT Debug Raw JSON
+        </button>
+        <button
+          onClick={onStockxLogin}
+          disabled={loading || isFetchingAll || stockxLoginLoading}
+          className="px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-800 disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          {stockxLoginLoading ? "🧩 StockX Logging in..." : "🧩 StockX Login (Playwright)"}
         </button>
       </div>
     </div>

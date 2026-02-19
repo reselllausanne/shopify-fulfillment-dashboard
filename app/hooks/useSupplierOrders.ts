@@ -314,6 +314,8 @@ type FetchAllArgs = {
   query: string;
   variablesJSON: string;
   stateFilter: string;
+  goatCookie?: string;
+  goatCsrfToken?: string;
 };
 
 export function useSupplierOrders() {
@@ -328,6 +330,7 @@ export function useSupplierOrders() {
   const [isFetchingAll, setIsFetchingAll] = useState(false);
   const [pricingByOrder, setPricingByOrder] = useState<Record<string, PricingResult | null>>({});
   const [pricingLoading, setPricingLoading] = useState<Record<string, boolean>>({});
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const fetchPage = async ({
     token,
@@ -535,7 +538,74 @@ export function useSupplierOrders() {
     }
   };
 
-  const handleFetchAllPages = async ({ token, query, variablesJSON, stateFilter }: FetchAllArgs) => {
+  const fetchAllGoatOrders = async (goatCookie: string, goatCsrfToken: string) => {
+    const loaded: any[] = [];
+    if (!goatCookie.trim()) {
+      const res = await fetch("/api/goat/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headless: false, includeRaw: false }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json?.orders) {
+        return json.orders;
+      }
+      setLastErrors((prev) => [
+        ...prev,
+        { message: `[GOAT] Playwright: ${json?.error || `HTTP ${res.status}`}` },
+      ]);
+      return [];
+    }
+    let page = 1;
+    const maxPages = 200;
+
+    while (page <= maxPages) {
+      const res = await fetch("/api/goat/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          token: goatCookie,
+          cookie: goatCookie,
+          csrfToken: goatCsrfToken,
+          page,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setLastErrors((prev) => [
+          ...prev,
+          { message: `[GOAT] HTTP ${res.status}: ${err?.error || "Unknown error"}` },
+        ]);
+        break;
+      }
+
+      const json = await res.json();
+      const pageOrders = Array.isArray(json?.orders) ? json.orders : [];
+      if (pageOrders.length === 0) break;
+
+      loaded.push(...pageOrders);
+      page += 1;
+      await sleep(250);
+    }
+
+    const seen = new Set<string>();
+    return loaded.filter((o: any) => {
+      const key = `${o?.provider || "GOAT"}:${o?.orderId || ""}:${o?.orderNumber || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const handleFetchAllPages = async ({
+    token,
+    query,
+    variablesJSON,
+    stateFilter,
+    goatCookie = "",
+    goatCsrfToken = "",
+  }: FetchAllArgs) => {
     setIsFetchingAll(true);
     setIsEnriching(false);
     setOrders([]);
@@ -543,13 +613,18 @@ export function useSupplierOrders() {
     setEnrichedOrders(null);
     setDetailsProgress({ done: 0, total: 0 });
 
-    const allLoadedOrders: OrderNode[] = [];
-    let currentResult = await fetchPage({ token, query, variablesJSON, stateFilter, cursor: null, append: false });
-    if (currentResult) {
-      allLoadedOrders.push(...currentResult.orders);
-    }
+    const allLoadedStockXOrders: OrderNode[] = [];
+    let currentResult = await fetchPage({
+      token,
+      query,
+      variablesJSON,
+      stateFilter,
+      cursor: null,
+      append: false,
+    });
+    if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
     while (currentResult?.pageInfo?.hasNextPage && currentResult?.pageInfo?.endCursor) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await sleep(250);
       currentResult = await fetchPage({
         token,
         query,
@@ -558,22 +633,23 @@ export function useSupplierOrders() {
         cursor: currentResult.pageInfo.endCursor,
         append: true,
       });
-      if (currentResult) {
-        allLoadedOrders.push(...currentResult.orders);
-      }
+      if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
     }
 
-    setIsFetchingAll(false);
+    // Dedicated GOAT endpoint, same button flow.
+    const goatOrders = await fetchAllGoatOrders(goatCookie, goatCsrfToken);
 
-    if (allLoadedOrders.length === 0) {
-      console.error("[ENRICH] ❌ No orders found! Check if fetchPage is working correctly.");
-      alert("❌ No orders to enrich. Please try fetching again.");
+    if (allLoadedStockXOrders.length === 0 && goatOrders.length === 0) {
+      setIsFetchingAll(false);
+      console.error("[FETCH] ❌ No StockX or GOAT orders found.");
+      alert("❌ No orders found from StockX/GOAT. Check credentials and retry.");
       return;
     }
 
+    setIsFetchingAll(false);
     setIsEnriching(true);
-    const total = allLoadedOrders.length;
-    const enriched: any[] = [];
+    const total = allLoadedStockXOrders.length;
+    const enrichedStockX: any[] = [];
     let done = 0;
 
     const fetchOrderDetails = async (node: OrderNode): Promise<any> => {
@@ -682,34 +758,33 @@ export function useSupplierOrders() {
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
       const batchStart = batchIndex * BATCH_SIZE;
       const batchEnd = Math.min(batchStart + BATCH_SIZE, total);
-      const batch = allLoadedOrders.slice(batchStart, batchEnd);
+      const batch = allLoadedStockXOrders.slice(batchStart, batchEnd);
 
       const batchResults = await Promise.all(batch.map((node) => fetchOrderDetails(node)));
 
       for (const result of batchResults) {
-        enriched.push(result.enriched);
+        enrichedStockX.push(result.enriched);
         done++;
         setDetailsProgress({ done, total });
       }
 
       if (batchIndex + 1 < totalBatches) {
-        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+        await sleep(BATCH_DELAY_MS);
       }
     }
 
-    const enrichedIds = enriched.map((o) => o.orderId);
-    const uniqueIds = new Set(enrichedIds);
-    if (uniqueIds.size !== enriched.length) {
-      const seen = new Set<string>();
-      const deduplicated = enriched.filter((o: any) => {
-        if (seen.has(o.orderId)) return false;
-        seen.add(o.orderId);
-        return true;
-      });
-      setEnrichedOrders(deduplicated);
-    } else {
-      setEnrichedOrders(enriched);
-    }
+    const combinedOrders = [...allLoadedStockXOrders, ...(goatOrders as OrderNode[])];
+    setOrders(combinedOrders);
+
+    const combinedEnriched = [...enrichedStockX, ...goatOrders];
+    const seen = new Set<string>();
+    const deduplicated = combinedEnriched.filter((o: any) => {
+      const key = `${o?.provider || "STOCKX"}:${o?.orderId || ""}:${o?.orderNumber || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    setEnrichedOrders(deduplicated);
 
     setIsEnriching(false);
   };

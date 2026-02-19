@@ -16,20 +16,42 @@ export const extractAwbFromTrackingUrl = (trackingUrl: string | null): string | 
   try {
     const url = new URL(trackingUrl);
     const params = url.searchParams;
+    const normalizeAwb = (raw: string | null): string | null => {
+      if (!raw) return null;
+      const first = raw.split(/[,\s|;]+/)[0] || "";
+      const cleaned = first.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+      if (!cleaned) return null;
+      if (/^\d{13,}$/.test(cleaned)) return cleaned.slice(-12);
+      if (/^1Z[0-9A-Z]{16}$/.test(cleaned)) return cleaned;
+      if (/^[A-Z0-9]{8,}$/.test(cleaned)) return cleaned;
+      return null;
+    };
 
-    const paramNames = ["AWB", "awb", "trackingNumber", "tracking_number", "waybill", "consignment", "shipmentNumber"];
+    const paramNames = [
+      "AWB",
+      "awb",
+      "trackingNumber",
+      "tracking_number",
+      "tracknum",
+      "trackNum",
+      "track_number",
+      "waybill",
+      "consignment",
+      "shipmentNumber",
+    ];
     for (const param of paramNames) {
       const value = params.get(param);
-      if (value && value.length >= 8) {
-        const normalized = /^\d{13,}$/.test(value) ? value.slice(-12) : value;
+      const normalized = normalizeAwb(value);
+      if (normalized) {
         console.log(`[AWB] ✅ Extracted from param "${param}": ${normalized}`);
         return normalized;
       }
     }
 
-    const pathMatch = trackingUrl.match(/\/([A-Z0-9]{10,})/);
-    if (pathMatch && pathMatch[1].length >= 8) {
-      const normalized = /^\d{13,}$/.test(pathMatch[1]) ? pathMatch[1].slice(-12) : pathMatch[1];
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    for (const segment of pathSegments) {
+      const normalized = normalizeAwb(segment);
+      if (!normalized) continue;
       console.log(`[AWB] ✅ Extracted from path: ${normalized}`);
       return normalized;
     }
