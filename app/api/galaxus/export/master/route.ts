@@ -250,6 +250,9 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       includeTrm: GALAXUS_FEED_INCLUDE_TRM,
+      keyBy: "providerKey",
+      requireProductName: false,
+      requireImage: false,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
@@ -273,13 +276,18 @@ export async function GET(request: Request) {
     const supplierName = sanitizeText(
       supplierVariant?.supplierProductName ?? supplierVariant?.productName ?? ""
     );
+    const fallbackTitle = sanitizeText(
+      supplierName ||
+        supplierVariant?.supplierSku ||
+        mapping.gtin ||
+        providerKey ||
+        supplierVariant?.supplierVariantId ||
+        ""
+    );
     const supplierBrand = normalizeBrand(
       supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand ?? ""
     );
     const images = pickPrimaryImages(supplierVariant?.images, product?.imageUrl ?? null);
-    if (!supplierName || images.length === 0) {
-      return;
-    }
     if (minimal) {
       rows.push({
         ProviderKey: providerKey,
@@ -296,8 +304,8 @@ export async function GET(request: Request) {
           description: product?.description ?? undefined,
         } as KickDbPayload)
       : null;
-    const title = supplierName;
-    const variantName = supplierName;
+    const title = fallbackTitle;
+    const variantName = fallbackTitle;
     const description = payload?.description ? cleanDescription(payload.description) : "";
 
     const manufacturerBase = sanitizeText(

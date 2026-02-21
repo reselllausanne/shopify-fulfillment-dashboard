@@ -116,7 +116,9 @@ function getChart(brand?: string | null, gender?: string | null, sizeRaw?: strin
   const normalizedGender = normalizeGenderForChart(gender, sizeRaw);
   return (
     FALLBACK_SIZE_CHARTS.find(
-      (entry) => entry.brand === normalizedBrand && entry.gender === normalizedGender
+      (entry) =>
+        entry.brand.toLowerCase() === normalizedBrand.toLowerCase() &&
+        entry.gender === normalizedGender
     ) ?? null
   );
 }
@@ -126,6 +128,7 @@ function normalizeUsSize(value: string): string {
   cleaned = cleaned.replace(/^US\s*M\s*/i, "");
   cleaned = cleaned.replace(/^US\s*W\s*/i, "");
   cleaned = cleaned.replace(/^US\s*/i, "");
+  cleaned = cleaned.replace(/\s*(Y|GS)\b/i, "");
   return cleaned.trim();
 }
 
@@ -154,7 +157,9 @@ function convertUsToEu(usValue: string, context?: SizeMatchContext): string | nu
 }
 
 function inferBrandFromTitle(...titles: Array<string | null | undefined>): string | null {
-  const brandList = Array.from(new Set(FALLBACK_SIZE_CHARTS.map((entry) => entry.brand)));
+  const brandList = Array.from(
+    new Set(FALLBACK_SIZE_CHARTS.map((entry) => entry.brand.toLowerCase()))
+  );
   for (const title of titles) {
     if (!title) continue;
     const lower = title.toLowerCase();
@@ -379,6 +384,9 @@ function sizeMatch(size1: string | null, size2: string | null, context?: SizeMat
 
     // If gender marker precedes numeric size, drop it: "M 9" -> "9", "W10" -> "10"
     normalized = normalized.replace(/^(M|W)\s*(?=\d)/i, "");
+
+    // Drop youth suffix: "5.5Y" -> "5.5", "6GS" -> "6"
+    normalized = normalized.replace(/(Y|GS)$/i, "");
 
     // Remove spaces for final comparison
     normalized = normalized.replace(/\s/g, "");

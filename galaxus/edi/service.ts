@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { createHash, randomUUID } from "crypto";
 import { ingestGalaxusOrders } from "@/galaxus/orders/ingest";
 import { DocumentService, buildInvoiceNumber } from "@/galaxus/documents/DocumentService";
 import { DocumentType } from "@prisma/client";
@@ -184,6 +185,34 @@ export async function sendOutgoingEdi(options: {
 
   const shipment = order.shipments[0] ?? null;
   const results: OutgoingResult[] = [];
+  const runId = randomUUID();
+  const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_OUT_DIR}`;
+
+  const createManifest = async (payload: {
+    exportType: string;
+    filename: string;
+    checksum?: string | null;
+    uploadStatus: string;
+    responseJson?: unknown;
+  }) => {
+    try {
+      await (prisma as any).galaxusExportManifest.create({
+        data: {
+          runId,
+          exportType: payload.exportType,
+          supplierKeys: [],
+          productCount: 0,
+          checksum: payload.checksum ?? null,
+          storagePointer: payload.filename ? `${GALAXUS_SFTP_OUT_DIR.replace(/\/$/, "")}/${payload.filename}` : null,
+          destination,
+          uploadStatus: payload.uploadStatus,
+          responseJson: payload.responseJson ?? undefined,
+        },
+      });
+    } catch {
+      // ignore audit failures
+    }
+  };
 
   const gate = await getSupplierGateForOrder(order.id);
   const lockAll = !gate.ok && (gate.reason ?? "").toLowerCase().includes("unsupported supplier");
@@ -227,6 +256,16 @@ export async function sendOutgoingEdi(options: {
                 shipmentId: res.shipmentId,
               }))
             );
+            for (const delr of delrResults) {
+              if (!delr.filename) continue;
+              await createManifest({
+                exportType: "edi-out",
+                filename: delr.filename,
+                checksum: null,
+                uploadStatus: delr.status,
+                responseJson: { shipmentId: delr.shipmentId, status: delr.status, message: delr.message },
+              });
+            }
             continue;
           }
 
@@ -260,6 +299,7 @@ export async function sendOutgoingEdi(options: {
             const invoiceNo = buildInvoiceNumber(order);
             const filename = buildExpinvFilenameForOrder(order, invoiceNo);
             await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, filename, pdf.content);
+            const checksum = createHash("sha256").update(pdf.content).digest("hex");
             await upsertEdiFile({
               filename,
               direction: "OUT",
@@ -268,12 +308,20 @@ export async function sendOutgoingEdi(options: {
               orderRef: order.galaxusOrderId,
               status: "uploaded",
             });
+            await createManifest({
+              exportType: "edi-out",
+              filename,
+              checksum,
+              uploadStatus: "uploaded",
+              responseJson: { orderId: order.id, docType: type },
+            });
             results.push({ docType: type, filename, status: "uploaded" });
             continue;
           }
 
           const edi = await buildOutgoingXml(type, order, order.lines);
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
+          const checksum = createHash("sha256").update(edi.content).digest("hex");
           await upsertEdiFile({
             filename: edi.filename,
             direction: "OUT",
@@ -281,6 +329,13 @@ export async function sendOutgoingEdi(options: {
             orderId: order.id,
             orderRef: order.galaxusOrderId,
             status: "uploaded",
+          });
+          await createManifest({
+            exportType: "edi-out",
+            filename: edi.filename,
+            checksum,
+            uploadStatus: "uploaded",
+            responseJson: { orderId: order.id, docType: type },
           });
           results.push({ docType: type, filename: edi.filename, status: "uploaded" });
           if (type === "ORDR") {

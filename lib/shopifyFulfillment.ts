@@ -182,6 +182,7 @@ query OrderShippingInfo($orderId: ID!) {
     name
     email
     phone
+    paymentGatewayNames
     shippingAddress {
       firstName
       lastName

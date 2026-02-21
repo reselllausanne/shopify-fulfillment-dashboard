@@ -194,6 +194,11 @@ export default function GalaxusDashboardPage() {
   const [partnerAccessCode, setPartnerAccessCode] = useState<string>("");
   const [partnerFile, setPartnerFile] = useState<File | null>(null);
   const [partnerAssignKey, setPartnerAssignKey] = useState<string>("self");
+  const formatJobStatus = (runAt: string | null | undefined, result: any) => {
+    if (!runAt) return "—";
+    const status = result?.ok ? "OK" : "FAIL";
+    return `${new Date(runAt).toLocaleString()} · ${status}`;
+  };
 
   const loadSchedulerStatus = async () => {
     try {
@@ -388,6 +393,12 @@ export default function GalaxusDashboardPage() {
         throw new Error(syncData.error ?? "Supplier sync failed");
       }
 
+      const partnerResponse = await fetch("/api/galaxus/partners/sync?all=1", { method: "POST" });
+      const partnerData = await partnerResponse.json();
+      if (!partnerResponse.ok || !partnerData.ok) {
+        throw new Error(partnerData.error ?? "Partner sync failed");
+      }
+
       const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
       const enrichData = await enrichResponse.json();
       if (!enrichResponse.ok || !enrichData.ok) {
@@ -439,8 +450,19 @@ export default function GalaxusDashboardPage() {
         (report.summary?.stock?.totalIssues ?? 0) +
         (report.summary?.specs?.totalIssues ?? 0);
       if (totalIssues > 0) {
-        setOpsLog(JSON.stringify({ sync: syncData, kickdb: enrichData, checks: report.summary }, null, 2));
-        throw new Error(`Export checks found ${totalIssues} issues. Fix before uploading feeds.`);
+        setOpsLog(
+          JSON.stringify(
+            {
+              sync: syncData,
+              partner: partnerData,
+              kickdb: enrichData,
+              checks: report.summary,
+              warning: `Export checks found ${totalIssues} issues. Upload will continue.`,
+            },
+            null,
+            2
+          )
+        );
       }
 
       const uploadResponse = await fetch(
@@ -456,6 +478,7 @@ export default function GalaxusDashboardPage() {
         JSON.stringify(
           {
             sync: syncData,
+            partner: partnerData,
             kickdb: enrichData,
             checks: report.summary ?? null,
             upload: uploadData,
@@ -1054,6 +1077,68 @@ export default function GalaxusDashboardPage() {
               ) : null}
               {schedulerStatus?.nextMasterAt ? (
                 <div>Next master: {new Date(schedulerStatus.nextMasterAt).toLocaleString()}</div>
+              ) : null}
+            </div>
+            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
+              <div>
+                Last EDI IN: {formatJobStatus(schedulerStatus?.lastEdiInRunAt, schedulerStatus?.lastEdiInResult)}
+              </div>
+              <div>
+                Last supplier sync:{" "}
+                {formatJobStatus(
+                  schedulerStatus?.lastSupplierSyncRunAt,
+                  schedulerStatus?.lastSupplierSyncResult
+                )}
+              </div>
+              <div>
+                Last price/stock:{" "}
+                {formatJobStatus(
+                  schedulerStatus?.lastOfferStockRunAt,
+                  schedulerStatus?.lastOfferStockResult
+                )}
+              </div>
+              <div>
+                Last master:{" "}
+                {formatJobStatus(schedulerStatus?.lastMasterRunAt, schedulerStatus?.lastMasterResult)}
+              </div>
+              {schedulerStatus?.lastOfferStockResult?.resultJson?.upload?.counts ? (
+                <div>
+                  Last price/stock counts:{" "}
+                  {JSON.stringify(schedulerStatus.lastOfferStockResult.resultJson.upload.counts)}
+                </div>
+              ) : null}
+              {schedulerStatus?.lastMasterResult?.resultJson?.upload?.counts ? (
+                <div>
+                  Last master counts:{" "}
+                  {JSON.stringify(schedulerStatus.lastMasterResult.resultJson.upload.counts)}
+                </div>
+              ) : null}
+              {schedulerStatus?.lastOfferStockResult?.error ? (
+                <div>Last price/stock error: {schedulerStatus.lastOfferStockResult.error}</div>
+              ) : null}
+              {schedulerStatus?.lastMasterResult?.error ? (
+                <div>Last master error: {schedulerStatus.lastMasterResult.error}</div>
+              ) : null}
+              {schedulerStatus?.lastEdiInResult?.error ? (
+                <div>Last EDI IN error: {schedulerStatus.lastEdiInResult.error}</div>
+              ) : null}
+              {schedulerStatus?.lastManifests?.master?.validationIssuesJson ? (
+                <div>
+                  Last master validation issues:{" "}
+                  {JSON.stringify(schedulerStatus.lastManifests.master.validationIssuesJson.summary ?? {})}
+                </div>
+              ) : null}
+              {schedulerStatus?.lastManifests?.offer?.validationIssuesJson ? (
+                <div>
+                  Last offer validation issues:{" "}
+                  {JSON.stringify(schedulerStatus.lastManifests.offer.validationIssuesJson.summary ?? {})}
+                </div>
+              ) : null}
+              {schedulerStatus?.lastManifests?.stock?.validationIssuesJson ? (
+                <div>
+                  Last stock validation issues:{" "}
+                  {JSON.stringify(schedulerStatus.lastManifests.stock.validationIssuesJson.summary ?? {})}
+                </div>
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2">

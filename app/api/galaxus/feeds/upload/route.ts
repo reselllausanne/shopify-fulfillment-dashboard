@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { randomUUID, createHash } from "crypto";
+import { prisma } from "@/app/lib/prisma";
 import {
   GALAXUS_SFTP_HOST,
   GALAXUS_PROVIDER_NAME,
@@ -33,6 +35,27 @@ function normalizeProviderName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase() || "digitecgalaxus";
 }
 
+function hashContent(value: string | Buffer): string {
+  const hash = createHash("sha256");
+  hash.update(value);
+  return hash.digest("hex");
+}
+
+function extractSupplierKeysFromCsv(csv: string): string[] {
+  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length <= 1) return [];
+  const suppliers = new Set<string>();
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+    const first = line.split(",")[0] ?? "";
+    const providerKey = first.replace(/^"|"$/g, "").trim();
+    const supplierKey = providerKey.split("_")[0]?.trim();
+    if (supplierKey) suppliers.add(supplierKey);
+  }
+  return Array.from(suppliers.values()).sort();
+}
+
 function buildFeedFilename(
   type: "product" | "price" | "stock",
   providerName: string,
@@ -47,11 +70,15 @@ function buildFeedFilename(
 }
 
 export async function POST(request: Request) {
+  const runId = randomUUID();
+  const startedAt = new Date();
+  let auditId: string | null = null;
   try {
     assertSftpConfig();
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier");
     const type = (searchParams.get("type") ?? "all").toLowerCase();
+    const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const limitRaw = searchParams.get("limit");
     const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
     const origin = new URL(request.url).origin;
@@ -68,6 +95,17 @@ export async function POST(request: Request) {
     const needsMaster = type === "all" || type === "master";
     const needsStock = type === "all" || type === "stock" || type === "offer-stock";
     const needsOffer = type === "offer" || type === "all" || type === "offer-stock";
+    auditId = (await (prisma as any).galaxusJobRun.create({
+      data: {
+        jobName: "feeds-upload",
+        runId,
+        supplierKey: supplier?.trim() || null,
+        startedAt,
+        finishedAt: startedAt,
+        success: false,
+      },
+    }))?.id ?? null;
+
     const [masterRes, stockRes, offerRes] = await Promise.all([
       needsMaster ? fetch(masterUrl, { cache: "no-store" }) : Promise.resolve(null),
       needsStock ? fetch(stockUrl, { cache: "no-store" }) : Promise.resolve(null),
@@ -96,6 +134,72 @@ export async function POST(request: Request) {
     const masterCount = masterRes ? countCsvRows(masterCsv) : null;
     const stockCount = stockRes ? countCsvRows(stockCsv) : null;
     const offerCount = offerRes ? countCsvRows(offerCsv) : null;
+
+    const validationRes = await fetch(
+      `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`,
+      { cache: "no-store" }
+    ).catch(() => null);
+    const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
+    const report = validationData?.report ?? null;
+    const totalIssues =
+      (report?.summary?.master?.totalIssues ?? 0) +
+      (report?.summary?.stock?.totalIssues ?? 0) +
+      (report?.summary?.specs?.totalIssues ?? 0);
+    if (!force && totalIssues > 0) {
+      const blockedManifests = [];
+      if (needsMaster && masterCsv) {
+        blockedManifests.push({
+          exportType: "master",
+          csv: masterCsv,
+          count: masterCount ?? 0,
+        });
+      }
+      if (needsStock && stockCsv) {
+        blockedManifests.push({
+          exportType: "stock",
+          csv: stockCsv,
+          count: stockCount ?? 0,
+        });
+      }
+      if (needsOffer && offerCsv) {
+        blockedManifests.push({
+          exportType: "offer",
+          csv: offerCsv,
+          count: offerCount ?? 0,
+        });
+      }
+      for (const entry of blockedManifests) {
+        await (prisma as any).galaxusExportManifest.create({
+          data: {
+            runId,
+            exportType: entry.exportType,
+            supplierKeys: extractSupplierKeysFromCsv(entry.csv),
+            productCount: entry.count ?? 0,
+            checksum: hashContent(entry.csv),
+            storagePointer: null,
+            destination: null,
+            uploadStatus: "blocked",
+            responseJson: { error: "validation_failed" },
+            validationIssuesJson: report ?? undefined,
+          },
+        });
+      }
+      if (auditId) {
+        await (prisma as any).galaxusJobRun.update({
+          where: { id: auditId },
+          data: {
+            finishedAt: new Date(),
+            success: false,
+            errorMessage: "Validation failed",
+            resultJson: { validation: report },
+          },
+        });
+      }
+      return NextResponse.json(
+        { ok: false, error: "Validation failed. Fix issues or pass force=1.", report },
+        { status: 409 }
+      );
+    }
     if (needsStock && needsOffer && stockCount !== offerCount) {
       return NextResponse.json(
         {
@@ -132,6 +236,14 @@ export async function POST(request: Request) {
     const offerName = buildFeedFilename("price", providerName, assortmentFile);
 
     const uploads: UploadedFile[] = [];
+    const manifestEntries: Array<{
+      exportType: string;
+      csv: string;
+      count: number | null;
+      name: string;
+      path: string;
+      size: number;
+    }> = [];
 
     await withSftp(
       {
@@ -148,11 +260,27 @@ export async function POST(request: Request) {
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
             size: Buffer.byteLength(masterCsv),
           });
+          manifestEntries.push({
+            exportType: "master",
+            csv: masterCsv,
+            count: masterCount ?? null,
+            name: masterName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
+            size: Buffer.byteLength(masterCsv),
+          });
         }
 
         if (needsStock) {
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, stockName, stockCsv);
           uploads.push({
+            name: stockName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${stockName}`,
+            size: Buffer.byteLength(stockCsv),
+          });
+          manifestEntries.push({
+            exportType: "stock",
+            csv: stockCsv,
+            count: stockCount ?? null,
             name: stockName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${stockName}`,
             size: Buffer.byteLength(stockCsv),
@@ -165,19 +293,46 @@ export async function POST(request: Request) {
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${offerName}`,
             size: Buffer.byteLength(offerCsv),
           });
+          manifestEntries.push({
+            exportType: "offer",
+            csv: offerCsv,
+            count: offerCount ?? null,
+            name: offerName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${offerName}`,
+            size: Buffer.byteLength(offerCsv),
+          });
         }
       }
     );
+
+    const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_FEEDS_DIR}`;
+    for (const entry of manifestEntries) {
+      await (prisma as any).galaxusExportManifest.create({
+        data: {
+          runId,
+          exportType: entry.exportType,
+          supplierKeys: extractSupplierKeysFromCsv(entry.csv),
+          productCount: entry.count ?? 0,
+          checksum: hashContent(entry.csv),
+          storagePointer: entry.path,
+          destination,
+          uploadStatus: "uploaded",
+          responseJson: { filename: entry.name, size: entry.size },
+          validationIssuesJson: report ?? undefined,
+        },
+      });
+    }
 
     const isLocal =
       !GALAXUS_SFTP_HOST ||
       GALAXUS_SFTP_HOST === "localhost" ||
       GALAXUS_SFTP_HOST === "127.0.0.1" ||
       GALAXUS_SFTP_HOST.startsWith("192.168.");
-    return NextResponse.json({
+    const payload = {
       ok: true,
       type,
       limit,
+      runId,
       sftpHost: GALAXUS_SFTP_HOST,
       sftpPort: GALAXUS_SFTP_PORT,
       supplierId: GALAXUS_SUPPLIER_ID,
@@ -194,9 +349,31 @@ export async function POST(request: Request) {
         stock: stockCount,
         offer: offerCount,
       },
-    });
+      validation: report ?? null,
+    };
+    if (auditId) {
+      await (prisma as any).galaxusJobRun.update({
+        where: { id: auditId },
+        data: {
+          finishedAt: new Date(),
+          success: true,
+          resultJson: payload,
+        },
+      });
+    }
+    return NextResponse.json(payload);
   } catch (error: any) {
     console.error("[GALAXUS][FEEDS][UPLOAD] Failed:", error);
+    if (auditId) {
+      await (prisma as any).galaxusJobRun.update({
+        where: { id: auditId },
+        data: {
+          finishedAt: new Date(),
+          success: false,
+          errorMessage: error?.message ?? "Upload failed.",
+        },
+      });
+    }
     return NextResponse.json(
       { ok: false, error: error?.message ?? "Upload failed." },
       { status: 500 }

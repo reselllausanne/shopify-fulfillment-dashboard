@@ -145,6 +145,10 @@ export default function ScanPage() {
         };
         return [entry, ...prev].slice(0, 20);
       });
+
+      if (ENABLE_FULFILLMENT && data.ok && data.match) {
+        await runFulfillFromScan(data);
+      }
     } catch (err: any) {
       setResult({
         ok: false,
@@ -169,8 +173,8 @@ export default function ScanPage() {
     return `${min}m ${rem.toFixed(0)}s`;
   };
 
-  const handleFulfill = async () => {
-    if (!result?.awb || !result?.match) return;
+  const runFulfillFromScan = async (scan: ScanResult) => {
+    if (!scan?.awb || !scan?.match) return;
     setFulfillLoading(true);
     setFulfillResult(null);
     try {
@@ -178,8 +182,8 @@ export default function ScanPage() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          awb: result.awb,
-          trackingUrl: result.match?.trackingUrl || null,
+          awb: scan.awb,
+          trackingUrl: scan.match?.trackingUrl || null,
           allowAlreadyFulfilled: forceFulfill,
         }),
       });
@@ -190,6 +194,11 @@ export default function ScanPage() {
     } finally {
       setFulfillLoading(false);
     }
+  };
+
+  const handleFulfill = async () => {
+    if (!result?.awb || !result?.match) return;
+    await runFulfillFromScan(result);
   };
 
 

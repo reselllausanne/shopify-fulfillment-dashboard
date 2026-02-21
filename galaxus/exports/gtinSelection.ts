@@ -64,6 +64,9 @@ type CandidateExcludeReason =
 
 type AccumulateOptions = {
   includeTrm?: boolean;
+  keyBy?: "gtin" | "providerKey";
+  requireProductName?: boolean;
+  requireImage?: boolean;
   onExclude?: (payload: {
     reason: CandidateExcludeReason;
     supplierKey: string | null;
@@ -86,6 +89,9 @@ export function accumulateBestCandidates(
 ) {
   const isMerchant = GALAXUS_PRICE_MODEL === "merchant";
   const includeTrm = options?.includeTrm !== false;
+  const keyBy = options?.keyBy ?? "gtin";
+  const requireProductName = options?.requireProductName !== false;
+  const requireImage = options?.requireImage !== false;
 
   for (const mapping of mappings) {
     const variant = mapping.supplierVariant ?? null;
@@ -136,7 +142,7 @@ export function accumulateBestCandidates(
     }
 
     const productName = variant?.supplierProductName ?? null;
-    if (!productName) {
+    if (requireProductName && !productName) {
       options?.onExclude?.({
         reason: "MISSING_PRODUCT_NAME",
         supplierKey,
@@ -147,7 +153,7 @@ export function accumulateBestCandidates(
     }
 
     const product = mapping.kickdbVariant?.product ?? null;
-    if (!hasPrimaryImage(variant?.images, product?.imageUrl ?? null)) {
+    if (requireImage && !hasPrimaryImage(variant?.images, product?.imageUrl ?? null)) {
       options?.onExclude?.({
         reason: "MISSING_IMAGE",
         supplierKey,
@@ -207,27 +213,28 @@ export function accumulateBestCandidates(
       updatedAt,
     };
 
-    const existing = bestByGtin.get(gtin);
+    const mapKey = keyBy === "providerKey" ? providerKey : gtin;
+    const existing = bestByGtin.get(mapKey);
     if (!existing) {
-      bestByGtin.set(gtin, candidate);
+      bestByGtin.set(mapKey, candidate);
       continue;
     }
 
     const priceDelta = candidate.sellPriceExVat - existing.sellPriceExVat;
     if (priceDelta < 0) {
-      bestByGtin.set(gtin, candidate);
+      bestByGtin.set(mapKey, candidate);
       continue;
     }
     if (priceDelta > 0) continue;
 
     if (candidate.stock > existing.stock) {
-      bestByGtin.set(gtin, candidate);
+      bestByGtin.set(mapKey, candidate);
       continue;
     }
     if (candidate.stock < existing.stock) continue;
 
     if (candidate.updatedAt > existing.updatedAt) {
-      bestByGtin.set(gtin, candidate);
+      bestByGtin.set(mapKey, candidate);
     }
   }
 

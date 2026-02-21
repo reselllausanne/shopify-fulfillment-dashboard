@@ -1,0 +1,585 @@
+{
+  "cookies": [
+    {
+      "name": "browser_data",
+      "value": "aaEVRF8zUnhNVyUyRmtTcllZM2ZpM2dwREo0Qmp2JTJGeEdKNURtN2FxNmtGOGx0aTN6WDl5ZXpqOCUyQnJKZnVCaDRuZU5pU2w5NkRKRlBvNUxiQ2NXMUZIeGVLSVgyQSUzRCUzRA",
+      "domain": ".dnacdn.net",
+      "path": "/",
+      "expires": 1805366525.443,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "uid",
+      "value": "92a63292-644d-43d4-b12c-3ed0408d81aa",
+      "domain": ".criteo.com",
+      "path": "/",
+      "expires": 1805366524.346,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "IDE",
+      "value": "AHWqTUm5KUDJa3anX_veXUh17YovrTv8U9EJqScVu8IJwDY6g3eeuHcY0HUbHT5cFwU",
+      "domain": ".doubleclick.net",
+      "path": "/",
+      "expires": 1806230525.169,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "ad-id",
+      "value": "A1VgBrcacUVbtvbFFwnWsZI",
+      "domain": ".amazon-adsystem.com",
+      "path": "/",
+      "expires": 1790851325.574,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "ad-privacy",
+      "value": "0",
+      "domain": ".amazon-adsystem.com",
+      "path": "/",
+      "expires": 1806230525.574,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_immortal|deviceToken",
+      "value": "eyJhbGciOiJkaXIiLCJjdHkiOiJKV1QiLCJlbmMiOiJBMTI4R0NNIiwidHlwIjoiSldUIn0..G1ZJ8JM9CdkuDUtl.tFYskBAXHEAphRUc_AlSQ1QUVhCTxsc897XXP1vD0GOiueDqEkon1mea8kgxH-NVqdp7RS78Q1D3QK1-hB1xi4kl9J1WrBUQBrqqQsIlEeyW0z3DF1lj-cj50ut5y5Z2KdHt5u_Y8QFGbxUXu6IJKYl9lWxp99gZ1WzCgh2WVgCcf7SlLSkQkUqK4uJlOA2busJsV2-QMn4LCmON-6BgeBljsZ-erWpGNnb8vPcZwS4kY1W-JwtF0m3JFxzXYdOr_Coi67O4BX8WkdLPFyk9mKkDILmX73K2ZolB.vaPaIMXIjsY318_jMHWhkg",
+      "domain": "api.sardine.ai",
+      "path": "/",
+      "expires": 1803206567,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "uuid",
+      "value": "rbos-f9418567-23dc-4887-ae7f-84dc4ba6bec7",
+      "domain": ".getrockerbox.com",
+      "path": "/",
+      "expires": 1774262524.929,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_cfuvid",
+      "value": "ea4Rsnc9RwbsTLdF45Bkkdg44uw60gFND30wl1p.Lsw-1771670522811-0.0.1.1-604800000",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "did",
+      "value": "s%3Av0%3A51bcf72d-0915-457f-9721-3d34085e0f24.6WyE9LJBAcKS9f%2FxD13%2FYeMWOc%2FM4yxE%2BYjxZbfly0A",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": 1803228122.862,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "did_compat",
+      "value": "s%3Av0%3A51bcf72d-0915-457f-9721-3d34085e0f24.6WyE9LJBAcKS9f%2FxD13%2FYeMWOc%2FM4yxE%2BYjxZbfly0A",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": 1803228122.862,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "__spdt",
+      "value": "7c079d27132c4ca890675dfb4d2e5c8d",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": 1803206523,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "pxcts",
+      "value": "f5d636da-0f11-11f1-97dc-48df43370879",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_pxvid",
+      "value": "f5d62cf2-0f11-11f1-97db-1ec3b69d8822",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1803206523,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_tt_enable_cookie",
+      "value": "1",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1779446524,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_ttp",
+      "value": "01KHZWNM8XC1X244PMAEPKPJ2A_.tt.1",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1779446524,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "language_code",
+      "value": "en",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_csrf",
+      "value": "nfSQZ5ed0LQR8-P-1kH1IwsQ",
+      "domain": "accounts.stockx.com",
+      "path": "/usernamepassword/login",
+      "expires": 1772534524.425,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "cto_bundle",
+      "value": "PE1R_18zUnhNVyUyRmtTcllZM2ZpM2dwREo0Qmc4cmlHbW5NcGp6U2NXZXdWYSUyQjVRQ2NwNlVnRzJ5aVFFVndaaEx6RmR4N1V2cTdDaTRCSFRDekJ3SHBqMHQlMkZQWGl6OHdMRWUxN1Rya3VkUG94Z0NBb0ZhUm1Mb2NPc1pJTUJTM1E5QjBCUTRJNjlkSGpsNyUyQnZLUDE2MHJCR3NBeVloWSUyQiUyRmlYZktZelFLWGVhVnprZE0lM0Q",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1805834525,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_pxhd",
+      "value": "eZPOVBXRBRi-f3nzt0qpuMkYDiWCu53YueK82Gse7CYtGYCMdvTfgN-xNJ817NiTBxziAvjy296IApY1xE3MaA==:wsmETC6crWawZsm1tqhvvUAsgjQpt6ThoNufvrCipPpiEfZ0GWOGLYwqi9UT3JTH--8wBSr8dEiOc5ih9Z2WJstV7ZRgUwTok610pTizz5A=",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__cf_bm",
+      "value": "PKuqbldTMZhfEAc_zZdYGO_n8sWrwPZ3Vap.j8G5WaM-1771670546-1.0.1.1-2tz0rTv3u1QvGQekcpK_dDMBCAP8BHRKjDlD92urFuFlwfdmS47nLLyDkja9nPdKJP5o4K7B13B4J8LaPdouSOys5WNJuIAUcOKnkkYPQeCoLb6FPAKeZR9qQX84_oXc",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1771672345.855,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_dd_s",
+      "value": "logs=1&id=60d6a4b6-3136-4567-a4a4-c2256e34182d&created=1771670523452&expire=1771671452035",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": 1771671452,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "ttcsid_C9M4BE3C77U8C02R6C3G",
+      "value": "1771670524190::0x2-3R-JomjSZUlbjUrb.1.1771670552054.1",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1779446552,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "ttcsid",
+      "value": "1771670524190::ZG5pHS81qKmoraoWQb3o.1.1771670552054.0",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1779446552,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_fbp",
+      "value": "fb.1.1771670525075.818385744369452680",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1779446552,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "rbuid",
+      "value": "rbos-f9418567-23dc-4887-ae7f-84dc4ba6bec7",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1774262552,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_gcl_au",
+      "value": "1.1.630244883.1771670524.578920873.1771670538.1771670552",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1779446524,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "auth0",
+      "value": "s%3AJdrW1J9xNhVw9XF-c0RaOQNIFYw6-iB5.opVCcnQ0502lgDwmJBLtv7yZ5qVSccX2nlL1fDYrjQc",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": 1780310563.444,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "auth0_compat",
+      "value": "s%3AJdrW1J9xNhVw9XF-c0RaOQNIFYw6-iB5.opVCcnQ0502lgDwmJBLtv7yZ5qVSccX2nlL1fDYrjQc",
+      "domain": "accounts.stockx.com",
+      "path": "/",
+      "expires": 1780310563.445,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "mfaLogin",
+      "value": "err",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": 1806230563.969,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "stockx_device_id",
+      "value": "cc1edc07-ae5b-4f2d-bdfc-8f32fdd4c886",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1806230563.993,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "stockx_session",
+      "value": "d448a54b-6c93-408a-a829-1fa23df76bb4",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": 1771674164.376,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "token",
+      "value": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Ik5USkNNVVEyUmpBd1JUQXdORFk0TURRelF6SkZRelV4TWpneU5qSTNNRFJGTkRZME0wSTNSQSJ9.eyJodHRwczovL3N0b2NreC5jb20vY3VzdG9tZXJfdXVpZCI6IjIwYjViMThkLWVhODgtMTFlOC04YWQzLTBhOTM4YjE4OTNhZSIsImh0dHBzOi8vc3RvY2t4LmNvbS9nYV9ldmVudCI6IkxvZ2dlZCBJbiIsImh0dHBzOi8vc3RvY2t4LmNvbS9lbWFpbF92ZXJpZmllZCI6ZmFsc2UsImlzcyI6Imh0dHBzOi8vYWNjb3VudHMuc3RvY2t4LmNvbS8iLCJzdWIiOiJhdXRoMHwyMGI1YjE4ZC1lYTg4LTExZTgtOGFkMy0wYTkzOGIxODkzYWUiLCJhdWQiOiJnYXRld2F5LnN0b2NreC5jb20iLCJpYXQiOjE3NzE2NzA1NjMsImV4cCI6MTc3MTcxMzc2MywiYXpwIjoiT1Z4cnQ0VkpxVHg3TElVS2Q2NjFXMER1Vk1wY0ZCeUQifQ.DnOMhWf-jD4bgm6W_z-x74bCq7zKa4Byqsaeg8JgcnyjUvaMl1lfDk8NennmvQCAEQsLZlxiXmdzDsDvpioOCv3F9P0vUIl0A8AEMSFz1xbAU4EneUNw8l7g-GU-NABTo40JCz3Mn_UJlXla2kmQMIn7LQwjqfDVpa0HkukqbPJWRBPbtwrOMJatd9oJUKsmwfm06-45v8nbIKr29ECBkBS6r5wKB97Ug6bk3fysYXsrBO85BWEWATsKjS4kHaXG8HeDyNeHlu2kSpcFirYR-P4awIqyJ-L0VPR3ydQCuo35dzuIZ15Ib2KSQy0LUxaGBT_tLlQ3FlosEEBvLcrSgg",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": 1806230565.398,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "stockx_selected_locale",
+      "value": "fr",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1803206565.399,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "stockx_selected_region",
+      "value": "CH",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "display_location_selector",
+      "value": "true",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "loggedIn",
+      "value": "20b5b18d-ea88-11e8-8ad3-0a938b1893ae",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "stockx_selected_currency",
+      "value": "CHF",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "stockx_session_id",
+      "value": "f74facbe-199e-432a-97d7-3af9b1b5b2f0",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1771672365,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "is_gdpr",
+      "value": "false",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "stockx_ip_region",
+      "value": "CH",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "OptanonConsent",
+      "value": "isGpcEnabled=0&datestamp=Sat+Feb+21+2026+11%3A42%3A46+GMT%2B0100+(Central+European+Standard+Time)&version=202512.1.0&browserGpcFlag=0&isIABGlobal=false&hosts=&consentId=3d8b0a0e-aa80-42c9-ba61-b1b40f56203d&interactionCount=0&isAnonUser=1&landingPath=https%3A%2F%2Fstockx.com%2Ffr-fr&groups=C0004%3A0%2CC0003%3A0%2CC0001%3A1%2CC0002%3A0%2CV2STACK42%3A0",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1803206566,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "cf_clearance",
+      "value": "6mbDnmAnyXrv4TUPjyDDvexB44wCNr5XlBD6OGyg.SI-1771670566-1.2.1.1-all29FHVvDw76FKxPvoY6gkvHqDpo1PN_L.Ve77pIhpPWly0C7vJOzeUo9DzPnetwDpAZmWCfXzQ0kBMc1qMN2jCn6n.3pfZ62sHD3HNNEldiyIiGsN_EV_4KN7JI_5cWiwzDQymchTTf2DTxm.9MVN9xDMkwMDhCVoPn9wIET3EbnNN83PBLrNTBuEOdHQSYkHnapRh2skZRPmFYMG.kLaA6d8JOiMU.wqdisx.sEw",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1803206566.092,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "_px3",
+      "value": "589daaaf0521b4977033ac7353133c4f42c265a47393d31e7f85e641bd337e9c:0HGJT8I0aZfncB/s/lUajsXcIh9av/xktlY6cPQreLxqm5yLzAIld7RtrgjDahVVAfuMSU8bH5nHvlyNDMzFqw==:1000:+kdmuehP7fj+8zxf0eJN0wH4cJZ00olhpHCzfv+YMfL+qn/8fwEcP0J/kv3mCV3G8twc1umx9+a3eaUlIFBg7xi67YE02ZUceIGx2rSFVnvq/pySq75pxzTALYxGTTFvTE8wrx43bFlYVfCniq/6xQzT5eExUFPsKKzXSkc3aNlOmKHiwwfMr1ybH5uFXmnqo9fHEMRTBFwRPuwQK8LWk8/PkUzQMqam4DdnqOeCajQq2XnSjzfpgKLpxFPkFgsC0NADJf1hV3X/2zWGwZ4FArZ9nsz8223LJxrGRzp3olWWFbWhCLffa4j9EwxN/wmx4zpegriMViWVL4nXhY1Z5kTvH6O6jFRmtOsJg5Jn4OQ271mV78sYk9rJ7wX6eQM+wj35ynKghX4+MoCMXVzNWn32ogTuTf8dvCeNK5FbRdwrbBiozdp3oP5KeV/42z2FvkGGw1RX3ElFd96xbdbaN6AB6y+3bPvudMFnO3v9bQeDe3e3GTqb5vLdmL1URhpDVnr4qeSZgxis321t4reKQe+89bEeGQvet0za3PA7eQg=",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1771670896,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_pxde",
+      "value": "bf6d28c1bc87166831813fceb0b48b3b5e726e45f3c99a151d6cf010a4df456b:eyJ0aW1lc3RhbXAiOjE3NzE2NzA1NjY3NzYsImZfa2IiOjAsImZfdHlwZSI6InciLCJmX2lkIjoiOGJiNTUxZTgtODY4ZC00ZjlhLWE2ZGItMTJiMjdiYmY2MmM4IiwiZl9vcmlnaW4iOiJjdXN0b20ifQ==",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1771670896,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "stockx_message_last_seen_inbox",
+      "value": "2026-02-21T10%3A09%3A25.000Z",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_dd_s",
+      "value": "aid=6d186e44-ebe2-42a6-bc6c-6d24b6a7b203&logs=1&id=993dae67-5f8f-458b-9f9d-e335cb1c9f1f&created=1771670565840&expire=1771671466910&rum=0",
+      "domain": "stockx.com",
+      "path": "/",
+      "expires": 1803206566,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Strict"
+    },
+    {
+      "name": "lastRskxRun",
+      "value": "1771670566926",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1806230566.926,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "rskxRunCookie",
+      "value": "0",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1806230566.926,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "rCookie",
+      "value": "e0avayappn8hbcdze36os9mlw6wufj",
+      "domain": ".stockx.com",
+      "path": "/",
+      "expires": 1806230567.692,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "None"
+    },
+    {
+      "name": "_ttp",
+      "value": "39yZyMcUP3aVbAuOIBAYgrQ4NzG",
+      "domain": ".tiktok.com",
+      "path": "/",
+      "expires": 1779446524.699,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://stockx.com",
+      "localStorage": [
+        {
+          "name": "stockx-video-store",
+          "value": "{\"state\":{\"isPlayerReady\":true,\"error\":null},\"version\":0}"
+        },
+        {
+          "name": "rCookie",
+          "value": "{\"value\":\"e0avayappn8hbcdze36os9mlw6wufj\",\"expiration_date\":\"Mon, 21 Feb 2028 10:42:47 GMT\"}"
+        },
+        {
+          "name": "rskxRunCookie",
+          "value": "{\"value\":0,\"expiration_date\":\"Mon, 21 Feb 2028 10:42:46 GMT\"}"
+        },
+        {
+          "name": "lastRskxRun",
+          "value": "{\"value\":1771670566926,\"expiration_date\":\"Mon, 21 Feb 2028 10:42:46 GMT\"}"
+        },
+        {
+          "name": "PX16uD0kOF_px-ff",
+          "value": "eyJjYyI6eyJ0dGwiOjE3NzE2NzA2MjYsInZhbCI6IlUyRnRaVk5wZEdVOVRHRjRPdz09In0sImZlZCI6eyJ0dGwiOjE3NzE2NzA2MjYsInZhbCI6IjUwMDAifSwidWlpNCI6eyJ0dGwiOjE3NzE2NzA2MjYsInZhbCI6IjEifX0="
+        },
+        {
+          "name": "stockx.com-en-us",
+          "value": "{\"values\":{\"cohortId\":\"8da549e7-f4ce-4ec4-b332-35883fb49463\",\"automaticMessages\":[{\"id\":\"pre-identified-user-message\",\"isUser\":false,\"content\":{\"body\":\"</div>Hi! This is Lexie, the StockX Virtual Assistant. How can I help?</div>\"},\"subType\":\"HTML\",\"ordinal\":0,\"date\":\"2026-02-21T10:42:46.182Z\"},{\"id\":\"post-onboarding-quick-reply\",\"isUser\":false,\"content\":{\"body\":\"\",\"options\":[{\"id\":\"01\",\"label\":\"Order Support\"},{\"id\":\"02\",\"label\":\"Account Issues\"},{\"id\":\"03\",\"label\":\"General Questions\"}]},\"subType\":\"QUICK_REPLY_REQUEST\",\"ordinal\":1,\"date\":\"2026-02-21T10:42:46.182Z\"}],\"locationHistory\":[\"CHAT\"],\"user\":{\"id\":null,\"type\":\"AUTHENTICATED\",\"gladlyCustomerId\":null,\"hasOnboarded\":false,\"name\":\"\",\"userId\":null,\"token\":null,\"hasUserIdentityJwtCallback\":true,\"userIdentityJwt\":null,\"identity\":null,\"identityType\":null}},\"updatedAt\":1771670566182}"
+        }
+      ]
+    },
+    {
+      "origin": "https://accounts.stockx.com",
+      "localStorage": [
+        {
+          "name": "PX16uD0kOF_px_fp",
+          "value": "eyJVaTVpS0JkQ1lobz0iOiJkZjdmMTdiMzhmNDk0YjExZjUxM2JhNDMzMjdlNjU0OSIsIkN6ZDdjVTFkZVVFPSI6ImIxMGJlNzE3ZjYxMmJmMGJiYWYxMTBlY2NhOTViYzJmIiwiUlQwMWV3QldPMHM9IjoiTW96aWxsYSIsIk5BeEVTbkpnUlg4PSI6IkFwcGxlIE0xLCBvciBzaW1pbGFyIiwiV0dob2JoMEJiRjQ9IjoiV2ViR0wgMS4wIiwiRUZBZ0ZsWThKQ0k9IjpbIkFOR0xFX2luc3RhbmNlZF9hcnJheXMiLCJFWFRfYmxlbmRfbWlubWF4IiwiRVhUX2NvbG9yX2J1ZmZlcl9oYWxmX2Zsb2F0IiwiRVhUX2RlcHRoX2NsYW1wIiwiRVhUX2Zsb2F0X2JsZW5kIiwiRVhUX2ZyYWdfZGVwdGgiLCJFWFRfc2hhZGVyX3RleHR1cmVfbG9kIiwiRVhUX3NSR0IiLCJFWFRfdGV4dHVyZV9jb21wcmVzc2lvbl9yZ3RjIiwiRVhUX3RleHR1cmVfZmlsdGVyX2FuaXNvdHJvcGljIiwiT0VTX2VsZW1lbnRfaW5kZXhfdWludCIsIk9FU19mYm9fcmVuZGVyX21pcG1hcCIsIk9FU19zdGFuZGFyZF9kZXJpdmF0aXZlcyIsIk9FU190ZXh0dXJlX2Zsb2F0IiwiT0VTX3RleHR1cmVfZmxvYXRfbGluZWFyIiwiT0VTX3RleHR1cmVfaGFsZl9mbG9hdCIsIk9FU190ZXh0dXJlX2hhbGZfZmxvYXRfbGluZWFyIiwiT0VTX3ZlcnRleF9hcnJheV9vYmplY3QiLCJXRUJHTF9jb2xvcl9idWZmZXJfZmxvYXQiLCJXRUJHTF9jb21wcmVzc2VkX3RleHR1cmVfczN0YyIsIldFQkdMX2NvbXByZXNzZWRfdGV4dHVyZV9zM3RjX3NyZ2IiLCJXRUJHTF9kZWJ1Z19yZW5kZXJlcl9pbmZvIiwiV0VCR0xfZGVidWdfc2hhZGVycyIsIldFQkdMX2RlcHRoX3RleHR1cmUiLCJXRUJHTF9kcmF3X2J1ZmZlcnMiLCJXRUJHTF9sb3NlX2NvbnRleHQiLCJXRUJHTF9wcm92b2tpbmdfdmVydGV4Il0sIlQzTS9OUW9iUEE0PSI6WyJbMSwgMV0iLCJbMSwgNjRdIiw4LCJ5ZXMiLDgsMjQsOCwxNiw4MCw4MTkyLDEwMjQsODE5MiwxNiw4MTkyLDMyLDE2LDE2LDEwMjQsIlsxNjM4NCwgMTYzODRdIiwibm9fZnAiLDIzLDEyNywxMjcsMjMsMTI3LDEyNywyMywxMjcsMTI3LDIzLDEyNywxMjcsMjMsMTI3LDEyNywyMywxMjcsMTI3LDIzLDEyNywxMjcsMjMsMTI3LDEyNywyMywxMjcsMTI3LDIzLDEyNywxMjcsMjMsMTI3LDEyNywyMywxMjcsMTI3XSwiTTI4REtYWUZBUms9IjoiQXBwbGUiLCJmeU5QWlRsT1RWST0iOiJBcHBsZSBNMSwgb3Igc2ltaWxhciIsIk1EQkFOblpjUkFBPSI6IldlYkdMIEdMU0wgRVMgMS4wIiwiZUVnSURqMGtEejg9IjoiNTNkNzViNWNkYTYxZTkxODEzM2E5MGE1OWI4YTIxOTAiLCJKRHhVT21GUVV3bz0iOiIxMWIwM2QwMzhkMjVhNGFkMmE5Y2ZlMTFlMWI3ZDIxZCIsIk0yOERLWFVQQmh3PSI6ImYyNzMxYWY0N2YzMzU0YTc5NTM3NDU4ODZhNzY2ZDQ1IiwiUWw1eUdBY3ljaWc9IjoiZmE5ZDA1MTU5MDNhOGJkZWFmYmM3NWE0ZTQ4OTEzNjAiLCJlZ1lLUUR4ckNuVT0iOiIzNS43NTAxMDIyNTU0OTM0IiwiZnlOUFpUcExTRjQ9IjoiNDUxYTg0NDc1MmM5ZTg4NGZmY2FhNzc3YjM2YmJlM2IiLCJBV0Z4SjBRTGNCYz0iOiI5ZjRhZDQzNmM1OTA4MjViNzYzNjEzY2MwMjI3ZmI2ZSIsIk9BaElUbjFpU25nPSI6ImY3NWYzZDUwODJhNGU2NjY2MDViZjNhMjY3MDJkNTVlIiwiY3k5RGFUWkFSbGs9IjoiMDE2YmViMTdkZDU3YTZlNDQ2YjM2MjY1Mjg0YzBjOWMiLCJkeXRIYlRKRFExOD0iOlsiYXV0aDAiLCJpMThuZXh0aWZ5IiwiX19TRUdNRU5UX0lOU1BFQ1RPUl9fIiwic25hcC1wbHVnaW5zRGVzdGluYXRpb24iLCJ0aWt0b2stcGl4ZWxEZXN0aW5hdGlvbiIsImZhY2Vib29rLXBpeGVsRGVwcyIsImZhY2Vib29rLXBpeGVsTG9hZGVyIiwiZ29vZ2xlLWFkd29yZHMtbmV3RGVwcyIsImdvb2dsZS1hZHdvcmRzLW5ld0xvYWRlciIsImdvb2dsZS10YWctbWFuYWdlckRlcHMiLCJnb29nbGUtdGFnLW1hbmFnZXJMb2FkZXIiLCJmYWNlYm9vay1waXhlbEludGVncmF0aW9uIiwiX2ZicSIsImdvb2dsZS1hZHdvcmRzLW5ld0ludGVncmF0aW9uIiwiZ29vZ2xlLXRhZy1tYW5hZ2VySW50ZWdyYXRpb24iXSwiZnlOUFpUbEpRRkU9IjpbIndlYmRyaXZlciJdLCJlV2xKTHp3RlRCZz0iOiJjZDQ4NDMwMGYwZTFmMWU3NjAwOTgzMzU5ZTQ5MTFiNSIsImZXVk5JemdKU0JjPSI6IjVkY2ZmMDYwMWNhYzBlNzQyMjg5NDM1NWRkZDkyYjIwIiwiWkh3VWVpSWNGMEE9IjoxLCJWUTBsQ3hOdEtqOD0iOnRydWUsIk9rWktBSDh0UkRzPSI6dHJ1ZSwiZkVRTUFqa3VDREU9IjpmYWxzZSwiQ2hZNlVFeDhQR1E9IjpmYWxzZSwiVkd4a2FoSUJaMUE9Ijp0cnVlLCJkeXRIYlRKRFNWaz0iOiJtaXNzaW5nIiwiUUFCd1JnVnRkWE09IjpbIl9weEFwcElkIiwiX19TRUdNRU5UX0lOU1BFQ1RPUl9fIiwiXzE2dUQwa09GaGFuZGxlciIsIl9mYnEiLCJfX2NvcmUtanNfc2hhcmVkX18iXSwiVEJSOFVncDFmMkk9IjpbXSwiQ0ZnNEhrMDFQQ1U9IjpbXSwiTERSY01tcFVVZ009IjoiMTc3MTY3MDUyNDgwOSIsIkJ6dDNmVUpRY2tjPSI6ImNyQGh0dHBzOi8vYWNjb3VudHMuc3RvY2t4LmNvbS8xNnVEMGtPRi9pbml0LmpzOjI6MTk3ODRcbmZ1bmNAaHR0cHM6Ly9hY2NvdW50cy5zdG9ja3guY29tLzE2dUQwa09GL2luaXQuanM6MzoxMDk0ODRcbnRlQGh0dHBzOi8vYWNjb3VudHMuc3RvY2t4LmNvbS8xNnVEMGtPRi9pbml0LmpzOjI6MTQ2MzFcbmVwLzwvPEBodHRwczovL2FjY291bnRzLnN0b2NreC5jb20vMTZ1RDBrT0YvaW5pdC5qczozOjExMTAwNVxuIiwiQkZ3MEdrRTNPeUE9Ijp0cnVlLCJWR3hrYWhFQloxND0iOjM3LCJPQWhJVG4xalRIbz0iOiJmZDcxNDliYmZiMzE2Njk5ZWY5MThmYTdiYjc1MTBhOCIsImJqSWVOQ2hZR1E4PSI6ImQ0MWQ4Y2Q5OGYwMGIyMDRlOTgwMDk5OGVjZjg0MjdlIiwiTkF4RVNuSmdSbms9IjoiZmQ3MTQ5YmJmYjMxNjY5OWVmOTE4ZmE3YmI3NTEwYTgiLCJhMWRiVVM0N1ZHVT0iOjMsImlmdiI6MywiaWZ0IjoiMTc3MTY3MDUyNDgwOSIsIk0yOERLWFVPQUJnPSI6MTI4MCwiYVJsWkh5OTNWaXc9Ijo3MjAsIllqNFNPQ2RXRndzPSI6MTI4MCwiZUVnSURqMGlCenM9IjoiMTI4MFg3MjAiLCJGQ3drS2xKR0t4Zz0iOjMwLCJFdzlqQ1ZabVpEZz0iOjMwLCJiakllTkN0YUd3ND0iOjcyMCwiVkd4a2FoSU5aMUU9IjoiNmNhODJjNWIiLCJJVUVSUjJjdEhuWT0iOiJ1bmRlZmluZWQiLCJRQUJ3UmdWdGNudz0iOiJNYWNJbnRlbCIsIkpWMFZXMk16RjIwPSI6Ik1vemlsbGEvNS4wIChNYWNpbnRvc2g7IEludGVsIE1hYyBPUyBYIDEwLjE1OyBydjoxNDYuMCkgR2Vja28vMjAxMDAxMDEgRmlyZWZveC8xNDYuMCIsIkd3ZHJBVjFvWkRJPSI6WyJ1bmRlZmluZWQiXSwiWjF0WFhTSXlVMmc9Ijp0cnVlLCJLVmtaWDI4MkZtZz0iOjEwLCJOQXhFU25KbVNuZz0iOi02MCwiT0FoSVRuNW5TSFE9IjpmYWxzZSwiV0dob2JoNEphMXc9IjoiU2F0IEZlYiAyMSAyMDI2IDExOjQyOjA0IEdNVCswMTAwIChDZW50cmFsIEV1cm9wZWFuIFN0YW5kYXJkIFRpbWUpIiwiR3dkckFWMXJhRE09Ijp0cnVlLCJXaVpxSUJ4S2Jocz0iOiJhZDljYWZhYyIsIkd3ZHJBVjFxYVRFPSI6IjE0OTc4Y2MiLCJiakllTkN0ZUd3RT0iOiJhMzAxZmQxZTJhYzY3YTEyZmE0NWZkZGViNzZlNDg1MSIsIlNsWjZFQTg3ZFNRPSI6bnVsbH0="
+        },
+        {
+          "name": "PX16uD0kOF_px-ff",
+          "value": "eyJjYyI6eyJ0dGwiOjE3NzE2NzA1ODUsInZhbCI6IlUyRnRaVk5wZEdVOVRHRjRPdz09In0sImZwIjp7InR0bCI6MTc3MTY3MDU4NSwidmFsIjoiMSJ9LCJmZWQiOnsidHRsIjoxNzcxNjcwNTg1LCJ2YWwiOiI1MDAwIn0sInVpaTQiOnsidHRsIjoxNzcxNjcwNTg1LCJ2YWwiOiIxIn19"
+        },
+        {
+          "name": "_gcl_ls",
+          "value": "{\"schema\":\"gcl\",\"version\":1,\"gcl_ctr\":{\"value\":{\"value\":0,\"timeouts\":0,\"errors\":0,\"creationTimeMs\":1771670523662},\"expires\":1779446523662}}"
+        },
+        {
+          "name": "spdt-1771670552.069-74",
+          "value": "{\"order\":8,\"pid\":\"d1a071b3828a4b25a571864b711877ad\",\"sid\":\"919a2067cd8f4cbb9172c146c951c8c9\",\"event\":{\"action\":\"aam\",\"time\":1771670552.069,\"group\":null,\"label\":null,\"experiment\":null,\"body\":{\"aam_user_hashed_email\":\"540018f7134bdb1b485116cd6fc2a76773e35985c46e42161645971ba326c98f\",\"aam_trigger\":\"form:form-login\"}}}"
+        },
+        {
+          "name": "RB.uid",
+          "value": "rbos-f9418567-23dc-4887-ae7f-84dc4ba6bec7"
+        },
+        {
+          "name": "cto_bundle",
+          "value": "PE1R_18zUnhNVyUyRmtTcllZM2ZpM2dwREo0Qmc4cmlHbW5NcGp6U2NXZXdWYSUyQjVRQ2NwNlVnRzJ5aVFFVndaaEx6RmR4N1V2cTdDaTRCSFRDekJ3SHBqMHQlMkZQWGl6OHdMRWUxN1Rya3VkUG94Z0NBb0ZhUm1Mb2NPc1pJTUJTM1E5QjBCUTRJNjlkSGpsNyUyQnZLUDE2MHJCR3NBeVloWSUyQiUyRmlYZktZelFLWGVhVnprZE0lM0Q"
+        },
+        {
+          "name": "QM_S",
+          "value": "{\"configReplayEnabled\":false}"
+        },
+        {
+          "name": "PX16uD0kOF_px_hvd",
+          "value": "2c29284851fc429463bd9445110b3043"
+        },
+        {
+          "name": "i18nextLng",
+          "value": "en"
+        }
+      ]
+    },
+    {
+      "origin": "https://api.sardine.ai",
+      "localStorage": [
+        {
+          "name": "_immortal|deviceToken",
+          "value": "eyJhbGciOiJkaXIiLCJjdHkiOiJKV1QiLCJlbmMiOiJBMTI4R0NNIiwidHlwIjoiSldUIn0..G1ZJ8JM9CdkuDUtl.tFYskBAXHEAphRUc_AlSQ1QUVhCTxsc897XXP1vD0GOiueDqEkon1mea8kgxH-NVqdp7RS78Q1D3QK1-hB1xi4kl9J1WrBUQBrqqQsIlEeyW0z3DF1lj-cj50ut5y5Z2KdHt5u_Y8QFGbxUXu6IJKYl9lWxp99gZ1WzCgh2WVgCcf7SlLSkQkUqK4uJlOA2busJsV2-QMn4LCmON-6BgeBljsZ-erWpGNnb8vPcZwS4kY1W-JwtF0m3JFxzXYdOr_Coi67O4BX8WkdLPFyk9mKkDILmX73K2ZolB.vaPaIMXIjsY318_jMHWhkg"
+        }
+      ]
+    }
+  ]
+}

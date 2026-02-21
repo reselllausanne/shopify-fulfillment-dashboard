@@ -100,6 +100,9 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       includeTrm: GALAXUS_FEED_INCLUDE_TRM,
+      keyBy: "providerKey",
+      requireProductName: false,
+      requireImage: false,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);

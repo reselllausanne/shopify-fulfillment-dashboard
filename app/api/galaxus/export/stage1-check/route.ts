@@ -102,7 +102,11 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     total += mappings.length;
-    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides);
+    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+      keyBy: "providerKey",
+      requireProductName: false,
+      requireImage: false,
+    });
 
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);

@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const status = getFeedSchedulerStatus();
+  const status = await getFeedSchedulerStatus();
   return NextResponse.json({ ok: true, status });
 }
 
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   const origin = new URL(request.url).origin;
 
   if (action === "stop") {
-    const status = stopFeedScheduler();
+    const status = await stopFeedScheduler();
     return NextResponse.json({ ok: true, status });
   }
 

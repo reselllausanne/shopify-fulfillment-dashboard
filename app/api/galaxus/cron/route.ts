@@ -50,6 +50,20 @@ export async function GET(request: Request) {
       const supplier = searchParams.get("supplier")?.trim();
       const supplierParam = supplier ? `&supplier=${encodeURIComponent(supplier)}` : "";
       results.feedsMaster = await runJob("feeds-master", async () => {
+        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1`, {
+          cache: "no-store",
+        });
+        const supplierData = await supplierRes.json().catch(() => ({}));
+        if (!supplierRes.ok || !supplierData.ok) {
+          throw new Error(supplierData?.error ?? "Supplier sync failed");
+        }
+        const partnerRes = await fetch(`${origin}/api/galaxus/partners/sync?all=1`, {
+          cache: "no-store",
+        });
+        const partnerData = await partnerRes.json().catch(() => ({}));
+        if (!partnerRes.ok || !partnerData.ok) {
+          throw new Error(partnerData?.error ?? "Partner sync failed");
+        }
         const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=master${supplierParam}`, {
           cache: "no-store",
         });
@@ -57,7 +71,7 @@ export async function GET(request: Request) {
         if (!res.ok || !data.ok) {
           throw new Error(data?.error ?? "Feed master upload failed");
         }
-        return data;
+        return { supplier: supplierData, partner: partnerData, upload: data };
       });
     }
 
@@ -66,6 +80,20 @@ export async function GET(request: Request) {
       const supplier = searchParams.get("supplier")?.trim();
       const supplierParam = supplier ? `&supplier=${encodeURIComponent(supplier)}` : "";
       results.feedsOfferStock = await runJob("feeds-offer-stock", async () => {
+        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1`, {
+          cache: "no-store",
+        });
+        const supplierData = await supplierRes.json().catch(() => ({}));
+        if (!supplierRes.ok || !supplierData.ok) {
+          throw new Error(supplierData?.error ?? "Supplier sync failed");
+        }
+        const partnerRes = await fetch(`${origin}/api/galaxus/partners/sync?all=1`, {
+          cache: "no-store",
+        });
+        const partnerData = await partnerRes.json().catch(() => ({}));
+        if (!partnerRes.ok || !partnerData.ok) {
+          throw new Error(partnerData?.error ?? "Partner sync failed");
+        }
         const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=offer-stock${supplierParam}`, {
           cache: "no-store",
         });
@@ -73,7 +101,7 @@ export async function GET(request: Request) {
         if (!res.ok || !data.ok) {
           throw new Error(data?.error ?? "Feed offer/stock upload failed");
         }
-        return data;
+        return { supplier: supplierData, partner: partnerData, upload: data };
       });
     }
 

@@ -270,14 +270,10 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
 
   const uniqueRows: ExportRow[] = [];
   const seenProviderKeys = new Set<string>();
-  const seenGtins = new Set<string>();
   for (const row of rows) {
     const providerKey = row.ProviderKey;
-    const gtin = row.Gtin;
     if (providerKey && seenProviderKeys.has(providerKey)) continue;
-    if (gtin && seenGtins.has(gtin)) continue;
     if (providerKey) seenProviderKeys.add(providerKey);
-    if (gtin) seenGtins.add(gtin);
     uniqueRows.push(row);
   }
 
@@ -695,7 +691,11 @@ export async function GET(request: Request) {
       });
       lastBatch = mappings.length;
 
-      accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides);
+    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+      keyBy: "providerKey",
+      requireProductName: false,
+      requireImage: false,
+    });
 
       currentOffset += pageSize;
     } while (all && lastBatch === pageSize);

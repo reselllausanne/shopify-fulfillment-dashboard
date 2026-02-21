@@ -852,3 +852,50 @@ model GalaxusEdiFile {
   @@unique([shipmentId, direction, docType])
   @@schema("public")
 }
+
+model GalaxusSchedulerConfig {
+  id         String   @id @default(uuid())
+  enabled    Boolean  @default(false)
+  enabledAt  DateTime?
+  disabledAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model GalaxusJobRun {
+  id           String   @id @default(uuid())
+  jobName      String
+  runId        String?
+  supplierKey  String?
+  startedAt    DateTime
+  finishedAt   DateTime
+  success      Boolean
+  errorMessage String?
+  resultJson   Json?
+  createdAt    DateTime @default(now())
+
+  @@index([jobName, startedAt])
+  @@index([runId])
+  @@schema("public")
+}
+
+model GalaxusExportManifest {
+  id                    String   @id @default(uuid())
+  runId                 String
+  exportType            String
+  supplierKeys          String[]
+  productCount          Int
+  checksum              String?
+  storagePointer        String?
+  destination           String?
+  uploadStatus          String
+  responseJson          Json?
+  validationIssuesJson  Json?
+  createdAt             DateTime @default(now())
+
+  @@index([runId])
+  @@index([exportType])
+  @@schema("public")
+}

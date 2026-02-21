@@ -176,6 +176,13 @@ const getActiveShippingLine = (
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null
 ) => orderInfo?.shippingLines?.find((line) => !line.isRemoved) || null;
 
+function isPowerpayBilling(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null) {
+  const gateways = orderInfo?.paymentGatewayNames ?? [];
+  return gateways.some((gateway) =>
+    gateway.toLowerCase().includes("pay by invoice / pay later (with powerpay)".toLowerCase())
+  );
+}
+
 function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>): SwissPostRecipient {
   const address = orderInfo?.shippingAddress;
   const fullName =
@@ -233,6 +240,7 @@ function buildSwissPostPayload(
   const shippingOption = activeShippingLine
     ? SHIPPING_LINE_TO_SWISSPOST_MAP[activeShippingLine.title]
     : null;
+  const forceSignature = isPowerpayBilling(orderInfo);
   const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
     .split(",")
     .map((value: string) => value.trim())
@@ -242,6 +250,9 @@ function buildSwissPostPayload(
     : basePrzlValues.length
     ? basePrzlValues
     : ["ECO"];
+  if (forceSignature && !przlValues.includes("SI")) {
+    przlValues.unshift("SI");
+  }
 
   return {
     language,
