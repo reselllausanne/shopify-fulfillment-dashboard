@@ -49,6 +49,7 @@ export type OrderShippingInfo = {
   name: string;
   email?: string | null;
   phone?: string | null;
+  paymentGatewayNames?: string[];
   shippingAddress?: {
     firstName?: string | null;
     lastName?: string | null;
@@ -591,6 +592,7 @@ export async function createFulfillment(fulfillment: FulfillmentInput) {
 type OrderShippingGraphQLResponse = {
   order:
     | (OrderShippingInfo & {
+        paymentGatewayNames?: string[];
         shippingLines?: {
           edges?: Array<{
             node?: {

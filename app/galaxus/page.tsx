@@ -427,6 +427,12 @@ export default function GalaxusDashboardPage() {
         throw new Error(syncData.error ?? "Supplier sync failed");
       }
 
+      const partnerResponse = await fetch("/api/galaxus/partners/sync?all=1", { method: "POST" });
+      const partnerData = await partnerResponse.json();
+      if (!partnerResponse.ok || !partnerData.ok) {
+        throw new Error(partnerData.error ?? "Partner sync failed");
+      }
+
       const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
       const enrichData = await enrichResponse.json();
       if (!enrichResponse.ok || !enrichData.ok) {
