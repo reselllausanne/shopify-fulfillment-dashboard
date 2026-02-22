@@ -169,10 +169,13 @@ export default function GalaxusDashboardPage() {
   const [enrichDebugRaw, setEnrichDebugRaw] = useState<string | null>(null);
   const [batchLimit] = useState<number>(100);
   const [batchOffset] = useState<number>(0);
-  const [supplierFilter, setSupplierFilter] = useState<string>("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [exportCheckReport, setExportCheckReport] = useState<string | null>(null);
+  const [variantStats, setVariantStats] = useState<{
+    total: number;
+    withGtin: number;
+    withoutGtin: number;
+  } | null>(null);
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [ordersNextOffset, setOrdersNextOffset] = useState<number | null>(null);
   const [orderProviderKey, setOrderProviderKey] = useState<string>("");
@@ -184,8 +187,6 @@ export default function GalaxusDashboardPage() {
   const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
   const [forceRepack, setForceRepack] = useState<boolean>(true);
-  const [syncMax, setSyncMax] = useState<number>(1000);
-  const [syncAll, setSyncAll] = useState<boolean>(false);
   const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
   const [schedulerBusy, setSchedulerBusy] = useState(false);
   const [enrichSku, setEnrichSku] = useState<string>("");
@@ -217,6 +218,16 @@ export default function GalaxusDashboardPage() {
       });
       const data = await res.json();
       if (data?.ok) setUnassignedCount(data.unassignedCount ?? 0);
+    } catch {
+      // silent
+    }
+  };
+
+  const loadVariantStats = async () => {
+    try {
+      const res = await fetch("/api/galaxus/supplier/variants-stats", { cache: "no-store" });
+      const data = await res.json();
+      if (data?.ok) setVariantStats(data.stats ?? null);
     } catch {
       // silent
     }
@@ -334,7 +345,8 @@ export default function GalaxusDashboardPage() {
 
   useEffect(() => {
     loadSchedulerStatus();
-  loadRoutingSummary();
+    loadRoutingSummary();
+    loadVariantStats();
     const t = setInterval(loadSchedulerStatus, 30000);
     return () => clearInterval(t);
   }, []);
@@ -343,38 +355,22 @@ export default function GalaxusDashboardPage() {
     setBusy("sync");
     setError(null);
     try {
-      const params = new URLSearchParams();
-      if (syncAll) {
-        params.set("all", "1");
-      } else {
-        params.set("max", String(Math.max(syncMax, 1)));
-      }
-      const response = await fetch(`/api/galaxus/supplier/sync?${params.toString()}`, { method: "POST" });
+      const response = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Sync failed");
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
+      // Background enrichment retries (bounded).
+      void fetch("/api/galaxus/kickdb/enrich-missing?limit=50&concurrency=2", { method: "POST" })
+        .then((res) => res.json().catch(() => ({})))
+        .then((payload) => {
+          if (payload?.ok) {
+            setOpsLog(JSON.stringify({ sync: data, enrichMissing: payload }, null, 2));
+          }
+        })
+        .catch(() => {
+          // ignore background errors; sync result already returned
+        });
 
-  const syncTrmSupplier = async () => {
-    setBusy("sync-trm");
-    setError(null);
-    try {
-      const params = new URLSearchParams();
-      if (syncAll) {
-        params.set("all", "1");
-      } else {
-        params.set("max", String(Math.max(syncMax, 1)));
-      }
-      const response = await fetch(`/api/galaxus/supplier/trm/sync?${params.toString()}`, {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "TRM sync failed");
-      setOpsLog(JSON.stringify(data, null, 2));
+      await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -408,6 +404,7 @@ export default function GalaxusDashboardPage() {
       setOpsLog(JSON.stringify({ supplier: syncData, kickdb: enrichData }, null, 2));
       await loadDb(0);
       await loadMappings(0);
+      await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -419,7 +416,6 @@ export default function GalaxusDashboardPage() {
     setBusy("sync-upload");
     setError(null);
     setOpsLog(null);
-    setExportCheckReport(null);
     try {
       const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
       const syncData = await syncResponse.json();
@@ -439,9 +435,8 @@ export default function GalaxusDashboardPage() {
         throw new Error(enrichData.error ?? "KickDB enrich failed");
       }
 
-      const supplierValue = encodeURIComponent(supplierFilter);
       const checkResponse = await fetch(
-        `/api/galaxus/export/check-all?all=1&supplier=${supplierValue}`,
+        "/api/galaxus/export/check-all?all=1",
         { cache: "no-store" }
       );
       const checkData = await checkResponse.json();
@@ -449,7 +444,6 @@ export default function GalaxusDashboardPage() {
         throw new Error(checkData.error ?? "Export checks failed");
       }
       const report = checkData.report ?? {};
-      setExportCheckReport(JSON.stringify(report, null, 2));
 
       const totalIssues =
         (report.summary?.master?.totalIssues ?? 0) +
@@ -472,7 +466,7 @@ export default function GalaxusDashboardPage() {
       }
 
       const uploadResponse = await fetch(
-        `/api/galaxus/feeds/upload?supplier=${supplierValue}&type=offer-stock`,
+        "/api/galaxus/feeds/upload?type=offer-stock",
         { cache: "no-store" }
       );
       const uploadData = await uploadResponse.json();
@@ -495,6 +489,7 @@ export default function GalaxusDashboardPage() {
       );
       await loadDb(0);
       await loadMappings(0);
+      await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -521,6 +516,7 @@ export default function GalaxusDashboardPage() {
       if (!response.ok || !data.ok) throw new Error(data.error ?? "Clear supplier data failed");
       setOpsLog(JSON.stringify(data, null, 2));
       await loadDb(0);
+      await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -542,6 +538,7 @@ export default function GalaxusDashboardPage() {
       if (!data.ok) throw new Error(data.error ?? "Load DB failed");
       setDbItems(data.items ?? []);
       setDbNextOffset(data.nextOffset ?? null);
+      await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -553,9 +550,8 @@ export default function GalaxusDashboardPage() {
     setBusy("db-mappings");
     setError(null);
     try {
-      const supplierValue = encodeURIComponent(supplierFilter);
       const response = await fetch(
-        `/api/galaxus/supplier/mappings?limit=${batchLimit}&offset=${offset}&supplier=${supplierValue}`,
+        `/api/galaxus/supplier/mappings?limit=${batchLimit}&offset=${offset}`,
         { cache: "no-store" }
       );
       const data = await response.json();
@@ -614,42 +610,13 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const exportAllWithChecks = async () => {
-    setBusy("export-check");
-    setError(null);
-    setExportCheckReport(null);
-    const supplierValue = encodeURIComponent(supplierFilter);
-    const exportUrls = [
-      `/api/galaxus/export/master?all=1&supplier=${supplierValue}`,
-      `/api/galaxus/export/stock?all=1&supplier=${supplierValue}`,
-      `/api/galaxus/export/specifications?all=1&supplier=${supplierValue}`,
-    ];
-    exportUrls.forEach((url) => {
-      window.open(url, "_blank", "noopener,noreferrer");
-    });
-    try {
-      const response = await fetch(
-        `/api/galaxus/export/check-all?all=1&supplier=${supplierValue}`,
-        { cache: "no-store" }
-      );
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Export checks failed");
-      setExportCheckReport(JSON.stringify(data.report ?? {}, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const checkStage1 = async () => {
     setBusy("stage1-check");
     setError(null);
     setOpsLog(null);
     try {
-      const supplierValue = encodeURIComponent(supplierFilter);
       const response = await fetch(
-        `/api/galaxus/export/stage1-check?all=1&supplier=${supplierValue}`,
+        "/api/galaxus/export/stage1-check?all=1",
         { cache: "no-store" }
       );
       const data = await response.json();
@@ -667,9 +634,8 @@ export default function GalaxusDashboardPage() {
     setError(null);
     setOpsLog(null);
     try {
-      const supplierValue = encodeURIComponent(supplierFilter);
       const response = await fetch(
-        `/api/galaxus/export/stage2-check?all=1&supplier=${supplierValue}`,
+        "/api/galaxus/export/stage2-check?all=1",
         { cache: "no-store" }
       );
       const data = await response.json();
@@ -817,8 +783,6 @@ export default function GalaxusDashboardPage() {
     setOpsLog(null);
     try {
       const params = new URLSearchParams();
-      const supplierValue = supplierFilter.trim();
-      if (supplierValue) params.set("supplier", supplierValue);
       if (type === "product") params.set("type", "master");
       if (type === "price") params.set("type", "offer");
       if (type === "stock") params.set("type", "stock");
@@ -1275,29 +1239,6 @@ export default function GalaxusDashboardPage() {
           <div className="rounded border bg-gray-50 p-3 space-y-3">
             <div className="text-sm font-medium">Catalog & Feeds</div>
             <div className="flex flex-wrap items-center gap-2">
-              <input
-                className="px-2 py-2 border rounded text-sm w-28"
-                value={supplierFilter}
-                onChange={(event) => setSupplierFilter(event.target.value)}
-                placeholder="Supplier key (optional)"
-              />
-              <input
-                className="px-2 py-2 border rounded text-sm w-28"
-                type="number"
-                min={1}
-                value={syncMax}
-                onChange={(event) => setSyncMax(Number(event.target.value || 0))}
-                disabled={syncAll}
-                placeholder="Max products"
-              />
-              <label className="flex items-center gap-2 text-sm text-gray-600">
-                <input
-                  type="checkbox"
-                  checked={syncAll}
-                  onChange={(event) => setSyncAll(event.target.checked)}
-                />
-                Get all
-              </label>
               <button
                 className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
                 onClick={syncSupplier}
@@ -1305,13 +1246,11 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "sync" ? "Syncing…" : "Sync catalog"}
               </button>
-              <button
-                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
-                onClick={syncTrmSupplier}
-                disabled={busy !== null}
-              >
-                {busy === "sync-trm" ? "Syncing…" : "Sync TRM only"}
-              </button>
+              <div className="text-xs text-gray-500">
+                {variantStats
+                  ? `Mappings: ${variantStats.withGtin} with GTIN · ${variantStats.withoutGtin} without GTIN`
+                  : "Mappings: —"}
+              </div>
               <button
                 className="px-3 py-2 rounded bg-blue-800 text-white disabled:opacity-50"
                 onClick={syncAllData}
@@ -1321,13 +1260,6 @@ export default function GalaxusDashboardPage() {
               </button>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button
-                className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
-                onClick={() => enrichKickDb(false, false)}
-                disabled={busy !== null}
-              >
-                {busy === "enrich" ? "Enriching…" : "Enrich GTIN"}
-              </button>
               <button
                 className="px-3 py-2 rounded bg-green-100 text-green-900 disabled:opacity-50"
                 onClick={() => enrichKickDb(true, true)}
@@ -1363,13 +1295,6 @@ export default function GalaxusDashboardPage() {
                 disabled={busy !== null}
               >
                 {busy === "db-mappings" ? "Loading…" : "Load DB mappings"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
-                onClick={exportAllWithChecks}
-                disabled={busy !== null}
-              >
-                {busy === "export-check" ? "Exporting…" : "Export + checks"}
               </button>
             </div>
             <details className="rounded border bg-white p-3">
@@ -2031,14 +1956,6 @@ export default function GalaxusDashboardPage() {
         </div>
       </details>
 
-      {exportCheckReport && (
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Export Check Report</div>
-          <div className="border rounded bg-gray-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
-            {exportCheckReport}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

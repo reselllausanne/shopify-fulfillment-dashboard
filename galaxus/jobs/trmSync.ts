@@ -3,6 +3,8 @@ import { validateGtin } from "@/app/lib/normalize";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 import { createTrmSupplierClient } from "@/galaxus/supplier/trmClient";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { bulkInsertSupplierVariants, bulkUpdateSupplierVariants, bulkUpsertVariantMappings, chunkArray, createLimiter } from "@/galaxus/jobs/bulkSql";
+import { Prisma } from "@prisma/client";
 
 type TrmSyncOptions = {
   limit?: number;
@@ -19,6 +21,9 @@ type TrmSyncResult = {
   invalidGtinRows: number;
   enrichedRows: number;
   enrichErrors: number;
+  insertedMappings: number;
+  updatedMappings: number;
+  durationMs: number;
 };
 
 function parsePrice(value: unknown): number {
@@ -40,8 +45,8 @@ function normalizeGtin(value: unknown): string | null {
 }
 
 export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
-  const prismaAny = prisma as any;
   const client = createTrmSupplierClient();
+  const startedAt = Date.now();
   const products = await client.fetchProductsFullList();
   const flattened = products.flatMap((product) =>
     (product.variants ?? [])
@@ -74,133 +79,149 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
   let enrichedRows = 0;
   let enrichErrors = 0;
 
-  const missingOrInvalidVariantIds: string[] = [];
+  const now = new Date();
 
-  for (const row of rows) {
-    const now = new Date();
-    const gtin = row.gtin;
-    const hasGtin = Boolean(gtin);
-    const validSupplierGtin = hasGtin && validateGtin(gtin) ? gtin : null;
-    const existing = await prismaAny.supplierVariant.findUnique({
-      where: { supplierVariantId: row.supplierVariantId },
-      select: { supplierVariantId: true },
+  // For TRM, GTIN is NOT volatile. Never overwrite existing GTIN/mapping with null.
+  // Prepare batches with valid GTINs de-duplicated and avoiding existing providerKey+gtin conflicts.
+  const batches = chunkArray(rows, 500);
+
+  let insertedMappings = 0;
+  let updatedMappings = 0;
+
+  for (const batch of batches) {
+    // Build map of gtin -> first supplierVariantId to avoid duplicates in the same batch.
+    const firstByGtin = new Map<string, string>();
+    for (const r of batch) {
+      const g = r.gtin && validateGtin(r.gtin) ? r.gtin : null;
+      if (!g) continue;
+      if (!firstByGtin.has(g)) firstByGtin.set(g, r.supplierVariantId);
+    }
+
+    // Avoid conflicts with existing TRM rows having the same (providerKey, gtin).
+    const gtins = Array.from(firstByGtin.keys());
+    const existingUsed = gtins.length
+      ? await prisma.$queryRaw<Array<{ gtin: string; supplierVariantId: string }>>(
+          Prisma.sql`
+              SELECT "gtin", "supplierVariantId"
+              FROM "public"."SupplierVariant"
+              WHERE "providerKey" = 'TRM'
+                AND "gtin" = ANY(${gtins}::text[])
+            `
+        )
+      : [];
+    const usedGtins = new Set<string>();
+    for (const row of existingUsed) {
+      if (row?.gtin) usedGtins.add(String(row.gtin));
+    }
+
+    const supplierRows = batch.map((r) => {
+      const hasGtin = Boolean(r.gtin);
+      const valid = hasGtin && r.gtin && validateGtin(r.gtin) ? r.gtin : null;
+      if (valid) supplierGtinRows += 1;
+      else if (!hasGtin) missingGtinRows += 1;
+      else invalidGtinRows += 1;
+      const allowThisGtin =
+        valid &&
+        firstByGtin.get(valid) === r.supplierVariantId &&
+        !usedGtins.has(valid);
+
+      return {
+        supplierVariantId: r.supplierVariantId,
+        supplierSku: r.supplierSku,
+        providerKey: "TRM",
+        // Only write supplier GTIN when valid and non-conflicting; never clear.
+        gtin: allowThisGtin ? valid : null,
+        price: r.price,
+        stock: r.stock,
+        sizeRaw: r.sizeRaw,
+        supplierBrand: r.supplierBrand,
+        supplierProductName: r.supplierProductName,
+        images: null,
+        leadTimeDays: null,
+      };
     });
 
-    try {
-      await prismaAny.supplierVariant.upsert({
-        where: { supplierVariantId: row.supplierVariantId },
-        create: {
-          supplierVariantId: row.supplierVariantId,
-          supplierSku: row.supplierSku,
-          providerKey: "TRM",
-          gtin: gtin,
-          price: row.price,
-          stock: row.stock,
-          sizeRaw: row.sizeRaw,
-          supplierBrand: row.supplierBrand,
-          supplierProductName: row.supplierProductName,
-          lastSyncAt: now,
-        },
-        update: {
-          supplierSku: row.supplierSku,
-          providerKey: "TRM",
-          gtin: gtin,
-          price: row.price,
-          stock: row.stock,
-          sizeRaw: row.sizeRaw,
-          supplierBrand: row.supplierBrand,
-          supplierProductName: row.supplierProductName,
-          lastSyncAt: now,
-        },
-      });
-    } catch (error: any) {
-      if (error?.code === "P2002" && validSupplierGtin) {
-        // Keep the row synced but clear duplicate GTIN; candidate selection handles GTIN-based inclusion.
-        await prismaAny.supplierVariant.upsert({
-          where: { supplierVariantId: row.supplierVariantId },
-          create: {
-            supplierVariantId: row.supplierVariantId,
-            supplierSku: row.supplierSku,
-            providerKey: "TRM",
-            gtin: null,
-            price: row.price,
-            stock: row.stock,
-            sizeRaw: row.sizeRaw,
-            supplierBrand: row.supplierBrand,
-            supplierProductName: row.supplierProductName,
-            lastSyncAt: now,
-          },
-          update: {
-            supplierSku: row.supplierSku,
-            providerKey: "TRM",
-            gtin: null,
-            price: row.price,
-            stock: row.stock,
-            sizeRaw: row.sizeRaw,
-            supplierBrand: row.supplierBrand,
-            supplierProductName: row.supplierProductName,
-            lastSyncAt: now,
-          },
-        });
-      } else {
-        throw error;
+    created += await bulkInsertSupplierVariants(supplierRows, now);
+    updated += await bulkUpdateSupplierVariants(supplierRows, now, { updateGtinWhenProvided: true });
+
+    const mappingRows = batch.map((r) => {
+      const gtinRaw = r.gtin ?? null;
+      const valid = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+      if (valid) {
+        return {
+          supplierVariantId: r.supplierVariantId,
+          gtin: valid,
+          providerKey: buildProviderKey(valid, r.supplierVariantId),
+          status: "SUPPLIER_GTIN",
+        };
       }
-    }
+      return {
+        supplierVariantId: r.supplierVariantId,
+        gtin: gtinRaw, // keep raw for diagnostics; do not clear existing mapping gtin
+        providerKey: null,
+        status: "PENDING_GTIN",
+      };
+    });
 
-    if (existing) updated += 1;
-    else created += 1;
-
-    if (validSupplierGtin) {
-      supplierGtinRows += 1;
-      const providerKey = buildProviderKey(validSupplierGtin, row.supplierVariantId);
-      await prismaAny.variantMapping.upsert({
-        where: { supplierVariantId: row.supplierVariantId },
-        create: {
-          supplierVariantId: row.supplierVariantId,
-          gtin: validSupplierGtin,
-          providerKey: providerKey ?? null,
-          status: "SUPPLIER_GTIN",
-        },
-        update: {
-          gtin: validSupplierGtin,
-          providerKey: providerKey ?? null,
-          status: "SUPPLIER_GTIN",
-        },
-      });
-    } else {
-      if (!hasGtin) missingGtinRows += 1;
-      else invalidGtinRows += 1;
-      missingOrInvalidVariantIds.push(row.supplierVariantId);
-      await prismaAny.variantMapping.upsert({
-        where: { supplierVariantId: row.supplierVariantId },
-        create: {
-          supplierVariantId: row.supplierVariantId,
-          gtin: gtin,
-          providerKey: null,
-          status: "PENDING_GTIN",
-        },
-        update: {
-          gtin: gtin,
-          providerKey: null,
-          status: "PENDING_GTIN",
-        },
-      });
-    }
+    // Prevent downgrading existing MATCHED mappings to PENDING_GTIN.
+    const mappingRes = await bulkUpsertVariantMappings(mappingRows, now, {
+      doNotDowngradeFromMatched: true,
+      onlySetPendingIfMissing: true,
+    });
+    insertedMappings += mappingRes.inserted;
+    updatedMappings += mappingRes.updated;
   }
 
+  // Throttled enrichment queue (spreads work across runs).
   if (options.enrichMissingGtin !== false) {
-    for (const supplierVariantId of missingOrInvalidVariantIds) {
-      try {
-        const { results } = await runKickdbEnrich({
-          supplierVariantId,
-          force: true,
-        });
-        enrichedRows += results.length;
-      } catch {
-        enrichErrors += 1;
-      }
-    }
+    const maxEnrichPerRun = 200;
+    const candidates = await prisma.$queryRaw<Array<{ supplierVariantId: string; createdAt: Date }>>(
+      Prisma.sql`
+          SELECT sv."supplierVariantId", sv."createdAt"
+          FROM "public"."SupplierVariant" sv
+          LEFT JOIN "public"."VariantMapping" vm
+            ON vm."supplierVariantId" = sv."supplierVariantId"
+          WHERE sv."supplierVariantId" LIKE 'trm:%'
+            AND sv."gtin" IS NULL
+            AND (vm."gtin" IS NULL OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN','NOT_FOUND'))
+          ORDER BY sv."createdAt" DESC, sv."updatedAt" DESC
+          LIMIT ${maxEnrichPerRun}
+        `
+    );
+
+    const enrichLimit = createLimiter(3);
+    const tasks = candidates.map((c) =>
+      enrichLimit(async () => {
+        try {
+          const isNew = c.createdAt && Date.now() - new Date(c.createdAt).getTime() < 2 * 24 * 60 * 60 * 1000;
+          const { results } = await runKickdbEnrich({
+            supplierVariantId: c.supplierVariantId,
+            force: isNew,
+          });
+          enrichedRows += results.length;
+        } catch {
+          enrichErrors += 1;
+        }
+      })
+    );
+    await Promise.all(tasks);
   }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:trm] done", {
+    fetchedProducts: products.length,
+    processed: rows.length,
+    insertedCount: created,
+    updatedCount: updated,
+    supplierGtinRows,
+    missingGtinRows,
+    invalidGtinRows,
+    insertedMappings,
+    updatedMappings,
+    enrichedRows,
+    enrichErrors,
+    durationMs,
+  });
 
   return {
     processed: rows.length,
@@ -211,6 +232,9 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
     invalidGtinRows,
     enrichedRows,
     enrichErrors,
+    insertedMappings,
+    updatedMappings,
+    durationMs,
   };
 }
 

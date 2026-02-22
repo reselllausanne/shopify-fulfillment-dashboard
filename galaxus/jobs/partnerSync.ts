@@ -1,6 +1,13 @@
 import { prisma } from "@/app/lib/prisma";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
+import { Prisma } from "@prisma/client";
+import {
+  bulkInsertSupplierVariantsByProviderKeyGtin,
+  bulkUpdateSupplierVariantsByProviderKeyGtin,
+  bulkUpsertVariantMappings,
+  chunkArray,
+} from "@/galaxus/jobs/bulkSql";
 
 type PartnerSyncOptions = {
   limit?: number;
@@ -12,6 +19,9 @@ type PartnerSyncResult = {
   created: number;
   updated: number;
   skippedInvalid: number;
+  mappingInserted: number;
+  mappingUpdated: number;
+  durationMs: number;
 };
 
 function buildSupplierVariantId(providerKey: string, sku: string, sizeNormalized: string) {
@@ -22,11 +32,11 @@ function buildSupplierVariantId(providerKey: string, sku: string, sizeNormalized
 }
 
 export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<PartnerSyncResult> {
-  const prismaAny = prisma as any;
   const limit = Math.min(Math.max(options.limit ?? 500, 1), 2000);
   const offset = Math.max(options.offset ?? 0, 0);
+  const startedAt = Date.now();
 
-  const rows = await prismaAny.partnerUploadRow.findMany({
+  const rows = await (prisma as any).partnerUploadRow.findMany({
     where: {
       status: "RESOLVED",
       gtinResolved: { not: null },
@@ -40,6 +50,20 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   let created = 0;
   let updated = 0;
   let skippedInvalid = 0;
+  let mappingInserted = 0;
+  let mappingUpdated = 0;
+
+  const now = new Date();
+  const offers: Array<{
+    providerKey: string;
+    gtin: string;
+    supplierVariantId: string;
+    supplierSku: string;
+    sizeRaw: string;
+    sizeNormalized: string;
+    stock: number;
+    price: number;
+  }> = [];
 
   for (const row of rows) {
     const providerKey = normalizeProviderKey(row.providerKey);
@@ -55,73 +79,83 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
       continue;
     }
     const supplierVariantId = buildSupplierVariantId(providerKey, sku, sizeNormalized);
-    const now = new Date();
-
-    const existing = await prismaAny.supplierVariant.findFirst({
-      where: { providerKey, gtin },
-      select: { supplierVariantId: true },
-    });
-
-    const offer = await prismaAny.supplierVariant.upsert({
-      where: { providerKey_gtin: { providerKey, gtin } },
-      create: {
-        supplierVariantId,
-        supplierSku: sku,
-        providerKey,
-        gtin,
-        sizeRaw: row.sizeRaw,
-        sizeNormalized,
-        stock: row.rawStock,
-        price: row.price,
-        lastSyncAt: now,
-      },
-      update: {
-        supplierSku: sku,
-        providerKey,
-        gtin,
-        sizeRaw: row.sizeRaw,
-        sizeNormalized,
-        stock: row.rawStock,
-        price: row.price,
-        lastSyncAt: now,
-      },
-    });
-
-    if (existing) updated += 1;
-    else created += 1;
-    processed += 1;
-
-    if (offer.supplierVariantId !== supplierVariantId) {
-      const existingMapping = await prismaAny.variantMapping.findUnique({
-        where: { supplierVariantId: offer.supplierVariantId },
-        select: { supplierVariantId: true },
-      });
-      if (existingMapping) {
-        await prismaAny.variantMapping.deleteMany({ where: { supplierVariantId } });
-      } else {
-        await prismaAny.variantMapping.updateMany({
-          where: { supplierVariantId },
-          data: { supplierVariantId: offer.supplierVariantId },
-        });
-      }
-      await prismaAny.supplierVariant.deleteMany({ where: { supplierVariantId } });
-    }
-
-    await prismaAny.variantMapping.upsert({
-      where: { supplierVariantId: offer.supplierVariantId },
-      create: {
-        supplierVariantId: offer.supplierVariantId,
-        gtin,
-        providerKey: `${providerKey}_${gtin}`,
-        status: "PARTNER_GTIN",
-      },
-      update: {
-        gtin,
-        providerKey: `${providerKey}_${gtin}`,
-        status: "PARTNER_GTIN",
-      },
+    offers.push({
+      providerKey,
+      gtin,
+      supplierVariantId,
+      supplierSku: sku,
+      sizeRaw: row.sizeRaw,
+      sizeNormalized,
+      stock: Number(row.rawStock ?? 0),
+      price: Number(row.price ?? 0),
     });
   }
 
-  return { processed, created, updated, skippedInvalid };
+  processed = offers.length;
+
+  for (const batch of chunkArray(offers, 500)) {
+    created += await bulkInsertSupplierVariantsByProviderKeyGtin(
+      batch.map((o) => ({
+        supplierVariantId: o.supplierVariantId,
+        supplierSku: o.supplierSku,
+        providerKey: o.providerKey,
+        gtin: o.gtin,
+        price: o.price,
+        stock: o.stock,
+        sizeRaw: o.sizeRaw,
+        sizeNormalized: o.sizeNormalized,
+      })),
+      now
+    );
+
+    updated += await bulkUpdateSupplierVariantsByProviderKeyGtin(
+      batch.map((o) => ({
+        providerKey: o.providerKey,
+        gtin: o.gtin,
+        supplierSku: o.supplierSku,
+        price: o.price,
+        stock: o.stock,
+        sizeRaw: o.sizeRaw,
+        sizeNormalized: o.sizeNormalized,
+      })),
+      now
+    );
+  }
+
+  // Build mappings by resolving the actual supplierVariantId for each (providerKey, gtin).
+  for (const batch of chunkArray(offers, 500)) {
+    const pairs = batch.map((o) => Prisma.sql`(${o.providerKey}, ${o.gtin})`);
+    const found = await prisma.$queryRaw<Array<{ supplierVariantId: string; providerKey: string; gtin: string }>>(
+      Prisma.sql`
+          SELECT "supplierVariantId", "providerKey", "gtin"
+          FROM "public"."SupplierVariant"
+          WHERE ("providerKey","gtin") IN (${Prisma.join(pairs)})
+        `
+    );
+    const mappingRows = (found ?? []).map((r) => ({
+      supplierVariantId: r.supplierVariantId,
+      gtin: r.gtin,
+      providerKey: `${r.providerKey}_${r.gtin}`,
+      status: "PARTNER_GTIN",
+    }));
+    const res = await bulkUpsertVariantMappings(mappingRows, now, {
+      doNotDowngradeFromMatched: true,
+      onlySetPendingIfMissing: true,
+    });
+    mappingInserted += res.inserted;
+    mappingUpdated += res.updated;
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:partner] done", {
+    processed,
+    insertedCount: created,
+    updatedCount: updated,
+    skippedInvalid,
+    mappingInserted,
+    mappingUpdated,
+    durationMs,
+  });
+
+  return { processed, created, updated, skippedInvalid, mappingInserted, mappingUpdated, durationMs };
 }
