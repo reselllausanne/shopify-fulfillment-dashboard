@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 const SECRET = process.env.TRACKING_PAGE_SECRET || "default-secret";
 const TTL_SECONDS = Number(process.env.TRACKING_PAGE_TTL_SECONDS || 60 * 60); // 1 hour
 
-export function createTrackingToken(orderMatchId: string) {
+function createTrackingToken(orderMatchId: string) {
   const issuedAt = Math.floor(Date.now() / 1000);
   const payload = `${orderMatchId}:${issuedAt}`;
   const signature = crypto

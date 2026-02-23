@@ -43,7 +43,7 @@ export function isSupabaseUrl(storageUrl: string): boolean {
   return storageUrl.startsWith("supabase://");
 }
 
-export function parseSupabaseUrl(storageUrl: string): { bucket: string; key: string } {
+function parseSupabaseUrl(storageUrl: string): { bucket: string; key: string } {
   const withoutPrefix = storageUrl.replace("supabase://", "");
   const [bucket, ...keyParts] = withoutPrefix.split("/");
   if (!bucket || keyParts.length === 0) {

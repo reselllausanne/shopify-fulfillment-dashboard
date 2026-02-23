@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
-import { GALAXUS_FEED_INCLUDE_TRM } from "@/galaxus/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { computeGalaxusSellPriceExVat, getDefaultPricing, resolvePricingOverrides } from "@/galaxus/exports/pricing";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
@@ -53,6 +52,8 @@ export async function GET(request: Request) {
 
   const rows: ExportRow[] = [];
   const skippedProviderKeys: string[] = [];
+  let skippedInvalidPrice = 0;
+  let skippedMissingProviderKey = 0;
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
@@ -106,8 +107,7 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
-      includeTrm: GALAXUS_FEED_INCLUDE_TRM,
-      keyBy: "providerKey",
+      keyBy: "gtin",
       requireProductName: false,
       requireImage: false,
       onExclude: (payload) => {
@@ -119,34 +119,36 @@ export async function GET(request: Request) {
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
-  const candidates = Array.from(bestByGtin.values());
-  for (const candidate of candidates) {
+  const candidates = Array.from(bestByGtin.values()).filter((candidate: any) => {
+    const key = String(candidate?.providerKey ?? "");
+    return Boolean(key);
+  });
+  const seenProviderKeys = new Set<string>();
+  const uniqueCandidates = candidates.filter((candidate: any) => {
+    const key = String(candidate?.providerKey ?? "");
+    if (seenProviderKeys.has(key)) return false;
+    seenProviderKeys.add(key);
+    return true;
+  });
+  for (const candidate of uniqueCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
     const product = candidate.product as any;
-    const supplierKey = String(variant?.supplierVariantId ?? "").split(":")[0] || "";
-    const overrides = resolvePricingOverrides(resolvePartnerOverrides(supplierKey));
-
-    const providerKey =
-      buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? mapping?.providerKey ?? "";
-    const buyPrice = parseNumber(variant?.price);
-    if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
+    const providerKey = candidate.providerKey ?? "";
+    const sellPrice = Number(candidate.sellPriceExVat);
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
+      skippedInvalidPrice += 1;
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
-    const computedPrice = computeGalaxusSellPriceExVat({
-      buyPriceExVatCHF: buyPrice,
-      shippingPerPairCHF: overrides.shippingPerPair,
-      targetNetMargin: overrides.targetMargin,
-      bufferPerPairCHF: overrides.bufferPerPair,
-      roundTo: overrides.roundTo,
-      vatRate: overrides.vatRate,
-    });
-    const price = computedPrice.sellPriceExVatCHF.toFixed(2);
-    const vatRate = overrides.vatRate ?? vatRateDefault;
+    const price = sellPrice.toFixed(2);
+    const vatRate = vatRateDefault;
     const rrp = parseNumber(product?.retailPrice);
     const rrpAdjusted = rrp ? (rrp + 30).toFixed(2) : "";
-    if (!providerKey || !price) continue;
+    if (!providerKey || !price) {
+      if (!providerKey) skippedMissingProviderKey += 1;
+      continue;
+    }
 
     if (isMerchant) {
       rows.push({
@@ -185,6 +187,8 @@ export async function GET(request: Request) {
       "X-Total-Rows": rows.length.toString(),
       "X-Offset": offset.toString(),
       "X-TRM-Excluded": trmFeedExclusionsHeaderValue(trmExclusionStats),
+      "X-Skipped-Invalid-Price": skippedInvalidPrice.toString(),
+      "X-Skipped-Missing-ProviderKey": skippedMissingProviderKey.toString(),
     },
   });
 }

@@ -1,7 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
-import { validateGtin } from "@/app/lib/normalize";
+import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 import { bulkInsertSupplierVariants, bulkUpdateSupplierVariants, bulkUpsertVariantMappings, chunkArray } from "./bulkSql";
 
 type StockSyncResult = {
@@ -25,6 +25,7 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
 
   const now = new Date();
   const rows = slicedItems.map((item) => {
+    const sizeNormalized = normalizeSize(item.sizeRaw ?? null) ?? item.sizeRaw ?? null;
     const supplierGtinRaw = item.sourcePayload?.barcode ?? null;
     const supplierGtin = supplierGtinRaw && validateGtin(supplierGtinRaw) ? supplierGtinRaw : null;
     return {
@@ -35,6 +36,7 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
       price: item.price ?? 0,
       stock: item.stock ?? 0,
       sizeRaw: item.sizeRaw,
+      sizeNormalized,
       supplierBrand: item.sourcePayload.brand_name ?? null,
       supplierProductName: item.sourcePayload.product_name ?? null,
       images: item.images.length ? item.images : null,

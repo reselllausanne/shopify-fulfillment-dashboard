@@ -8,7 +8,7 @@ type SftpConfig = {
   password: string;
 };
 
-export type RemoteFile = {
+type RemoteFile = {
   name: string;
   path: string;
   size: number;

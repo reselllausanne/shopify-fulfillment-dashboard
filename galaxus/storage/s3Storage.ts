@@ -59,7 +59,7 @@ export function isS3Url(storageUrl: string): boolean {
   return storageUrl.startsWith("s3://");
 }
 
-export function parseS3Url(storageUrl: string): { bucket: string; key: string } {
+function parseS3Url(storageUrl: string): { bucket: string; key: string } {
   const withoutPrefix = storageUrl.replace("s3://", "");
   const [bucket, ...keyParts] = withoutPrefix.split("/");
   if (!bucket || keyParts.length === 0) {

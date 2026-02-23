@@ -15,7 +15,7 @@ import {
   calculateTotals,
 } from "./mapper";
 
-export type EdiOutput = {
+type EdiOutput = {
   docType: EdiDocType;
   filename: string;
   content: string;

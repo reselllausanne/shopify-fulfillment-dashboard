@@ -69,7 +69,7 @@ function resolveCacheKey({
   return `${clientId}|${scope}|${tokenUrl}`;
 }
 
-export async function getSwissPostToken(options: TokenOptions = {}) {
+async function getSwissPostToken(options: TokenOptions = {}) {
   const scope = options.scope || getScope();
   const tokenUrl = options.tokenUrl || getTokenEndpoint();
   const clientId = options.clientId || process.env.SWISS_POST_CLIENT_ID;

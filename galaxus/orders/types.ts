@@ -44,7 +44,7 @@ export type GalaxusShipmentInput = {
   items?: GalaxusShipmentItemInput[];
 };
 
-export type GalaxusShipmentItemInput = {
+type GalaxusShipmentItemInput = {
   supplierPid: string;
   gtin14: string;
   buyerPid?: string;

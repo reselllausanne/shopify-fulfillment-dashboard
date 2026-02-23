@@ -19,48 +19,12 @@ import { getSupplierToken } from "@/lib/stockxToken";
 
 const STOCKX_GRAPHQL_URL = "https://stockx.com/api/p/e";
 
-const BUYING_SEARCH_QUERY = `
-  query BuyingSearch(
-    $first: Int
-    $after: String
-    $currencyCode: CurrencyCode
-    $query: String
-    $state: BuyingGeneralState
-    $sort: BuyingSortInput
-    $order: AscDescOrderInput
-  ) {
-    viewer {
-      buying(
-        query: $query
-        state: $state
-        currencyCode: $currencyCode
-        first: $first
-        after: $after
-        sort: $sort
-        order: $order
-      ) {
-        edges {
-          node {
-            chainId
-            orderId
-            orderNumber
-          }
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
-      }
-    }
-  }
-`;
-
 /**
  * Extract AWB (Air Waybill / tracking number) from tracking URL
  * @param trackingUrl - Full tracking URL
  * @returns AWB string or null
  */
-export function extractAwb(trackingUrl: string | null | undefined): string | null {
+function extractAwb(trackingUrl: string | null | undefined): string | null {
   if (!trackingUrl) return null;
   
   try {
@@ -150,7 +114,7 @@ export type StockXState = {
   sourceType?: string | null;
 };
 
-export function normalizeStockXStates(states: any[] | null | undefined): StockXState[] | null {
+function normalizeStockXStates(states: any[] | null | undefined): StockXState[] | null {
   if (!Array.isArray(states) || states.length === 0) return null;
   return states.map((state) => ({
     title: state?.title ?? null,
@@ -255,7 +219,7 @@ const GET_BUY_ORDER_FULL_QUERY = `
   }
 `;
 
-export interface StockXFullOrderResult {
+interface StockXFullOrderResult {
   orderNumber: string;
   chainId: string;
   checkoutType: string | null;
@@ -277,9 +241,9 @@ export interface StockXFullOrderResult {
 }
 
 // Legacy type for backward compatibility
-export type StockXTrackingResult = StockXFullOrderResult;
+type StockXTrackingResult = StockXFullOrderResult;
 
-export interface StockXFullOrderResponse {
+interface StockXFullOrderResponse {
   data?: {
     viewer?: {
       order?: {
@@ -364,91 +328,7 @@ export interface StockXFullOrderResponse {
 }
 
 // Legacy type for backward compatibility
-export type StockXTrackingResponse = StockXFullOrderResponse;
-
-type StockXBuyingSearchResponse = {
-  data?: {
-    viewer?: {
-      buying?: {
-        edges?: Array<{
-          node?: {
-            chainId?: string | null;
-            orderId?: string | null;
-            orderNumber?: string | null;
-          } | null;
-        }>;
-      } | null;
-    } | null;
-  };
-  errors?: Array<{ message: string }>;
-};
-
-export async function findStockXIdsByOrderNumber(orderNumber: string) {
-  const trimmed = String(orderNumber || "").trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const token = await getSupplierToken();
-  if (!token) {
-    throw new Error("Supplier token not found or expired in DB");
-  }
-
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "Authorization": `Bearer ${token}`,
-    "apollographql-client-name": "Iron",
-    "apollographql-client-version": "2026.01.11.01",
-    "app-platform": "Iron",
-    "app-version": "2026.01.11.01",
-    "accept": "application/json",
-  };
-
-  const body = {
-    operationName: "BuyingSearch",
-    query: BUYING_SEARCH_QUERY,
-    variables: {
-      first: 50,
-      after: "",
-      currencyCode: "CHF",
-      query: trimmed,
-      state: null,
-      sort: "MATCHED_AT",
-      order: "DESC",
-    },
-  };
-
-  const response = await fetch(STOCKX_GRAPHQL_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-  }
-
-  const json: StockXBuyingSearchResponse = await response.json();
-  if (json.errors?.length) {
-    throw new Error(`GraphQL errors: ${JSON.stringify(json.errors)}`);
-  }
-
-  const edges = json.data?.viewer?.buying?.edges ?? [];
-  const match = edges
-    .map((edge) => edge?.node)
-    .find((node) => node?.orderNumber === trimmed);
-
-  if (!match?.chainId || !match?.orderId) {
-    return null;
-  }
-
-  return {
-    chainId: match.chainId,
-    orderId: match.orderId,
-    orderNumber: match.orderNumber || trimmed,
-  };
-}
+type StockXTrackingResponse = StockXFullOrderResponse;
 
 /**
  * Fetch FULL supplier order details from stockx.com GraphQL (Query B)
@@ -458,7 +338,7 @@ export async function findStockXIdsByOrderNumber(orderNumber: string) {
  * @param orderId - Order ID from DB (e.g. "03-9WRPD7UF2G")
  * @returns Full order data including ALL-IN cost
  */
-export async function fetchStockXTracking(
+async function fetchStockXTracking(
   chainId: string,
   orderId: string
 ): Promise<StockXFullOrderResult> {
@@ -632,7 +512,7 @@ export async function fetchStockXTracking(
  * @param force - Force refresh even if data already exists
  * @returns Upserted tracking record or null on error
  */
-export async function fetchAndUpsertTracking(
+async function fetchAndUpsertTracking(
   chainId: string,
   orderNumber: string,
   prisma: any,

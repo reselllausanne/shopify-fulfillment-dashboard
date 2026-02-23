@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { GALAXUS_FEED_INCLUDE_TRM } from "@/galaxus/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import {
@@ -63,6 +62,21 @@ function stripToken(name: string, token: string): string {
 function truncate(value: string, max: number): string {
   if (value.length <= max) return value;
   return value.slice(0, max).trim();
+}
+
+function buildManufacturerKey(base: string, gtin: string | null, fallbackKey?: string | null): string {
+  const cleanedBase = sanitizeText(base);
+  const cleanedGtin = sanitizeText(gtin ?? "");
+  const cleanedFallback = sanitizeText(fallbackKey ?? "");
+  const suffix = cleanedGtin || cleanedFallback;
+  if (!suffix) {
+    return truncate(cleanedBase, 50);
+  }
+  const maxBaseLen = Math.max(0, 50 - suffix.length - 1);
+  if (!cleanedBase || maxBaseLen <= 0) {
+    return suffix;
+  }
+  return `${cleanedBase.slice(0, maxBaseLen)}-${suffix}`;
 }
 
 function stripParenthetical(text: string): string {
@@ -167,6 +181,19 @@ function pickPrimaryImages(supplierImages: unknown, kickdbImageUrl?: string | nu
   return fallback;
 }
 
+function dedupeCandidatesByProviderKey(candidates: any[]) {
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  for (const candidate of candidates) {
+    const key = String(candidate?.providerKey ?? "");
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+  return unique;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
@@ -212,15 +239,6 @@ export async function GET(request: Request) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
-  const parsePrice = (value: unknown): number | null => {
-    if (value === null || value === undefined) return null;
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string") {
-      const parsed = Number.parseFloat(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  };
   const resolvePartnerOverrides = (key: string | null) => {
     if (!key) return null;
     const partner = partnerByKey.get(key.toLowerCase());
@@ -249,8 +267,7 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
-      includeTrm: GALAXUS_FEED_INCLUDE_TRM,
-      keyBy: "providerKey",
+      keyBy: "gtin",
       requireProductName: false,
       requireImage: false,
       onExclude: (payload) => {
@@ -262,14 +279,14 @@ export async function GET(request: Request) {
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
-  const candidates = Array.from(bestByGtin.values());
+  const candidates = dedupeCandidatesByProviderKey(Array.from(bestByGtin.values()));
   candidates.forEach((candidate) => {
     const mapping = candidate.mapping;
     const supplierVariant = candidate.variant as any;
     const product = candidate.product as any;
     const providerKey = candidate.providerKey ?? "";
-    const buyPrice = parsePrice(supplierVariant?.price);
-    if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
+    const sellPrice = Number(candidate.sellPriceExVat);
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       return;
     }
@@ -308,12 +325,12 @@ export async function GET(request: Request) {
     const variantName = fallbackTitle;
     const description = payload?.description ? cleanDescription(payload.description) : "";
 
-    const manufacturerBase = sanitizeText(
-      payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? ""
-    );
-    const manufacturerKey = truncate(
-      manufacturerBase ? `${manufacturerBase}-${mapping.gtin ?? ""}` : mapping.gtin ?? "",
-      50
+    const manufacturerBase =
+      payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
+    const manufacturerKey = buildManufacturerKey(
+      manufacturerBase,
+      mapping.gtin ?? null,
+      mapping.providerKey ?? null
     );
 
     const row: ExportRow = {

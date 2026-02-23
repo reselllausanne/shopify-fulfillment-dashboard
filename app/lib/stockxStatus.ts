@@ -67,11 +67,6 @@ function sequenceForCheckout(checkoutType: string | null, orderNumber?: string |
   return STANDARD_SEQUENCE;
 }
 
-export function getStepTitles(checkoutType: string | null, orderNumber?: string | null): string[] {
-  const seq = sequenceForCheckout(checkoutType, orderNumber);
-  return seq.map((m) => m.title);
-}
-
 function normalizeTitle(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -148,9 +143,5 @@ export function detectMilestone(
   }
 
   return null;
-}
-
-export function milestoneKeyExists(milestone: MilestoneDefinition | null): string | null {
-  return milestone?.key || null;
 }
 

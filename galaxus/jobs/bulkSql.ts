@@ -9,7 +9,7 @@ export function chunkArray<T>(items: T[], size: number): T[][] {
   return result;
 }
 
-export function jsonb(value: unknown) {
+function jsonb(value: unknown) {
   if (value === undefined) return Prisma.sql`NULL::jsonb`;
   if (value === null) return Prisma.sql`NULL::jsonb`;
   return Prisma.sql`${JSON.stringify(value)}::jsonb`;
@@ -37,6 +37,7 @@ export async function bulkInsertSupplierVariants(
     const gtin = r.gtin ?? null;
     const sizeNormalized = r.sizeNormalized ?? null;
     return Prisma.sql`(
+      ${Prisma.sql`gen_random_uuid()`},
       ${r.supplierVariantId},
       ${r.supplierSku},
       ${r.providerKey},
@@ -49,6 +50,8 @@ export async function bulkInsertSupplierVariants(
       ${r.supplierProductName},
       ${jsonb(r.images)},
       ${r.leadTimeDays},
+      ${now},
+      ${now},
       ${now}
     )`;
   });
@@ -56,6 +59,7 @@ export async function bulkInsertSupplierVariants(
   const query = Prisma.sql`
     WITH ins AS (
       INSERT INTO "public"."SupplierVariant" (
+        "id",
         "supplierVariantId",
         "supplierSku",
         "providerKey",
@@ -68,7 +72,9 @@ export async function bulkInsertSupplierVariants(
         "supplierProductName",
         "images",
         "leadTimeDays",
-        "lastSyncAt"
+        "lastSyncAt",
+        "createdAt",
+        "updatedAt"
       )
       VALUES ${Prisma.join(values)}
       ON CONFLICT ("supplierVariantId") DO NOTHING
@@ -98,6 +104,7 @@ export async function bulkInsertSupplierVariantsByProviderKeyGtin(
   const values = rows.map((r) => {
     const sizeNormalized = r.sizeNormalized ?? null;
     return Prisma.sql`(
+      ${Prisma.sql`gen_random_uuid()`},
       ${r.supplierVariantId},
       ${r.supplierSku},
       ${r.providerKey},
@@ -106,12 +113,15 @@ export async function bulkInsertSupplierVariantsByProviderKeyGtin(
       ${r.stock},
       ${r.sizeRaw},
       ${sizeNormalized},
+      ${now},
+      ${now},
       ${now}
     )`;
   });
   const query = Prisma.sql`
     WITH ins AS (
       INSERT INTO "public"."SupplierVariant" (
+        "id",
         "supplierVariantId",
         "supplierSku",
         "providerKey",
@@ -120,7 +130,9 @@ export async function bulkInsertSupplierVariantsByProviderKeyGtin(
         "stock",
         "sizeRaw",
         "sizeNormalized",
-        "lastSyncAt"
+        "lastSyncAt",
+        "createdAt",
+        "updatedAt"
       )
       VALUES ${Prisma.join(values)}
       ON CONFLICT ("providerKey","gtin") DO NOTHING
@@ -145,12 +157,16 @@ export async function bulkUpdateSupplierVariantsByProviderKeyGtin(
   now: Date
 ): Promise<number> {
   if (rows.length === 0) return 0;
+  const numericOrNull = (value: number | null | undefined, type: "numeric" | "int") =>
+    value === null || value === undefined
+      ? Prisma.sql`NULL::${Prisma.raw(type)}`
+      : Prisma.sql`${value}::${Prisma.raw(type)}`;
   const values = rows.map((r) => Prisma.sql`(
     ${r.providerKey},
     ${r.gtin},
     ${r.supplierSku ?? null},
-    ${r.price ?? null},
-    ${r.stock ?? null},
+    ${numericOrNull(r.price, "numeric")},
+    ${numericOrNull(r.stock, "int")},
     ${r.sizeRaw ?? null},
     ${r.sizeNormalized ?? null}
   )`);
@@ -213,6 +229,10 @@ export async function bulkUpdateSupplierVariants(
 ): Promise<number> {
   if (rows.length === 0) return 0;
   const updateGtin = options?.updateGtinWhenProvided !== false;
+  const numericOrNull = (value: number | null | undefined, type: "numeric" | "int") =>
+    value === null || value === undefined
+      ? Prisma.sql`NULL::${Prisma.raw(type)}`
+      : Prisma.sql`${value}::${Prisma.raw(type)}`;
   const values = rows.map((r) => {
     const gtin = updateGtin ? (r.gtin ?? null) : null;
     return Prisma.sql`(
@@ -220,14 +240,14 @@ export async function bulkUpdateSupplierVariants(
       ${r.supplierSku ?? null},
       ${r.providerKey ?? null},
       ${gtin},
-      ${r.price ?? null},
-      ${r.stock ?? null},
+      ${numericOrNull(r.price, "numeric")},
+      ${numericOrNull(r.stock, "int")},
       ${r.sizeRaw ?? null},
       ${r.sizeNormalized ?? null},
       ${r.supplierBrand ?? null},
       ${r.supplierProductName ?? null},
       ${r.images === undefined ? Prisma.sql`NULL::jsonb` : jsonb(r.images)},
-      ${r.leadTimeDays ?? null}
+      ${numericOrNull(r.leadTimeDays, "int")}
     )`;
   });
 
@@ -333,10 +353,23 @@ export async function bulkUpsertVariantMappings(
   const onlySetPendingIfMissing = options?.onlySetPendingIfMissing === true;
 
   // Insert missing mappings.
-  const insertValues = rows.map((r) => Prisma.sql`(${r.supplierVariantId}, ${r.gtin}, ${r.providerKey}, ${r.status}, ${r.kickdbVariantId ?? null}, ${now}, ${now})`);
+  const insertValues = rows.map(
+    (r) =>
+      Prisma.sql`(
+        ${Prisma.sql`gen_random_uuid()`},
+        ${r.supplierVariantId},
+        ${r.gtin},
+        ${r.providerKey},
+        ${r.status},
+        ${r.kickdbVariantId ?? null},
+        ${now},
+        ${now}
+      )`
+  );
   const insertQuery = Prisma.sql`
     WITH ins AS (
       INSERT INTO "public"."VariantMapping" (
+        "id",
         "supplierVariantId",
         "gtin",
         "providerKey",

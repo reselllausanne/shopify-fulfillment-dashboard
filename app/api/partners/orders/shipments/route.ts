@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const shipments = await (prisma as any).shipment.findMany({
     where: {
       providerKey,
+      status: { not: null },
       ...(statusFilter ? { delrStatus: statusFilter } : {}),
     },
     include: {
@@ -43,9 +44,16 @@ export async function GET(req: NextRequest) {
 
   const normalized = shipments.map((shipment: any) => {
     const deliveryNote = shipment.documents?.find((doc: any) => doc.type === "DELIVERY_NOTE");
+    const shippingLabelDoc = shipment.documents
+      ?.filter((doc: any) => doc.type === "LABEL" && String(doc.storageUrl || "").includes("shipping-labels"))
+      .sort(
+        (a: any, b: any) =>
+          new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+      )[0];
     return {
       ...shipment,
       deliveryNotePdfUrl: deliveryNote?.storageUrl ?? null,
+      shippingLabelPdfUrl: shippingLabelDoc ? `/api/galaxus/documents/${shippingLabelDoc.id}` : null,
     };
   });
 

@@ -1,8 +1,3 @@
-export function stripBom(value?: string | null): string {
-  if (!value) return "";
-  return value.replace(/^\uFEFF/, "");
-}
-
 export function normalizeSize(value?: string | null): string | null {
   if (!value) return null;
   return value

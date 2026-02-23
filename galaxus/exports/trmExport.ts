@@ -1,12 +1,12 @@
-export const FEED_ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
+const FEED_ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
 
-export type TrmFeedExclusionReason =
+type TrmFeedExclusionReason =
   | "MISSING_GTIN"
   | "INVALID_GTIN"
   | "ENRICHMENT_PENDING"
   | "KICKDB_NOT_FOUND";
 
-export type TrmFeedExclusionStats = Record<TrmFeedExclusionReason, number>;
+type TrmFeedExclusionStats = Record<TrmFeedExclusionReason, number>;
 
 export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagnostics = true) {
   let normalizedSupplier = supplier ? supplier.trim().toLowerCase() : "";

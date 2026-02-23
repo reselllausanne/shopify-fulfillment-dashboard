@@ -60,10 +60,9 @@ type CandidateExcludeReason =
   | "MISSING_IMAGE"
   | "INVALID_PRICE"
   | "INVALID_PROVIDER_KEY"
-  | "TRM_DISABLED";
+  ;
 
 type AccumulateOptions = {
-  includeTrm?: boolean;
   keyBy?: "gtin" | "providerKey";
   requireProductName?: boolean;
   requireImage?: boolean;
@@ -88,7 +87,6 @@ export function accumulateBestCandidates(
   options?: AccumulateOptions
 ) {
   const isMerchant = GALAXUS_PRICE_MODEL === "merchant";
-  const includeTrm = options?.includeTrm !== false;
   const keyBy = options?.keyBy ?? "gtin";
   const requireProductName = options?.requireProductName !== false;
   const requireImage = options?.requireImage !== false;
@@ -97,16 +95,6 @@ export function accumulateBestCandidates(
     const variant = mapping.supplierVariant ?? null;
     if (!variant) continue;
     const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
-
-    if (supplierKey === "trm" && !includeTrm) {
-      options?.onExclude?.({
-        reason: "TRM_DISABLED",
-        supplierKey,
-        mapping,
-        variant,
-      });
-      continue;
-    }
 
     const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();
     if (supplierKey === "trm") {

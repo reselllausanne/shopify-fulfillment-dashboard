@@ -38,10 +38,145 @@ export async function POST(
       });
     }
     if (providerKey && providerKey !== "GLD") {
-      return NextResponse.json(
-        { ok: false, error: "Partner boxes are assigned only", boxId: shipment.id },
-        { status: 400 }
-      );
+      const prismaAny = prisma as any;
+      const partner = await prismaAny.partner.findFirst({
+        where: { key: { equals: providerKey, mode: "insensitive" } },
+      });
+      if (!partner) {
+        return NextResponse.json(
+          { ok: false, error: "Partner not found for providerKey", boxId: shipment.id },
+          { status: 404 }
+        );
+      }
+      const order = shipment.order;
+      const partnerOrder = await prismaAny.partnerOrder.upsert({
+        where: {
+          partnerId_galaxusOrderId: {
+            partnerId: partner.id,
+            galaxusOrderId: order.galaxusOrderId,
+          },
+        },
+        create: {
+          partnerId: partner.id,
+          galaxusOrderId: order.galaxusOrderId,
+          status: "ASSIGNED",
+          sentAt: new Date(),
+        },
+        update: {
+          status: "ASSIGNED",
+          sentAt: new Date(),
+        },
+      });
+
+      const gtins = order.lines
+        .map((line) => line.gtin)
+        .filter((value): value is string => Boolean(value));
+      const prefix = `${partner.key.toLowerCase()}:`;
+      const mappings = await prismaAny.variantMapping.findMany({
+        where: {
+          gtin: { in: gtins },
+          supplierVariantId: { startsWith: prefix },
+        },
+        include: { supplierVariant: true },
+      });
+      const supplierVariantByGtin = new Map<string, any>();
+      for (const mapping of mappings) {
+        const gtin = String(mapping.gtin ?? "");
+        if (!gtin) continue;
+        const candidate = mapping.supplierVariant;
+        if (!candidate) continue;
+        const existing = supplierVariantByGtin.get(gtin);
+        if (!existing || Number(candidate.stock ?? 0) > Number(existing.stock ?? 0)) {
+          supplierVariantByGtin.set(gtin, candidate);
+        }
+      }
+
+      await prismaAny.partnerOrderLine.deleteMany({
+        where: { partnerOrderId: partnerOrder.id },
+      });
+
+      const partnerVariantCache = new Map<string, string>();
+      const ensurePartnerVariant = async (candidate: any, fallbackGtin: string | null) => {
+        const supplierVariantId = String(candidate?.supplierVariantId ?? "");
+        if (!supplierVariantId) return null;
+        const cached = partnerVariantCache.get(supplierVariantId);
+        if (cached) return cached;
+        const res = await prismaAny.partnerVariant.upsert({
+          where: {
+            partnerId_partnerVariantId: {
+              partnerId: partner.id,
+              partnerVariantId: supplierVariantId,
+            },
+          },
+          create: {
+            partnerId: partner.id,
+            partnerVariantId: supplierVariantId,
+            externalSku: candidate?.supplierSku ?? null,
+            sizeRaw: candidate?.sizeRaw ?? null,
+            price: candidate?.price ?? null,
+            stock: candidate?.stock ?? null,
+            images: candidate?.images ?? null,
+            productName: candidate?.supplierProductName ?? null,
+            brand: candidate?.supplierBrand ?? null,
+            gtin: candidate?.gtin ?? fallbackGtin ?? null,
+            lastSyncAt: new Date(),
+          },
+          update: {
+            externalSku: candidate?.supplierSku ?? undefined,
+            sizeRaw: candidate?.sizeRaw ?? undefined,
+            price: candidate?.price ?? undefined,
+            stock: candidate?.stock ?? undefined,
+            images: candidate?.images ?? undefined,
+            productName: candidate?.supplierProductName ?? undefined,
+            brand: candidate?.supplierBrand ?? undefined,
+            gtin: candidate?.gtin ?? fallbackGtin ?? undefined,
+            lastSyncAt: new Date(),
+          },
+        });
+        const id = String(res.id);
+        partnerVariantCache.set(supplierVariantId, id);
+        return id;
+      };
+
+      const lineRows: Array<{
+        partnerOrderId: string;
+        partnerVariantId: string | null;
+        gtin: string | null;
+        quantity: number;
+      }> = [];
+      for (const line of order.lines) {
+        const gtin = line.gtin ? String(line.gtin) : null;
+        let partnerVariantId: string | null = null;
+        if (gtin) {
+          const matched = supplierVariantByGtin.get(gtin);
+          if (matched) {
+            partnerVariantId = await ensurePartnerVariant(matched, gtin);
+          }
+        }
+        lineRows.push({
+          partnerOrderId: partnerOrder.id,
+          partnerVariantId,
+          gtin,
+          quantity: line.quantity ?? 1,
+        });
+      }
+
+      await prismaAny.partnerOrderLine.createMany({ data: lineRows });
+
+      await prisma.shipment.update({
+        where: { id: shipment.id },
+        data: {
+          status: "ASSIGNED",
+        },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        status: "assigned",
+        boxId: shipment.id,
+        partnerOrderId: partnerOrder.id,
+        partnerKey: partner.key,
+      });
     }
 
     const existing = await prisma.supplierOrder.findUnique({ where: { shipmentId: shipment.id } });

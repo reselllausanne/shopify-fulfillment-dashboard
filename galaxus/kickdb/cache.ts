@@ -1,7 +1,7 @@
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
 
-export type KickDbCacheState = {
+type KickDbCacheState = {
   lastFetchedAt?: Date | null;
   notFound?: boolean | null;
   missingGtin?: boolean | null;

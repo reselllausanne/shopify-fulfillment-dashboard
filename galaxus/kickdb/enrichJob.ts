@@ -11,7 +11,7 @@ import { buildProviderKey, normalizeProviderKey, resolveSupplierCode } from "@/g
 import { shouldFetchKickDb } from "@/galaxus/kickdb/cache";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 
-export type KickdbEnrichOptions = {
+type KickdbEnrichOptions = {
   limit?: number;
   offset?: number;
   debug?: boolean;
@@ -411,6 +411,23 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       mapping?.gtin && mapping.status === "SUPPLIER_GTIN" ? mapping.gtin : null;
     const mappingCreateBase = { supplierVariantId: variant.supplierVariantId };
     const providerKeySourceId = variant.supplierVariantId;
+    const existingGtin = mapping?.gtin ?? variant?.gtin ?? null;
+    if (existingGtin) {
+      results.push({
+        supplierVariantId: variant.supplierVariantId,
+        status: "SKIPPED_HAS_GTIN",
+        gtin: existingGtin,
+        debug: debug
+          ? {
+              reason: "SKIPPED_HAS_GTIN",
+              force,
+              sizeRaw: variant.sizeRaw,
+              supplierSku: variantSku ?? undefined,
+            }
+          : undefined,
+      });
+      continue;
+    }
 
     if (
       !force
@@ -767,7 +784,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       },
     });
 
-    if (finalGtin) {
+    if (finalGtin && !variant?.gtin) {
       try {
         await prismaAny.supplierVariant.update({
           where: { supplierVariantId: variant.supplierVariantId },

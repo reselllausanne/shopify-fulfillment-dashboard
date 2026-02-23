@@ -87,6 +87,21 @@ function truncate(value: string, max: number): string {
   return value.slice(0, max).trim();
 }
 
+function buildManufacturerKey(base: string, gtin: string | null, fallbackKey?: string | null): string {
+  const cleanedBase = sanitizeText(base);
+  const cleanedGtin = sanitizeText(gtin ?? "");
+  const cleanedFallback = sanitizeText(fallbackKey ?? "");
+  const suffix = cleanedGtin || cleanedFallback;
+  if (!suffix) {
+    return truncate(cleanedBase, 50);
+  }
+  const maxBaseLen = Math.max(0, 50 - suffix.length - 1);
+  if (!cleanedBase || maxBaseLen <= 0) {
+    return suffix;
+  }
+  return `${cleanedBase.slice(0, maxBaseLen)}-${suffix}`;
+}
+
 function stripParenthetical(text: string): string {
   return text.replace(/\s*\([^)]*\)\s*$/g, "").trim();
 }
@@ -222,6 +237,19 @@ function isValidGtin(value: string): boolean {
   return calculated === checkDigit;
 }
 
+function dedupeCandidatesByProviderKey(candidates: any[]) {
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  for (const candidate of candidates) {
+    const key = String(candidate?.providerKey ?? "");
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+  return unique;
+}
+
 function buildMasterRows(candidates: any[]): ExportRow[] {
   const rows: ExportRow[] = candidates.map((candidate) => {
     const mapping = candidate.mapping;
@@ -239,12 +267,12 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
     const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
     const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
 
-    const manufacturerBase = sanitizeText(
-      payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? ""
-    );
-    const manufacturerKey = truncate(
-      manufacturerBase ? `${manufacturerBase}-${mapping.gtin ?? ""}` : mapping.gtin ?? "",
-      50
+    const manufacturerBase =
+      payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
+    const manufacturerKey = buildManufacturerKey(
+      manufacturerBase,
+      mapping.gtin ?? null,
+      mapping.providerKey ?? null
     );
 
     return {
@@ -268,16 +296,7 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
     };
   });
 
-  const uniqueRows: ExportRow[] = [];
-  const seenProviderKeys = new Set<string>();
-  for (const row of rows) {
-    const providerKey = row.ProviderKey;
-    if (providerKey && seenProviderKeys.has(providerKey)) continue;
-    if (providerKey) seenProviderKeys.add(providerKey);
-    uniqueRows.push(row);
-  }
-
-  return uniqueRows;
+  return rows.filter((row) => Boolean(row.ProviderKey));
 }
 
 function buildStockRows(candidates: any[]): ExportRow[] {
@@ -691,16 +710,16 @@ export async function GET(request: Request) {
       });
       lastBatch = mappings.length;
 
-    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
-      keyBy: "providerKey",
-      requireProductName: false,
-      requireImage: false,
-    });
+      accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+        keyBy: "gtin",
+        requireProductName: false,
+        requireImage: false,
+      });
 
       currentOffset += pageSize;
     } while (all && lastBatch === pageSize);
 
-    const candidates = Array.from(bestByGtin.values());
+    const candidates = dedupeCandidatesByProviderKey(Array.from(bestByGtin.values()));
     masterRows.push(...buildMasterRows(candidates));
     stockRows.push(...buildStockRows(candidates));
     specsRows.push(...buildSpecsRows(candidates));

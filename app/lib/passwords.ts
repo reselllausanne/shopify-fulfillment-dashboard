@@ -7,12 +7,6 @@ function toHex(buffer: Buffer) {
   return buffer.toString("hex");
 }
 
-export function hashPassword(password: string, salt?: string) {
-  const actualSalt = salt ?? randomBytes(16).toString("hex");
-  const derived = pbkdf2Sync(password, actualSalt, DEFAULT_ITERATIONS, KEY_LENGTH, "sha256");
-  return `pbkdf2$${DEFAULT_ITERATIONS}$${actualSalt}$${toHex(derived)}`;
-}
-
 export function verifyPassword(password: string, stored: string) {
   if (!stored) return false;
   if (stored.startsWith("plain:")) {

@@ -1,7 +1,7 @@
 import { jwtVerify, SignJWT } from "jose";
 import type { NextRequest } from "next/server";
 
-export type PartnerSession = {
+type PartnerSession = {
   partnerId: string;
   partnerKey: string;
   role: string;

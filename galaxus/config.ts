@@ -28,8 +28,6 @@ const parsedTrmSyncMinIntervalSec = Number.parseInt(
 export const SUPPLIER_TRM_SYNC_MIN_INTERVAL_SEC = Number.isFinite(parsedTrmSyncMinIntervalSec)
   ? Math.max(parsedTrmSyncMinIntervalSec, 60)
   : 60;
-export const GALAXUS_FEED_INCLUDE_TRM = process.env.GALAXUS_FEED_INCLUDE_TRM !== "false";
-
 export const GALAXUS_SUPPLIER_AUTO_ORDER = process.env.GALAXUS_SUPPLIER_AUTO_ORDER === "true";
 export const GALAXUS_SUPPLIER_AUTO_SEND_ORDR = process.env.GALAXUS_SUPPLIER_AUTO_SEND_ORDR === "true";
 const DEFAULT_LEAD_DAYS = 7;

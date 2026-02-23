@@ -103,7 +103,7 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
     total += mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
-      keyBy: "providerKey",
+      keyBy: "gtin",
       requireProductName: false,
       requireImage: false,
     });

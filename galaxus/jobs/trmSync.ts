@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { validateGtin } from "@/app/lib/normalize";
+import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 import { createTrmSupplierClient } from "@/galaxus/supplier/trmClient";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
@@ -124,6 +124,7 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
         valid &&
         firstByGtin.get(valid) === r.supplierVariantId &&
         !usedGtins.has(valid);
+      const sizeNormalized = normalizeSize(r.sizeRaw ?? null) ?? r.sizeRaw ?? null;
 
       return {
         supplierVariantId: r.supplierVariantId,
@@ -134,6 +135,7 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
         price: r.price,
         stock: r.stock,
         sizeRaw: r.sizeRaw,
+        sizeNormalized,
         supplierBrand: r.supplierBrand,
         supplierProductName: r.supplierProductName,
         images: null,

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { GALAXUS_FEED_INCLUDE_TRM } from "@/galaxus/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import {
@@ -85,8 +84,7 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
-      includeTrm: GALAXUS_FEED_INCLUDE_TRM,
-      keyBy: "providerKey",
+      keyBy: "gtin",
       requireProductName: false,
       requireImage: false,
       onExclude: (payload) => {

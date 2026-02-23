@@ -183,6 +183,7 @@ export default function GalaxusDashboardPage() {
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [opsLog, setOpsLog] = useState<string | null>(null);
   const [unassignedCount, setUnassignedCount] = useState<number | null>(null);
+  const [cleanupStats, setCleanupStats] = useState<any | null>(null);
   const [seedLineCount, setSeedLineCount] = useState<number>(5);
   const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
@@ -220,6 +221,22 @@ export default function GalaxusDashboardPage() {
       if (data?.ok) setUnassignedCount(data.unassignedCount ?? 0);
     } catch {
       // silent
+    }
+  };
+
+  const loadCleanupStats = async () => {
+    setBusy("cleanup-stats");
+    setError(null);
+    try {
+      const res = await fetch("/api/galaxus/cleanup/stats", { cache: "no-store" });
+      const data = await res.json();
+      if (!data?.ok) throw new Error(data?.error ?? "Failed to load cleanup stats");
+      setCleanupStats(data);
+      setOpsLog(JSON.stringify(data, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -358,8 +375,8 @@ export default function GalaxusDashboardPage() {
       const response = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Sync failed");
-      // Background enrichment retries (bounded).
-      void fetch("/api/galaxus/kickdb/enrich-missing?limit=50&concurrency=2", { method: "POST" })
+      // Enrich newly added products immediately; older retries are gated (4-day window).
+      void fetch("/api/galaxus/kickdb/enrich-missing?limit=200&concurrency=3", { method: "POST" })
         .then((res) => res.json().catch(() => ({})))
         .then((payload) => {
           if (payload?.ok) {
@@ -369,7 +386,6 @@ export default function GalaxusDashboardPage() {
         .catch(() => {
           // ignore background errors; sync result already returned
         });
-
       await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
@@ -1147,7 +1163,7 @@ export default function GalaxusDashboardPage() {
                 onClick={uploadFeeds}
                 disabled={busy !== null}
               >
-                {busy === "feeds" ? "Uploading…" : "Upload Price + Stock"}
+                {busy === "feeds" ? "Uploading…" : "Upload Offer + Stock"}
               </button>
               <button
                 className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
@@ -1165,42 +1181,42 @@ export default function GalaxusDashboardPage() {
                   onClick={() => uploadFeed("product")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-product" ? "Uploading…" : "Upload ProductData"}
+                  {busy === "feed-product" ? "Uploading…" : "Upload Master"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
                   onClick={() => uploadFeed("price")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-price" ? "Uploading…" : "Upload PriceData"}
+                  {busy === "feed-price" ? "Uploading…" : "Upload Offer"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
                   onClick={() => uploadFeed("stock")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-stock" ? "Uploading…" : "Upload StockData"}
+                  {busy === "feed-stock" ? "Uploading…" : "Upload Stock"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
                   onClick={() => downloadFeed("product")}
                   disabled={busy !== null}
                 >
-                  Download ProductData
+                  Download Master
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
                   onClick={() => downloadFeed("price")}
                   disabled={busy !== null}
                 >
-                  Download PriceData
+                  Download Offer
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
                   onClick={() => downloadFeed("stock")}
                   disabled={busy !== null}
                 >
-                  Download StockData
+                  Download Stock
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"
@@ -1321,7 +1337,19 @@ export default function GalaxusDashboardPage() {
                 >
                   Download DB mappings (CSV)
                 </button>
+                <button
+                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                  onClick={loadCleanupStats}
+                  disabled={busy !== null}
+                >
+                  {busy === "cleanup-stats" ? "Loading…" : "Load cleanup stats"}
+                </button>
               </div>
+              {cleanupStats?.cleanupCandidates ? (
+                <div className="mt-3 text-xs text-gray-600">
+                  {`Orphan candidates — sv→mapping: ${cleanupStats.cleanupCandidates.supplierVariantsWithoutMapping}, mapping→sv: ${cleanupStats.cleanupCandidates.mappingsWithoutSupplierVariant}, mapping→kickdb: ${cleanupStats.cleanupCandidates.mappingsWithoutKickdbVariant}`}
+                </div>
+              ) : null}
             </details>
           </div>
           <div className="rounded border bg-gray-50 p-3 space-y-3">

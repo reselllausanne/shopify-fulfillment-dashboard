@@ -11,7 +11,7 @@ export function normalizeProviderKey(value?: string | null): string | null {
   return PROVIDER_KEY_REGEX.test(cleaned) ? cleaned : null;
 }
 
-export function isValidProviderKey(value?: string | null): boolean {
+function isValidProviderKey(value?: string | null): boolean {
   return Boolean(normalizeProviderKey(value));
 }
 

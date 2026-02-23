@@ -5,7 +5,7 @@ type PackedItem = {
   quantity: number;
 };
 
-export type PackedShipment = {
+type PackedShipment = {
   items: PackedItem[];
   totalQuantity: number;
 };

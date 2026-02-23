@@ -19,6 +19,7 @@ type Shipment = {
   delrStatus?: string | null;
   delrFileName?: string | null;
   labelPdfUrl?: string | null;
+  shippingLabelPdfUrl?: string | null;
   deliveryNotePdfUrl?: string | null;
   createdAt: string;
   items: ShipmentItem[];
@@ -84,6 +85,31 @@ export default function PartnerOrdersPage() {
     }
   };
 
+  const fulfillShipment = async (shipmentId: string) => {
+    const trackingNumber = (trackingById[shipmentId] ?? "").trim();
+    const carrier = (carrierById[shipmentId] ?? "").trim();
+    if (!trackingNumber) {
+      setError("Tracking number is required.");
+      return;
+    }
+    setBusy(`fulfill-${shipmentId}`);
+    setError(null);
+    try {
+      const res = await fetch(`/api/partners/orders/shipments/${shipmentId}/fulfill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackingNumber, carrier }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Fulfillment failed");
+      await loadShipments();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   useEffect(() => {
     loadShipments();
   }, [statusFilter]);
@@ -92,6 +118,9 @@ export default function PartnerOrdersPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-lg font-semibold">Partner Fulfillment</h1>
+        <div className="text-xs text-gray-500">
+          Enter tracking, then use Fulfill to generate DELR, SSCC, and shipping labels.
+        </div>
         <div className="flex items-center gap-2 text-sm">
           <span>Status</span>
           <select
@@ -125,6 +154,11 @@ export default function PartnerOrdersPage() {
               {shipment.packageId ?? "—"} · DELR {shipment.delrStatus ?? "—"}
             </div>
             <div className="text-xs text-gray-500">
+              Status: {shipment.trackingNumber ? "Tracking set" : "Missing tracking"} ·{" "}
+              {shipment.labelPdfUrl ? "SSCC ready" : "SSCC missing"} ·{" "}
+              {shipment.shippingLabelPdfUrl ? "Shipping label ready" : "Shipping label missing"}
+            </div>
+            <div className="text-xs text-gray-500">
               Order {shipment.order?.galaxusOrderId ?? "—"} ·{" "}
               {shipment.order?.orderNumber ?? "—"} · {shipment.order?.deliveryType ?? "—"}
             </div>
@@ -154,6 +188,13 @@ export default function PartnerOrdersPage() {
               >
                 {busy === `track-${shipment.id}` ? "Saving…" : "Confirm tracking + send DELR"}
               </button>
+              <button
+                className="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-50"
+                onClick={() => fulfillShipment(shipment.id)}
+                disabled={busy !== null}
+              >
+                {busy === `fulfill-${shipment.id}` ? "Working…" : "Fulfill + generate labels"}
+              </button>
               {shipment.labelPdfUrl && (
                 <a
                   className="px-2 py-1 rounded bg-gray-100"
@@ -172,6 +213,16 @@ export default function PartnerOrdersPage() {
                   rel="noreferrer"
                 >
                   Delivery Note
+                </a>
+              )}
+              {shipment.shippingLabelPdfUrl && (
+                <a
+                  className="px-2 py-1 rounded bg-gray-100"
+                  href={shipment.shippingLabelPdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Shipping Label
                 </a>
               )}
             </div>

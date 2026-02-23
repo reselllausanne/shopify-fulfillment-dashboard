@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { GALAXUS_FEED_INCLUDE_TRM } from "@/galaxus/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import {
@@ -62,15 +61,6 @@ export async function GET(request: Request) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
-  const parsePrice = (value: unknown): number | null => {
-    if (value === null || value === undefined) return null;
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string") {
-      const parsed = Number.parseFloat(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  };
   const resolvePartnerOverrides = (key: string | null) => {
     if (!key) return null;
     const partner = partnerByKey.get(key.toLowerCase());
@@ -99,8 +89,7 @@ export async function GET(request: Request) {
     });
     lastBatch = mappings.length;
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
-      includeTrm: GALAXUS_FEED_INCLUDE_TRM,
-      keyBy: "providerKey",
+      keyBy: "gtin",
       requireProductName: false,
       requireImage: false,
       onExclude: (payload) => {
@@ -112,13 +101,23 @@ export async function GET(request: Request) {
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
 
-  const candidates = Array.from(bestByGtin.values());
-  candidates.forEach((candidate) => {
+  const candidates = Array.from(bestByGtin.values()).filter((candidate: any) => {
+    const key = String(candidate?.providerKey ?? "");
+    return Boolean(key);
+  });
+  const seenProviderKeys = new Set<string>();
+  const uniqueCandidates = candidates.filter((candidate: any) => {
+    const key = String(candidate?.providerKey ?? "");
+    if (seenProviderKeys.has(key)) return false;
+    seenProviderKeys.add(key);
+    return true;
+  });
+  uniqueCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;
-    const buyPrice = parsePrice(variant?.price);
-    if (!buyPrice || !Number.isFinite(buyPrice) || buyPrice <= 0) {
+    const sellPrice = Number(candidate.sellPriceExVat);
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       return;
     }

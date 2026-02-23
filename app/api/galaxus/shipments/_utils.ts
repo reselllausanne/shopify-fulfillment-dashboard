@@ -6,10 +6,6 @@ type ShipmentPlacement = {
   status: string | null;
 };
 
-export async function ensureShipmentPlacementColumns() {
-  await prisma.$executeRaw`ALTER TABLE "Shipment" ADD COLUMN IF NOT EXISTS "supplierOrderRef" TEXT`;
-  await prisma.$executeRaw`ALTER TABLE "Shipment" ADD COLUMN IF NOT EXISTS "status" TEXT`;
-}
 
 async function shipmentPlacementColumnsExist() {
   const rows = await prisma.$queryRaw<{ column_name: string }[]>`
@@ -35,28 +31,3 @@ export async function getShipmentPlacementByOrder(orderId: string): Promise<Map<
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-export async function getShipmentPlacementById(shipmentId: string): Promise<ShipmentPlacement | null> {
-  if (!(await shipmentPlacementColumnsExist())) {
-    return null;
-  }
-  const rows = await prisma.$queryRaw<ShipmentPlacement[]>`
-    SELECT "id", "supplierOrderRef", "status"
-    FROM "Shipment"
-    WHERE "id" = ${shipmentId}
-    LIMIT 1
-  `;
-  return rows[0] ?? null;
-}
-
-export async function updateShipmentPlacement(
-  shipmentId: string,
-  supplierOrderRef: string | null,
-  status: string | null
-) {
-  await prisma.$executeRaw`
-    UPDATE "Shipment"
-    SET "supplierOrderRef" = ${supplierOrderRef},
-        "status" = ${status}
-    WHERE "id" = ${shipmentId}
-  `;
-}

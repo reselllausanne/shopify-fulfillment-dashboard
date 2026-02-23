@@ -27,7 +27,7 @@ type KickDbVariant = {
   ean?: string;
 };
 
-export type KickDbSearchResponse = {
+type KickDbSearchResponse = {
   data: KickDbProduct[];
   meta?: { total?: number };
 };
@@ -329,7 +329,7 @@ function getVariantSizeCandidates(variant: KickDbVariant, context?: SizeMatchCon
   return Array.from(tokens);
 }
 
-export function matchVariantBySize(
+function matchVariantBySize(
   variants: KickDbVariant[] = [],
   sizeRaw?: string | null,
   context?: SizeMatchContext

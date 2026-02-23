@@ -22,17 +22,19 @@ export async function POST(request: Request) {
         : Math.min(Number(searchParams.get("limit") ?? "50"), 500);
     const offset = all || max !== null ? 0 : Math.max(Number(searchParams.get("offset") ?? "0"), 0);
 
-    const catalog = await runJob("catalog-sync", () => runCatalogSync({ limit, offset }));
-    const stock = await runJob("stock-sync", () => runStockSync({ limit, offset }));
-    const trm = includeTrm
-      ? await runJob("trm-sync", () =>
-          runTrmSync({
-            limit,
-            offset,
-            enrichMissingGtin: true,
-          })
-        )
-      : null;
+    const [catalog, stock, trm] = await Promise.all([
+      runJob("catalog-sync", () => runCatalogSync({ limit, offset })),
+      runJob("stock-sync", () => runStockSync({ limit, offset })),
+      includeTrm
+        ? runJob("trm-sync", () =>
+            runTrmSync({
+              limit,
+              offset,
+              enrichMissingGtin: false,
+            })
+          )
+        : Promise.resolve(null),
+    ]);
     return NextResponse.json({
       ok: true,
       mode: all ? "all" : "max",

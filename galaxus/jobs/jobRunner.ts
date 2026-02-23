@@ -1,11 +1,12 @@
 import { prisma } from "@/app/lib/prisma";
 
-export type JobResult<T> = {
+type JobResult<T> = {
   name: string;
   startedAt: Date;
   finishedAt: Date;
   success: boolean;
   result?: T;
+  error?: string;
 };
 
 async function createJobRunRecord(name: string, startedAt: Date) {
@@ -58,6 +59,6 @@ export async function runJob<T>(name: string, handler: () => Promise<T>): Promis
     console.error(`[galaxus][job:${name}] failed`, error);
     const message = error instanceof Error ? error.message : undefined;
     await finishJobRunRecord(audit?.id ?? null, { finishedAt, success: false, errorMessage: message });
-    return { name, startedAt, finishedAt, success: false };
+    return { name, startedAt, finishedAt, success: false, error: message };
   }
 }

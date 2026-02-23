@@ -9,7 +9,7 @@ type TrmLoginResponse = {
   access_token?: string;
 };
 
-export type TrmVariant = {
+type TrmVariant = {
   variant_id: string;
   eu_size?: string | null;
   size?: string | null;
@@ -18,7 +18,7 @@ export type TrmVariant = {
   ean?: string | null;
 };
 
-export type TrmProduct = {
+type TrmProduct = {
   sku: string;
   brand?: string | null;
   name?: string | null;

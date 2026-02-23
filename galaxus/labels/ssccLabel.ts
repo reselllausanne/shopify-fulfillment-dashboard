@@ -34,7 +34,7 @@ export async function generateSsccLabelPdf(order: GalaxusOrder, sscc: string): P
   return { sscc: normalized, zpl, pdf, barcodeDataUrl };
 }
 
-export function buildSsccZpl(sscc: string): string {
+function buildSsccZpl(sscc: string): string {
   const normalized = normalizeSscc(sscc);
   return [
     "^XA",
