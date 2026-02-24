@@ -102,7 +102,7 @@ function normalizeBrandForChart(value?: string | null): string | null {
 
 function normalizeGenderForChart(value?: string | null, sizeRaw?: string | null): "men" | "women" | "youth" {
   const lower = (value ?? "").toLowerCase();
-  if (/(women|womens|woman|female|w\b)/.test(lower)) return "women";
+  if (/(women|womens|woman|female|\bw\b)/.test(lower)) return "women";
   if (/(youth|kids|kid|gs|grade school|child|children)/.test(lower)) return "youth";
   const size = (sizeRaw ?? "").toUpperCase();
   if (/(^|\b)\d+(\.\d+)?\s*Y\b/.test(size)) return "youth";
