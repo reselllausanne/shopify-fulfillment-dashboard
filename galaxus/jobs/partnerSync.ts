@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
 import { Prisma } from "@prisma/client";
 import {
@@ -66,9 +66,9 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   }> = [];
 
   for (const row of rows) {
-    const providerKey = normalizeProviderKey(row.providerKey);
+    const supplierCode = normalizeProviderKey(row.providerKey);
     const gtin = validateGtin(row.gtinResolved) ? row.gtinResolved : null;
-    if (!providerKey || !gtin) {
+    if (!supplierCode || !gtin) {
       skippedInvalid += 1;
       continue;
     }
@@ -78,7 +78,18 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
       skippedInvalid += 1;
       continue;
     }
-    const supplierVariantId = buildSupplierVariantId(providerKey, sku, sizeNormalized);
+    const supplierVariantId = buildSupplierVariantId(supplierCode, sku, sizeNormalized);
+    const providerKey = buildProviderKey(gtin, supplierVariantId);
+    if (!providerKey) {
+      skippedInvalid += 1;
+      continue;
+    }
+    assertMappingIntegrity({
+      supplierVariantId,
+      gtin,
+      providerKey,
+      status: "MATCHED",
+    });
     offers.push({
       providerKey,
       gtin,
@@ -132,12 +143,17 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
           WHERE ("providerKey","gtin") IN (${Prisma.join(pairs)})
         `
     );
-    const mappingRows = (found ?? []).map((r) => ({
-      supplierVariantId: r.supplierVariantId,
-      gtin: r.gtin,
-      providerKey: `${r.providerKey}_${r.gtin}`,
-      status: "PARTNER_GTIN",
-    }));
+    const mappingRows = (found ?? []).map((r) => {
+      const providerKey = buildProviderKey(r.gtin, r.supplierVariantId);
+      const payload = {
+        supplierVariantId: r.supplierVariantId,
+        gtin: r.gtin,
+        providerKey,
+        status: "MATCHED",
+      };
+      assertMappingIntegrity(payload);
+      return payload;
+    });
     const res = await bulkUpsertVariantMappings(mappingRows, now, {
       doNotDowngradeFromMatched: true,
       onlySetPendingIfMissing: true,

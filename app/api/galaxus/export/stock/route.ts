@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
-import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
   buildFeedMappingsWhere,
   createTrmFeedExclusionStats,
@@ -112,7 +112,18 @@ export async function GET(request: Request) {
     seenProviderKeys.add(key);
     return true;
   });
-  uniqueCandidates.forEach((candidate) => {
+  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
+  if (invalidSupplierVariantIds.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "ProviderKey/GTIN invariant failed",
+        supplierVariantIds: invalidSupplierVariantIds.slice(0, 50),
+      },
+      { status: 409 }
+    );
+  }
+  exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;

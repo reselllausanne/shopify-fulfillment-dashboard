@@ -273,8 +273,7 @@ export async function GET(request: Request) {
           sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
         } as KickDbPayload)
       : null;
-    const providerKey =
-      buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? mapping?.providerKey ?? "";
+    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
     const gtin = String(mapping.gtin ?? "");
     const priceRaw = supplierVariant?.price ?? null;
     const stockRaw = supplierVariant?.stock ?? null;

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
-import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
 
 export const runtime = "nodejs";
@@ -64,8 +64,8 @@ export async function POST(req: NextRequest) {
       const priceRaw = read("price");
       const gtin = read("gtin");
 
-      const providerKey = normalizeProviderKey(providerKeyRaw);
-      if (!providerKey || providerKey !== partnerKey) {
+      const supplierCode = normalizeProviderKey(providerKeyRaw);
+      if (!supplierCode || supplierCode !== partnerKey) {
         errors.push({ row: i + 1, field: "providerKey", message: "Invalid providerKey" });
         continue;
       }
@@ -110,9 +110,20 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const supplierVariantId = buildSupplierVariantId(providerKey, sku, sizeNormalized);
+      const supplierVariantId = buildSupplierVariantId(supplierCode, sku, sizeNormalized);
+      const providerKey = buildProviderKey(gtin, supplierVariantId);
+      if (!providerKey) {
+        errors.push({ row: i + 1, field: "gtin", message: "Invalid GTIN" });
+        continue;
+      }
       const now = new Date();
 
+      assertMappingIntegrity({
+        supplierVariantId,
+        gtin,
+        providerKey,
+        status: "MATCHED",
+      });
       const offer = await prismaAny.supplierVariant.upsert({
         where: { providerKey_gtin: { providerKey, gtin } },
         create: {
@@ -154,18 +165,24 @@ export async function POST(req: NextRequest) {
         await prismaAny.supplierVariant.deleteMany({ where: { supplierVariantId } });
       }
 
+      assertMappingIntegrity({
+        supplierVariantId: offer.supplierVariantId,
+        gtin,
+        providerKey,
+        status: "MATCHED",
+      });
       await prismaAny.variantMapping.upsert({
         where: { supplierVariantId: offer.supplierVariantId },
         create: {
           supplierVariantId: offer.supplierVariantId,
           gtin,
-          providerKey: `${providerKey}_${gtin}`,
-          status: "PARTNER_GTIN",
+          providerKey,
+          status: "MATCHED",
         },
         update: {
           gtin,
-          providerKey: `${providerKey}_${gtin}`,
-          status: "PARTNER_GTIN",
+          providerKey,
+          status: "MATCHED",
         },
       });
 

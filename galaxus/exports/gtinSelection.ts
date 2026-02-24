@@ -179,7 +179,7 @@ export function accumulateBestCandidates(
     const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
     const updatedAt = new Date(variant?.updatedAt ?? mapping.updatedAt ?? Date.now());
 
-    const providerKey = buildProviderKey(gtin, variant?.supplierVariantId) ?? mapping.providerKey;
+    const providerKey = buildProviderKey(gtin, variant?.supplierVariantId);
     if (!providerKey || !isValidProviderKeyWithGtin(providerKey)) {
       options?.onExclude?.({
         reason: "INVALID_PROVIDER_KEY",
@@ -227,4 +227,26 @@ export function accumulateBestCandidates(
   }
 
   return bestByGtin;
+}
+
+export function filterExportCandidates<
+  T extends { gtin?: string; providerKey?: string; variant?: any; mapping?: any }
+>(candidates: T[]) {
+  const valid: T[] = [];
+  const invalidSupplierVariantIds: string[] = [];
+  for (const candidate of candidates) {
+    const gtin = String(candidate?.gtin ?? candidate?.mapping?.gtin ?? "").trim();
+    if (!validateGtin(gtin)) {
+      continue;
+    }
+    const supplierVariantId =
+      candidate?.variant?.supplierVariantId ?? candidate?.mapping?.supplierVariantId ?? null;
+    const expectedProviderKey = buildProviderKey(gtin, supplierVariantId);
+    if (!expectedProviderKey || candidate?.providerKey !== expectedProviderKey) {
+      if (supplierVariantId) invalidSupplierVariantIds.push(String(supplierVariantId));
+      continue;
+    }
+    valid.push(candidate);
+  }
+  return { valid, invalidSupplierVariantIds };
 }

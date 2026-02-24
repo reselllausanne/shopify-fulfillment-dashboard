@@ -5,7 +5,7 @@ import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
 import { buildDuplicateKey, computeLastRowByKey } from "@/app/lib/partnerImport";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
-import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -151,12 +151,25 @@ export async function POST(req: NextRequest) {
       const now = new Date();
 
       // DELTA import: rows absent from this CSV remain unchanged.
+      const existingVariant = await prismaAny.supplierVariant.findUnique({
+        where: { supplierVariantId },
+        select: { gtin: true, providerKey: true },
+      });
+      const existingGtin = existingVariant?.gtin ?? null;
+      const existingProviderKey = existingVariant?.providerKey ?? null;
+      assertMappingIntegrity({
+        supplierVariantId,
+        gtin: existingGtin,
+        providerKey: existingProviderKey,
+        status: existingGtin ? "MATCHED" : "PENDING_GTIN",
+      });
       await prismaAny.supplierVariant.upsert({
         where: { supplierVariantId },
         create: {
           supplierVariantId,
           supplierSku: normalizedSku,
-          providerKey: providerKeyValue,
+          providerKey: existingProviderKey,
+          gtin: existingGtin,
           sizeRaw,
           sizeNormalized: normalizedSize,
           stock,
@@ -165,7 +178,8 @@ export async function POST(req: NextRequest) {
         },
         update: {
           supplierSku: normalizedSku,
-          providerKey: providerKeyValue,
+          providerKey: existingProviderKey,
+          gtin: existingGtin,
           sizeRaw,
           sizeNormalized: normalizedSize,
           stock,
@@ -301,12 +315,24 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      const fullProviderKey = buildProviderKey(resolvedGtin, supplierVariantId);
+      if (!fullProviderKey) {
+        errors.push({ row: i + 1, field: "gtin", message: "Invalid GTIN" });
+        rowResults.push({ row: i + 1, status: "ERROR", error: "Invalid GTIN" });
+        continue;
+      }
+      assertMappingIntegrity({
+        supplierVariantId,
+        gtin: resolvedGtin,
+        providerKey: fullProviderKey,
+        status: "MATCHED",
+      });
       const offer = await prismaAny.supplierVariant.upsert({
-        where: { providerKey_gtin: { providerKey: providerKeyValue, gtin: resolvedGtin } },
+        where: { providerKey_gtin: { providerKey: fullProviderKey, gtin: resolvedGtin } },
         create: {
           supplierVariantId,
           supplierSku: normalizedSku,
-          providerKey: providerKeyValue,
+          providerKey: fullProviderKey,
           gtin: resolvedGtin,
           sizeRaw,
           sizeNormalized: normalizedSize,
@@ -316,7 +342,7 @@ export async function POST(req: NextRequest) {
         },
         update: {
           supplierSku: normalizedSku,
-          providerKey: providerKeyValue,
+          providerKey: fullProviderKey,
           gtin: resolvedGtin,
           sizeRaw,
           sizeNormalized,

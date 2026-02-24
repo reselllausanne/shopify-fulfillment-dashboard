@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { assertMappingIntegrity } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,16 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid price" }, { status: 400 });
   }
 
+  const existing = await prisma.supplierVariant.findUnique({
+    where: { supplierVariantId: decodedSupplierVariantId },
+    select: { gtin: true, providerKey: true },
+  });
+  assertMappingIntegrity({
+    supplierVariantId: decodedSupplierVariantId,
+    gtin: existing?.gtin ?? null,
+    providerKey: existing?.providerKey ?? null,
+    status: existing?.gtin ? "MATCHED" : "PENDING_GTIN",
+  });
   const updated = await prisma.supplierVariant.update({
     where: { supplierVariantId: decodedSupplierVariantId },
     data: {
@@ -74,7 +85,7 @@ export async function DELETE(
   await prismaAny.variantMapping.deleteMany({ where: { supplierVariantId: decodedSupplierVariantId } });
   await prismaAny.partnerUploadRow?.deleteMany({
     where: {
-      providerKey: variant.providerKey ?? session.partnerKey.toUpperCase(),
+      providerKey: session.partnerKey?.toUpperCase() ?? "",
       sku: variant.supplierSku ?? "",
       sizeNormalized: variant.sizeNormalized ?? "",
     },

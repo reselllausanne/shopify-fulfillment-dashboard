@@ -117,8 +117,7 @@ export async function GET(request: Request) {
     const row = index + 1;
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
-    const providerKey =
-      buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? mapping?.providerKey ?? "";
+    const providerKey = buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? "";
     const gtin = String(mapping.gtin ?? "");
     const priceRaw = variant?.price ?? null;
     const stockRaw = variant?.stock ?? null;

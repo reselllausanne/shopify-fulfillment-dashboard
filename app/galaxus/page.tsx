@@ -191,6 +191,14 @@ export default function GalaxusDashboardPage() {
   const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
   const [schedulerBusy, setSchedulerBusy] = useState(false);
   const [enrichSku, setEnrichSku] = useState<string>("");
+  const [enrichAllStatus, setEnrichAllStatus] = useState<{
+    running: boolean;
+    processed: number;
+    remaining: number | null;
+    lastError: string | null;
+    lastRunAt: string | null;
+    lastResults?: Array<{ supplierVariantId: string; status: string; gtin: string | null; error?: string | null }>;
+  } | null>(null);
   const [partnerKey, setPartnerKey] = useState<string>("self");
   const [partnerName, setPartnerName] = useState<string>("Personal stock");
   const [partnerAccessCode, setPartnerAccessCode] = useState<string>("");
@@ -203,10 +211,21 @@ export default function GalaxusDashboardPage() {
   };
 
   const loadSchedulerStatus = async () => {
+    if (enrichAllStatus?.running) return;
     try {
       const res = await fetch("/api/galaxus/feeds/scheduler", { cache: "no-store" });
       const data = await res.json();
       if (data?.ok) setSchedulerStatus(data.status ?? null);
+    } catch {
+      // silent
+    }
+  };
+
+  const loadEnrichAllStatus = async () => {
+    try {
+      const res = await fetch("/api/galaxus/kickdb/enrich-all", { cache: "no-store" });
+      const data = await res.json();
+      if (data?.ok) setEnrichAllStatus(data.status ?? null);
     } catch {
       // silent
     }
@@ -364,29 +383,44 @@ export default function GalaxusDashboardPage() {
     loadSchedulerStatus();
     loadRoutingSummary();
     loadVariantStats();
+    loadEnrichAllStatus();
     const t = setInterval(loadSchedulerStatus, 30000);
-    return () => clearInterval(t);
+    const enrichTick = setInterval(loadEnrichAllStatus, 30000);
+    return () => {
+      clearInterval(t);
+      clearInterval(enrichTick);
+    };
   }, []);
 
   const syncSupplier = async () => {
     setBusy("sync");
     setError(null);
     try {
-      const response = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
+      const response = await fetch("/api/galaxus/supplier/sync?all=1&mode=stock", {
+        method: "POST",
+      });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Sync failed");
-      // Enrich newly added products immediately; older retries are gated (4-day window).
-      void fetch("/api/galaxus/kickdb/enrich-missing?limit=200&concurrency=3", { method: "POST" })
-        .then((res) => res.json().catch(() => ({})))
-        .then((payload) => {
-          if (payload?.ok) {
-            setOpsLog(JSON.stringify({ sync: data, enrichMissing: payload }, null, 2));
-          }
-        })
-        .catch(() => {
-          // ignore background errors; sync result already returned
-        });
+      setOpsLog(JSON.stringify({ sync: data }, null, 2));
       await loadVariantStats();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const enrichAll = async () => {
+    setBusy("enrich-all");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch("/api/galaxus/kickdb/enrich-all", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error ?? "Enrich ALL failed");
+      }
+      await loadEnrichAllStatus();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -399,16 +433,12 @@ export default function GalaxusDashboardPage() {
     setError(null);
     setOpsLog(null);
     try {
-      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
+      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1&mode=full", {
+        method: "POST",
+      });
       const syncData = await syncResponse.json();
       if (!syncResponse.ok || !syncData.ok) {
         throw new Error(syncData.error ?? "Supplier sync failed");
-      }
-
-      const partnerResponse = await fetch("/api/galaxus/partners/sync?all=1", { method: "POST" });
-      const partnerData = await partnerResponse.json();
-      if (!partnerResponse.ok || !partnerData.ok) {
-        throw new Error(partnerData.error ?? "Partner sync failed");
       }
 
       const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
@@ -433,7 +463,9 @@ export default function GalaxusDashboardPage() {
     setError(null);
     setOpsLog(null);
     try {
-      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1", { method: "POST" });
+      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1&mode=stock", {
+        method: "POST",
+      });
       const syncData = await syncResponse.json();
       if (!syncResponse.ok || !syncData.ok) {
         throw new Error(syncData.error ?? "Supplier sync failed");
@@ -443,12 +475,6 @@ export default function GalaxusDashboardPage() {
       const partnerData = await partnerResponse.json();
       if (!partnerResponse.ok || !partnerData.ok) {
         throw new Error(partnerData.error ?? "Partner sync failed");
-      }
-
-      const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
-      const enrichData = await enrichResponse.json();
-      if (!enrichResponse.ok || !enrichData.ok) {
-        throw new Error(enrichData.error ?? "KickDB enrich failed");
       }
 
       const checkResponse = await fetch(
@@ -471,7 +497,6 @@ export default function GalaxusDashboardPage() {
             {
               sync: syncData,
               partner: partnerData,
-              kickdb: enrichData,
               checks: report.summary,
               warning: `Export checks found ${totalIssues} issues. Upload will continue.`,
             },
@@ -495,7 +520,6 @@ export default function GalaxusDashboardPage() {
           {
             sync: syncData,
             partner: partnerData,
-            kickdb: enrichData,
             checks: report.summary ?? null,
             upload: uploadData,
           },
@@ -1051,7 +1075,7 @@ export default function GalaxusDashboardPage() {
               <div>EDI IN (ORDR pull) every 1 hour</div>
               <div>Supplier sync every 2 hours</div>
               <div>Price + stock every 2 hours</div>
-              <div>Master data every 12 hours</div>
+              <div>Full refresh every 10 hours</div>
               {schedulerStatus?.nextEdiInAt ? (
                 <div>Next EDI IN: {new Date(schedulerStatus.nextEdiInAt).toLocaleString()}</div>
               ) : null}
@@ -1062,7 +1086,7 @@ export default function GalaxusDashboardPage() {
                 <div>Next price/stock: {new Date(schedulerStatus.nextOfferStockAt).toLocaleString()}</div>
               ) : null}
               {schedulerStatus?.nextMasterAt ? (
-                <div>Next master: {new Date(schedulerStatus.nextMasterAt).toLocaleString()}</div>
+                <div>Next full refresh: {new Date(schedulerStatus.nextMasterAt).toLocaleString()}</div>
               ) : null}
             </div>
             <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
@@ -1084,7 +1108,7 @@ export default function GalaxusDashboardPage() {
                 )}
               </div>
               <div>
-                Last master:{" "}
+                Last full refresh:{" "}
                 {formatJobStatus(schedulerStatus?.lastMasterRunAt, schedulerStatus?.lastMasterResult)}
               </div>
               {schedulerStatus?.lastOfferStockResult?.resultJson?.upload?.counts ? (
@@ -1095,7 +1119,7 @@ export default function GalaxusDashboardPage() {
               ) : null}
               {schedulerStatus?.lastMasterResult?.resultJson?.upload?.counts ? (
                 <div>
-                  Last master counts:{" "}
+                  Last full refresh counts:{" "}
                   {JSON.stringify(schedulerStatus.lastMasterResult.resultJson.upload.counts)}
                 </div>
               ) : null}
@@ -1103,7 +1127,7 @@ export default function GalaxusDashboardPage() {
                 <div>Last price/stock error: {schedulerStatus.lastOfferStockResult.error}</div>
               ) : null}
               {schedulerStatus?.lastMasterResult?.error ? (
-                <div>Last master error: {schedulerStatus.lastMasterResult.error}</div>
+                <div>Last full refresh error: {schedulerStatus.lastMasterResult.error}</div>
               ) : null}
               {schedulerStatus?.lastEdiInResult?.error ? (
                 <div>Last EDI IN error: {schedulerStatus.lastEdiInResult.error}</div>
@@ -1260,51 +1284,53 @@ export default function GalaxusDashboardPage() {
                 onClick={syncSupplier}
                 disabled={busy !== null}
               >
-                {busy === "sync" ? "Syncing…" : "Sync catalog"}
+                {busy === "sync" ? "Syncing…" : "Sync Stock"}
               </button>
-              <div className="text-xs text-gray-500">
+              <button
+                className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
+                onClick={enrichAll}
+                disabled={busy !== null}
+              >
+                {busy === "enrich-all" ? "Starting…" : "Enrich ALL"}
+              </button>
+            </div>
+            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
+              <div>
+                Enrich ALL: {enrichAllStatus?.running ? "RUNNING" : "IDLE"}
+              </div>
+              <div>
+                Processed: {enrichAllStatus?.processed ?? 0} · Remaining:{" "}
+                {enrichAllStatus?.remaining === null ? "calculating…" : enrichAllStatus?.remaining ?? 0}
+              </div>
+              <div>
+                Last run:{" "}
+                {enrichAllStatus?.lastRunAt
+                  ? new Date(enrichAllStatus.lastRunAt).toLocaleString()
+                  : "—"}
+              </div>
+              {enrichAllStatus?.lastError ? (
+                <div className="text-red-600">Last error: {enrichAllStatus.lastError}</div>
+              ) : null}
+              <div>
                 {variantStats
                   ? `Mappings: ${variantStats.withGtin} with GTIN · ${variantStats.withoutGtin} without GTIN`
                   : "Mappings: —"}
               </div>
-              <button
-                className="px-3 py-2 rounded bg-blue-800 text-white disabled:opacity-50"
-                onClick={syncAllData}
-                disabled={busy !== null}
-              >
-                {busy === "sync-all" ? "Refreshing…" : "Full refresh"}
-              </button>
+              {enrichAllStatus?.lastResults?.length ? (
+                <div className="text-xs text-gray-500">
+                  Last 10 results:
+                  <div className="mt-1 space-y-1">
+                    {enrichAllStatus.lastResults.map((item) => (
+                      <div key={item.supplierVariantId}>
+                        {item.supplierVariantId} · {item.status} · {item.gtin ?? "—"}
+                        {item.error ? ` · ${item.error}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button
-                className="px-3 py-2 rounded bg-green-100 text-green-900 disabled:opacity-50"
-                onClick={() => enrichKickDb(true, true)}
-                disabled={busy !== null}
-              >
-                {busy === "enrich" ? "Enriching…" : "Enrich GTIN (debug)"}
-              </button>
-              <div className="flex items-center gap-2">
-                <input
-                  className="px-2 py-2 border rounded text-sm w-40"
-                  value={enrichSku}
-                  onChange={(event) => setEnrichSku(event.target.value)}
-                  placeholder="Supplier SKU"
-                />
-                <button
-                  className="px-3 py-2 rounded bg-green-700 text-white disabled:opacity-50"
-                  onClick={enrichSingleSku}
-                  disabled={busy !== null}
-                >
-                  {busy === "enrich-single" ? "Enriching…" : "Enrich single SKU"}
-                </button>
-              </div>
-              <button
-                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
-                onClick={() => loadDb(0)}
-                disabled={busy !== null}
-              >
-                {busy === "db" ? "Loading…" : "Load DB variants"}
-              </button>
               <button
                 className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
                 onClick={() => loadMappings(0)}
@@ -1312,45 +1338,14 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "db-mappings" ? "Loading…" : "Load DB mappings"}
               </button>
+              <button
+                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
+                onClick={downloadMappings}
+                disabled={busy !== null}
+              >
+                Download DB mappings (CSV)
+              </button>
             </div>
-            <details className="rounded border bg-white p-3">
-              <summary className="cursor-pointer text-sm font-medium">Data cleanup</summary>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  className="px-3 py-2 rounded bg-red-700 text-white disabled:opacity-50"
-                  onClick={() => clearSupplierData(false)}
-                  disabled={busy !== null}
-                >
-                  {busy === "supplier-clear" ? "Clearing…" : "Clear supplier data"}
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-red-100 text-red-900 disabled:opacity-50"
-                  onClick={() => clearSupplierData(true)}
-                  disabled={busy !== null}
-                >
-                  {busy === "supplier-clear-kickdb" ? "Clearing…" : "Clear supplier + KickDB"}
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
-                  onClick={downloadMappings}
-                  disabled={busy !== null}
-                >
-                  Download DB mappings (CSV)
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                  onClick={loadCleanupStats}
-                  disabled={busy !== null}
-                >
-                  {busy === "cleanup-stats" ? "Loading…" : "Load cleanup stats"}
-                </button>
-              </div>
-              {cleanupStats?.cleanupCandidates ? (
-                <div className="mt-3 text-xs text-gray-600">
-                  {`Orphan candidates — sv→mapping: ${cleanupStats.cleanupCandidates.supplierVariantsWithoutMapping}, mapping→sv: ${cleanupStats.cleanupCandidates.mappingsWithoutSupplierVariant}, mapping→kickdb: ${cleanupStats.cleanupCandidates.mappingsWithoutKickdbVariant}`}
-                </div>
-              ) : null}
-            </details>
           </div>
           <div className="rounded border bg-gray-50 p-3 space-y-3">
             <div className="text-sm font-medium">Partner Portal</div>

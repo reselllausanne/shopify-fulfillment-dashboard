@@ -4,9 +4,30 @@ import { getFeedSchedulerStatus, startFeedScheduler, stopFeedScheduler } from "@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+let cachedStatus: any | null = null;
+let cachedAt: number | null = null;
+const CACHE_TTL_MS = 30000;
+
 export async function GET(request: Request) {
-  const status = await getFeedSchedulerStatus();
-  return NextResponse.json({ ok: true, status });
+  const now = Date.now();
+  if (cachedAt && cachedStatus && now - cachedAt < CACHE_TTL_MS) {
+    return NextResponse.json({ ok: true, status: cachedStatus, cached: true });
+  }
+  try {
+    const status = await getFeedSchedulerStatus();
+    cachedStatus = status;
+    cachedAt = now;
+    return NextResponse.json({ ok: true, status });
+  } catch (error: any) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error?.message ?? "Scheduler status unavailable",
+        status: cachedStatus ?? null,
+      },
+      { status: 503 }
+    );
+  }
 }
 
 export async function POST(request: Request) {

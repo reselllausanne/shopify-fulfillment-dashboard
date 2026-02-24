@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const debug = searchParams.get("debug") === "1";
-    const force = searchParams.get("force") === "1";
+    const forceMissing = searchParams.get("force") === "1";
     const raw = searchParams.get("raw") === "1";
     const supplierSku = searchParams.get("sku")?.trim() || null;
 
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     for (const sku of skuSet) {
       const { results } = await runKickdbEnrich({
         debug,
-        force,
+        forceMissing,
         raw,
         supplierSku: sku,
       });

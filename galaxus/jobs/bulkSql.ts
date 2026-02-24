@@ -272,7 +272,11 @@ export async function bulkUpdateSupplierVariants(
       UPDATE "public"."SupplierVariant" AS t
       SET
         "supplierSku" = COALESCE(vals."supplierSku", t."supplierSku"),
-        "providerKey" = COALESCE(vals."providerKey", t."providerKey"),
+        "providerKey" = CASE
+          WHEN vals."providerKey" IS NOT NULL THEN vals."providerKey"
+          WHEN vals."gtin" IS NULL AND t."gtin" IS NULL THEN NULL
+          ELSE t."providerKey"
+        END,
         "price" = COALESCE(vals."price", t."price"),
         "stock" = COALESCE(vals."stock", t."stock"),
         "sizeRaw" = COALESCE(vals."sizeRaw", t."sizeRaw"),
@@ -307,7 +311,8 @@ export async function bulkUpdateSupplierVariants(
             t."supplierProductName" IS DISTINCT FROM COALESCE(vals."supplierProductName", t."supplierProductName") OR
             (vals."images" IS NOT NULL AND t."images" IS DISTINCT FROM vals."images") OR
             t."leadTimeDays" IS DISTINCT FROM COALESCE(vals."leadTimeDays", t."leadTimeDays") OR
-            (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin")
+            (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
+            (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL)
           )
           THEN ${now}
           ELSE t."lastSyncAt"
@@ -325,6 +330,7 @@ export async function bulkUpdateSupplierVariants(
           t."leadTimeDays" IS DISTINCT FROM COALESCE(vals."leadTimeDays", t."leadTimeDays") OR
           (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
           (vals."providerKey" IS NOT NULL AND t."providerKey" IS DISTINCT FROM vals."providerKey") OR
+          (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR
           (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")
         )
       RETURNING 1
@@ -403,6 +409,7 @@ export async function bulkUpsertVariantMappings(
           ELSE vals."gtin"
         END,
         "providerKey" = CASE
+          WHEN vals."gtin" IS NULL AND m."gtin" IS NULL THEN NULL
           WHEN vals."providerKey" IS NULL THEN m."providerKey"
           ELSE vals."providerKey"
         END,
@@ -426,6 +433,7 @@ export async function bulkUpsertVariantMappings(
         AND (
           (vals."gtin" IS NOT NULL AND m."gtin" IS DISTINCT FROM vals."gtin") OR
           (vals."providerKey" IS NOT NULL AND m."providerKey" IS DISTINCT FROM vals."providerKey") OR
+          (vals."gtin" IS NULL AND m."gtin" IS NULL AND m."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR
           (vals."kickdbVariantId" IS NOT NULL AND m."kickdbVariantId" IS DISTINCT FROM vals."kickdbVariantId") OR
           (m."status" IS DISTINCT FROM vals."status")
         )

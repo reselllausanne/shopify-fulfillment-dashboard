@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
-import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
   buildFeedMappingsWhere,
   createTrmFeedExclusionStats,
@@ -98,7 +98,18 @@ export async function GET(request: Request) {
   } while (all && lastBatch === pageSize);
 
   const candidates = Array.from(bestByGtin.values());
-  for (const candidate of candidates) {
+  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
+  if (invalidSupplierVariantIds.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "ProviderKey/GTIN invariant failed",
+        supplierVariantIds: invalidSupplierVariantIds.slice(0, 50),
+      },
+      { status: 409 }
+    );
+  }
+  for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
     const product = candidate.product as any;

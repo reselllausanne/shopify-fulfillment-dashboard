@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { computeGalaxusSellPriceExVat, getDefaultPricing, resolvePricingOverrides } from "@/galaxus/exports/pricing";
-import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
   buildFeedMappingsWhere,
   createTrmFeedExclusionStats,
@@ -130,7 +129,18 @@ export async function GET(request: Request) {
     seenProviderKeys.add(key);
     return true;
   });
-  for (const candidate of uniqueCandidates) {
+  const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
+  if (invalidSupplierVariantIds.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "ProviderKey/GTIN invariant failed",
+        supplierVariantIds: invalidSupplierVariantIds.slice(0, 50),
+      },
+      { status: 409 }
+    );
+  }
+  for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
     const product = candidate.product as any;

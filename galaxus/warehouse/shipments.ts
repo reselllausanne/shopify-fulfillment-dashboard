@@ -262,7 +262,7 @@ function buildDeliveryNoteData(
 ): DeliveryNoteData {
   const lines: OrderLine[] = items.map((item) => {
     const line = item.line as any;
-    const providerKey = buildProviderKey(line.gtin, line.supplierVariantId) ?? line.gtin ?? "";
+    const providerKey = buildProviderKey(line.gtin, line.supplierVariantId) ?? "";
     const unitNetPrice = Number(line.unitNetPrice ?? 0);
     const lineNetAmount = unitNetPrice * item.quantity;
     return {

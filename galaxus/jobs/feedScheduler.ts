@@ -40,7 +40,7 @@ type SchedulerState = {
 };
 
 const DEFAULT_OFFER_STOCK_INTERVAL_MS = 2 * 60 * 60 * 1000;
-const DEFAULT_MASTER_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_MASTER_INTERVAL_MS = 10 * 60 * 60 * 1000;
 const DEFAULT_EDI_IN_INTERVAL_MS = 60 * 60 * 1000;
 
 function toIso(value: Date | number | null) {
@@ -117,7 +117,7 @@ export async function getFeedSchedulerStatus(): Promise<SchedulerState> {
   const enabledAt = config.enabledAt ? new Date(config.enabledAt) : null;
   const lastEdiIn = await getLastJobRun("edi-in");
   const lastOfferStock = await getLastJobRun("feeds-offer-stock");
-  const lastMaster = await getLastJobRun("feeds-master");
+  const lastMaster = await getLastJobRun("full-refresh");
   const lastPartnerSync = await getLastJobRun("partners-sync");
   const [lastMasterManifest, lastOfferManifest, lastStockManifest, lastEdiManifest] =
     await Promise.all([
@@ -228,9 +228,9 @@ export async function runFeedSchedulerTick(origin: string) {
   );
   results.master = await maybeRunIfDue(
     origin,
-    "feeds-master",
+    "full-refresh",
     DEFAULT_MASTER_INTERVAL_MS,
-    "/api/galaxus/cron?task=feeds-master",
+    "/api/galaxus/cron?task=full-refresh",
     enabledAt
   );
   return { ok: true, running: true, results };

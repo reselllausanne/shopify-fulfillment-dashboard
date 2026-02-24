@@ -50,12 +50,20 @@ export async function GET(request: Request) {
       const supplier = searchParams.get("supplier")?.trim();
       const supplierParam = supplier ? `&supplier=${encodeURIComponent(supplier)}` : "";
       results.feedsMaster = await runJob("feeds-master", async () => {
-        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1`, {
+        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1&mode=full`, {
           cache: "no-store",
         });
         const supplierData = await supplierRes.json().catch(() => ({}));
         if (!supplierRes.ok || !supplierData.ok) {
           throw new Error(supplierData?.error ?? "Supplier sync failed");
+        }
+        const enrichRes = await fetch(`${origin}/api/galaxus/kickdb/enrich?all=1`, {
+          method: "POST",
+          cache: "no-store",
+        });
+        const enrichData = await enrichRes.json().catch(() => ({}));
+        if (!enrichRes.ok || !enrichData.ok) {
+          throw new Error(enrichData?.error ?? "KickDB enrich failed");
         }
         const partnerRes = await fetch(`${origin}/api/galaxus/partners/sync?all=1`, {
           cache: "no-store",
@@ -71,7 +79,29 @@ export async function GET(request: Request) {
         if (!res.ok || !data.ok) {
           throw new Error(data?.error ?? "Feed master upload failed");
         }
-        return { supplier: supplierData, partner: partnerData, upload: data };
+        return { supplier: supplierData, kickdb: enrichData, partner: partnerData, upload: data };
+      });
+    }
+
+    if (task === "full-refresh" || task === "all") {
+      const origin = new URL(request.url).origin;
+      results.fullRefresh = await runJob("full-refresh", async () => {
+        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1&mode=full`, {
+          cache: "no-store",
+        });
+        const supplierData = await supplierRes.json().catch(() => ({}));
+        if (!supplierRes.ok || !supplierData.ok) {
+          throw new Error(supplierData?.error ?? "Supplier sync failed");
+        }
+        const enrichRes = await fetch(`${origin}/api/galaxus/kickdb/enrich-all`, {
+          method: "POST",
+          cache: "no-store",
+        });
+        const enrichData = await enrichRes.json().catch(() => ({}));
+        if (!enrichRes.ok && enrichRes.status !== 409) {
+          throw new Error(enrichData?.error ?? "KickDB enrich-all failed");
+        }
+        return { supplier: supplierData, enrich: enrichData };
       });
     }
 
@@ -80,7 +110,7 @@ export async function GET(request: Request) {
       const supplier = searchParams.get("supplier")?.trim();
       const supplierParam = supplier ? `&supplier=${encodeURIComponent(supplier)}` : "";
       results.feedsOfferStock = await runJob("feeds-offer-stock", async () => {
-        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1`, {
+        const supplierRes = await fetch(`${origin}/api/galaxus/supplier/sync?all=1&mode=stock`, {
           cache: "no-store",
         });
         const supplierData = await supplierRes.json().catch(() => ({}));

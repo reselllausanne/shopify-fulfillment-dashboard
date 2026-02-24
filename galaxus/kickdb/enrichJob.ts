@@ -7,7 +7,8 @@ import {
   extractVariantGtin,
   searchStockxProducts,
 } from "@/galaxus/kickdb/client";
-import { buildProviderKey, normalizeProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
+import { Prisma } from "@prisma/client";
+import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { shouldFetchKickDb } from "@/galaxus/kickdb/cache";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 
@@ -16,6 +17,7 @@ type KickdbEnrichOptions = {
   offset?: number;
   debug?: boolean;
   force?: boolean;
+  forceMissing?: boolean;
   raw?: boolean;
   supplierVariantId?: string | null;
   supplierSku?: string | null;
@@ -338,6 +340,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   const offset = Math.max(Number(options.offset ?? 0), 0);
   const debug = Boolean(options.debug);
   const force = Boolean(options.force);
+  const forceMissing = Boolean(options.forceMissing);
   const raw = Boolean(options.raw);
   const supplierVariantId = options.supplierVariantId?.trim() || null;
   const supplierSku = options.supplierSku?.trim() || null;
@@ -363,18 +366,32 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
     supplierVariants = matches;
   } else {
-    const where: Record<string, unknown> = {};
-    if (supplierVariantIdPrefix) {
-      where.supplierVariantId = {
-        startsWith: supplierVariantIdPrefix,
-      };
+    const prefixFilter = supplierVariantIdPrefix
+      ? Prisma.sql`AND sv."supplierVariantId" ILIKE ${`${supplierVariantIdPrefix}%`}`
+      : Prisma.sql``;
+    const candidates = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>(Prisma.sql`
+      SELECT sv."supplierVariantId"
+      FROM "public"."SupplierVariant" sv
+      LEFT JOIN "public"."VariantMapping" vm
+        ON vm."supplierVariantId" = sv."supplierVariantId"
+      WHERE (vm."supplierVariantId" IS NULL OR vm."gtin" IS NULL OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN'))
+      ${prefixFilter}
+      ORDER BY COALESCE(vm."updatedAt", sv."updatedAt") ASC
+      LIMIT ${limit}
+      OFFSET ${offset}
+    `);
+    const candidateIds = candidates.map((row) => row.supplierVariantId).filter(Boolean);
+    if (!candidateIds.length) {
+      supplierVariants = [];
+    } else {
+      const fetched = await prisma.supplierVariant.findMany({
+        where: { supplierVariantId: { in: candidateIds } },
+      });
+      const byId = new Map(fetched.map((variant) => [variant.supplierVariantId, variant]));
+      supplierVariants = candidateIds
+        .map((id) => byId.get(id))
+        .filter((variant): variant is NonNullable<typeof variant> => Boolean(variant));
     }
-    supplierVariants = await prisma.supplierVariant.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-      skip: offset,
-    });
   }
 
   const results: Array<{
@@ -401,40 +418,103 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const variantId = variant.supplierVariantId;
     const variantSku = variant.supplierSku ?? null;
     const variantBrand = (variant as any)?.supplierBrand ?? null;
-    const variantName = productNameByVariantId.get(variant.supplierVariantId) ?? null;
+    const variantName =
+      productNameByVariantId.get(variant.supplierVariantId) ?? variant?.supplierProductName ?? null;
     const mappingWhere = { supplierVariantId: variant.supplierVariantId };
 
     const mapping = await prismaAny.variantMapping.findUnique({
       where: mappingWhere as any,
     });
+    const mappingStatus = String(mapping?.status ?? "");
+    const mappingGtinRaw = mapping?.gtin ?? null;
+    const mappingGtin = mappingGtinRaw && validateGtin(mappingGtinRaw) ? mappingGtinRaw : null;
+    const variantGtinRaw = variant?.gtin ?? null;
+    const variantGtin = variantGtinRaw && validateGtin(variantGtinRaw) ? variantGtinRaw : null;
     const supplierGtin =
-      mapping?.gtin && mapping.status === "SUPPLIER_GTIN" ? mapping.gtin : null;
+      mappingGtin && mappingStatus === "SUPPLIER_GTIN" ? mappingGtin : null;
     const mappingCreateBase = { supplierVariantId: variant.supplierVariantId };
     const providerKeySourceId = variant.supplierVariantId;
-    const existingGtin = mapping?.gtin ?? variant?.gtin ?? null;
+    const existingGtin = mappingGtin ?? variantGtin ?? null;
     if (existingGtin) {
-      results.push({
+      const normalizedStatus = mappingStatus === "SUPPLIER_GTIN" ? "SUPPLIER_GTIN" : "MATCHED";
+      const providerKey = buildProviderKey(existingGtin, providerKeySourceId);
+      assertMappingIntegrity({
         supplierVariantId: variant.supplierVariantId,
-        status: "SKIPPED_HAS_GTIN",
         gtin: existingGtin,
-        debug: debug
-          ? {
-              reason: "SKIPPED_HAS_GTIN",
-              force,
-              sizeRaw: variant.sizeRaw,
-              supplierSku: variantSku ?? undefined,
-            }
-          : undefined,
+        providerKey,
+        status: normalizedStatus,
       });
-      continue;
+      const needsMappingUpdate =
+        !mapping ||
+        mapping.gtin !== existingGtin ||
+        mapping.providerKey !== providerKey ||
+        mappingStatus === "PENDING_GTIN" ||
+        mappingStatus === "AMBIGUOUS_GTIN";
+      if (needsMappingUpdate) {
+        await prismaAny.variantMapping.upsert({
+          where: mappingWhere as any,
+          create: {
+            ...(mappingCreateBase as any),
+            gtin: existingGtin,
+            providerKey,
+            status: normalizedStatus,
+          },
+          update: {
+            gtin: existingGtin,
+            providerKey,
+            status: normalizedStatus,
+          },
+        });
+      }
+      if (variant?.gtin !== existingGtin || variant?.providerKey !== providerKey) {
+        await prismaAny.supplierVariant.update({
+          where: { supplierVariantId: variant.supplierVariantId },
+          data: {
+            gtin: existingGtin,
+            providerKey,
+          },
+        });
+      }
+      if (!force) {
+        results.push({
+          supplierVariantId: variant.supplierVariantId,
+          status: "SKIPPED_HAS_GTIN",
+          gtin: existingGtin,
+          debug: debug
+            ? {
+                reason: "SKIPPED_HAS_GTIN",
+                force,
+                sizeRaw: variant.sizeRaw,
+                supplierSku: variantSku ?? undefined,
+              }
+            : undefined,
+        });
+        continue;
+      }
     }
 
+    if (!existingGtin && mapping?.providerKey) {
+      const normalizedStatus = mappingStatus === "AMBIGUOUS_GTIN" ? "AMBIGUOUS_GTIN" : "PENDING_GTIN";
+      assertMappingIntegrity({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: normalizedStatus,
+      });
+      await prismaAny.variantMapping.update({
+        where: mappingWhere as any,
+        data: { gtin: null, providerKey: null, status: normalizedStatus },
+      });
+    }
+
+    const shouldBypassCache =
+      force || (forceMissing && (!mappingGtin || mappingStatus === "PENDING_GTIN" || mappingStatus === "AMBIGUOUS_GTIN"));
     if (
-      !force
+      !shouldBypassCache
       && !shouldFetchKickDb({
         lastFetchedAt: mapping?.updatedAt ?? null,
         notFound: mapping?.status === "NOT_FOUND",
-        missingGtin: !mapping?.gtin,
+        missingGtin: !mappingGtin,
       })
     ) {
       results.push({
@@ -452,7 +532,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       continue;
     }
 
-    const supplierProductName = variantName;
+    const supplierProductName = variantName ?? variant?.supplierProductName ?? null;
     const query = variantSku ? deriveSkuSearchQuery(variantSku) : supplierProductName;
     const debugInfo: DebugInfo | undefined = debug
       ? {
@@ -475,15 +555,23 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         });
         continue;
       }
+      assertMappingIntegrity({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "PENDING_GTIN",
+      });
       await prismaAny.variantMapping.upsert({
         where: mappingWhere as any,
         create: {
           ...(mappingCreateBase as any),
           gtin: null,
+          providerKey: null,
           status: "PENDING_GTIN",
         },
         update: {
           gtin: null,
+          providerKey: null,
           status: "PENDING_GTIN",
         },
       });
@@ -547,15 +635,23 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         });
         continue;
       }
+      assertMappingIntegrity({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "PENDING_GTIN",
+      });
       await prismaAny.variantMapping.upsert({
         where: mappingWhere as any,
         create: {
           ...(mappingCreateBase as any),
           gtin: null,
+          providerKey: null,
           status: "PENDING_GTIN",
         },
         update: {
           gtin: null,
+          providerKey: null,
           status: "PENDING_GTIN",
         },
       });
@@ -640,8 +736,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       ? extractVariantGtin(matchedVariant ?? undefined)
       : null;
     const supplierGtinValid = supplierGtin && validateGtin(supplierGtin) ? supplierGtin : null;
-    const resolvedGtin = supplierGtinValid ?? gtin ?? null;
-    const isAmbiguous = !supplierGtinValid && gtinCandidates.length > 1;
+    const resolvedGtin = supplierGtinValid ?? gtin ?? existingGtin ?? null;
+    const isAmbiguous = !supplierGtinValid && !existingGtin && gtinCandidates.length > 1;
     const finalGtin = isAmbiguous ? null : resolvedGtin;
     const providerKey = buildProviderKey(finalGtin ?? null, providerKeySourceId);
 
@@ -720,12 +816,13 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     if (!hasImages && imageUrl) {
       updateSupplier.images = [imageUrl];
     }
-    const providerKeyShort =
-      normalizeProviderKey(variant.providerKey ?? null) ?? resolveSupplierCode(variant.supplierVariantId);
-    if (providerKeyShort && !variant.providerKey) {
-      updateSupplier.providerKey = providerKeyShort;
-    }
     if (Object.keys(updateSupplier).length > 0) {
+      assertMappingIntegrity({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: variant?.gtin ?? null,
+        providerKey: variant?.providerKey ?? null,
+        status: variant?.gtin ? "MATCHED" : "PENDING_GTIN",
+      });
       await prismaAny.supplierVariant.update({
         where: { supplierVariantId: variant.supplierVariantId },
         data: updateSupplier,
@@ -767,6 +864,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         : finalGtin
           ? "MATCHED"
           : "PENDING_GTIN";
+    assertMappingIntegrity({
+      supplierVariantId: variant.supplierVariantId,
+      gtin: finalGtin ?? null,
+      providerKey: providerKey ?? null,
+      status: resolvedStatus,
+    });
     await prismaAny.variantMapping.upsert({
       where: mappingWhere as any,
       create: {
@@ -784,19 +887,19 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       },
     });
 
-    if (finalGtin && !variant?.gtin) {
+    if (finalGtin) {
       try {
         await prismaAny.supplierVariant.update({
           where: { supplierVariantId: variant.supplierVariantId },
           data: {
             gtin: finalGtin,
-            providerKey: providerKeyShort ?? undefined,
+            providerKey: providerKey ?? null,
           },
         });
       } catch (error: any) {
-        if (error?.code === "P2002" && providerKeyShort) {
+        if (error?.code === "P2002" && providerKey) {
           const existing = await prismaAny.supplierVariant.findFirst({
-            where: { providerKey: providerKeyShort, gtin: finalGtin },
+            where: { providerKey, gtin: finalGtin },
             select: { supplierVariantId: true },
           });
           if (existing?.supplierVariantId && existing.supplierVariantId !== variant.supplierVariantId) {
@@ -819,6 +922,19 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
           throw error;
         }
       }
+    } else if (variant?.providerKey) {
+      assertMappingIntegrity({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: resolvedStatus === "AMBIGUOUS_GTIN" ? "AMBIGUOUS_GTIN" : "PENDING_GTIN",
+      });
+      await prismaAny.supplierVariant.update({
+        where: { supplierVariantId: variant.supplierVariantId },
+        data: {
+          providerKey: null,
+        },
+      });
     }
 
     results.push({

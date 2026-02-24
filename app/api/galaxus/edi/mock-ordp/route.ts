@@ -237,7 +237,7 @@ export async function POST(request: Request) {
     const lines: MockLine[] = validMappings.map((mapping, index) => {
       const mappingAny = mapping as any;
       const supplierVariant = mapping.supplierVariant as any;
-      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? `PK-${index + 1}`;
+      const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
       const priceRaw = supplierVariant?.price ?? 0;
       const unitPrice = Number(priceRaw) || 0;
       const stockRaw = Number(supplierVariant?.stock ?? 0);

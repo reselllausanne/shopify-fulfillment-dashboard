@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
+import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
 import { bulkInsertSupplierVariants, bulkUpdateSupplierVariants, bulkUpsertVariantMappings, chunkArray } from "./bulkSql";
@@ -28,10 +28,11 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     const sizeNormalized = normalizeSize(item.sizeRaw ?? null) ?? item.sizeRaw ?? null;
     const supplierGtinRaw = item.sourcePayload?.barcode ?? null;
     const supplierGtin = supplierGtinRaw && validateGtin(supplierGtinRaw) ? supplierGtinRaw : null;
+    const providerKey = supplierGtin ? buildProviderKey(supplierGtin, item.supplierVariantId) : null;
     return {
       supplierVariantId: item.supplierVariantId,
       supplierSku: item.supplierSku,
-      providerKey: resolveSupplierCode(item.supplierVariantId),
+      providerKey,
       gtin: supplierGtin,
       price: item.price ?? 0,
       stock: item.stock ?? 0,
@@ -43,6 +44,14 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
       leadTimeDays: item.leadTimeDays,
     };
   });
+  for (const row of rows) {
+    assertMappingIntegrity({
+      supplierVariantId: row.supplierVariantId,
+      gtin: row.gtin ?? null,
+      providerKey: row.providerKey ?? null,
+      status: row.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN",
+    });
+  }
 
   let created = 0;
   let updated = 0;
@@ -51,14 +60,18 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: true });
   }
 
-  const mappingRows = rows
-    .filter((r) => Boolean(r.gtin))
-    .map((r) => ({
+  const mappingRows = rows.map((r) => {
+    const status = r.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN";
+    const providerKey = r.gtin ? buildProviderKey(r.gtin, r.supplierVariantId) : null;
+    const payload = {
       supplierVariantId: r.supplierVariantId,
       gtin: r.gtin ?? null,
-      providerKey: r.gtin ? buildProviderKey(r.gtin, r.supplierVariantId) : null,
-      status: "SUPPLIER_GTIN",
-    }));
+      providerKey,
+      status,
+    };
+    assertMappingIntegrity(payload);
+    return payload;
+  });
   let mappingInserted = 0;
   let mappingUpdated = 0;
   for (const batch of chunkArray(mappingRows, 500)) {
@@ -82,4 +95,35 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
   });
 
   return { processed: slicedItems.length, updated, created };
+}
+
+export async function runStockPriceSync(options: StockSyncOptions = {}): Promise<StockSyncResult> {
+  const client = createGoldenSupplierClient();
+  const startedAt = Date.now();
+  const items = await client.fetchStockAndPrice();
+  const offset = Math.max(options.offset ?? 0, 0);
+  const limit = options.limit ? Math.max(options.limit, 0) : items.length;
+  const slicedItems = items.slice(offset, offset + limit);
+
+  const now = new Date();
+  const rows = slicedItems.map((item) => ({
+    supplierVariantId: item.supplierVariantId,
+    price: item.price ?? 0,
+    stock: item.stock ?? 0,
+  }));
+
+  let updated = 0;
+  for (const batch of chunkArray(rows, 500)) {
+    updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: false });
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:stock-only] done", {
+    fetchedCount: items.length,
+    processed: slicedItems.length,
+    updatedCount: updated,
+    durationMs,
+  });
+
+  return { processed: slicedItems.length, updated, created: 0 };
 }
