@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
 
       const pendingRow = await prismaAny.partnerUploadRow.findFirst({
         where: {
-          providerKey,
+          providerKey: supplierCode,
           sku,
           sizeNormalized,
           status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
@@ -111,8 +111,8 @@ export async function POST(req: NextRequest) {
       }
 
       const supplierVariantId = buildSupplierVariantId(supplierCode, sku, sizeNormalized);
-      const providerKey = buildProviderKey(gtin, supplierVariantId);
-      if (!providerKey) {
+      const fullProviderKey = buildProviderKey(gtin, supplierVariantId);
+      if (!fullProviderKey) {
         errors.push({ row: i + 1, field: "gtin", message: "Invalid GTIN" });
         continue;
       }
@@ -121,15 +121,15 @@ export async function POST(req: NextRequest) {
       assertMappingIntegrity({
         supplierVariantId,
         gtin,
-        providerKey,
+        providerKey: fullProviderKey,
         status: "MATCHED",
       });
       const offer = await prismaAny.supplierVariant.upsert({
-        where: { providerKey_gtin: { providerKey, gtin } },
+        where: { providerKey_gtin: { providerKey: fullProviderKey, gtin } },
         create: {
           supplierVariantId,
           supplierSku: sku,
-          providerKey,
+          providerKey: fullProviderKey,
           gtin,
           sizeRaw,
           sizeNormalized,
@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
         },
         update: {
           supplierSku: sku,
-          providerKey,
+          providerKey: fullProviderKey,
           gtin,
           sizeRaw,
           sizeNormalized,
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
       assertMappingIntegrity({
         supplierVariantId: offer.supplierVariantId,
         gtin,
-        providerKey,
+        providerKey: fullProviderKey,
         status: "MATCHED",
       });
       await prismaAny.variantMapping.upsert({
@@ -176,12 +176,12 @@ export async function POST(req: NextRequest) {
         create: {
           supplierVariantId: offer.supplierVariantId,
           gtin,
-          providerKey,
+          providerKey: fullProviderKey,
           status: "MATCHED",
         },
         update: {
           gtin,
-          providerKey,
+          providerKey: fullProviderKey,
           status: "MATCHED",
         },
       });
