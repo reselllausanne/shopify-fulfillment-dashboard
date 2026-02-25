@@ -538,64 +538,21 @@ export function useSupplierOrders() {
     }
   };
 
-  const fetchAllGoatOrders = async (goatCookie: string, goatCsrfToken: string) => {
-    const loaded: any[] = [];
-    if (!goatCookie.trim()) {
-      const res = await fetch("/api/goat/playwright", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ headless: false, includeRaw: false }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (res.ok && json?.orders) {
-        return json.orders;
-      }
-      setLastErrors((prev) => [
-        ...prev,
-        { message: `[GOAT] Playwright: ${json?.error || `HTTP ${res.status}`}` },
-      ]);
-      return [];
-    }
-    let page = 1;
-    const maxPages = 200;
-
-    while (page <= maxPages) {
-      const res = await fetch("/api/goat/orders", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          token: goatCookie,
-          cookie: goatCookie,
-          csrfToken: goatCsrfToken,
-          page,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setLastErrors((prev) => [
-          ...prev,
-          { message: `[GOAT] HTTP ${res.status}: ${err?.error || "Unknown error"}` },
-        ]);
-        break;
-      }
-
-      const json = await res.json();
-      const pageOrders = Array.isArray(json?.orders) ? json.orders : [];
-      if (pageOrders.length === 0) break;
-
-      loaded.push(...pageOrders);
-      page += 1;
-      await sleep(250);
-    }
-
-    const seen = new Set<string>();
-    return loaded.filter((o: any) => {
-      const key = `${o?.provider || "GOAT"}:${o?.orderId || ""}:${o?.orderNumber || ""}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+  const fetchAllGoatOrders = async (_goatCookie: string, _goatCsrfToken: string) => {
+    const res = await fetch("/api/goat/playwright", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ headless: false, includeRaw: false }),
     });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok && json?.orders) {
+      return json.orders;
+    }
+    setLastErrors((prev) => [
+      ...prev,
+      { message: `[GOAT] Playwright: ${json?.error || `HTTP ${res.status}`}` },
+    ]);
+    return [];
   };
 
   const handleFetchAllPages = async ({
