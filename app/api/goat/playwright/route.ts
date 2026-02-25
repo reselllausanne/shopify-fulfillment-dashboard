@@ -17,7 +17,7 @@ const ensureSessionDir = async (filePath: string) => {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const headless = Boolean(body?.headless ?? false);
+    const headless = Boolean(body?.headless ?? true);
     const browserType = String(body?.browser || "firefox").toLowerCase();
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
     const maxWaitMs = Math.min(Number(body?.maxWaitMs || 120000), 300000);
@@ -25,10 +25,11 @@ export async function POST(req: NextRequest) {
 
     await ensureSessionDir(sessionFile);
 
+    const launchArgs = headless ? ["--no-sandbox", "--disable-setuid-sandbox"] : [];
     const browser =
       browserType === "chromium"
-        ? await chromium.launch({ headless, slowMo: 50 })
-        : await firefox.launch({ headless, slowMo: 50 });
+        ? await chromium.launch({ headless, slowMo: 50, args: launchArgs })
+        : await firefox.launch({ headless, slowMo: 50, args: launchArgs });
 
     let context;
     try {

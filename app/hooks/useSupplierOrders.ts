@@ -542,11 +542,23 @@ export function useSupplierOrders() {
     const res = await fetch("/api/goat/playwright", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ headless: false, includeRaw: false }),
+      body: JSON.stringify({ headless: true, includeRaw: false }),
     });
     const json = await res.json().catch(() => ({}));
     if (res.ok && json?.orders) {
-      return json.orders;
+      return (json.orders as any[]).map((o: any) => ({
+        ...o,
+        productTitleB: o.productTitle || o.displayName || null,
+        brandB: null,
+        sizeB: o.size || null,
+        thumbUrlB: o.thumbUrl || null,
+        imageUrlB: o.thumbUrl || null,
+        statusB: o.statusTitle || o.statusKey || null,
+        statusKeyB: o.statusKey || null,
+        estimatedDeliveryB: o.estimatedDeliveryDate || null,
+        latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+        styleId: o.skuKey || o.styleId || null,
+      }));
     }
     setLastErrors((prev) => [
       ...prev,
