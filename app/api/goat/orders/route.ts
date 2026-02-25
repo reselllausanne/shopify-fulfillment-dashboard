@@ -31,10 +31,11 @@ export async function POST(req: NextRequest) {
       "x-requested-with": "XMLHttpRequest",
     };
 
-    if (cookie.toLowerCase().startsWith("bearer ")) {
-      headers.authorization = cookie;
+    const safeCookie = cookie.replace(/[^\x00-\xFF]/g, "");
+    if (safeCookie.toLowerCase().startsWith("bearer ")) {
+      headers.authorization = safeCookie;
     } else {
-      headers.cookie = cookie;
+      headers.cookie = safeCookie;
     }
     if (csrfToken) {
       headers["x-csrf-token"] = csrfToken;
