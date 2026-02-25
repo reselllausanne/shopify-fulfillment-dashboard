@@ -379,7 +379,7 @@ export default function Home() {
       const res = await fetch("/api/stockx/playwright", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ headless: false, forceLogin: true }),
+        body: JSON.stringify({ headless: false, forceLogin: false }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {

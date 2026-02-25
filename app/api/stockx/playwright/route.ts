@@ -227,6 +227,7 @@ export async function POST(req: NextRequest) {
     }
 
     await context.storageState({ path: sessionFile });
+    console.log("[STOCKX-PW] Session saved");
     await browser.close();
 
     if (!capturedToken) {
