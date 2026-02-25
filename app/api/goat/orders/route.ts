@@ -8,8 +8,21 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const token = String(body?.token || "").trim();
-    const cookie = String(body?.cookie || token || "").trim();
+    let cookie = String(body?.cookie || token || "").trim();
     const csrfToken = String(body?.csrfToken || "").trim();
+
+    if (cookie.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(cookie);
+        if (Array.isArray(parsed?.cookies)) {
+          cookie = parsed.cookies
+            .map((c: { name: string; value: string }) => `${c.name}=${c.value}`)
+            .join("; ");
+        }
+      } catch {
+        // not JSON, use as-is
+      }
+    }
     const page = Math.max(1, Number(body?.page || 1));
 
     if (!cookie) {
