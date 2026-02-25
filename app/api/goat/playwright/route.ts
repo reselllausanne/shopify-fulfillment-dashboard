@@ -29,7 +29,8 @@ export async function POST(req: NextRequest) {
     const headless = forceHeadless ? true : (requestedHeadless ?? defaultHeadless);
     const browserType = String(body?.browser || "firefox").toLowerCase();
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
-    const maxWaitMs = Math.min(Number(body?.maxWaitMs || 120000), 300000);
+    // Keep below common reverse-proxy timeouts to avoid 504s.
+    const maxWaitMs = Math.min(Number(body?.maxWaitMs || 55000), 120000);
     const includeRaw = Boolean(body?.includeRaw ?? false);
 
     await ensureSessionDir(sessionFile);
@@ -82,16 +83,21 @@ export async function POST(req: NextRequest) {
       await page.waitForTimeout(2000);
     }
 
-    if (allOrdersRaw.length === 0) {
-      await browser.close();
-      return NextResponse.json(
-        { ok: false, error: "No GOAT orders detected. Login required." },
-        { status: 401 }
-      );
-    }
-
     await context.storageState({ path: sessionFile });
     console.log("[GOAT-PW] Session saved");
+
+    if (allOrdersRaw.length === 0) {
+      await browser.close();
+      return NextResponse.json({
+        ok: true,
+        count: 0,
+        orders: [],
+        sessionFile,
+        loginRequired: true,
+        warning:
+          "No GOAT orders detected yet. If this is first login or 2FA flow, complete auth in remote desktop then retry.",
+      });
+    }
 
     // Pagination via fetch inside browser context (keeps cookies)
     let pageNum = 2;

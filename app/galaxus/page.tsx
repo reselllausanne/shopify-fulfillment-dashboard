@@ -211,7 +211,6 @@ export default function GalaxusDashboardPage() {
   };
 
   const loadSchedulerStatus = async () => {
-    if (enrichAllStatus?.running) return;
     try {
       const res = await fetch("/api/galaxus/feeds/scheduler", { cache: "no-store" });
       const data = await res.json();
