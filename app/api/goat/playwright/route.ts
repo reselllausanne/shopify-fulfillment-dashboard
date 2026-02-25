@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     // Keep below common reverse-proxy timeouts to avoid 504s.
     const maxWaitMs = Math.min(Number(body?.maxWaitMs || 55000), 120000);
     const includeRaw = Boolean(body?.includeRaw ?? false);
+    const collectOrders = Boolean(body?.collectOrders ?? true);
 
     await ensureSessionDir(sessionFile);
 
@@ -77,6 +78,18 @@ export async function POST(req: NextRequest) {
     await page.goto("https://www.goat.com/fr-fr/account/orders", {
       waitUntil: "domcontentloaded",
     });
+
+    if (!collectOrders) {
+      await context.storageState({ path: sessionFile });
+      await browser.close();
+      return NextResponse.json({
+        ok: true,
+        sessionReady: true,
+        count: 0,
+        orders: [],
+        sessionFile,
+      });
+    }
 
     const start = Date.now();
     while (allOrdersRaw.length === 0 && Date.now() - start < maxWaitMs) {

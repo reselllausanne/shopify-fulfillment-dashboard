@@ -336,7 +336,12 @@ export default function Home() {
       const res = await fetch("/api/goat/playwright", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ headless: false, includeRaw: false, maxWaitMs: 55000 }),
+        body: JSON.stringify({
+          headless: false,
+          includeRaw: false,
+          collectOrders: false,
+          maxWaitMs: 15000,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {
