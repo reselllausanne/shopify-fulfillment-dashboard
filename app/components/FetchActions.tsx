@@ -9,6 +9,8 @@ type FetchActionsProps = {
   onExport: () => void;
   onGoatLogin: () => void;
   onGoatDebug: () => void;
+  onExportGoatSession: () => void;
+  onImportGoatSession: (file: File | null) => void;
   onStockxLogin: () => void;
   stockxLoginLoading: boolean;
   loading: boolean;
@@ -28,6 +30,8 @@ export default function FetchActions({
   onExport,
   onGoatLogin,
   onGoatDebug,
+  onExportGoatSession,
+  onImportGoatSession,
   onStockxLogin,
   stockxLoginLoading,
   loading,
@@ -37,6 +41,11 @@ export default function FetchActions({
   ordersCount,
   hasNextPage,
 }: FetchActionsProps) {
+  const handleImportChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    onImportGoatSession(event.target.files?.[0] ?? null);
+    event.currentTarget.value = "";
+  };
+
   return (
     <div className="bg-white rounded-lg shadow p-6 mb-6">
       <h2 className="text-xl font-semibold mb-4">Actions</h2>
@@ -101,6 +110,22 @@ export default function FetchActions({
         >
           🐐 GOAT Debug Raw JSON
         </button>
+        <button
+          onClick={onExportGoatSession}
+          disabled={loading || isFetchingAll}
+          className="px-4 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 disabled:bg-gray-200 disabled:cursor-not-allowed"
+        >
+          🐐 Export GOAT Session
+        </button>
+        <label className="px-4 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 cursor-pointer">
+          🐐 Import GOAT Session
+          <input
+            type="file"
+            accept="application/json,.json"
+            onChange={handleImportChange}
+            className="hidden"
+          />
+        </label>
         <button
           onClick={onStockxLogin}
           disabled={loading || isFetchingAll || stockxLoginLoading}

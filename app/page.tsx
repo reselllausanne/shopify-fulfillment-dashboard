@@ -378,6 +378,48 @@ export default function Home() {
     }
   };
 
+  const handleExportGoatSession = async () => {
+    try {
+      const res = await fetch("/api/goat/session", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok || !json?.session) {
+        alert(`❌ GOAT session export failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(json.session, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "goat-session.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      alert("✅ GOAT session exported.");
+    } catch (error: any) {
+      alert(`❌ GOAT session export error: ${error?.message || "Unknown error"}`);
+    }
+  };
+
+  const handleImportGoatSession = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const session = JSON.parse(raw);
+      const res = await fetch("/api/goat/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        alert(`❌ GOAT session import failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      alert("✅ GOAT session imported.");
+    } catch (error: any) {
+      alert(`❌ GOAT session import error: ${error?.message || "Invalid JSON file"}`);
+    }
+  };
+
   const handleStockxLogin = async () => {
     setStockxLoginLoading(true);
     try {
@@ -898,6 +940,8 @@ export default function Home() {
           onExport={handleExportCSV}
           onGoatLogin={handleGoatLogin}
           onGoatDebug={handleGoatDebug}
+          onExportGoatSession={handleExportGoatSession}
+          onImportGoatSession={handleImportGoatSession}
           onStockxLogin={handleStockxLogin}
           stockxLoginLoading={stockxLoginLoading}
           loading={loading}
