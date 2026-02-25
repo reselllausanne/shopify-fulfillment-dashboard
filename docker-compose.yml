@@ -3,8 +3,13 @@ services:
     build: .
     env_file:
       - .env
+    environment:
+      - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
+      - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
+      - VNC_PASSWORD=${VNC_PASSWORD:-change-me-now}
     ports:
       - "3000:3000"
+      - "6080:6080"
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped

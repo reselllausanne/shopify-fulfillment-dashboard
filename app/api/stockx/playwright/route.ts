@@ -106,7 +106,13 @@ export async function POST(req: NextRequest) {
     const forceHeadless = ["1", "true", "yes"].includes(
       String(process.env.PLAYWRIGHT_HEADLESS ?? "").toLowerCase()
     );
-    const headless = forceHeadless || process.env.NODE_ENV === "production" ? true : Boolean(body?.headless ?? false);
+    const remoteDesktopEnabled = ["1", "true", "yes"].includes(
+      String(process.env.PLAYWRIGHT_ENABLE_REMOTE_DESKTOP ?? "").toLowerCase()
+    );
+    const requestedHeadless =
+      body?.headless === undefined || body?.headless === null ? null : Boolean(body.headless);
+    const defaultHeadless = process.env.NODE_ENV === "production" && !remoteDesktopEnabled;
+    const headless = forceHeadless ? true : (requestedHeadless ?? defaultHeadless);
     const browserType = String(body?.browser || "firefox").toLowerCase();
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
     const maxWaitMs = Math.min(Number(body?.maxWaitMs || 600000), 900000);
