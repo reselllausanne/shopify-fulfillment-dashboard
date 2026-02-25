@@ -6,6 +6,7 @@ import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app
 import { buildDuplicateKey, computeLastRowByKey } from "@/app/lib/partnerImport";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { chunkArray } from "@/galaxus/jobs/bulkSql";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,6 +69,9 @@ export async function POST(req: NextRequest) {
     if (!partner) {
       throw new Error("Partner not found.");
     }
+    const partnerKey = normalizeProviderKey(partner.key);
+    const cleanPartnerKey = partnerKey ? partnerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "") : null;
+    const seenSupplierVariantIds = new Set<string>();
 
     const buildSupplierVariantId = (providerKey: string, sku: string, sizeValue: string) => {
       const cleanKey = providerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -105,7 +109,6 @@ export async function POST(req: NextRequest) {
       if (!providerKey) {
         rowErrors.push({ field: "providerKey", message: "Must be 3 uppercase letters" });
       }
-      const partnerKey = normalizeProviderKey(partner.key);
       if (providerKey && partnerKey && providerKey !== partnerKey) {
         rowErrors.push({
           field: "providerKey",
@@ -148,6 +151,7 @@ export async function POST(req: NextRequest) {
       const normalizedSku = sku!;
       const normalizedSize = sizeNormalized!;
       const supplierVariantId = buildSupplierVariantId(providerKeyValue, normalizedSku, normalizedSize);
+      seenSupplierVariantIds.add(supplierVariantId);
       const now = new Date();
 
       // DELTA import: rows absent from this CSV remain unchanged.
@@ -389,6 +393,26 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    let removedMissing = 0;
+    let removeSkipped = false;
+    if (!dryRun && !errors.length && cleanPartnerKey && seenSupplierVariantIds.size > 0) {
+      const existing = await prismaAny.supplierVariant.findMany({
+        where: { supplierVariantId: { startsWith: `${cleanPartnerKey}:` } },
+        select: { supplierVariantId: true },
+      });
+      const missing = existing
+        .map((row: { supplierVariantId: string }) => row.supplierVariantId)
+        .filter((id: string) => !seenSupplierVariantIds.has(id));
+      for (const batch of chunkArray(missing, 500)) {
+        const res = await prismaAny.supplierVariant.deleteMany({
+          where: { supplierVariantId: { in: batch } },
+        });
+        removedMissing += res.count ?? 0;
+      }
+    } else {
+      removeSkipped = true;
+    }
+
     return NextResponse.json({
       ok: true,
       result: {
@@ -398,6 +422,8 @@ export async function POST(req: NextRequest) {
         errors,
         rows: rowResults,
         dryRun,
+        removedMissing,
+        removeSkipped,
       },
     });
   } catch (error: any) {

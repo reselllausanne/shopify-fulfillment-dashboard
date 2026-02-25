@@ -15,6 +15,38 @@ type StockSyncOptions = {
   offset?: number;
 };
 
+async function removeMissingSupplierVariants(params: {
+  supplierKey: string;
+  fetchedIds: string[];
+  allowDelete: boolean;
+}) {
+  const { supplierKey, fetchedIds, allowDelete } = params;
+  if (!allowDelete) return { removed: 0, skipped: true };
+  if (fetchedIds.length === 0) {
+    console.warn("[galaxus][sync] skip delete: empty supplier payload", { supplierKey });
+    return { removed: 0, skipped: true };
+  }
+
+  const prefix = `${supplierKey}:`;
+  const existing = await prisma.supplierVariant.findMany({
+    where: { supplierVariantId: { startsWith: prefix } },
+    select: { supplierVariantId: true },
+  });
+  const fetchedSet = new Set(fetchedIds);
+  const missing = existing
+    .map((row) => row.supplierVariantId)
+    .filter((id) => !fetchedSet.has(id));
+
+  let removed = 0;
+  for (const batch of chunkArray(missing, 500)) {
+    const res = await prisma.supplierVariant.deleteMany({
+      where: { supplierVariantId: { in: batch } },
+    });
+    removed += res.count;
+  }
+  return { removed, skipped: false };
+}
+
 export async function runStockSync(options: StockSyncOptions = {}): Promise<StockSyncResult> {
   const client = createGoldenSupplierClient();
   const startedAt = Date.now();
@@ -22,6 +54,7 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
   const offset = Math.max(options.offset ?? 0, 0);
   const limit = options.limit ? Math.max(options.limit, 0) : items.length;
   const slicedItems = items.slice(offset, offset + limit);
+  const isFullRun = offset === 0 && (options.limit == null || options.limit >= items.length);
 
   const now = new Date();
   const rows = slicedItems.map((item) => {
@@ -83,6 +116,12 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     mappingUpdated += res.updated;
   }
 
+  const removeResult = await removeMissingSupplierVariants({
+    supplierKey: client.supplierKey,
+    fetchedIds: items.map((item) => item.supplierVariantId),
+    allowDelete: isFullRun,
+  });
+
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:stock] done", {
     fetchedCount: items.length,
@@ -91,6 +130,8 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     updatedCount: updated,
     mappingInserted,
     mappingUpdated,
+    removedMissing: removeResult.removed,
+    removeSkipped: removeResult.skipped,
     durationMs,
   });
 
@@ -104,6 +145,7 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
   const offset = Math.max(options.offset ?? 0, 0);
   const limit = options.limit ? Math.max(options.limit, 0) : items.length;
   const slicedItems = items.slice(offset, offset + limit);
+  const isFullRun = offset === 0 && (options.limit == null || options.limit >= items.length);
 
   const now = new Date();
   const rows = slicedItems.map((item) => ({
@@ -117,11 +159,19 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: false });
   }
 
+  const removeResult = await removeMissingSupplierVariants({
+    supplierKey: client.supplierKey,
+    fetchedIds: items.map((item) => item.supplierVariantId),
+    allowDelete: isFullRun,
+  });
+
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:stock-only] done", {
     fetchedCount: items.length,
     processed: slicedItems.length,
     updatedCount: updated,
+    removedMissing: removeResult.removed,
+    removeSkipped: removeResult.skipped,
     durationMs,
   });
 

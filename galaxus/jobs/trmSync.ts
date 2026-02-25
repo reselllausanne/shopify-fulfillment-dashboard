@@ -44,6 +44,33 @@ function normalizeGtin(value: unknown): string | null {
   return gtin.length ? gtin : null;
 }
 
+async function removeMissingTrmVariants(params: { fetchedIds: string[]; allowDelete: boolean }) {
+  const { fetchedIds, allowDelete } = params;
+  if (!allowDelete) return { removed: 0, skipped: true };
+  if (fetchedIds.length === 0) {
+    console.warn("[galaxus][sync] skip delete: empty TRM payload");
+    return { removed: 0, skipped: true };
+  }
+
+  const existing = await prisma.supplierVariant.findMany({
+    where: { supplierVariantId: { startsWith: "trm:" } },
+    select: { supplierVariantId: true },
+  });
+  const fetchedSet = new Set(fetchedIds);
+  const missing = existing
+    .map((row) => row.supplierVariantId)
+    .filter((id) => !fetchedSet.has(id));
+
+  let removed = 0;
+  for (const batch of chunkArray(missing, 500)) {
+    const res = await prisma.supplierVariant.deleteMany({
+      where: { supplierVariantId: { in: batch } },
+    });
+    removed += res.count;
+  }
+  return { removed, skipped: false };
+}
+
 export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
   const client = createTrmSupplierClient();
   const startedAt = Date.now();
@@ -70,6 +97,7 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
   const offset = Math.max(options.offset ?? 0, 0);
   const limit = options.limit ? Math.max(options.limit, 0) : flattened.length;
   const rows = flattened.slice(offset, offset + limit);
+  const isFullRun = offset === 0 && (options.limit == null || options.limit >= flattened.length);
 
   let created = 0;
   let updated = 0;
@@ -212,12 +240,19 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
     await Promise.all(tasks);
   }
 
+  const removeResult = await removeMissingTrmVariants({
+    fetchedIds: flattened.map((row) => row.supplierVariantId),
+    allowDelete: isFullRun,
+  });
+
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:trm] done", {
     fetchedProducts: products.length,
     processed: rows.length,
     insertedCount: created,
     updatedCount: updated,
+    removedMissing: removeResult.removed,
+    removeSkipped: removeResult.skipped,
     supplierGtinRows,
     missingGtinRows,
     invalidGtinRows,
@@ -264,6 +299,7 @@ export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<Trm
   const offset = Math.max(options.offset ?? 0, 0);
   const limit = options.limit ? Math.max(options.limit, 0) : flattened.length;
   const rows = flattened.slice(offset, offset + limit);
+  const isFullRun = offset === 0 && (options.limit == null || options.limit >= flattened.length);
 
   const now = new Date();
   let updated = 0;
@@ -271,11 +307,18 @@ export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<Trm
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: false });
   }
 
+  const removeResult = await removeMissingTrmVariants({
+    fetchedIds: flattened.map((row) => row.supplierVariantId),
+    allowDelete: isFullRun,
+  });
+
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:trm-stock-only] done", {
     fetchedCount: flattened.length,
     processed: rows.length,
     updatedCount: updated,
+    removedMissing: removeResult.removed,
+    removeSkipped: removeResult.skipped,
     durationMs,
   });
 

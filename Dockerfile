@@ -9,6 +9,7 @@ COPY prisma ./prisma
 
 # Install dev deps for build (Tailwind/PostCSS live in devDependencies)
 RUN npm install --include=dev
+RUN npx playwright install --with-deps
 
 COPY . .
 
