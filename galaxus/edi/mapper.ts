@@ -94,6 +94,14 @@ export function buildEdiLines(lines: GalaxusOrderLine[]): EdiOrderLine[] {
       gtin: line.gtin ?? null,
       responseStatus: responseStatus ?? undefined,
       responseReason: responseReason ?? null,
+      arrivalDateStart:
+        "arrivalDateStart" in line
+          ? ((line as { arrivalDateStart?: Date | null }).arrivalDateStart ?? null)
+          : null,
+      arrivalDateEnd:
+        "arrivalDateEnd" in line
+          ? ((line as { arrivalDateEnd?: Date | null }).arrivalDateEnd ?? null)
+          : null,
     };
   });
 }

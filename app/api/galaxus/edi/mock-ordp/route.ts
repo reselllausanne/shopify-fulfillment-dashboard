@@ -31,7 +31,7 @@ type MockLine = {
   lineNetAmount: number;
 };
 
-const OPENTRANS_NS = "http://www.opentrans.org/XMLSchema/2.1";
+const OPENTRANS_NS = "http://www.bmecat.org/bmecat/2005";
 const XSI_NS = "http://www.w3.org/2001/XMLSchema-instance";
 
 function formatDateTime(value: Date): string {

@@ -184,7 +184,6 @@ export default function GalaxusDashboardPage() {
   const [opsLog, setOpsLog] = useState<string | null>(null);
   const [unassignedCount, setUnassignedCount] = useState<number | null>(null);
   const [cleanupStats, setCleanupStats] = useState<any | null>(null);
-  const [seedLineCount, setSeedLineCount] = useState<number>(5);
   const [packMaxPairs, setPackMaxPairs] = useState<number>(12);
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
   const [forceRepack, setForceRepack] = useState<boolean>(true);
@@ -436,114 +435,6 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const syncAllData = async () => {
-    setBusy("sync-all");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1&mode=full", {
-        method: "POST",
-      });
-      const syncData = await syncResponse.json();
-      if (!syncResponse.ok || !syncData.ok) {
-        throw new Error(syncData.error ?? "Supplier sync failed");
-      }
-
-      const enrichResponse = await fetch("/api/galaxus/kickdb/enrich?all=1", { method: "POST" });
-      const enrichData = await enrichResponse.json();
-      if (!enrichResponse.ok || !enrichData.ok) {
-        throw new Error(enrichData.error ?? "KickDB enrich failed");
-      }
-
-      setOpsLog(JSON.stringify({ supplier: syncData, kickdb: enrichData }, null, 2));
-      await loadDb(0);
-      await loadMappings(0);
-      await loadVariantStats();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const syncCheckAndUploadFeeds = async () => {
-    setBusy("sync-upload");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const syncResponse = await fetch("/api/galaxus/supplier/sync?all=1&mode=stock", {
-        method: "POST",
-      });
-      const syncData = await syncResponse.json();
-      if (!syncResponse.ok || !syncData.ok) {
-        throw new Error(syncData.error ?? "Supplier sync failed");
-      }
-
-      const partnerResponse = await fetch("/api/galaxus/partners/sync?all=1", { method: "POST" });
-      const partnerData = await partnerResponse.json();
-      if (!partnerResponse.ok || !partnerData.ok) {
-        throw new Error(partnerData.error ?? "Partner sync failed");
-      }
-
-      const checkResponse = await fetch(
-        "/api/galaxus/export/check-all?all=1",
-        { cache: "no-store" }
-      );
-      const checkData = await checkResponse.json();
-      if (!checkResponse.ok || !checkData.ok) {
-        throw new Error(checkData.error ?? "Export checks failed");
-      }
-      const report = checkData.report ?? {};
-
-      const totalIssues =
-        (report.summary?.master?.totalIssues ?? 0) +
-        (report.summary?.stock?.totalIssues ?? 0) +
-        (report.summary?.specs?.totalIssues ?? 0);
-      if (totalIssues > 0) {
-        setOpsLog(
-          JSON.stringify(
-            {
-              sync: syncData,
-              partner: partnerData,
-              checks: report.summary,
-              warning: `Export checks found ${totalIssues} issues. Upload will continue.`,
-            },
-            null,
-            2
-          )
-        );
-      }
-
-      const uploadResponse = await fetch(
-        "/api/galaxus/feeds/upload?type=offer-stock",
-        { cache: "no-store" }
-      );
-      const uploadData = await uploadResponse.json();
-      if (!uploadResponse.ok || !uploadData.ok) {
-        throw new Error(uploadData.error ?? "Feed upload failed");
-      }
-
-      setOpsLog(
-        JSON.stringify(
-          {
-            sync: syncData,
-            partner: partnerData,
-            checks: report.summary ?? null,
-            upload: uploadData,
-          },
-          null,
-          2
-        )
-      );
-      await loadDb(0);
-      await loadMappings(0);
-      await loadVariantStats();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const clearSupplierData = async (includeKickdb: boolean) => {
     const confirmed = (window.prompt('This will DELETE supplier data. Type "YES" to confirm.') ?? "").trim().toUpperCase();
@@ -752,46 +643,6 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const seedOrder = async () => {
-    setBusy("seed");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch("/api/galaxus/edi/mock-ordp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lineCount: seedLineCount }),
-      });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Mock ORDP failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const clearSeedOrders = async () => {
-    setBusy("seed-clear");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch("/api/galaxus/seed/clear", {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Seed cleanup failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-      await fetchOrders(0);
-      setSelectedOrder(null);
-      setSelectedOrderId("");
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const pollEdiIn = async () => {
     setBusy("edi-in");
@@ -809,21 +660,6 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const uploadFeeds = async () => {
-    setBusy("feeds");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch("/api/galaxus/feeds/upload?type=offer-stock", { cache: "no-store" });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Feed upload failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const uploadFeed = async (type: "product" | "price" | "stock") => {
     setBusy(`feed-${type}`);
@@ -984,28 +820,7 @@ export default function GalaxusDashboardPage() {
       const response = await fetch(`/api/galaxus/shipments/${shipmentId}/delr`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true }),
-      });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "DELR upload failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-      await loadOrderDetail(selectedOrderId);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const fakeShipAndSendDelr = async (shipmentId: string) => {
-    setBusy(`delr-fake-${shipmentId}`);
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/delr`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true, autoShip: true, delayDays: 2 }),
+        body: JSON.stringify({}),
       });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "DELR upload failed");
@@ -1212,13 +1027,6 @@ export default function GalaxusDashboardPage() {
                 {busy === "edi-out" ? "Sending…" : "Send EDI OUT"}
               </button>
               <button
-                className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-                onClick={uploadFeeds}
-                disabled={busy !== null}
-              >
-                {busy === "feeds" ? "Uploading…" : "Upload Offer + Stock"}
-              </button>
-              <button
                 className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
                 onClick={() => fetchOrders(0)}
                 disabled={busy !== null}
@@ -1271,37 +1079,6 @@ export default function GalaxusDashboardPage() {
                 >
                   Download Stock
                 </button>
-                <button
-                  className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"
-                  onClick={syncCheckAndUploadFeeds}
-                  disabled={busy !== null}
-                >
-                  {busy === "sync-upload" ? "Running…" : "Full pipeline (sync + check + price/stock upload)"}
-                </button>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <input
-                  className="px-2 py-2 border rounded text-sm w-20"
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={seedLineCount}
-                  onChange={(event) => setSeedLineCount(Number(event.target.value || 0))}
-                />
-                <button
-                  className="px-3 py-2 rounded bg-purple-600 text-white disabled:opacity-50"
-                  onClick={seedOrder}
-                  disabled={busy !== null}
-                >
-                  {busy === "seed" ? "Creating…" : "Create Test ORDP"}
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-red-600 text-white disabled:opacity-50"
-                  onClick={clearSeedOrders}
-                  disabled={busy !== null}
-                >
-                  {busy === "seed-clear" ? "Clearing…" : "Clear Test Orders"}
-                </button>
               </div>
             </details>
           </div>
@@ -1321,13 +1098,6 @@ export default function GalaxusDashboardPage() {
                 disabled={busy !== null}
               >
                 {busy === "enrich-all" ? "Starting…" : "Enrich ALL"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
-                onClick={syncAllData}
-                disabled={busy !== null}
-              >
-                {busy === "sync-all" ? "Running…" : "Sync + Enrich"}
               </button>
               <label className="inline-flex items-center gap-2 text-xs text-gray-700">
                 <input
@@ -1757,13 +1527,6 @@ export default function GalaxusDashboardPage() {
                         disabled={busy !== null}
                       >
                         {busy === `delr-${shipment.id}` ? "Uploading…" : "Upload DELR"}
-                      </button>
-                      <button
-                        className="px-2 py-1 rounded bg-sky-600 text-white"
-                        onClick={() => fakeShipAndSendDelr(shipment.id)}
-                        disabled={busy !== null}
-                      >
-                        {busy === `delr-fake-${shipment.id}` ? "Sending…" : "Fake ship + DELR"}
                       </button>
                       {shipment.labelPdfUrl && (
                         <a

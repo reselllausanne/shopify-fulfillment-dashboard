@@ -21,11 +21,10 @@ export async function POST(request: Request) {
       body?.ordrMode === "WITH_ARRIVAL_DATES" || body?.ordrMode === "WITHOUT_POSITIONS"
         ? (body.ordrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")
         : undefined;
-    const forceDelr = Boolean(body?.forceDelr);
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
     }
-    const results = await sendOutgoingEdi({ orderId, types, ordrMode, forceDelr });
+    const results = await sendOutgoingEdi({ orderId, types, ordrMode });
     return NextResponse.json({ ok: true, results });
   } catch (error: any) {
     console.error("[GALAXUS][EDI][SEND] Failed:", error);

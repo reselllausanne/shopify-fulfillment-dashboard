@@ -30,7 +30,6 @@ export const SUPPLIER_TRM_SYNC_MIN_INTERVAL_SEC = Number.isFinite(parsedTrmSyncM
   : 60;
 export const GALAXUS_SUPPLIER_AUTO_ORDER = process.env.GALAXUS_SUPPLIER_AUTO_ORDER === "true";
 export const GALAXUS_SUPPLIER_AUTO_SEND_ORDR = process.env.GALAXUS_SUPPLIER_AUTO_SEND_ORDR === "true";
-export const GALAXUS_EDI_BYPASS_SUPPLIER_GATE = process.env.GALAXUS_EDI_BYPASS_SUPPLIER_GATE === "true";
 const DEFAULT_LEAD_DAYS = 7;
 const DEFAULT_ETA_WINDOW_DAYS = 0;
 const parsedLeadDays = Number.parseInt(process.env.GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS ?? "", 10);

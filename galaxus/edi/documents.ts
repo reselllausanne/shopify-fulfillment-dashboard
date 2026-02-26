@@ -27,7 +27,12 @@ export function buildOrderResponse(
   options: { supplierId: string; status: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK"; reason?: string | null }
 ): EdiOutput {
   const docId = buildDocNumber("GORDR");
-  const ediLines = buildEdiLines(lines);
+  const fallbackArrival = addBusinessDays(new Date(), 4);
+  const ediLines = buildEdiLines(lines).map((line) => ({
+    ...line,
+    arrivalDateStart: line.arrivalDateStart ?? fallbackArrival,
+    arrivalDateEnd: line.arrivalDateEnd ?? line.arrivalDateStart ?? fallbackArrival,
+  }));
   const xml = buildOrderResponseXml({
     docId,
     orderId: order.galaxusOrderId,
@@ -41,6 +46,10 @@ export function buildOrderResponse(
     status: options.status,
     statusReason: options.reason ?? null,
     deliveryDate: order.deliveryDate ?? null,
+    supplierOrderId:
+      ("supplierOrderId" in order
+        ? (order as { supplierOrderId?: string | null }).supplierOrderId
+        : null) ?? order.galaxusOrderId,
   });
 
   return {
@@ -53,6 +62,19 @@ export function buildOrderResponse(
     }),
     content: xml,
   };
+}
+
+function addBusinessDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  let added = 0;
+  while (added < days) {
+    result.setDate(result.getDate() + 1);
+    const day = result.getDay();
+    if (day !== 0 && day !== 6) {
+      added += 1;
+    }
+  }
+  return result;
 }
 
 export function buildDispatchNotification(
@@ -196,15 +218,33 @@ export function buildInvoice(
   const docId = buildDocNumber("GINVO");
   const ediLines = buildEdiLines(lines);
   const { totals, vatSummary } = calculateTotals(ediLines);
+  const orderAny = order as unknown as {
+    supplierOrderId?: string | null;
+    deliveryDate?: Date | null;
+    shipments?: Array<{
+      dispatchNotificationId?: string | null;
+      shippedAt?: Date | null;
+    }>;
+  };
+  const shipment = orderAny.shipments?.[0] ?? null;
+  const fallbackDelivery = addBusinessDays(new Date(), 4);
+  const deliveryStartDate = orderAny.deliveryDate ?? shipment?.shippedAt ?? fallbackDelivery;
+  const deliveryEndDate = orderAny.deliveryDate ?? shipment?.shippedAt ?? deliveryStartDate;
   const xml = buildInvoiceXml({
     docId,
     orderId: order.galaxusOrderId,
     orderNumber: order.orderNumber ?? null,
     orderDate: order.orderDate,
+    generationDate: new Date(),
     invoiceDate: new Date(),
+    deliveryNoteId: shipment?.dispatchNotificationId ?? null,
+    deliveryStartDate,
+    deliveryEndDate,
+    supplierOrderId: orderAny.supplierOrderId ?? order.galaxusOrderId,
     currency: order.currencyCode,
     buyer: buildBuyerParty(order),
     supplier: buildSupplierParty(),
+    deliveryParty: buildDeliveryParty(order),
     lines: ediLines,
     totals,
     vatSummary,

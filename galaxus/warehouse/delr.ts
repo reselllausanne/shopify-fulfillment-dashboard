@@ -45,17 +45,6 @@ export async function uploadDelrForShipment(
   }
 
   const existingDelr = await findExistingDelr(shipment);
-  if (existingDelr) {
-    return {
-      shipmentId,
-      status: "skipped",
-      httpStatus: 409,
-      message: "DELR already sent",
-      filename: existingDelr.filename ?? undefined,
-      ediFileId: existingDelr.id ?? undefined,
-    };
-  }
-
   const shipped = resolveShipmentShipped(shipment);
   if (!shipped) {
     return {
@@ -112,6 +101,11 @@ export async function uploadDelrForShipment(
         password: GALAXUS_SFTP_PASSWORD,
       },
       async (client) => {
+        if (existingDelr?.filename) {
+          const dir = GALAXUS_SFTP_OUT_DIR.replace(/\/$/, "");
+          const path = `${dir}/${existingDelr.filename}`;
+          await client.delete(path).catch(() => undefined);
+        }
         await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, dispatch.filename, dispatch.content);
       }
     );

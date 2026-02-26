@@ -26,6 +26,8 @@ export type EdiOrderLine = {
   orderReferenceId?: string | null;
   responseStatus?: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
   responseReason?: string | null;
+  arrivalDateStart?: Date | null;
+  arrivalDateEnd?: Date | null;
   dispatchPackages?: Array<{
     packageId: string;
     quantity: number;
@@ -61,6 +63,7 @@ export type EdiOrderResponseDocument = EdiBaseDocument & {
   status: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
   statusReason?: string | null;
   deliveryDate?: Date | null;
+  supplierOrderId?: string | null;
 };
 
 export type EdiDispatchDocument = EdiBaseDocument & {
@@ -74,7 +77,13 @@ export type EdiDispatchDocument = EdiBaseDocument & {
 };
 
 export type EdiInvoiceDocument = EdiBaseDocument & {
+  generationDate: Date;
   invoiceDate: Date;
+  deliveryNoteId?: string | null;
+  deliveryStartDate?: Date | null;
+  deliveryEndDate?: Date | null;
+  supplierOrderId?: string | null;
+  deliveryParty?: EdiParty | null;
   lines: EdiOrderLine[];
   totals: EdiTotals;
   vatSummary: EdiVatSummaryLine[];

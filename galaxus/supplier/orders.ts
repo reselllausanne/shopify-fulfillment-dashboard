@@ -11,7 +11,6 @@ import type {
 } from "./types";
 import { extractProviderKeyFromOrderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import {
-  GALAXUS_EDI_BYPASS_SUPPLIER_GATE,
   GALAXUS_SUPPLIER_AUTO_ORDER,
   GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS,
   GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
@@ -182,21 +181,6 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
       reason: `Order not found: ${orderId}`,
       statusByOrderRef: [],
       allowedTypes: new Set(),
-    };
-  }
-
-  if (GALAXUS_EDI_BYPASS_SUPPLIER_GATE) {
-    const supplierKeys = await resolveSupplierKeysForLines(order.lines);
-    return {
-      ok: true,
-      statusByOrderRef: supplierKeys
-        .filter((key) => key !== "unknown")
-        .map((key) => ({
-          supplierOrderRef: `bypass-${key}`,
-          supplierKey: key,
-          status: "ASSIGNED",
-        })),
-      allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "CANR", "EOLN"]),
     };
   }
 
