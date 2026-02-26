@@ -98,13 +98,14 @@ async function runEnrichAll(jobId: string, forceMissing: boolean) {
       const batch = await fetchNextBatch(batchSize);
       if (batch.length === 0) break;
 
-      await Promise.all(
+      const batchStatuses = await Promise.all(
         batch.map((supplierVariantId) =>
           kickdbLimit(() =>
             dbLimit(async () => {
               try {
                 const { results } = await runKickdbEnrich({ supplierVariantId, forceMissing });
                 const match = results.find((item) => item.supplierVariantId === supplierVariantId);
+                const status = match?.status ?? "UNKNOWN";
                 if (match) {
                   lastResults.push({
                     supplierVariantId,
@@ -115,14 +116,23 @@ async function runEnrichAll(jobId: string, forceMissing: boolean) {
                   if (lastResults.length > 10) lastResults.shift();
                 }
                 processed += 1;
+                return status;
               } catch (error: any) {
                 errors += 1;
                 lastError = error?.message ?? "Enrich failed";
+                return "ERROR";
               }
             })
           )
         )
       );
+
+      // Prevent infinite loops when all candidates are cache-skipped and remain pending.
+      const hasActionableResult = batchStatuses.some((status) => !String(status).startsWith("SKIPPED"));
+      if (!hasActionableResult) {
+        lastError = "Stopped enrich-all: no actionable rows in batch (all cache-skipped).";
+        break;
+      }
 
       batchIndex += 1;
       if (batchIndex % 2 === 0) {
