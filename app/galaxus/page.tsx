@@ -199,6 +199,7 @@ export default function GalaxusDashboardPage() {
     lastRunAt: string | null;
     lastResults?: Array<{ supplierVariantId: string; status: string; gtin: string | null; error?: string | null }>;
   } | null>(null);
+  const [enrichAllDebugMode, setEnrichAllDebugMode] = useState<boolean>(false);
   const [partnerKey, setPartnerKey] = useState<string>("self");
   const [partnerName, setPartnerName] = useState<string>("Personal stock");
   const [partnerAccessCode, setPartnerAccessCode] = useState<string>("");
@@ -414,11 +415,25 @@ export default function GalaxusDashboardPage() {
     setError(null);
     setOpsLog(null);
     try {
-      const response = await fetch("/api/galaxus/kickdb/enrich-all", { method: "POST" });
+      const debugParam = enrichAllDebugMode ? "?forceMissing=1" : "";
+      const response = await fetch(`/api/galaxus/kickdb/enrich-all${debugParam}`, { method: "POST" });
       const data = await response.json();
       if (!response.ok || !data.ok) {
         throw new Error(data.error ?? "Enrich ALL failed");
       }
+      setOpsLog(
+        JSON.stringify(
+          {
+            enrichAllStarted: true,
+            debugMode: enrichAllDebugMode,
+            forceMissing: Boolean(data?.forceMissing),
+            jobId: data?.jobId ?? null,
+            remaining: data?.remaining ?? null,
+          },
+          null,
+          2
+        )
+      );
       await loadEnrichAllStatus();
     } catch (err: any) {
       setError(err.message);
@@ -1292,6 +1307,38 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "enrich-all" ? "Starting…" : "Enrich ALL"}
               </button>
+              <button
+                className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                onClick={syncAllData}
+                disabled={busy !== null}
+              >
+                {busy === "sync-all" ? "Running…" : "Sync + Enrich"}
+              </button>
+              <label className="inline-flex items-center gap-2 text-xs text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={enrichAllDebugMode}
+                  onChange={(e) => setEnrichAllDebugMode(e.target.checked)}
+                  disabled={busy !== null}
+                />
+                Debug enrich (force missing)
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                className="px-2 py-2 border rounded text-sm w-72"
+                value={enrichSku}
+                onChange={(event) => setEnrichSku(event.target.value)}
+                placeholder="Enrich single supplier SKU (debug)"
+                disabled={busy !== null}
+              />
+              <button
+                className="px-3 py-2 rounded bg-orange-600 text-white disabled:opacity-50"
+                onClick={enrichSingleSku}
+                disabled={busy !== null || !enrichSku.trim()}
+              >
+                {busy === "enrich-single" ? "Checking…" : "Enrich Single SKU"}
+              </button>
             </div>
             <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
               <div>
@@ -1317,7 +1364,7 @@ export default function GalaxusDashboardPage() {
               </div>
               {enrichAllStatus?.lastResults?.length ? (
                 <div className="text-xs text-gray-500">
-                  Last 10 results:
+                  Last 10 results (preview only; server processes larger batches):
                   <div className="mt-1 space-y-1">
                     {enrichAllStatus.lastResults.map((item) => (
                       <div key={item.supplierVariantId}>

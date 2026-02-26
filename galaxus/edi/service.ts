@@ -16,7 +16,7 @@ import { EdiDocType } from "./filenames";
 import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_OUT_DIR, GALAXUS_SFTP_PASSWORD, GALAXUS_SFTP_PORT, GALAXUS_SFTP_USER, GALAXUS_SUPPLIER_ID } from "./config";
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
 import { upsertEdiFile } from "./ediFiles";
-import { GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
+import { GALAXUS_EDI_BYPASS_SUPPLIER_GATE, GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
 import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder, resolveSupplierVariant } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
@@ -214,8 +214,16 @@ export async function sendOutgoingEdi(options: {
     }
   };
 
-  const gate = await getSupplierGateForOrder(order.id);
-  const lockAll = !gate.ok && (gate.reason ?? "").toLowerCase().includes("unsupported supplier");
+  const bypassGate = GALAXUS_EDI_BYPASS_SUPPLIER_GATE;
+  const gate = bypassGate
+    ? {
+        ok: true,
+        statusByOrderRef: [],
+        allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "EXPINV", "CANR", "EOLN"]),
+      }
+    : await getSupplierGateForOrder(order.id);
+  const lockAll =
+    !bypassGate && !gate.ok && (gate.reason ?? "").toLowerCase().includes("unsupported supplier");
   await withSftp(
     {
       host: GALAXUS_SFTP_HOST,
@@ -237,7 +245,7 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
           if (type === "DELR") {
-            if (!order.ordrSentAt && !options.forceDelr) {
+            if (!order.ordrSentAt && !options.forceDelr && !bypassGate) {
               results.push({
                 docType: "DELR",
                 filename: "",

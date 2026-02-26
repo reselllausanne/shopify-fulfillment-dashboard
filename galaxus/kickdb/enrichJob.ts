@@ -475,7 +475,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
           },
         });
       }
-      if (!force) {
+      const hasKickdbVariant = Boolean(mapping?.kickdbVariantId);
+      if (!force && hasKickdbVariant) {
         results.push({
           supplierVariantId: variant.supplierVariantId,
           status: "SKIPPED_HAS_GTIN",

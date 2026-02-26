@@ -80,9 +80,11 @@ async function updateJob(
 }
 
 async function runEnrichAll(jobId: string, forceMissing: boolean) {
-  const batchSize = 300;
-  const kickdbConcurrency = 6;
-  const dbConcurrency = 2;
+  // Larger batches and moderate parallelism reduce total wall time
+  // while staying below aggressive external API pressure.
+  const batchSize = 500;
+  const kickdbConcurrency = 8;
+  const dbConcurrency = 4;
   const kickdbLimit = createLimiter(kickdbConcurrency);
   const dbLimit = createLimiter(dbConcurrency);
 
