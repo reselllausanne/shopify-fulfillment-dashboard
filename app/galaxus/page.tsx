@@ -384,12 +384,6 @@ export default function GalaxusDashboardPage() {
     loadRoutingSummary();
     loadVariantStats();
     loadEnrichAllStatus();
-    const t = setInterval(loadSchedulerStatus, 30000);
-    const enrichTick = setInterval(loadEnrichAllStatus, 30000);
-    return () => {
-      clearInterval(t);
-      clearInterval(enrichTick);
-    };
   }, []);
 
   const syncSupplier = async () => {
@@ -970,7 +964,7 @@ export default function GalaxusDashboardPage() {
       const response = await fetch("/api/galaxus/edi/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: selectedOrderId, types: ["INVO", "EXPINV"] }),
+        body: JSON.stringify({ orderId: selectedOrderId, types: ["INVO"] }),
       });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Invoice send failed");
@@ -991,6 +985,27 @@ export default function GalaxusDashboardPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ force: true }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "DELR upload failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const fakeShipAndSendDelr = async (shipmentId: string) => {
+    setBusy(`delr-fake-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/delr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true, autoShip: true, delayDays: 2 }),
       });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "DELR upload failed");
@@ -1630,7 +1645,7 @@ export default function GalaxusDashboardPage() {
                 onClick={sendInvoice}
                 disabled={busy !== null}
               >
-                {busy === "invoice" ? "Sending…" : "Send INVO + EXPINV"}
+                {busy === "invoice" ? "Sending…" : "Send INVO"}
               </button>
             </div>
           </div>
@@ -1667,9 +1682,6 @@ export default function GalaxusDashboardPage() {
                   </div>
                   <div>
                     INVO: {hasEdiFile("INVO") ? "Sent" : "Pending"}
-                  </div>
-                  <div>
-                    EXPINV: {hasEdiFile("EXPINV") ? "Sent" : "Pending"}
                   </div>
                 </div>
               </div>
@@ -1745,6 +1757,13 @@ export default function GalaxusDashboardPage() {
                         disabled={busy !== null}
                       >
                         {busy === `delr-${shipment.id}` ? "Uploading…" : "Upload DELR"}
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded bg-sky-600 text-white"
+                        onClick={() => fakeShipAndSendDelr(shipment.id)}
+                        disabled={busy !== null}
+                      >
+                        {busy === `delr-fake-${shipment.id}` ? "Sending…" : "Fake ship + DELR"}
                       </button>
                       {shipment.labelPdfUrl && (
                         <a

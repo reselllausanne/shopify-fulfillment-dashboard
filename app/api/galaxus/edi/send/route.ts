@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     }
 
     const orderId = body?.orderId as string | undefined;
-    const types = (body?.types as EdiDocType[] | undefined) ?? ["ORDR", "DELR", "INVO", "EXPINV"];
+    const types = (body?.types as EdiDocType[] | undefined) ?? ["ORDR", "DELR", "INVO"];
     const ordrMode =
       body?.ordrMode === "WITH_ARRIVAL_DATES" || body?.ordrMode === "WITHOUT_POSITIONS"
         ? (body.ordrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")

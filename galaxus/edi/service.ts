@@ -1,16 +1,12 @@
 import { prisma } from "@/app/lib/prisma";
 import { createHash, randomUUID } from "crypto";
 import { ingestGalaxusOrders } from "@/galaxus/orders/ingest";
-import { DocumentService, buildInvoiceNumber } from "@/galaxus/documents/DocumentService";
-import { DocumentType } from "@prisma/client";
-import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { XMLParser } from "fast-xml-parser";
 import {
   buildCancelResponse,
   buildInvoice,
   buildOrderResponse,
   buildOutOfStockNotice,
-  buildExpinvFilenameForOrder,
 } from "./documents";
 import { EdiDocType } from "./filenames";
 import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_OUT_DIR, GALAXUS_SFTP_PASSWORD, GALAXUS_SFTP_PORT, GALAXUS_SFTP_USER, GALAXUS_SUPPLIER_ID } from "./config";
@@ -219,7 +215,7 @@ export async function sendOutgoingEdi(options: {
     ? {
         ok: true,
         statusByOrderRef: [],
-        allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "EXPINV", "CANR", "EOLN"]),
+        allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "CANR", "EOLN"]),
       }
     : await getSupplierGateForOrder(order.id);
   const lockAll =
@@ -234,7 +230,7 @@ export async function sendOutgoingEdi(options: {
     async (client) => {
       for (const type of options.types) {
         try {
-          const gatedTypes: EdiDocType[] = ["ORDR", "DELR", "INVO", "EXPINV"];
+          const gatedTypes: EdiDocType[] = ["ORDR", "DELR", "INVO"];
           if (lockAll || (gatedTypes.includes(type) && (!gate.ok || !gate.allowedTypes.has(type)))) {
             results.push({
               docType: type,
@@ -286,44 +282,6 @@ export async function sendOutgoingEdi(options: {
           });
           if (alreadySent) {
             results.push({ docType: type, filename: alreadySent.filename, status: "skipped", message: "already sent" });
-            continue;
-          }
-
-          if (type === "EXPINV") {
-            let doc = await prisma.document.findFirst({
-              where: { orderId: order.id, type: DocumentType.INVOICE },
-              orderBy: { createdAt: "desc" },
-            });
-            if (!doc) {
-              const service = new DocumentService();
-              const docs = await service.generateForOrder({
-                orderId: order.id,
-                types: [DocumentType.INVOICE],
-              });
-              doc = docs[0];
-            }
-            const storage = getStorageAdapter();
-            const pdf = await storage.getPdf(doc.storageUrl);
-            const invoiceNo = buildInvoiceNumber(order);
-            const filename = buildExpinvFilenameForOrder(order, invoiceNo);
-            await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, filename, pdf.content);
-            const checksum = createHash("sha256").update(pdf.content).digest("hex");
-            await upsertEdiFile({
-              filename,
-              direction: "OUT",
-              docType: type,
-              orderId: order.id,
-              orderRef: order.galaxusOrderId,
-              status: "uploaded",
-            });
-            await createManifest({
-              exportType: "edi-out",
-              filename,
-              checksum,
-              uploadStatus: "uploaded",
-              responseJson: { orderId: order.id, docType: type },
-            });
-            results.push({ docType: type, filename, status: "uploaded" });
             continue;
           }
 
@@ -382,7 +340,7 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
     const hasOutOfStock = order.statusEvents.some((event) => event.type === "OUT_OF_STOCK");
     const types: EdiDocType[] = ["ORDR"];
     if (order.shipments.length > 0) {
-      types.push("DELR", "INVO", "EXPINV");
+      types.push("DELR", "INVO");
     }
     if (hasCancel) types.push("CANR");
     if (hasOutOfStock) types.push("EOLN");

@@ -1,6 +1,6 @@
 import type { GalaxusOrder, GalaxusOrderLine, Shipment } from "@prisma/client";
 import { buildDocNumber } from "./docNumbers";
-import { buildEdiFilename, buildExpinvFilename, EdiDocType } from "./filenames";
+import { buildEdiFilename, EdiDocType } from "./filenames";
 import {
   buildDispatchXml,
   buildInvoiceXml,
@@ -222,12 +222,3 @@ export function buildInvoice(
   };
 }
 
-export function buildExpinvFilenameForOrder(
-  order: GalaxusOrder,
-  invoiceNoPartner: string
-): string {
-  return buildExpinvFilename({
-    orderId: order.galaxusOrderId,
-    invoiceNoPartner,
-  });
-}

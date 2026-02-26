@@ -4,7 +4,6 @@ export type EdiDocType =
   | "ORDP"
   | "ORDR"
   | "DELR"
-  | "EXPINV"
   | "INVO"
   | "EOLN"
   | "CANP"
@@ -41,11 +40,3 @@ export function buildEdiFilename(options: {
   return `${parts.join("_")}.${extension}`;
 }
 
-export function buildExpinvFilename(options: {
-  orderId: string;
-  invoiceNoPartner: string;
-}): string {
-  const orderId = sanitize(options.orderId);
-  const invoiceNo = sanitize(options.invoiceNoPartner);
-  return `${orderId}_${invoiceNo}.pdf`;
-}

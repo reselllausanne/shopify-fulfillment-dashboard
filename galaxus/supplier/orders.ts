@@ -196,7 +196,7 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
           supplierKey: key,
           status: "ASSIGNED",
         })),
-      allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "EXPINV", "CANR", "EOLN"]),
+      allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "CANR", "EOLN"]),
     };
   }
 
@@ -211,7 +211,7 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
         supplierKey: key,
         status: "ASSIGNED",
       })),
-      allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO", "EXPINV"]),
+      allowedTypes: new Set<EdiDocType>(["ORDR", "DELR", "INVO"]),
     };
   }
 
@@ -282,7 +282,6 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
   }
   if (all(["WAITING_FOR_INVOICE", "ENDED"])) {
     allowedTypes.add("INVO");
-    allowedTypes.add("EXPINV");
   }
 
   return { ok: true, statusByOrderRef, allowedTypes };
