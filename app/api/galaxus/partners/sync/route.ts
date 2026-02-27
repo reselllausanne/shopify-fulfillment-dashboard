@@ -19,6 +19,7 @@ export async function POST(request: Request) {
       let totalCreated = 0;
       let totalUpdated = 0;
       let totalSkipped = 0;
+      let totalRemovedZeroStock = 0;
       let lastBatch = 0;
       do {
         const result = await runJob("partners-sync", () =>
@@ -29,11 +30,13 @@ export async function POST(request: Request) {
           created: 0,
           updated: 0,
           skippedInvalid: 0,
+          removedZeroStock: 0,
         };
         totalProcessed += payload.processed ?? 0;
         totalCreated += payload.created ?? 0;
         totalUpdated += payload.updated ?? 0;
         totalSkipped += payload.skippedInvalid ?? 0;
+        totalRemovedZeroStock += payload.removedZeroStock ?? 0;
         lastBatch = payload.processed ?? 0;
         currentOffset += batchSize;
       } while (lastBatch === batchSize);
@@ -45,6 +48,7 @@ export async function POST(request: Request) {
         created: totalCreated,
         updated: totalUpdated,
         skippedInvalid: totalSkipped,
+        removedZeroStock: totalRemovedZeroStock,
       });
     }
 

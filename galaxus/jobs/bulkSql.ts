@@ -9,6 +9,47 @@ export function chunkArray<T>(items: T[], size: number): T[][] {
   return result;
 }
 
+export async function remapRowsToExistingProviderKeyGtin<
+  T extends { supplierVariantId: string; providerKey?: string | null; gtin?: string | null }
+>(rows: T[]): Promise<{ rows: T[]; remapped: number }> {
+  if (rows.length === 0) return { rows, remapped: 0 };
+
+  const pairs = Array.from(
+    new Map(
+      rows
+        .filter((r) => r.providerKey && r.gtin)
+        .map((r) => [`${r.providerKey}__${r.gtin}`, { providerKey: r.providerKey as string, gtin: r.gtin as string }])
+    ).values()
+  );
+  if (pairs.length === 0) return { rows, remapped: 0 };
+
+  const existingByKey = new Map<string, string>();
+  for (const batch of chunkArray(pairs, 500)) {
+    const pairSql = batch.map((p) => Prisma.sql`(${p.providerKey}, ${p.gtin})`);
+    const existing = await prisma.$queryRaw<
+      Array<{ supplierVariantId: string; providerKey: string; gtin: string }>
+    >(Prisma.sql`
+      SELECT "supplierVariantId", "providerKey", "gtin"
+      FROM "public"."SupplierVariant"
+      WHERE ("providerKey","gtin") IN (${Prisma.join(pairSql)})
+    `);
+    for (const row of existing) {
+      existingByKey.set(`${row.providerKey}__${row.gtin}`, row.supplierVariantId);
+    }
+  }
+
+  let remapped = 0;
+  const normalizedRows = rows.map((row) => {
+    if (!row.providerKey || !row.gtin) return row;
+    const existingId = existingByKey.get(`${row.providerKey}__${row.gtin}`);
+    if (!existingId || existingId === row.supplierVariantId) return row;
+    remapped += 1;
+    return { ...row, supplierVariantId: existingId };
+  });
+
+  return { rows: normalizedRows, remapped };
+}
+
 function jsonb(value: unknown) {
   if (value === undefined) return Prisma.sql`NULL::jsonb`;
   if (value === null) return Prisma.sql`NULL::jsonb`;

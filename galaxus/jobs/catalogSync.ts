@@ -1,7 +1,13 @@
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
-import { bulkInsertSupplierVariants, bulkUpdateSupplierVariants, bulkUpsertVariantMappings, chunkArray } from "./bulkSql";
+import {
+  bulkInsertSupplierVariants,
+  bulkUpdateSupplierVariants,
+  bulkUpsertVariantMappings,
+  chunkArray,
+  remapRowsToExistingProviderKeyGtin,
+} from "./bulkSql";
 
 type CatalogSyncResult = {
   processed: number;
@@ -26,7 +32,7 @@ export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<
   const slicedItems = items.slice(offset, offset + limit);
 
   const now = new Date();
-  const rows = slicedItems.map((item) => {
+  const inputRows = slicedItems.map((item) => {
     const sizeNormalized = normalizeSize(item.sizeRaw ?? null) ?? item.sizeRaw ?? null;
     const supplierGtinRaw = item.sourcePayload?.barcode ?? null;
     const supplierGtin = supplierGtinRaw && validateGtin(supplierGtinRaw) ? supplierGtinRaw : null;
@@ -46,6 +52,9 @@ export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<
       leadTimeDays: item.leadTimeDays,
     };
   });
+  const remappedRowsResult = await remapRowsToExistingProviderKeyGtin(inputRows);
+  const rows = remappedRowsResult.rows;
+
   for (const row of rows) {
     assertMappingIntegrity({
       supplierVariantId: row.supplierVariantId,
@@ -93,6 +102,7 @@ export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<
     updatedCount: updated,
     mappingInserted,
     mappingUpdated,
+    remappedToExistingGtinRow: remappedRowsResult.remapped,
     durationMs,
   });
 

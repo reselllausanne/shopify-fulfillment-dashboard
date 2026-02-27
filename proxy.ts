@@ -6,6 +6,7 @@ const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
   "/api/galaxus",
+  "/api/galaxus/pipeline",
   "/api/galaxus/feeds",
   "/api/galaxus/export",
   "/_next",

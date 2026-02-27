@@ -2,7 +2,13 @@ import { prisma } from "@/app/lib/prisma";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
-import { bulkInsertSupplierVariants, bulkUpdateSupplierVariants, bulkUpsertVariantMappings, chunkArray } from "./bulkSql";
+import {
+  bulkInsertSupplierVariants,
+  bulkUpdateSupplierVariants,
+  bulkUpsertVariantMappings,
+  chunkArray,
+  remapRowsToExistingProviderKeyGtin,
+} from "./bulkSql";
 
 type StockSyncResult = {
   processed: number;
@@ -47,6 +53,27 @@ async function removeMissingSupplierVariants(params: {
   return { removed, skipped: false };
 }
 
+async function removeZeroStockSupplierVariants(params: {
+  supplierKey: string;
+  supplierVariantIds: string[];
+  allowDelete: boolean;
+}) {
+  const { supplierKey, supplierVariantIds, allowDelete } = params;
+  if (!allowDelete) return { removed: 0, skipped: true };
+  if (supplierVariantIds.length === 0) return { removed: 0, skipped: false };
+
+  const prefix = `${supplierKey}:`;
+  const ids = supplierVariantIds.filter((id) => id.startsWith(prefix));
+  let removed = 0;
+  for (const batch of chunkArray(ids, 500)) {
+    const res = await prisma.supplierVariant.deleteMany({
+      where: { supplierVariantId: { in: batch } },
+    });
+    removed += res.count;
+  }
+  return { removed, skipped: false };
+}
+
 export async function runStockSync(options: StockSyncOptions = {}): Promise<StockSyncResult> {
   const client = createGoldenSupplierClient();
   const startedAt = Date.now();
@@ -57,7 +84,7 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
   const isFullRun = offset === 0 && (options.limit == null || options.limit >= items.length);
 
   const now = new Date();
-  const rows = slicedItems.map((item) => {
+  const inputRows = slicedItems.map((item) => {
     const sizeNormalized = normalizeSize(item.sizeRaw ?? null) ?? item.sizeRaw ?? null;
     const supplierGtinRaw = item.sourcePayload?.barcode ?? null;
     const supplierGtin = supplierGtinRaw && validateGtin(supplierGtinRaw) ? supplierGtinRaw : null;
@@ -77,6 +104,9 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
       leadTimeDays: item.leadTimeDays,
     };
   });
+  const remappedRowsResult = await remapRowsToExistingProviderKeyGtin(inputRows);
+  const rows = remappedRowsResult.rows;
+
   for (const row of rows) {
     assertMappingIntegrity({
       supplierVariantId: row.supplierVariantId,
@@ -118,7 +148,15 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
 
   const removeResult = await removeMissingSupplierVariants({
     supplierKey: client.supplierKey,
-    fetchedIds: items.map((item) => item.supplierVariantId),
+    fetchedIds: Array.from(new Set(rows.map((row) => row.supplierVariantId))),
+    allowDelete: isFullRun,
+  });
+  const zeroStockIds = items
+    .filter((item) => Number(item.stock ?? 0) <= 0)
+    .map((item) => item.supplierVariantId);
+  const removeZeroStockResult = await removeZeroStockSupplierVariants({
+    supplierKey: client.supplierKey,
+    supplierVariantIds: zeroStockIds,
     allowDelete: isFullRun,
   });
 
@@ -130,7 +168,9 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     updatedCount: updated,
     mappingInserted,
     mappingUpdated,
+    remappedToExistingGtinRow: remappedRowsResult.remapped,
     removedMissing: removeResult.removed,
+    removedZeroStock: removeZeroStockResult.removed,
     removeSkipped: removeResult.skipped,
     durationMs,
   });
@@ -148,15 +188,60 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
   const isFullRun = offset === 0 && (options.limit == null || options.limit >= items.length);
 
   const now = new Date();
-  const rows = slicedItems.map((item) => ({
-    supplierVariantId: item.supplierVariantId,
-    price: item.price ?? 0,
-    stock: item.stock ?? 0,
-  }));
+  const inputRows = slicedItems.map((item) => {
+    const sizeNormalized = normalizeSize(item.sizeRaw ?? null) ?? item.sizeRaw ?? null;
+    const supplierGtinRaw = item.sourcePayload?.barcode ?? null;
+    const supplierGtin = supplierGtinRaw && validateGtin(supplierGtinRaw) ? supplierGtinRaw : null;
+    const providerKey = supplierGtin ? buildProviderKey(supplierGtin, item.supplierVariantId) : null;
+    return {
+      supplierVariantId: item.supplierVariantId,
+      supplierSku: item.supplierSku,
+      providerKey,
+      gtin: supplierGtin,
+      price: item.price ?? 0,
+      stock: item.stock ?? 0,
+      sizeRaw: item.sizeRaw,
+      sizeNormalized,
+      supplierBrand: item.sourcePayload.brand_name ?? null,
+      supplierProductName: item.sourcePayload.product_name ?? null,
+      images: item.images.length ? item.images : null,
+      leadTimeDays: item.leadTimeDays,
+    };
+  });
+  const remappedRowsResult = await remapRowsToExistingProviderKeyGtin(inputRows);
+  const rows = remappedRowsResult.rows;
 
   let updated = 0;
+  let created = 0;
+  let mappingInserted = 0;
+  let mappingUpdated = 0;
+
+  for (const batch of chunkArray(rows, 500)) {
+    created += await bulkInsertSupplierVariants(batch as any, now);
+  }
   for (const batch of chunkArray(rows, 500)) {
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: false });
+  }
+
+  const mappingRows = rows
+    .filter((r) => r.gtin && r.providerKey)
+    .map((r) => {
+      const payload = {
+        supplierVariantId: r.supplierVariantId,
+        gtin: r.gtin as string,
+        providerKey: r.providerKey as string,
+        status: "SUPPLIER_GTIN" as const,
+      };
+      assertMappingIntegrity(payload);
+      return payload;
+    });
+  for (const batch of chunkArray(mappingRows, 500)) {
+    const res = await bulkUpsertVariantMappings(batch, now, {
+      doNotDowngradeFromMatched: true,
+      onlySetPendingIfMissing: true,
+    });
+    mappingInserted += res.inserted;
+    mappingUpdated += res.updated;
   }
 
   const removeResult = await removeMissingSupplierVariants({
@@ -164,16 +249,29 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
     fetchedIds: items.map((item) => item.supplierVariantId),
     allowDelete: isFullRun,
   });
+  const zeroStockIds = items
+    .filter((item) => Number(item.stock ?? 0) <= 0)
+    .map((item) => item.supplierVariantId);
+  const removeZeroStockResult = await removeZeroStockSupplierVariants({
+    supplierKey: client.supplierKey,
+    supplierVariantIds: zeroStockIds,
+    allowDelete: isFullRun,
+  });
 
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:stock-only] done", {
     fetchedCount: items.length,
     processed: slicedItems.length,
+    insertedCount: created,
     updatedCount: updated,
+    mappingInserted,
+    mappingUpdated,
+    remappedToExistingGtinRow: remappedRowsResult.remapped,
     removedMissing: removeResult.removed,
+    removedZeroStock: removeZeroStockResult.removed,
     removeSkipped: removeResult.skipped,
     durationMs,
   });
 
-  return { processed: slicedItems.length, updated, created: 0 };
+  return { processed: slicedItems.length, updated, created };
 }

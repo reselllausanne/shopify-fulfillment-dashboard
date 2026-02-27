@@ -19,6 +19,7 @@ type PartnerSyncResult = {
   created: number;
   updated: number;
   skippedInvalid: number;
+  removedZeroStock: number;
   mappingInserted: number;
   mappingUpdated: number;
   durationMs: number;
@@ -50,6 +51,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   let created = 0;
   let updated = 0;
   let skippedInvalid = 0;
+  let removedZeroStock = 0;
   let mappingInserted = 0;
   let mappingUpdated = 0;
 
@@ -64,6 +66,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
     stock: number;
     price: number;
   }> = [];
+  const zeroStockPairs: Array<{ providerKey: string; gtin: string }> = [];
 
   for (const row of rows) {
     const supplierCode = normalizeProviderKey(row.providerKey);
@@ -90,6 +93,13 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
       providerKey,
       status: "MATCHED",
     });
+    const stock = Number(row.rawStock ?? 0);
+    const price = Number(row.price ?? 0);
+    if (stock <= 0) {
+      zeroStockPairs.push({ providerKey, gtin });
+      continue;
+    }
+
     offers.push({
       providerKey,
       gtin,
@@ -97,12 +107,30 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
       supplierSku: sku,
       sizeRaw: row.sizeRaw,
       sizeNormalized,
-      stock: Number(row.rawStock ?? 0),
-      price: Number(row.price ?? 0),
+      stock,
+      price,
     });
   }
 
   processed = offers.length;
+
+  // Hard delete sold-out partner offers (stock <= 0) so they don't leak into Galaxus feeds.
+  for (const batch of chunkArray(zeroStockPairs, 500)) {
+    const pairs = batch.map((o) => Prisma.sql`(${o.providerKey}, ${o.gtin})`);
+    const found = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>(
+      Prisma.sql`
+        SELECT "supplierVariantId"
+        FROM "public"."SupplierVariant"
+        WHERE ("providerKey","gtin") IN (${Prisma.join(pairs)})
+      `
+    );
+    const ids = (found ?? []).map((r) => r.supplierVariantId);
+    if (ids.length === 0) continue;
+    const res = await prisma.supplierVariant.deleteMany({
+      where: { supplierVariantId: { in: ids } },
+    });
+    removedZeroStock += res.count;
+  }
 
   for (const batch of chunkArray(offers, 500)) {
     created += await bulkInsertSupplierVariantsByProviderKeyGtin(
@@ -168,10 +196,20 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
     insertedCount: created,
     updatedCount: updated,
     skippedInvalid,
+    removedZeroStock,
     mappingInserted,
     mappingUpdated,
     durationMs,
   });
 
-  return { processed, created, updated, skippedInvalid, mappingInserted, mappingUpdated, durationMs };
+  return {
+    processed,
+    created,
+    updated,
+    skippedInvalid,
+    removedZeroStock,
+    mappingInserted,
+    mappingUpdated,
+    durationMs,
+  };
 }

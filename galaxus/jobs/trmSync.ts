@@ -71,6 +71,21 @@ async function removeMissingTrmVariants(params: { fetchedIds: string[]; allowDel
   return { removed, skipped: false };
 }
 
+async function removeZeroStockTrmVariants(params: { supplierVariantIds: string[]; allowDelete: boolean }) {
+  const { supplierVariantIds, allowDelete } = params;
+  if (!allowDelete) return { removed: 0, skipped: true };
+  if (supplierVariantIds.length === 0) return { removed: 0, skipped: false };
+
+  let removed = 0;
+  for (const batch of chunkArray(supplierVariantIds, 500)) {
+    const res = await prisma.supplierVariant.deleteMany({
+      where: { supplierVariantId: { in: batch } },
+    });
+    removed += res.count;
+  }
+  return { removed, skipped: false };
+}
+
 export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
   const client = createTrmSupplierClient();
   const startedAt = Date.now();
@@ -244,6 +259,13 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
     fetchedIds: flattened.map((row) => row.supplierVariantId),
     allowDelete: isFullRun,
   });
+  const zeroStockIds = flattened
+    .filter((row) => Number(row.stock ?? 0) <= 0)
+    .map((row) => row.supplierVariantId);
+  const removeZeroStockResult = await removeZeroStockTrmVariants({
+    supplierVariantIds: zeroStockIds,
+    allowDelete: isFullRun,
+  });
 
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:trm] done", {
@@ -252,6 +274,7 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
     insertedCount: created,
     updatedCount: updated,
     removedMissing: removeResult.removed,
+    removedZeroStock: removeZeroStockResult.removed,
     removeSkipped: removeResult.skipped,
     supplierGtinRows,
     missingGtinRows,
@@ -287,8 +310,22 @@ export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<Trm
       .map((variant) => {
         const variantId = String(variant.variant_id ?? "").trim();
         if (!variantId) return null;
+        const sizeRaw = variant.eu_size ?? variant.size ?? null;
+        const sizeNormalized = normalizeSize(sizeRaw) ?? sizeRaw ?? null;
+        const gtinRaw = normalizeGtin(variant.ean);
+        const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+        const providerKey = gtin ? buildProviderKey(gtin, `trm:${variantId}`) : null;
         return {
           supplierVariantId: `trm:${variantId}`,
+          supplierSku: product.sku,
+          providerKey,
+          gtin,
+          sizeRaw,
+          sizeNormalized,
+          supplierBrand: product.brand ?? null,
+          supplierProductName: product.name ?? null,
+          images: null,
+          leadTimeDays: null,
           price: parsePrice(variant.price),
           stock: parseStock(variant.stock),
         };
@@ -302,13 +339,45 @@ export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<Trm
   const isFullRun = offset === 0 && (options.limit == null || options.limit >= flattened.length);
 
   const now = new Date();
+  let created = 0;
   let updated = 0;
+  let mappingInserted = 0;
+  let mappingUpdated = 0;
   for (const batch of chunkArray(rows, 500)) {
+    created += await bulkInsertSupplierVariants(batch as any, now);
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: false });
+  }
+
+  const mappingRows = rows
+    .filter((r) => r.gtin && r.providerKey)
+    .map((r) => {
+      const payload = {
+        supplierVariantId: r.supplierVariantId,
+        gtin: r.gtin as string,
+        providerKey: r.providerKey as string,
+        status: "SUPPLIER_GTIN" as const,
+      };
+      assertMappingIntegrity(payload);
+      return payload;
+    });
+  for (const batch of chunkArray(mappingRows, 500)) {
+    const res = await bulkUpsertVariantMappings(batch, now, {
+      doNotDowngradeFromMatched: true,
+      onlySetPendingIfMissing: true,
+    });
+    mappingInserted += res.inserted;
+    mappingUpdated += res.updated;
   }
 
   const removeResult = await removeMissingTrmVariants({
     fetchedIds: flattened.map((row) => row.supplierVariantId),
+    allowDelete: isFullRun,
+  });
+  const zeroStockIds = flattened
+    .filter((row) => Number(row.stock ?? 0) <= 0)
+    .map((row) => row.supplierVariantId);
+  const removeZeroStockResult = await removeZeroStockTrmVariants({
+    supplierVariantIds: zeroStockIds,
     allowDelete: isFullRun,
   });
 
@@ -316,23 +385,27 @@ export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<Trm
   console.info("[galaxus][sync:trm-stock-only] done", {
     fetchedCount: flattened.length,
     processed: rows.length,
+    insertedCount: created,
     updatedCount: updated,
     removedMissing: removeResult.removed,
+    removedZeroStock: removeZeroStockResult.removed,
     removeSkipped: removeResult.skipped,
+    mappingInserted,
+    mappingUpdated,
     durationMs,
   });
 
   return {
     processed: rows.length,
-    created: 0,
+    created,
     updated,
     supplierGtinRows: 0,
     missingGtinRows: 0,
     invalidGtinRows: 0,
     enrichedRows: 0,
     enrichErrors: 0,
-    insertedMappings: 0,
-    updatedMappings: 0,
+    insertedMappings: mappingInserted,
+    updatedMappings: mappingUpdated,
     durationMs,
   };
 }
