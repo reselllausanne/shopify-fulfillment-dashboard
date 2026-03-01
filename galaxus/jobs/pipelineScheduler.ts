@@ -21,6 +21,7 @@ type PipelineTickResult = {
   jobs: {
     ediIn: TickJobStatus;
     syncOfferStock: TickJobStatus;
+    masterRefresh: TickJobStatus;
     enrichNew: TickJobStatus;
     reenrichUnmatched: TickJobStatus;
   };
@@ -29,6 +30,7 @@ type PipelineTickResult = {
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const TWO_HOURS_MS = 2 * ONE_HOUR_MS;
 const TWO_DAYS_MS = 2 * 24 * ONE_HOUR_MS;
+const TEN_HOURS_MS = 10 * ONE_HOUR_MS;
 
 function toIso(d: Date | null): string | null {
   return d ? d.toISOString() : null;
@@ -39,6 +41,14 @@ async function getLastSuccessfulJob(jobName: string) {
     where: { jobName, success: true },
     orderBy: { finishedAt: "desc" },
     select: { id: true, jobName: true, startedAt: true, finishedAt: true },
+  });
+}
+
+async function getLastJob(jobName: string) {
+  return (prisma as any).galaxusJobRun.findFirst({
+    where: { jobName },
+    orderBy: { finishedAt: "desc" },
+    select: { id: true, jobName: true, startedAt: true, finishedAt: true, success: true },
   });
 }
 
@@ -54,6 +64,18 @@ function isDue(nextAt: Date | null, nowMs: number): boolean {
 
 async function runOfferStockUpload(origin: string) {
   const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=offer-stock`, {
+    method: "POST",
+    cache: "no-store",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error ?? `Upload failed (HTTP ${res.status})`);
+  }
+  return data;
+}
+
+async function runAllFeedsUpload(origin: string) {
+  const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=all`, {
     method: "POST",
     cache: "no-store",
   });
@@ -127,7 +149,11 @@ async function runKickdbEnrichCandidates(params: {
   return { candidates: supplierVariantIds.length, processed, enrichedRows, errors, durationMs };
 }
 
-async function fetchNewCandidatesSince(since: Date, limit: number): Promise<string[]> {
+async function fetchNewCandidatesSince(
+  since: Date,
+  limit: number,
+  offset = 0
+): Promise<string[]> {
   const rows = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>(
     Prisma.sql`
       SELECT sv."supplierVariantId"
@@ -140,8 +166,9 @@ async function fetchNewCandidatesSince(since: Date, limit: number): Promise<stri
           OR vm."gtin" IS NULL
           OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN','NOT_FOUND')
         )
-      ORDER BY sv."createdAt" DESC, sv."updatedAt" DESC
+      ORDER BY sv."createdAt" ASC, sv."supplierVariantId" ASC
       LIMIT ${limit}
+      OFFSET ${offset}
     `
   );
   return (rows ?? []).map((r) => r.supplierVariantId);
@@ -176,7 +203,7 @@ export async function runGalaxusPipelineTick(
   const shouldConsider = (key: string) => (isOnlyMode ? only.has(key) : true);
 
   // EDI IN (hourly)
-  const lastEdi = await getLastSuccessfulJob("edi-in");
+  const lastEdi = await getLastJob("edi-in");
   const nextEdiAt = nextFrom(lastEdi?.finishedAt ? new Date(lastEdi.finishedAt) : null, ONE_HOUR_MS);
   const ediDue = force ? shouldConsider("edi-in") : shouldConsider("edi-in") && isDue(nextEdiAt, nowMs);
   let ediIn: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextEdiAt) };
@@ -191,7 +218,7 @@ export async function runGalaxusPipelineTick(
   }
 
   // 2h supplier+partner delta sync + offer/stock upload (single locked pipeline job)
-  const lastSync = await getLastSuccessfulJob("pipeline-offer-stock");
+  const lastSync = await getLastJob("pipeline-offer-stock");
   const nextSyncAt = nextFrom(lastSync?.finishedAt ? new Date(lastSync.finishedAt) : null, TWO_HOURS_MS);
   const syncDue = force ? shouldConsider("sync-offer-stock") : shouldConsider("sync-offer-stock") && isDue(nextSyncAt, nowMs);
   let syncOfferStock: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextSyncAt) };
@@ -228,35 +255,103 @@ export async function runGalaxusPipelineTick(
         : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextSyncAt) };
   }
 
+  // Master refresh: every 10h (supplier full + partner + upload master/stock/offer together).
+  const lastMaster = await getLastJob("pipeline-master");
+  const nextMasterAt = nextFrom(lastMaster?.finishedAt ? new Date(lastMaster.finishedAt) : null, TEN_HOURS_MS);
+  const masterDue = force ? shouldConsider("master") : shouldConsider("master") && isDue(nextMasterAt, nowMs);
+  let masterRefresh: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextMasterAt) };
+  if (shouldConsider("master") && masterDue) {
+    const locked = await withAdvisoryLock("galaxus:pipeline:master", async () =>
+      runJob("pipeline-master", async () => {
+        const supplier = await runJob("pipeline-supplier-full", async () => {
+          // Use the existing supplier sync API route to ensure we mirror prod behavior.
+          const res = await fetch(`${origin}/api/galaxus/supplier/sync?all=1&mode=full`, {
+            method: "POST",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) throw new Error(data?.error ?? `Supplier full sync failed (HTTP ${res.status})`);
+          return data;
+        });
+        if (!supplier.success) throw new Error(supplier.error ?? "Supplier full sync failed");
+
+        const partner = await runJob("pipeline-partner-sync", async () => runPartnerSyncAll());
+        if (!partner.success) throw new Error(partner.error ?? "Partner sync failed");
+
+        const upload = await runJob("pipeline-upload-all", async () => runAllFeedsUpload(origin));
+        if (!upload.success) throw new Error(upload.error ?? "Feed upload (all) failed");
+
+        return { supplier: supplier.result, partner: partner.result, upload: upload.result };
+      })
+    );
+    masterRefresh =
+      locked.locked
+        ? { due: true, ran: true, nextAt: toIso(nextFrom(new Date(), TEN_HOURS_MS)), result: locked.result }
+        : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextMasterAt) };
+  }
+
   // Enrich NEW: 1h after the last successful 2h sync finished, and only for newly created rows.
   const lastSyncAfter = await getLastSuccessfulJob("pipeline-offer-stock");
   const syncFinishedAt = lastSyncAfter?.finishedAt ? new Date(lastSyncAfter.finishedAt) : null;
   const enrichScheduledAt = syncFinishedAt ? new Date(syncFinishedAt.getTime() + ONE_HOUR_MS) : null;
-  const lastEnrichNew = await getLastSuccessfulJob("kickdb-enrich-new");
+  const lastEnrichNew = await getLastJob("kickdb-enrich-new");
+  const ranEnrichNewForCycle = Boolean(
+    enrichScheduledAt &&
+      lastEnrichNew?.startedAt &&
+      new Date(lastEnrichNew.startedAt).getTime() >= enrichScheduledAt.getTime()
+  );
+  const nextEnrichNewAt =
+    syncFinishedAt && enrichScheduledAt
+      ? ranEnrichNewForCycle
+        ? new Date(syncFinishedAt.getTime() + TWO_HOURS_MS + ONE_HOUR_MS) // next 2h cycle + 1h offset
+        : enrichScheduledAt
+      : null;
   const enrichNewDue = Boolean(
     enrichScheduledAt &&
       (force ? shouldConsider("enrich-new") : nowMs >= enrichScheduledAt.getTime()) &&
-      (!lastEnrichNew?.startedAt || new Date(lastEnrichNew.startedAt).getTime() < enrichScheduledAt.getTime())
+      !ranEnrichNewForCycle
   );
   let enrichNew: TickJobStatus = {
     due: false,
     ran: false,
     skipped: syncFinishedAt ? "not_due" : "missing_dependency",
-    nextAt: toIso(enrichScheduledAt),
+    nextAt: toIso(nextEnrichNewAt),
   };
   if (shouldConsider("enrich-new") && enrichNewDue && syncFinishedAt && lastSyncAfter?.startedAt) {
     const since = new Date(lastSyncAfter.startedAt);
     const locked = await withAdvisoryLock("galaxus:kickdb:enrich-new", async () =>
       runJob("kickdb-enrich-new", async () => {
-        const candidateLimit = 500;
+        const candidatePageSize = 500;
+        const maxCandidates = 5000;
         const concurrency = 4;
-        const candidates = await fetchNewCandidatesSince(since, candidateLimit);
+        const candidates: string[] = [];
+        let offset = 0;
+        // Scan new rows in pages so bursty syncs don't leave untouched "new" rows.
+        // Hard cap keeps calls bounded in pathological cases.
+        while (candidates.length < maxCandidates) {
+          const page = await fetchNewCandidatesSince(
+            since,
+            Math.min(candidatePageSize, maxCandidates - candidates.length),
+            offset
+          );
+          if (page.length === 0) break;
+          candidates.push(...page);
+          if (page.length < candidatePageSize) break;
+          offset += candidatePageSize;
+        }
         const res = await runKickdbEnrichCandidates({
           supplierVariantIds: candidates,
           concurrency,
           force: true,
         });
-        return { since: since.toISOString(), candidateLimit, concurrency, ...res };
+        return {
+          since: since.toISOString(),
+          candidatePageSize,
+          maxCandidates,
+          truncated: candidates.length >= maxCandidates,
+          concurrency,
+          ...res,
+        };
       })
     );
     enrichNew =
@@ -266,7 +361,7 @@ export async function runGalaxusPipelineTick(
   }
 
   // Re-enrich UNMATCHED: every 2 days, for rows still unmatched (no GTIN/mapping).
-  const lastRe = await getLastSuccessfulJob("kickdb-reenrich-unmatched");
+  const lastRe = await getLastJob("kickdb-reenrich-unmatched");
   const nextReAt = nextFrom(lastRe?.finishedAt ? new Date(lastRe.finishedAt) : null, TWO_DAYS_MS);
   const reDue = force ? shouldConsider("reenrich-unmatched") : shouldConsider("reenrich-unmatched") && isDue(nextReAt, nowMs);
   let reenrichUnmatched: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextReAt) };
@@ -294,7 +389,7 @@ export async function runGalaxusPipelineTick(
     ok: true,
     now: now.toISOString(),
     origin,
-    jobs: { ediIn, syncOfferStock, enrichNew, reenrichUnmatched },
+    jobs: { ediIn, syncOfferStock, masterRefresh, enrichNew, reenrichUnmatched },
   };
 }
 

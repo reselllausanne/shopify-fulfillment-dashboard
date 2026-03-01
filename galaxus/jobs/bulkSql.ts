@@ -14,6 +14,11 @@ export async function remapRowsToExistingProviderKeyGtin<
 >(rows: T[]): Promise<{ rows: T[]; remapped: number }> {
   if (rows.length === 0) return { rows, remapped: 0 };
 
+  // Important: providerKey+gtin is unique in DB. We must avoid inserting a batch
+  // that contains duplicates for the same pair (even if both are "new"), or Postgres
+  // will throw a 23505 unique constraint error.
+  const firstSeenByPair = new Map<string, string>();
+
   const pairs = Array.from(
     new Map(
       rows
@@ -41,10 +46,25 @@ export async function remapRowsToExistingProviderKeyGtin<
   let remapped = 0;
   const normalizedRows = rows.map((row) => {
     if (!row.providerKey || !row.gtin) return row;
-    const existingId = existingByKey.get(`${row.providerKey}__${row.gtin}`);
-    if (!existingId || existingId === row.supplierVariantId) return row;
+    const pairKey = `${row.providerKey}__${row.gtin}`;
+
+    // 1) If DB already has this pair, always remap to that canonical row.
+    const existingId = existingByKey.get(pairKey);
+    if (existingId && existingId !== row.supplierVariantId) {
+      remapped += 1;
+      return { ...row, supplierVariantId: existingId };
+    }
+
+    // 2) If this input batch contains multiple rows for the same pair,
+    // remap all to the first seen supplierVariantId to avoid 23505.
+    const first = firstSeenByPair.get(pairKey);
+    if (!first) {
+      firstSeenByPair.set(pairKey, row.supplierVariantId);
+      return row;
+    }
+    if (first === row.supplierVariantId) return row;
     remapped += 1;
-    return { ...row, supplierVariantId: existingId };
+    return { ...row, supplierVariantId: first };
   });
 
   return { rows: normalizedRows, remapped };

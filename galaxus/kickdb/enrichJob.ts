@@ -648,17 +648,17 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
           ...(mappingCreateBase as any),
           gtin: null,
           providerKey: null,
-          status: "PENDING_GTIN",
+          status: "NOT_FOUND",
         },
         update: {
           gtin: null,
           providerKey: null,
-          status: "PENDING_GTIN",
+          status: "NOT_FOUND",
         },
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
-        status: "PENDING_GTIN",
+        status: "NOT_FOUND",
         debug: debugInfo
           ? {
               ...debugInfo,
@@ -687,9 +687,29 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
 
     const productRecord = productResponse?.data ?? productResponse;
     if (!productRecord) {
+      assertMappingIntegrity({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "NOT_FOUND",
+      });
+      await prismaAny.variantMapping.upsert({
+        where: mappingWhere as any,
+        create: {
+          ...(mappingCreateBase as any),
+          gtin: null,
+          providerKey: null,
+          status: "NOT_FOUND",
+        },
+        update: {
+          gtin: null,
+          providerKey: null,
+          status: "NOT_FOUND",
+        },
+      });
       results.push({
         supplierVariantId: variant.supplierVariantId,
-        status: "PENDING_GTIN",
+        status: "NOT_FOUND",
         debug: debugInfo ? { ...debugInfo, reason: "PRODUCT_EMPTY" } : undefined,
       });
       continue;
@@ -864,7 +884,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         ? "AMBIGUOUS_GTIN"
         : finalGtin
           ? "MATCHED"
-          : "PENDING_GTIN";
+          : "NOT_FOUND";
     assertMappingIntegrity({
       supplierVariantId: variant.supplierVariantId,
       gtin: finalGtin ?? null,

@@ -190,15 +190,7 @@ export default function GalaxusDashboardPage() {
   const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
   const [schedulerBusy, setSchedulerBusy] = useState(false);
   const [enrichSku, setEnrichSku] = useState<string>("");
-  const [enrichAllStatus, setEnrichAllStatus] = useState<{
-    running: boolean;
-    processed: number;
-    remaining: number | null;
-    lastError: string | null;
-    lastRunAt: string | null;
-    lastResults?: Array<{ supplierVariantId: string; status: string; gtin: string | null; error?: string | null }>;
-  } | null>(null);
-  const [enrichAllDebugMode, setEnrichAllDebugMode] = useState<boolean>(false);
+  // Enrich-all UI removed; enrichment is cron-driven.
   const [partnerKey, setPartnerKey] = useState<string>("self");
   const [partnerName, setPartnerName] = useState<string>("Personal stock");
   const [partnerAccessCode, setPartnerAccessCode] = useState<string>("");
@@ -212,7 +204,7 @@ export default function GalaxusDashboardPage() {
 
   const loadSchedulerStatus = async () => {
     try {
-      const res = await fetch("/api/galaxus/feeds/scheduler", { cache: "no-store" });
+      const res = await fetch("/api/galaxus/pipeline/status", { cache: "no-store" });
       const data = await res.json();
       if (data?.ok) setSchedulerStatus(data.status ?? null);
     } catch {
@@ -220,15 +212,7 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const loadEnrichAllStatus = async () => {
-    try {
-      const res = await fetch("/api/galaxus/kickdb/enrich-all", { cache: "no-store" });
-      const data = await res.json();
-      if (data?.ok) setEnrichAllStatus(data.status ?? null);
-    } catch {
-      // silent
-    }
-  };
+  // Enrich-all is deprecated in favor of cron-driven pipeline enrichment jobs.
 
   const loadRoutingSummary = async () => {
     try {
@@ -382,7 +366,6 @@ export default function GalaxusDashboardPage() {
     loadSchedulerStatus();
     loadRoutingSummary();
     loadVariantStats();
-    loadEnrichAllStatus();
   }, []);
 
   const syncSupplier = async () => {
@@ -402,39 +385,6 @@ export default function GalaxusDashboardPage() {
       setBusy(null);
     }
   };
-
-  const enrichAll = async () => {
-    setBusy("enrich-all");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const debugParam = enrichAllDebugMode ? "?forceMissing=1" : "";
-      const response = await fetch(`/api/galaxus/kickdb/enrich-all${debugParam}`, { method: "POST" });
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error ?? "Enrich ALL failed");
-      }
-      setOpsLog(
-        JSON.stringify(
-          {
-            enrichAllStarted: true,
-            debugMode: enrichAllDebugMode,
-            forceMissing: Boolean(data?.forceMissing),
-            jobId: data?.jobId ?? null,
-            remaining: data?.remaining ?? null,
-          },
-          null,
-          2
-        )
-      );
-      await loadEnrichAllStatus();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
 
   const clearSupplierData = async (includeKickdb: boolean) => {
     const confirmed = (window.prompt('This will DELETE supplier data. Type "YES" to confirm.') ?? "").trim().toUpperCase();
@@ -1092,22 +1042,6 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "sync" ? "Syncing…" : "Sync Stock"}
               </button>
-              <button
-                className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
-                onClick={enrichAll}
-                disabled={busy !== null}
-              >
-                {busy === "enrich-all" ? "Starting…" : "Enrich ALL"}
-              </button>
-              <label className="inline-flex items-center gap-2 text-xs text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={enrichAllDebugMode}
-                  onChange={(e) => setEnrichAllDebugMode(e.target.checked)}
-                  disabled={busy !== null}
-                />
-                Debug enrich (force missing)
-              </label>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -1124,42 +1058,6 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "enrich-single" ? "Checking…" : "Enrich Single SKU"}
               </button>
-            </div>
-            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
-              <div>
-                Enrich ALL: {enrichAllStatus?.running ? "RUNNING" : "IDLE"}
-              </div>
-              <div>
-                Processed: {enrichAllStatus?.processed ?? 0} · Remaining:{" "}
-                {enrichAllStatus?.remaining === null ? "calculating…" : enrichAllStatus?.remaining ?? 0}
-              </div>
-              <div>
-                Last run:{" "}
-                {enrichAllStatus?.lastRunAt
-                  ? new Date(enrichAllStatus.lastRunAt).toLocaleString()
-                  : "—"}
-              </div>
-              {enrichAllStatus?.lastError ? (
-                <div className="text-red-600">Last error: {enrichAllStatus.lastError}</div>
-              ) : null}
-              <div>
-                {variantStats
-                  ? `Mappings: ${variantStats.withGtin} with GTIN · ${variantStats.withoutGtin} without GTIN`
-                  : "Mappings: —"}
-              </div>
-              {enrichAllStatus?.lastResults?.length ? (
-                <div className="text-xs text-gray-500">
-                  Last 10 results (preview only; server processes larger batches):
-                  <div className="mt-1 space-y-1">
-                    {enrichAllStatus.lastResults.map((item) => (
-                      <div key={item.supplierVariantId}>
-                        {item.supplierVariantId} · {item.status} · {item.gtin ?? "—"}
-                        {item.error ? ` · ${item.error}` : ""}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </div>
             <div className="flex flex-wrap gap-2">
               <button
