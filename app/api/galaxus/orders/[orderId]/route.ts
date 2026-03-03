@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils";
+import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,8 +47,10 @@ export async function GET(
     }
 
     const placement = await getShipmentPlacementByOrder(order.id);
+    const stx = await getStxLinkStatusForOrder(order.galaxusOrderId).catch(() => null);
     const normalized = {
       ...order,
+      stx,
       shipments: order.shipments.map((shipment: any) => {
         const deliveryNote = shipment.documents?.find((doc: any) => doc.type === "DELIVERY_NOTE");
         const labelNote = shipment.documents?.find((doc: any) => doc.type === "LABEL");

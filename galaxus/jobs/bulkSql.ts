@@ -89,6 +89,7 @@ export async function bulkInsertSupplierVariants(
     supplierProductName: string | null;
     images: unknown;
     leadTimeDays: number | null;
+    deliveryType?: string | null;
     gtin?: string | null;
   }>,
   now: Date
@@ -111,6 +112,7 @@ export async function bulkInsertSupplierVariants(
       ${r.supplierProductName},
       ${jsonb(r.images)},
       ${r.leadTimeDays},
+      ${r.deliveryType ?? null},
       ${now},
       ${now},
       ${now}
@@ -133,6 +135,7 @@ export async function bulkInsertSupplierVariants(
         "supplierProductName",
         "images",
         "leadTimeDays",
+        "deliveryType",
         "lastSyncAt",
         "createdAt",
         "updatedAt"
@@ -283,6 +286,7 @@ export async function bulkUpdateSupplierVariants(
     supplierProductName?: string | null;
     images?: unknown;
     leadTimeDays?: number | null;
+    deliveryType?: string | null;
     gtin?: string | null;
   }>,
   now: Date,
@@ -308,7 +312,8 @@ export async function bulkUpdateSupplierVariants(
       ${r.supplierBrand ?? null},
       ${r.supplierProductName ?? null},
       ${r.images === undefined ? Prisma.sql`NULL::jsonb` : jsonb(r.images)},
-      ${numericOrNull(r.leadTimeDays, "int")}
+      ${numericOrNull(r.leadTimeDays, "int")},
+      ${r.deliveryType ?? null}
     )`;
   });
 
@@ -325,7 +330,8 @@ export async function bulkUpdateSupplierVariants(
       "supplierBrand",
       "supplierProductName",
       "images",
-      "leadTimeDays"
+      "leadTimeDays",
+      "deliveryType"
     ) AS (
       VALUES ${Prisma.join(values)}
     ),
@@ -349,6 +355,7 @@ export async function bulkUpdateSupplierVariants(
           ELSE vals."images"
         END,
         "leadTimeDays" = COALESCE(vals."leadTimeDays", t."leadTimeDays"),
+        "deliveryType" = COALESCE(vals."deliveryType", t."deliveryType"),
         "gtin" = CASE
           WHEN vals."gtin" IS NULL THEN t."gtin"
           WHEN t."gtin" IS DISTINCT FROM vals."gtin"
@@ -372,6 +379,7 @@ export async function bulkUpdateSupplierVariants(
             t."supplierProductName" IS DISTINCT FROM COALESCE(vals."supplierProductName", t."supplierProductName") OR
             (vals."images" IS NOT NULL AND t."images" IS DISTINCT FROM vals."images") OR
             t."leadTimeDays" IS DISTINCT FROM COALESCE(vals."leadTimeDays", t."leadTimeDays") OR
+            t."deliveryType" IS DISTINCT FROM COALESCE(vals."deliveryType", t."deliveryType") OR
             (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
             (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL)
           )
@@ -389,6 +397,7 @@ export async function bulkUpdateSupplierVariants(
           t."supplierProductName" IS DISTINCT FROM COALESCE(vals."supplierProductName", t."supplierProductName") OR
           (vals."images" IS NOT NULL AND t."images" IS DISTINCT FROM vals."images") OR
           t."leadTimeDays" IS DISTINCT FROM COALESCE(vals."leadTimeDays", t."leadTimeDays") OR
+          t."deliveryType" IS DISTINCT FROM COALESCE(vals."deliveryType", t."deliveryType") OR
           (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
           (vals."providerKey" IS NOT NULL AND t."providerKey" IS DISTINCT FROM vals."providerKey") OR
           (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR

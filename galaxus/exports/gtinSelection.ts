@@ -76,7 +76,12 @@ type AccumulateOptions = {
 
 function extractSupplierKey(supplierVariantId?: string | null): string | null {
   if (!supplierVariantId) return null;
-  const rawKey = supplierVariantId.split(":")[0];
+  const raw = supplierVariantId.trim();
+  const rawKey = raw.includes(":")
+    ? raw.split(":")[0]
+    : raw.includes("_")
+      ? raw.split("_")[0]
+      : raw;
   return rawKey ? rawKey.toLowerCase() : null;
 }
 

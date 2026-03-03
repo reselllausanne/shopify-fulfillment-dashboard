@@ -6,6 +6,12 @@ import { renderLabelHtml } from "@/galaxus/documents/templates/label";
 import { renderPdfFromHtml } from "@/galaxus/documents/renderers/playwrightRenderer";
 import type { Address, LabelData } from "@/galaxus/documents/types";
 import {
+  GALAXUS_SSCC_RECIPIENT_CITY,
+  GALAXUS_SSCC_RECIPIENT_COUNTRY,
+  GALAXUS_SSCC_RECIPIENT_LINE2,
+  GALAXUS_SSCC_RECIPIENT_NAME,
+  GALAXUS_SSCC_RECIPIENT_POSTAL_CODE,
+  GALAXUS_SSCC_RECIPIENT_STREET,
   GALAXUS_SUPPLIER_ADDRESS_LINES,
   GALAXUS_SUPPLIER_NAME,
 } from "@/galaxus/config";
@@ -24,7 +30,7 @@ export async function generateSsccLabelPdf(order: GalaxusOrder, sscc: string): P
     shipmentId: "",
     orderNumbers: [order.orderNumber ?? order.galaxusOrderId],
     sender: buildSupplierAddress(),
-    recipient: buildRecipient(order),
+    recipient: buildRecipient(),
     sscc: normalized,
     barcodeDataUrl,
   };
@@ -60,15 +66,15 @@ function buildSupplierAddress(): Address {
   };
 }
 
-function buildRecipient(order: GalaxusOrder): Address {
+function buildRecipient(): Address {
   return {
-    name: order.recipientName ?? order.customerName,
-    line1: order.recipientAddress1 ?? order.customerAddress1,
-    line2: order.recipientAddress2 ?? order.customerAddress2 ?? null,
-    postalCode: order.recipientPostalCode ?? order.customerPostalCode,
-    city: order.recipientCity ?? order.customerCity,
-    country: order.recipientCountry ?? order.customerCountry,
-    vatId: order.customerVatId ?? null,
+    name: GALAXUS_SSCC_RECIPIENT_NAME,
+    line1: GALAXUS_SSCC_RECIPIENT_STREET,
+    line2: GALAXUS_SSCC_RECIPIENT_LINE2,
+    postalCode: GALAXUS_SSCC_RECIPIENT_POSTAL_CODE,
+    city: GALAXUS_SSCC_RECIPIENT_CITY,
+    country: GALAXUS_SSCC_RECIPIENT_COUNTRY,
+    vatId: null,
   };
 }
 

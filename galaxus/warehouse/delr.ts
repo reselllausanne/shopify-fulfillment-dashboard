@@ -14,6 +14,7 @@ import {
 } from "@/galaxus/edi/config";
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { GALAXUS_SHIPMENT_CARRIER_ALLOWLIST } from "@/galaxus/config";
+import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
 
 type UploadResult = {
   shipmentId: string;
@@ -42,6 +43,38 @@ export async function uploadDelrForShipment(
 
   if (!shipment.order.ordrSentAt && !options.force) {
     return { shipmentId, status: "error", message: "ORDR not sent yet" };
+  }
+
+  const stxStatus = await getStxLinkStatusForShipment(shipment.id).catch(() => null);
+  if (stxStatus?.hasStxItems && !options.force) {
+    if (!stxStatus.allLinked) {
+      return {
+        shipmentId,
+        status: "error",
+        httpStatus: 409,
+        message: "StockX units are not fully linked yet",
+      };
+    }
+    if (!stxStatus.allEtaPresent) {
+      return {
+        shipmentId,
+        status: "error",
+        httpStatus: 409,
+        message: "StockX linked units are missing ETA bounds",
+      };
+    }
+  }
+
+  if (!stxStatus?.hasStxItems) {
+    const placedOnSupplier = await hasPlacedSupplierOrder(shipment);
+    if (!placedOnSupplier && !options.force) {
+      return {
+        shipmentId,
+        status: "error",
+        httpStatus: 409,
+        message: "Supplier order not placed yet",
+      };
+    }
   }
 
   const existingDelr = await findExistingDelr(shipment);
@@ -85,12 +118,19 @@ export async function uploadDelrForShipment(
       items,
     });
     const carrier = resolveCarrier(shipment.carrierFinal ?? null);
+    const arrivalByGtin =
+      stxStatus?.hasStxItems
+        ? await buildStxArrivalByGtin({
+            galaxusOrderId: shipment.order.galaxusOrderId,
+            buckets: stxStatus.buckets ?? [],
+          })
+        : {};
     const dispatch = buildDispatchNotification(
       shipment.order,
       shipment.order.lines,
       { ...shipment, carrierFinal: carrier },
       items,
-      { supplierId: GALAXUS_SUPPLIER_ID }
+      { supplierId: GALAXUS_SUPPLIER_ID, arrivalByGtin }
     );
 
     await withSftp(
@@ -211,4 +251,82 @@ async function findExistingDelr(shipment: any) {
   return (prisma as any).galaxusEdiFile.findFirst({
     where: { shipmentId: shipment.id, direction: "OUT", docType: "DELR" },
   });
+}
+
+async function hasPlacedSupplierOrder(shipment: any): Promise<boolean> {
+  const ref = String(shipment?.supplierOrderRef ?? "").trim();
+  if (ref.length > 0) return true;
+
+  const status = String(shipment?.status ?? "").toUpperCase();
+  if (status === "PLACED" || status === "ASSIGNED") return true;
+
+  const order = await (prisma as any).supplierOrder.findUnique({
+    where: { shipmentId: shipment.id },
+    select: { supplierOrderRef: true, status: true },
+  });
+  if (!order) return false;
+  const orderRef = String(order?.supplierOrderRef ?? "").trim();
+  const orderStatus = String(order?.status ?? "").toUpperCase();
+  if (orderRef.startsWith("pending-")) return false;
+  if (orderStatus === "ERROR" || orderStatus === "CREATING") return false;
+  return orderRef.length > 0 || orderStatus === "CREATED";
+}
+
+function midpointDate(min: Date, max: Date) {
+  return new Date(Math.floor((min.getTime() + max.getTime()) / 2));
+}
+
+function addBusinessDays(base: Date, days: number) {
+  const result = new Date(base);
+  let added = 0;
+  while (added < days) {
+    result.setDate(result.getDate() + 1);
+    const day = result.getDay();
+    if (day !== 0 && day !== 6) {
+      added += 1;
+    }
+  }
+  return result;
+}
+
+async function buildStxArrivalByGtin(params: {
+  galaxusOrderId: string;
+  buckets: Array<{ gtin: string; needed: number }>;
+}) {
+  const out: Record<string, { start: Date; end: Date }> = {};
+  for (const bucket of params.buckets) {
+    const gtin = String(bucket?.gtin ?? "").trim();
+    const needed = Math.max(0, Number(bucket?.needed ?? 0));
+    if (!gtin || needed <= 0) continue;
+    const rows = await (prisma as any).stxPurchaseUnit.findMany({
+      where: {
+        galaxusOrderId: params.galaxusOrderId,
+        gtin,
+        stockxOrderId: { not: null },
+        etaMin: { not: null },
+        etaMax: { not: null },
+      },
+      orderBy: { createdAt: "asc" },
+      take: needed,
+      select: { etaMin: true, etaMax: true },
+    });
+    if (!rows.length) continue;
+    let latestMidpoint: Date | null = null;
+    for (const row of rows) {
+      const etaMin = row.etaMin ? new Date(row.etaMin) : null;
+      const etaMax = row.etaMax ? new Date(row.etaMax) : null;
+      if (!etaMin || !etaMax) continue;
+      const mid = midpointDate(etaMin, etaMax);
+      if (!latestMidpoint || mid.getTime() > latestMidpoint.getTime()) {
+        latestMidpoint = mid;
+      }
+    }
+    if (!latestMidpoint) continue;
+    const estimatedDeliveryForDelr = addBusinessDays(latestMidpoint, 3);
+    out[gtin] = {
+      start: estimatedDeliveryForDelr,
+      end: estimatedDeliveryForDelr,
+    };
+  }
+  return out;
 }

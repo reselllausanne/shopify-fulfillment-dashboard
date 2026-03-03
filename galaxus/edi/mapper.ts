@@ -150,10 +150,12 @@ export function buildDispatchLines(
   items: ShipmentItemLike[],
   orderId: string,
   packageId: string,
-  metaBySupplierPid: Record<string, { description: string; lineNumber: number }>
+  metaBySupplierPid: Record<string, { description: string; lineNumber: number }>,
+  arrivalByGtin: Record<string, { start: Date; end: Date }> = {}
 ): EdiOrderLine[] {
   return items.map((item, index) => {
     const meta = metaBySupplierPid[item.supplierPid];
+    const arrival = arrivalByGtin[item.gtin14] ?? null;
     return {
       lineNumber: meta?.lineNumber ?? index + 1,
       description: meta?.description ?? "Item",
@@ -167,6 +169,8 @@ export function buildDispatchLines(
     providerKey: item.supplierPid ?? null,
     gtin: item.gtin14,
     orderReferenceId: orderId,
+    arrivalDateStart: arrival?.start ?? null,
+    arrivalDateEnd: arrival?.end ?? null,
     dispatchPackages: [
       {
         packageId,

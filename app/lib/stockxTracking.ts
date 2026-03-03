@@ -24,7 +24,7 @@ const STOCKX_GRAPHQL_URL = "https://stockx.com/api/p/e";
  * @param trackingUrl - Full tracking URL
  * @returns AWB string or null
  */
-function extractAwb(trackingUrl: string | null | undefined): string | null {
+export function extractAwbFromTrackingUrl(trackingUrl: string | null | undefined): string | null {
   if (!trackingUrl) return null;
   
   try {
@@ -448,7 +448,7 @@ async function fetchStockXTracking(
         }
 
         // Extract AWB from tracking URL
-        const awb = extractAwb(trackingUrl);
+        const awb = extractAwbFromTrackingUrl(trackingUrl);
         if (awb) {
           console.log(`[STOCKX-ORDER] ✅ Extracted AWB: ${awb}`);
         }

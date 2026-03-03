@@ -91,7 +91,10 @@ export function buildDispatchNotification(
     buyerPid?: string | null;
     quantity: number;
   }>,
-  options: { supplierId: string }
+  options: {
+    supplierId: string;
+    arrivalByGtin?: Record<string, { start: Date; end: Date }>;
+  }
 ): EdiOutput {
   const metaBySupplierPid = new Map<string, { description: string; lineNumber: number }>();
   for (const line of lines) {
@@ -112,7 +115,8 @@ export function buildDispatchNotification(
     items,
     order.galaxusOrderId,
     packageId,
-    Object.fromEntries(metaBySupplierPid)
+    Object.fromEntries(metaBySupplierPid),
+    options.arrivalByGtin ?? {}
   );
   const dispatchNotificationId = shipment.dispatchNotificationId ?? buildDocNumber("GDELR");
   const xml = buildDispatchXml({

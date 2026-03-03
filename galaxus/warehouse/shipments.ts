@@ -40,6 +40,12 @@ type CreateShipmentsResult = {
   message?: string;
 };
 
+type ShipmentLineGroup = {
+  providerKey: string;
+  lines: any[];
+  stxDeliveryType?: "express_standard" | "express_expedited" | null;
+};
+
 export async function createShipmentsForOrder(options: CreateShipmentsOptions): Promise<CreateShipmentsResult> {
   const prismaAny = prisma as any;
   const order = await resolveOrder(options.orderId);
@@ -66,14 +72,17 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
   validateOrderLines(orderAny.lines);
 
   const groupedLines = await groupLinesByProviderKey(orderAny.lines);
+  const groupedLinesWithStxBuckets = await splitStxGroupsByDeliveryTypeIfNeeded(groupedLines);
   const shipments: Shipment[] = [];
   const shippedAt = options.shippedAt ?? null;
   const storage = getStorageAdapter();
   let shipmentIndex = 0;
 
-  for (const group of groupedLines) {
+  for (const group of groupedLinesWithStxBuckets) {
+    const isStx = group.providerKey === "STX";
+    const groupMaxPairs = isStx ? 24 : options.maxPairsPerParcel;
     const packed = packOrderLines(group.lines, {
-      maxPairsPerParcel: options.maxPairsPerParcel,
+      maxPairsPerParcel: groupMaxPairs,
       allowSplit: options.allowSplit,
     });
 
@@ -93,7 +102,11 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
             dispatchNotificationCreatedAt: new Date(),
             incoterms: null,
             packageId,
-            deliveryType: options.deliveryType ?? orderAny.deliveryType ?? "warehouse_delivery",
+            deliveryType:
+              group.stxDeliveryType ??
+              options.deliveryType ??
+              orderAny.deliveryType ??
+              "warehouse_delivery",
             carrierRaw: options.carrierRaw ?? "eurosender",
             carrierFinal: options.carrierFinal ?? null,
             trackingNumber,
@@ -163,7 +176,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
   return { status: "created", shipments };
 }
 
-async function groupLinesByProviderKey(lines: Array<any>) {
+async function groupLinesByProviderKey(lines: Array<any>): Promise<ShipmentLineGroup[]> {
   const groups = new Map<string, any[]>();
   for (const line of lines) {
     const resolution = await resolveProviderKeyForLine(line);
@@ -177,6 +190,125 @@ async function groupLinesByProviderKey(lines: Array<any>) {
     providerKey,
     lines: groupLines,
   }));
+}
+
+async function splitStxGroupsByDeliveryTypeIfNeeded(
+  groups: ShipmentLineGroup[]
+): Promise<ShipmentLineGroup[]> {
+  const out: ShipmentLineGroup[] = [];
+  for (const group of groups) {
+    if (group.providerKey !== "STX") {
+      out.push(group);
+      continue;
+    }
+    const buckets = await bucketStxLinesByDeliveryType(group.lines);
+    const standardQty = sumLineQty(buckets.standard);
+    const expeditedQty = sumLineQty(buckets.expedited);
+    // Split only when both express buckets exceed 12 units.
+    if (standardQty > 12 && expeditedQty > 12) {
+      if (buckets.standard.length > 0) {
+        out.push({
+          providerKey: "STX",
+          lines: buckets.standard,
+          stxDeliveryType: "express_standard",
+        });
+      }
+      if (buckets.expedited.length > 0) {
+        out.push({
+          providerKey: "STX",
+          lines: buckets.expedited,
+          stxDeliveryType: "express_expedited",
+        });
+      }
+      if (buckets.other.length > 0) {
+        out.push({
+          providerKey: "STX",
+          lines: buckets.other,
+          stxDeliveryType: null,
+        });
+      }
+      continue;
+    }
+    out.push(group);
+  }
+  return out;
+}
+
+function sumLineQty(lines: any[]) {
+  return lines.reduce((acc, line) => acc + Math.max(1, Number(line?.quantity ?? 1)), 0);
+}
+
+async function bucketStxLinesByDeliveryType(lines: any[]) {
+  const variantIds = Array.from(
+    new Set(
+      lines
+        .map((line) => String(line?.supplierVariantId ?? "").trim())
+        .filter((value) => value.startsWith("stx_"))
+    )
+  );
+  const gtins = Array.from(
+    new Set(
+      lines
+        .map((line) => String(line?.gtin ?? "").trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+
+  const variantRows =
+    variantIds.length > 0
+      ? await prisma.supplierVariant.findMany({
+          where: { supplierVariantId: { in: variantIds } },
+          select: { supplierVariantId: true, deliveryType: true },
+        })
+      : [];
+  const mappingRows =
+    gtins.length > 0
+      ? await (prisma as any).variantMapping.findMany({
+          where: {
+            gtin: { in: gtins },
+            supplierVariantId: { startsWith: "stx_" },
+          },
+          include: { supplierVariant: true },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+
+  const deliveryTypeByVariant = new Map<string, string>();
+  for (const row of variantRows) {
+    const id = String(row.supplierVariantId ?? "");
+    const deliveryType = String((row as any).deliveryType ?? "").toLowerCase();
+    if (!id || !deliveryType) continue;
+    deliveryTypeByVariant.set(id, deliveryType);
+  }
+
+  const deliveryTypeByGtin = new Map<string, string>();
+  for (const row of mappingRows) {
+    const gtin = String(row?.gtin ?? "").trim();
+    if (!gtin || deliveryTypeByGtin.has(gtin)) continue;
+    const deliveryType = String(row?.supplierVariant?.deliveryType ?? "").toLowerCase();
+    if (deliveryType === "express_standard" || deliveryType === "express_expedited") {
+      deliveryTypeByGtin.set(gtin, deliveryType);
+    }
+  }
+
+  const standard: any[] = [];
+  const expedited: any[] = [];
+  const other: any[] = [];
+  for (const line of lines) {
+    const supplierVariantId = String(line?.supplierVariantId ?? "").trim();
+    const gtin = String(line?.gtin ?? "").trim();
+    const byVariant = supplierVariantId ? deliveryTypeByVariant.get(supplierVariantId) : null;
+    const deliveryType = byVariant ?? (gtin ? deliveryTypeByGtin.get(gtin) : null) ?? null;
+    if (deliveryType === "express_standard") {
+      standard.push(line);
+    } else if (deliveryType === "express_expedited") {
+      expedited.push(line);
+    } else {
+      other.push(line);
+    }
+  }
+
+  return { standard, expedited, other };
 }
 
 type ProviderResolution = { providerKey: string; rule: string; assigned: boolean };

@@ -37,6 +37,15 @@ export async function POST(
         sscc: shipment.packageId ?? null,
       });
     }
+    if (providerKey === "STX") {
+      return NextResponse.json({
+        ok: true,
+        status: "skipped",
+        message: "StockX orders are manual. Use Sync StockX orders.",
+        boxId: shipment.id,
+        sscc: shipment.packageId ?? null,
+      });
+    }
     if (providerKey && providerKey !== "GLD") {
       const prismaAny = prisma as any;
       const partner = await prismaAny.partner.findFirst({

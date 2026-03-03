@@ -75,3 +75,17 @@ export const GALAXUS_BUYER_ADDRESS2 = null;
 export const GALAXUS_BUYER_POSTAL_CODE = "CH-8005";
 export const GALAXUS_BUYER_CITY = "Zürich";
 export const GALAXUS_BUYER_COUNTRY = "Switzerland";
+
+// Fixed receiver address required for SSCC labels.
+export const GALAXUS_SSCC_RECIPIENT_NAME =
+  process.env.GALAXUS_SSCC_RECIPIENT_NAME ?? "Digitec Galaxus AG";
+export const GALAXUS_SSCC_RECIPIENT_LINE2 =
+  process.env.GALAXUS_SSCC_RECIPIENT_LINE2 ?? "Receiving Wohlen";
+export const GALAXUS_SSCC_RECIPIENT_STREET =
+  process.env.GALAXUS_SSCC_RECIPIENT_STREET ?? "Ferroring 23";
+export const GALAXUS_SSCC_RECIPIENT_POSTAL_CODE =
+  process.env.GALAXUS_SSCC_RECIPIENT_POSTAL_CODE ?? "CH-5612";
+export const GALAXUS_SSCC_RECIPIENT_CITY =
+  process.env.GALAXUS_SSCC_RECIPIENT_CITY ?? "Villmergen";
+export const GALAXUS_SSCC_RECIPIENT_COUNTRY =
+  process.env.GALAXUS_SSCC_RECIPIENT_COUNTRY ?? "Schweiz";

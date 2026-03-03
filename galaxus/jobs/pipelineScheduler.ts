@@ -8,6 +8,8 @@ import { runTrmStockSync } from "@/galaxus/jobs/trmSync";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
+import { runStxSync } from "@/galaxus/jobs/stxSync";
+import { runStxAwbResync } from "@/galaxus/jobs/stxAwbResync";
 
 type TickJobStatus =
   | { due: false; ran: false; skipped: "not_due" | "missing_dependency"; nextAt: string | null }
@@ -22,6 +24,8 @@ type PipelineTickResult = {
     ediIn: TickJobStatus;
     syncOfferStock: TickJobStatus;
     masterRefresh: TickJobStatus;
+    stxDailySync: TickJobStatus;
+    stxAwbResync: TickJobStatus;
     enrichNew: TickJobStatus;
     reenrichUnmatched: TickJobStatus;
   };
@@ -29,6 +33,7 @@ type PipelineTickResult = {
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const TWO_HOURS_MS = 2 * ONE_HOUR_MS;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 const TWO_DAYS_MS = 2 * 24 * ONE_HOUR_MS;
 const TEN_HOURS_MS = 10 * ONE_HOUR_MS;
 
@@ -290,6 +295,44 @@ export async function runGalaxusPipelineTick(
         : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextMasterAt) };
   }
 
+  // STX daily refresh (KickDB-driven, express offers only)
+  const lastStx = await getLastJob("pipeline-stx-sync");
+  const nextStxAt = nextFrom(lastStx?.finishedAt ? new Date(lastStx.finishedAt) : null, ONE_DAY_MS);
+  const stxDue = force ? shouldConsider("stx-sync") : shouldConsider("stx-sync") && isDue(nextStxAt, nowMs);
+  let stxDailySync: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextStxAt) };
+  if (shouldConsider("stx-sync") && stxDue) {
+    const locked = await withAdvisoryLock("galaxus:pipeline:stx-sync", async () =>
+      runJob("pipeline-stx-sync", async () => runStxSync())
+    );
+    stxDailySync =
+      locked.locked
+        ? { due: true, ran: true, nextAt: toIso(nextFrom(new Date(), ONE_DAY_MS)), result: locked.result }
+        : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextStxAt) };
+  }
+
+  // STX AWB re-sync (rows linked without AWB for >=48h)
+  const lastStxAwb = await getLastJob("pipeline-stx-awb-resync");
+  const nextStxAwbAt = nextFrom(lastStxAwb?.finishedAt ? new Date(lastStxAwb.finishedAt) : null, ONE_DAY_MS);
+  const stxAwbDue =
+    force
+      ? shouldConsider("stx-awb-resync")
+      : shouldConsider("stx-awb-resync") && isDue(nextStxAwbAt, nowMs);
+  let stxAwbResync: TickJobStatus = {
+    due: false,
+    ran: false,
+    skipped: "not_due",
+    nextAt: toIso(nextStxAwbAt),
+  };
+  if (shouldConsider("stx-awb-resync") && stxAwbDue) {
+    const locked = await withAdvisoryLock("galaxus:pipeline:stx-awb-resync", async () =>
+      runJob("pipeline-stx-awb-resync", async () => runStxAwbResync())
+    );
+    stxAwbResync =
+      locked.locked
+        ? { due: true, ran: true, nextAt: toIso(nextFrom(new Date(), ONE_DAY_MS)), result: locked.result }
+        : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextStxAwbAt) };
+  }
+
   // Enrich NEW: 1h after the last successful 2h sync finished, and only for newly created rows.
   const lastSyncAfter = await getLastSuccessfulJob("pipeline-offer-stock");
   const syncFinishedAt = lastSyncAfter?.finishedAt ? new Date(lastSyncAfter.finishedAt) : null;
@@ -389,7 +432,7 @@ export async function runGalaxusPipelineTick(
     ok: true,
     now: now.toISOString(),
     origin,
-    jobs: { ediIn, syncOfferStock, masterRefresh, enrichNew, reenrichUnmatched },
+    jobs: { ediIn, syncOfferStock, masterRefresh, stxDailySync, stxAwbResync, enrichNew, reenrichUnmatched },
   };
 }
 

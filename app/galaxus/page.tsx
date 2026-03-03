@@ -144,6 +144,48 @@ type EdiFile = {
   createdAt: string;
 };
 
+type StxLinkBucket = {
+  gtin: string;
+  supplierVariantId: string;
+  needed: number;
+  reserved: number;
+  linked: number;
+  linkedWithEta: number;
+};
+
+type StxOrderStatus = {
+  galaxusOrderId: string;
+  hasStxItems: boolean;
+  allLinked: boolean;
+  allEtaPresent: boolean;
+  buckets: StxLinkBucket[];
+};
+
+type StxImportResult = {
+  ok: boolean;
+  productSummary?: {
+    input?: string;
+    normalizedInput?: string;
+    kickdbProductId?: string | null;
+    slug?: string | null;
+    styleId?: string | null;
+    name?: string | null;
+    brand?: string | null;
+    image?: string | null;
+  } | null;
+  importedVariantsCount: number;
+  eligibleVariantsCount: number;
+  warnings: string[];
+  errors: string[];
+  variantsPreview?: Array<{
+    supplierVariantId: string;
+    size: string | null;
+    deliveryType: string;
+    price: number;
+    stock: number;
+  }>;
+};
+
 type OrderDetail = {
   id: string;
   galaxusOrderId: string;
@@ -156,6 +198,7 @@ type OrderDetail = {
   shipments: Shipment[];
   statusEvents: Array<{ id: string; type: string; createdAt: string }>;
   ediFiles: EdiFile[];
+  stx?: StxOrderStatus | null;
 };
 
 export default function GalaxusDashboardPage() {
@@ -196,6 +239,14 @@ export default function GalaxusDashboardPage() {
   const [partnerAccessCode, setPartnerAccessCode] = useState<string>("");
   const [partnerFile, setPartnerFile] = useState<File | null>(null);
   const [partnerAssignKey, setPartnerAssignKey] = useState<string>("self");
+  const [stxImportInput, setStxImportInput] = useState<string>("");
+  const [stxImportResult, setStxImportResult] = useState<StxImportResult | null>(null);
+  const [stxSlugInput, setStxSlugInput] = useState<string>("");
+  const [stxSlugCounts, setStxSlugCounts] = useState<{
+    pending: number;
+    imported: number;
+    error: number;
+  } | null>(null);
   const formatJobStatus = (runAt: string | null | undefined, result: any) => {
     if (!runAt) return "—";
     const status = result?.ok ? "OK" : "FAIL";
@@ -247,6 +298,16 @@ export default function GalaxusDashboardPage() {
       const res = await fetch("/api/galaxus/supplier/variants-stats", { cache: "no-store" });
       const data = await res.json();
       if (data?.ok) setVariantStats(data.stats ?? null);
+    } catch {
+      // silent
+    }
+  };
+
+  const loadStxSlugCounts = async () => {
+    try {
+      const res = await fetch("/api/galaxus/stx/import-slugs", { cache: "no-store" });
+      const data = await res.json();
+      if (data?.ok) setStxSlugCounts(data.counts ?? null);
     } catch {
       // silent
     }
@@ -366,18 +427,92 @@ export default function GalaxusDashboardPage() {
     loadSchedulerStatus();
     loadRoutingSummary();
     loadVariantStats();
+    loadStxSlugCounts();
   }, []);
 
   const syncSupplier = async () => {
     setBusy("sync");
     setError(null);
     try {
-      const response = await fetch("/api/galaxus/supplier/sync?all=1&mode=stock", {
+      const response = await fetch("/api/galaxus/supplier/sync?all=1&mode=stock&stxLimit=100", {
         method: "POST",
       });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Sync failed");
       setOpsLog(JSON.stringify({ sync: data }, null, 2));
+      await loadVariantStats();
+      await loadStxSlugCounts();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const importStxProduct = async () => {
+    const input = stxImportInput.trim();
+    if (!input) {
+      setError("Enter a StockX slug or URL.");
+      return;
+    }
+    setBusy("stx-import");
+    setError(null);
+    try {
+      const response = await fetch("/api/galaxus/stx/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input, mode: "test" }),
+      });
+      const data = (await response.json()) as StxImportResult;
+      setStxImportResult(data);
+      if (!response.ok || !data.ok) {
+        throw new Error(data.errors?.[0] ?? "STX import failed");
+      }
+      await loadVariantStats();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveStxSlugs = async () => {
+    if (!stxSlugInput.trim()) {
+      setError("Paste at least one slug or URL.");
+      return;
+    }
+    setBusy("stx-slug-save");
+    setError(null);
+    try {
+      const response = await fetch("/api/galaxus/stx/import-slugs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input: stxSlugInput }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Failed to save slugs");
+      setStxSlugCounts(data.counts ?? null);
+      setStxSlugInput("");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const syncFirstStxSlugs = async () => {
+    setBusy("stx-slug-sync");
+    setError(null);
+    try {
+      const response = await fetch("/api/galaxus/stx/import-slugs/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 50 }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "STX slug sync failed");
+      setStxSlugCounts(data.counts ?? null);
+      setOpsLog(JSON.stringify({ stxSlugSync: data }, null, 2));
       await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
@@ -564,7 +699,15 @@ export default function GalaxusDashboardPage() {
   const resolveProviderKeyForLine = (line: OrderLine) => {
     const direct = line.providerKey?.split("_")[0]?.trim().toUpperCase();
     if (direct && direct.length === 3) return direct;
-    const variantKey = line.supplierVariantId?.split(":")[0]?.trim().toUpperCase();
+    const variantRaw = line.supplierVariantId ?? "";
+    const variantKey = (variantRaw.includes(":")
+      ? variantRaw.split(":")[0]
+      : variantRaw.includes("_")
+        ? variantRaw.split("_")[0]
+        : variantRaw
+    )
+      .trim()
+      .toUpperCase();
     if (variantKey && variantKey.length === 3) return variantKey;
     return "";
   };
@@ -730,6 +873,29 @@ export default function GalaxusDashboardPage() {
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Supplier order failed");
       setOpsLog(JSON.stringify(data.result ?? data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const syncStockxOrdersForOrder = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    setBusy("stx-sync-order");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/orders/${selectedOrderId}/stx/sync`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Failed to sync StockX orders");
+      setOpsLog(JSON.stringify(data, null, 2));
       await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);
@@ -1043,6 +1209,103 @@ export default function GalaxusDashboardPage() {
                 {busy === "sync" ? "Syncing…" : "Sync Stock"}
               </button>
             </div>
+            <div className="rounded border bg-white p-2 space-y-2">
+              <div className="text-xs font-medium text-gray-700">STX Product Import (Testing)</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="px-2 py-2 border rounded text-sm w-72"
+                  value={stxImportInput}
+                  onChange={(event) => setStxImportInput(event.target.value)}
+                  placeholder="StockX slug or URL"
+                  disabled={busy !== null}
+                />
+                <button
+                  className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-50"
+                  onClick={importStxProduct}
+                  disabled={busy !== null || !stxImportInput.trim()}
+                >
+                  {busy === "stx-import" ? "Importing…" : "Import STX product"}
+                </button>
+              </div>
+              {stxImportResult && (
+                <div className="text-xs text-gray-700 space-y-1">
+                  <div>
+                    Imported variants: {stxImportResult.importedVariantsCount} · Eligible variants:{" "}
+                    {stxImportResult.eligibleVariantsCount}
+                  </div>
+                  {stxImportResult.productSummary?.name ? (
+                    <div>
+                      Product: {stxImportResult.productSummary.name}
+                      {stxImportResult.productSummary.brand
+                        ? ` (${stxImportResult.productSummary.brand})`
+                        : ""}
+                    </div>
+                  ) : null}
+                  {stxImportResult.warnings?.length ? (
+                    <div>Warnings: {stxImportResult.warnings.join(" | ")}</div>
+                  ) : null}
+                  {stxImportResult.errors?.length ? (
+                    <div className="text-red-600">Errors: {stxImportResult.errors.join(" | ")}</div>
+                  ) : null}
+                  {stxImportResult.variantsPreview?.length ? (
+                    <div className="overflow-auto border rounded">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-2 py-1 text-left">Variant</th>
+                            <th className="px-2 py-1 text-left">Size</th>
+                            <th className="px-2 py-1 text-left">Delivery</th>
+                            <th className="px-2 py-1 text-right">Price</th>
+                            <th className="px-2 py-1 text-right">Stock</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {stxImportResult.variantsPreview.slice(0, 5).map((row) => (
+                            <tr key={row.supplierVariantId} className="border-t">
+                              <td className="px-2 py-1">{row.supplierVariantId}</td>
+                              <td className="px-2 py-1">{row.size ?? ""}</td>
+                              <td className="px-2 py-1">{row.deliveryType}</td>
+                              <td className="px-2 py-1 text-right">{row.price}</td>
+                              <td className="px-2 py-1 text-right">{row.stock}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+            <div className="rounded border bg-white p-2 space-y-2">
+              <div className="text-xs font-medium text-gray-700">STX slugs/URLs (one per line)</div>
+              <textarea
+                className="w-full border rounded text-sm p-2 min-h-[90px]"
+                value={stxSlugInput}
+                onChange={(event) => setStxSlugInput(event.target.value)}
+                placeholder="Paste StockX slugs or URLs here, one per line"
+                disabled={busy !== null}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="px-3 py-2 rounded bg-slate-700 text-white disabled:opacity-50"
+                  onClick={saveStxSlugs}
+                  disabled={busy !== null || !stxSlugInput.trim()}
+                >
+                  {busy === "stx-slug-save" ? "Saving…" : "Save"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                  onClick={syncFirstStxSlugs}
+                  disabled={busy !== null}
+                >
+                  {busy === "stx-slug-sync" ? "Syncing…" : "Sync first 50 STX slugs"}
+                </button>
+                <span className="text-xs text-gray-500">
+                  Pending: {stxSlugCounts?.pending ?? "—"} · Imported: {stxSlugCounts?.imported ?? "—"} · Error:{" "}
+                  {stxSlugCounts?.error ?? "—"}
+                </span>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 className="px-2 py-2 border rounded text-sm w-72"
@@ -1294,13 +1557,23 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "pack" ? "Packing…" : "Pack + Create Shipments"}
               </button>
-          <button
-            className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
-            onClick={placeSupplierOrder}
-            disabled={busy !== null}
-          >
-            {busy === "supplier-order" ? "Ordering…" : "Place Supplier Order (12 pairs max)"}
-          </button>
+              {selectedOrder?.stx?.hasStxItems ? (
+                <button
+                  className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
+                  onClick={syncStockxOrdersForOrder}
+                  disabled={busy !== null}
+                >
+                  {busy === "stx-sync-order" ? "Syncing…" : "Sync StockX orders"}
+                </button>
+              ) : (
+                <button
+                  className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                  onClick={placeSupplierOrder}
+                  disabled={busy !== null}
+                >
+                  {busy === "supplier-order" ? "Ordering…" : "Place Supplier Order (12 pairs max)"}
+                </button>
+              )}
               <button
                 className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
                 onClick={sendOrdr}
@@ -1381,6 +1654,36 @@ export default function GalaxusDashboardPage() {
                 </table>
               </div>
 
+              {selectedOrder.stx?.buckets?.length ? (
+                <div className="overflow-auto border rounded bg-white">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-2 py-1 text-left">GTIN</th>
+                        <th className="px-2 py-1 text-left">STX Variant</th>
+                        <th className="px-2 py-1 text-right">Linked / Needed</th>
+                        <th className="px-2 py-1 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedOrder.stx.buckets.map((bucket) => {
+                        const complete = bucket.linked >= bucket.needed;
+                        return (
+                          <tr key={`${bucket.gtin}-${bucket.supplierVariantId}`} className="border-t">
+                            <td className="px-2 py-1">{bucket.gtin}</td>
+                            <td className="px-2 py-1">{bucket.supplierVariantId}</td>
+                            <td className="px-2 py-1 text-right">
+                              {bucket.linked}/{bucket.needed}
+                            </td>
+                            <td className="px-2 py-1">{complete ? "✅" : "❌"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
               <div className="space-y-2">
                 <div className="text-sm font-medium">Shipments</div>
                 {selectedOrder.shipments.map((shipment) => (
@@ -1394,17 +1697,32 @@ export default function GalaxusDashboardPage() {
                       {shipment.boxStatus ?? "—"}
                     </div>
                     <div className="flex gap-2 flex-wrap">
+                      {(() => {
+                        const provider = (shipment.providerKey ?? "").toUpperCase();
+                        const isStx = provider === "STX";
+                        const isTrm = provider === "TRM";
+                        return (
                       <button
-                        className="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-50"
-                        onClick={() => placeSupplierOrderForShipment(shipment.id)}
-                        disabled={busy !== null || (shipment.providerKey ?? "").toUpperCase() === "TRM"}
+                        className={`px-2 py-1 rounded text-white disabled:opacity-50 ${
+                          isStx ? "bg-green-600" : "bg-emerald-600"
+                        }`}
+                        onClick={() =>
+                          isStx ? syncStockxOrdersForOrder() : placeSupplierOrderForShipment(shipment.id)
+                        }
+                        disabled={busy !== null || (!isStx && isTrm)}
                       >
-                        {(shipment.providerKey ?? "").toUpperCase() === "TRM"
+                        {isStx
+                          ? busy === "stx-sync-order"
+                            ? "Syncing…"
+                            : "Sync StockX orders"
+                          : isTrm
                           ? "TRM disabled"
                           : busy === `place-${shipment.id}`
                             ? "Placing…"
                             : "Place supplier order"}
                       </button>
+                        );
+                      })()}
                       <button
                         className="px-2 py-1 rounded bg-purple-600 text-white"
                         onClick={() => generateDocsForShipment(shipment.id)}

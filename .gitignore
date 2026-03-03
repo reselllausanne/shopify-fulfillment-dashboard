@@ -59,6 +59,10 @@ Thumbs.db
 .cursor/
 terminals/
 
+# local auth/session artifacts
+.data/*session*.json
+.data/*token*.json
+
 # StockX credentials
 stockx-cookies.json
 debug/

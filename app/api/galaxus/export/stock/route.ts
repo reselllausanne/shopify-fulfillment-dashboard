@@ -132,7 +132,14 @@ export async function GET(request: Request) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       return;
     }
-    const stock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const rawStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
+    const deliveryType = String(variant?.deliveryType ?? "");
+    const stxEligible =
+      deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
+    // Temporary single-unit publish strategy until asks-by-price is available.
+    const stock = isStx ? (stxEligible ? 1 : 0) : rawStock;
 
     rows.push({
       ProviderKey: providerKey,

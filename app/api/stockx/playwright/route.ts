@@ -13,6 +13,12 @@ const ensureSessionDir = async (filePath: string) => {
   await fs.mkdir(dir, { recursive: true });
 };
 
+const resolveOptionalFile = (value: unknown): string | null => {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const cleaned = value.trim();
+  return path.isAbsolute(cleaned) ? cleaned : path.join(process.cwd(), cleaned);
+};
+
 const extractTokenValue = (raw: string | null): string | null => {
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -115,10 +121,12 @@ export async function POST(req: NextRequest) {
     const headless = forceHeadless ? true : (requestedHeadless ?? defaultHeadless);
     const browserType = String(body?.browser || "firefox").toLowerCase();
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
+    const tokenFile = resolveOptionalFile(body?.tokenFile);
     const maxWaitMs = Math.min(Number(body?.maxWaitMs || 600000), 900000);
     const forceLogin = Boolean(body?.forceLogin ?? false);
 
     await ensureSessionDir(sessionFile);
+    if (tokenFile) await ensureSessionDir(tokenFile);
 
     const launchOptions = {
       headless,
@@ -243,10 +251,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (tokenFile) {
+      const tokenPayload = {
+        token: stripBearer(capturedToken),
+        updatedAt: new Date().toISOString(),
+      };
+      await fs.writeFile(tokenFile, `${JSON.stringify(tokenPayload, null, 2)}\n`, "utf8");
+    }
+
     return NextResponse.json({
       ok: true,
       token: stripBearer(capturedToken),
       sessionFile,
+      tokenFile: tokenFile ?? null,
     });
   } catch (error: any) {
     console.error("[STOCKX-PW] Error:", error?.message || error);

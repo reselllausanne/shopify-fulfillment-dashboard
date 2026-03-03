@@ -15,7 +15,8 @@ export async function GET(request: Request) {
   try {
     const prismaAny = prisma as any;
     const { searchParams } = new URL(request.url);
-    const supplier = searchParams.get("supplier")?.trim();
+    const supplier = searchParams.get("supplier")?.trim() || null;
+    const supplierPrefix = supplier ? `${supplier.toLowerCase()}:` : null;
 
     const mappingsWhere = buildFeedMappingsWhere(supplier, true);
     const trmExclusionStats = createTrmFeedExclusionStats();
@@ -80,6 +81,71 @@ export async function GET(request: Request) {
 
     const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(uniqueCandidates);
 
+    // Full-scope stats (not only feed-eligible), for “where rows are lost” debugging.
+    const mappingScopeWhere = supplierPrefix
+      ? { supplierVariantId: { startsWith: supplierPrefix } }
+      : {};
+    const mappingsInScope = await prismaAny.variantMapping.findMany({
+      where: mappingScopeWhere,
+      select: {
+        gtin: true,
+        status: true,
+        supplierVariantId: true,
+        kickdbVariantId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    const mappingsWithGtinScope = mappingsInScope.filter((m: any) => Boolean(m?.gtin));
+    const uniqueGtinsScope = new Set(
+      mappingsWithGtinScope.map((m: any) => String(m.gtin ?? "").trim()).filter(Boolean)
+    );
+    const duplicateGtinRowsCollapsed = mappingsWithGtinScope.length - uniqueGtinsScope.size;
+    const eligibleStatuses = new Set(["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"]);
+    const statusBreakdownWithGtin: Record<string, number> = {};
+    for (const row of mappingsWithGtinScope) {
+      const status = String(row?.status ?? "NULL");
+      statusBreakdownWithGtin[status] = (statusBreakdownWithGtin[status] ?? 0) + 1;
+    }
+    const eligibleWithGtinCount = mappingsWithGtinScope.filter((m: any) =>
+      eligibleStatuses.has(String(m?.status ?? ""))
+    ).length;
+
+    const supplierVariantScopeWhere = supplierPrefix
+      ? { supplierVariantId: { startsWith: supplierPrefix } }
+      : {};
+    const [supplierVariantsTotal, supplierVariantsStockPositive, supplierVariantsStockZeroOrLess] =
+      await Promise.all([
+        prismaAny.supplierVariant.count({ where: supplierVariantScopeWhere }),
+        prismaAny.supplierVariant.count({
+          where: {
+            ...supplierVariantScopeWhere,
+            stock: { gt: 0 },
+          },
+        }),
+        prismaAny.supplierVariant.count({
+          where: {
+            ...supplierVariantScopeWhere,
+            stock: { lte: 0 },
+          },
+        }),
+      ]);
+
+    // “Never ran” diagnostics for unresolved rows (no SQL needed by user).
+    const unresolvedStatuses = new Set(["PENDING_GTIN", "AMBIGUOUS_GTIN", "NOT_FOUND"]);
+    const unresolvedRows = mappingsInScope.filter((m: any) =>
+      unresolvedStatuses.has(String(m?.status ?? ""))
+    );
+    const unresolvedWithKickdbVariant = unresolvedRows.filter((m: any) => Boolean(m?.kickdbVariantId));
+    const unresolvedWithoutKickdbVariant = unresolvedRows.filter((m: any) => !m?.kickdbVariantId);
+    // Best-effort proxy for “never ran”: unresolved + no linked kickdb variant + never updated since create.
+    const unresolvedNeverRanApprox = unresolvedWithoutKickdbVariant.filter((m: any) => {
+      const createdAt = m?.createdAt ? new Date(m.createdAt).getTime() : null;
+      const updatedAt = m?.updatedAt ? new Date(m.updatedAt).getTime() : null;
+      if (!createdAt || !updatedAt) return false;
+      return createdAt === updatedAt;
+    });
+
     // Approximate “not sendable” reasons you can act on.
     let skippedInvalidSellPrice = 0;
     let skippedMissingProviderKey = totalCandidatesByGtin - candidatesWithProviderKey.length;
@@ -92,18 +158,34 @@ export async function GET(request: Request) {
       ok: true,
       supplier: supplier ?? null,
       counts: {
-        mappingsTotal: await prismaAny.variantMapping.count({ where: mappingsWhere }),
-        mappingsWithGtin: await prismaAny.variantMapping.count({ where: { ...mappingsWhere, gtin: { not: null } } }),
+        mappingsTotal: await prismaAny.variantMapping.count({ where: mappingScopeWhere }),
+        mappingsWithGtin: mappingsWithGtinScope.length,
+        mappingsWithGtinEligibleStatus: eligibleWithGtinCount,
+        mappingsWithGtinIneligibleStatus: mappingsWithGtinScope.length - eligibleWithGtinCount,
+        uniqueGtinsFromMappings: uniqueGtinsScope.size,
+        duplicateGtinRowsCollapsed,
         candidatesBestByGtin: totalCandidatesByGtin,
         candidatesMissingProviderKey: skippedMissingProviderKey,
         candidatesUniqueProviderKey: uniqueCandidates.length,
         exportRowsAfterInvariants: exportCandidates.length,
         invariantFailures: invalidSupplierVariantIds.length,
         skippedInvalidSellPriceApprox: skippedInvalidSellPrice,
+        supplierVariantsTotal,
+        supplierVariantsStockPositive,
+        supplierVariantsStockZeroOrLess,
+        unresolvedRows: unresolvedRows.length,
+        unresolvedRowsWithKickdbVariant: unresolvedWithKickdbVariant.length,
+        unresolvedRowsWithoutKickdbVariant: unresolvedWithoutKickdbVariant.length,
+        neverRanApprox: unresolvedNeverRanApprox.length,
       },
+      statusBreakdownWithGtin,
+      trmExclusionStats,
       invariantFailureSample: invalidSupplierVariantIds.slice(0, 50),
+      neverRanApproxSample: unresolvedNeverRanApprox
+        .slice(0, 50)
+        .map((row: any) => row.supplierVariantId),
       note:
-        "exportRowsAfterInvariants is the closest number to what ends up in master/offer/stock feeds (before format-specific filtering). Big drops are usually GTIN grouping + providerKey dedupe or invalid sellPrice.",
+        "neverRanApprox is a best-effort proxy: unresolved rows without kickdbVariantId and unchanged since creation. It highlights rows likely never processed by enrichment.",
     });
   } catch (error: any) {
     console.error("[GALAXUS][EXPORT][DIAGNOSTICS] Failed:", error);

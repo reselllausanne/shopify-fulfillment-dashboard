@@ -538,33 +538,45 @@ export function useSupplierOrders() {
     }
   };
 
-  const fetchAllGoatOrders = async (_goatCookie: string, _goatCsrfToken: string) => {
-    const res = await fetch("/api/goat/playwright", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ headless: true, includeRaw: false }),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (res.ok && json?.orders) {
-      return (json.orders as any[]).map((o: any) => ({
-        ...o,
-        productTitleB: o.productTitle || o.displayName || null,
-        brandB: null,
-        sizeB: o.size || null,
-        thumbUrlB: o.thumbUrl || null,
-        imageUrlB: o.thumbUrl || null,
-        statusB: o.statusTitle || o.statusKey || null,
-        statusKeyB: o.statusKey || null,
-        estimatedDeliveryB: o.estimatedDeliveryDate || null,
-        latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
-        styleId: o.skuKey || o.styleId || null,
-      }));
+  const fetchAllGoatOrders = async (goatCookie: string, goatCsrfToken: string) => {
+    const token = goatCookie.trim();
+    if (!token) return [];
+
+    const allOrders: any[] = [];
+    let page = 1;
+    while (true) {
+      const res = await fetch("/api/goat/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cookie: token, csrfToken: goatCsrfToken, page }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLastErrors((prev) => [
+          ...prev,
+          { message: `[GOAT] Orders: ${json?.error || `HTTP ${res.status}`}` },
+        ]);
+        break;
+      }
+      const orders = Array.isArray(json?.orders) ? json.orders : [];
+      if (orders.length === 0) break;
+      allOrders.push(...orders);
+      page += 1;
     }
-    setLastErrors((prev) => [
-      ...prev,
-      { message: `[GOAT] Playwright: ${json?.error || `HTTP ${res.status}`}` },
-    ]);
-    return [];
+
+    return allOrders.map((o: any) => ({
+      ...o,
+      productTitleB: o.productTitle || o.displayName || null,
+      brandB: null,
+      sizeB: o.size || null,
+      thumbUrlB: o.thumbUrl || null,
+      imageUrlB: o.thumbUrl || null,
+      statusB: o.statusTitle || o.statusKey || null,
+      statusKeyB: o.statusKey || null,
+      estimatedDeliveryB: o.estimatedDeliveryDate || null,
+      latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+      styleId: o.skuKey || o.styleId || null,
+    }));
   };
 
   const handleFetchAllPages = async ({
@@ -583,30 +595,33 @@ export function useSupplierOrders() {
     setDetailsProgress({ done: 0, total: 0 });
 
     const allLoadedStockXOrders: OrderNode[] = [];
-    let currentResult = await fetchPage({
-      token,
-      query,
-      variablesJSON,
-      stateFilter,
-      cursor: null,
-      append: false,
-    });
-    if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
-    while (currentResult?.pageInfo?.hasNextPage && currentResult?.pageInfo?.endCursor) {
-      await sleep(250);
-      currentResult = await fetchPage({
+    if (token.trim()) {
+      let currentResult = await fetchPage({
         token,
         query,
         variablesJSON,
         stateFilter,
-        cursor: currentResult.pageInfo.endCursor,
-        append: true,
+        cursor: null,
+        append: false,
       });
       if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
+      while (currentResult?.pageInfo?.hasNextPage && currentResult?.pageInfo?.endCursor) {
+        await sleep(250);
+        currentResult = await fetchPage({
+          token,
+          query,
+          variablesJSON,
+          stateFilter,
+          cursor: currentResult.pageInfo.endCursor,
+          append: true,
+        });
+        if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
+      }
     }
 
-    // Dedicated GOAT endpoint, same button flow.
-    const goatOrders = await fetchAllGoatOrders(goatCookie, goatCsrfToken);
+    // Dedicated GOAT endpoint (only when a token is provided).
+    const goatOrders =
+      goatCookie && goatCookie.trim() ? await fetchAllGoatOrders(goatCookie, goatCsrfToken) : [];
 
     if (allLoadedStockXOrders.length === 0 && goatOrders.length === 0) {
       setIsFetchingAll(false);

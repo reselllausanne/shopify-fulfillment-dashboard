@@ -3,6 +3,7 @@ import { validateGtin } from "@/app/lib/normalize";
 const SUPPLIER_CODE_MAP: Record<string, string> = {
   golden: "GLD",
   trm: "TRM",
+  stx: "STX",
 };
 
 const PROVIDER_KEY_REGEX = /^[A-Z]{3}$/;
@@ -31,7 +32,13 @@ export function isValidProviderKeyWithGtin(value?: string | null): boolean {
 
 export function resolveSupplierCode(supplierVariantId?: string | null): string {
   if (!supplierVariantId) return "SUP";
-  const rawKey = supplierVariantId.split(":")[0]?.toLowerCase();
+  const raw = supplierVariantId.trim();
+  const rawKey =
+    raw.includes(":")
+      ? raw.split(":")[0]?.toLowerCase()
+      : raw.includes("_")
+        ? raw.split("_")[0]?.toLowerCase()
+        : raw.toLowerCase();
   if (rawKey && SUPPLIER_CODE_MAP[rawKey]) return SUPPLIER_CODE_MAP[rawKey];
   const cleaned = (rawKey ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   return cleaned.slice(0, 3) || "SUP";
