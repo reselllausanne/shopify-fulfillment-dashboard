@@ -244,11 +244,15 @@ function buildRecipient(order: GalaxusOrder) {
 function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
   return lines.map((line) => ({
     lineNumber: line.lineNumber,
-    articleNumber: buildProviderKey(line.gtin, line.supplierVariantId) ?? line.gtin ?? "",
+    articleNumber:
+      line.providerKey ??
+      buildProviderKey(line.gtin, line.supplierVariantId) ??
+      line.gtin ??
+      "",
     description: line.productName,
     size: line.size,
     gtin: line.gtin,
-    providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
+    providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
     sku: line.supplierSku ?? line.supplierVariantId ?? null,
     quantity: line.quantity,
     vatRate: Number(line.vatRate),
@@ -380,11 +384,15 @@ function buildShipmentOrderLines(
     const unitNetPrice = Number(line.unitNetPrice);
     lines.push({
       lineNumber: line.lineNumber,
-      articleNumber: buildProviderKey(line.gtin, line.supplierVariantId) ?? line.gtin ?? "",
+      articleNumber:
+        line.providerKey ??
+        buildProviderKey(line.gtin, line.supplierVariantId) ??
+        line.gtin ??
+        "",
       description: line.productName,
       size: line.size,
       gtin: line.gtin,
-      providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
+      providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
       sku: line.supplierSku ?? line.supplierVariantId ?? null,
       quantity: item.quantity,
       vatRate: Number(line.vatRate),

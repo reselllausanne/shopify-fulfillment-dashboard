@@ -141,6 +141,10 @@ export async function GET(request: Request) {
     // Temporary single-unit publish strategy until asks-by-price is available.
     const stock = isStx ? (stxEligible ? 1 : 0) : rawStock;
 
+    if (!Number.isFinite(stock) || stock <= 0) {
+      return;
+    }
+
     rows.push({
       ProviderKey: providerKey,
       QuantityOnStock: Number.isFinite(stock) ? stock.toString() : "0",
@@ -150,8 +154,8 @@ export async function GET(request: Request) {
       OrderQuantitySteps: "1",
       TradeUnit: "",
       LogisticUnit: "",
-      WarehouseCountry: "Poland",
-      DirectDeliverySupported: "no",
+      WarehouseCountry: isStx ? "Switzerland" : "Poland",
+      DirectDeliverySupported: isStx ? "yes" : "no",
     });
   });
 

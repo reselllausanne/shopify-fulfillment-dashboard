@@ -343,7 +343,42 @@ export default function Home() {
         alert(`❌ GOAT login failed: ${json?.error || `HTTP ${res.status}`}`);
         return;
       }
-      alert(`✅ GOAT session ready. Orders: ${json?.count || 0}`);
+      const goatOrdersRaw = Array.isArray(json?.orders) ? json.orders : [];
+      const goatRows = goatOrdersRaw.map((o: any) => ({
+        ...o,
+        provider: "GOAT",
+        productTitleB: o.productTitle || o.displayName || null,
+        brandB: null,
+        sizeB: o.size || null,
+        thumbUrlB: o.thumbUrl || null,
+        imageUrlB: o.thumbUrl || null,
+        statusB: o.statusTitle || o.statusKey || null,
+        statusKeyB: o.statusKey || null,
+        estimatedDeliveryB: o.estimatedDeliveryDate || null,
+        latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+        styleId: o.skuKey || o.styleId || null,
+      }));
+
+      if (goatRows.length > 0) {
+        const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
+        const combinedRows = [...existingRows, ...goatRows];
+        const seen = new Set<string>();
+        const dedupedRows = combinedRows.filter((row: any) => {
+          const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+        setOrders(dedupedRows as OrderNode[]);
+        setEnrichedOrders(dedupedRows);
+      }
+
+      setLastStatus(res.status);
+      setLastErrors([]);
+      setPageInfo(null);
+
+      alert(`✅ GOAT session ready. Orders: ${json?.count || 0}. Added to results table.`);
     } catch (error: any) {
       alert(`❌ GOAT login error: ${error?.message || "Unknown error"}`);
     } finally {

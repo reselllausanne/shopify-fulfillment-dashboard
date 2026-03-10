@@ -540,7 +540,39 @@ export function useSupplierOrders() {
 
   const fetchAllGoatOrders = async (goatCookie: string, goatCsrfToken: string) => {
     const token = goatCookie.trim();
-    if (!token) return [];
+    if (!token) {
+      // Session mode: reuse Playwright storageState saved by the GOAT Login button.
+      // This avoids WAF issues from direct server-side requests.
+      const res = await fetch("/api/goat/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headless: true, includeRaw: false }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        const message = String(json?.error || `HTTP ${res.status}`);
+        // Silent when no saved GOAT session exists yet (StockX-only usage).
+        if (/no goat orders detected|login required/i.test(message)) {
+          return [];
+        }
+        setLastErrors((prev) => [...prev, { message: `[GOAT] Session: ${message}` }]);
+        return [];
+      }
+      const orders = Array.isArray(json?.orders) ? json.orders : [];
+      return orders.map((o: any) => ({
+        ...o,
+        productTitleB: o.productTitle || o.displayName || null,
+        brandB: null,
+        sizeB: o.size || null,
+        thumbUrlB: o.thumbUrl || null,
+        imageUrlB: o.thumbUrl || null,
+        statusB: o.statusTitle || o.statusKey || null,
+        statusKeyB: o.statusKey || null,
+        estimatedDeliveryB: o.estimatedDeliveryDate || null,
+        latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+        styleId: o.skuKey || o.styleId || null,
+      }));
+    }
 
     const allOrders: any[] = [];
     let page = 1;
@@ -620,8 +652,7 @@ export function useSupplierOrders() {
     }
 
     // Dedicated GOAT endpoint (only when a token is provided).
-    const goatOrders =
-      goatCookie && goatCookie.trim() ? await fetchAllGoatOrders(goatCookie, goatCsrfToken) : [];
+    const goatOrders = await fetchAllGoatOrders(goatCookie, goatCsrfToken);
 
     if (allLoadedStockXOrders.length === 0 && goatOrders.length === 0) {
       setIsFetchingAll(false);
