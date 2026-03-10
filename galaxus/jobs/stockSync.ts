@@ -8,7 +8,9 @@ import {
   bulkUpsertVariantMappings,
   chunkArray,
   remapRowsToExistingProviderKeyGtin,
+  createLimiter,
 } from "./bulkSql";
+import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 
 type StockSyncResult = {
   processed: number;
@@ -20,6 +22,22 @@ type StockSyncOptions = {
   limit?: number;
   offset?: number;
 };
+
+async function enrichPendingInStock(supplierVariantIds: string[]) {
+  if (supplierVariantIds.length === 0) return;
+  const limiter = createLimiter(3);
+  await Promise.all(
+    supplierVariantIds.map((supplierVariantId) =>
+      limiter(async () => {
+        try {
+          await runKickdbEnrich({ supplierVariantId, forceMissing: true });
+        } catch {
+          // ignore enrich errors here; main sync should still succeed
+        }
+      })
+    )
+  );
+}
 
 async function removeMissingSupplierVariants(params: {
   supplierKey: string;
@@ -146,6 +164,11 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     mappingUpdated += res.updated;
   }
 
+  const enrichCandidates = rows
+    .filter((row) => !row.gtin && Number(row.stock ?? 0) > 0)
+    .map((row) => row.supplierVariantId);
+  await enrichPendingInStock(enrichCandidates);
+
   const removeResult = await removeMissingSupplierVariants({
     supplierKey: client.supplierKey,
     fetchedIds: Array.from(new Set(rows.map((row) => row.supplierVariantId))),
@@ -243,6 +266,11 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
     mappingInserted += res.inserted;
     mappingUpdated += res.updated;
   }
+
+  const enrichCandidates = rows
+    .filter((row) => !row.gtin && Number(row.stock ?? 0) > 0)
+    .map((row) => row.supplierVariantId);
+  await enrichPendingInStock(enrichCandidates);
 
   const removeResult = await removeMissingSupplierVariants({
     supplierKey: client.supplierKey,

@@ -78,6 +78,7 @@ export async function POST(request: Request) {
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier");
     const type = (searchParams.get("type") ?? "all").toLowerCase();
+    const effectiveType = type === "stock" || type === "offer" ? "offer-stock" : type;
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const limitRaw = searchParams.get("limit");
     const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
@@ -92,9 +93,9 @@ export async function POST(request: Request) {
     const stockUrl = `${origin}/api/galaxus/export/stock?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
     const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
 
-    const needsMaster = type === "all" || type === "master";
-    const needsStock = type === "all" || type === "stock" || type === "offer-stock";
-    const needsOffer = type === "offer" || type === "all" || type === "offer-stock";
+    const needsMaster = effectiveType === "all" || effectiveType === "master";
+    const needsStock = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "stock";
+    const needsOffer = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "offer";
     auditId = (await (prisma as any).galaxusJobRun.create({
       data: {
         jobName: "feeds-upload",

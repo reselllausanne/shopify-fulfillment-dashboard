@@ -247,6 +247,14 @@ export default function GalaxusDashboardPage() {
     imported: number;
     error: number;
   } | null>(null);
+  const [exportCounts, setExportCounts] = useState<{
+    supplierVariantsTotal: number;
+    exportRowsAfterInvariants: number;
+    pendingGtin: number;
+    notFoundGtin: number;
+    enrichPendingAt: string | null;
+    enrichNotFoundAt: string | null;
+  } | null>(null);
   const formatJobStatus = (runAt: string | null | undefined, result: any) => {
     if (!runAt) return "—";
     const status = result?.ok ? "OK" : "FAIL";
@@ -308,6 +316,25 @@ export default function GalaxusDashboardPage() {
       const res = await fetch("/api/galaxus/stx/import-slugs", { cache: "no-store" });
       const data = await res.json();
       if (data?.ok) setStxSlugCounts(data.counts ?? null);
+    } catch {
+      // silent
+    }
+  };
+
+  const loadExportCounts = async () => {
+    try {
+      const res = await fetch("/api/galaxus/export/diagnostics", { cache: "no-store" });
+      const data = await res.json();
+      if (data?.ok) {
+        setExportCounts({
+          supplierVariantsTotal: data.counts?.supplierVariantsTotal ?? 0,
+          exportRowsAfterInvariants: data.counts?.exportRowsAfterInvariants ?? 0,
+          pendingGtin: data.counts?.pendingGtin ?? 0,
+          notFoundGtin: data.counts?.notFoundGtin ?? 0,
+          enrichPendingAt: data.lastRuns?.enrichPendingAt ?? null,
+          enrichNotFoundAt: data.lastRuns?.enrichNotFoundAt ?? null,
+        });
+      }
     } catch {
       // silent
     }
@@ -428,6 +455,7 @@ export default function GalaxusDashboardPage() {
     loadRoutingSummary();
     loadVariantStats();
     loadStxSlugCounts();
+    loadExportCounts();
   }, []);
 
   const syncSupplier = async () => {
@@ -442,6 +470,7 @@ export default function GalaxusDashboardPage() {
       setOpsLog(JSON.stringify({ sync: data }, null, 2));
       await loadVariantStats();
       await loadStxSlugCounts();
+      await loadExportCounts();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -514,6 +543,38 @@ export default function GalaxusDashboardPage() {
       setStxSlugCounts(data.counts ?? null);
       setOpsLog(JSON.stringify({ stxSlugSync: data }, null, 2));
       await loadVariantStats();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const reEnrichNotFound = async () => {
+    setBusy("enrich-not-found");
+    setError(null);
+    try {
+      const response = await fetch("/api/galaxus/kickdb/enrich-not-found", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Re-enrich NOT_FOUND failed");
+      setOpsLog(JSON.stringify({ enrichNotFound: data }, null, 2));
+      await loadExportCounts();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const reEnrichPending = async () => {
+    setBusy("enrich-pending");
+    setError(null);
+    try {
+      const response = await fetch("/api/galaxus/kickdb/enrich-pending", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Re-enrich PENDING failed");
+      setOpsLog(JSON.stringify({ enrichPending: data }, null, 2));
+      await loadExportCounts();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -1165,14 +1226,7 @@ export default function GalaxusDashboardPage() {
                   onClick={() => uploadFeed("price")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-price" ? "Uploading…" : "Upload Offer"}
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-                  onClick={() => uploadFeed("stock")}
-                  disabled={busy !== null}
-                >
-                  {busy === "feed-stock" ? "Uploading…" : "Upload Stock"}
+                  {busy === "feed-price" ? "Uploading…" : "Upload Offer + Stock"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
@@ -1186,14 +1240,7 @@ export default function GalaxusDashboardPage() {
                   onClick={() => downloadFeed("price")}
                   disabled={busy !== null}
                 >
-                  Download Offer
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                  onClick={() => downloadFeed("stock")}
-                  disabled={busy !== null}
-                >
-                  Download Stock
+                  Download Offer + Stock
                 </button>
               </div>
             </details>
@@ -1208,6 +1255,10 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "sync" ? "Syncing…" : "Sync Stock"}
               </button>
+                <span className="text-xs text-gray-500">
+                  DB rows: {exportCounts?.supplierVariantsTotal ?? "—"} · Exportable:{" "}
+                  {exportCounts?.exportRowsAfterInvariants ?? "—"}
+                </span>
             </div>
             <div className="rounded border bg-white p-2 space-y-2">
               <div className="text-xs font-medium text-gray-700">STX Product Import (Testing)</div>
@@ -1321,6 +1372,34 @@ export default function GalaxusDashboardPage() {
               >
                 {busy === "enrich-single" ? "Checking…" : "Enrich Single SKU"}
               </button>
+              <button
+                className="px-3 py-2 rounded bg-slate-800 text-white disabled:opacity-50"
+                onClick={reEnrichPending}
+                disabled={busy !== null}
+              >
+                {busy === "enrich-pending" ? "Re-enriching…" : "Re-enrich PENDING"}
+              </button>
+              <button
+                className="px-3 py-2 rounded bg-slate-900 text-white disabled:opacity-50"
+                onClick={reEnrichNotFound}
+                disabled={busy !== null}
+              >
+                {busy === "enrich-not-found" ? "Re-enriching…" : "Re-enrich NOT_FOUND"}
+              </button>
+              <span className="text-xs text-gray-500">
+                Pending: {exportCounts?.pendingGtin ?? "—"} · Not found: {exportCounts?.notFoundGtin ?? "—"}
+              </span>
+              <span className="text-xs text-gray-500">
+                Pending last run:{" "}
+                {exportCounts?.enrichPendingAt
+                  ? new Date(exportCounts.enrichPendingAt).toLocaleString()
+                  : "—"}
+                {" · "}
+                Not found last run:{" "}
+                {exportCounts?.enrichNotFoundAt
+                  ? new Date(exportCounts.enrichNotFoundAt).toLocaleString()
+                  : "—"}
+              </span>
             </div>
             <div className="flex flex-wrap gap-2">
               <button

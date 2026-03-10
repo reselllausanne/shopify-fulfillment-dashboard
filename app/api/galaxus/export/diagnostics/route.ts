@@ -17,6 +17,20 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier")?.trim() || null;
     const supplierPrefix = supplier ? `${supplier.toLowerCase()}:` : null;
+    const cacheKey = `export-diagnostics:${supplier ?? "all"}`;
+    const cacheTtlMs = 60 * 60 * 1000;
+
+    const latestCache = await prismaAny.galaxusJobRun.findFirst({
+      where: { jobName: cacheKey },
+      orderBy: { startedAt: "desc" },
+      select: { startedAt: true, resultJson: true },
+    });
+    if (latestCache?.startedAt && latestCache?.resultJson) {
+      const ageMs = Date.now() - new Date(latestCache.startedAt).getTime();
+      if (ageMs >= 0 && ageMs < cacheTtlMs) {
+        return NextResponse.json(latestCache.resultJson);
+      }
+    }
 
     const mappingsWhere = buildFeedMappingsWhere(supplier, true);
     const trmExclusionStats = createTrmFeedExclusionStats();
@@ -110,6 +124,13 @@ export async function GET(request: Request) {
     const eligibleWithGtinCount = mappingsWithGtinScope.filter((m: any) =>
       eligibleStatuses.has(String(m?.status ?? ""))
     ).length;
+    const statusBreakdownAll: Record<string, number> = {};
+    for (const row of mappingsInScope) {
+      const status = String(row?.status ?? "NULL");
+      statusBreakdownAll[status] = (statusBreakdownAll[status] ?? 0) + 1;
+    }
+    const pendingCount = statusBreakdownAll.PENDING_GTIN ?? 0;
+    const notFoundCount = statusBreakdownAll.NOT_FOUND ?? 0;
 
     const supplierVariantScopeWhere = supplierPrefix
       ? { supplierVariantId: { startsWith: supplierPrefix } }
@@ -154,7 +175,18 @@ export async function GET(request: Request) {
       if (!Number.isFinite(sellPrice) || sellPrice <= 0) skippedInvalidSellPrice += 1;
     }
 
-    return NextResponse.json({
+    const lastEnrichPending = await prismaAny.galaxusJobRun.findFirst({
+      where: { jobName: "kickdb-enrich-pending", success: true },
+      orderBy: { finishedAt: "desc" },
+      select: { finishedAt: true },
+    });
+    const lastEnrichNotFound = await prismaAny.galaxusJobRun.findFirst({
+      where: { jobName: "kickdb-enrich-not-found", success: true },
+      orderBy: { finishedAt: "desc" },
+      select: { finishedAt: true },
+    });
+
+    const payload = {
       ok: true,
       supplier: supplier ?? null,
       counts: {
@@ -177,6 +209,12 @@ export async function GET(request: Request) {
         unresolvedRowsWithKickdbVariant: unresolvedWithKickdbVariant.length,
         unresolvedRowsWithoutKickdbVariant: unresolvedWithoutKickdbVariant.length,
         neverRanApprox: unresolvedNeverRanApprox.length,
+        pendingGtin: pendingCount,
+        notFoundGtin: notFoundCount,
+      },
+      lastRuns: {
+        enrichPendingAt: lastEnrichPending?.finishedAt ?? null,
+        enrichNotFoundAt: lastEnrichNotFound?.finishedAt ?? null,
       },
       statusBreakdownWithGtin,
       trmExclusionStats,
@@ -186,7 +224,19 @@ export async function GET(request: Request) {
         .map((row: any) => row.supplierVariantId),
       note:
         "neverRanApprox is a best-effort proxy: unresolved rows without kickdbVariantId and unchanged since creation. It highlights rows likely never processed by enrichment.",
+    };
+
+    await prismaAny.galaxusJobRun.create({
+      data: {
+        jobName: cacheKey,
+        startedAt: new Date(),
+        finishedAt: new Date(),
+        success: true,
+        resultJson: payload,
+      },
     });
+
+    return NextResponse.json(payload);
   } catch (error: any) {
     console.error("[GALAXUS][EXPORT][DIAGNOSTICS] Failed:", error);
     return NextResponse.json({ ok: false, error: error?.message ?? "Diagnostics failed" }, { status: 500 });

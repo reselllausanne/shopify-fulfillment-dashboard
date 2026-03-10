@@ -160,6 +160,18 @@ export async function GET(request: Request) {
       continue;
     }
 
+    const rawStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
+    const deliveryType = String(variant?.deliveryType ?? "");
+    const stxEligible =
+      deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
+    // Keep offer rows aligned with stock export rules.
+    const effectiveStock = isStx ? (stxEligible ? 1 : 0) : rawStock;
+    if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) {
+      continue;
+    }
+
     if (isMerchant) {
       rows.push({
         ProviderKey: providerKey,

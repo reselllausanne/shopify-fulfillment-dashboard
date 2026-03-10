@@ -102,35 +102,16 @@ export function accumulateBestCandidates(
     const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
 
     const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();
-    if (supplierKey === "trm") {
-      const status = String(mapping?.status ?? "");
-      const productNotFound =
-        Boolean(mapping?.kickdbVariant?.notFound) || Boolean(mapping?.kickdbVariant?.product?.notFound);
-      if (!gtin) {
-        const reason: CandidateExcludeReason =
-          productNotFound || status === "NOT_FOUND"
-            ? "KICKDB_NOT_FOUND"
-            : status === "PENDING_GTIN" || status === "AMBIGUOUS_GTIN"
-              ? "ENRICHMENT_PENDING"
-              : "MISSING_GTIN";
-        options?.onExclude?.({
-          reason,
-          supplierKey,
-          mapping,
-          variant,
-        });
-        continue;
-      }
-      if (!validateGtin(gtin)) {
-        options?.onExclude?.({
-          reason: "INVALID_GTIN",
-          supplierKey,
-          mapping,
-          variant,
-        });
-        continue;
-      }
-    } else if (!gtin) {
+    if (!gtin) {
+      continue;
+    }
+    if (!validateGtin(gtin)) {
+      options?.onExclude?.({
+        reason: "INVALID_GTIN",
+        supplierKey,
+        mapping,
+        variant,
+      });
       continue;
     }
 

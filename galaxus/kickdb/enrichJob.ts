@@ -22,6 +22,7 @@ type KickdbEnrichOptions = {
   supplierVariantId?: string | null;
   supplierSku?: string | null;
   supplierVariantIdPrefix?: string | null;
+  includeNotFound?: boolean;
 };
 
 type DebugInfo = {
@@ -336,11 +337,15 @@ function selectBestKickdbHit(options: {
 
 export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   const prismaAny = prisma as any;
-  const limit = Math.min(Number(options.limit ?? 50), 200);
-  const offset = Math.max(Number(options.offset ?? 0), 0);
+  const limit =
+    options.limit === null || options.limit === (undefined as unknown as number)
+      ? null
+      : Math.min(Number(options.limit ?? 50), 200);
+  const offset = limit === null ? 0 : Math.max(Number(options.offset ?? 0), 0);
   const debug = Boolean(options.debug);
   const force = Boolean(options.force);
   const forceMissing = Boolean(options.forceMissing);
+  const includeNotFound = Boolean(options.includeNotFound);
   const raw = Boolean(options.raw);
   const supplierVariantId = options.supplierVariantId?.trim() || null;
   const supplierSku = options.supplierSku?.trim() || null;
@@ -369,16 +374,19 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const prefixFilter = supplierVariantIdPrefix
       ? Prisma.sql`AND sv."supplierVariantId" ILIKE ${`${supplierVariantIdPrefix}%`}`
       : Prisma.sql``;
+    const statusFilter = includeNotFound
+      ? Prisma.sql`(vm."supplierVariantId" IS NULL OR vm."gtin" IS NULL OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN','NOT_FOUND'))`
+      : Prisma.sql`(vm."supplierVariantId" IS NULL OR vm."gtin" IS NULL OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN'))`;
+    const limitClause = limit === null ? Prisma.sql`` : Prisma.sql`LIMIT ${limit} OFFSET ${offset}`;
     const candidates = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>(Prisma.sql`
       SELECT sv."supplierVariantId"
       FROM "public"."SupplierVariant" sv
       LEFT JOIN "public"."VariantMapping" vm
         ON vm."supplierVariantId" = sv."supplierVariantId"
-      WHERE (vm."supplierVariantId" IS NULL OR vm."gtin" IS NULL OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN'))
+      WHERE ${statusFilter}
       ${prefixFilter}
       ORDER BY COALESCE(vm."updatedAt", sv."updatedAt") ASC
-      LIMIT ${limit}
-      OFFSET ${offset}
+      ${limitClause}
     `);
     const candidateIds = candidates.map((row) => row.supplierVariantId).filter(Boolean);
     if (!candidateIds.length) {

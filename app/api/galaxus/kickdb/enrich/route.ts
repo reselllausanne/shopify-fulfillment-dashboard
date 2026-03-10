@@ -17,30 +17,17 @@ export async function POST(request: Request) {
     const supplierSku = searchParams.get("supplierSku")?.trim() || null;
 
     if (all && !supplierVariantId && !supplierSku) {
-      const batchSize = 200;
-      let currentOffset = 0;
-      let totalProcessed = 0;
-      let lastBatchCount = 0;
-      const collected: any[] = [];
-      do {
-        const { results } = await runKickdbEnrich({
-          limit: batchSize,
-          offset: currentOffset,
-          debug,
-          force,
-          raw,
-        });
-        lastBatchCount = results.length;
-        totalProcessed += lastBatchCount;
-        if (debug) collected.push(...results);
-        currentOffset += batchSize;
-      } while (lastBatchCount === batchSize);
-
+      const { results } = await runKickdbEnrich({
+        limit: null as unknown as number,
+        debug,
+        force,
+        raw,
+      });
       return NextResponse.json({
         ok: true,
         mode: "all",
-        processed: totalProcessed,
-        results: debug ? collected : [],
+        processed: results.length,
+        results: debug ? results : [],
       });
     }
 
