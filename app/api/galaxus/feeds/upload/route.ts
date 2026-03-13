@@ -57,7 +57,7 @@ function extractSupplierKeysFromCsv(csv: string): string[] {
 }
 
 function buildFeedFilename(
-  type: "product" | "price" | "stock",
+  type: "product" | "price" | "stock" | "specifications",
   providerName: string,
   assortmentFile: string
 ): string {
@@ -66,6 +66,7 @@ function buildFeedFilename(
   const suffix = isAssortment ? "_assortment" : "";
   if (type === "price") return `PriceData_${safeProvider}${suffix}.csv`;
   if (type === "stock") return `StockData_${safeProvider}${suffix}.csv`;
+  if (type === "specifications") return `SpecificationData_${safeProvider}${suffix}.csv`;
   return `ProductData_${safeProvider}${suffix}.csv`;
 }
 
@@ -78,7 +79,9 @@ export async function POST(request: Request) {
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier");
     const type = (searchParams.get("type") ?? "all").toLowerCase();
-    const effectiveType = type === "stock" || type === "offer" ? "offer-stock" : type;
+    // Keep backward-compat alias for `stock` only. `offer` must remain offer-only
+    // so manual "price" uploads do not trigger an expensive paired run.
+    const effectiveType = type === "stock" ? "offer-stock" : type;
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const limitRaw = searchParams.get("limit");
     const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
@@ -92,10 +95,13 @@ export async function POST(request: Request) {
     const masterUrl = `${origin}/api/galaxus/export/master?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
     const stockUrl = `${origin}/api/galaxus/export/stock?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
     const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
+    const specsUrl = `${origin}/api/galaxus/export/specifications?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
 
     const needsMaster = effectiveType === "all" || effectiveType === "master";
     const needsStock = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "stock";
     const needsOffer = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "offer";
+    const needsSpecs =
+      effectiveType === "all" || effectiveType === "specs" || effectiveType === "specifications";
     auditId = (await (prisma as any).galaxusJobRun.create({
       data: {
         jobName: "feeds-upload",
@@ -107,10 +113,11 @@ export async function POST(request: Request) {
       },
     }))?.id ?? null;
 
-    const [masterRes, stockRes, offerRes] = await Promise.all([
+    const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
       needsMaster ? fetch(masterUrl, { cache: "no-store" }) : Promise.resolve(null),
       needsStock ? fetch(stockUrl, { cache: "no-store" }) : Promise.resolve(null),
       needsOffer ? fetch(offerUrl, { cache: "no-store" }) : Promise.resolve(null),
+      needsSpecs ? fetch(specsUrl, { cache: "no-store" }) : Promise.resolve(null),
     ]);
 
     if (masterRes && !masterRes.ok) {
@@ -125,28 +132,37 @@ export async function POST(request: Request) {
       const body = await offerRes.text().catch(() => "");
       throw new Error(`Offer export failed: ${offerRes.status} ${offerRes.statusText} ${body}`);
     }
+    if (specsRes && !specsRes.ok) {
+      const body = await specsRes.text().catch(() => "");
+      throw new Error(`Specifications export failed: ${specsRes.status} ${specsRes.statusText} ${body}`);
+    }
 
-    const [masterCsv, stockCsv, offerCsv] = await Promise.all([
+    const [masterCsv, stockCsv, offerCsv, specsCsv] = await Promise.all([
       masterRes ? masterRes.text() : Promise.resolve(""),
       stockRes ? stockRes.text() : Promise.resolve(""),
       offerRes ? offerRes.text() : Promise.resolve(""),
+      specsRes ? specsRes.text() : Promise.resolve(""),
     ]);
 
     const masterCount = masterRes ? countCsvRows(masterCsv) : null;
     const stockCount = stockRes ? countCsvRows(stockCsv) : null;
     const offerCount = offerRes ? countCsvRows(offerCsv) : null;
+    const specsCount = specsRes ? countCsvRows(specsCsv) : null;
 
-    const validationRes = await fetch(
-      `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`,
-      { cache: "no-store" }
-    ).catch(() => null);
+    const shouldRunValidation = needsMaster || needsStock || needsSpecs;
+    const validationRes = shouldRunValidation
+      ? await fetch(
+          `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`,
+          { cache: "no-store" }
+        ).catch(() => null)
+      : null;
     const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
     const report = validationData?.report ?? null;
     const totalIssues =
       (report?.summary?.master?.totalIssues ?? 0) +
       (report?.summary?.stock?.totalIssues ?? 0) +
       (report?.summary?.specs?.totalIssues ?? 0);
-    if (!force && totalIssues > 0) {
+    if (shouldRunValidation && !force && totalIssues > 0) {
       const blockedManifests = [];
       if (needsMaster && masterCsv) {
         blockedManifests.push({
@@ -169,6 +185,13 @@ export async function POST(request: Request) {
           count: offerCount ?? 0,
         });
       }
+    if (needsSpecs && specsCsv) {
+      blockedManifests.push({
+        exportType: "specs",
+        csv: specsCsv,
+        count: specsCount ?? 0,
+      });
+    }
       for (const entry of blockedManifests) {
         await (prisma as any).galaxusExportManifest.create({
           data: {
@@ -235,6 +258,7 @@ export async function POST(request: Request) {
     const masterName = buildFeedFilename("product", providerName, assortmentFile);
     const stockName = buildFeedFilename("stock", providerName, assortmentFile);
     const offerName = buildFeedFilename("price", providerName, assortmentFile);
+    const specsName = buildFeedFilename("specifications", providerName, assortmentFile);
 
     const uploads: UploadedFile[] = [];
     const manifestEntries: Array<{
@@ -303,6 +327,22 @@ export async function POST(request: Request) {
             size: Buffer.byteLength(offerCsv),
           });
         }
+        if (needsSpecs) {
+          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, specsName, specsCsv);
+          uploads.push({
+            name: specsName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
+            size: Buffer.byteLength(specsCsv),
+          });
+          manifestEntries.push({
+            exportType: "specs",
+            csv: specsCsv,
+            count: specsCount ?? null,
+            name: specsName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
+            size: Buffer.byteLength(specsCsv),
+          });
+        }
       }
     );
 
@@ -349,6 +389,7 @@ export async function POST(request: Request) {
         master: masterCount,
         stock: stockCount,
         offer: offerCount,
+        specs: specsCount,
       },
       validation: report ?? null,
     };

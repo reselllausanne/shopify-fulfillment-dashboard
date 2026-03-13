@@ -58,6 +58,33 @@ type ParsedVariantRow = {
   ean: string | null;
 };
 
+const LEGO_CUSTOM_ADDON_BY_SLUG: Record<string, number> = {
+  "lego-pet-shop-set-10218": 45,
+  "lego-grand-emporium-set-10211": 25,
+};
+
+const LEGO_LARGE_SET_SLUGS = new Set([
+  "lego-eiffel-tower-set-10307",
+  "lego-titanic-set-10294",
+  "lego-palace-cinema-set-10232",
+  "lego-marvel-studios-infinity-saga-hulkbuster-set-76210",
+]);
+
+const LEGO_MEDIUM_SET_SLUGS = new Set([
+  "lego-creator-fairgrounds-mixer-set-10244",
+  "lego-stranger-things-the-upside-down-set-75810",
+  "lego-tower-bridge-set-10214",
+  "lego-technic-land-rover-defender-set-42110",
+  "lego-creator-ferris-wheel-2015-set-10247",
+  "lego-architecture-taj-mahal-set-21056",
+]);
+
+const LEGO_SMALL_SET_SLUGS = new Set([
+  "lego-star-wars-tie-fighter-set-75095",
+  "lego-creator-horizon-express-set-10233",
+  "lego-creator-santas-workshop-set-10245",
+]);
+
 function pickString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -90,6 +117,27 @@ function pickSizeRawEuFirst(variant: any): string | null {
     }
   }
   return pickString(variant?.size);
+}
+
+function normalizeSlug(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function resolveStxShippingCHF(product: any): number {
+  const baseShipping = 20;
+  const slug = normalizeSlug(product?.slug ?? product?.url_key ?? product?.urlKey);
+  const title = normalizeSlug(product?.title ?? product?.primary_title ?? product?.name);
+  const isLego = slug.includes("lego") || title.includes("lego");
+  if (!isLego) return baseShipping;
+
+  const customAddon = LEGO_CUSTOM_ADDON_BY_SLUG[slug];
+  if (Number.isFinite(customAddon)) return baseShipping + customAddon;
+  if (LEGO_LARGE_SET_SLUGS.has(slug)) return 60;
+  if (LEGO_MEDIUM_SET_SLUGS.has(slug)) return 45;
+  if (LEGO_SMALL_SET_SLUGS.has(slug)) return 35;
+  return baseShipping;
 }
 
 export function normalizeStxImportInput(input: string): string {
@@ -248,12 +296,16 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
     const providerKey = buildProviderKey(gtin, supplierVariantId);
 
+    const stxBasePrice = Number(selected.price);
+    const shippingCHF = resolveStxShippingCHF(product);
+    const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
+
     parsedRows.push({
       supplierVariantId,
       supplierSku: supplierSkuFallback,
       providerKey,
       gtin,
-      price: selected.price,
+      price: stxSellPrice,
       stock: selected.asks,
       sizeRaw: pickSizeRawEuFirst(variant),
       supplierBrand: brand,

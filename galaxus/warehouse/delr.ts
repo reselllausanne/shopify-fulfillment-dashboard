@@ -193,6 +193,76 @@ export async function uploadDelrForShipment(
   }
 }
 
+export async function buildDelrXmlForShipment(
+  shipmentId: string,
+  options: { force?: boolean } = {}
+): Promise<{ shipmentId: string; filename: string; content: string }> {
+  assertSftpConfig();
+  const prismaAny = prisma as any;
+  const shipment = (await prismaAny.shipment.findUnique({
+    where: { id: shipmentId },
+    include: { order: { include: { lines: true } } },
+  })) as any;
+
+  if (!shipment || !shipment.order) {
+    throw new Error("Shipment not found");
+  }
+
+  if (!shipment.order.ordrSentAt && !options.force) {
+    throw new Error("ORDR not sent yet");
+  }
+
+  const stxStatus = await getStxLinkStatusForShipment(shipment.id).catch(() => null);
+  if (stxStatus?.hasStxItems && !options.force) {
+    if (!stxStatus.allLinked) throw new Error("StockX units are not fully linked yet");
+    if (!stxStatus.allEtaPresent) throw new Error("StockX linked units are missing ETA bounds");
+  }
+  if (!stxStatus?.hasStxItems) {
+    const placedOnSupplier = await hasPlacedSupplierOrder(shipment);
+    if (!placedOnSupplier && !options.force) {
+      throw new Error("Supplier order not placed yet");
+    }
+  }
+
+  const shipped = resolveShipmentShipped(shipment);
+  if (!shipped && !options.force) {
+    throw new Error("Shipment not marked as shipped");
+  }
+
+  if (!shipment.packageId) {
+    throw new Error("Missing SSCC package id");
+  }
+
+  const items = (await prismaAny.shipmentItem.findMany({
+    where: { shipmentId: shipment.id },
+  })) as Array<{ supplierPid: string; gtin14: string; quantity: number }>;
+
+  validateShipment({
+    dispatchNotificationId: shipment.dispatchNotificationId ?? null,
+    packageId: shipment.packageId ?? null,
+    items,
+  });
+
+  const carrier = resolveCarrier(shipment.carrierFinal ?? null);
+  const arrivalByGtin =
+    stxStatus?.hasStxItems
+      ? await buildStxArrivalByGtin({
+          galaxusOrderId: shipment.order.galaxusOrderId,
+          buckets: stxStatus.buckets ?? [],
+        })
+      : {};
+
+  const dispatch = buildDispatchNotification(
+    shipment.order,
+    shipment.order.lines,
+    { ...shipment, carrierFinal: carrier, shippedAt: shipment.shippedAt ?? (options.force ? new Date() : null) },
+    items,
+    { supplierId: GALAXUS_SUPPLIER_ID, arrivalByGtin }
+  );
+
+  return { shipmentId: shipment.id, filename: dispatch.filename, content: dispatch.content };
+}
+
 export async function uploadDelrForOrder(
   orderId: string,
   options: { force?: boolean } = {}

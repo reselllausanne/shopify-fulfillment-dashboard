@@ -167,12 +167,19 @@ export async function sendOutgoingEdi(options: {
   orderId: string;
   types: EdiDocType[];
   ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS";
+  force?: boolean;
 }): Promise<OutgoingResult[]> {
   assertSftpConfig();
-  const order = await prisma.galaxusOrder.findUnique({
-    where: { id: options.orderId },
-    include: { lines: true, shipments: true },
-  });
+  const force = Boolean(options.force);
+  const order =
+    (await prisma.galaxusOrder.findUnique({
+      where: { id: options.orderId },
+      include: { lines: true, shipments: true },
+    })) ??
+    (await prisma.galaxusOrder.findUnique({
+      where: { galaxusOrderId: options.orderId },
+      include: { lines: true, shipments: true },
+    }));
 
   if (!order) {
     throw new Error(`Order not found: ${options.orderId}`);
@@ -222,7 +229,10 @@ export async function sendOutgoingEdi(options: {
       for (const type of options.types) {
         try {
           const gatedTypes: EdiDocType[] = ["ORDR", "DELR", "INVO"];
-          if (lockAll || (gatedTypes.includes(type) && (!gate.ok || !gate.allowedTypes.has(type)))) {
+          if (
+            !force &&
+            (lockAll || (gatedTypes.includes(type) && (!gate.ok || !gate.allowedTypes.has(type))))
+          ) {
             results.push({
               docType: type,
               filename: "",
@@ -232,7 +242,7 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
           if (type === "DELR") {
-            if (!order.ordrSentAt) {
+            if (!order.ordrSentAt && !force) {
               results.push({
                 docType: "DELR",
                 filename: "",
@@ -241,7 +251,7 @@ export async function sendOutgoingEdi(options: {
               });
               continue;
             }
-            const delrResults = await uploadDelrForOrder(order.id);
+            const delrResults = await uploadDelrForOrder(order.id, { force });
             results.push(
               ...delrResults.map((res) => ({
                 docType: "DELR" as const,
@@ -313,6 +323,33 @@ export async function sendOutgoingEdi(options: {
   );
 
   return results;
+}
+
+export async function buildOutgoingEdiXml(options: {
+  orderId: string;
+  type: Exclude<EdiDocType, "DELR" | "ORDP" | "CANP">;
+  force?: boolean;
+}): Promise<{ filename: string; content: string }> {
+  const order =
+    (await prisma.galaxusOrder.findUnique({
+      where: { id: options.orderId },
+      include: { lines: true, shipments: true },
+    })) ??
+    (await prisma.galaxusOrder.findUnique({
+      where: { galaxusOrderId: options.orderId },
+      include: { lines: true, shipments: true },
+    }));
+  if (!order) {
+    throw new Error(`Order not found: ${options.orderId}`);
+  }
+  const force = Boolean(options.force);
+  const gate = await getSupplierGateForOrder(order.id);
+  const gatedTypes: EdiDocType[] = ["ORDR", "INVO"];
+  if (!force && gatedTypes.includes(options.type) && (!gate.ok || !gate.allowedTypes.has(options.type))) {
+    throw new Error(gate.reason ?? "Supplier order not ready");
+  }
+  const edi = await buildOutgoingXml(options.type, order, order.lines);
+  return { filename: edi.filename, content: edi.content };
 }
 
 export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[]> {

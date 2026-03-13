@@ -501,11 +501,29 @@ export async function bulkUpsertVariantMappings(
       FROM vals
       WHERE m."supplierVariantId" = vals."supplierVariantId"
         AND (
-          (vals."gtin" IS NOT NULL AND m."gtin" IS DISTINCT FROM vals."gtin") OR
-          (vals."providerKey" IS NOT NULL AND m."providerKey" IS DISTINCT FROM vals."providerKey") OR
-          (vals."gtin" IS NULL AND m."gtin" IS NULL AND m."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR
-          (vals."kickdbVariantId" IS NOT NULL AND m."kickdbVariantId" IS DISTINCT FROM vals."kickdbVariantId") OR
-          (m."status" IS DISTINCT FROM vals."status")
+          m."gtin" IS DISTINCT FROM CASE
+            WHEN vals."gtin" IS NULL THEN m."gtin"
+            ELSE vals."gtin"
+          END
+          OR m."providerKey" IS DISTINCT FROM CASE
+            WHEN vals."gtin" IS NULL AND m."gtin" IS NULL THEN NULL
+            WHEN vals."providerKey" IS NULL THEN m."providerKey"
+            ELSE vals."providerKey"
+          END
+          OR m."kickdbVariantId" IS DISTINCT FROM CASE
+            WHEN vals."kickdbVariantId" IS NULL THEN m."kickdbVariantId"
+            ELSE vals."kickdbVariantId"
+          END
+          OR m."status" IS DISTINCT FROM CASE
+            WHEN ${onlySetPendingIfMissing} AND vals."status" = 'PENDING_GTIN'
+              AND m."status" IS NOT NULL AND m."status" <> 'PENDING_GTIN'
+            THEN m."status"
+            WHEN ${doNotDowngrade}
+              AND vals."status" = 'PENDING_GTIN'
+              AND m."status" IN ('MATCHED','AMBIGUOUS_GTIN','SUPPLIER_GTIN','PARTNER_GTIN')
+            THEN m."status"
+            ELSE vals."status"
+          END
         )
       RETURNING 1
     )

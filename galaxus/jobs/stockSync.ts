@@ -25,7 +25,7 @@ type StockSyncOptions = {
 
 async function enrichPendingInStock(supplierVariantIds: string[]) {
   if (supplierVariantIds.length === 0) return;
-  const limiter = createLimiter(3);
+  const limiter = createLimiter(2);
   await Promise.all(
     supplierVariantIds.map((supplierVariantId) =>
       limiter(async () => {

@@ -6,6 +6,9 @@ import { buildFeedMappingsWhere, createTrmFeedExclusionStats, recordTrmFeedExclu
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DIAGNOSTICS_CACHE_TTL_MS = 60 * 60 * 1000;
+const diagnosticsCache = new Map<string, { createdAt: number; payload: any }>();
+
 function toNumber(value: any) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -17,25 +20,25 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier")?.trim() || null;
     const supplierPrefix = supplier ? `${supplier.toLowerCase()}:` : null;
-    const cacheKey = `export-diagnostics:${supplier ?? "all"}`;
-    const cacheTtlMs = 60 * 60 * 1000;
-
-    const latestCache = await prismaAny.galaxusJobRun.findFirst({
-      where: { jobName: cacheKey },
-      orderBy: { startedAt: "desc" },
-      select: { startedAt: true, resultJson: true },
-    });
-    if (latestCache?.startedAt && latestCache?.resultJson) {
-      const ageMs = Date.now() - new Date(latestCache.startedAt).getTime();
-      if (ageMs >= 0 && ageMs < cacheTtlMs) {
-        return NextResponse.json(latestCache.resultJson);
-      }
+    const cacheKey = supplier ?? "all";
+    const cached = diagnosticsCache.get(cacheKey);
+    if (cached && Date.now() - cached.createdAt < DIAGNOSTICS_CACHE_TTL_MS) {
+      return NextResponse.json(cached.payload);
     }
 
     const mappingsWhere = buildFeedMappingsWhere(supplier, true);
     const trmExclusionStats = createTrmFeedExclusionStats();
 
-    const partners = await prismaAny.partner.findMany();
+    const partners = await prismaAny.partner.findMany({
+      select: {
+        key: true,
+        targetMargin: true,
+        shippingPerPair: true,
+        bufferPerPair: true,
+        roundTo: true,
+        vatRate: true,
+      },
+    });
     const partnerByKey = new Map<string, any>(
       partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
     );
@@ -55,20 +58,47 @@ export async function GET(request: Request) {
     // Build the same candidate set exports use: best-by-gtin, then providerKey dedupe.
     const bestByGtin = new Map<string, any>();
     const pageSize = 500;
-    let offset = 0;
     let lastBatch = 0;
+    let cursorUpdatedAt: Date | null = null;
+    let cursorId: string | null = null;
     do {
-      const mappings = await prismaAny.variantMapping.findMany({
-        where: mappingsWhere,
-        include: {
-          supplierVariant: true,
-          kickdbVariant: { include: { product: true } },
+      const whereClause: Record<string, unknown> = {
+        ...mappingsWhere,
+        ...(cursorUpdatedAt && cursorId
+          ? {
+              OR: [
+                { updatedAt: { lt: cursorUpdatedAt } },
+                { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
+              ],
+            }
+          : {}),
+      };
+      const mappings: any[] = await prismaAny.variantMapping.findMany({
+        where: whereClause,
+        select: {
+          id: true,
+          gtin: true,
+          updatedAt: true,
+          supplierVariantId: true,
+          supplierVariant: {
+            select: {
+              supplierVariantId: true,
+              price: true,
+              stock: true,
+              updatedAt: true,
+              deliveryType: true,
+            },
+          },
         },
-        orderBy: { updatedAt: "desc" },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         take: pageSize,
-        skip: offset,
       });
       lastBatch = mappings.length;
+      if (mappings.length > 0) {
+        const last: any = mappings[mappings.length - 1];
+        cursorUpdatedAt = last.updatedAt ?? null;
+        cursorId = last.id ?? null;
+      }
       accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
         keyBy: "gtin",
         requireProductName: false,
@@ -77,7 +107,6 @@ export async function GET(request: Request) {
           if (payload.supplierKey === "trm") recordTrmFeedExclusion(trmExclusionStats, payload.reason);
         },
       });
-      offset += pageSize;
     } while (lastBatch === pageSize);
 
     const candidates = Array.from(bestByGtin.values());
@@ -226,15 +255,7 @@ export async function GET(request: Request) {
         "neverRanApprox is a best-effort proxy: unresolved rows without kickdbVariantId and unchanged since creation. It highlights rows likely never processed by enrichment.",
     };
 
-    await prismaAny.galaxusJobRun.create({
-      data: {
-        jobName: cacheKey,
-        startedAt: new Date(),
-        finishedAt: new Date(),
-        success: true,
-        resultJson: payload,
-      },
-    });
+    diagnosticsCache.set(cacheKey, { createdAt: Date.now(), payload });
 
     return NextResponse.json(payload);
   } catch (error: any) {

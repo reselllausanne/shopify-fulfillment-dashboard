@@ -34,12 +34,13 @@ export async function POST(request: Request) {
   const { searchParams } = new URL(request.url);
   const action = (searchParams.get("action") ?? "start").toLowerCase();
   const origin = new URL(request.url).origin;
+  const runNow = ["1", "true", "yes"].includes((searchParams.get("runNow") ?? "").toLowerCase());
 
   if (action === "stop") {
     const status = await stopFeedScheduler();
     return NextResponse.json({ ok: true, status });
   }
 
-  const status = await startFeedScheduler(origin, true);
+  const status = await startFeedScheduler(origin, runNow);
   return NextResponse.json({ ok: true, status });
 }

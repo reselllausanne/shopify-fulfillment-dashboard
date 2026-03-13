@@ -22,7 +22,7 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
   const minAgeHours = Math.max(1, options.minAgeHours ?? 48);
   const limitUnits = Math.max(1, options.limitUnits ?? 500);
   const orderListPages = Math.max(1, options.orderListPages ?? 12);
-  const concurrency = Math.max(1, options.concurrency ?? 4);
+  const concurrency = Math.max(1, options.concurrency ?? 2);
   const cutoff = new Date(Date.now() - minAgeHours * 60 * 60 * 1000);
 
   const token = await readGalaxusStockxToken();

@@ -52,8 +52,21 @@ export async function GET(request: Request) {
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
+  let cursorUpdatedAt: Date | null = null;
+  let cursorId: string | null = null;
   const prismaAny = prisma as any;
-  const partners = prismaAny.partner?.findMany ? await prismaAny.partner.findMany() : [];
+  const partners = prismaAny.partner?.findMany
+    ? await prismaAny.partner.findMany({
+        select: {
+          key: true,
+          targetMargin: true,
+          shippingPerPair: true,
+          bufferPerPair: true,
+          roundTo: true,
+          vatRate: true,
+        },
+      })
+    : [];
   const partnerByKey = new Map<string, any>(
     partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
   );
@@ -75,19 +88,48 @@ export async function GET(request: Request) {
   };
 
   do {
-    const mappings = await prismaAny.variantMapping.findMany({
-      where: {
-        ...mappingsWhere,
+    const whereClause: Record<string, unknown> = all
+      ? {
+          ...mappingsWhere,
+          ...(cursorUpdatedAt && cursorId
+            ? {
+                OR: [
+                  { updatedAt: { lt: cursorUpdatedAt } },
+                  { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
+                ],
+              }
+            : {}),
+        }
+      : {
+          ...mappingsWhere,
+        };
+    const mappings: any[] = await prismaAny.variantMapping.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        gtin: true,
+        updatedAt: true,
+        supplierVariantId: true,
+        supplierVariant: {
+          select: {
+            supplierVariantId: true,
+            price: true,
+            stock: true,
+            updatedAt: true,
+            deliveryType: true,
+          },
+        },
       },
-      include: {
-        supplierVariant: true,
-        kickdbVariant: { include: { product: true } },
-      },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       take: pageSize,
-      skip: currentOffset,
+      ...(all ? {} : { skip: currentOffset }),
     });
     lastBatch = mappings.length;
+    if (mappings.length > 0) {
+      const last: any = mappings[mappings.length - 1];
+      cursorUpdatedAt = last.updatedAt ?? null;
+      cursorId = last.id ?? null;
+    }
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       keyBy: "gtin",
       requireProductName: false,

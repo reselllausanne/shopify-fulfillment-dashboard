@@ -5,6 +5,7 @@ import { runStockPriceSync, runStockSync } from "@/galaxus/jobs/stockSync";
 import { runTrmStockSync, runTrmSync } from "@/galaxus/jobs/trmSync";
 import { prisma } from "@/app/lib/prisma";
 import { importStxProductByInput } from "@/galaxus/stx/importProduct";
+import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,16 +82,18 @@ export async function POST(request: Request) {
       }
     }
 
-    const [catalog, stock, trm] = await Promise.all([
-      shouldRunCatalog ? runJob("catalog-sync", () => runCatalogSync({ limit, offset })) : Promise.resolve(null),
-      shouldRunStock
-        ? runJob(
+    const locked = await withAdvisoryLock("galaxus:supplier-sync", async () => {
+      const catalog = shouldRunCatalog
+        ? await runJob("catalog-sync", () => runCatalogSync({ limit, offset }))
+        : null;
+      const stock = shouldRunStock
+        ? await runJob(
             "stock-sync",
             () => (mode === "stock" ? runStockPriceSync({ limit, offset }) : runStockSync({ limit, offset }))
           )
-        : Promise.resolve(null),
-      includeTrm
-        ? runJob("trm-sync", () =>
+        : null;
+      const trm = includeTrm
+        ? await runJob("trm-sync", () =>
             mode === "stock"
               ? runTrmStockSync({ limit, offset, enrichMissingGtin: false })
               : runTrmSync({
@@ -99,8 +102,16 @@ export async function POST(request: Request) {
                   enrichMissingGtin: false,
                 })
           )
-        : Promise.resolve(null),
-    ]);
+        : null;
+
+      return { catalog, stock, trm };
+    });
+    if (!locked.locked) {
+      return NextResponse.json(
+        { ok: false, error: "Supplier sync already running", status: "locked" },
+        { status: 423 }
+      );
+    }
     return NextResponse.json({
       ok: true,
       mode: all ? "all" : "max",
@@ -109,9 +120,9 @@ export async function POST(request: Request) {
       offset,
       includeTrm,
       stxImport,
-      catalog,
-      stock,
-      trm,
+      catalog: locked.result.catalog,
+      stock: locked.result.stock,
+      trm: locked.result.trm,
     });
   } catch (error: any) {
     console.error("[GALAXUS][SUPPLIER][SYNC] Failed:", error);

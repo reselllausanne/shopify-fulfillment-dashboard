@@ -12,11 +12,12 @@ import { downloadRemoteFile, listRemoteFiles, withSftp } from "@/galaxus/edi/sft
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type PreviewType = "product" | "price" | "stock";
+type PreviewType = "product" | "price" | "stock" | "specs";
 
 function resolvePrefix(type: PreviewType): string {
   if (type === "price") return "PriceData_";
   if (type === "stock") return "StockData_";
+  if (type === "specs") return "SpecificationData_";
   return "ProductData_";
 }
 
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
     assertSftpConfig();
     const { searchParams } = new URL(request.url);
     const type = (searchParams.get("type") ?? "product") as PreviewType;
-    if (type !== "product" && type !== "stock" && type !== "price") {
+    if (type !== "product" && type !== "stock" && type !== "price" && type !== "specs") {
       return NextResponse.json({ ok: false, error: "Invalid type." }, { status: 400 });
     }
 

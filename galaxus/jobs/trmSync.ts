@@ -95,7 +95,7 @@ async function removeZeroStockTrmVariants(params: { supplierVariantIds: string[]
 
 async function enrichPendingInStock(supplierVariantIds: string[]) {
   if (supplierVariantIds.length === 0) return;
-  const limiter = createLimiter(3);
+  const limiter = createLimiter(2);
   await Promise.all(
     supplierVariantIds.map((supplierVariantId) =>
       limiter(async () => {
@@ -224,7 +224,7 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
         ORDER BY sv."createdAt" DESC, sv."updatedAt" DESC
       `
     );
-    const enrichLimit = createLimiter(3);
+    const enrichLimit = createLimiter(2);
     await Promise.all(
       candidates.map((c) =>
         enrichLimit(async () => {

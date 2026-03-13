@@ -231,10 +231,8 @@ export async function runGalaxusPipelineTick(
     const locked = await withAdvisoryLock("galaxus:pipeline:offer-stock", async () =>
       runJob("pipeline-offer-stock", async () => {
         const supplier = await runJob("pipeline-supplier-delta", async () => {
-          const [gld, trm] = await Promise.all([
-            runStockPriceSync({ limit: undefined, offset: 0 }),
-            runTrmStockSync({ limit: undefined, offset: 0, enrichMissingGtin: false }),
-          ]);
+          const gld = await runStockPriceSync({ limit: undefined, offset: 0 });
+          const trm = await runTrmStockSync({ limit: undefined, offset: 0, enrichMissingGtin: false });
           return { gld, trm };
         });
         if (!supplier.success) {
@@ -366,7 +364,7 @@ export async function runGalaxusPipelineTick(
       runJob("kickdb-enrich-new", async () => {
         const candidatePageSize = 500;
         const maxCandidates = 5000;
-        const concurrency = 4;
+        const concurrency = 2;
         const candidates: string[] = [];
         let offset = 0;
         // Scan new rows in pages so bursty syncs don't leave untouched "new" rows.
@@ -412,7 +410,7 @@ export async function runGalaxusPipelineTick(
     const locked = await withAdvisoryLock("galaxus:kickdb:reenrich-unmatched", async () =>
       runJob("kickdb-reenrich-unmatched", async () => {
         const candidateLimit = 200;
-        const concurrency = 3;
+        const concurrency = 2;
         const candidates = await fetchUnmatchedCandidates(candidateLimit);
         const res = await runKickdbEnrichCandidates({
           supplierVariantIds: candidates,

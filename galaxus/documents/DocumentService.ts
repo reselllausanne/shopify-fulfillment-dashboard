@@ -78,6 +78,17 @@ export class DocumentService {
       const pdfBuffer = await renderPdfFromHtml({ html, format: pdfFormat, showPageNumbers });
       const checksum = crypto.createHash("sha256").update(pdfBuffer).digest("hex");
 
+      const existing = findLatestDocument(order.documents, type, type === DocumentType.LABEL ? shipment?.id ?? null : null);
+      if (existing && existing.checksum && existing.checksum === checksum) {
+        console.info("[galaxus][docs] reuse", {
+          orderId: order.galaxusOrderId,
+          type,
+          shipmentId: existing.shipmentId ?? null,
+        });
+        results.push(existing);
+        continue;
+      }
+
       const version = getNextVersion(order.documents, type);
       const key = `galaxus/${order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
       const stored = await storage.uploadPdf(key, pdfBuffer);
@@ -140,6 +151,17 @@ export class DocumentService {
 
       const pdfBuffer = await renderPdfFromHtml({ html, format: pdfFormat, showPageNumbers });
       const checksum = crypto.createHash("sha256").update(pdfBuffer).digest("hex");
+      const existing = findLatestDocument(allDocuments, type, shipment.id);
+      if (existing && existing.checksum && existing.checksum === checksum) {
+        console.info("[galaxus][docs] reuse", {
+          orderId: order.galaxusOrderId,
+          type,
+          shipmentId: shipment.id,
+        });
+        results.push(existing);
+        continue;
+      }
+
       const version = getNextVersion(allDocuments, type);
       const key = `galaxus/${order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
       const stored = await storage.uploadPdf(key, pdfBuffer);
@@ -443,6 +465,23 @@ function calculateTotals(lines: OrderLine[]): { vatSummary: VatSummaryLine[]; to
 function getNextVersion(documents: { type: DocumentType; version: number }[], type: DocumentType) {
   const versions = documents.filter((doc) => doc.type === type).map((doc) => doc.version);
   return versions.length === 0 ? 1 : Math.max(...versions) + 1;
+}
+
+function findLatestDocument(
+  documents: Array<{
+    id: string;
+    type: DocumentType;
+    version: number;
+    shipmentId: string | null;
+    checksum: string | null;
+    storageUrl: string;
+  }>,
+  type: DocumentType,
+  shipmentId: string | null
+) {
+  const matches = documents.filter((doc) => doc.type === type && doc.shipmentId === shipmentId);
+  if (matches.length === 0) return null;
+  return matches.reduce((latest, doc) => (doc.version > latest.version ? doc : latest), matches[0]);
 }
 
 export function buildInvoiceNumber(order: GalaxusOrder): string {

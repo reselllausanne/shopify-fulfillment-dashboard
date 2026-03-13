@@ -48,9 +48,39 @@ export async function GET(
 
     const placement = await getShipmentPlacementByOrder(order.id);
     const stx = await getStxLinkStatusForOrder(order.galaxusOrderId).catch(() => null);
+    const gtins = Array.from(
+      new Set(
+        order.lines
+          .map((line: any) => String(line.gtin ?? "").trim())
+          .filter((gtin: string) => gtin.length > 0)
+      )
+    );
+    const skuByGtin: Record<string, string> = {};
+    const sizeByGtin: Record<string, string> = {};
+    if (gtins.length > 0) {
+      const mappings = await (prisma as any).variantMapping.findMany({
+        where: { gtin: { in: gtins } },
+        include: { supplierVariant: true },
+        orderBy: { updatedAt: "desc" },
+      });
+      for (const mapping of mappings) {
+        const gtin = String(mapping?.gtin ?? "").trim();
+        if (!gtin) continue;
+        if (!skuByGtin[gtin]) {
+          const sku = String(mapping?.supplierVariant?.supplierSku ?? "").trim();
+          if (sku) skuByGtin[gtin] = sku;
+        }
+        if (!sizeByGtin[gtin]) {
+          const size = String(mapping?.supplierVariant?.sizeRaw ?? "").trim();
+          if (size) sizeByGtin[gtin] = size;
+        }
+      }
+    }
     const normalized = {
       ...order,
       stx,
+      skuByGtin,
+      sizeByGtin,
       shipments: order.shipments.map((shipment: any) => {
         const deliveryNote = shipment.documents?.find((doc: any) => doc.type === "DELIVERY_NOTE");
         const labelNote = shipment.documents?.find((doc: any) => doc.type === "LABEL");

@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 
 type FeedRunResult = {
   ok: boolean;
@@ -206,32 +207,39 @@ export async function stopFeedScheduler() {
 }
 
 export async function runFeedSchedulerTick(origin: string) {
-  const config = await getSchedulerConfig();
-  if (!config.enabled) {
-    return { ok: true, running: false, skipped: true };
+  const locked = await withAdvisoryLock("galaxus:feed-scheduler", async () => {
+    const config = await getSchedulerConfig();
+    if (!config.enabled) {
+      return { ok: true, running: false, skipped: true };
+    }
+    const enabledAt = config.enabledAt ? new Date(config.enabledAt) : new Date();
+    const results: Record<string, FeedRunResult | null> = {};
+    results.ediIn = await maybeRunIfDue(
+      origin,
+      "edi-in",
+      DEFAULT_EDI_IN_INTERVAL_MS,
+      "/api/galaxus/cron?task=edi-in",
+      enabledAt
+    );
+    results.offerStock = await maybeRunIfDue(
+      origin,
+      "feeds-offer-stock",
+      DEFAULT_OFFER_STOCK_INTERVAL_MS,
+      "/api/galaxus/cron?task=feeds-offer-stock",
+      enabledAt
+    );
+    results.master = await maybeRunIfDue(
+      origin,
+      "full-refresh",
+      DEFAULT_MASTER_INTERVAL_MS,
+      "/api/galaxus/cron?task=full-refresh",
+      enabledAt
+    );
+    return { ok: true, running: true, results };
+  });
+
+  if (!locked.locked) {
+    return { ok: true, running: true, skipped: "locked" };
   }
-  const enabledAt = config.enabledAt ? new Date(config.enabledAt) : new Date();
-  const results: Record<string, FeedRunResult | null> = {};
-  results.ediIn = await maybeRunIfDue(
-    origin,
-    "edi-in",
-    DEFAULT_EDI_IN_INTERVAL_MS,
-    "/api/galaxus/cron?task=edi-in",
-    enabledAt
-  );
-  results.offerStock = await maybeRunIfDue(
-    origin,
-    "feeds-offer-stock",
-    DEFAULT_OFFER_STOCK_INTERVAL_MS,
-    "/api/galaxus/cron?task=feeds-offer-stock",
-    enabledAt
-  );
-  results.master = await maybeRunIfDue(
-    origin,
-    "full-refresh",
-    DEFAULT_MASTER_INTERVAL_MS,
-    "/api/galaxus/cron?task=full-refresh",
-    enabledAt
-  );
-  return { ok: true, running: true, results };
+  return locked.result;
 }
