@@ -38,6 +38,14 @@ type CreateShipmentsResult = {
   status: "created" | "skipped" | "error";
   shipments: Shipment[];
   message?: string;
+  availabilityIssues?: Array<{
+    providerKey: string;
+    gtin: string | null;
+    lineNumber: number | null;
+    requestedQty: number;
+    stock: number | null;
+    reason: "NO_VARIANT" | "OUT_OF_STOCK";
+  }>;
 };
 
 type ShipmentLineGroup = {
@@ -73,6 +81,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
 
   const groupedLines = await groupLinesByProviderKey(orderAny.lines);
   const groupedLinesWithStxBuckets = await splitStxGroupsByDeliveryTypeIfNeeded(groupedLines);
+  const availabilityIssues = await checkAvailabilityIssues(groupedLinesWithStxBuckets);
   const shipments: Shipment[] = [];
   const shippedAt = options.shippedAt ?? null;
   const storage = getStorageAdapter();
@@ -173,7 +182,82 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     }
   }
 
-  return { status: "created", shipments };
+  return {
+    status: "created",
+    shipments,
+    ...(availabilityIssues.length > 0 ? { availabilityIssues } : {}),
+  };
+}
+
+async function checkAvailabilityIssues(groups: ShipmentLineGroup[]) {
+  const issues: Array<{
+    providerKey: string;
+    gtin: string | null;
+    lineNumber: number | null;
+    requestedQty: number;
+    stock: number | null;
+    reason: "NO_VARIANT" | "OUT_OF_STOCK";
+  }> = [];
+
+  const relevantGroups = groups.filter((g) => {
+    const key = String(g.providerKey ?? "").trim().toUpperCase();
+    return key && key !== "STX" && key !== "UNASSIGNED";
+  });
+  if (relevantGroups.length === 0) return issues;
+
+  for (const group of relevantGroups) {
+    const providerKey = String(group.providerKey ?? "").trim().toUpperCase();
+    const gtins = Array.from(
+      new Set(
+        group.lines
+          .map((line) => String(line?.gtin ?? "").trim())
+          .filter((value) => value.length > 0)
+      )
+    );
+    if (gtins.length === 0) continue;
+
+    const variants = await prisma.supplierVariant.findMany({
+      where: { providerKey, gtin: { in: gtins } },
+      select: { gtin: true, stock: true },
+    });
+    const stockByGtin = new Map<string, number | null>();
+    for (const row of variants) {
+      const gtin = String(row.gtin ?? "").trim();
+      if (!gtin) continue;
+      const stock = row.stock === null || row.stock === undefined ? null : Number(row.stock);
+      stockByGtin.set(gtin, Number.isFinite(stock as number) ? (stock as number) : null);
+    }
+
+    for (const line of group.lines) {
+      const gtin = line?.gtin ? String(line.gtin).trim() : "";
+      const qty = Math.max(1, Number(line?.quantity ?? 1));
+      if (!gtin) continue;
+      if (!stockByGtin.has(gtin)) {
+        issues.push({
+          providerKey,
+          gtin,
+          lineNumber: line?.lineNumber ?? null,
+          requestedQty: qty,
+          stock: null,
+          reason: "NO_VARIANT",
+        });
+        continue;
+      }
+      const stock = stockByGtin.get(gtin) ?? null;
+      if (stock !== null && stock < qty) {
+        issues.push({
+          providerKey,
+          gtin,
+          lineNumber: line?.lineNumber ?? null,
+          requestedQty: qty,
+          stock,
+          reason: "OUT_OF_STOCK",
+        });
+      }
+    }
+  }
+
+  return issues;
 }
 
 async function groupLinesByProviderKey(lines: Array<any>): Promise<ShipmentLineGroup[]> {

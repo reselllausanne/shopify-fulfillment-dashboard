@@ -596,6 +596,9 @@ model StxPurchaseUnit {
   etaMin            DateTime?
   etaMax            DateTime?
   checkoutType      String?
+  manualTrackingRaw String?
+  manualNote        String?
+  manualSetAt       DateTime?
 
   @@index([galaxusOrderId])
   @@index([gtin])

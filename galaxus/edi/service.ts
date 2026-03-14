@@ -469,7 +469,7 @@ function extractOrderId(filename: string): string {
   return parts[2]?.replace(/\.xml$/i, "") ?? filename;
 }
 
-function parseOrderFromXml(xml: string, fallbackOrderId: string) {
+export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
   const data = parser.parse(xml) as any;
   const root = data.ORDER ?? data;
   const orderId = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_ID"]) ?? fallbackOrderId;
@@ -603,7 +603,7 @@ function extractLines(data: any) {
       supplierPid: supplierPid ?? undefined,
       buyerPid: buyerPid ?? undefined,
       orderUnit: orderUnit ?? undefined,
-      supplierSku: buyerPid ?? undefined,
+      supplierSku: supplierPid ?? buyerPid ?? undefined,
       supplierVariantId: undefined,
       productName: getNestedValue(item, ["DESCRIPTION_SHORT"]) ?? "Item",
       description: getNestedValue(item, ["DESCRIPTION_LONG"]) ?? undefined,
@@ -625,32 +625,96 @@ function extractLines(data: any) {
 }
 
 function findParty(data: any, role: string) {
-  const parties = findAllByPath(data, ["PARTIES", "PARTY"]);
-  for (const party of parties) {
-    const roleAttr = party?.["@_PARTY_ROLE"] || party?.PARTY_ROLE;
-    if (roleAttr && String(roleAttr).toLowerCase() === role) {
-      const address = party.ADDRESS ?? {};
+  const target = role.toLowerCase().trim();
+  const extractText = (value: any): string | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === "string" || typeof value === "number") return String(value);
+    if (typeof value === "object") {
+      if (value["#text"]) return String(value["#text"]);
+      if (value.text) return String(value.text);
+    }
+    return null;
+  };
+  const normalizeRole = (value: any): string => (extractText(value) ?? "").toLowerCase().trim();
+  const normalizePostalCode = (value: any): string | null => {
+    const raw = extractText(value);
+    if (!raw) return null;
+    return raw.replace(/^CH[\s-]*/i, "").trim();
+  };
+  const normalizeKey = (value: string): string =>
+    value
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, "_")
+      .replace(/-+/g, "_")
+      .replace(/__+/g, "_");
+  const deliveryRoleAliases = new Set<string>([
+    "delivery",
+    "delivery_party",
+    "deliveryparty",
+    "ship_to",
+    "shipto",
+    "ship_to_party",
+    "consignee",
+    "goods_recipient",
+    "recipient",
+    "deliver_to",
+  ]);
+  const roleMatches = (roleValueRaw: string, partyIds: Record<string, string>) => {
+    const roleValue = normalizeKey(roleValueRaw);
+    if (!roleValue) {
+      // Some partner payloads omit PARTY_ROLE but still include typed PARTY_IDs.
+      if (target === "delivery") {
+        return Object.keys(partyIds ?? {}).some((key) => normalizeKey(key).includes("delivery"));
+      }
+      return false;
+    }
+    if (roleValue === target) return true;
+    if (target === "delivery") {
+      if (roleValue.includes("delivery")) return true;
+      if (deliveryRoleAliases.has(roleValue)) return true;
+      return false;
+    }
+    return roleValue.includes(target);
+  };
+
+  // OpenTrans orders typically store parties at ORDER_HEADER/ORDER_INFO/PARTIES.
+  const partyGroups = [
+    findAllByPath(data, ["ORDER_HEADER", "ORDER_INFO", "PARTIES", "PARTY"]),
+    findAllByPath(data, ["PARTIES", "PARTY"]),
+  ];
+
+  for (const parties of partyGroups) {
+    for (const party of parties) {
+      const roleAttr = normalizeRole(party?.["@_PARTY_ROLE"] ?? null);
+      const roleNode = normalizeRole(party?.PARTY_ROLE ?? null);
+      const roleValue = roleAttr || roleNode;
       const ids = extractPartyIds(party.PARTY_ID);
+      const matches = roleMatches(roleValue, ids);
+      if (!matches) continue;
+
+      const address = party.ADDRESS ?? {};
       const contact = address.CONTACT_DETAILS ?? {};
-      const name =
-        address.NAME ??
-        [contact.FIRST_NAME, contact.CONTACT_NAME].filter(Boolean).join(" ") ??
-        null;
+      const name = extractText(address.NAME) ?? [contact.FIRST_NAME, contact.CONTACT_NAME].filter(Boolean).join(" ") ?? null;
+      const name2 = extractText(address.NAME2) ?? null;
+      const combinedName = name2 ? [name, name2].filter(Boolean).join(", ") : name;
+
       return {
-        name,
-        street: address.STREET ?? null,
-        street2: address.STREET2 ?? null,
-        postalCode: address.ZIP ?? null,
-        city: address.CITY ?? null,
-        country: address.COUNTRY ?? null,
-        countryCode: address.COUNTRY_CODED ?? null,
-        vatId: address.VAT_ID ?? null,
-        email: address.EMAIL ?? null,
-        phone: address.PHONE ?? null,
+        name: combinedName,
+        street: extractText(address.STREET) ?? null,
+        street2: extractText(address.STREET2) ?? null,
+        postalCode: normalizePostalCode(address.ZIP),
+        city: extractText(address.CITY) ?? null,
+        country: extractText(address.COUNTRY) ?? null,
+        countryCode: extractText(address.COUNTRY_CODED) ?? extractText((address as any).COUNTRY_CODE) ?? null,
+        vatId: extractText(address.VAT_ID) ?? null,
+        email: extractText(address.EMAIL) ?? null,
+        phone: extractText(address.PHONE) ?? null,
         partyIds: ids,
       };
     }
   }
+
   return null;
 }
 

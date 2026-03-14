@@ -5,7 +5,16 @@ type StockxBuyingNode = {
   chainId: string | null;
   orderId: string | null;
   orderNumber: string | null;
-  productVariant?: { id?: string | null } | null;
+  // Keeping these fields loose because StockX query returns a lot of nested data and we
+  // want to log/return the full node for debugging and history export.
+  purchaseDate?: string | null;
+  creationDate?: string | null;
+  amount?: number | null;
+  currencyCode?: string | null;
+  state?: { statusKey?: string | null; statusTitle?: string | null } | null;
+  localizedSizeTitle?: string | null;
+  localizedSizeType?: string | null;
+  productVariant?: any | null;
 };
 
 type StockxBuyOrder = {
@@ -30,6 +39,236 @@ type StockxBuyOrder = {
 };
 
 const STOCKX_PRO_URL = "https://pro.stockx.com/api/graphql";
+
+// Full detail query used for “A+B” enrichment exports and debugging.
+const GET_BUY_ORDER_FULL_QUERY = `
+  query GET_BUY_ORDER(
+    $chainId: String
+    $orderId: String
+    $country: String
+    $market: String
+    $isShipByDateEnabled: Boolean!
+    $isDFSUpdatesEnabled: Boolean!
+  ) {
+    viewer {
+      order(chainId: $chainId, orderId: $orderId) {
+        ... on BuyOrder {
+          id
+          chainId
+          orderNumber
+          created
+          sourceType
+          guestOrderTransferMessage
+          estimatedDeliveryDateRange {
+            estimatedDeliveryDate
+            latestEstimatedDeliveryDate
+            estimatedDeliveryStatus
+          }
+          tradeInvoice @include(if: $isDFSUpdatesEnabled) {
+            transactions {
+              id
+              locationUrl
+            }
+          }
+          deliveredDate
+          actionCode
+          referenceType
+          sellerShipByDateRange @include(if: $isShipByDateEnabled) {
+            start
+            end
+            actual
+          }
+          status
+          currentStatus {
+            key
+            completionStatus
+          }
+          user {
+            shippingAddress {
+              address1
+              address2
+              city
+              region
+              country
+              zipCode
+            }
+          }
+          product {
+            localizedSize {
+              title
+            }
+            variant {
+              id
+              traits {
+                size
+                sizeDescriptor
+              }
+              sizeChart {
+                baseSize
+                baseType
+                displayOptions {
+                  size
+                  type
+                }
+              }
+              market(currencyCode: USD) {
+                state(country: $country, market: $market) {
+                  lowestAsk { amount }
+                  highestBid { amount }
+                }
+              }
+              product {
+                id
+                title
+                primaryTitle
+                secondaryTitle
+                listingType
+                sizeDescriptor
+                productCategory
+                urlKey
+                defaultSizeConversion { name type }
+                media { thumbUrl smallImageUrl imageUrl }
+                brand
+                primaryCategory
+                browseVerticals
+                contentGroup
+              }
+            }
+          }
+          checkoutType
+          states {
+            title
+            subtitle
+            status
+            progress
+            meta
+            sourceType
+          }
+          currency { code }
+          returnDetails { refundMechanism type }
+          return {
+            returnDetails { refundMechanism type }
+            shipping {
+              shipment {
+                documents { returnInstructions }
+              }
+            }
+            pricing {
+              finalized {
+                local {
+                  credit {
+                    total
+                    adjustments {
+                      name
+                      amount
+                      percentage
+                      translationKey
+                      excludedFromTotal
+                      item
+                      groupInternal
+                    }
+                  }
+                }
+              }
+            }
+          }
+          returnInfo {
+            eligibilityDays
+            returnEligibilityStatus
+            returnEligibilityEndDate
+            returnByDate
+            orderDeliveredDate
+            orderReturnedDate
+          }
+          pricing {
+            finalized {
+              local {
+                credit {
+                  total
+                  adjustments {
+                    name
+                    amount
+                    percentage
+                    translationKey
+                    excludedFromTotal
+                    item
+                    groupInternal
+                  }
+                }
+                subtotal
+                total
+                adjustments {
+                  name
+                  amount
+                  excludedFromTotal
+                  translationKey
+                  groupInternal
+                }
+              }
+            }
+          }
+          payment {
+            id
+            settledAmount { value currency }
+            authorizedAmount { value currency }
+            transactions {
+              paymentInstrument { descriptor type cardType }
+              authorizedAmount { value currency }
+              settledAmount { value currency }
+              provider
+              id
+              token
+              status
+              method { id type }
+            }
+          }
+          shipping {
+            shipment {
+              trackingUrl
+              deliveryDate
+            }
+            returnShipment {
+              documents { returnInstructions }
+              trackingUrl
+            }
+          }
+          resellNoFee { eligible expiresAt eligibilityDays }
+          returnInfo {
+            eligibilityDays
+            returnEligibilityEndDate
+            returnEligibilityStatus
+            returnByDate
+          }
+          pickUpDetails {
+            locationId
+            locationName
+            address {
+              address1
+              address2
+              city
+              region
+              country
+              zipCode
+              latitude
+              longitude
+            }
+            pickUpFirstName
+            pickUpLastName
+            openingHours {
+              monday { open close }
+              tuesday { open close }
+              wednesday { open close }
+              thursday { open close }
+              friday { open close }
+              saturday { open close }
+              sunday { open close }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 const GET_BUY_ORDER_QUERY = `
   query GET_BUY_ORDER(
@@ -107,7 +346,7 @@ async function callStockx<T>(
 
 export async function fetchRecentStockxBuyingOrders(
   token: string,
-  options?: { first?: number; maxPages?: number }
+  options?: { first?: number; maxPages?: number; state?: string | null; query?: string | null }
 ): Promise<StockxBuyingNode[]> {
   const first = Math.max(1, Math.min(options?.first ?? 50, 100));
   const maxPages = Math.max(1, options?.maxPages ?? 4);
@@ -119,8 +358,9 @@ export async function fetchRecentStockxBuyingOrders(
       first,
       after,
       currencyCode: "CHF",
-      query: null,
-      state: null,
+      query: options?.query ?? null,
+      // StockX buying query can return empty when state is null; default to PENDING.
+      state: options?.state ?? "PENDING",
       sort: "MATCHED_AT",
       order: "DESC",
     });
@@ -129,11 +369,12 @@ export async function fetchRecentStockxBuyingOrders(
     for (const edge of edges) {
       const node = edge?.node;
       if (!node) continue;
+      // Keep the full node payload (but ensure expected root keys exist).
       out.push({
+        ...node,
         chainId: node.chainId ?? null,
         orderId: node.orderId ?? null,
         orderNumber: node.orderNumber ?? null,
-        productVariant: node.productVariant ?? null,
       });
     }
     const pageInfo = buying?.pageInfo;
@@ -170,6 +411,68 @@ export async function fetchStockxBuyOrderDetails(
   return {
     order,
     awb: extractAwbFromTrackingUrl(trackingUrl),
+    etaMin: etaMinRaw ? new Date(etaMinRaw) : null,
+    etaMax: etaMaxRaw ? new Date(etaMaxRaw) : null,
+  };
+}
+
+export async function fetchStockxBuyOrderDetailsFull(
+  token: string,
+  params: { chainId: string; orderId: string }
+): Promise<{
+  order: any | null;
+  awb: string | null;
+  etaMin: Date | null;
+  etaMax: Date | null;
+}> {
+  const extractAwbLoose = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const normalize = (value: string): string | null => {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const first = trimmed.split(/[,\s|;]+/)[0] || "";
+      const cleaned = first.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+      if (!cleaned) return null;
+      if (/^1Z[0-9A-Z]{16}$/.test(cleaned)) return cleaned;
+      if (/^\d{13,}$/.test(cleaned)) return cleaned.slice(-12);
+      if (/^[A-Z0-9]{8,}$/.test(cleaned)) return cleaned;
+      return null;
+    };
+    // Try URL-based extraction first.
+    const urlAwb = extractAwbFromTrackingUrl(raw);
+    if (urlAwb) return urlAwb;
+    // Fallback: raw strings like "DPD\n123456789" or "tracking: 1Z...."
+    const tokens = raw.split(/[\s\r\n]+/).filter(Boolean);
+    for (const token of tokens) {
+      const hit = normalize(token);
+      if (hit) return hit;
+    }
+    return null;
+  };
+
+  const response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_FULL_QUERY, {
+    chainId: params.chainId,
+    orderId: params.orderId,
+    country: "CH",
+    market: "CH",
+    isShipByDateEnabled: true,
+    isDFSUpdatesEnabled: true,
+  });
+  const order = (response?.data?.viewer?.order ?? null) as any | null;
+  const trackingUrl = order?.shipping?.shipment?.trackingUrl ?? null;
+  const returnTrackingUrl = order?.shipping?.returnShipment?.trackingUrl ?? null;
+  const tradeInvoiceUrl =
+    order?.tradeInvoice?.transactions?.[0]?.locationUrl ??
+    order?.tradeInvoice?.transactions?.[0]?.locationURL ??
+    null;
+  const etaMinRaw = order?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
+  const etaMaxRaw = order?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
+  return {
+    order,
+    awb:
+      extractAwbLoose(trackingUrl) ||
+      extractAwbLoose(returnTrackingUrl) ||
+      extractAwbLoose(tradeInvoiceUrl),
     etaMin: etaMinRaw ? new Date(etaMinRaw) : null,
     etaMax: etaMaxRaw ? new Date(etaMaxRaw) : null,
   };

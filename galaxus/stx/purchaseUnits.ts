@@ -42,8 +42,20 @@ function makeNeedKey(gtin: string, supplierVariantId: string) {
 
 async function resolveStxNeedsForOrder(order: Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>>) {
   if (!order) return [] as StxNeed[];
+  const isStxLine = (line: any): boolean => {
+    const supplierPid = String(line?.supplierPid ?? "").trim().toUpperCase();
+    if (supplierPid.startsWith("STX_")) return true;
+    const supplierVariantId = String(line?.supplierVariantId ?? "").trim().toLowerCase();
+    if (supplierVariantId.startsWith("stx_")) return true;
+    const providerKeyRaw = String(line?.providerKey ?? "").trim().toUpperCase();
+    if (providerKeyRaw === "STX" || providerKeyRaw.startsWith("STX_")) return true;
+    return false;
+  };
   const gtinQty = new Map<string, number>();
   for (const line of order.lines) {
+    // Only STX-designated lines should be handled by the StockX linking flow.
+    // TRM/GLD lines can share GTINs with StockX catalog, but they must not create STX purchase unit needs.
+    if (!isStxLine(line)) continue;
     const gtin = typeof line.gtin === "string" ? line.gtin.trim() : "";
     const qty = Number(line.quantity ?? 0);
     if (!gtin || qty <= 0) continue;

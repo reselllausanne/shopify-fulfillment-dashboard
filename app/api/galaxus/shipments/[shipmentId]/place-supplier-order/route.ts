@@ -9,11 +9,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   let supplierOrder: any | null = null;
   try {
+    const url = new URL(request.url);
+    const onlyAvailable = url.searchParams.get("onlyAvailable") === "1";
+
     const { shipmentId } = await params;
     const shipment = await prisma.shipment.findUnique({
       where: { id: shipmentId },
@@ -197,6 +200,7 @@ export async function POST(
         supplierOrderId: existing.supplierOrderRef,
         supplierOrderStatus: existing.status,
         trackingCount: resolveTrackingCount(existing),
+        supplierOrderError: (existing as any)?.payloadJson?.error ?? null,
         sscc: shipment.packageId ?? null,
         delrSentAt: shipment.delrSentAt ?? null,
       });
@@ -209,6 +213,7 @@ export async function POST(
         supplierOrderId: existing.supplierOrderRef,
         supplierOrderStatus: existing.status,
         trackingCount: resolveTrackingCount(existing),
+        supplierOrderError: (existing as any)?.payloadJson?.error ?? null,
         sscc: shipment.packageId ?? null,
         delrSentAt: shipment.delrSentAt ?? null,
       });
@@ -222,55 +227,67 @@ export async function POST(
       );
     }
 
-    supplierOrder = existing;
-    if (!supplierOrder || supplierOrder.status === "ERROR") {
-      const pendingRef = `pending-${shipment.id}`;
-      try {
-        supplierOrder = await prisma.supplierOrder.create({
-          data: {
-            supplierOrderRef: pendingRef,
-            orderId: shipment.orderId ?? undefined,
+    const pendingRef = `pending-${shipment.id}`;
+    if (!existing) {
+      supplierOrder = await prisma.supplierOrder.create({
+        data: {
+          supplierOrderRef: pendingRef,
+          orderId: shipment.orderId ?? undefined,
+          shipmentId: shipment.id,
+          status: "CREATING",
+          payloadJson: {
+            supplierKey: "golden",
             shipmentId: shipment.id,
-            status: "CREATING",
-            payloadJson: {
-              supplierKey: "golden",
-              shipmentId: shipment.id,
-              createdAt: new Date().toISOString(),
-            },
+            createdAt: new Date().toISOString(),
+            onlyAvailable,
           },
-        });
-      } catch (error: any) {
-        const existingLock = await prisma.supplierOrder.findUnique({
-          where: { shipmentId: shipment.id },
-        });
-        if (existingLock) {
-          return NextResponse.json({
-            ok: true,
-            status: "pending",
-            boxId: shipment.id,
-            supplierOrderId: existingLock.supplierOrderRef,
-            supplierOrderStatus: existingLock.status,
-            trackingCount: resolveTrackingCount(existingLock),
-            sscc: shipment.packageId ?? null,
-            delrSentAt: shipment.delrSentAt ?? null,
-          });
-        }
-        throw error;
-      }
+        },
+      });
+    } else {
+      const existingPayload =
+        existing.payloadJson && typeof existing.payloadJson === "object"
+          ? (existing.payloadJson as any)
+          : {};
+      supplierOrder = await prisma.supplierOrder.update({
+        where: { id: existing.id },
+        data: {
+          status: "CREATING",
+          payloadJson: {
+            ...existingPayload,
+            supplierKey: "golden",
+            shipmentId: shipment.id,
+            retryAt: new Date().toISOString(),
+            onlyAvailable,
+            error: null,
+          },
+        },
+      });
     }
 
-    const items = await buildSupplierItems({
+    const { items, skipped } = await buildSupplierItems({
       orderLines: shipment.order.lines,
       shipmentItems: shipment.items,
+      onlyAvailable,
     });
+    if (onlyAvailable && items.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "No in-stock items available to order for this shipment",
+          boxId: shipment.id,
+          skipped,
+        },
+        { status: 409 }
+      );
+    }
     const deliveryAddress = buildDeliveryAddress(shipment.order);
 
-    const request: SupplierDropshipOrderRequest = {
+    const dropshipRequest: SupplierDropshipOrderRequest = {
       deliveryAddress,
       clientProvidesShippingLabel: false,
       items,
     };
-    const response = await client.createDropshipOrder(request);
+    const response = await client.createDropshipOrder(dropshipRequest);
     const supplierOrderRef = response.orderId;
     const safeResponse = { ...response, raw: undefined };
 
@@ -281,10 +298,12 @@ export async function POST(
           supplierOrderRef,
           status: "CREATED",
           payloadJson: {
-            request,
+            request: dropshipRequest,
             response: safeResponse,
             supplierKey: "golden",
             shipmentId: shipment.id,
+            onlyAvailable,
+            skipped,
           },
         },
       });
@@ -320,6 +339,7 @@ export async function POST(
       supplierOrderId: supplierOrderRef,
       supplierOrderStatus: "CREATED",
       trackingCount: 0,
+      skipped,
       sscc: shipment.packageId ?? null,
       delrSentAt: shipment.delrSentAt ?? null,
     });
@@ -351,8 +371,31 @@ export async function POST(
 async function buildSupplierItems(options: {
   orderLines: Array<import("@prisma/client").GalaxusOrderLine>;
   shipmentItems: Array<{ supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>;
-}): Promise<SupplierDropshipOrderItem[]> {
+  onlyAvailable: boolean;
+}): Promise<{
+  items: SupplierDropshipOrderItem[];
+  skipped: Array<{
+    lineNumber: number | null;
+    gtin: string | null;
+    supplierVariantId: string | null;
+    supplierSku: string | null;
+    sizeRaw: string | null;
+    requestedQty: number;
+    stock: number | null;
+    reason: "NO_VARIANT" | "OUT_OF_STOCK";
+  }>;
+}> {
   const items: SupplierDropshipOrderItem[] = [];
+  const skipped: Array<{
+    lineNumber: number | null;
+    gtin: string | null;
+    supplierVariantId: string | null;
+    supplierSku: string | null;
+    sizeRaw: string | null;
+    requestedQty: number;
+    stock: number | null;
+    reason: "NO_VARIANT" | "OUT_OF_STOCK";
+  }> = [];
   for (const shipmentItem of options.shipmentItems) {
     const line =
       options.orderLines.find(
@@ -368,7 +411,38 @@ async function buildSupplierItems(options: {
     }
     const supplierVariant = await resolveSupplierVariant(line);
     if (!supplierVariant) {
+      if (options.onlyAvailable) {
+        skipped.push({
+          lineNumber: line.lineNumber ?? null,
+          gtin: line.gtin ? String(line.gtin) : null,
+          supplierVariantId: null,
+          supplierSku: line.supplierSku ?? null,
+          sizeRaw: line.size ?? null,
+          requestedQty: shipmentItem.quantity,
+          stock: null,
+          reason: "NO_VARIANT",
+        });
+        continue;
+      }
       throw new Error(`Missing supplier variant for line ${line.lineNumber}`);
+    }
+
+    const stockValue = supplierVariant.stock === null || supplierVariant.stock === undefined
+      ? null
+      : Number(supplierVariant.stock);
+    const available = stockValue === null ? true : stockValue >= shipmentItem.quantity;
+    if (options.onlyAvailable && !available) {
+      skipped.push({
+        lineNumber: line.lineNumber ?? null,
+        gtin: line.gtin ? String(line.gtin) : null,
+        supplierVariantId: supplierVariant.supplierVariantId ?? null,
+        supplierSku: supplierVariant.supplierSku ?? line.supplierSku ?? null,
+        sizeRaw: supplierVariant.sizeRaw ?? line.size ?? null,
+        requestedQty: shipmentItem.quantity,
+        stock: Number.isFinite(stockValue) ? stockValue : null,
+        reason: "OUT_OF_STOCK",
+      });
+      continue;
     }
 
     const sizeId = parseGoldenSizeId(supplierVariant.supplierVariantId);
@@ -384,7 +458,7 @@ async function buildSupplierItems(options: {
     }
     items.push({ sku, sizeUs, quantity: shipmentItem.quantity });
   }
-  return items;
+  return { items, skipped };
 }
 
 function buildDeliveryAddress(order: import("@prisma/client").GalaxusOrder) {

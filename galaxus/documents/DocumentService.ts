@@ -267,6 +267,7 @@ function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
   return lines.map((line) => ({
     lineNumber: line.lineNumber,
     articleNumber:
+      (line as any).buyerPid ??
       line.providerKey ??
       buildProviderKey(line.gtin, line.supplierVariantId) ??
       line.gtin ??
@@ -275,7 +276,12 @@ function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
     size: line.size,
     gtin: line.gtin,
     providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
-    sku: line.supplierSku ?? line.supplierVariantId ?? null,
+    sku:
+      line.providerKey ??
+      line.supplierSku ??
+      line.supplierVariantId ??
+      buildProviderKey(line.gtin, line.supplierVariantId) ??
+      null,
     quantity: line.quantity,
     vatRate: Number(line.vatRate),
     unitNetPrice: Number(line.unitNetPrice),

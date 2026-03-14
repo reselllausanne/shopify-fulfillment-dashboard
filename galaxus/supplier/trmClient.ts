@@ -84,6 +84,31 @@ function parseProducts(payload: any): TrmProduct[] {
   return products;
 }
 
+function parseProduct(payload: any): TrmProduct | null {
+  const sku = String(payload?.sku ?? "").trim();
+  if (!sku) return null;
+  const variantsRaw = Array.isArray(payload?.variants) ? payload.variants : [];
+  const variants: TrmVariant[] = [];
+  for (const variant of variantsRaw) {
+    const variantId = String(variant?.variant_id ?? "").trim();
+    if (!variantId) continue;
+    variants.push({
+      variant_id: variantId,
+      eu_size: variant?.eu_size ?? null,
+      size: variant?.size ?? null,
+      price: parseNumber(variant?.price),
+      stock: parseNumber(variant?.stock),
+      ean: variant?.ean ? String(variant.ean).trim() : null,
+    });
+  }
+  return {
+    sku,
+    brand: payload?.brand ? String(payload.brand).trim() : null,
+    name: payload?.name ? String(payload.name).trim() : null,
+    variants,
+  };
+}
+
 function ensureConfigured() {
   if (!SUPPLIER_TRM_USERNAME || !SUPPLIER_TRM_PASSWORD) {
     throw new Error("Missing SUPPLIER_TRM_USERNAME or SUPPLIER_TRM_PASSWORD");
@@ -155,6 +180,20 @@ export function createTrmSupplierClient() {
       }
       const payload = await response.json();
       return parseProducts(payload);
+    },
+    async fetchProductBySku(sku: string): Promise<TrmProduct | null> {
+      const token = await getAccessToken(baseUrl);
+      const response = await fetch(`${baseUrl}/v1/product/${encodeURIComponent(sku)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`TRM product fetch failed (${response.status}): ${text}`);
+      }
+      const payload = await response.json();
+      return parseProduct(payload);
     },
   };
 }

@@ -65,6 +65,7 @@ terminals/
 
 # StockX credentials
 stockx-cookies.json
+stockx-*.json
 debug/
 .env
 .env

@@ -45,8 +45,12 @@ export async function uploadDelrForShipment(
     return { shipmentId, status: "error", message: "ORDR not sent yet" };
   }
 
-  const stxStatus = await getStxLinkStatusForShipment(shipment.id).catch(() => null);
-  if (stxStatus?.hasStxItems && !options.force) {
+  const providerKey = String(shipment.providerKey ?? "").toUpperCase();
+  const isManual = String(shipment.status ?? "").toUpperCase() === "MANUAL";
+  const isStxShipment = providerKey === "STX";
+
+  const stxStatus = isStxShipment ? await getStxLinkStatusForShipment(shipment.id).catch(() => null) : null;
+  if (isStxShipment && stxStatus?.hasStxItems && !options.force && !isManual) {
     if (!stxStatus.allLinked) {
       return {
         shipmentId,
@@ -65,9 +69,9 @@ export async function uploadDelrForShipment(
     }
   }
 
-  if (!stxStatus?.hasStxItems) {
+  if (!isStxShipment) {
     const placedOnSupplier = await hasPlacedSupplierOrder(shipment);
-    if (!placedOnSupplier && !options.force) {
+    if (!placedOnSupplier && !options.force && !isManual) {
       return {
         shipmentId,
         status: "error",
@@ -119,7 +123,7 @@ export async function uploadDelrForShipment(
     });
     const carrier = resolveCarrier(shipment.carrierFinal ?? null);
     const arrivalByGtin =
-      stxStatus?.hasStxItems
+      isStxShipment && stxStatus?.hasStxItems
         ? await buildStxArrivalByGtin({
             galaxusOrderId: shipment.order.galaxusOrderId,
             buckets: stxStatus.buckets ?? [],
