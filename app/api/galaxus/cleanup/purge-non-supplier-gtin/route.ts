@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const rows = deletePrefixes
       ? await prisma.supplierVariant.findMany({
           where: {
-            OR: deletePrefixes.map((prefix) => ({
+            OR: deletePrefixes.map((prefix: string) => ({
               supplierVariantId: { startsWith: `${prefix}:` },
             })),
           },
