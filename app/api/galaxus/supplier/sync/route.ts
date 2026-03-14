@@ -13,6 +13,13 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const disabled = process.env.GALAXUS_SUPPLIER_SYNC_DISABLED === "1";
+    if (disabled) {
+      return NextResponse.json(
+        { ok: false, error: "Supplier sync disabled", disabled: true },
+        { status: 503 }
+      );
+    }
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const includeTrm = searchParams.get("includeTrm") !== "0";
     const mode = (searchParams.get("mode") ?? "full").toLowerCase();

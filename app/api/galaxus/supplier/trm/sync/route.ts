@@ -7,6 +7,13 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
+    const disabled = process.env.GALAXUS_SUPPLIER_SYNC_DISABLED === "1";
+    if (disabled) {
+      return NextResponse.json(
+        { ok: false, error: "Supplier sync disabled", disabled: true },
+        { status: 503 }
+      );
+    }
     const { searchParams } = new URL(request.url);
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const maxParam = searchParams.get("max");
