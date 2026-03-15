@@ -24,15 +24,27 @@ type EdiOutput = {
 export function buildOrderResponse(
   order: GalaxusOrder,
   lines: GalaxusOrderLine[],
-  options: { supplierId: string; status: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK"; reason?: string | null }
+  options: {
+    supplierId: string;
+    status: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
+    reason?: string | null;
+    arrivalByGtin?: Record<string, { start: Date; end: Date }>;
+  }
 ): EdiOutput {
   const docId = buildDocNumber("GORDR");
   const fallbackArrival = addBusinessDays(new Date(), 4);
-  const ediLines = buildEdiLines(lines).map((line) => ({
-    ...line,
-    arrivalDateStart: line.arrivalDateStart ?? fallbackArrival,
-    arrivalDateEnd: line.arrivalDateEnd ?? line.arrivalDateStart ?? fallbackArrival,
-  }));
+  const arrivalByGtin = options.arrivalByGtin ?? {};
+  const ediLines = buildEdiLines(lines).map((line) => {
+    const gtin = line.gtin ?? null;
+    const arrival = gtin ? arrivalByGtin[gtin] ?? null : null;
+    const start = arrival?.start ?? line.arrivalDateStart ?? fallbackArrival;
+    const end = arrival?.end ?? line.arrivalDateEnd ?? line.arrivalDateStart ?? fallbackArrival;
+    return {
+      ...line,
+      arrivalDateStart: start,
+      arrivalDateEnd: end,
+    };
+  });
   const xml = buildOrderResponseXml({
     docId,
     orderId: order.galaxusOrderId,
@@ -131,8 +143,8 @@ export function buildDispatchNotification(
     buyer: buildBuyerParty(order),
     supplier: buildSupplierParty(),
     lines: ediLines,
-    shipmentId: shipment.trackingNumber ?? shipment.shipmentId,
-    shipmentCarrier: shipment.carrierFinal ?? null,
+    shipmentId: shipment.shipmentId,
+    shipmentCarrier: null,
     deliveryParty: buildDeliveryParty(order),
   });
 

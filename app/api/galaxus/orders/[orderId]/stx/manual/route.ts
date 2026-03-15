@@ -65,14 +65,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     });
 
     // Persist manual context even if the unit already existed/linked.
+    const manualUpdate: Record<string, unknown> = {
+      manualSetAt: new Date(),
+    };
+    if (trackingRaw) manualUpdate.manualTrackingRaw = trackingRaw;
+    if (note) manualUpdate.manualNote = note;
+
     if (linkResult.status === "linked" && linkResult.unitId) {
       await (prisma as any).stxPurchaseUnit.update({
         where: { id: linkResult.unitId },
-        data: {
-          manualTrackingRaw: trackingRaw || null,
-          manualNote: note || null,
-          manualSetAt: new Date(),
-        },
+        data: manualUpdate,
       });
     } else if (linkResult.status === "already_linked") {
       const existing = await (prisma as any).stxPurchaseUnit.findUnique({
@@ -82,11 +84,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       if (existing?.id) {
         await (prisma as any).stxPurchaseUnit.update({
           where: { id: existing.id },
-          data: {
-            manualTrackingRaw: trackingRaw || null,
-            manualNote: note || null,
-            manualSetAt: new Date(),
-          },
+          data: manualUpdate,
         });
       }
     }

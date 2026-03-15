@@ -7,6 +7,70 @@ import { parseOrderFromXml } from "@/galaxus/edi/service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+async function repairOrderAddressesFromLatestOrdp(order: any) {
+  const edi = await (prisma as any).galaxusEdiFile.findFirst({
+    where: {
+      direction: "IN",
+      docType: "ORDP",
+      OR: [{ orderRef: order.galaxusOrderId }, { filename: { contains: order.galaxusOrderId } }],
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, filename: true, payloadJson: true, createdAt: true },
+  });
+  const rawXml = edi?.payloadJson?.rawXml ?? null;
+  if (!rawXml || typeof rawXml !== "string") return null;
+
+  const parsed = parseOrderFromXml(rawXml, order.galaxusOrderId);
+  const parsedStreet = parsed?.recipientAddress1 ? String(parsed.recipientAddress1).trim() : "";
+  const parsedZip = parsed?.recipientPostalCode ? String(parsed.recipientPostalCode).trim() : "";
+  const parsedCity = parsed?.recipientCity ? String(parsed.recipientCity).trim() : "";
+  if (!parsedStreet || !parsedZip || !parsedCity) return null;
+
+  const currentStreet = String(order?.recipientAddress1 ?? "").trim();
+  const currentZip = String(order?.recipientPostalCode ?? "").trim();
+  const currentCity = String(order?.recipientCity ?? "").trim();
+  const parsedDeliveryPartyId = String((parsed as any)?.deliveryPartyId ?? "").trim();
+  const currentDeliveryPartyId = String(order?.deliveryPartyId ?? "").trim();
+
+  const needsUpdate =
+    currentStreet !== parsedStreet ||
+    currentZip !== parsedZip ||
+    currentCity !== parsedCity ||
+    (parsedDeliveryPartyId && currentDeliveryPartyId !== parsedDeliveryPartyId);
+
+  if (!needsUpdate) return null;
+
+  const updated = await prisma.galaxusOrder.update({
+    where: { id: order.id },
+    data: {
+      customerName: parsed.customerName ?? null,
+      customerAddress1: parsed.customerAddress1 ?? null,
+      customerAddress2: parsed.customerAddress2 ?? null,
+      customerPostalCode: parsed.customerPostalCode ?? null,
+      customerCity: parsed.customerCity ?? null,
+      customerCountry: parsed.customerCountry ?? null,
+      customerCountryCode: (parsed as any).customerCountryCode ?? null,
+      customerEmail: (parsed as any).customerEmail ?? null,
+      customerVatId: parsed.customerVatId ?? null,
+      recipientName: parsed.recipientName ?? null,
+      recipientAddress1: parsed.recipientAddress1 ?? null,
+      recipientAddress2: parsed.recipientAddress2 ?? null,
+      recipientPostalCode: parsed.recipientPostalCode ?? null,
+      recipientCity: parsed.recipientCity ?? null,
+      recipientCountry: parsed.recipientCountry ?? null,
+      recipientCountryCode: (parsed as any).recipientCountryCode ?? null,
+      recipientEmail: (parsed as any).recipientEmail ?? null,
+      recipientPhone: (parsed as any).recipientPhone ?? null,
+      deliveryPartyId: (parsed as any).deliveryPartyId ?? null,
+    } as any,
+  });
+
+  return {
+    updated,
+    repairedFrom: { ediFileId: edi.id, filename: edi.filename, createdAt: edi.createdAt },
+  };
+}
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ orderId: string }> }
@@ -47,11 +111,43 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    const placement = await getShipmentPlacementByOrder(order.id);
-    const stx = await getStxLinkStatusForOrder(order.galaxusOrderId).catch(() => null);
+    const repaired = await repairOrderAddressesFromLatestOrdp(order).catch(() => null);
+    const orderRow = repaired?.updated
+      ? ({
+          ...(order as any),
+          ...(repaired.updated as any),
+        } as any)
+      : order;
+
+    const placement = await getShipmentPlacementByOrder(orderRow.id);
+    const stx = await getStxLinkStatusForOrder(orderRow.galaxusOrderId).catch(() => null);
+    const stxUnits = await (prisma as any).stxPurchaseUnit
+      .findMany({
+        where: {
+          galaxusOrderId: orderRow.galaxusOrderId,
+          supplierVariantId: { startsWith: "stx_" },
+        },
+        orderBy: { updatedAt: "desc" },
+        select: {
+          id: true,
+          createdAt: true,
+          updatedAt: true,
+          gtin: true,
+          supplierVariantId: true,
+          stockxOrderId: true,
+          awb: true,
+          etaMin: true,
+          etaMax: true,
+          checkoutType: true,
+          manualTrackingRaw: true,
+          manualNote: true,
+          manualSetAt: true,
+        },
+      })
+      .catch(() => []);
     const gtins = Array.from(
       new Set(
-        order.lines
+        orderRow.lines
           .map((line: any) => String(line.gtin ?? "").trim())
           .filter((gtin: string) => gtin.length > 0)
       )
@@ -78,7 +174,7 @@ export async function GET(
         return prefix ? prefix.trim().toLowerCase() : null;
       };
       const preferredKeyByGtin = new Map<string, string>();
-      for (const line of order.lines as any[]) {
+      for (const line of orderRow.lines as any[]) {
         const gtin = String(line?.gtin ?? "").trim();
         if (!gtin) continue;
         const key = supplierKeyFromPid(line?.supplierPid ?? null);
@@ -112,29 +208,70 @@ export async function GET(
         }
       }
     }
+    const pickLatest = (docs: any[]) => {
+      if (!docs.length) return null;
+      return docs
+        .slice()
+        .sort((a, b) => {
+          const av = Number(a?.version ?? 0);
+          const bv = Number(b?.version ?? 0);
+          if (av !== bv) return bv - av;
+          const at = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bt = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return bt - at;
+        })[0];
+    };
+
     const normalized = {
-      ...order,
+      ...orderRow,
       stx,
+      stxUnits,
       skuByGtin,
       sizeByGtin,
       productNameByGtin,
-      shipments: order.shipments.map((shipment: any) => {
-        const deliveryNote = shipment.documents?.find((doc: any) => doc.type === "DELIVERY_NOTE");
+      shipments: orderRow.shipments.map((shipment: any) => {
+        const isStxShipment = String(shipment?.providerKey ?? "").toUpperCase() === "STX";
+        const stxShipmentStatus = isStxShipment
+          ? stx
+            ? ({
+                ...stx,
+                buckets: (stx?.buckets ?? []).filter((bucket: any) =>
+                  (shipment.items ?? []).some(
+                    (it: any) => String(it?.gtin14 ?? "").trim() === String(bucket?.gtin ?? "").trim()
+                  )
+                ),
+              } as any)
+            : null
+          : null;
+        const deliveryNotes = (shipment.documents ?? []).filter((doc: any) => doc.type === "DELIVERY_NOTE");
+        const deliveryNote = pickLatest(deliveryNotes);
         const labelDocs = (shipment.documents ?? []).filter((doc: any) => doc.type === "LABEL");
-        const ssccLabelDoc = labelDocs.find(
-          (doc: any) => typeof doc.storageUrl === "string" && !doc.storageUrl.includes("shipping-labels")
+        const ssccLabelDoc = pickLatest(
+          labelDocs.filter(
+            (doc: any) => typeof doc.storageUrl === "string" && !doc.storageUrl.includes("shipping-labels")
+          )
         );
-        const shippingLabelDoc = labelDocs.find(
-          (doc: any) => typeof doc.storageUrl === "string" && doc.storageUrl.includes("shipping-labels")
+        const shippingLabelDoc = pickLatest(
+          labelDocs.filter(
+            (doc: any) => typeof doc.storageUrl === "string" && doc.storageUrl.includes("shipping-labels")
+          )
         );
+        const labelDocCreatedAt = ssccLabelDoc?.createdAt ? new Date(ssccLabelDoc.createdAt).getTime() : 0;
+        const shipmentLabelCreatedAt = shipment.labelGeneratedAt
+          ? new Date(shipment.labelGeneratedAt).getTime()
+          : 0;
+        const preferShipmentLabel = shipmentLabelCreatedAt > labelDocCreatedAt;
         const extra = placement.get(shipment.id);
         return {
           ...shipment,
           supplierOrderRef: extra?.supplierOrderRef ?? null,
           boxStatus: extra?.status ?? null,
+          stx: stxShipmentStatus,
           deliveryNotePdfUrl: deliveryNote ? `/api/galaxus/documents/${deliveryNote.id}` : null,
           labelPdfUrl: ssccLabelDoc
-            ? `/api/galaxus/documents/${ssccLabelDoc.id}`
+            ? preferShipmentLabel
+              ? `/api/galaxus/shipments/${shipment.id}/label`
+              : `/api/galaxus/documents/${ssccLabelDoc.id}`
             : shipment.labelPdfUrl
               ? `/api/galaxus/shipments/${shipment.id}/label`
               : null,
@@ -143,7 +280,11 @@ export async function GET(
       }),
     };
 
-    return NextResponse.json({ ok: true, order: normalized });
+    return NextResponse.json({
+      ok: true,
+      order: normalized,
+      ...(repaired?.repairedFrom ? { repairedFromOrdp: repaired.repairedFrom } : {}),
+    });
   } catch (error: any) {
     console.error("[GALAXUS][ORDERS] Detail failed:", error);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

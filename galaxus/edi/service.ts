@@ -435,9 +435,11 @@ async function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
   if (docType === "ORDR") {
     const linesWithStatus = await attachOrderResponseStatus(lines);
     const status = deriveOrderResponseStatus(linesWithStatus);
+    const arrivalByGtin = await buildArrivalByGtinForOrder(order);
     return buildOrderResponse(order, linesWithStatus, {
       supplierId: GALAXUS_SUPPLIER_ID,
       status,
+      arrivalByGtin,
     });
   }
   if (docType === "CANR") {
@@ -456,6 +458,92 @@ async function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
     });
   }
   throw new Error(`Unsupported doc type: ${docType}`);
+}
+
+function addDays(value: Date, days: number): Date {
+  const next = new Date(value);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function isStxLine(line: any): boolean {
+  const supplierPid = String(line?.supplierPid ?? line?.providerKey ?? "").trim().toUpperCase();
+  if (supplierPid.startsWith("STX_")) return true;
+  if (supplierPid.startsWith("STX:")) return true;
+  const variantId = String(line?.supplierVariantId ?? "").trim().toLowerCase();
+  return variantId.startsWith("stx_");
+}
+
+async function buildArrivalByGtinForOrder(order: any) {
+  const arrivalByGtin: Record<string, { start: Date; end: Date }> = {};
+  const stxGtins = new Set<string>();
+  for (const line of order.lines ?? []) {
+    const gtin = String(line?.gtin ?? "").trim();
+    if (!gtin) continue;
+    if (isStxLine(line)) stxGtins.add(gtin);
+  }
+
+  if (stxGtins.size > 0) {
+    const rows = await (prisma as any).stxPurchaseUnit.findMany({
+      where: {
+        galaxusOrderId: order.galaxusOrderId,
+        gtin: { in: Array.from(stxGtins) },
+        etaMin: { not: null },
+        etaMax: { not: null },
+      },
+      select: { gtin: true, etaMin: true, etaMax: true, awb: true },
+    });
+    const byGtin = new Map<string, { min: Date; max: Date }>();
+    for (const row of rows) {
+      const gtin = String(row?.gtin ?? "").trim();
+      if (!gtin || !row?.etaMin || !row?.etaMax) continue;
+      const etaMin = new Date(row.etaMin);
+      const etaMax = new Date(row.etaMax);
+      if (!byGtin.has(gtin)) {
+        byGtin.set(gtin, { min: etaMin, max: etaMax });
+        continue;
+      }
+      const current = byGtin.get(gtin)!;
+      if (etaMin.getTime() < current.min.getTime()) current.min = etaMin;
+      if (etaMax.getTime() > current.max.getTime()) current.max = etaMax;
+    }
+    for (const [gtin, range] of byGtin.entries()) {
+      arrivalByGtin[gtin] = {
+        start: addDays(range.min, 3),
+        end: addDays(range.max, 3),
+      };
+    }
+  }
+
+  const manualShipments = (order.shipments ?? []).filter(
+    (shipment: any) => shipment.manualEtaMin || shipment.manualEtaMax
+  );
+  if (manualShipments.length > 0) {
+    const shipmentIds = manualShipments.map((shipment: any) => shipment.id);
+    const items = await (prisma as any).shipmentItem.findMany({
+      where: { shipmentId: { in: shipmentIds } },
+      select: { shipmentId: true, gtin14: true },
+    });
+    const etaByShipment = new Map<string, { start: Date; end: Date }>();
+    for (const shipment of manualShipments) {
+      const start = shipment.manualEtaMin ?? shipment.manualEtaMax ?? null;
+      const end = shipment.manualEtaMax ?? shipment.manualEtaMin ?? null;
+      if (!start || !end) continue;
+      etaByShipment.set(String(shipment.id), {
+        start: addDays(new Date(start), 3),
+        end: addDays(new Date(end), 3),
+      });
+    }
+    for (const item of items) {
+      const gtin = String(item?.gtin14 ?? "").trim();
+      if (!gtin || arrivalByGtin[gtin]) continue;
+      const eta = etaByShipment.get(String(item.shipmentId));
+      if (!eta) continue;
+      arrivalByGtin[gtin] = eta;
+    }
+  }
+
+  return arrivalByGtin;
 }
 
 function detectDocType(filename: string): EdiDocType | null {
@@ -514,22 +602,25 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
     currencyCode: currency,
     customerName: buyer?.name ?? "Digitec Galaxus AG",
     customerAddress1: buyer?.street ?? "Pfingstweidstrasse 60b",
-    customerAddress2: buyer?.street2 ?? undefined,
+    customerAddress2: buyer?.street2 ?? (buyer as any)?.department ?? undefined,
     customerPostalCode: buyer?.postalCode ?? "8005",
     customerCity: buyer?.city ?? "Zürich",
     customerCountry: buyer?.country ?? "Schweiz",
     customerCountryCode: buyer?.countryCode ?? undefined,
     customerEmail: buyer?.email ?? undefined,
     customerVatId: buyer?.vatId ?? undefined,
-    recipientName: delivery?.name ?? buyer?.name ?? undefined,
-    recipientAddress1: delivery?.street ?? buyer?.street ?? undefined,
-    recipientAddress2: delivery?.street2 ?? buyer?.street2 ?? undefined,
-    recipientPostalCode: delivery?.postalCode ?? buyer?.postalCode ?? undefined,
-    recipientCity: delivery?.city ?? buyer?.city ?? undefined,
-    recipientCountry: delivery?.country ?? buyer?.country ?? undefined,
+    recipientName: delivery?.name ?? undefined,
+    recipientAddress1: delivery?.street ?? undefined,
+    recipientAddress2:
+      delivery?.street2 ??
+      (delivery as any)?.department ??
+      undefined,
+    recipientPostalCode: delivery?.postalCode ?? undefined,
+    recipientCity: delivery?.city ?? undefined,
+    recipientCountry: delivery?.country ?? undefined,
     recipientCountryCode: delivery?.countryCode ?? undefined,
     recipientEmail: delivery?.email ?? undefined,
-    recipientPhone: delivery?.phone ?? buyer?.phone ?? undefined,
+    recipientPhone: delivery?.phone ?? undefined,
     referencePerson: findValue(data, "REFERENCE_PERSON") ?? undefined,
     yourReference: findValue(data, "YOUR_REFERENCE") ?? undefined,
     afterSalesHandling: Boolean(findValue(data, "AFTER_SALES_HANDLING") ?? false),
@@ -697,12 +788,14 @@ function findParty(data: any, role: string) {
       const contact = address.CONTACT_DETAILS ?? {};
       const name = extractText(address.NAME) ?? [contact.FIRST_NAME, contact.CONTACT_NAME].filter(Boolean).join(" ") ?? null;
       const name2 = extractText(address.NAME2) ?? null;
+      const department = extractText((address as any).DEPARTMENT) ?? null;
       const combinedName = name2 ? [name, name2].filter(Boolean).join(", ") : name;
 
       return {
         name: combinedName,
         street: extractText(address.STREET) ?? null,
         street2: extractText(address.STREET2) ?? null,
+        department,
         postalCode: normalizePostalCode(address.ZIP),
         city: extractText(address.CITY) ?? null,
         country: extractText(address.COUNTRY) ?? null,

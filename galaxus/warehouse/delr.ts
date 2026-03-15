@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/app/lib/prisma";
+import { XMLParser } from "fast-xml-parser";
 import { buildDispatchNotification } from "@/galaxus/edi/documents";
 import { upsertEdiFile } from "@/galaxus/edi/ediFiles";
 import {
@@ -25,6 +26,105 @@ type UploadResult = {
   ediFileId?: string;
 };
 
+const ordrParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  removeNSPrefix: true,
+});
+
+function extractText(value: any): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "object") {
+    if (value["#text"]) return String(value["#text"]);
+    if (value.text) return String(value.text);
+  }
+  return null;
+}
+
+function normalizePostalCode(value: any): string | null {
+  const raw = extractText(value);
+  if (!raw) return null;
+  return raw.replace(/^CH[\s-]*/i, "").trim();
+}
+
+function findDeliveryParty(root: any) {
+  const partiesNode =
+    root?.ORDER_HEADER?.ORDER_INFO?.PARTIES?.PARTY ?? root?.PARTIES?.PARTY ?? null;
+  const parties = Array.isArray(partiesNode) ? partiesNode : partiesNode ? [partiesNode] : [];
+  for (const party of parties) {
+    const roleAttr = extractText(party?.["@_PARTY_ROLE"]) ?? "";
+    const roleNode = extractText(party?.PARTY_ROLE) ?? "";
+    const role = String(roleAttr || roleNode).toLowerCase().trim();
+    if (role !== "delivery") continue;
+    const address = party?.ADDRESS ?? {};
+    const delivery = {
+      name: extractText(address.NAME) ?? null,
+      name2: extractText(address.NAME2) ?? null,
+      department: extractText(address.DEPARTMENT) ?? null,
+      street: extractText(address.STREET) ?? null,
+      street2: extractText(address.STREET2) ?? null,
+      postalCode: normalizePostalCode(address.ZIP),
+      city: extractText(address.CITY) ?? null,
+      country: extractText(address.COUNTRY) ?? null,
+      countryCode: extractText(address.COUNTRY_CODED) ?? extractText(address.COUNTRY_CODE) ?? null,
+    };
+    if (!delivery.street || !delivery.postalCode || !delivery.city) return null;
+    return delivery;
+  }
+  return null;
+}
+
+async function refreshOrderRecipientFromOrdp(order: any) {
+  const edi = await (prisma as any).galaxusEdiFile.findFirst({
+    where: {
+      direction: "IN",
+      docType: "ORDP",
+      OR: [{ orderRef: order.galaxusOrderId }, { filename: { contains: order.galaxusOrderId } }],
+    },
+    orderBy: { createdAt: "desc" },
+    select: { payloadJson: true },
+  });
+  const rawXml = edi?.payloadJson?.rawXml ?? null;
+  if (!rawXml || typeof rawXml !== "string") return order;
+  let data: any;
+  try {
+    data = ordrParser.parse(rawXml);
+  } catch {
+    return order;
+  }
+  const root = data?.ORDER ?? data;
+  const delivery = findDeliveryParty(root);
+  if (!delivery) return order;
+
+  const recipientAddress2 =
+    delivery.street2 ?? delivery.department ?? delivery.name2 ?? null;
+  const currentStreet = String(order?.recipientAddress1 ?? "").trim();
+  const currentZip = String(order?.recipientPostalCode ?? "").trim();
+  const currentCity = String(order?.recipientCity ?? "").trim();
+  if (
+    currentStreet === delivery.street &&
+    currentZip === delivery.postalCode &&
+    currentCity === delivery.city &&
+    String(order?.recipientAddress2 ?? "").trim() === String(recipientAddress2 ?? "").trim()
+  ) {
+    return order;
+  }
+
+  return prisma.galaxusOrder.update({
+    where: { id: order.id },
+    data: {
+      recipientName: delivery.name ?? "Digitec Galaxus AG",
+      recipientAddress1: delivery.street,
+      recipientAddress2,
+      recipientPostalCode: delivery.postalCode,
+      recipientCity: delivery.city,
+      recipientCountry: delivery.country ?? "Schweiz",
+      recipientCountryCode: delivery.countryCode ?? "CH",
+    },
+  });
+}
+
 export async function uploadDelrForShipment(
   shipmentId: string,
   options: { force?: boolean } = {}
@@ -40,6 +140,8 @@ export async function uploadDelrForShipment(
   if (!shipment || !shipment.order) {
     return { shipmentId, status: "error", message: "Shipment not found" };
   }
+
+  shipment.order = await refreshOrderRecipientFromOrdp(shipment.order);
 
   if (!shipment.order.ordrSentAt && !options.force) {
     return { shipmentId, status: "error", message: "ORDR not sent yet" };
@@ -122,13 +224,11 @@ export async function uploadDelrForShipment(
       items,
     });
     const carrier = resolveCarrier(shipment.carrierFinal ?? null);
-    const arrivalByGtin =
-      isStxShipment && stxStatus?.hasStxItems
-        ? await buildStxArrivalByGtin({
-            galaxusOrderId: shipment.order.galaxusOrderId,
-            buckets: stxStatus.buckets ?? [],
-          })
-        : {};
+  const arrivalByGtin = await buildArrivalByGtinForShipment({
+    shipment,
+    items,
+    isStxShipment,
+  });
     const dispatch = buildDispatchNotification(
       shipment.order,
       shipment.order.lines,
@@ -212,6 +312,8 @@ export async function buildDelrXmlForShipment(
     throw new Error("Shipment not found");
   }
 
+  shipment.order = await refreshOrderRecipientFromOrdp(shipment.order);
+
   if (!shipment.order.ordrSentAt && !options.force) {
     throw new Error("ORDR not sent yet");
   }
@@ -248,13 +350,11 @@ export async function buildDelrXmlForShipment(
   });
 
   const carrier = resolveCarrier(shipment.carrierFinal ?? null);
-  const arrivalByGtin =
-    stxStatus?.hasStxItems
-      ? await buildStxArrivalByGtin({
-          galaxusOrderId: shipment.order.galaxusOrderId,
-          buckets: stxStatus.buckets ?? [],
-        })
-      : {};
+  const arrivalByGtin = await buildArrivalByGtinForShipment({
+    shipment,
+    items,
+    isStxShipment: stxStatus?.hasStxItems ?? false,
+  });
 
   const dispatch = buildDispatchNotification(
     shipment.order,
@@ -361,6 +461,67 @@ function addBusinessDays(base: Date, days: number) {
     }
   }
   return result;
+}
+
+function addDays(base: Date, days: number) {
+  const result = new Date(base);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+async function buildArrivalByGtinForShipment(params: {
+  shipment: any;
+  items: Array<{ supplierPid: string; gtin14: string; quantity: number }>;
+  isStxShipment: boolean;
+}) {
+  const { shipment, items, isStxShipment } = params;
+  const arrivalByGtin: Record<string, { start: Date; end: Date }> = {};
+  const gtins = Array.from(
+    new Set(items.map((item) => String(item?.gtin14 ?? "").trim()).filter((gtin) => gtin.length > 0))
+  );
+
+  if (isStxShipment && gtins.length > 0) {
+    const rows = await (prisma as any).stxPurchaseUnit.findMany({
+      where: {
+        galaxusOrderId: shipment.order.galaxusOrderId,
+        gtin: { in: gtins },
+        etaMin: { not: null },
+        etaMax: { not: null },
+      },
+      select: { gtin: true, etaMin: true, etaMax: true, awb: true },
+    });
+    const byGtin = new Map<string, { min: Date; max: Date }>();
+    for (const row of rows) {
+      const gtin = String(row?.gtin ?? "").trim();
+      if (!gtin || !row?.etaMin || !row?.etaMax) continue;
+      const etaMin = new Date(row.etaMin);
+      const etaMax = new Date(row.etaMax);
+      if (!byGtin.has(gtin)) {
+        byGtin.set(gtin, { min: etaMin, max: etaMax });
+        continue;
+      }
+      const current = byGtin.get(gtin)!;
+      if (etaMin.getTime() < current.min.getTime()) current.min = etaMin;
+      if (etaMax.getTime() > current.max.getTime()) current.max = etaMax;
+    }
+    for (const [gtin, range] of byGtin.entries()) {
+      arrivalByGtin[gtin] = {
+        start: addDays(range.min, 3),
+        end: addDays(range.max, 3),
+      };
+    }
+  } else if (shipment.manualEtaMin || shipment.manualEtaMax) {
+    const start = shipment.manualEtaMin ?? shipment.manualEtaMax ?? null;
+    const end = shipment.manualEtaMax ?? shipment.manualEtaMin ?? null;
+    if (start && end) {
+      const range = { start: addDays(new Date(start), 3), end: addDays(new Date(end), 3) };
+      for (const gtin of gtins) {
+        arrivalByGtin[gtin] = range;
+      }
+    }
+  }
+
+  return arrivalByGtin;
 }
 
 async function buildStxArrivalByGtin(params: {

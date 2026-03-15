@@ -210,19 +210,27 @@ export function buildDispatchXml(doc: EdiDispatchDocument): string {
   info.ele("DISPATCHNOTIFICATION_DATE").txt(formatDispatchDateTime(doc.dispatchDate));
 
   const parties = info.ele("PARTIES");
+  if (
+    !doc.deliveryParty ||
+    !doc.deliveryParty.name?.trim() ||
+    !doc.deliveryParty.street?.trim() ||
+    !doc.deliveryParty.postalCode?.trim() ||
+    !doc.deliveryParty.city?.trim() ||
+    !doc.deliveryParty.country?.trim()
+  ) {
+    throw new Error("Missing delivery party address for DELR");
+  }
   const deliveryParty = {
     id: doc.deliveryParty?.id?.trim() ? doc.deliveryParty.id : "delivery",
-    name: doc.deliveryParty?.name?.trim() ? doc.deliveryParty.name : doc.buyer.name,
-    street: doc.deliveryParty?.street?.trim() ? doc.deliveryParty.street : doc.buyer.street,
-    street2: doc.deliveryParty?.street2?.trim() ? doc.deliveryParty.street2 : undefined,
-    postalCode: doc.deliveryParty?.postalCode?.trim()
-      ? doc.deliveryParty.postalCode
-      : doc.buyer.postalCode,
-    city: doc.deliveryParty?.city?.trim() ? doc.deliveryParty.city : doc.buyer.city,
-    country: doc.deliveryParty?.country?.trim() ? doc.deliveryParty.country : doc.buyer.country,
-    vatId: doc.deliveryParty?.vatId?.trim() ? doc.deliveryParty.vatId : undefined,
-    email: doc.deliveryParty?.email?.trim() ? doc.deliveryParty.email : undefined,
-    phone: doc.deliveryParty?.phone?.trim() ? doc.deliveryParty.phone : doc.buyer.phone,
+    name: doc.deliveryParty.name,
+    street: doc.deliveryParty.street,
+    street2: doc.deliveryParty.street2?.trim() ? doc.deliveryParty.street2 : undefined,
+    postalCode: doc.deliveryParty.postalCode,
+    city: doc.deliveryParty.city,
+    country: doc.deliveryParty.country,
+    vatId: doc.deliveryParty.vatId?.trim() ? doc.deliveryParty.vatId : undefined,
+    email: doc.deliveryParty.email?.trim() ? doc.deliveryParty.email : undefined,
+    phone: doc.deliveryParty.phone?.trim() ? doc.deliveryParty.phone : undefined,
   };
   addDispatchDeliveryParty(parties, deliveryParty);
 
@@ -266,23 +274,35 @@ export function buildInvoiceXml(doc: EdiInvoiceDocument): string {
   }
 
   const parties = info.ele("PARTIES");
-  const deliveryParty = {
-    id: doc.deliveryParty?.id?.trim() ? doc.deliveryParty.id : "delivery",
-    name: doc.deliveryParty?.name?.trim() ? doc.deliveryParty.name : doc.buyer.name,
-    street: doc.deliveryParty?.street?.trim() ? doc.deliveryParty.street : doc.buyer.street,
-    street2: doc.deliveryParty?.street2?.trim() ? doc.deliveryParty.street2 : undefined,
-    postalCode: doc.deliveryParty?.postalCode?.trim()
-      ? doc.deliveryParty.postalCode
-      : doc.buyer.postalCode,
-    city: doc.deliveryParty?.city?.trim() ? doc.deliveryParty.city : doc.buyer.city,
-    country: doc.deliveryParty?.country?.trim() ? doc.deliveryParty.country : doc.buyer.country,
-    vatId: doc.deliveryParty?.vatId?.trim() ? doc.deliveryParty.vatId : undefined,
-    email: doc.deliveryParty?.email?.trim() ? doc.deliveryParty.email : undefined,
-    phone: doc.deliveryParty?.phone?.trim() ? doc.deliveryParty.phone : doc.buyer.phone,
-  };
+  if (
+    doc.deliveryParty &&
+    (!doc.deliveryParty.name?.trim() ||
+      !doc.deliveryParty.street?.trim() ||
+      !doc.deliveryParty.postalCode?.trim() ||
+      !doc.deliveryParty.city?.trim() ||
+      !doc.deliveryParty.country?.trim())
+  ) {
+    throw new Error("Missing delivery party address for INVO");
+  }
+  const deliveryParty = doc.deliveryParty
+    ? {
+        id: doc.deliveryParty?.id?.trim() ? doc.deliveryParty.id : "delivery",
+        name: doc.deliveryParty.name,
+        street: doc.deliveryParty.street,
+        street2: doc.deliveryParty.street2?.trim() ? doc.deliveryParty.street2 : undefined,
+        postalCode: doc.deliveryParty.postalCode,
+        city: doc.deliveryParty.city,
+        country: doc.deliveryParty.country,
+        vatId: doc.deliveryParty.vatId?.trim() ? doc.deliveryParty.vatId : undefined,
+        email: doc.deliveryParty.email?.trim() ? doc.deliveryParty.email : undefined,
+        phone: doc.deliveryParty.phone?.trim() ? doc.deliveryParty.phone : undefined,
+      }
+    : null;
   addInvoiceParty(parties, "buyer", doc.buyer);
   addInvoiceParty(parties, "invoice_issuer", doc.supplier);
-  addInvoiceParty(parties, "delivery", deliveryParty);
+  if (deliveryParty) {
+    addInvoiceParty(parties, "delivery", deliveryParty);
+  }
   info.ele("CURRENCY", { xmlns: BMECAT_NS }).txt(doc.currency);
 
   const orderHistory = header.ele("ORDER_HISTORY");

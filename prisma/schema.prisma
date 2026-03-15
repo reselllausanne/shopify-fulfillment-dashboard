@@ -771,6 +771,10 @@ model Shipment {
   carrierRaw     String?
   carrierFinal   String?
   trackingNumber String?
+  manualOrderRef String?
+  manualEtaMin   DateTime?
+  manualEtaMax   DateTime?
+  manualNote     String?
   packageType    ShipmentPackageType @default(PARCEL)
   shippedAt      DateTime?
   delrFileName   String?

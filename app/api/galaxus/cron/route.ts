@@ -79,7 +79,20 @@ export async function GET(request: Request) {
         if (!res.ok || !data.ok) {
           throw new Error(data?.error ?? "Feed master upload failed");
         }
-        return { supplier: supplierData, kickdb: enrichData, partner: partnerData, upload: data };
+        const specsRes = await fetch(`${origin}/api/galaxus/feeds/upload?type=specs${supplierParam}`, {
+          cache: "no-store",
+        });
+        const specsData = await specsRes.json().catch(() => ({}));
+        if (!specsRes.ok || !specsData.ok) {
+          throw new Error(specsData?.error ?? "Feed specs upload failed");
+        }
+        return {
+          supplier: supplierData,
+          kickdb: enrichData,
+          partner: partnerData,
+          upload: data,
+          specs: specsData,
+        };
       });
     }
 

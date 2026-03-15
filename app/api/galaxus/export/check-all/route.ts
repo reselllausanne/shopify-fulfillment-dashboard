@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -660,9 +661,7 @@ export async function GET(request: Request) {
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
 
-    const whereSupplier = supplier
-      ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
-      : {};
+    const mappingsWhere = buildFeedMappingsWhere(supplier, all);
 
     const masterRows: ExportRow[] = [];
     const stockRows: ExportRow[] = [];
@@ -696,9 +695,7 @@ export async function GET(request: Request) {
     do {
       const mappings = await prismaAny.variantMapping.findMany({
         where: {
-          status: { in: ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] },
-          gtin: { not: null },
-          ...whereSupplier,
+          ...mappingsWhere,
         },
         include: {
           supplierVariant: true,

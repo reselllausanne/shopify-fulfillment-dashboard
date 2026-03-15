@@ -68,11 +68,16 @@ function buildRecipient(order: any) {
   if (hasRecipient) {
     const country = normalizeCountryCode(order.recipientCountryCode ?? order.recipientCountry) ?? "CH";
     const zip = normalizePostalCode(order.recipientPostalCode) ?? "";
+    const baseStreet = order.recipientAddress1 ?? "";
+    const extraStreet = order.recipientAddress2 ? String(order.recipientAddress2).trim() : "";
+    const street = extraStreet && !baseStreet.includes(extraStreet)
+      ? `${baseStreet}, ${extraStreet}`
+      : baseStreet;
     return {
       name1: order.recipientName ?? "",
       firstName: null,
       name2: null,
-      street: order.recipientAddress1 ?? "",
+      street,
       zip,
       city: order.recipientCity ?? "",
       country,
@@ -82,11 +87,16 @@ function buildRecipient(order: any) {
   }
   const country = normalizeCountryCode(order.customerCountryCode ?? order.customerCountry) ?? "CH";
   const zip = normalizePostalCode(order.customerPostalCode) ?? "";
+  const baseStreet = order.customerAddress1 ?? "";
+  const extraStreet = order.customerAddress2 ? String(order.customerAddress2).trim() : "";
+  const street = extraStreet && !baseStreet.includes(extraStreet)
+    ? `${baseStreet}, ${extraStreet}`
+    : baseStreet;
   return {
     name1: order.customerName ?? "",
     firstName: null,
     name2: null,
-    street: order.customerAddress1 ?? "",
+    street,
     zip,
     city: order.customerCity ?? "",
     country,

@@ -125,6 +125,10 @@ type Shipment = {
   dispatchNotificationId?: string | null;
   packageId?: string | null;
   trackingNumber?: string | null;
+  manualOrderRef?: string | null;
+  manualEtaMin?: string | null;
+  manualEtaMax?: string | null;
+  manualNote?: string | null;
   carrierFinal?: string | null;
   delrStatus?: string | null;
   delrFileName?: string | null;
@@ -136,6 +140,7 @@ type Shipment = {
   shippedAt?: string | null;
   createdAt: string;
   items: ShipmentItem[];
+  stx?: StxOrderStatus | null;
 };
 
 type EdiFile = {
@@ -202,6 +207,21 @@ type OrderDetail = {
   statusEvents: Array<{ id: string; type: string; createdAt: string }>;
   ediFiles: EdiFile[];
   stx?: StxOrderStatus | null;
+  stxUnits?: Array<{
+    id: string;
+    createdAt: string;
+    updatedAt: string;
+    gtin: string;
+    supplierVariantId: string;
+    stockxOrderId: string | null;
+    awb: string | null;
+    etaMin: string | null;
+    etaMax: string | null;
+    checkoutType: string | null;
+    manualTrackingRaw: string | null;
+    manualNote: string | null;
+    manualSetAt: string | null;
+  }>;
   skuByGtin?: Record<string, string>;
   sizeByGtin?: Record<string, string>;
   productNameByGtin?: Record<string, string>;
@@ -258,6 +278,17 @@ export default function GalaxusDashboardPage() {
   const [stxManualEtaMax, setStxManualEtaMax] = useState<string>("");
   const [stxManualAwb, setStxManualAwb] = useState<string>("");
   const [stxManualNote, setStxManualNote] = useState<string>("");
+  const [manualFulfillModalOpen, setManualFulfillModalOpen] = useState<boolean>(false);
+  const [manualFulfillShipmentId, setManualFulfillShipmentId] = useState<string>("");
+  const [manualFulfillLineId, setManualFulfillLineId] = useState<string>("");
+  const [manualFulfillTracking, setManualFulfillTracking] = useState<string>("");
+  const [manualFulfillCarrier, setManualFulfillCarrier] = useState<string>("Swiss Post");
+  const [manualFulfillMarkShipped, setManualFulfillMarkShipped] = useState<boolean>(false);
+  const [manualFulfillOrderRef, setManualFulfillOrderRef] = useState<string>("");
+  const [manualFulfillEtaMin, setManualFulfillEtaMin] = useState<string>("");
+  const [manualFulfillEtaMax, setManualFulfillEtaMax] = useState<string>("");
+  const [manualFulfillNote, setManualFulfillNote] = useState<string>("");
+  const [manualFulfillIsStx, setManualFulfillIsStx] = useState<boolean>(false);
   const [lineStockById, setLineStockById] = useState<
     Record<
       string,
@@ -284,6 +315,174 @@ export default function GalaxusDashboardPage() {
     if (!runAt) return "—";
     const status = result?.ok ? "OK" : "FAIL";
     return `${new Date(runAt).toLocaleString()} · ${status}`;
+  };
+
+  const totalShipments = selectedOrder?.shipments?.length ?? 0;
+  const delrUploadedCount =
+    selectedOrder?.shipments?.filter(
+      (s) => String(s.delrStatus ?? "").toUpperCase() === "UPLOADED" || Boolean(s.delrSentAt)
+    ).length ?? 0;
+  const shippedCount = selectedOrder?.shipments?.filter((s) => Boolean(s.shippedAt)).length ?? 0;
+  const orderGalaxusLocked = delrUploadedCount > 0;
+
+  const toDateInput = (iso: string | null | undefined): string => {
+    const raw = String(iso ?? "").trim();
+    if (!raw) return "";
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return "";
+    return d.toISOString().slice(0, 10);
+  };
+
+  const openStxManualModalForVariant = (variantId: string) => {
+    const next = String(variantId ?? "").trim();
+    setStxManualVariantId(next);
+
+    const units = Array.isArray(selectedOrder?.stxUnits) ? selectedOrder?.stxUnits : [];
+    const related = units.filter((u) => String(u?.supplierVariantId ?? "") === next);
+    const best =
+      related.find((u) => Boolean(u?.manualSetAt)) ??
+      related.find((u) => Boolean(u?.stockxOrderId)) ??
+      related[0] ??
+      null;
+
+    setStxManualOrderId(best?.stockxOrderId ? String(best.stockxOrderId) : "");
+    setStxManualEtaMin(toDateInput(best?.etaMin ?? null));
+    setStxManualEtaMax(toDateInput(best?.etaMax ?? null));
+    setStxManualAwb(
+      best?.manualTrackingRaw
+        ? String(best.manualTrackingRaw)
+        : best?.awb
+          ? String(best.awb)
+          : ""
+    );
+    setStxManualNote(best?.manualNote ? String(best.manualNote) : "");
+    setStxManualModalOpen(Boolean(next));
+  };
+
+  const openManualFulfillForLine = (line: OrderLine) => {
+    if (!selectedOrder) {
+      setError("Select an order first.");
+      return;
+    }
+    if (!selectedOrder.shipments?.length) {
+      setError("Pack shipments first (no shipments found).");
+      return;
+    }
+    const gtin = String(line?.gtin ?? "").trim();
+    const supplierPid = String(line?.supplierPid ?? "").trim();
+    const shipment =
+      selectedOrder.shipments.find((s) =>
+        (s.items ?? []).some(
+          (it) => String(it?.gtin14 ?? "").trim() === gtin && String(it?.supplierPid ?? "").trim() === supplierPid
+        )
+      ) ?? null;
+    if (!shipment) {
+      setError("Could not find a shipment box for this line. Re-pack shipments and try again.");
+      return;
+    }
+    setManualFulfillShipmentId(shipment.id);
+    setManualFulfillLineId(line.id);
+    setManualFulfillTracking(shipment.trackingNumber ? String(shipment.trackingNumber) : "");
+    setManualFulfillCarrier(shipment.carrierFinal ? String(shipment.carrierFinal) : "Swiss Post");
+    setManualFulfillMarkShipped(!shipment.shippedAt);
+    setManualFulfillOrderRef(shipment.manualOrderRef ? String(shipment.manualOrderRef) : "");
+    setManualFulfillEtaMin(toDateInput(shipment.manualEtaMin ?? null));
+    setManualFulfillEtaMax(toDateInput(shipment.manualEtaMax ?? null));
+    setManualFulfillNote(shipment.manualNote ? String(shipment.manualNote) : "");
+    const ref = shipment.manualOrderRef ? String(shipment.manualOrderRef) : "";
+    setManualFulfillIsStx(isLikelyStockxOrderId(ref));
+    setManualFulfillModalOpen(true);
+  };
+
+  const isLikelyStockxOrderId = (value: string): boolean => {
+    const v = String(value ?? "").trim().toUpperCase();
+    if (!v) return false;
+    return /^(\d{2}-)?[A-Z0-9]{6,}$/.test(v);
+  };
+
+  const guessCarrierFromTrackingUrl = (url: string | null): string | null => {
+    if (!url) return null;
+    const u = url.toLowerCase();
+    if (u.includes("dhl")) return "DHL";
+    if (u.includes("ups") || u.includes("1z")) return "UPS";
+    if (u.includes("dpd")) return "DPD";
+    if (u.includes("fedex")) return "FedEx";
+    if (u.includes("swisspost") || u.includes("post.ch")) return "Swiss Post";
+    return null;
+  };
+
+  const fetchManualStockxDetails = async () => {
+    const orderId = manualFulfillOrderRef.trim();
+    if (!orderId) {
+      setError("Enter a StockX order number first.");
+      return;
+    }
+    setBusy("manual-stockx-lookup");
+    setError(null);
+    try {
+      const res = await fetch(`/api/galaxus/stx/buy-order-lookup?orderId=${encodeURIComponent(orderId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error ?? "StockX lookup failed");
+      const details = data.details ?? {};
+      if (details.etaMin) setManualFulfillEtaMin(toDateInput(details.etaMin));
+      if (details.etaMax) setManualFulfillEtaMax(toDateInput(details.etaMax));
+      if (details.awb && !manualFulfillTracking.trim()) setManualFulfillTracking(String(details.awb));
+      const carrierGuess = guessCarrierFromTrackingUrl(details.trackingUrl ?? null);
+      if (carrierGuess && !manualFulfillCarrier.trim()) setManualFulfillCarrier(carrierGuess);
+      setManualFulfillIsStx(true);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveManualFulfillOverride = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    if (!manualFulfillShipmentId.trim()) {
+      setError("No shipment selected for manual override.");
+      return;
+    }
+    setBusy(`manual-override-${manualFulfillShipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${manualFulfillShipmentId}/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          manualManaged: true,
+          markShipped: manualFulfillMarkShipped,
+          trackingNumber: manualFulfillTracking.trim() || null,
+          carrierFinal: manualFulfillCarrier.trim() || null,
+          manualOrderRef: manualFulfillOrderRef.trim() || null,
+          manualEtaMin: manualFulfillEtaMin ? new Date(manualFulfillEtaMin).toISOString() : null,
+          manualEtaMax: manualFulfillEtaMax ? new Date(manualFulfillEtaMax).toISOString() : null,
+          manualNote: manualFulfillNote.trim() || null,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data?.error ?? "Manual override failed");
+      setOpsLog(
+        JSON.stringify(
+          {
+            ...data,
+            lineId: manualFulfillLineId || null,
+          },
+          null,
+          2
+        )
+      );
+      await loadOrderDetail(selectedOrderId);
+      setManualFulfillModalOpen(false);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const loadSchedulerStatus = async () => {
@@ -856,31 +1055,6 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const repairOrderPartiesFromOrdp = async () => {
-    if (!selectedOrderId) {
-      setError("Select an order first.");
-      return;
-    }
-    setBusy("repair-parties");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch(`/api/galaxus/orders/${selectedOrderId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "repair_parties" }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.ok) throw new Error(data?.error ?? "Repair failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-      await loadOrderDetail(selectedOrderId);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const sendOrdr = async () => {
     if (!selectedOrderId) {
       setError("Select an order first.");
@@ -1364,6 +1538,12 @@ export default function GalaxusDashboardPage() {
                 Auto-upload: {schedulerStatus?.running ? "ON" : "OFF"}
               </div>
             </div>
+            {orderGalaxusLocked ? (
+              <div className="text-xs text-red-600">
+                Galaxus EDI is locked because at least one DELR was sent. You can still generate labels, but ORDR/INVO/DELR
+                actions are disabled.
+              </div>
+            ) : null}
             <div className="rounded border bg-white p-2 text-xs text-gray-600">
               <div>EDI IN (ORDR pull) every 1 hour</div>
               <div>Supplier sync every 2 hours</div>
@@ -1819,26 +1999,11 @@ export default function GalaxusDashboardPage() {
         <div className="space-y-2">
           <div className="text-sm font-medium">Order Detail</div>
           <div className="flex gap-2 flex-wrap items-center">
-            <input
-              className="px-2 py-2 border rounded text-sm w-72"
-              value={selectedOrderId}
-              onChange={(event) => setSelectedOrderId(event.target.value)}
-              placeholder="Order ID (DB or Galaxus ID)"
-            />
-            <button
-              className="px-3 py-2 rounded bg-gray-200"
-              onClick={() => loadOrderDetail(selectedOrderId)}
-              disabled={busy !== null}
-            >
-              Load Order
-            </button>
-            <button
-              className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-              onClick={repairOrderPartiesFromOrdp}
-              disabled={busy !== null}
-            >
-              {busy === "repair-parties" ? "Repairing…" : "Repair address from ORDP"}
-            </button>
+            <div className="text-xs text-gray-500">
+              Selected order:{" "}
+              <span className="font-mono">{selectedOrder?.galaxusOrderId ?? "—"}</span>{" "}
+              {selectedOrder?.id ? <span className="text-gray-400">({selectedOrder.id})</span> : null}
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500">Max pairs/parcel</span>
               <input
@@ -1900,7 +2065,7 @@ export default function GalaxusDashboardPage() {
               <button
                 className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
                 onClick={sendOrdr}
-                disabled={busy !== null}
+                disabled={busy !== null || orderGalaxusLocked}
               >
                 {busy === "ordr" ? "Sending…" : "Send ORDR"}
               </button>
@@ -1914,7 +2079,7 @@ export default function GalaxusDashboardPage() {
               <button
                 className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
                 onClick={sendInvoice}
-                disabled={busy !== null}
+                disabled={busy !== null || orderGalaxusLocked}
               >
                 {busy === "invoice" ? "Sending…" : "Send INVO"}
               </button>
@@ -1950,13 +2115,12 @@ export default function GalaxusDashboardPage() {
                     {selectedOrder.shipments.length > 0 ? "Created" : "Not packed"}
                   </div>
                   <div>
-                    DELR:{" "}
-                    {selectedOrder.shipments.some(
-                      (shipment) =>
-                        shipment.delrStatus === "UPLOADED" || Boolean(shipment.delrSentAt)
-                    )
-                      ? "Uploaded"
-                      : "Pending"}
+                    DELR: {delrUploadedCount}/{totalShipments || 0}{" "}
+                    {delrUploadedCount > 0 ? "Uploaded" : "Pending"}
+                  </div>
+                  <div>
+                    Shipped: {shippedCount}/{totalShipments || 0}{" "}
+                    {totalShipments > 0 && shippedCount === totalShipments ? "✅" : "—"}
                   </div>
                   <div>
                     INVO: {hasEdiFile("INVO") ? "Sent" : "Pending"}
@@ -1964,161 +2128,86 @@ export default function GalaxusDashboardPage() {
                 </div>
               </div>
 
-              <div className="overflow-auto border rounded bg-white">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-2 py-1 text-left">Line</th>
-                      <th className="px-2 py-1 text-left">Product</th>
-                      <th className="px-2 py-1 text-left">Size</th>
-                      <th className="px-2 py-1 text-left">Supplier SKU</th>
-                      <th className="px-2 py-1 text-left">Supplier PID</th>
-                      <th className="px-2 py-1 text-left">Stock</th>
-                      <th className="px-2 py-1 text-right">Qty</th>
-                      <th className="px-2 py-1 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedOrder.lines.map((line) => (
-                      <tr key={line.id} className="border-t">
-                        <td className="px-2 py-1">{line.lineNumber}</td>
-                        <td className="px-2 py-1">
-                          {resolveProductNameForGtin(line.gtin) || line.productName}
-                        </td>
-                        <td className="px-2 py-1">{resolveSizeForGtin(line.gtin) || line.size || ""}</td>
-                        <td className="px-2 py-1">{resolveSkuForGtin(line.gtin) || line.supplierSku || ""}</td>
-                        <td className="px-2 py-1">{line.supplierPid ?? ""}</td>
-                        <td className="px-2 py-1">
-                          {(() => {
-                            const stock = lineStockById[line.id];
-                            if (!stock) return "—";
-                            if (stock.status === "NO_VARIANT") {
-                              if (stock.noResponseReason === "TRM_SKU_NOT_FOUND") {
-                                return "TRM not found";
-                              }
-                              return "No variant";
-                            }
-                            if (stock.status === "UNKNOWN") return "Unknown";
-                            const label = stock.status === "OK" ? "OK" : "Out";
-                            const qty = stock.stock ?? 0;
-                            return `${label} (${qty})`;
-                          })()}
-                        </td>
-                        <td className="px-2 py-1 text-right">{line.quantity}</td>
-                        <td className="px-2 py-1 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
-                              onClick={() => checkLineStock(line)}
-                              disabled={busy !== null}
-                            >
-                              {busy === `line-stock-${line.id}` ? "Checking…" : "Check stock"}
-                            </button>
-                            <button
-                              className="px-2 py-1 rounded bg-red-600 text-white disabled:opacity-50"
-                              onClick={() => removeOrderLine(line)}
-                              disabled={busy !== null}
-                            >
-                              {busy === `line-remove-${line.id}` ? "Removing…" : "Remove"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {selectedOrder.stx?.buckets?.length ? (
+              {selectedOrder.shipments.length === 0 ? (
                 <div className="overflow-auto border rounded bg-white">
                   <table className="min-w-full text-xs">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-2 py-1 text-left">GTIN</th>
+                        <th className="px-2 py-1 text-left">Line</th>
+                        <th className="px-2 py-1 text-left">Product</th>
                         <th className="px-2 py-1 text-left">Size</th>
                         <th className="px-2 py-1 text-left">Supplier SKU</th>
-                        <th className="px-2 py-1 text-left">STX Variant</th>
-                        <th className="px-2 py-1 text-right">Linked / Needed</th>
-                        <th className="px-2 py-1 text-left">Status</th>
+                        <th className="px-2 py-1 text-left">Supplier PID</th>
+                        <th className="px-2 py-1 text-left">Stock</th>
+                        <th className="px-2 py-1 text-right">Qty</th>
+                        <th className="px-2 py-1 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedOrder.stx.buckets.map((bucket) => {
-                        const complete = bucket.linked >= bucket.needed;
-                        return (
-                          <tr key={`${bucket.gtin}-${bucket.supplierVariantId}`} className="border-t">
-                            <td className="px-2 py-1">{bucket.gtin}</td>
-                            <td className="px-2 py-1">{resolveSizeForGtin(bucket.gtin)}</td>
-                            <td className="px-2 py-1">{resolveSkuForGtin(bucket.gtin)}</td>
-                            <td className="px-2 py-1">{bucket.supplierVariantId}</td>
-                            <td className="px-2 py-1 text-right">
-                              {bucket.linked}/{bucket.needed}
-                            </td>
-                            <td className="px-2 py-1">{complete ? "✅" : "❌"}</td>
-                          </tr>
-                        );
-                      })}
+                      {selectedOrder.lines.map((line) => (
+                        <tr key={line.id} className="border-t">
+                          <td className="px-2 py-1">{line.lineNumber}</td>
+                          <td className="px-2 py-1">
+                            {resolveProductNameForGtin(line.gtin) || line.productName}
+                          </td>
+                          <td className="px-2 py-1">{resolveSizeForGtin(line.gtin) || line.size || ""}</td>
+                          <td className="px-2 py-1">{resolveSkuForGtin(line.gtin) || line.supplierSku || ""}</td>
+                          <td className="px-2 py-1">{line.supplierPid ?? ""}</td>
+                          <td className="px-2 py-1">
+                            {(() => {
+                              const stock = lineStockById[line.id];
+                              if (!stock) return "—";
+                              if (stock.status === "NO_VARIANT") {
+                                if (stock.noResponseReason === "TRM_SKU_NOT_FOUND") {
+                                  return "TRM not found";
+                                }
+                                return "No variant";
+                              }
+                              if (stock.status === "UNKNOWN") return "Unknown";
+                              const label = stock.status === "OK" ? "OK" : "Out";
+                              const qty = stock.stock ?? 0;
+                              return `${label} (${qty})`;
+                            })()}
+                          </td>
+                          <td className="px-2 py-1 text-right">{line.quantity}</td>
+                          <td className="px-2 py-1 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                                onClick={() => checkLineStock(line)}
+                                disabled={busy !== null}
+                              >
+                                {busy === `line-stock-${line.id}` ? "Checking…" : "Check stock"}
+                              </button>
+                              <button
+                                className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                                onClick={() => openManualFulfillForLine(line)}
+                                disabled={busy !== null}
+                              >
+                                Manual override…
+                              </button>
+                              <button
+                                className="px-2 py-1 rounded bg-red-600 text-white disabled:opacity-50"
+                                onClick={() => removeOrderLine(line)}
+                                disabled={busy !== null}
+                              >
+                                {busy === `line-remove-${line.id}` ? "Removing…" : "Remove"}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              ) : null}
-
-              {selectedOrder.stx?.buckets?.length ? (
-                <div className="border rounded bg-white p-2 space-y-2 text-xs">
-                  <div className="font-medium text-gray-700">Manual StockX link</div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      className="border rounded px-2 py-1"
-                      value={stxManualVariantId}
-                      onChange={(event) => {
-                        const next = event.target.value;
-                        setStxManualVariantId(next);
-                        if (next) setStxManualModalOpen(true);
-                      }}
-                      disabled={busy !== null}
-                    >
-                      <option value="">Select STX variant</option>
-                      {selectedOrder.stx.buckets.map((bucket) => {
-                        const product = resolveProductNameForGtin(bucket.gtin) || "";
-                        const size = resolveSizeForGtin(bucket.gtin) || "";
-                        const sku = resolveSkuForGtin(bucket.gtin) || "";
-                        const label = `${bucket.supplierVariantId} · ${product}${product ? " · " : ""}${size}${
-                          size ? " · " : ""
-                        }${sku}${sku ? " · " : ""}${bucket.gtin}`;
-                        return (
-                          <option key={bucket.supplierVariantId} value={bucket.supplierVariantId}>
-                            {label}
-                          </option>
-                        );
-                      })}
-                    </select>
-                    <input
-                      className="border rounded px-2 py-1"
-                      placeholder="Tracking (optional) — URL or number"
-                      value={stxManualAwb}
-                      onChange={(event) => setStxManualAwb(event.target.value)}
-                      disabled={busy !== null}
-                    />
-                    <button
-                      className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
-                      onClick={() => {
-                        if (!stxManualVariantId.trim()) {
-                          setError("Select an STX variant first.");
-                          return;
-                        }
-                        setStxManualModalOpen(true);
-                      }}
-                      disabled={busy !== null}
-                    >
-                      Manual override…
-                    </button>
-                  </div>
-                  <div className="text-gray-500">
-                    Pick the STX variant, then fill order number + ETA + tracking + note in the modal. It will keep the
-                    same flow and flip the bucket to ✅ when linked.
-                  </div>
+              ) : (
+                <div className="text-xs text-gray-500">
+                  Packed shipments detected. Manage items from the shipment tables below (check stock, manual override,
+                  remove line) so DELR can still be sent for the remaining items.
                 </div>
-              ) : null}
+              )}
+
+              {/* StockX bucket linking is now displayed inside each STX shipment card. */}
 
               {stxManualModalOpen ? (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -2148,6 +2237,31 @@ export default function GalaxusDashboardPage() {
                         }${sku}${sku ? " · " : ""}GTIN ${bucket.gtin} · Need ${bucket.needed} · Linked ${bucket.linked}`;
                       })()}
                     </div>
+
+                    {(() => {
+                      const units = Array.isArray(selectedOrder?.stxUnits) ? selectedOrder?.stxUnits : [];
+                      const linked = units
+                        .filter((u) => String(u?.supplierVariantId ?? "") === stxManualVariantId)
+                        .filter((u) => Boolean(u?.stockxOrderId));
+                      if (linked.length === 0) return null;
+                      const preview = linked.slice(0, 3);
+                      return (
+                        <div className="text-[11px] text-gray-500 space-y-1">
+                          <div className="font-medium text-gray-600">Existing linked unit(s)</div>
+                          {preview.map((u) => (
+                            <div key={u.id}>
+                              {u.stockxOrderId}
+                              {u.awb ? ` · AWB ${u.awb}` : ""}
+                              {u.etaMin ? ` · ETA ${toDateInput(u.etaMin)}` : ""}
+                              {u.manualSetAt ? " · manual" : ""}
+                            </div>
+                          ))}
+                          {linked.length > preview.length ? (
+                            <div>…and {linked.length - preview.length} more</div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                       <input
@@ -2217,6 +2331,139 @@ export default function GalaxusDashboardPage() {
                   </div>
                 </div>
               ) : null}
+
+              {manualFulfillModalOpen ? (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+                  <div className="w-full max-w-2xl rounded bg-white p-4 space-y-3 shadow">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-medium">Manual fulfillment override</div>
+                      <button
+                        className="px-2 py-1 rounded bg-slate-100 text-black"
+                        onClick={() => setManualFulfillModalOpen(false)}
+                        disabled={busy !== null}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-gray-600">
+                      {(() => {
+                        const line = selectedOrder?.lines?.find((l) => l.id === manualFulfillLineId) ?? null;
+                        const shipment = selectedOrder?.shipments?.find((s) => s.id === manualFulfillShipmentId) ?? null;
+                        const product = resolveProductNameForGtin(line?.gtin ?? null) || line?.productName || "";
+                        const size = resolveSizeForGtin(line?.gtin ?? null) || line?.size || "";
+                        const pid = line?.supplierPid ?? "—";
+                        const gtin = line?.gtin ?? "—";
+                        const provider = shipment?.providerKey ?? "—";
+                        return `Line: ${line?.lineNumber ?? "—"} · ${product}${product ? " · " : ""}${size}${
+                          size ? " · " : ""
+                        }GTIN ${gtin} · PID ${pid} · Shipment provider ${provider}`;
+                      })()}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                      <input
+                        className="border rounded px-2 py-1"
+                        placeholder="Manual order number / reference"
+                        value={manualFulfillOrderRef}
+                        onChange={(event) => setManualFulfillOrderRef(event.target.value)}
+                        disabled={busy !== null}
+                      />
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-2 text-xs text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={manualFulfillIsStx || isLikelyStockxOrderId(manualFulfillOrderRef)}
+                            onChange={(event) => setManualFulfillIsStx(event.target.checked)}
+                            disabled={busy !== null}
+                          />
+                          StockX order
+                        </label>
+                        <button
+                          className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                          onClick={fetchManualStockxDetails}
+                          disabled={busy !== null || !manualFulfillOrderRef.trim()}
+                        >
+                          {busy === "manual-stockx-lookup" ? "Fetching…" : "Fetch from StockX"}
+                        </button>
+                      </div>
+                      <input
+                        className="border rounded px-2 py-1"
+                        type="date"
+                        placeholder="Estimated delivery date"
+                        value={manualFulfillEtaMin}
+                        onChange={(event) => {
+                          const v = event.target.value;
+                          setManualFulfillEtaMin(v);
+                          if (!manualFulfillEtaMax) setManualFulfillEtaMax(v);
+                        }}
+                        disabled={busy !== null}
+                      />
+                      <input
+                        className="border rounded px-2 py-1"
+                        type="date"
+                        placeholder="Latest estimated delivery (optional)"
+                        value={manualFulfillEtaMax}
+                        onChange={(event) => setManualFulfillEtaMax(event.target.value)}
+                        disabled={busy !== null}
+                      />
+                      <input
+                        className="border rounded px-2 py-1"
+                        placeholder="Carrier (optional)"
+                        value={manualFulfillCarrier}
+                        onChange={(event) => setManualFulfillCarrier(event.target.value)}
+                        disabled={busy !== null}
+                      />
+                      <input
+                        className="border rounded px-2 py-1"
+                        placeholder="Tracking number / AWB (optional)"
+                        value={manualFulfillTracking}
+                        onChange={(event) => setManualFulfillTracking(event.target.value)}
+                        disabled={busy !== null}
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-2 text-xs text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={manualFulfillMarkShipped}
+                        onChange={(event) => setManualFulfillMarkShipped(event.target.checked)}
+                        disabled={busy !== null}
+                      />
+                      Mark shipped now (manual)
+                    </label>
+
+                    <textarea
+                      className="border rounded px-2 py-1 w-full text-xs"
+                      rows={3}
+                      placeholder="Info (optional): e.g. shipped by friend in Switzerland, not bought on TRM"
+                      value={manualFulfillNote}
+                      onChange={(event) => setManualFulfillNote(event.target.value)}
+                      disabled={busy !== null}
+                    />
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="px-2 py-1 rounded bg-blue-600 text-white disabled:opacity-50"
+                        onClick={saveManualFulfillOverride}
+                        disabled={busy !== null}
+                      >
+                        {busy === `manual-override-${manualFulfillShipmentId}` ? "Saving…" : "Save manual override"}
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                        onClick={() => setManualFulfillModalOpen(false)}
+                        disabled={busy !== null}
+                      >
+                        Cancel
+                      </button>
+                      <span className="text-xs text-gray-500">
+                        This keeps supplier keys unchanged and only marks the shipment as manual-managed.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <div className="text-sm font-medium">Shipments</div>
                 {selectedOrder.shipments.map((shipment) => (
@@ -2226,7 +2473,7 @@ export default function GalaxusDashboardPage() {
                       {shipment.packageId ?? "—"} · DELR {shipment.delrStatus ?? "—"}
                     </div>
                     <div className="text-xs text-gray-600">
-                      Supplier order: {shipment.supplierOrderRef ?? "—"} · Status{" "}
+                      Supplier order: {shipment.supplierOrderRef ?? shipment.manualOrderRef ?? "—"} · Status{" "}
                       {shipment.boxStatus ?? "—"}
                     </div>
                     <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
@@ -2306,7 +2553,7 @@ export default function GalaxusDashboardPage() {
                       <button
                         className="px-2 py-1 rounded bg-purple-600 text-white"
                         onClick={() => generateDocsForShipment(shipment.id)}
-                        disabled={busy !== null}
+                        disabled={busy !== null || orderGalaxusLocked}
                       >
                         {busy === `docs-${shipment.id}` ? "Generating…" : "Generate box docs"}
                       </button>
@@ -2320,14 +2567,14 @@ export default function GalaxusDashboardPage() {
                       <button
                         className="px-2 py-1 rounded bg-blue-600 text-white"
                         onClick={() => uploadDelrForShipment(shipment.id)}
-                        disabled={busy !== null}
+                        disabled={busy !== null || orderGalaxusLocked}
                       >
                         {busy === `delr-${shipment.id}` ? "Uploading…" : "Upload DELR"}
                       </button>
                       <button
                         className="px-2 py-1 rounded bg-gray-100"
                         onClick={() => downloadDelrXmlForShipment(shipment.id)}
-                        disabled={busy !== null}
+                        disabled={busy !== null || orderGalaxusLocked}
                       >
                         Download DELR XML
                       </button>
@@ -2369,37 +2616,159 @@ export default function GalaxusDashboardPage() {
                         </a>
                       )}
                     </div>
+
                     <div className="overflow-auto border rounded">
-                      <table className="min-w-full text-xs">
-                        <thead className="bg-gray-50">
-                          <tr>
-                            <th className="px-2 py-1 text-left">Supplier PID</th>
-                            <th className="px-2 py-1 text-left">GTIN</th>
-                            <th className="px-2 py-1 text-left">Size</th>
-                            <th className="px-2 py-1 text-left">Supplier SKU</th>
-                            <th className="px-2 py-1 text-right">Qty</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {shipment.items.map((item) => (
-                            <tr key={item.id} className="border-t">
-                              <td className="px-2 py-1">{item.supplierPid}</td>
-                              <td className="px-2 py-1">{item.gtin14}</td>
-                              <td className="px-2 py-1">{resolveSizeForGtin(item.gtin14)}</td>
-                              <td className="px-2 py-1">{resolveSkuForGtin(item.gtin14)}</td>
-                              <td className="px-2 py-1 text-right">{item.quantity}</td>
-                            </tr>
-                          ))}
-                          {shipment.items.length === 0 && (
-                            <tr>
-                              <td className="px-2 py-2 text-gray-500" colSpan={3}>
-                                No shipment items.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
+                      {(() => {
+                        const isStx = String(shipment.providerKey ?? "").toUpperCase() === "STX";
+                        const buckets = shipment.stx?.buckets ?? [];
+                        const bucketByGtin = new Map<string, StxLinkBucket>();
+                        for (const b of buckets) bucketByGtin.set(String(b.gtin ?? "").trim(), b);
+                        const orderLineByKey = new Map<string, OrderLine>();
+                        for (const line of selectedOrder.lines) {
+                          const gtin = String(line?.gtin ?? "").trim();
+                          const pid = String(line?.supplierPid ?? "").trim();
+                          if (!gtin || !pid) continue;
+                          const key = `${pid}::${gtin}`;
+                          if (!orderLineByKey.has(key)) orderLineByKey.set(key, line);
+                        }
+                        const shipmentIsManual =
+                          String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase() === "MANUAL";
+                        const shipmentIsShipped = Boolean(shipment.shippedAt);
+                        const hasSupplierOrderRef = Boolean(
+                          String(shipment.supplierOrderRef ?? "").trim() &&
+                            !String(shipment.supplierOrderRef ?? "").trim().startsWith("pending-")
+                        );
+                        const hasManualOrderRef = Boolean(String(shipment.manualOrderRef ?? "").trim());
+                        return (
+                          <table className="min-w-full text-xs">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-2 py-1 text-left">Supplier PID</th>
+                                <th className="px-2 py-1 text-left">GTIN</th>
+                                <th className="px-2 py-1 text-left">Size</th>
+                                <th className="px-2 py-1 text-left">Supplier SKU</th>
+                                <th className="px-2 py-1 text-left">Stock</th>
+                                <th className="px-2 py-1 text-left">Status</th>
+                                {isStx ? (
+                                  <>
+                                    <th className="px-2 py-1 text-left">STX Variant</th>
+                                    <th className="px-2 py-1 text-right">Linked / Needed</th>
+                                    <th className="px-2 py-1 text-right">STX</th>
+                                  </>
+                                ) : null}
+                                <th className="px-2 py-1 text-right">Action</th>
+                                <th className="px-2 py-1 text-right">Qty</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {shipment.items.map((item) => {
+                                const gtin = String(item.gtin14 ?? "").trim();
+                                const bucket = isStx ? bucketByGtin.get(gtin) ?? null : null;
+                                const complete = bucket ? bucket.linked >= bucket.needed : false;
+                                const pid = String(item.supplierPid ?? "").trim();
+                                const line = orderLineByKey.get(`${pid}::${gtin}`) ?? null;
+                                const stock = line?.id ? lineStockById[line.id] : undefined;
+                                const boughtNonStx =
+                                  shipmentIsShipped || shipmentIsManual || hasSupplierOrderRef || hasManualOrderRef;
+                                const boughtStx = bucket ? bucket.linked >= bucket.needed : false;
+                                return (
+                                  <tr key={item.id} className="border-t">
+                                    <td className="px-2 py-1">{item.supplierPid}</td>
+                                    <td className="px-2 py-1">{item.gtin14}</td>
+                                    <td className="px-2 py-1">{resolveSizeForGtin(item.gtin14)}</td>
+                                    <td className="px-2 py-1">{resolveSkuForGtin(item.gtin14)}</td>
+                                    <td className="px-2 py-1">
+                                      {(() => {
+                                        if (!stock) return "—";
+                                        if (stock.status === "NO_VARIANT") {
+                                          if (stock.noResponseReason === "TRM_SKU_NOT_FOUND") return "TRM not found";
+                                          return "No variant";
+                                        }
+                                        if (stock.status === "UNKNOWN") return "Unknown";
+                                        const label = stock.status === "OK" ? "OK" : "Out";
+                                        const qty = stock.stock ?? 0;
+                                        return `${label} (${qty})`;
+                                      })()}
+                                    </td>
+                                    <td className="px-2 py-1">
+                                      {isStx
+                                        ? boughtStx
+                                          ? "Bought"
+                                          : "Not bought"
+                                        : boughtNonStx
+                                          ? "Bought"
+                                          : "Not bought"}
+                                    </td>
+                                    {isStx ? (
+                                      <>
+                                        <td className="px-2 py-1">{bucket?.supplierVariantId ?? "—"}</td>
+                                        <td className="px-2 py-1 text-right">
+                                          {bucket ? `${bucket.linked}/${bucket.needed}` : "—"}
+                                        </td>
+                                        <td className="px-2 py-1">{bucket ? (complete ? "✅" : "❌") : "—"}</td>
+                                      </>
+                                    ) : null}
+                                    <td className="px-2 py-1 text-right">
+                                      <div className="flex items-center justify-end gap-2">
+                                        <button
+                                          className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                                          onClick={() => (line ? checkLineStock(line) : null)}
+                                          disabled={busy !== null || !line}
+                                        >
+                                          Check stock
+                                        </button>
+                                        {isStx ? (
+                                          <button
+                                            className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                                            onClick={() =>
+                                              bucket?.supplierVariantId
+                                                ? openStxManualModalForVariant(bucket.supplierVariantId)
+                                                : null
+                                            }
+                                            disabled={busy !== null || !bucket?.supplierVariantId}
+                                          >
+                                            Manual override…
+                                          </button>
+                                        ) : (
+                                          <button
+                                            className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                                            onClick={() => (line ? openManualFulfillForLine(line) : null)}
+                                            disabled={busy !== null || !line}
+                                          >
+                                            Manual override…
+                                          </button>
+                                        )}
+                                        <button
+                                          className="px-2 py-1 rounded bg-red-600 text-white disabled:opacity-50"
+                                          onClick={() => (line ? removeOrderLine(line) : null)}
+                                          disabled={busy !== null || !line}
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    </td>
+                                    <td className="px-2 py-1 text-right">{item.quantity}</td>
+                                  </tr>
+                                );
+                              })}
+                              {shipment.items.length === 0 && (
+                                <tr>
+                                  <td className="px-2 py-2 text-gray-500" colSpan={isStx ? 11 : 8}>
+                                    No shipment items.
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        );
+                      })()}
                     </div>
+                    {String(shipment.providerKey ?? "").toUpperCase() === "STX" ? (
+                      <div className="text-[11px] text-gray-500">
+                        StockX docs for this shipment are blocked until all units are linked and have ETA, unless you
+                        tick “Force docs/DELR”.
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {selectedOrder.shipments.length === 0 && (

@@ -1,3 +1,5 @@
+import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
+
 const FEED_ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
 
 type TrmFeedExclusionReason =
@@ -8,28 +10,49 @@ type TrmFeedExclusionReason =
 
 type TrmFeedExclusionStats = Record<TrmFeedExclusionReason, number>;
 
+function normalizeSupplierKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function buildSupplierIdFilter(keys: string[]) {
+  const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
+  if (normalized.length === 0) return null;
+  const or = normalized.flatMap((key) => [
+    { supplierVariant: { supplierVariantId: { startsWith: `${key}:`, mode: "insensitive" } } },
+    { supplierVariant: { supplierVariantId: { startsWith: `${key}_`, mode: "insensitive" } } },
+  ]);
+  return or.length > 0 ? { OR: or } : null;
+}
+
 export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagnostics = true) {
-  let normalizedSupplier = supplier ? supplier.trim().toLowerCase() : "";
-  if (normalizedSupplier === "trm") {
-    normalizedSupplier = "";
-  }
-  const whereSupplier = normalizedSupplier
-    ? { supplierVariant: { supplierVariantId: { startsWith: `${normalizedSupplier}:` } } }
-    : {};
+  const normalizedSupplier = supplier ? normalizeSupplierKey(supplier) : "";
+  const allowlistKeys = GALAXUS_FEED_SUPPLIER_ALLOWLIST.split(",")
+    .map(normalizeSupplierKey)
+    .filter(Boolean);
+  const allowlistFilter = buildSupplierIdFilter(allowlistKeys);
+  const supplierFilter = normalizedSupplier ? buildSupplierIdFilter([normalizedSupplier]) : null;
+  const combinedSupplierFilter =
+    allowlistFilter && supplierFilter
+      ? { AND: [allowlistFilter, supplierFilter] }
+      : allowlistFilter || supplierFilter;
+
   const eligibleWhere = {
     status: { in: FEED_ELIGIBLE_MAPPING_STATUSES as unknown as string[] },
     gtin: { not: null },
   };
-  if (!includeTrmDiagnostics) {
-    return {
-      ...whereSupplier,
-      ...eligibleWhere,
-    };
+  const statusFilter = includeTrmDiagnostics
+    ? {
+        OR: [
+          eligibleWhere,
+          { supplierVariant: { supplierVariantId: { startsWith: "trm:", mode: "insensitive" } } },
+        ],
+      }
+    : eligibleWhere;
+
+  if (combinedSupplierFilter) {
+    return { AND: [combinedSupplierFilter, statusFilter] };
   }
-  return {
-    ...whereSupplier,
-    OR: [eligibleWhere, { supplierVariant: { supplierVariantId: { startsWith: "trm:" } } }],
-  };
+  return statusFilter;
 }
 
 export function createTrmFeedExclusionStats(): TrmFeedExclusionStats {
