@@ -8,7 +8,7 @@ import { runTrmStockSync } from "@/galaxus/jobs/trmSync";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
-import { runStxSync } from "@/galaxus/jobs/stxSync";
+import { runStxPriceStockRefresh } from "@/galaxus/jobs/stxSync";
 import { runStxAwbResync } from "@/galaxus/jobs/stxAwbResync";
 
 type TickJobStatus =
@@ -65,6 +65,12 @@ function nextFrom(lastFinishedAt: Date | null, intervalMs: number): Date | null 
 function isDue(nextAt: Date | null, nowMs: number): boolean {
   if (!nextAt) return false;
   return nowMs >= nextAt.getTime();
+}
+
+function nextServerMidnightAfter(base: Date): Date {
+  const next = new Date(base);
+  next.setHours(24, 0, 0, 0);
+  return next;
 }
 
 async function runOfferStockUpload(origin: string) {
@@ -293,18 +299,20 @@ export async function runGalaxusPipelineTick(
         : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextMasterAt) };
   }
 
-  // STX daily refresh (KickDB-driven, express offers only)
-  const lastStx = await getLastJob("pipeline-stx-sync");
-  const nextStxAt = nextFrom(lastStx?.finishedAt ? new Date(lastStx.finishedAt) : null, ONE_DAY_MS);
+  // STX daily refresh at server midnight: update price/stock only for STX variants.
+  const lastStx = await getLastJob("pipeline-stx-price-stock-nightly");
+  const nextStxAt = lastStx?.finishedAt
+    ? nextServerMidnightAfter(new Date(lastStx.finishedAt))
+    : nextServerMidnightAfter(now);
   const stxDue = force ? shouldConsider("stx-sync") : shouldConsider("stx-sync") && isDue(nextStxAt, nowMs);
   let stxDailySync: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextStxAt) };
   if (shouldConsider("stx-sync") && stxDue) {
-    const locked = await withAdvisoryLock("galaxus:pipeline:stx-sync", async () =>
-      runJob("pipeline-stx-sync", async () => runStxSync())
+    const locked = await withAdvisoryLock("galaxus:pipeline:stx-price-stock-nightly", async () =>
+      runJob("pipeline-stx-price-stock-nightly", async () => runStxPriceStockRefresh())
     );
     stxDailySync =
       locked.locked
-        ? { due: true, ran: true, nextAt: toIso(nextFrom(new Date(), ONE_DAY_MS)), result: locked.result }
+        ? { due: true, ran: true, nextAt: toIso(nextServerMidnightAfter(new Date())), result: locked.result }
         : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextStxAt) };
   }
 

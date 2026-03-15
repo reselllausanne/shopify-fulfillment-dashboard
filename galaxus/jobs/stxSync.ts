@@ -34,6 +34,22 @@ type SelectedOffer = {
   asks: number;
 };
 
+type ParsedStxRow = {
+  supplierVariantId: string;
+  supplierSku: string;
+  providerKey: string | null;
+  gtin: string | null;
+  price: number;
+  stock: number;
+  sizeRaw: string | null;
+  sizeNormalized?: string | null;
+  supplierBrand: string | null;
+  supplierProductName: string | null;
+  images: unknown;
+  leadTimeDays: number | null;
+  deliveryType: StxDeliveryType;
+};
+
 const STX_PREFIX = "stx_";
 
 const LEGO_CUSTOM_ADDON_BY_SLUG: Record<string, number> = {
@@ -159,21 +175,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
   const limit = createLimiter(concurrency);
   let processedProducts = 0;
   let processedVariants = 0;
-  const parsedRows: Array<{
-    supplierVariantId: string;
-    supplierSku: string;
-    providerKey: string | null;
-    gtin: string | null;
-    price: number;
-    stock: number;
-    sizeRaw: string | null;
-    sizeNormalized?: string | null;
-    supplierBrand: string | null;
-    supplierProductName: string | null;
-    images: unknown;
-    leadTimeDays: number | null;
-    deliveryType: StxDeliveryType;
-  }> = [];
+  const parsedRows: ParsedStxRow[] = [];
 
   await Promise.all(
     products.map((row: any) =>
@@ -302,6 +304,129 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
     mappingInserted,
     mappingUpdated,
     removedMissingOrIneligible,
+    durationMs,
+  };
+}
+
+export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Promise<StxSyncResult> {
+  const startedAt = Date.now();
+  const concurrency = Math.max(1, options.concurrency ?? 3);
+  const limitProducts = options.limitProducts ? Math.max(1, options.limitProducts) : null;
+  const now = new Date();
+
+  const products = await (prisma as any).kickDBProduct.findMany({
+    select: { kickdbProductId: true },
+    where: { notFound: false },
+    orderBy: { updatedAt: "desc" },
+    ...(limitProducts ? { take: limitProducts } : {}),
+  });
+
+  const limit = createLimiter(concurrency);
+  let processedProducts = 0;
+  let processedVariants = 0;
+  const parsedRows: ParsedStxRow[] = [];
+
+  await Promise.all(
+    products.map((row: any) =>
+      limit(async () => {
+        const productId = String(row?.kickdbProductId ?? "").trim();
+        if (!productId) return;
+        let payload: any;
+        try {
+          const res = await fetchStockxProductByIdOrSlugRaw(productId);
+          payload = res.product;
+        } catch {
+          return;
+        }
+        processedProducts += 1;
+        const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+        const supplierBrand = pickString(payload?.brand);
+        const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
+        const images = pickImages(payload);
+        const supplierSkuFallback =
+          pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
+
+        for (const variant of variants) {
+          processedVariants += 1;
+          const variantId = pickString(variant?.id);
+          if (!variantId) continue;
+
+          const gtinRaw = pickString(extractVariantGtin(variant));
+          const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+          if (!gtin) continue;
+
+          const selected = selectStxActiveOffer(variant?.prices);
+          if (!selected) continue;
+
+          const supplierVariantId = `${STX_PREFIX}${variantId}`;
+          const providerKey = buildProviderKey(gtin, supplierVariantId);
+          if (!providerKey) continue;
+
+          const stxBasePrice = Number(selected.price);
+          const shippingCHF = resolveStxShippingCHF(payload);
+          const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
+          parsedRows.push({
+            supplierVariantId,
+            supplierSku: supplierSkuFallback,
+            providerKey,
+            gtin,
+            price: stxSellPrice,
+            stock: selected.asks,
+            sizeRaw: pickSizeRawEuFirst(variant),
+            supplierBrand,
+            supplierProductName,
+            images,
+            leadTimeDays: null,
+            deliveryType: selected.deliveryType,
+          });
+        }
+      })
+    )
+  );
+
+  const dedupBySupplierVariantId = new Map<string, ParsedStxRow>();
+  for (const row of parsedRows) {
+    dedupBySupplierVariantId.set(row.supplierVariantId, row);
+  }
+  const rows = Array.from(dedupBySupplierVariantId.values());
+
+  // Nightly lightweight refresh: update only price/stock/deliveryType for existing STX variants.
+  let updated = 0;
+  for (const batch of chunkArray(rows, 500)) {
+    updated += await bulkUpdateSupplierVariants(
+      batch.map((row) => ({
+        supplierVariantId: row.supplierVariantId,
+        price: row.price,
+        stock: row.stock,
+        deliveryType: row.deliveryType,
+      })),
+      now,
+      { updateGtinWhenProvided: false }
+    );
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:stx-price-stock] done", {
+    productsSeen: products.length,
+    processedProducts,
+    processedVariants,
+    eligibleRows: rows.length,
+    insertedCount: 0,
+    updatedCount: updated,
+    mappingInserted: 0,
+    mappingUpdated: 0,
+    removedMissingOrIneligible: 0,
+    durationMs,
+  });
+
+  return {
+    processedProducts,
+    processedVariants,
+    created: 0,
+    updated,
+    mappingInserted: 0,
+    mappingUpdated: 0,
+    removedMissingOrIneligible: 0,
     durationMs,
   };
 }
