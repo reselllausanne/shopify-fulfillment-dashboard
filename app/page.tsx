@@ -219,7 +219,16 @@ export default function Home() {
   const autoSetAllHighMatchesAndRefresh = async () => {
     await autoSetAllHighMatches();
     // Important: update existing DB rows too (ETA range, tracking, states)
-    await refreshDbMatchesTracking();
+    await refreshDbMatchesTracking(stockxToken, { onlyMissingTracking: true, limit: 800 });
+    await loadFromDB();
+  };
+
+  const refreshTrackingFromStockx = async () => {
+    if (!stockxToken.trim()) {
+      alert("Please enter a StockX token first.");
+      return;
+    }
+    await refreshDbMatchesTracking(stockxToken, { onlyMissingTracking: true, limit: 800 });
     await loadFromDB();
   };
 
@@ -1017,6 +1026,7 @@ export default function Home() {
 
         <DatabaseAutoSync
           onLoadFromDatabase={loadFromDB}
+          onRefreshTrackingFromStockx={refreshTrackingFromStockx}
           dbLoading={dbLoading}
           token={stockxToken}
           dbMatches={dbMatches}

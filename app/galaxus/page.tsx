@@ -114,6 +114,7 @@ type ShipmentItem = {
   gtin14: string;
   buyerPid?: string | null;
   quantity: number;
+  manualBoughtQty?: number | null;
 };
 
 type Shipment = {
@@ -289,6 +290,7 @@ export default function GalaxusDashboardPage() {
   const [manualFulfillEtaMax, setManualFulfillEtaMax] = useState<string>("");
   const [manualFulfillNote, setManualFulfillNote] = useState<string>("");
   const [manualFulfillIsStx, setManualFulfillIsStx] = useState<boolean>(false);
+  const [manualFulfillBoughtQty, setManualFulfillBoughtQty] = useState<number>(0);
   const [lineStockById, setLineStockById] = useState<
     Record<
       string,
@@ -382,6 +384,10 @@ export default function GalaxusDashboardPage() {
     }
     setManualFulfillShipmentId(shipment.id);
     setManualFulfillLineId(line.id);
+    const shipmentItem =
+      shipment?.items?.find(
+        (it: any) => String(it?.gtin14 ?? "").trim() === gtin && String(it?.supplierPid ?? "").trim() === supplierPid
+      ) ?? null;
     setManualFulfillTracking(shipment.trackingNumber ? String(shipment.trackingNumber) : "");
     setManualFulfillCarrier(shipment.carrierFinal ? String(shipment.carrierFinal) : "Swiss Post");
     setManualFulfillMarkShipped(!shipment.shippedAt);
@@ -389,6 +395,7 @@ export default function GalaxusDashboardPage() {
     setManualFulfillEtaMin(toDateInput(shipment.manualEtaMin ?? null));
     setManualFulfillEtaMax(toDateInput(shipment.manualEtaMax ?? null));
     setManualFulfillNote(shipment.manualNote ? String(shipment.manualNote) : "");
+    setManualFulfillBoughtQty(Number(shipmentItem?.manualBoughtQty ?? 0));
     const ref = shipment.manualOrderRef ? String(shipment.manualOrderRef) : "";
     setManualFulfillIsStx(isLikelyStockxOrderId(ref));
     setManualFulfillModalOpen(true);
@@ -462,6 +469,8 @@ export default function GalaxusDashboardPage() {
           manualEtaMin: manualFulfillEtaMin ? new Date(manualFulfillEtaMin).toISOString() : null,
           manualEtaMax: manualFulfillEtaMax ? new Date(manualFulfillEtaMax).toISOString() : null,
           manualNote: manualFulfillNote.trim() || null,
+          lineId: manualFulfillLineId || null,
+          manualBoughtQty: Number.isFinite(manualFulfillBoughtQty) ? manualFulfillBoughtQty : 0,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -2409,6 +2418,16 @@ export default function GalaxusDashboardPage() {
                       />
                       <input
                         className="border rounded px-2 py-1"
+                        type="number"
+                        min={0}
+                        step={1}
+                        placeholder="Bought quantity (manual)"
+                        value={Number.isFinite(manualFulfillBoughtQty) ? manualFulfillBoughtQty : 0}
+                        onChange={(event) => setManualFulfillBoughtQty(Number(event.target.value || 0))}
+                        disabled={busy !== null}
+                      />
+                      <input
+                        className="border rounded px-2 py-1"
                         placeholder="Carrier (optional)"
                         value={manualFulfillCarrier}
                         onChange={(event) => setManualFulfillCarrier(event.target.value)}
@@ -2668,6 +2687,11 @@ export default function GalaxusDashboardPage() {
                                 const pid = String(item.supplierPid ?? "").trim();
                                 const line = orderLineByKey.get(`${pid}::${gtin}`) ?? null;
                                 const stock = line?.id ? lineStockById[line.id] : undefined;
+                                const manualBoughtQty = Number(item.manualBoughtQty ?? 0);
+                                const manualBoughtComplete =
+                                  Number.isFinite(manualBoughtQty) &&
+                                  manualBoughtQty >= Number(item.quantity ?? 0) &&
+                                  Number(item.quantity ?? 0) > 0;
                                 const boughtNonStx =
                                   shipmentIsShipped || shipmentIsManual || hasSupplierOrderRef || hasManualOrderRef;
                                 const boughtStx = bucket ? bucket.linked >= bucket.needed : false;
@@ -2695,9 +2719,11 @@ export default function GalaxusDashboardPage() {
                                         ? boughtStx
                                           ? "Bought"
                                           : "Not bought"
-                                        : boughtNonStx
-                                          ? "Bought"
-                                          : "Not bought"}
+                                        : manualBoughtQty > 0
+                                          ? `Bought ${manualBoughtQty}/${item.quantity}${manualBoughtComplete ? " ✅" : ""}`
+                                          : boughtNonStx
+                                            ? "Bought"
+                                            : "Not bought"}
                                     </td>
                                     {isStx ? (
                                       <>
@@ -2745,6 +2771,12 @@ export default function GalaxusDashboardPage() {
                                         >
                                           Remove
                                         </button>
+                                        {!isStx ? (
+                                          <span className="text-[11px] text-gray-600">
+                                            {manualBoughtQty}/{item.quantity}
+                                            {manualBoughtComplete ? " ✅" : ""}
+                                          </span>
+                                        ) : null}
                                       </div>
                                     </td>
                                     <td className="px-2 py-1 text-right">{item.quantity}</td>

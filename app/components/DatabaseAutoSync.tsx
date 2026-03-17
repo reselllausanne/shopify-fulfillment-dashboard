@@ -5,6 +5,7 @@ type MatchRow = any;
 
 type Props = {
   onLoadFromDatabase: () => Promise<void>;
+  onRefreshTrackingFromStockx: () => Promise<void>;
   dbLoading: boolean;
   token: string;
   dbMatches: MatchRow[];
@@ -21,6 +22,7 @@ type Props = {
 
 export default function DatabaseAutoSync({
   onLoadFromDatabase,
+  onRefreshTrackingFromStockx,
   dbLoading,
   token,
   dbMatches,
@@ -36,6 +38,7 @@ export default function DatabaseAutoSync({
 }: Props) {
   const [emailLoading, setEmailLoading] = React.useState<Record<string, boolean>>({});
   const [bulkLoading, setBulkLoading] = React.useState(false);
+  const [trackingRefreshLoading, setTrackingRefreshLoading] = React.useState(false);
 
   const sendMilestoneEmail = async (matchId: string, force: boolean) => {
     setEmailLoading((prev) => ({ ...prev, [matchId]: true }));
@@ -154,7 +157,16 @@ export default function DatabaseAutoSync({
 
       <ActionBar
         onLoadFromDatabase={onLoadFromDatabase}
+        onRefreshTrackingFromStockx={async () => {
+          setTrackingRefreshLoading(true);
+          try {
+            await onRefreshTrackingFromStockx();
+          } finally {
+            setTrackingRefreshLoading(false);
+          }
+        }}
         dbLoading={dbLoading}
+        trackingRefreshLoading={trackingRefreshLoading}
         token={token}
       />
 
