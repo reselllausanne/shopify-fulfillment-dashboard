@@ -351,6 +351,12 @@ model SupplierVariant {
   supplierProductName String?
   weightGrams       Int?
   images            Json?
+  sourceImageUrl    String?
+  hostedImageUrl    String?
+  imageSyncStatus   String?
+  imageVersion      Int      @default(1)
+  imageLastSyncedAt DateTime?
+  imageSyncError    String?
   leadTimeDays      Int?
   deliveryType      String?
   lastSyncAt        DateTime?
@@ -599,6 +605,8 @@ model StxPurchaseUnit {
   manualTrackingRaw String?
   manualNote        String?
   manualSetAt       DateTime?
+  cancelledAt       DateTime?
+  cancelledReason   String?
 
   @@index([galaxusOrderId])
   @@index([gtin])

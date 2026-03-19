@@ -41,12 +41,8 @@ function isAbsoluteUrl(value: string) {
   }
 }
 
-function hasPrimaryImage(images: unknown, fallbackUrl?: string | null): boolean {
-  if (Array.isArray(images)) {
-    const ok = images.some((value) => typeof value === "string" && value.length > 0 && isAbsoluteUrl(value));
-    if (ok) return true;
-  }
-  return typeof fallbackUrl === "string" && fallbackUrl.length > 0 && isAbsoluteUrl(fallbackUrl);
+function hasPrimaryImage(hostedImageUrl?: string | null): boolean {
+  return typeof hostedImageUrl === "string" && hostedImageUrl.length > 0 && isAbsoluteUrl(hostedImageUrl);
 }
 
 type ResolveOverrides = (supplierKey: string | null) => PricingOverrides | null;
@@ -127,7 +123,7 @@ export function accumulateBestCandidates(
     }
 
     const product = mapping.kickdbVariant?.product ?? null;
-    if (requireImage && !hasPrimaryImage(variant?.images, product?.imageUrl ?? null)) {
+    if (requireImage && !hasPrimaryImage(variant?.hostedImageUrl ?? null)) {
       options?.onExclude?.({
         reason: "MISSING_IMAGE",
         supplierKey,

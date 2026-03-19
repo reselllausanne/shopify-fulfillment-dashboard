@@ -20,11 +20,17 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function isUnknownCancelledAtArg(error: any): boolean {
+  return String(error?.message ?? "").includes("Unknown argument `cancelledAt`");
+}
+
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
+    const { searchParams } = new URL(_request.url);
+    const mode = String(searchParams.get("mode") ?? "").trim().toLowerCase();
     const leanBuyOrder = (order: any) => {
       if (!order) return null;
       return {
@@ -104,6 +110,14 @@ export async function POST(
 
     const { orderId } = await params;
     const reservation = await reserveStxPurchaseUnitsForOrder(orderId);
+    if (mode === "reserve") {
+      return NextResponse.json({
+        ok: true,
+        galaxusOrderId: reservation.galaxusOrderId,
+        reserve: reservation,
+        status: reservation.status,
+      });
+    }
     const initialStatus = reservation.status;
     console.info("[GALAXUS][STX][SYNC] Start", {
       galaxusOrderId: reservation.galaxusOrderId,
@@ -263,6 +277,7 @@ export async function POST(
     let linked = 0;
     let alreadyLinked = 0;
     let noPendingUnit = 0;
+    let missingEta = 0;
     let etaBackfilled = 0;
     let skippedNoVariant = 0;
     let skippedNotPendingVariant = 0;
@@ -357,15 +372,30 @@ export async function POST(
               if (normalizedEtaMax) updateData.etaMax = normalizedEtaMax;
               if (details.awb) updateData.awb = details.awb;
               if (checkoutType) updateData.checkoutType = checkoutType;
-              const updated = await prisma.stxPurchaseUnit.updateMany({
-                where: {
-                  galaxusOrderId: reservation.galaxusOrderId,
-                  supplierVariantId: resolvedSupplierVariantId,
-                  stockxOrderId,
-                  OR: [{ etaMin: null }, { etaMax: null }],
-                },
-                data: updateData,
-              });
+              let updated: { count: number };
+              try {
+                updated = await (prisma as any).stxPurchaseUnit.updateMany({
+                  where: {
+                    galaxusOrderId: reservation.galaxusOrderId,
+                    supplierVariantId: resolvedSupplierVariantId,
+                    stockxOrderId,
+                    cancelledAt: null,
+                    OR: [{ etaMin: null }, { etaMax: null }],
+                  },
+                  data: updateData,
+                });
+              } catch (error: any) {
+                if (!isUnknownCancelledAtArg(error)) throw error;
+                updated = await (prisma as any).stxPurchaseUnit.updateMany({
+                  where: {
+                    galaxusOrderId: reservation.galaxusOrderId,
+                    supplierVariantId: resolvedSupplierVariantId,
+                    stockxOrderId,
+                    OR: [{ etaMin: null }, { etaMax: null }],
+                  },
+                  data: updateData,
+                });
+              }
               if ((updated?.count ?? 0) > 0) {
                 etaBackfilled += updated.count;
                 linkResult = { status: "eta_backfilled" };
@@ -394,6 +424,7 @@ export async function POST(
           if (linkResult.status === "linked") linked += 1;
           else if (linkResult.status === "already_linked") alreadyLinked += 1;
           else if (linkResult.status === "no_pending_unit") noPendingUnit += 1;
+          else if (linkResult.status === "missing_eta") missingEta += 1;
         })
       )
     );
@@ -411,6 +442,7 @@ export async function POST(
         linked,
         alreadyLinked,
         noPendingUnit,
+        missingEta,
         etaBackfilled,
         skippedNoVariant,
         skippedNotPendingVariant,

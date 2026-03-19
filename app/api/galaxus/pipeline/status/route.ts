@@ -47,6 +47,7 @@ export async function GET() {
       "pipeline-stx-price-stock-nightly",
       "pipeline-stx-sync",
       "pipeline-stx-awb-resync",
+      "pipeline-image-sync",
       "kickdb-enrich-new",
       "kickdb-reenrich-unmatched",
       "pipeline-partner-sync",
@@ -69,12 +70,13 @@ export async function GET() {
       latestByJob.set(key, run);
     }
 
-    const [ediIn, offerStock, master, stxSync, stxAwbResync, enrichNew, reenrich, partnerSync] = [
+    const [ediIn, offerStock, master, stxSync, stxAwbResync, imageSync, enrichNew, reenrich, partnerSync] = [
       latestByJob.get("edi-in") ?? null,
       latestByJob.get("pipeline-offer-stock") ?? null,
       latestByJob.get("pipeline-master") ?? null,
       latestByJob.get("pipeline-stx-price-stock-nightly") ?? latestByJob.get("pipeline-stx-sync") ?? null,
       latestByJob.get("pipeline-stx-awb-resync") ?? null,
+      latestByJob.get("pipeline-image-sync") ?? null,
       latestByJob.get("kickdb-enrich-new") ?? null,
       latestByJob.get("kickdb-reenrich-unmatched") ?? null,
       latestByJob.get("pipeline-partner-sync") ?? null,
@@ -103,12 +105,14 @@ export async function GET() {
       lastMasterRunAt: toIso(master?.finishedAt ?? null),
       lastStxSyncRunAt: toIso(stxSync?.finishedAt ?? null),
       lastStxAwbResyncRunAt: toIso(stxAwbResync?.finishedAt ?? null),
+      lastImageSyncRunAt: toIso(imageSync?.finishedAt ?? null),
       lastPartnerSyncRunAt: toIso(partnerSync?.finishedAt ?? null),
       lastEdiInResult: toResult(ediIn),
       lastOfferStockResult: toResult(offerStock),
       lastMasterResult: toResult(master),
       lastStxSyncResult: toResult(stxSync),
       lastStxAwbResyncResult: toResult(stxAwbResync),
+      lastImageSyncResult: toResult(imageSync),
       lastPartnerSyncResult: toResult(partnerSync),
       lastEnrichNewRunAt: toIso(enrichNew?.finishedAt ?? null),
       lastEnrichNewResult: toResult(enrichNew),
@@ -119,6 +123,7 @@ export async function GET() {
       masterIntervalMs: TEN_HOURS_MS,
       stxSyncIntervalMs: ONE_DAY_MS,
       stxAwbResyncIntervalMs: ONE_DAY_MS,
+      imageSyncIntervalMs: ONE_HOUR_MS,
       reenrichIntervalMs: TWO_DAYS_MS,
       nextEdiInAt: toIso(nextFrom(ediIn?.finishedAt ? new Date(ediIn.finishedAt) : null, ONE_HOUR_MS)),
       nextOfferStockAt: toIso(nextFrom(offerStock?.finishedAt ? new Date(offerStock.finishedAt) : null, TWO_HOURS_MS)),
@@ -126,6 +131,9 @@ export async function GET() {
       nextStxSyncAt: toIso(nextFrom(stxSync?.finishedAt ? new Date(stxSync.finishedAt) : null, ONE_DAY_MS)),
       nextStxAwbResyncAt: toIso(
         nextFrom(stxAwbResync?.finishedAt ? new Date(stxAwbResync.finishedAt) : null, ONE_DAY_MS)
+      ),
+      nextImageSyncAt: toIso(
+        nextFrom(imageSync?.finishedAt ? new Date(imageSync.finishedAt) : null, ONE_HOUR_MS)
       ),
       nextReenrichUnmatchedAt: toIso(nextFrom(reenrich?.finishedAt ? new Date(reenrich.finishedAt) : null, TWO_DAYS_MS)),
       lastManifests: {

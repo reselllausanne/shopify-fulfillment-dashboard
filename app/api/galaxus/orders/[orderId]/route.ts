@@ -142,6 +142,8 @@ export async function GET(
           manualTrackingRaw: true,
           manualNote: true,
           manualSetAt: true,
+          cancelledAt: true,
+          cancelledReason: true,
         },
       })
       .catch(() => []);

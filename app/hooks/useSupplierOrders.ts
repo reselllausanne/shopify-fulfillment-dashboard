@@ -587,6 +587,10 @@ export function useSupplierOrders() {
     goatCookie = "",
     goatCsrfToken = "",
   }: FetchAllArgs) => {
+    const existingGoatRows = ((enrichedOrders || orders) as any[]).filter(
+      (row) => String(row?.provider || "").toUpperCase() === "GOAT"
+    );
+
     setIsFetchingAll(true);
     setIsEnriching(false);
     setOrders([]);
@@ -622,8 +626,9 @@ export function useSupplierOrders() {
     // Dedicated GOAT endpoint (only when a token is provided).
     const goatOrders =
       goatCookie && goatCookie.trim() ? await fetchAllGoatOrders(goatCookie, goatCsrfToken) : [];
+    const goatRowsForMerge = goatOrders.length > 0 ? goatOrders : existingGoatRows;
 
-    if (allLoadedStockXOrders.length === 0 && goatOrders.length === 0) {
+    if (allLoadedStockXOrders.length === 0 && goatRowsForMerge.length === 0) {
       setIsFetchingAll(false);
       console.error("[FETCH] ❌ No StockX or GOAT orders found.");
       alert("❌ No orders found from StockX/GOAT. Check credentials and retry.");
@@ -757,10 +762,10 @@ export function useSupplierOrders() {
       }
     }
 
-    const combinedOrders = [...allLoadedStockXOrders, ...(goatOrders as OrderNode[])];
+    const combinedOrders = [...allLoadedStockXOrders, ...(goatRowsForMerge as OrderNode[])];
     setOrders(combinedOrders);
 
-    const combinedEnriched = [...enrichedStockX, ...goatOrders];
+    const combinedEnriched = [...enrichedStockX, ...goatRowsForMerge];
     const seen = new Set<string>();
     const deduplicated = combinedEnriched.filter((o: any) => {
       const key = `${o?.provider || "STOCKX"}:${o?.orderId || ""}:${o?.orderNumber || ""}`;

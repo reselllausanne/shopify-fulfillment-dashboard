@@ -10,6 +10,7 @@ import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 import { runStxPriceStockRefresh } from "@/galaxus/jobs/stxSync";
 import { runStxAwbResync } from "@/galaxus/jobs/stxAwbResync";
+import { runImageSync } from "@/galaxus/jobs/imageSync";
 
 type TickJobStatus =
   | { due: false; ran: false; skipped: "not_due" | "missing_dependency"; nextAt: string | null }
@@ -26,6 +27,7 @@ type PipelineTickResult = {
     masterRefresh: TickJobStatus;
     stxDailySync: TickJobStatus;
     stxAwbResync: TickJobStatus;
+    imageSync: TickJobStatus;
     enrichNew: TickJobStatus;
     reenrichUnmatched: TickJobStatus;
   };
@@ -339,6 +341,24 @@ export async function runGalaxusPipelineTick(
         : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextStxAwbAt) };
   }
 
+  // Hosted image sync (hourly)
+  const lastImage = await getLastJob("pipeline-image-sync");
+  const nextImageAt = nextFrom(lastImage?.finishedAt ? new Date(lastImage.finishedAt) : null, ONE_HOUR_MS);
+  const imageDue =
+    force
+      ? shouldConsider("image-sync")
+      : shouldConsider("image-sync") && isDue(nextImageAt, nowMs);
+  let imageSync: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextImageAt) };
+  if (shouldConsider("image-sync") && imageDue) {
+    const locked = await withAdvisoryLock("galaxus:pipeline:image-sync", async () =>
+      runJob("pipeline-image-sync", async () => runImageSync({ limit: 50 }))
+    );
+    imageSync =
+      locked.locked
+        ? { due: true, ran: true, nextAt: toIso(nextFrom(new Date(), ONE_HOUR_MS)), result: locked.result }
+        : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextImageAt) };
+  }
+
   // Enrich NEW: 1h after the last successful 2h sync finished, and only for newly created rows.
   const lastSyncAfter = await getLastSuccessfulJob("pipeline-offer-stock");
   const syncFinishedAt = lastSyncAfter?.finishedAt ? new Date(lastSyncAfter.finishedAt) : null;
@@ -438,7 +458,16 @@ export async function runGalaxusPipelineTick(
     ok: true,
     now: now.toISOString(),
     origin,
-    jobs: { ediIn, syncOfferStock, masterRefresh, stxDailySync, stxAwbResync, enrichNew, reenrichUnmatched },
+    jobs: {
+      ediIn,
+      syncOfferStock,
+      masterRefresh,
+      stxDailySync,
+      stxAwbResync,
+      imageSync,
+      enrichNew,
+      reenrichUnmatched,
+    },
   };
 }
 

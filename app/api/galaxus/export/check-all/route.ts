@@ -176,27 +176,11 @@ function cleanDescription(value?: string | null): string {
   return truncate(text, 4000);
 }
 
-function extractProductImages(
-  payload: KickDbPayload | null,
-  supplierImages: unknown,
-  fallback?: string | null
-): string[] {
-  const list: string[] = [];
-  if (Array.isArray(supplierImages)) {
-    for (const item of supplierImages) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
+function extractProductImages(hostedImageUrl?: string | null): string[] {
+  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
+    return [hostedImageUrl.trim()];
   }
-  if (payload?.image) list.push(payload.image);
-  if (Array.isArray(payload?.gallery)) {
-    for (const item of payload.gallery) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
-  }
-  if (fallback) list.push(fallback);
-  return Array.from(new Set(list))
-    .filter(Boolean)
-    .filter((value) => isAbsoluteUrl(value));
+  return [];
 }
 
 function decimalToString(value: unknown): string {
@@ -264,7 +248,7 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
         } as KickDbPayload)
       : null;
     const providerKey = candidate.providerKey ?? "";
-    const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
+    const images = extractProductImages(supplierVariant?.hostedImageUrl ?? null);
     const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
     const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
 

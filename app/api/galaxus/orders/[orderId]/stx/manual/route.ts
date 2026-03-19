@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import {
   getStxLinkStatusForOrder,
+  cancelStxPurchaseUnit,
   linkOldestPendingStxUnit,
   resolveGalaxusOrderByIdOrRef,
 } from "@/galaxus/stx/purchaseUnits";
@@ -43,6 +44,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     const etaMaxRaw = body?.etaMax ?? null;
     const trackingRaw = String(body?.trackingRaw ?? "").trim();
     const note = String(body?.note ?? "").trim();
+    const action = String(body?.action ?? "").trim().toLowerCase();
+    const cancelReason = String(body?.cancelReason ?? "").trim();
+
+    if (action === "cancel") {
+      if (!stockxOrderId) {
+        return NextResponse.json({ ok: false, error: "Missing stockxOrderId" }, { status: 400 });
+      }
+      const order = await resolveGalaxusOrderByIdOrRef(orderId);
+      if (!order) return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+      const cancel = await cancelStxPurchaseUnit({
+        galaxusOrderId: order.galaxusOrderId,
+        stockxOrderId,
+        reason: cancelReason || null,
+      });
+      if (!cancel.ok) {
+        return NextResponse.json({ ok: false, error: `Cancel failed: ${cancel.status}` }, { status: 409 });
+      }
+      const status = await getStxLinkStatusForOrder(order.galaxusOrderId);
+      return NextResponse.json({ ok: true, status, cancel });
+    }
 
     if (!supplierVariantId) return NextResponse.json({ ok: false, error: "Missing supplierVariantId" }, { status: 400 });
     if (!stockxOrderId) return NextResponse.json({ ok: false, error: "Missing stockxOrderId" }, { status: 400 });
@@ -63,6 +84,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       etaMax,
       checkoutType: "MANUAL_OVERRIDE",
     });
+    if (linkResult.status === "missing_eta") {
+      return NextResponse.json(
+        { ok: false, error: "ETA min/max required to link a StockX unit" },
+        { status: 400 }
+      );
+    }
 
     // Persist manual context even if the unit already existed/linked.
     const manualUpdate: Record<string, unknown> = {

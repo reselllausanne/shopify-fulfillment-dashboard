@@ -34,6 +34,21 @@ type CreateShipmentsOptions = {
   force?: boolean;
 };
 
+type ManualPackageInput = {
+  items: Array<{ lineId: string; quantity: number }>;
+};
+
+type CreateManualShipmentsOptions = {
+  orderId: string;
+  packages: ManualPackageInput[];
+  trackingNumbers?: string[];
+  carrierRaw?: string | null;
+  carrierFinal?: string | null;
+  shippedAt?: Date;
+  deliveryType?: string;
+  packageType?: "PARCEL" | "PALLET";
+};
+
 type CreateShipmentsResult = {
   status: "created" | "skipped" | "error";
   shipments: Shipment[];
@@ -186,6 +201,192 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
     status: "created",
     shipments,
     ...(availabilityIssues.length > 0 ? { availabilityIssues } : {}),
+  };
+}
+
+export async function createManualShipmentsForOrder(
+  options: CreateManualShipmentsOptions
+): Promise<CreateShipmentsResult> {
+  const prismaAny = prisma as any;
+  const order = await resolveOrder(options.orderId);
+  if (!order) {
+    return { status: "error", shipments: [], message: "Order not found" };
+  }
+  const existingShipments = await prisma.shipment.findMany({
+    where: { orderId: order.id },
+    orderBy: { createdAt: "asc" },
+  });
+  if (!options.packages?.length) {
+    return { status: "error", shipments: [], message: "No packages provided" };
+  }
+
+  const orderAny = order as any;
+  validateOrderLines(orderAny.lines);
+  const lineById = new Map<string, any>(orderAny.lines.map((line: any) => [line.id, line]));
+  const totalsByLine = new Map<string, number>();
+  const shippedQtyByLine = new Map<string, number>();
+  if (existingShipments.length > 0) {
+    const existingItems = await prismaAny.shipmentItem.findMany({
+      where: { orderId: order.id },
+      select: {
+        supplierPid: true,
+        gtin14: true,
+        quantity: true,
+        shipment: { select: { delrSentAt: true, delrStatus: true } },
+      },
+    });
+    for (const line of orderAny.lines) {
+      const lineId = String(line.id);
+      const supplierPid = String(line?.supplierPid ?? "").trim();
+      const gtin = String(line?.gtin ?? "").trim();
+      const qty = existingItems
+        .filter((item: any) => {
+          const sameLine =
+            String(item?.supplierPid ?? "").trim() === supplierPid &&
+            String(item?.gtin14 ?? "").trim() === gtin;
+          if (!sameLine) return false;
+          const delrStatus = String(item?.shipment?.delrStatus ?? "").toUpperCase();
+          return Boolean(item?.shipment?.delrSentAt) || delrStatus === "UPLOADED";
+        })
+        .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
+      if (qty > 0) shippedQtyByLine.set(lineId, qty);
+    }
+  }
+  const packagesResolved: Array<{
+    items: Array<{ line: GalaxusOrderLine; quantity: number }>;
+    providerKey: string;
+  }> = [];
+
+  for (let idx = 0; idx < options.packages.length; idx += 1) {
+    const pkg = options.packages[idx];
+    if (!pkg?.items?.length) continue;
+    const items: Array<{ line: GalaxusOrderLine; quantity: number }> = [];
+    for (const item of pkg.items) {
+      const lineId = String(item.lineId ?? "").trim();
+      const qty = Math.max(0, Number(item.quantity ?? 0));
+      if (!lineId || qty <= 0) continue;
+      const line = lineById.get(lineId);
+      if (!line) {
+        return { status: "error", shipments: [], message: `Unknown line in package ${idx + 1}` };
+      }
+      const alreadyAssigned = totalsByLine.get(lineId) ?? 0;
+      const alreadyShipped = shippedQtyByLine.get(lineId) ?? 0;
+      const lineQty = Number(line?.quantity ?? 0);
+      const remaining = Math.max(0, lineQty - alreadyShipped);
+      const nextTotal = alreadyAssigned + qty;
+      if (nextTotal > remaining) {
+        return {
+          status: "error",
+          shipments: [],
+          message: `Package ${idx + 1} exceeds remaining quantity for line ${line.lineNumber}`,
+        };
+      }
+      totalsByLine.set(lineId, nextTotal);
+      items.push({ line, quantity: qty });
+    }
+    if (items.length === 0) continue;
+
+    const providerKeys = new Set<string>();
+    for (const item of items) {
+      const resolution = await resolveProviderKeyForLine(item.line as any);
+      providerKeys.add(resolution.providerKey);
+    }
+    const providerKey = Array.from(providerKeys.values()).filter((key) => key && key !== "UNASSIGNED");
+
+    packagesResolved.push({
+      items,
+      providerKey: providerKey[0] ?? "UNASSIGNED",
+    });
+  }
+
+  if (packagesResolved.length === 0) {
+    return { status: "error", shipments: [], message: "All packages are empty" };
+  }
+
+  const shipments: Shipment[] = [];
+  const shippedAt = options.shippedAt ?? null;
+  const storage = getStorageAdapter();
+
+  const startIndex = existingShipments.length;
+  for (let index = 0; index < packagesResolved.length; index += 1) {
+    const pack = packagesResolved[index];
+    const packageId = await allocateSscc();
+    const dispatchNotificationId = buildDispatchNotificationId(order.galaxusOrderId, startIndex + index);
+    const trackingNumber = options.trackingNumbers?.[startIndex + index] ?? null;
+    const packageType = options.packageType ?? "PARCEL";
+
+    const created = await prismaAny.$transaction(async (tx: any) => {
+      const shipment = await tx.shipment.create({
+        data: {
+          orderId: order.id,
+          providerKey: pack.providerKey === "UNASSIGNED" ? null : pack.providerKey,
+          shipmentId: `SHIP-${order.galaxusOrderId}-${pack.providerKey}-${Date.now()}-${startIndex + index + 1}`,
+          dispatchNotificationId,
+          dispatchNotificationCreatedAt: new Date(),
+          incoterms: null,
+          packageId,
+          deliveryType: options.deliveryType ?? orderAny.deliveryType ?? "warehouse_delivery",
+          carrierRaw: options.carrierRaw ?? "eurosender",
+          carrierFinal: options.carrierFinal ?? null,
+          trackingNumber,
+          packageType,
+          shippedAt,
+          delrStatus: "PENDING",
+        },
+      });
+
+      await tx.shipmentItem.createMany({
+        data: pack.items.map((item) => ({
+          shipmentId: shipment.id,
+          orderId: order.id,
+          supplierPid: (item.line as any).supplierPid ?? "",
+          gtin14: (item.line as any).gtin ?? "",
+          buyerPid: (item.line as any).buyerPid ?? null,
+          quantity: item.quantity,
+        })),
+      });
+
+      return shipment;
+    });
+
+    const deliveryNotePdf = await renderPdfFromHtml({
+      html: renderDeliveryNoteHtml(
+        buildDeliveryNoteData(orderAny, pack.items, created.dispatchNotificationId, created.incoterms, created.shipmentId)
+      ),
+      format: "A4",
+      showPageNumbers: true,
+    });
+    const deliveryKey = `galaxus/${order.galaxusOrderId}/delivery_note/${created.id}.pdf`;
+    const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
+    await prismaAny.document.create({
+      data: {
+        orderId: order.id,
+        shipmentId: created.id,
+        type: "DELIVERY_NOTE",
+        version: 1,
+        storageUrl: deliveryStored.storageUrl,
+      },
+    });
+
+    const label = await generateSsccLabelPdf(order, packageId);
+    const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
+    const stored = await storage.uploadPdf(key, label.pdf);
+
+    const updated = await prismaAny.shipment.update({
+      where: { id: created.id },
+      data: {
+        labelZpl: label.zpl,
+        labelPdfUrl: stored.storageUrl,
+        labelGeneratedAt: new Date(),
+      },
+    });
+
+    shipments.push(updated);
+  }
+
+  return {
+    status: "created",
+    shipments,
   };
 }
 

@@ -92,8 +92,21 @@ async function submitPrintJob(filePath: string): Promise<PrintJobResult> {
       args.push("-o", `page-top=${offsetY}`);
     }
     args.push(filePath);
-    const { stdout, stderr } = await execFile(PRINT_COMMAND, args);
-    return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() };
+    const run = async (command: string) => {
+      const { stdout, stderr } = await execFile(command, args);
+      return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() } as PrintJobResult;
+    };
+    try {
+      return await run(PRINT_COMMAND);
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      const code = error?.code || "";
+      if ((code === "ENOENT" || /ENOENT/i.test(message)) && PRINT_COMMAND === "lp") {
+        // Common on daemons/PM2 where PATH does not include /usr/bin.
+        return await run("/usr/bin/lp");
+      }
+      throw error;
+    }
   } catch (error: any) {
     const message = error?.message || String(error);
     const code = error?.code || "";

@@ -32,6 +32,11 @@ const ordrParser = new XMLParser({
   removeNSPrefix: true,
 });
 
+function isUnknownCancelledAtArg(error: any): boolean {
+  const message = String(error?.message ?? "");
+  return message.includes("Unknown argument `cancelledAt`");
+}
+
 function extractText(value: any): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" || typeof value === "number") return String(value);
@@ -481,15 +486,30 @@ async function buildArrivalByGtinForShipment(params: {
   );
 
   if (isStxShipment && gtins.length > 0) {
-    const rows = await (prisma as any).stxPurchaseUnit.findMany({
-      where: {
-        galaxusOrderId: shipment.order.galaxusOrderId,
-        gtin: { in: gtins },
-        etaMin: { not: null },
-        etaMax: { not: null },
-      },
-      select: { gtin: true, etaMin: true, etaMax: true, awb: true },
-    });
+    let rows: Array<{ gtin: string; etaMin: Date; etaMax: Date; awb: string | null }> = [];
+    try {
+      rows = await (prisma as any).stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: shipment.order.galaxusOrderId,
+          gtin: { in: gtins },
+          cancelledAt: null,
+          etaMin: { not: null },
+          etaMax: { not: null },
+        },
+        select: { gtin: true, etaMin: true, etaMax: true, awb: true },
+      });
+    } catch (error: any) {
+      if (!isUnknownCancelledAtArg(error)) throw error;
+      rows = await (prisma as any).stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: shipment.order.galaxusOrderId,
+          gtin: { in: gtins },
+          etaMin: { not: null },
+          etaMax: { not: null },
+        },
+        select: { gtin: true, etaMin: true, etaMax: true, awb: true },
+      });
+    }
     const byGtin = new Map<string, { min: Date; max: Date }>();
     for (const row of rows) {
       const gtin = String(row?.gtin ?? "").trim();
@@ -533,18 +553,36 @@ async function buildStxArrivalByGtin(params: {
     const gtin = String(bucket?.gtin ?? "").trim();
     const needed = Math.max(0, Number(bucket?.needed ?? 0));
     if (!gtin || needed <= 0) continue;
-    const rows = await (prisma as any).stxPurchaseUnit.findMany({
-      where: {
-        galaxusOrderId: params.galaxusOrderId,
-        gtin,
-        stockxOrderId: { not: null },
-        etaMin: { not: null },
-        etaMax: { not: null },
-      },
-      orderBy: { createdAt: "asc" },
-      take: needed,
-      select: { etaMin: true, etaMax: true },
-    });
+    let rows: Array<{ etaMin: Date; etaMax: Date }> = [];
+    try {
+      rows = await (prisma as any).stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: params.galaxusOrderId,
+          gtin,
+          cancelledAt: null,
+          stockxOrderId: { not: null },
+          etaMin: { not: null },
+          etaMax: { not: null },
+        },
+        orderBy: { createdAt: "asc" },
+        take: needed,
+        select: { etaMin: true, etaMax: true },
+      });
+    } catch (error: any) {
+      if (!isUnknownCancelledAtArg(error)) throw error;
+      rows = await (prisma as any).stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: params.galaxusOrderId,
+          gtin,
+          stockxOrderId: { not: null },
+          etaMin: { not: null },
+          etaMax: { not: null },
+        },
+        orderBy: { createdAt: "asc" },
+        take: needed,
+        select: { etaMin: true, etaMax: true },
+      });
+    }
     if (!rows.length) continue;
     let latestMidpoint: Date | null = null;
     for (const row of rows) {

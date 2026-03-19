@@ -161,24 +161,11 @@ function cleanDescription(value?: string | null): string {
   return truncate(text, 4000);
 }
 
-function extractSupplierImages(supplierImages: unknown): string[] {
-  const list: string[] = [];
-  if (Array.isArray(supplierImages) && supplierImages.length) {
-    for (const item of supplierImages) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
+function pickPrimaryImages(hostedImageUrl?: string | null): string[] {
+  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
+    return [hostedImageUrl.trim()];
   }
-  return Array.from(new Set(list)).filter((value) => isAbsoluteUrl(value));
-}
-
-function pickPrimaryImages(supplierImages: unknown, kickdbImageUrl?: string | null): string[] {
-  const supplier = extractSupplierImages(supplierImages);
-  if (supplier.length > 0) return supplier;
-  const fallback =
-    typeof kickdbImageUrl === "string" && kickdbImageUrl.trim() && isAbsoluteUrl(kickdbImageUrl)
-      ? [kickdbImageUrl.trim()]
-      : [];
-  return fallback;
+  return [];
 }
 
 function dedupeCandidatesByProviderKey(candidates: any[]) {
@@ -269,7 +256,7 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       keyBy: "gtin",
       requireProductName: false,
-      requireImage: false,
+      requireImage: true,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
@@ -315,7 +302,7 @@ export async function GET(request: Request) {
     const supplierBrand = normalizeBrand(
       supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand ?? ""
     );
-    const images = pickPrimaryImages(supplierVariant?.images, product?.imageUrl ?? null);
+      const images = pickPrimaryImages(supplierVariant?.hostedImageUrl ?? null);
     if (minimal) {
       rows.push({
         ProviderKey: providerKey,

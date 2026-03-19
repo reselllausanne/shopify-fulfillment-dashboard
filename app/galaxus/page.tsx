@@ -160,6 +160,7 @@ type StxLinkBucket = {
   reserved: number;
   linked: number;
   linkedWithEta: number;
+  linkedWithAwb: number;
 };
 
 type StxOrderStatus = {
@@ -167,6 +168,7 @@ type StxOrderStatus = {
   hasStxItems: boolean;
   allLinked: boolean;
   allEtaPresent: boolean;
+  allAwbPresent: boolean;
   buckets: StxLinkBucket[];
 };
 
@@ -222,6 +224,8 @@ type OrderDetail = {
     manualTrackingRaw: string | null;
     manualNote: string | null;
     manualSetAt: string | null;
+    cancelledAt?: string | null;
+    cancelledReason?: string | null;
   }>;
   skuByGtin?: Record<string, string>;
   sizeByGtin?: Record<string, string>;
@@ -279,6 +283,7 @@ export default function GalaxusDashboardPage() {
   const [stxManualEtaMax, setStxManualEtaMax] = useState<string>("");
   const [stxManualAwb, setStxManualAwb] = useState<string>("");
   const [stxManualNote, setStxManualNote] = useState<string>("");
+  const [stxManualCancelReason, setStxManualCancelReason] = useState<string>("");
   const [manualFulfillModalOpen, setManualFulfillModalOpen] = useState<boolean>(false);
   const [manualFulfillShipmentId, setManualFulfillShipmentId] = useState<string>("");
   const [manualFulfillLineId, setManualFulfillLineId] = useState<string>("");
@@ -291,6 +296,9 @@ export default function GalaxusDashboardPage() {
   const [manualFulfillNote, setManualFulfillNote] = useState<string>("");
   const [manualFulfillIsStx, setManualFulfillIsStx] = useState<boolean>(false);
   const [manualFulfillBoughtQty, setManualFulfillBoughtQty] = useState<number>(0);
+  const [manualPackages, setManualPackages] = useState<
+    Array<{ id: string; items: Record<string, number> }>
+  >([]);
   const [lineStockById, setLineStockById] = useState<
     Record<
       string,
@@ -358,6 +366,7 @@ export default function GalaxusDashboardPage() {
           : ""
     );
     setStxManualNote(best?.manualNote ? String(best.manualNote) : "");
+    setStxManualCancelReason("");
     setStxManualModalOpen(Boolean(next));
   };
 
@@ -931,6 +940,7 @@ export default function GalaxusDashboardPage() {
       if (!data.ok) throw new Error(data.error ?? "Failed to load order");
       setSelectedOrder(data.order ?? null);
       setSelectedOrderId(data.order?.id ?? orderId);
+      setManualPackages([]);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -1064,6 +1074,68 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const addManualPackage = () => {
+    const nextId = `pkg-${Date.now()}-${Math.round(Math.random() * 1000)}`;
+    setManualPackages((current) => [...current, { id: nextId, items: {} }]);
+  };
+
+  const removeManualPackage = (packageId: string) => {
+    setManualPackages((current) => current.filter((pkg) => pkg.id !== packageId));
+  };
+
+  const updateManualPackageQty = (packageId: string, lineId: string, value: number) => {
+    const qty = Math.max(0, Math.floor(Number(value) || 0));
+    setManualPackages((current) =>
+      current.map((pkg) => {
+        if (pkg.id !== packageId) return pkg;
+        return {
+          ...pkg,
+          items: { ...pkg.items, [lineId]: qty },
+        };
+      })
+    );
+  };
+
+  const createManualShipments = async () => {
+    if (!selectedOrderId || !selectedOrder) {
+      setError("Select an order first.");
+      return;
+    }
+    if (manualPackages.length === 0) {
+      setError("Add at least one package.");
+      return;
+    }
+    setBusy("manual-pack");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const packages = manualPackages
+        .map((pkg) => {
+          const items = Object.entries(pkg.items)
+            .map(([lineId, qty]) => ({ lineId, quantity: Number(qty) }))
+            .filter((entry) => Number(entry.quantity) > 0);
+          return { items };
+        })
+        .filter((pkg) => pkg.items.length > 0);
+      if (packages.length === 0) {
+        throw new Error("All packages are empty.");
+      }
+      const response = await fetch("/api/galaxus/shipments/manual-pack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: selectedOrderId, packages }),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Manual pack failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const sendOrdr = async () => {
     if (!selectedOrderId) {
       setError("Select an order first.");
@@ -1144,6 +1216,40 @@ export default function GalaxusDashboardPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const recomputeStxBucketsForOrder = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    setBusy("stx-recompute");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/orders/${selectedOrderId}/stx/sync?mode=reserve`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Failed to recompute StockX buckets");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const unlockPartialDispatchForStx = () => {
+    if (!selectedOrder) return;
+    const next: Record<string, boolean> = { ...forceShipmentDocs };
+    selectedOrder.shipments.forEach((shipment) => {
+      if (String(shipment.providerKey ?? "").toUpperCase() === "STX") {
+        next[shipment.id] = true;
+      }
+    });
+    setForceShipmentDocs(next);
   };
 
   const connectGalaxusStockxAccount = async () => {
@@ -1298,6 +1404,39 @@ export default function GalaxusDashboardPage() {
       setOpsLog(JSON.stringify(data, null, 2));
       await loadOrderDetail(selectedOrderId);
       setStxManualModalOpen(false);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const cancelManualStxOrder = async () => {
+    if (!selectedOrderId) {
+      setError("Select an order first.");
+      return;
+    }
+    if (!stxManualOrderId.trim()) {
+      setError("StockX order number is required.");
+      return;
+    }
+    setBusy("stx-cancel");
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/orders/${selectedOrderId}/stx/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "cancel",
+          stockxOrderId: stxManualOrderId.trim(),
+          cancelReason: stxManualCancelReason.trim() || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? "Cancel StockX order failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -2137,6 +2276,182 @@ export default function GalaxusDashboardPage() {
                 </div>
               </div>
 
+              {selectedOrder ? (
+                <div className="border rounded bg-white p-3 text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium text-gray-700">Manual packing (choose items per package)</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                        onClick={addManualPackage}
+                        disabled={busy !== null}
+                      >
+                        Add package
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded bg-blue-600 text-white disabled:opacity-50"
+                        onClick={createManualShipments}
+                        disabled={busy !== null}
+                      >
+                        {busy === "manual-pack" ? "Packing…" : "Create manual shipments"}
+                      </button>
+                    </div>
+                  </div>
+                  {manualPackages.length === 0 ? (
+                    <div className="text-gray-500">No packages yet. Click “Add package”.</div>
+                  ) : (
+                    <div className="overflow-auto border rounded">
+                      <table className="min-w-full text-[11px]">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-2 py-1 text-left">Line</th>
+                            <th className="px-2 py-1 text-left">Product</th>
+                            <th className="px-2 py-1 text-right">Ordered</th>
+                            <th className="px-2 py-1 text-right">Shipped</th>
+                            <th className="px-2 py-1 text-right">Remaining</th>
+                            {manualPackages.map((pkg, idx) => (
+                              <th key={pkg.id} className="px-2 py-1 text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <span>Pkg {idx + 1}</span>
+                                  <button
+                                    className="text-[10px] text-red-600"
+                                    onClick={() => removeManualPackage(pkg.id)}
+                                    disabled={busy !== null}
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedOrder.lines.map((line) => {
+                            const lineId = line.id;
+                            const orderedQty = Number(line.quantity ?? 0);
+                            const shippedQty = (selectedOrder.shipments ?? []).reduce((acc, shipment) => {
+                              const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
+                              if (!shipment?.delrSentAt && delrStatus !== "UPLOADED") return acc;
+                              const match = (shipment.items ?? []).find(
+                                (it) =>
+                                  String(it?.gtin14 ?? "").trim() === String(line.gtin ?? "").trim() &&
+                                  String(it?.supplierPid ?? "").trim() === String(line.supplierPid ?? "").trim()
+                              );
+                              return acc + (match ? Number(match?.quantity ?? 0) : 0);
+                            }, 0);
+                            const assignedQty = manualPackages.reduce(
+                              (acc, pkg) => acc + Number(pkg.items?.[lineId] ?? 0),
+                              0
+                            );
+                            const remaining = Math.max(0, orderedQty - shippedQty - assignedQty);
+                            return (
+                              <tr key={line.id} className="border-t">
+                                <td className="px-2 py-1">{line.lineNumber}</td>
+                                <td className="px-2 py-1">
+                                  {resolveProductNameForGtin(line.gtin) || line.productName}
+                                </td>
+                                <td className="px-2 py-1 text-right">{orderedQty}</td>
+                                <td className="px-2 py-1 text-right">
+                                  {shippedQty}/{orderedQty}
+                                  {shippedQty >= orderedQty && orderedQty > 0 ? " ✅" : ""}
+                                </td>
+                                <td className="px-2 py-1 text-right">
+                                  {remaining}
+                                  {remaining === 0 ? " ✅" : ""}
+                                </td>
+                                {manualPackages.map((pkg) => {
+                                  const value = Number(pkg.items?.[lineId] ?? 0);
+                                  return (
+                                    <td key={pkg.id} className="px-2 py-1 text-right">
+                                      <input
+                                        className="w-16 border rounded px-1 py-0.5 text-right"
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={Number.isFinite(value) ? value : 0}
+                                        onChange={(event) =>
+                                          updateManualPackageQty(pkg.id, lineId, Number(event.target.value || 0))
+                                        }
+                                        disabled={busy !== null}
+                                      />
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <div className="text-[11px] text-gray-500">
+                    Manual packages can mix providers. Use this only when you intend to manually manage the dispatch.
+                  </div>
+                </div>
+              ) : null}
+
+              {selectedOrder.stx?.hasStxItems ? (
+                <div className="border rounded bg-white p-2 text-xs">
+                  <div className="font-medium text-gray-700 mb-2">StockX health</div>
+                  {(() => {
+                    const buckets = selectedOrder.stx?.buckets ?? [];
+                    const totals = buckets.reduce(
+                      (acc, bucket) => {
+                        acc.needed += bucket.needed;
+                        acc.linked += bucket.linked;
+                        acc.linkedWithEta += bucket.linkedWithEta;
+                        acc.linkedWithAwb += bucket.linkedWithAwb;
+                        return acc;
+                      },
+                      { needed: 0, linked: 0, linkedWithEta: 0, linkedWithAwb: 0 }
+                    );
+                    const pending = Math.max(0, totals.needed - totals.linked);
+                    const missingEta = Math.max(0, totals.linked - totals.linkedWithEta);
+                    const missingAwb = Math.max(0, totals.linked - totals.linkedWithAwb);
+                    const cancelled = (selectedOrder.stxUnits ?? []).filter((u) => Boolean(u?.cancelledAt)).length;
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <div>
+                          Linked: {totals.linked}/{totals.needed} · Pending {pending}
+                        </div>
+                        <div>
+                          Missing ETA: {missingEta} · Missing AWB: {missingAwb}
+                        </div>
+                        <div>
+                          Buckets OK: {selectedOrder.stx?.allLinked ? "✅" : "❌"} · ETA OK:{" "}
+                          {selectedOrder.stx?.allEtaPresent ? "✅" : "❌"} · AWB OK:{" "}
+                          {selectedOrder.stx?.allAwbPresent ? "✅" : "❌"}
+                        </div>
+                        <div>Cancelled units: {cancelled}</div>
+                      </div>
+                    );
+                  })()}
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      className="px-2 py-1 rounded bg-green-600 text-white disabled:opacity-50"
+                      onClick={syncStockxOrdersForOrder}
+                      disabled={busy !== null}
+                    >
+                      {busy === "stx-sync-order" ? "Syncing…" : "Re-sync STX"}
+                    </button>
+                    <button
+                      className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
+                      onClick={recomputeStxBucketsForOrder}
+                      disabled={busy !== null}
+                    >
+                      {busy === "stx-recompute" ? "Recomputing…" : "Recompute buckets"}
+                    </button>
+                    <button
+                      className="px-2 py-1 rounded bg-orange-100 text-orange-800 disabled:opacity-50"
+                      onClick={unlockPartialDispatchForStx}
+                      disabled={busy !== null}
+                    >
+                      Unlock partial dispatch
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {selectedOrder.shipments.length === 0 ? (
                 <div className="overflow-auto border rounded bg-white">
                   <table className="min-w-full text-xs">
@@ -2260,6 +2575,7 @@ export default function GalaxusDashboardPage() {
                           {preview.map((u) => (
                             <div key={u.id}>
                               {u.stockxOrderId}
+                              {u.cancelledAt ? " · cancelled" : ""}
                               {u.awb ? ` · AWB ${u.awb}` : ""}
                               {u.etaMin ? ` · ETA ${toDateInput(u.etaMin)}` : ""}
                               {u.manualSetAt ? " · manual" : ""}
@@ -2318,6 +2634,14 @@ export default function GalaxusDashboardPage() {
                       disabled={busy !== null}
                     />
 
+                    <input
+                      className="border rounded px-2 py-1 w-full text-xs"
+                      placeholder="Cancel reason (optional)"
+                      value={stxManualCancelReason}
+                      onChange={(event) => setStxManualCancelReason(event.target.value)}
+                      disabled={busy !== null}
+                    />
+
                     <div className="flex items-center gap-2">
                       <button
                         className="px-2 py-1 rounded bg-blue-600 text-white disabled:opacity-50"
@@ -2325,6 +2649,13 @@ export default function GalaxusDashboardPage() {
                         disabled={busy !== null}
                       >
                         {busy === "stx-manual" ? "Saving…" : "Save manual override"}
+                      </button>
+                      <button
+                        className="px-2 py-1 rounded bg-red-600 text-white disabled:opacity-50"
+                        onClick={cancelManualStxOrder}
+                        disabled={busy !== null || !stxManualOrderId.trim()}
+                      >
+                        {busy === "stx-cancel" ? "Cancelling…" : "Cancel StockX order"}
                       </button>
                       <button
                         className="px-2 py-1 rounded bg-slate-100 text-black disabled:opacity-50"
@@ -2683,7 +3014,11 @@ export default function GalaxusDashboardPage() {
                               {shipment.items.map((item) => {
                                 const gtin = String(item.gtin14 ?? "").trim();
                                 const bucket = isStx ? bucketByGtin.get(gtin) ?? null : null;
-                                const complete = bucket ? bucket.linked >= bucket.needed : false;
+                                const neededForShipment =
+                                  Number(item.quantity ?? 0) > 0
+                                    ? Number(item.quantity ?? 0)
+                                    : bucket?.needed ?? 0;
+                                const complete = bucket ? bucket.linked >= neededForShipment : false;
                                 const pid = String(item.supplierPid ?? "").trim();
                                 const line = orderLineByKey.get(`${pid}::${gtin}`) ?? null;
                                 const stock = line?.id ? lineStockById[line.id] : undefined;
@@ -2729,7 +3064,7 @@ export default function GalaxusDashboardPage() {
                                       <>
                                         <td className="px-2 py-1">{bucket?.supplierVariantId ?? "—"}</td>
                                         <td className="px-2 py-1 text-right">
-                                          {bucket ? `${bucket.linked}/${bucket.needed}` : "—"}
+                                          {bucket ? `${bucket.linked}/${neededForShipment}` : "—"}
                                         </td>
                                         <td className="px-2 py-1">{bucket ? (complete ? "✅" : "❌") : "—"}</td>
                                       </>

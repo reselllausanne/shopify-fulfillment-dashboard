@@ -35,7 +35,25 @@ export function createS3Storage(bucketOverride?: string): StorageAdapter {
           ContentType: "application/pdf",
         })
       );
-      return { storageUrl: `s3://${bucket}/${key}` };
+      return {
+        storageUrl: `s3://${bucket}/${key}`,
+        publicUrl: buildSupabasePublicUrl(bucket, key),
+      };
+    },
+
+    async uploadBinary(key: string, content: Buffer, contentType: string): Promise<StoredFile> {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: content,
+          ContentType: contentType,
+        })
+      );
+      return {
+        storageUrl: `s3://${bucket}/${key}`,
+        publicUrl: buildSupabasePublicUrl(bucket, key),
+      };
     },
 
     async getPdf(storageUrl: string): Promise<StorageFileResult> {
@@ -66,6 +84,26 @@ function parseS3Url(storageUrl: string): { bucket: string; key: string } {
     throw new Error(`Invalid s3 storage url: ${storageUrl}`);
   }
   return { bucket, key: keyParts.join("/") };
+}
+
+function buildSupabasePublicUrl(bucket: string, key: string): string {
+  const base = normalizeSupabaseUrl(SUPABASE_URL);
+  if (!base) {
+    throw new Error("Supabase URL is missing.");
+  }
+  return `${base}/storage/v1/object/public/${bucket}/${key}`;
+}
+
+function normalizeSupabaseUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.includes(".storage.supabase.co")
+      ? parsed.hostname.replace(".storage.supabase.co", ".supabase.co")
+      : parsed.hostname;
+    return `${parsed.protocol}//${host}`;
+  } catch {
+    return rawUrl;
+  }
 }
 
 async function streamToBuffer(stream: Readable): Promise<Buffer> {

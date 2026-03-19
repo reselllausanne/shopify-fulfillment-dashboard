@@ -13,6 +13,7 @@ export type StxLinkBucket = {
   reserved: number;
   linked: number;
   linkedWithEta: number;
+  linkedWithAwb: number;
 };
 
 export type StxOrderLinkStatus = {
@@ -20,6 +21,7 @@ export type StxOrderLinkStatus = {
   hasStxItems: boolean;
   allLinked: boolean;
   allEtaPresent: boolean;
+  allAwbPresent: boolean;
   buckets: StxLinkBucket[];
 };
 
@@ -38,6 +40,14 @@ export async function resolveGalaxusOrderByIdOrRef(orderIdOrRef: string) {
 
 function makeNeedKey(gtin: string, supplierVariantId: string) {
   return `${gtin}::${supplierVariantId}`;
+}
+
+function isUnknownCancelledAtArg(error: any): boolean {
+  const message = String(error?.message ?? "");
+  return (
+    message.includes("Unknown argument `cancelledAt`") ||
+    message.includes("Unknown argument `cancelledReason`")
+  );
 }
 
 async function resolveStxNeedsForOrder(order: Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>>) {
@@ -120,6 +130,7 @@ function buildBucketsFromNeeds(
     stockxOrderId: string | null;
     etaMin: Date | null;
     etaMax: Date | null;
+    awb: string | null;
   }>
 ): StxLinkBucket[] {
   const unitAgg = new Map<
@@ -128,15 +139,17 @@ function buildBucketsFromNeeds(
       reserved: number;
       linked: number;
       linkedWithEta: number;
+      linkedWithAwb: number;
     }
   >();
   for (const unit of units) {
     const key = makeNeedKey(unit.gtin, unit.supplierVariantId);
-    const current = unitAgg.get(key) ?? { reserved: 0, linked: 0, linkedWithEta: 0 };
+    const current = unitAgg.get(key) ?? { reserved: 0, linked: 0, linkedWithEta: 0, linkedWithAwb: 0 };
     current.reserved += 1;
     if (unit.stockxOrderId) {
       current.linked += 1;
       if (unit.etaMin && unit.etaMax) current.linkedWithEta += 1;
+      if (unit.awb) current.linkedWithAwb += 1;
     }
     unitAgg.set(key, current);
   }
@@ -146,6 +159,7 @@ function buildBucketsFromNeeds(
       reserved: 0,
       linked: 0,
       linkedWithEta: 0,
+      linkedWithAwb: 0,
     };
     return {
       gtin: need.gtin,
@@ -154,6 +168,7 @@ function buildBucketsFromNeeds(
       reserved: agg.reserved,
       linked: agg.linked,
       linkedWithEta: agg.linkedWithEta,
+      linkedWithAwb: agg.linkedWithAwb,
     };
   });
 }
@@ -162,31 +177,61 @@ export async function getStxLinkStatusForOrder(orderIdOrRef: string): Promise<St
   const order = await resolveGalaxusOrderByIdOrRef(orderIdOrRef);
   if (!order) throw new Error("Order not found");
   const needs = await resolveStxNeedsForOrder(order);
-  const units =
-    needs.length > 0
-      ? await (prisma as any).stxPurchaseUnit.findMany({
-          where: {
-            galaxusOrderId: order.galaxusOrderId,
-            gtin: { in: Array.from(new Set(needs.map((need) => need.gtin))) },
-          },
-          select: {
-            gtin: true,
-            supplierVariantId: true,
-            stockxOrderId: true,
-            etaMin: true,
-            etaMax: true,
-          },
-        })
-      : [];
+  let units: Array<{
+    gtin: string;
+    supplierVariantId: string;
+    stockxOrderId: string | null;
+    etaMin: Date | null;
+    etaMax: Date | null;
+    awb: string | null;
+  }> = [];
+  if (needs.length > 0) {
+    const gtins = Array.from(new Set(needs.map((need) => need.gtin)));
+    try {
+      units = await (prisma as any).stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: order.galaxusOrderId,
+          gtin: { in: gtins },
+          cancelledAt: null,
+        },
+        select: {
+          gtin: true,
+          supplierVariantId: true,
+          stockxOrderId: true,
+          etaMin: true,
+          etaMax: true,
+          awb: true,
+        },
+      });
+    } catch (error: any) {
+      if (!isUnknownCancelledAtArg(error)) throw error;
+      units = await (prisma as any).stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: order.galaxusOrderId,
+          gtin: { in: gtins },
+        },
+        select: {
+          gtin: true,
+          supplierVariantId: true,
+          stockxOrderId: true,
+          etaMin: true,
+          etaMax: true,
+          awb: true,
+        },
+      });
+    }
+  }
   const buckets = buildBucketsFromNeeds(needs, units);
   const hasStxItems = buckets.length > 0;
   const allLinked = buckets.every((bucket) => bucket.linked >= bucket.needed);
   const allEtaPresent = buckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
+  const allAwbPresent = buckets.every((bucket) => bucket.linkedWithAwb >= bucket.needed);
   return {
     galaxusOrderId: order.galaxusOrderId,
     hasStxItems,
     allLinked: hasStxItems ? allLinked : true,
     allEtaPresent: hasStxItems ? allEtaPresent : true,
+    allAwbPresent: hasStxItems ? allAwbPresent : true,
     buckets,
   };
 }
@@ -203,13 +248,27 @@ export async function reserveStxPurchaseUnitsForOrder(orderIdOrRef: string) {
     };
   }
 
-  const existing = await (prisma as any).stxPurchaseUnit.findMany({
-    where: {
-      galaxusOrderId: order.galaxusOrderId,
-      gtin: { in: Array.from(new Set(needs.map((need) => need.gtin))) },
-    },
-    select: { gtin: true, supplierVariantId: true },
-  });
+  const gtins = Array.from(new Set(needs.map((need) => need.gtin)));
+  let existing: Array<{ gtin: string; supplierVariantId: string }> = [];
+  try {
+    existing = await (prisma as any).stxPurchaseUnit.findMany({
+      where: {
+        galaxusOrderId: order.galaxusOrderId,
+        gtin: { in: gtins },
+        cancelledAt: null,
+      },
+      select: { gtin: true, supplierVariantId: true },
+    });
+  } catch (error: any) {
+    if (!isUnknownCancelledAtArg(error)) throw error;
+    existing = await (prisma as any).stxPurchaseUnit.findMany({
+      where: {
+        galaxusOrderId: order.galaxusOrderId,
+        gtin: { in: gtins },
+      },
+      select: { gtin: true, supplierVariantId: true },
+    });
+  }
   const counts = new Map<string, number>();
   for (const row of existing) {
     const key = makeNeedKey(String(row.gtin), String(row.supplierVariantId));
@@ -254,6 +313,9 @@ export async function linkOldestPendingStxUnit(params: {
 }) {
   const stockxOrderId = params.stockxOrderId.trim();
   if (!stockxOrderId) return { status: "invalid_order_id" as const };
+  if (!params.etaMin || !params.etaMax) {
+    return { status: "missing_eta" as const };
+  }
 
   const alreadyLinked = await (prisma as any).stxPurchaseUnit.findUnique({
     where: { stockxOrderId },
@@ -263,15 +325,30 @@ export async function linkOldestPendingStxUnit(params: {
     return { status: "already_linked" as const, unitId: String(alreadyLinked.id) };
   }
 
-  const pendingUnit = await (prisma as any).stxPurchaseUnit.findFirst({
-    where: {
-      galaxusOrderId: params.galaxusOrderId,
-      supplierVariantId: params.supplierVariantId,
-      stockxOrderId: null,
-    },
-    orderBy: { createdAt: "asc" },
-    select: { id: true },
-  });
+  let pendingUnit: { id: string } | null = null;
+  try {
+    pendingUnit = await (prisma as any).stxPurchaseUnit.findFirst({
+      where: {
+        galaxusOrderId: params.galaxusOrderId,
+        supplierVariantId: params.supplierVariantId,
+        stockxOrderId: null,
+        cancelledAt: null,
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+  } catch (error: any) {
+    if (!isUnknownCancelledAtArg(error)) throw error;
+    pendingUnit = await (prisma as any).stxPurchaseUnit.findFirst({
+      where: {
+        galaxusOrderId: params.galaxusOrderId,
+        supplierVariantId: params.supplierVariantId,
+        stockxOrderId: null,
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+  }
   if (!pendingUnit) {
     return { status: "no_pending_unit" as const };
   }
@@ -306,30 +383,77 @@ export async function getStxLinkStatusForShipment(shipmentId: string): Promise<S
   if (!shipment?.order) return null;
 
   const orderStatus = await getStxLinkStatusForOrder(shipment.order.galaxusOrderId);
+  const neededByGtin = new Map<string, number>();
+  for (const item of shipment.items) {
+    const gtin = String(item?.gtin14 ?? "").trim();
+    const qty = Number(item?.quantity ?? 0);
+    if (!gtin || qty <= 0) continue;
+    neededByGtin.set(gtin, (neededByGtin.get(gtin) ?? 0) + qty);
+  }
   const shipmentGtins = new Set(
     shipment.items
       .map((item) => String(item.gtin14 ?? "").trim())
       .filter((gtin) => gtin.length > 0)
   );
-  const relevantBuckets = orderStatus.buckets.filter((bucket) => shipmentGtins.has(bucket.gtin));
+  const relevantBuckets = orderStatus.buckets
+    .filter((bucket) => shipmentGtins.has(bucket.gtin))
+    .map((bucket) => {
+      const shipmentNeeded = neededByGtin.get(bucket.gtin) ?? bucket.needed;
+      return { ...bucket, needed: Math.min(bucket.needed, shipmentNeeded) };
+    });
   if (relevantBuckets.length === 0) {
     return {
       ...orderStatus,
       hasStxItems: false,
       allLinked: true,
       allEtaPresent: true,
+      allAwbPresent: true,
       buckets: [],
     };
   }
 
   const allLinked = relevantBuckets.every((bucket) => bucket.linked >= bucket.needed);
   const allEtaPresent = relevantBuckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
+  const allAwbPresent = relevantBuckets.every((bucket) => bucket.linkedWithAwb >= bucket.needed);
   return {
     galaxusOrderId: orderStatus.galaxusOrderId,
     hasStxItems: true,
     allLinked,
     allEtaPresent,
+    allAwbPresent,
     buckets: relevantBuckets,
   };
+}
+
+export async function cancelStxPurchaseUnit(params: {
+  galaxusOrderId: string;
+  stockxOrderId: string;
+  reason?: string | null;
+}) {
+  const stockxOrderId = params.stockxOrderId.trim();
+  if (!stockxOrderId) return { ok: false as const, status: "invalid_order_id" as const };
+  let unit: { id: string; galaxusOrderId: string; cancelledAt?: Date | null } | null = null;
+  try {
+    unit = await (prisma as any).stxPurchaseUnit.findUnique({
+      where: { stockxOrderId },
+      select: { id: true, galaxusOrderId: true, cancelledAt: true },
+    });
+  } catch (error: any) {
+    if (!isUnknownCancelledAtArg(error)) throw error;
+    throw new Error("StockX cancel requires DB migration (missing cancelledAt/cancelledReason columns)");
+  }
+  if (!unit) return { ok: false as const, status: "not_found" as const };
+  if (unit.cancelledAt) return { ok: true as const, status: "already_cancelled" as const };
+  if (String(unit.galaxusOrderId) !== String(params.galaxusOrderId)) {
+    return { ok: false as const, status: "wrong_order" as const };
+  }
+  await (prisma as any).stxPurchaseUnit.update({
+    where: { id: unit.id },
+    data: {
+      cancelledAt: new Date(),
+      cancelledReason: params.reason ? String(params.reason).trim() : null,
+    },
+  });
+  return { ok: true as const, status: "cancelled" as const };
 }
 

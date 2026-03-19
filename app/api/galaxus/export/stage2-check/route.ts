@@ -144,27 +144,11 @@ function buildProductCategory(payload: KickDbPayload | null): string {
   return truncate(category || sanitizeText(payload.product_type ?? ""), 200);
 }
 
-function extractProductImages(
-  payload: KickDbPayload | null,
-  supplierImages: unknown,
-  fallback?: string | null
-): string[] {
-  const list: string[] = [];
-  if (Array.isArray(supplierImages)) {
-    for (const item of supplierImages) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
+function extractProductImages(hostedImageUrl?: string | null): string[] {
+  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
+    return [hostedImageUrl.trim()];
   }
-  if (payload?.image) list.push(payload.image);
-  if (Array.isArray(payload?.gallery)) {
-    for (const item of payload.gallery) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
-  }
-  if (fallback) list.push(fallback);
-  return Array.from(new Set(list))
-    .filter(Boolean)
-    .filter((value) => isAbsoluteUrl(value));
+  return [];
 }
 
 function isAsciiPrintable(value: string): boolean {
@@ -288,7 +272,7 @@ export async function GET(request: Request) {
       supplierVariantAny?.supplierProductName ?? supplierVariantAny?.productName ?? null
     );
     const category = buildProductCategory(payload) || "Sneakers";
-    const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
+    const images = extractProductImages(supplierVariant?.hostedImageUrl ?? null);
     const weightRaw = supplierVariantAny?.weightGrams ?? 1000;
     const weight = weightRaw === null || weightRaw === undefined ? NaN : Number(weightRaw);
 
