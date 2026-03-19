@@ -17,6 +17,13 @@ type ImageSyncResult = {
   failed: number;
   skipped: number;
   updatedSource: number;
+  items: Array<{
+    supplierVariantId: string;
+    sourceImageUrl: string | null;
+    hostedImageUrl: string | null;
+    status: ImageSyncStatus | "SKIPPED";
+    error?: string | null;
+  }>;
   durationMs: number;
 };
 
@@ -94,6 +101,7 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
   let failed = 0;
   let skipped = 0;
   let updatedSource = 0;
+  const items: ImageSyncResult["items"] = [];
   const limiter = createLimiter(concurrency);
 
   await Promise.all(
@@ -108,6 +116,13 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
             imageSyncStatus: "FAILED",
             imageSyncError: "No source image URL available",
             imageLastSyncedAt: new Date(),
+          });
+          items.push({
+            supplierVariantId,
+            sourceImageUrl: row.sourceImageUrl ?? null,
+            hostedImageUrl: row.hostedImageUrl ?? null,
+            status: "FAILED",
+            error: "No source image URL available",
           });
           return;
         }
@@ -137,6 +152,12 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
 
         if (!force && row.hostedImageUrl && !sourceChanged && row.imageSyncStatus === "SYNCED") {
           skipped += 1;
+          items.push({
+            supplierVariantId,
+            sourceImageUrl: source,
+            hostedImageUrl: row.hostedImageUrl ?? null,
+            status: "SKIPPED",
+          });
           return;
         }
 
@@ -153,12 +174,25 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
             imageLastSyncedAt: new Date(),
           });
           synced += 1;
+          items.push({
+            supplierVariantId,
+            sourceImageUrl: source,
+            hostedImageUrl: hosted.publicUrl,
+            status: "SYNCED",
+          });
         } catch (error: any) {
           failed += 1;
           await updateVariantImageState(supplierVariantId, {
             imageSyncStatus: "FAILED",
             imageSyncError: error?.message ?? "Image sync failed",
             imageLastSyncedAt: new Date(),
+          });
+          items.push({
+            supplierVariantId,
+            sourceImageUrl: source,
+            hostedImageUrl: row.hostedImageUrl ?? null,
+            status: "FAILED",
+            error: error?.message ?? "Image sync failed",
           });
         }
       })
@@ -171,6 +205,7 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
     failed,
     skipped,
     updatedSource,
+    items,
     durationMs: Date.now() - startedAt,
   };
 }

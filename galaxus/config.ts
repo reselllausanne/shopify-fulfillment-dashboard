@@ -1,6 +1,7 @@
 import path from "path";
 
 export const SUPABASE_DOCS_BUCKET = process.env.SUPABASE_DOCS_BUCKET ?? "Galaxus-invoice";
+export const SUPABASE_IMAGES_BUCKET = process.env.SUPABASE_IMAGES_BUCKET ?? "";
 export const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 

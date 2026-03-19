@@ -1,4 +1,5 @@
-import { getStorageAdapter } from "@/galaxus/storage/storage";
+import { SUPABASE_DOCS_BUCKET, SUPABASE_IMAGES_BUCKET } from "@/galaxus/config";
+import { getStorageAdapterForBucket } from "@/galaxus/storage/storage";
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_RETRIES = 2;
@@ -113,7 +114,8 @@ export async function hostSupplierImage(params: {
   const download = await downloadImage(sourceImageUrl);
   const extension = extensionFromContentType(download.contentType);
   const key = `supplier-images/${supplierVariantId}/main-v${imageVersion}.${extension}`;
-  const storage = getStorageAdapter();
+  const bucket = SUPABASE_IMAGES_BUCKET || SUPABASE_DOCS_BUCKET;
+  const storage = getStorageAdapterForBucket(bucket);
   if (!storage.uploadBinary) {
     throw new Error("Storage adapter does not support binary uploads.");
   }
