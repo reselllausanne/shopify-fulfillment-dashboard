@@ -22,6 +22,32 @@ function decimalToString(value: unknown): string {
   return String(value);
 }
 
+function toIsoDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function addDays(base: Date, days: number) {
+  const result = new Date(base);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function businessDaysBetween(start: Date, end: Date): number {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  startDate.setHours(0, 0, 0, 0);
+  endDate.setHours(0, 0, 0, 0);
+  if (endDate <= startDate) return 0;
+  let count = 0;
+  const cursor = new Date(startDate);
+  while (cursor <= endDate) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) count += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return Math.max(0, count - 1);
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -29,8 +55,13 @@ export async function GET(request: Request) {
     const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
+  const providerKeys = (searchParams.get("providerKeys") ?? "")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   const mappingsWhere = buildFeedMappingsWhere(supplier, all);
+  const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
 
   const headers = [
     "ProviderKey",
@@ -91,6 +122,7 @@ export async function GET(request: Request) {
     const whereClause: Record<string, unknown> = all
       ? {
           ...mappingsWhere,
+          ...(providerKeyFilter ? providerKeyFilter : {}),
           ...(cursorUpdatedAt && cursorId
             ? {
                 OR: [
@@ -102,6 +134,7 @@ export async function GET(request: Request) {
         }
       : {
           ...mappingsWhere,
+          ...(providerKeyFilter ? providerKeyFilter : {}),
         };
     const mappings: any[] = await prismaAny.variantMapping.findMany({
       where: whereClause,
@@ -165,6 +198,61 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
+
+  const stxGtins = Array.from(
+    new Set(
+      exportCandidates
+        .filter((candidate: any) => String(candidate?.providerKey ?? "").startsWith("STX_"))
+        .map((candidate: any) => String(candidate?.mapping?.gtin ?? "").trim())
+        .filter((value: string) => value.length > 0)
+    )
+  );
+  const stxEtaByGtin = new Map<string, { min: Date; max: Date }>();
+  if (stxGtins.length > 0) {
+    let rows: Array<{ gtin: string; etaMin: Date; etaMax: Date }> = [];
+    try {
+      rows = await (prismaAny as any).stxPurchaseUnit.findMany({
+        where: {
+          gtin: { in: stxGtins },
+          cancelledAt: null,
+          stockxOrderId: { not: null },
+          etaMin: { not: null },
+          etaMax: { not: null },
+        },
+        select: { gtin: true, etaMin: true, etaMax: true },
+      });
+    } catch (error: any) {
+      const message = String(error?.message ?? "");
+      if (!message.includes("Unknown argument `cancelledAt`")) {
+        throw error;
+      }
+      rows = await (prismaAny as any).stxPurchaseUnit
+        .findMany({
+          where: {
+            gtin: { in: stxGtins },
+            stockxOrderId: { not: null },
+            etaMin: { not: null },
+            etaMax: { not: null },
+          },
+          select: { gtin: true, etaMin: true, etaMax: true },
+        })
+        .catch(() => []);
+    }
+    for (const row of rows) {
+      const gtin = String(row?.gtin ?? "").trim();
+      if (!gtin || !row?.etaMin || !row?.etaMax) continue;
+      const min = new Date(row.etaMin);
+      const max = new Date(row.etaMax);
+      if (!stxEtaByGtin.has(gtin)) {
+        stxEtaByGtin.set(gtin, { min, max });
+        continue;
+      }
+      const current = stxEtaByGtin.get(gtin)!;
+      if (min.getTime() < current.min.getTime()) current.min = min;
+      if (max.getTime() > current.max.getTime()) current.max = max;
+    }
+  }
+
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
@@ -187,11 +275,22 @@ export async function GET(request: Request) {
       return;
     }
 
+    let restockDate = "";
+    let restockTime = "";
+    const gtin = String(candidate?.mapping?.gtin ?? "").trim();
+    if (isStx && gtin && stxEtaByGtin.has(gtin)) {
+      const range = stxEtaByGtin.get(gtin)!;
+      const minPlusOne = addDays(range.min, 1);
+      const maxPlusOne = addDays(range.max, 1);
+      restockDate = toIsoDate(maxPlusOne);
+      restockTime = businessDaysBetween(new Date(), minPlusOne).toString();
+    }
+
     rows.push({
       ProviderKey: providerKey,
       QuantityOnStock: Number.isFinite(stock) ? stock.toString() : "0",
-      RestockTime: "",
-      RestockDate: "",
+      RestockTime: restockTime,
+      RestockDate: restockDate,
       MinimumOrderQuantity: "1",
       OrderQuantitySteps: "1",
       TradeUnit: "",
