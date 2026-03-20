@@ -351,7 +351,7 @@ export async function runGalaxusPipelineTick(
   let imageSync: TickJobStatus = { due: false, ran: false, skipped: "not_due", nextAt: toIso(nextImageAt) };
   if (shouldConsider("image-sync") && imageDue) {
     const locked = await withAdvisoryLock("galaxus:pipeline:image-sync", async () =>
-      runJob("pipeline-image-sync", async () => runImageSync({ limit: 50 }))
+      runJob("pipeline-image-sync", async () => runImageSync({ limit: 50, concurrency: 5 }))
     );
     imageSync =
       locked.locked

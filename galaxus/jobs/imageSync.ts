@@ -70,7 +70,7 @@ async function updateVariantImageState(
 export async function runImageSync(options: ImageSyncOptions = {}): Promise<ImageSyncResult> {
   const startedAt = Date.now();
   const limit = Math.max(1, options.limit ?? 50);
-  const concurrency = Math.max(1, options.concurrency ?? 3);
+  const concurrency = Math.max(1, options.concurrency ?? 5);
   const force = Boolean(options.force);
 
   const where = options.supplierVariantId

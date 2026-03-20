@@ -1,8 +1,10 @@
+import sharp from "sharp";
 import { SUPABASE_DOCS_BUCKET, SUPABASE_IMAGES_BUCKET } from "@/galaxus/config";
 import { getStorageAdapterForBucket } from "@/galaxus/storage/storage";
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_MAX_RETRIES = 2;
+const SUPPORTED_CONTENT_TYPES = new Set(["image/jpeg", "image/png"]);
 
 type HostedImageResult = {
   storageUrl: string;
@@ -112,14 +114,20 @@ export async function hostSupplierImage(params: {
 }): Promise<HostedImageResult> {
   const { supplierVariantId, sourceImageUrl, imageVersion } = params;
   const download = await downloadImage(sourceImageUrl);
-  const extension = extensionFromContentType(download.contentType);
+  let buffer = download.buffer;
+  let contentType = download.contentType;
+  if (!SUPPORTED_CONTENT_TYPES.has(contentType)) {
+    buffer = await sharp(buffer).jpeg({ quality: 90 }).toBuffer();
+    contentType = "image/jpeg";
+  }
+  const extension = extensionFromContentType(contentType);
   const key = `supplier-images/${supplierVariantId}/main-v${imageVersion}.${extension}`;
   const bucket = SUPABASE_IMAGES_BUCKET || SUPABASE_DOCS_BUCKET;
   const storage = getStorageAdapterForBucket(bucket);
   if (!storage.uploadBinary) {
     throw new Error("Storage adapter does not support binary uploads.");
   }
-  const stored = await storage.uploadBinary(key, download.buffer, download.contentType);
+  const stored = await storage.uploadBinary(key, buffer, contentType);
   const publicUrl = stored.publicUrl ?? null;
   if (!publicUrl) {
     throw new Error("Hosted image public URL missing (bucket may not be public).");
@@ -127,7 +135,7 @@ export async function hostSupplierImage(params: {
   return {
     storageUrl: stored.storageUrl,
     publicUrl,
-    contentType: download.contentType,
-    sizeBytes: download.sizeBytes,
+    contentType,
+    sizeBytes: buffer.length,
   };
 }

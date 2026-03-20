@@ -21,6 +21,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const input = body?.supplierVariantId ? String(body.supplierVariantId) : undefined;
     const limit = body?.limit ? Math.max(1, Number(body.limit)) : 1;
+    const concurrency = body?.concurrency ? Math.max(1, Number(body.concurrency)) : undefined;
     let supplierVariantId = input ? normalizeSupplierVariantId(input) : undefined;
 
     if (supplierVariantId && looksLikeProviderKey(supplierVariantId)) {
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
     const result = await runImageSync({
       supplierVariantId,
       limit,
+      ...(concurrency ? { concurrency } : {}),
       force: true,
     });
     return NextResponse.json({ ok: true, result });
