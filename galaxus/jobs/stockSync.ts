@@ -64,7 +64,7 @@ async function removeMissingSupplierVariants(params: {
   let removed = 0;
   for (const batch of chunkArray(missing, 500)) {
     const res = await prisma.supplierVariant.deleteMany({
-      where: { supplierVariantId: { in: batch } },
+      where: { supplierVariantId: { in: batch }, manualLock: { not: true } },
     });
     removed += res.count;
   }
@@ -85,7 +85,7 @@ async function removeZeroStockSupplierVariants(params: {
   let removed = 0;
   for (const batch of chunkArray(ids, 500)) {
     const res = await prisma.supplierVariant.deleteMany({
-      where: { supplierVariantId: { in: batch } },
+      where: { supplierVariantId: { in: batch }, manualLock: { not: true } },
     });
     removed += res.count;
   }

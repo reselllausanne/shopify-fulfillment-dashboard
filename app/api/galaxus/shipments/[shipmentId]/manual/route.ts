@@ -12,6 +12,7 @@ export async function POST(
     const { shipmentId } = await params;
     const body = (await request.json().catch(() => ({}))) as {
       manualManaged?: boolean;
+      archived?: boolean;
       markShipped?: boolean;
       trackingNumber?: string | null;
       carrierFinal?: string | null;
@@ -31,7 +32,9 @@ export async function POST(
 
     const wantsManual = body.manualManaged === true;
     const clearManual = body.manualManaged === false;
-    const isManualNow = String(shipment.status ?? "").toUpperCase() === "MANUAL";
+    const currentStatus = String(shipment.status ?? "").toUpperCase();
+    const isManualNow = currentStatus === "MANUAL";
+    const isArchivedNow = currentStatus === "ARCHIVED";
 
     const trackingNumber = body.trackingNumber ? String(body.trackingNumber).trim() : "";
     const carrierFinal = body.carrierFinal ? String(body.carrierFinal).trim() : "";
@@ -47,6 +50,8 @@ export async function POST(
         : null;
 
     const data: Record<string, unknown> = {};
+    if (body.archived === true) data.status = "ARCHIVED";
+    if (body.archived === false && isArchivedNow) data.status = "MANUAL";
     if (wantsManual) data.status = "MANUAL";
     if (clearManual && isManualNow) data.status = null;
     if (carrierFinal) data.carrierFinal = carrierFinal;

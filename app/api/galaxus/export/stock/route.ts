@@ -148,6 +148,9 @@ export async function GET(request: Request) {
             supplierVariantId: true,
             price: true,
             stock: true,
+            manualPrice: true,
+            manualStock: true,
+            manualLock: true,
             updatedAt: true,
             deliveryType: true,
           },
@@ -262,7 +265,12 @@ export async function GET(request: Request) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       return;
     }
-    const rawStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const manualLock = Boolean(variant?.manualLock);
+    const manualStockRaw = variant?.manualStock;
+    const manualStock =
+      manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
+    const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");

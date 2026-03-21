@@ -258,6 +258,7 @@ export async function bulkUpdateSupplierVariantsByProviderKeyGtin(
       FROM vals
       WHERE t."providerKey" = vals."providerKey"
         AND t."gtin" = vals."gtin"
+        AND (t."manualLock" IS DISTINCT FROM TRUE)
         AND (
           (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku") OR
           (vals."price" IS NOT NULL AND t."price" IS DISTINCT FROM vals."price") OR
@@ -388,6 +389,7 @@ export async function bulkUpdateSupplierVariants(
         END
       FROM vals
       WHERE t."supplierVariantId" = vals."supplierVariantId"
+        AND (t."manualLock" IS DISTINCT FROM TRUE)
         AND (
           t."price" IS DISTINCT FROM COALESCE(vals."price", t."price") OR
           t."stock" IS DISTINCT FROM COALESCE(vals."stock", t."stock") OR

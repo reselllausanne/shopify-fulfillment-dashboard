@@ -127,7 +127,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
     const ids = (found ?? []).map((r) => r.supplierVariantId);
     if (ids.length === 0) continue;
     const res = await prisma.supplierVariant.deleteMany({
-      where: { supplierVariantId: { in: ids } },
+      where: { supplierVariantId: { in: ids }, manualLock: { not: true } },
     });
     removedZeroStock += res.count;
   }

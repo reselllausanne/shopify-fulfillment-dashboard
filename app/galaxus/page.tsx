@@ -299,6 +299,8 @@ export default function GalaxusDashboardPage() {
   const [manualPackages, setManualPackages] = useState<
     Array<{ id: string; items: Record<string, number> }>
   >([]);
+  const [showArchivedShipments, setShowArchivedShipments] = useState(false);
+  const [postLabelUrlByShipment, setPostLabelUrlByShipment] = useState<Record<string, string>>({});
   const [lineStockById, setLineStockById] = useState<
     Record<
       string,
@@ -1493,6 +1495,28 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const deleteShipment = async (shipmentId: string) => {
+    if (!confirm("Remove this package? This cannot be undone.")) return;
+    setBusy(`delete-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!data.ok) throw new Error(data.error ?? "Delete shipment failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const downloadOrderEdiXml = (type: "ORDR" | "INVO" | "CANR" | "EOLN") => {
     if (!selectedOrderId) {
       setError("Select an order first.");
@@ -1534,6 +1558,9 @@ export default function GalaxusDashboardPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data?.error ?? "Post label failed");
+      if (typeof data?.url === "string" && data.url.trim()) {
+        setPostLabelUrlByShipment((prev) => ({ ...prev, [shipmentId]: data.url }));
+      }
       setOpsLog(JSON.stringify(data, null, 2));
       if (selectedOrderId) await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
@@ -1587,6 +1614,27 @@ export default function GalaxusDashboardPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok) throw new Error(data?.error ?? "Manual ship failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      if (selectedOrderId) await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const setShipmentArchived = async (shipmentId: string, archived: boolean) => {
+    setBusy(`archive-${shipmentId}`);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const response = await fetch(`/api/galaxus/shipments/${shipmentId}/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) throw new Error(data?.error ?? "Archive update failed");
       setOpsLog(JSON.stringify(data, null, 2));
       if (selectedOrderId) await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
@@ -1668,6 +1716,14 @@ export default function GalaxusDashboardPage() {
         <p className="text-sm text-gray-500">
           Preview supplier data, sync to DB, and inspect saved variants.
         </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <a
+            className="inline-flex items-center rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white"
+            href="/galaxus/pricing"
+          >
+            Pricing overrides
+          </a>
+        </div>
       </div>
 
       {error && <div className="text-sm text-red-600">{error}</div>}
@@ -1688,8 +1744,8 @@ export default function GalaxusDashboardPage() {
             </div>
             {orderGalaxusLocked ? (
               <div className="text-xs text-red-600">
-                Galaxus EDI is locked because at least one DELR was sent. You can still generate labels, but ORDR/INVO/DELR
-                actions are disabled.
+                Galaxus EDI is locked because at least one DELR was sent. ORDR/INVO/DELR actions are disabled, except on
+                manual shipments.
               </div>
             ) : null}
             <div className="rounded border bg-white p-2 text-xs text-gray-600">
@@ -2306,6 +2362,8 @@ export default function GalaxusDashboardPage() {
                           <tr>
                             <th className="px-2 py-1 text-left">Line</th>
                             <th className="px-2 py-1 text-left">Product</th>
+                            <th className="px-2 py-1 text-left">Provider</th>
+                            <th className="px-2 py-1 text-left">Size</th>
                             <th className="px-2 py-1 text-right">Ordered</th>
                             <th className="px-2 py-1 text-right">Shipped</th>
                             <th className="px-2 py-1 text-right">Remaining</th>
@@ -2344,12 +2402,28 @@ export default function GalaxusDashboardPage() {
                               0
                             );
                             const remaining = Math.max(0, orderedQty - shippedQty - assignedQty);
+                            const lineAny = line as any;
+                            const providerPrefix = resolveProviderKeyForLine(line);
+                            const providerKey =
+                              providerPrefix && line.gtin ? `${providerPrefix}_${line.gtin}` : providerPrefix;
+                            const sizeLabel =
+                              line.size ?? lineAny.sizeRaw ?? lineAny.sizeNormalized ?? lineAny.variantSize ?? "";
+                            const productLabel =
+                              resolveProductNameForGtin(line.gtin) ||
+                              line.productName ||
+                              lineAny.supplierProductName ||
+                              line.supplierSku ||
+                              line.supplierVariantId ||
+                              line.gtin ||
+                              "Item";
                             return (
                               <tr key={line.id} className="border-t">
                                 <td className="px-2 py-1">{line.lineNumber}</td>
                                 <td className="px-2 py-1">
-                                  {resolveProductNameForGtin(line.gtin) || line.productName}
+                                  {productLabel}
                                 </td>
+                                <td className="px-2 py-1">{providerKey}</td>
+                                <td className="px-2 py-1">{sizeLabel}</td>
                                 <td className="px-2 py-1 text-right">{orderedQty}</td>
                                 <td className="px-2 py-1 text-right">
                                   {shippedQty}/{orderedQty}
@@ -2816,8 +2890,37 @@ export default function GalaxusDashboardPage() {
               ) : null}
               <div className="space-y-2">
                 <div className="text-sm font-medium">Shipments</div>
-                {selectedOrder.shipments.map((shipment) => (
-                  <div key={shipment.id} className="border rounded bg-white p-2 space-y-2">
+                {(() => {
+                  const activeShipments = selectedOrder.shipments.filter((shipment) => {
+                    const status = String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase();
+                    return status !== "ARCHIVED";
+                  });
+                  const archivedShipments = selectedOrder.shipments.filter((shipment) => {
+                    const status = String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase();
+                    return status === "ARCHIVED";
+                  });
+                  const shipmentsToShow = showArchivedShipments
+                    ? [...activeShipments, ...archivedShipments]
+                    : activeShipments;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                        <button
+                          className="px-2 py-1 rounded bg-gray-100"
+                          onClick={() => setShowArchivedShipments((prev) => !prev)}
+                          disabled={busy !== null}
+                        >
+                          {showArchivedShipments ? "Hide archived" : "Show archived"}
+                        </button>
+                        <span>
+                          Active {activeShipments.length} · Archived {archivedShipments.length}
+                        </span>
+                      </div>
+                      {shipmentsToShow.map((shipment) => {
+                        const shipmentIsManual =
+                          String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase() === "MANUAL";
+                        return (
+                        <div key={shipment.id} className="border rounded bg-white p-2 space-y-2">
                     <div className="text-xs text-gray-600">
                       {shipment.shipmentId} · Provider {shipment.providerKey ?? "—"} · SSCC{" "}
                       {shipment.packageId ?? "—"} · DELR {shipment.delrStatus ?? "—"}
@@ -2837,6 +2940,17 @@ export default function GalaxusDashboardPage() {
                           disabled={busy !== null}
                         />
                         Manual managed
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={
+                            String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase() === "ARCHIVED"
+                          }
+                          onChange={(event) => setShipmentArchived(shipment.id, event.target.checked)}
+                          disabled={busy !== null}
+                        />
+                        Hide package (archive)
                       </label>
                       <button
                         className="px-2 py-1 rounded bg-gray-100"
@@ -2864,46 +2978,52 @@ export default function GalaxusDashboardPage() {
                       {(() => {
                         const provider = (shipment.providerKey ?? "").toUpperCase();
                         const isStx = provider === "STX";
+                        const isManual = shipmentIsManual;
+                        const canPlaceSupplierOrder = !isStx && !isManual;
+                        const canSyncStx = isStx && !isManual;
                         return (
                           <>
-                            <label className="flex items-center gap-2 text-xs text-gray-600 mr-2">
-                              <input
-                                type="checkbox"
-                                checked={Boolean(onlyAvailableSupplierOrder[shipment.id])}
-                                onChange={(event) =>
-                                  setOnlyAvailableSupplierOrder((prev) => ({
-                                    ...prev,
-                                    [shipment.id]: event.target.checked,
-                                  }))
-                                }
-                                disabled={busy !== null || isStx}
-                              />
-                              Only order available items
-                            </label>
-                            <button
-                              className={`px-2 py-1 rounded text-white disabled:opacity-50 ${
-                                isStx ? "bg-green-600" : "bg-emerald-600"
-                              }`}
-                              onClick={() =>
-                                isStx ? syncStockxOrdersForOrder() : placeSupplierOrderForShipment(shipment.id)
-                              }
-                              disabled={busy !== null}
-                            >
-                              {isStx
-                                ? busy === "stx-sync-order"
-                                  ? "Syncing…"
-                                  : "Sync StockX orders"
-                                : busy === `place-${shipment.id}`
-                                  ? "Placing…"
-                                  : "Place supplier order"}
-                            </button>
+                            {canPlaceSupplierOrder ? (
+                              <label className="flex items-center gap-2 text-xs text-gray-600 mr-2">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(onlyAvailableSupplierOrder[shipment.id])}
+                                  onChange={(event) =>
+                                    setOnlyAvailableSupplierOrder((prev) => ({
+                                      ...prev,
+                                      [shipment.id]: event.target.checked,
+                                    }))
+                                  }
+                                  disabled={busy !== null}
+                                />
+                                Only order available items
+                              </label>
+                            ) : null}
+                            {canSyncStx ? (
+                              <button
+                                className="px-2 py-1 rounded bg-green-600 text-white disabled:opacity-50"
+                                onClick={() => syncStockxOrdersForOrder()}
+                                disabled={busy !== null}
+                              >
+                                {busy === "stx-sync-order" ? "Syncing…" : "Sync StockX orders"}
+                              </button>
+                            ) : null}
+                            {canPlaceSupplierOrder ? (
+                              <button
+                                className="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-50"
+                                onClick={() => placeSupplierOrderForShipment(shipment.id)}
+                                disabled={busy !== null}
+                              >
+                                {busy === `place-${shipment.id}` ? "Placing…" : "Place supplier order"}
+                              </button>
+                            ) : null}
                           </>
                         );
                       })()}
                       <button
                         className="px-2 py-1 rounded bg-purple-600 text-white"
                         onClick={() => generateDocsForShipment(shipment.id)}
-                        disabled={busy !== null || orderGalaxusLocked}
+                        disabled={busy !== null || (orderGalaxusLocked && !shipmentIsManual)}
                       >
                         {busy === `docs-${shipment.id}` ? "Generating…" : "Generate box docs"}
                       </button>
@@ -2917,14 +3037,14 @@ export default function GalaxusDashboardPage() {
                       <button
                         className="px-2 py-1 rounded bg-blue-600 text-white"
                         onClick={() => uploadDelrForShipment(shipment.id)}
-                        disabled={busy !== null || orderGalaxusLocked}
+                        disabled={busy !== null || (orderGalaxusLocked && !shipmentIsManual)}
                       >
                         {busy === `delr-${shipment.id}` ? "Uploading…" : "Upload DELR"}
                       </button>
                       <button
                         className="px-2 py-1 rounded bg-gray-100"
                         onClick={() => downloadDelrXmlForShipment(shipment.id)}
-                        disabled={busy !== null || orderGalaxusLocked}
+                        disabled={busy !== null || (orderGalaxusLocked && !shipmentIsManual)}
                       >
                         Download DELR XML
                       </button>
@@ -2946,15 +3066,49 @@ export default function GalaxusDashboardPage() {
                         </a>
                       )}
                       {shipment.shippingLabelPdfUrl && (
-                        <a
-                          className="px-2 py-1 rounded bg-gray-100"
-                          href={shipment.shippingLabelPdfUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Post Label PDF
-                        </a>
+                        <>
+                          <button
+                            className="px-2 py-1 rounded bg-gray-100"
+                            onClick={() =>
+                              shipment.shippingLabelPdfUrl
+                                ? window.open(shipment.shippingLabelPdfUrl, "_blank", "noopener,noreferrer")
+                                : null
+                            }
+                            disabled={busy !== null}
+                          >
+                            Print Post label
+                          </button>
+                          <a
+                            className="px-2 py-1 rounded bg-gray-100"
+                            href={shipment.shippingLabelPdfUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Post Label PDF
+                          </a>
+                        </>
                       )}
+                      {!shipment.shippingLabelPdfUrl && postLabelUrlByShipment[shipment.id] ? (
+                        <>
+                          <button
+                            className="px-2 py-1 rounded bg-gray-100"
+                            onClick={() =>
+                              window.open(postLabelUrlByShipment[shipment.id], "_blank", "noopener,noreferrer")
+                            }
+                            disabled={busy !== null}
+                          >
+                            Print Post label
+                          </button>
+                          <a
+                            className="px-2 py-1 rounded bg-gray-100"
+                            href={postLabelUrlByShipment[shipment.id]}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Post Label PDF
+                          </a>
+                        </>
+                      ) : null}
                       {shipment.deliveryNotePdfUrl && (
                         <a
                           className="px-2 py-1 rounded bg-gray-100"
@@ -2965,7 +3119,27 @@ export default function GalaxusDashboardPage() {
                           Delivery Note PDF
                         </a>
                       )}
+                      {(() => {
+                        const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
+                        const status = String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase();
+                        const canDelete =
+                          status === "MANUAL" && !shipment.delrSentAt && delrStatus !== "UPLOADED";
+                        return canDelete ? (
+                          <button
+                            className="px-2 py-1 rounded bg-red-100 text-red-700"
+                            onClick={() => deleteShipment(shipment.id)}
+                            disabled={busy !== null}
+                          >
+                            {busy === `delete-${shipment.id}` ? "Removing…" : "Remove package"}
+                          </button>
+                        ) : null;
+                      })()}
                     </div>
+                    {shipmentIsManual ? (
+                      <div className="text-[11px] text-gray-500">
+                        Manual shipment: mark shipped (manual) then upload DELR. Supplier/StockX actions are hidden.
+                      </div>
+                    ) : null}
 
                     <div className="overflow-auto border rounded">
                       {(() => {
@@ -3136,8 +3310,12 @@ export default function GalaxusDashboardPage() {
                         tick “Force docs/DELR”.
                       </div>
                     ) : null}
-                  </div>
-                ))}
+                        </div>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
                 {selectedOrder.shipments.length === 0 && (
                   <div className="text-xs text-gray-500">No shipments yet.</div>
                 )}

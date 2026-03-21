@@ -45,8 +45,13 @@ export async function GET(request: Request) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
+  const providerKeys = (searchParams.get("providerKeys") ?? "")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   const mappingsWhere = buildFeedMappingsWhere(supplier, all);
+  const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
   const trmExclusionStats = createTrmFeedExclusionStats();
 
   const rows: ExportRow[] = [];
@@ -106,6 +111,7 @@ export async function GET(request: Request) {
     const whereClause: Record<string, unknown> = all
       ? {
           ...mappingsWhere,
+          ...(providerKeyFilter ? providerKeyFilter : {}),
           ...(cursorUpdatedAt && cursorId
             ? {
                 OR: [
@@ -117,6 +123,7 @@ export async function GET(request: Request) {
         }
       : {
           ...mappingsWhere,
+          ...(providerKeyFilter ? providerKeyFilter : {}),
         };
     const mappings: any[] = await prismaAny.variantMapping.findMany({
       where: whereClause,
@@ -130,6 +137,9 @@ export async function GET(request: Request) {
             supplierVariantId: true,
             price: true,
             stock: true,
+            manualPrice: true,
+            manualStock: true,
+            manualLock: true,
             updatedAt: true,
             deliveryType: true,
           },
@@ -195,12 +205,21 @@ export async function GET(request: Request) {
     const product = candidate.product as any;
     const providerKey = candidate.providerKey ?? "";
     const sellPrice = Number(candidate.sellPriceExVat);
-    if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
+    const manualLock = Boolean(variant?.manualLock);
+    const manualPrice = parseNumber(variant?.manualPrice);
+    const manualStockRaw = variant?.manualStock;
+    const manualStock =
+      manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
+    const manualPriceExVat =
+      manualLock && manualPrice && manualPrice > 0 ? manualPrice / (1 + (vatRate ?? 0)) : null;
+    const priceValue =
+      manualPriceExVat && manualPriceExVat > 0 ? manualPriceExVat : sellPrice;
+    if (!Number.isFinite(priceValue) || priceValue <= 0) {
       skippedInvalidPrice += 1;
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
-    const price = sellPrice.toFixed(2);
+    const price = Number.isFinite(priceValue) && priceValue > 0 ? priceValue.toFixed(2) : "";
     const vatRate = vatRateDefault;
     const rrp = parseNumber(product?.retailPrice);
     const rrpAdjusted = rrp ? (rrp + 30).toFixed(2) : "";
@@ -209,7 +228,8 @@ export async function GET(request: Request) {
       continue;
     }
 
-    const rawStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");

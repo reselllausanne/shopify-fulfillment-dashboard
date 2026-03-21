@@ -247,6 +247,9 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
   if (!brand) warnings.push("Missing product brand in KickDB payload.");
   if (!name) warnings.push("Missing product title/name in KickDB payload.");
   if (!image) warnings.push("Missing product image in KickDB payload.");
+  if (!images || images.length === 0) {
+    warnings.push("Missing product gallery/image list in KickDB payload.");
+  }
 
   const regionCheck = runRegionHook(product, { forcedMarket: "CH" });
   warnings.push(...regionCheck.warnings);
@@ -294,6 +297,14 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     const supplierVariantId = `stx_${variantId}`;
     const gtinRaw = pickString(extractVariantGtin(variant));
     const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+    if (!gtin) {
+      warnings.push(`Variant ${variantId}: missing/invalid GTIN (skipped).`);
+      continue;
+    }
+    if (!images || images.length === 0) {
+      warnings.push(`Variant ${variantId}: missing product images (skipped).`);
+      continue;
+    }
     const providerKey = buildProviderKey(gtin, supplierVariantId);
 
     const stxBasePrice = Number(selected.price);

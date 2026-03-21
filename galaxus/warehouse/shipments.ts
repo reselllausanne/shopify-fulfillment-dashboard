@@ -222,9 +222,26 @@ export async function createManualShipmentsForOrder(
 
   const orderAny = order as any;
   validateOrderLines(orderAny.lines);
+  const purgeCandidates = existingShipments.filter((shipment) => {
+    const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
+    const status = String(shipment?.status ?? "").toUpperCase();
+    if (status === "MANUAL") return false;
+    if (shipment?.delrSentAt) return false;
+    if (delrStatus === "UPLOADED") return false;
+    return true;
+  });
+  if (purgeCandidates.length > 0) {
+    const purgeIds = purgeCandidates.map((shipment) => shipment.id);
+    await prismaAny.$transaction(async (tx: any) => {
+      await tx.shipmentItem.deleteMany({ where: { shipmentId: { in: purgeIds } } });
+      await tx.document.deleteMany({ where: { shipmentId: { in: purgeIds } } });
+      await tx.shipment.deleteMany({ where: { id: { in: purgeIds } } });
+    });
+  }
   const lineById = new Map<string, any>(orderAny.lines.map((line: any) => [line.id, line]));
   const totalsByLine = new Map<string, number>();
   const shippedQtyByLine = new Map<string, number>();
+  const reservedQtyByLine = new Map<string, number>();
   if (existingShipments.length > 0) {
     const existingItems = await prismaAny.shipmentItem.findMany({
       where: { orderId: order.id },
@@ -232,13 +249,28 @@ export async function createManualShipmentsForOrder(
         supplierPid: true,
         gtin14: true,
         quantity: true,
-        shipment: { select: { delrSentAt: true, delrStatus: true } },
+        shipment: { select: { delrSentAt: true, delrStatus: true, status: true } },
       },
     });
     for (const line of orderAny.lines) {
       const lineId = String(line.id);
       const supplierPid = String(line?.supplierPid ?? "").trim();
       const gtin = String(line?.gtin ?? "").trim();
+      const reserved = existingItems
+        .filter((item: any) => {
+          const sameLine =
+            String(item?.supplierPid ?? "").trim() === supplierPid &&
+            String(item?.gtin14 ?? "").trim() === gtin;
+          if (!sameLine) return false;
+          const delrStatus = String(item?.shipment?.delrStatus ?? "").toUpperCase();
+          const status = String(item?.shipment?.status ?? "").toUpperCase();
+          if (status !== "MANUAL") return false;
+          if (item?.shipment?.delrSentAt) return false;
+          if (delrStatus === "UPLOADED") return false;
+          return true;
+        })
+        .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
+      if (reserved > 0) reservedQtyByLine.set(lineId, reserved);
       const qty = existingItems
         .filter((item: any) => {
           const sameLine =
@@ -271,8 +303,9 @@ export async function createManualShipmentsForOrder(
       }
       const alreadyAssigned = totalsByLine.get(lineId) ?? 0;
       const alreadyShipped = shippedQtyByLine.get(lineId) ?? 0;
+      const alreadyReserved = reservedQtyByLine.get(lineId) ?? 0;
       const lineQty = Number(line?.quantity ?? 0);
-      const remaining = Math.max(0, lineQty - alreadyShipped);
+      const remaining = Math.max(0, lineQty - alreadyShipped - alreadyReserved);
       const nextTotal = alreadyAssigned + qty;
       if (nextTotal > remaining) {
         return {
@@ -320,6 +353,7 @@ export async function createManualShipmentsForOrder(
         data: {
           orderId: order.id,
           providerKey: pack.providerKey === "UNASSIGNED" ? null : pack.providerKey,
+          status: "MANUAL",
           shipmentId: `SHIP-${order.galaxusOrderId}-${pack.providerKey}-${Date.now()}-${startIndex + index + 1}`,
           dispatchNotificationId,
           dispatchNotificationCreatedAt: new Date(),
@@ -679,7 +713,12 @@ function buildDeliveryNoteData(
 ): DeliveryNoteData {
   const lines: OrderLine[] = items.map((item) => {
     const line = item.line as any;
-    const providerKey = buildProviderKey(line.gtin, line.supplierVariantId) ?? "";
+    const gtin = String(line.gtin ?? "").trim();
+    const providerPrefix =
+      normalizeProviderKey(line.providerKey ?? null) ??
+      normalizeProviderKey(resolveSupplierCode(line.supplierVariantId ?? null)) ??
+      "SUP";
+    const providerKey = gtin ? `${providerPrefix}_${gtin}` : buildProviderKey(line.gtin, line.supplierVariantId) ?? "";
     const unitNetPrice = Number(line.unitNetPrice ?? 0);
     const lineNetAmount = unitNetPrice * item.quantity;
     return {

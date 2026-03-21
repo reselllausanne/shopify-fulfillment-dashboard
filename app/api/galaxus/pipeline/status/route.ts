@@ -124,6 +124,7 @@ export async function GET() {
       stxSyncIntervalMs: ONE_DAY_MS,
       stxAwbResyncIntervalMs: ONE_DAY_MS,
       imageSyncIntervalMs: ONE_HOUR_MS,
+      partnerSyncIntervalMs: ONE_DAY_MS,
       reenrichIntervalMs: TWO_DAYS_MS,
       nextEdiInAt: toIso(nextFrom(ediIn?.finishedAt ? new Date(ediIn.finishedAt) : null, ONE_HOUR_MS)),
       nextOfferStockAt: toIso(nextFrom(offerStock?.finishedAt ? new Date(offerStock.finishedAt) : null, TWO_HOURS_MS)),
@@ -134,6 +135,9 @@ export async function GET() {
       ),
       nextImageSyncAt: toIso(
         nextFrom(imageSync?.finishedAt ? new Date(imageSync.finishedAt) : null, ONE_HOUR_MS)
+      ),
+      nextPartnerSyncAt: toIso(
+        nextFrom(partnerSync?.finishedAt ? new Date(partnerSync.finishedAt) : null, ONE_DAY_MS)
       ),
       nextReenrichUnmatchedAt: toIso(nextFrom(reenrich?.finishedAt ? new Date(reenrich.finishedAt) : null, TWO_DAYS_MS)),
       lastManifests: {

@@ -318,6 +318,30 @@ export async function runGalaxusPipelineTick(
         : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextStxAt) };
   }
 
+  // Partner daily sync: pull partner stock/price once per day.
+  const lastPartnerDaily = await getLastJob("pipeline-partner-sync");
+  const nextPartnerDailyAt = nextFrom(
+    lastPartnerDaily?.finishedAt ? new Date(lastPartnerDaily.finishedAt) : null,
+    ONE_DAY_MS
+  );
+  const partnerDailyDue =
+    force ? shouldConsider("partner-daily") : shouldConsider("partner-daily") && isDue(nextPartnerDailyAt, nowMs);
+  let partnerDailySync: TickJobStatus = {
+    due: false,
+    ran: false,
+    skipped: "not_due",
+    nextAt: toIso(nextPartnerDailyAt),
+  };
+  if (shouldConsider("partner-daily") && partnerDailyDue) {
+    const locked = await withAdvisoryLock("galaxus:pipeline:partner-daily", async () =>
+      runJob("pipeline-partner-sync", async () => runPartnerSyncAll())
+    );
+    partnerDailySync =
+      locked.locked
+        ? { due: true, ran: true, nextAt: toIso(nextFrom(new Date(), ONE_DAY_MS)), result: locked.result }
+        : { due: true, ran: false, skipped: "locked", nextAt: toIso(nextPartnerDailyAt) };
+  }
+
   // STX AWB re-sync (rows linked without AWB for >=48h)
   const lastStxAwb = await getLastJob("pipeline-stx-awb-resync");
   const nextStxAwbAt = nextFrom(lastStxAwb?.finishedAt ? new Date(lastStxAwb.finishedAt) : null, ONE_DAY_MS);
@@ -463,6 +487,7 @@ export async function runGalaxusPipelineTick(
       syncOfferStock,
       masterRefresh,
       stxDailySync,
+      partnerDailySync,
       stxAwbResync,
       imageSync,
       enrichNew,

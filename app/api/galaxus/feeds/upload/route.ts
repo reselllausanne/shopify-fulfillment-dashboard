@@ -87,15 +87,19 @@ export async function POST(request: Request) {
     const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
     const origin = new URL(request.url).origin;
     const supplierParam = supplier?.trim() ? `&supplier=${encodeURIComponent(supplier.trim())}` : "";
+    const providerKeysRaw = searchParams.get("providerKeys")?.trim() ?? "";
+    const providerKeysParam = providerKeysRaw
+      ? `&providerKeys=${encodeURIComponent(providerKeysRaw)}`
+      : "";
     const limitParam = limit ? `&limit=${limit}` : "";
     const providerParam = searchParams.get("provider")?.trim();
     const providerName = providerParam || GALAXUS_PROVIDER_NAME || "digitecgalaxus";
     const assortmentFile = searchParams.get("assortment")?.trim() || GALAXUS_ASSORTMENT_FILE || "price";
 
-    const masterUrl = `${origin}/api/galaxus/export/master?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
-    const stockUrl = `${origin}/api/galaxus/export/stock?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
-    const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
-    const specsUrl = `${origin}/api/galaxus/export/specifications?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
+    const masterUrl = `${origin}/api/galaxus/export/master?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+    const stockUrl = `${origin}/api/galaxus/export/stock?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+    const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+    const specsUrl = `${origin}/api/galaxus/export/specifications?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
 
     const needsMaster = effectiveType === "all" || effectiveType === "master";
     const needsStock = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "stock";

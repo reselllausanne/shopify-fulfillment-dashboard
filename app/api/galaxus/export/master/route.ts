@@ -190,8 +190,13 @@ export async function GET(request: Request) {
   const supplier = searchParams.get("supplier")?.trim();
   const stage = searchParams.get("stage") ?? "1";
   const includeWeight = stage === "2";
+  const providerKeys = (searchParams.get("providerKeys") ?? "")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   const mappingsWhere = buildFeedMappingsWhere(supplier, all);
+  const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
 
   const headers = minimal
     ? ["ProviderKey", "Gtin", "BrandName"]
@@ -243,6 +248,7 @@ export async function GET(request: Request) {
     const mappings = await prismaAny.variantMapping.findMany({
       where: {
         ...mappingsWhere,
+        ...(providerKeyFilter ? providerKeyFilter : {}),
       },
       include: {
         supplierVariant: true,
@@ -278,7 +284,7 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
-  exportCandidates.forEach((candidate) => {
+  for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const supplierVariant = candidate.variant as any;
     const product = candidate.product as any;
@@ -286,7 +292,7 @@ export async function GET(request: Request) {
     const sellPrice = Number(candidate.sellPriceExVat);
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);
-      return;
+      continue;
     }
     const supplierName = sanitizeText(
       supplierVariant?.supplierProductName ?? supplierVariant?.productName ?? ""
@@ -302,14 +308,15 @@ export async function GET(request: Request) {
     const supplierBrand = normalizeBrand(
       supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand ?? ""
     );
-      const images = pickPrimaryImages(supplierVariant?.hostedImageUrl ?? null);
+    const images = pickPrimaryImages(supplierVariant?.hostedImageUrl ?? null);
+    if (!images.length) continue;
     if (minimal) {
       rows.push({
         ProviderKey: providerKey,
         Gtin: mapping.gtin ?? "",
         BrandName: supplierBrand,
       });
-      return;
+      continue;
     }
     const payload = product?.name || product?.brand || product?.description
       ? ({
@@ -349,7 +356,7 @@ export async function GET(request: Request) {
       row.ProductWeight = Number.isFinite(weightValue) ? String(weightValue) : "1000";
     }
     rows.push(row);
-  });
+  }
 
   const csv = toCsv(headers, rows);
   const filename = `galaxus-master-${supplier ?? "all"}-${Date.now()}.csv`;

@@ -357,6 +357,11 @@ model SupplierVariant {
   imageVersion      Int      @default(1)
   imageLastSyncedAt DateTime?
   imageSyncError    String?
+  manualPrice       Decimal? @db.Decimal(10, 2)
+  manualStock       Int?
+  manualLock        Boolean  @default(false)
+  manualNote        String?
+  manualUpdatedAt   DateTime?
   leadTimeDays      Int?
   deliveryType      String?
   lastSyncAt        DateTime?

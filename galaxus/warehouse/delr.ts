@@ -421,6 +421,8 @@ function resolveCarrier(value: string | null) {
 }
 
 function resolveShipmentShipped(shipment: any): boolean {
+  const status = String(shipment?.status ?? "").toUpperCase();
+  if (status === "MANUAL") return true;
   if (shipment.shippedAt) return true;
   if (shipment.trackingNumber && String(shipment.trackingNumber).trim().length > 0) return true;
   return false;
@@ -526,8 +528,8 @@ async function buildArrivalByGtinForShipment(params: {
     }
     for (const [gtin, range] of byGtin.entries()) {
       arrivalByGtin[gtin] = {
-        start: addDays(range.min, 3),
-        end: addDays(range.max, 3),
+        start: addDays(range.min, 1),
+        end: addDays(range.max, 1),
       };
     }
   } else if (shipment.manualEtaMin || shipment.manualEtaMax) {
@@ -595,7 +597,7 @@ async function buildStxArrivalByGtin(params: {
       }
     }
     if (!latestMidpoint) continue;
-    const estimatedDeliveryForDelr = addBusinessDays(latestMidpoint, 3);
+    const estimatedDeliveryForDelr = addBusinessDays(latestMidpoint, 1);
     out[gtin] = {
       start: estimatedDeliveryForDelr,
       end: estimatedDeliveryForDelr,

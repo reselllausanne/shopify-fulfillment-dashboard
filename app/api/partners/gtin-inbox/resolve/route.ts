@@ -65,30 +65,49 @@ export async function POST(request: NextRequest) {
       providerKey,
       status: "MATCHED",
     });
-    const offer = await prismaAny.supplierVariant.upsert({
+    let offer = await prismaAny.supplierVariant.findUnique({
       where: { providerKey_gtin: { providerKey, gtin } },
-      create: {
-        supplierVariantId,
-        supplierSku: sku,
-        providerKey,
-        gtin,
-        sizeRaw: row.sizeRaw,
-        sizeNormalized,
-        stock: row.rawStock,
-        price: row.price,
-        lastSyncAt: now,
-      },
-      update: {
-        supplierSku: sku,
-        providerKey,
-        gtin,
-        sizeRaw: row.sizeRaw,
-        sizeNormalized,
-        stock: row.rawStock,
-        price: row.price,
-        lastSyncAt: now,
-      },
     });
+    if (offer) {
+      offer = await prismaAny.supplierVariant.update({
+        where: { supplierVariantId: offer.supplierVariantId },
+        data: {
+          supplierSku: sku,
+          providerKey,
+          gtin,
+          sizeRaw: row.sizeRaw,
+          sizeNormalized,
+          stock: row.rawStock,
+          price: row.price,
+          lastSyncAt: now,
+        },
+      });
+    } else {
+      offer = await prismaAny.supplierVariant.upsert({
+        where: { supplierVariantId },
+        create: {
+          supplierVariantId,
+          supplierSku: sku,
+          providerKey,
+          gtin,
+          sizeRaw: row.sizeRaw,
+          sizeNormalized,
+          stock: row.rawStock,
+          price: row.price,
+          lastSyncAt: now,
+        },
+        update: {
+          supplierSku: sku,
+          providerKey,
+          gtin,
+          sizeRaw: row.sizeRaw,
+          sizeNormalized,
+          stock: row.rawStock,
+          price: row.price,
+          lastSyncAt: now,
+        },
+      });
+    }
 
     if (offer.supplierVariantId !== supplierVariantId) {
       const existingMapping = await prismaAny.variantMapping.findUnique({

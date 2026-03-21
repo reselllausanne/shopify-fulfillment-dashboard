@@ -27,6 +27,17 @@ type ImageSyncResult = {
   durationMs: number;
 };
 
+function isJpegHosted(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  return lower.endsWith(".jpg") || lower.endsWith(".jpeg");
+}
+
+function hasNonJpegHosted(url: string | null | undefined): boolean {
+  if (!url) return false;
+  return !isJpegHosted(url);
+}
+
 function isAbsoluteUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
@@ -79,6 +90,9 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
         OR: [
           { hostedImageUrl: null },
           { imageSyncStatus: { in: ["PENDING", "FAILED"] } },
+          { hostedImageUrl: { endsWith: ".avif" } },
+          { hostedImageUrl: { endsWith: ".webp" } },
+          { hostedImageUrl: { endsWith: ".gif" } },
         ],
       };
 
@@ -129,15 +143,16 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
 
         const currentSource = typeof row.sourceImageUrl === "string" ? row.sourceImageUrl.trim() : "";
         const sourceChanged = currentSource && currentSource !== source;
+        const nonJpegHosted = hasNonJpegHosted(row.hostedImageUrl);
         let version = Number.isFinite(row.imageVersion) ? Number(row.imageVersion) : 1;
 
-        if (!currentSource || sourceChanged) {
-          if (sourceChanged && row.hostedImageUrl) {
+        if (!currentSource || sourceChanged || nonJpegHosted) {
+          if ((sourceChanged || nonJpegHosted) && row.hostedImageUrl) {
             version += 1;
           }
           await updateVariantImageState(supplierVariantId, {
             sourceImageUrl: source,
-            hostedImageUrl: sourceChanged ? null : row.hostedImageUrl ?? null,
+            hostedImageUrl: sourceChanged || nonJpegHosted ? null : row.hostedImageUrl ?? null,
             imageVersion: version,
             imageSyncStatus: "PENDING",
             imageSyncError: null,
@@ -150,7 +165,7 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
           });
         }
 
-        if (!force && row.hostedImageUrl && !sourceChanged && row.imageSyncStatus === "SYNCED") {
+        if (!force && row.hostedImageUrl && !sourceChanged && !nonJpegHosted && row.imageSyncStatus === "SYNCED") {
           skipped += 1;
           items.push({
             supplierVariantId,

@@ -331,30 +331,49 @@ export async function POST(req: NextRequest) {
         providerKey: fullProviderKey,
         status: "MATCHED",
       });
-      const offer = await prismaAny.supplierVariant.upsert({
+      let offer = await prismaAny.supplierVariant.findUnique({
         where: { providerKey_gtin: { providerKey: fullProviderKey, gtin: resolvedGtin } },
-        create: {
-          supplierVariantId,
-          supplierSku: normalizedSku,
-          providerKey: fullProviderKey,
-          gtin: resolvedGtin,
-          sizeRaw,
-          sizeNormalized: normalizedSize,
-          stock,
-          price,
-          lastSyncAt: now,
-        },
-        update: {
-          supplierSku: normalizedSku,
-          providerKey: fullProviderKey,
-          gtin: resolvedGtin,
-          sizeRaw,
-          sizeNormalized,
-          stock,
-          price,
-          lastSyncAt: now,
-        },
       });
+      if (offer) {
+        offer = await prismaAny.supplierVariant.update({
+          where: { supplierVariantId: offer.supplierVariantId },
+          data: {
+            supplierSku: normalizedSku,
+            providerKey: fullProviderKey,
+            gtin: resolvedGtin,
+            sizeRaw,
+            sizeNormalized,
+            stock,
+            price,
+            lastSyncAt: now,
+          },
+        });
+      } else {
+        offer = await prismaAny.supplierVariant.upsert({
+          where: { supplierVariantId },
+          create: {
+            supplierVariantId,
+            supplierSku: normalizedSku,
+            providerKey: fullProviderKey,
+            gtin: resolvedGtin,
+            sizeRaw,
+            sizeNormalized: normalizedSize,
+            stock,
+            price,
+            lastSyncAt: now,
+          },
+          update: {
+            supplierSku: normalizedSku,
+            providerKey: fullProviderKey,
+            gtin: resolvedGtin,
+            sizeRaw,
+            sizeNormalized,
+            stock,
+            price,
+            lastSyncAt: now,
+          },
+        });
+      }
 
       if (offer.supplierVariantId !== supplierVariantId) {
         const existingMapping = await prismaAny.variantMapping.findUnique({

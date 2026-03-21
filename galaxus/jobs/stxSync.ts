@@ -137,7 +137,10 @@ function pickImages(product: any): string[] | null {
 async function removeMissingOrIneligibleStxVariants(activeSupplierVariantIds: string[]) {
   if (activeSupplierVariantIds.length === 0) {
     const removed = await prisma.supplierVariant.deleteMany({
-      where: { supplierVariantId: { startsWith: STX_PREFIX } },
+      where: {
+        supplierVariantId: { startsWith: STX_PREFIX },
+        manualLock: { not: true },
+      },
     });
     return removed.count;
   }
@@ -152,7 +155,10 @@ async function removeMissingOrIneligibleStxVariants(activeSupplierVariantIds: st
   let removed = 0;
   for (const batch of chunkArray(missing, 500)) {
     const result = await prisma.supplierVariant.deleteMany({
-      where: { supplierVariantId: { in: batch } },
+      where: {
+        supplierVariantId: { in: batch },
+        manualLock: { not: true },
+      },
     });
     removed += result.count;
   }

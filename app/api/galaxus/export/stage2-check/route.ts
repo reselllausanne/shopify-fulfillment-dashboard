@@ -276,6 +276,12 @@ export async function GET(request: Request) {
     const weightRaw = supplierVariantAny?.weightGrams ?? 1000;
     const weight = weightRaw === null || weightRaw === undefined ? NaN : Number(weightRaw);
 
+    if (!images[0]) {
+      // Skip rows without hosted images; they are excluded from the master export.
+      total -= 1;
+      return;
+    }
+
     let rowValid = true;
 
     if (!providerKey || providerKey.length > 100 || !isAsciiPrintable(providerKey)) {
@@ -345,16 +351,6 @@ export async function GET(request: Request) {
         field: "ProductCategory",
         message: "Product category is missing.",
         value: category,
-      });
-    }
-
-    if (!images[0]) {
-      rowValid = false;
-      issues.push({
-        row,
-        field: "MainImageUrl",
-        message: "Main image URL is missing.",
-        value: images[0] ?? "",
       });
     }
 

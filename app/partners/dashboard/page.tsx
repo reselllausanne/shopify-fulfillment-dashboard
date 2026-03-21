@@ -73,6 +73,7 @@ export default function PartnerDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [enrichLog, setEnrichLog] = useState<string | null>(null);
+  const [pushKeysInput, setPushKeysInput] = useState<string>("");
   const [catalog, setCatalog] = useState<CatalogRow[]>([]);
   const [catalogCount, setCatalogCount] = useState<number>(0);
   const [catalogNextOffset, setCatalogNextOffset] = useState<number | null>(null);
@@ -81,6 +82,8 @@ export default function PartnerDashboardPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [editStock, setEditStock] = useState<Record<string, string>>({});
   const [editPrice, setEditPrice] = useState<Record<string, string>>({});
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushLog, setPushLog] = useState<string | null>(null);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -177,6 +180,47 @@ export default function PartnerDashboardPage() {
       setError(err.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const pushToGalaxusNow = async (mode: "all" | "offer-stock", providerKeys?: string[]) => {
+    if (!partner?.key) {
+      setError("Partner key missing.");
+      return;
+    }
+    setPushBusy(true);
+    setError(null);
+    setPushLog(null);
+    try {
+      const supplier = partner.key.trim().toLowerCase();
+      const partnerRes = await fetch("/api/galaxus/partners/sync?all=1", {
+        method: "POST",
+        cache: "no-store",
+      });
+      const partnerData = await partnerRes.json().catch(() => ({}));
+      if (!partnerRes.ok || !partnerData.ok) {
+        throw new Error(partnerData?.error ?? "Partner sync failed");
+      }
+      const providerKeysParam =
+        providerKeys && providerKeys.length > 0
+          ? `&providerKeys=${encodeURIComponent(providerKeys.join(","))}`
+          : "";
+      const uploadRes = await fetch(
+        `/api/galaxus/feeds/upload?type=${mode}&supplier=${encodeURIComponent(supplier)}&all=1${providerKeysParam}`,
+        {
+          method: "POST",
+          cache: "no-store",
+        }
+      );
+      const uploadData = await uploadRes.json().catch(() => ({}));
+      if (!uploadRes.ok || !uploadData.ok) {
+        throw new Error(uploadData?.error ?? "Galaxus upload failed");
+      }
+      setPushLog(JSON.stringify({ partner: partnerData, upload: uploadData }, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setPushBusy(false);
     }
   };
 
@@ -334,6 +378,87 @@ export default function PartnerDashboardPage() {
         {enrichLog && (
           <div className="border rounded bg-gray-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
             {enrichLog}
+          </div>
+        )}
+      </div>
+
+      <div className="border rounded bg-white p-4 space-y-3">
+        <div className="text-sm font-medium">Fast Push to Galaxus</div>
+        <div className="text-xs text-gray-500">
+          Sync partner catalog and upload feeds immediately (skip cron).
+        </div>
+        <div className="space-y-2">
+          <div className="text-xs text-gray-500">
+            Optional: paste ProviderKeys (one per line) to push only those rows.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="px-2 py-1 rounded bg-gray-100 text-xs"
+              onClick={() => {
+                const keys = catalog.map((row) => row.providerKey).filter(Boolean);
+                setPushKeysInput(keys.join("\n"));
+              }}
+              disabled={busy || pushBusy || catalog.length === 0}
+            >
+              Use all catalog keys
+            </button>
+            <button
+              className="px-2 py-1 rounded bg-gray-100 text-xs"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(pushKeysInput);
+                } catch {
+                  // ignore clipboard errors
+                }
+              }}
+              disabled={busy || pushBusy || !pushKeysInput.trim()}
+            >
+              Copy keys
+            </button>
+          </div>
+          <textarea
+            className="w-full border rounded px-2 py-1 text-xs font-mono"
+            rows={3}
+            placeholder="NER_1234567890123&#10;THE_1234567890123"
+            value={pushKeysInput}
+            onChange={(e) => setPushKeysInput(e.target.value)}
+          />
+        </div>
+        <div className="flex gap-2">
+          <button
+            className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+            onClick={() =>
+              pushToGalaxusNow(
+                "all",
+                pushKeysInput
+                  .split(/[\n,]+/)
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+              )
+            }
+            disabled={busy || pushBusy}
+          >
+            {pushBusy ? "Pushing…" : "Push Master + Specs + Offer/Stock"}
+          </button>
+          <button
+            className="px-3 py-2 rounded bg-indigo-100 text-indigo-900 disabled:opacity-50"
+            onClick={() =>
+              pushToGalaxusNow(
+                "offer-stock",
+                pushKeysInput
+                  .split(/[\n,]+/)
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+              )
+            }
+            disabled={busy || pushBusy}
+          >
+            Push Offer/Stock only
+          </button>
+        </div>
+        {pushLog && (
+          <div className="border rounded bg-gray-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
+            {pushLog}
           </div>
         )}
       </div>

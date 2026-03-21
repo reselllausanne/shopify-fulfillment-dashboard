@@ -21,8 +21,13 @@ export async function GET(request: Request) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
+  const providerKeys = (searchParams.get("providerKeys") ?? "")
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
 
   const mappingsWhere = buildFeedMappingsWhere(supplier, all);
+  const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
 
   const rows: ExportRow[] = [];
   const trmExclusionStats = createTrmFeedExclusionStats();
@@ -73,6 +78,7 @@ export async function GET(request: Request) {
     const mappings = await prismaAny.variantMapping.findMany({
       where: {
         ...mappingsWhere,
+        ...(providerKeyFilter ? providerKeyFilter : {}),
       },
       include: {
         supplierVariant: true,

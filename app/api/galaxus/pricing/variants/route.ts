@@ -1,0 +1,227 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/app/lib/prisma";
+import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
+import {
+  computeGalaxusSellPriceExVat,
+  resolvePricingOverrides,
+  type PricingOverrides,
+} from "@/galaxus/exports/pricing";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function normalizeKeys(value: string | null): string[] {
+  if (!value) return [];
+  return value
+    .split(/[\n,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value && typeof value === "object") {
+    const parsed = Number.parseFloat(String(value));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function extractSupplierKey(supplierVariantId?: string | null): string | null {
+  if (!supplierVariantId) return null;
+  const raw = String(supplierVariantId).trim();
+  const rawKey = raw.includes(":")
+    ? raw.split(":")[0]
+    : raw.includes("_")
+      ? raw.split("_")[0]
+      : raw;
+  return rawKey ? rawKey.toLowerCase() : null;
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
+  const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+  const q = (searchParams.get("q") ?? "").trim();
+  const providerKeys = normalizeKeys(searchParams.get("providerKeys"));
+  const lockedOnly = ["1", "true", "yes"].includes((searchParams.get("lockedOnly") ?? "").toLowerCase());
+  const isMerchant = String(GALAXUS_PRICE_MODEL ?? "").toLowerCase() === "merchant";
+
+  const where: Record<string, unknown> = {};
+  if (lockedOnly) where.manualLock = true;
+  if (providerKeys.length > 0) {
+    where.providerKey = { in: providerKeys };
+  }
+  if (q) {
+    where.OR = [
+      { supplierVariantId: { contains: q, mode: "insensitive" } },
+      { providerKey: { contains: q, mode: "insensitive" } },
+      { gtin: { contains: q, mode: "insensitive" } },
+      { supplierSku: { contains: q, mode: "insensitive" } },
+      { supplierProductName: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  const items = await prisma.supplierVariant.findMany({
+    where,
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    skip: offset,
+  });
+  const partners = await (prisma as any).partner.findMany({
+    select: {
+      key: true,
+      targetMargin: true,
+      shippingPerPair: true,
+      bufferPerPair: true,
+      roundTo: true,
+      vatRate: true,
+    },
+  });
+  const partnerByKey = new Map<string, any>(
+    (partners ?? []).map((row: any) => [String(row.key ?? "").toLowerCase(), row])
+  );
+  const resolveOverrides = (supplierKey: string | null): PricingOverrides | null => {
+    if (!supplierKey) return null;
+    const partner = partnerByKey.get(supplierKey.toLowerCase());
+    if (!partner) return null;
+    return {
+      targetMargin: parseNumber(partner.targetMargin),
+      shippingPerPair: parseNumber(partner.shippingPerPair),
+      bufferPerPair: parseNumber(partner.bufferPerPair),
+      roundTo: parseNumber(partner.roundTo),
+      vatRate: parseNumber(partner.vatRate),
+    };
+  };
+
+  const enriched = items.map((item: any) => {
+    const buyPrice = parseNumber(item?.price);
+    const manualLock = Boolean(item?.manualLock);
+    const manualPrice = parseNumber(item?.manualPrice);
+    const supplierKey = extractSupplierKey(item?.supplierVariantId ?? null);
+    let galaxusPriceExVat: number | null = null;
+    let galaxusPriceIncVat: number | null = null;
+    if (manualLock && manualPrice && manualPrice > 0) {
+      galaxusPriceIncVat = manualPrice;
+      const overrides = resolvePricingOverrides(resolveOverrides(supplierKey));
+      const vatRate = parseNumber(overrides.vatRate) ?? 0;
+      galaxusPriceExVat = manualPrice / (1 + vatRate);
+    } else if (buyPrice && buyPrice > 0) {
+      if (isMerchant) {
+        galaxusPriceExVat = buyPrice;
+      } else {
+        const overrides = resolvePricingOverrides(resolveOverrides(supplierKey));
+        galaxusPriceExVat = computeGalaxusSellPriceExVat({
+          buyPriceExVatCHF: buyPrice,
+          shippingPerPairCHF: overrides.shippingPerPair,
+          targetNetMargin: overrides.targetMargin,
+          bufferPerPairCHF: overrides.bufferPerPair,
+          roundTo: overrides.roundTo,
+          vatRate: overrides.vatRate,
+        }).sellPriceExVatCHF;
+      }
+    }
+    if (galaxusPriceExVat !== null && galaxusPriceIncVat === null) {
+      const overrides = resolvePricingOverrides(resolveOverrides(supplierKey));
+      const vatRate = parseNumber(overrides.vatRate) ?? 0;
+      galaxusPriceIncVat = galaxusPriceExVat * (1 + vatRate);
+    }
+    return {
+      ...item,
+      galaxusPriceExVat,
+      galaxusPriceIncVat,
+    };
+  });
+
+  const nextOffset = items.length === limit ? offset + limit : null;
+  return NextResponse.json({ ok: true, items: enriched, nextOffset });
+}
+
+type UpdatePayload = {
+  supplierVariantId?: string;
+  providerKey?: string;
+  gtin?: string;
+  manualPrice?: number | null;
+  manualStock?: number | null;
+  manualLock?: boolean;
+  manualNote?: string | null;
+  clearManual?: boolean;
+};
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json().catch(() => ({}))) as { updates?: UpdatePayload[] };
+    const updates = Array.isArray(body.updates) ? body.updates : [];
+    if (updates.length === 0) {
+      return NextResponse.json({ ok: false, error: "No updates provided" }, { status: 400 });
+    }
+
+    const now = new Date();
+    const results = await prisma.$transaction(async (tx) => {
+      const output: Array<Record<string, unknown>> = [];
+      for (const entry of updates) {
+        const supplierVariantId = String(entry.supplierVariantId ?? "").trim();
+        const providerKey = String(entry.providerKey ?? "").trim();
+        const gtin = String(entry.gtin ?? "").trim();
+        const target = supplierVariantId
+          ? await tx.supplierVariant.findUnique({ where: { supplierVariantId } })
+          : providerKey && gtin
+            ? await tx.supplierVariant.findUnique({
+                where: { providerKey_gtin: { providerKey, gtin } },
+              })
+            : null;
+
+        if (!target) {
+          output.push({
+            ok: false,
+            error: "Variant not found",
+            supplierVariantId: supplierVariantId || null,
+            providerKey: providerKey || null,
+            gtin: gtin || null,
+          });
+          continue;
+        }
+
+        const data: Record<string, unknown> = {};
+        if ("manualPrice" in entry) data.manualPrice = entry.manualPrice ?? null;
+        if ("manualStock" in entry) data.manualStock = entry.manualStock ?? null;
+        if ("manualLock" in entry) data.manualLock = Boolean(entry.manualLock);
+        if ("manualNote" in entry) data.manualNote = entry.manualNote ?? null;
+        if (entry.clearManual) {
+          data.manualPrice = null;
+          data.manualStock = null;
+          data.manualLock = false;
+          data.manualNote = null;
+        }
+        if (Object.keys(data).length === 0) {
+          output.push({
+            ok: true,
+            skipped: true,
+            supplierVariantId: target.supplierVariantId,
+          });
+          continue;
+        }
+        data.manualUpdatedAt = now;
+
+        const updated = await tx.supplierVariant.update({
+          where: { supplierVariantId: target.supplierVariantId },
+          data,
+        });
+        output.push({ ok: true, item: updated });
+      }
+      return output;
+    });
+
+    return NextResponse.json({ ok: true, results });
+  } catch (error: any) {
+    console.error("[GALAXUS][PRICING] Update failed", error);
+    return NextResponse.json(
+      { ok: false, error: error?.message ?? "Update failed" },
+      { status: 500 }
+    );
+  }
+}
