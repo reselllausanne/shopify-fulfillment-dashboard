@@ -26,6 +26,7 @@ type PipelineTickResult = {
     syncOfferStock: TickJobStatus;
     masterRefresh: TickJobStatus;
     stxDailySync: TickJobStatus;
+    partnerDailySync: TickJobStatus;
     stxAwbResync: TickJobStatus;
     imageSync: TickJobStatus;
     enrichNew: TickJobStatus;

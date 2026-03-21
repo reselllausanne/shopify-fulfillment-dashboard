@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import {
@@ -152,6 +153,12 @@ type UpdatePayload = {
   clearManual?: boolean;
 };
 
+function toDecimalOrNull(value: number | null | undefined): Prisma.Decimal | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value)) return null;
+  return new Prisma.Decimal(value.toFixed(2));
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => ({}))) as { updates?: UpdatePayload[] };
@@ -161,62 +168,93 @@ export async function POST(request: Request) {
     }
 
     const now = new Date();
-    const results = await prisma.$transaction(async (tx) => {
-      const output: Array<Record<string, unknown>> = [];
-      for (const entry of updates) {
-        const supplierVariantId = String(entry.supplierVariantId ?? "").trim();
-        const providerKey = String(entry.providerKey ?? "").trim();
-        const gtin = String(entry.gtin ?? "").trim();
-        const target = supplierVariantId
-          ? await tx.supplierVariant.findUnique({ where: { supplierVariantId } })
-          : providerKey && gtin
-            ? await tx.supplierVariant.findUnique({
-                where: { providerKey_gtin: { providerKey, gtin } },
-              })
-            : null;
+    const results = await prisma.$transaction(
+      async (tx) => {
+        const output: Array<Record<string, unknown>> = [];
+        for (const entry of updates) {
+          const supplierVariantId = String(entry.supplierVariantId ?? "").trim();
+          const providerKey = String(entry.providerKey ?? "").trim();
+          const gtin = String(entry.gtin ?? "").trim();
+          const target = supplierVariantId
+            ? await tx.supplierVariant.findUnique({ where: { supplierVariantId } })
+            : providerKey && gtin
+              ? await tx.supplierVariant.findUnique({
+                  where: { providerKey_gtin: { providerKey, gtin } },
+                })
+              : null;
 
-        if (!target) {
-          output.push({
-            ok: false,
-            error: "Variant not found",
-            supplierVariantId: supplierVariantId || null,
-            providerKey: providerKey || null,
-            gtin: gtin || null,
-          });
-          continue;
-        }
+          if (!target) {
+            output.push({
+              ok: false,
+              error: "Variant not found",
+              supplierVariantId: supplierVariantId || null,
+              providerKey: providerKey || null,
+              gtin: gtin || null,
+            });
+            continue;
+          }
 
-        const data: Record<string, unknown> = {};
-        if ("manualPrice" in entry) data.manualPrice = entry.manualPrice ?? null;
-        if ("manualStock" in entry) data.manualStock = entry.manualStock ?? null;
-        if ("manualLock" in entry) data.manualLock = Boolean(entry.manualLock);
-        if ("manualNote" in entry) data.manualNote = entry.manualNote ?? null;
-        if (entry.clearManual) {
-          data.manualPrice = null;
-          data.manualStock = null;
-          data.manualLock = false;
-          data.manualNote = null;
-        }
-        if (Object.keys(data).length === 0) {
-          output.push({
-            ok: true,
-            skipped: true,
-            supplierVariantId: target.supplierVariantId,
-          });
-          continue;
-        }
-        data.manualUpdatedAt = now;
+          const data: Prisma.SupplierVariantUpdateInput = {};
+          if ("manualPrice" in entry) {
+            data.manualPrice = toDecimalOrNull(entry.manualPrice ?? null);
+          }
+          if ("manualStock" in entry) {
+            data.manualStock = entry.manualStock ?? null;
+          }
+          if ("manualLock" in entry) {
+            data.manualLock = Boolean(entry.manualLock);
+          }
+          if ("manualNote" in entry) {
+            data.manualNote = entry.manualNote ?? null;
+          }
+          if (entry.clearManual) {
+            data.manualPrice = null;
+            data.manualStock = null;
+            data.manualLock = false;
+            data.manualNote = null;
+          }
+          const keysTouched = Object.keys(data).filter((k) => k !== "manualUpdatedAt");
+          if (keysTouched.length === 0) {
+            output.push({
+              ok: true,
+              skipped: true,
+              supplierVariantId: target.supplierVariantId,
+            });
+            continue;
+          }
+          data.manualUpdatedAt = now;
 
-        const updated = await tx.supplierVariant.update({
-          where: { supplierVariantId: target.supplierVariantId },
-          data,
-        });
-        output.push({ ok: true, item: updated });
-      }
-      return output;
+          try {
+            const updated = await tx.supplierVariant.update({
+              where: { supplierVariantId: target.supplierVariantId },
+              data,
+            });
+            output.push({ ok: true, item: updated });
+          } catch (rowErr: any) {
+            output.push({
+              ok: false,
+              error: rowErr?.message ?? "Update failed",
+              code: rowErr?.code ?? null,
+              supplierVariantId: target.supplierVariantId,
+            });
+          }
+        }
+        return output;
+      },
+      { maxWait: 15000, timeout: 60000 }
+    );
+
+    const failed = results.filter((r: any) => r && r.ok === false);
+    const ok = failed.length === 0;
+    return NextResponse.json({
+      ok,
+      results,
+      ...(failed.length > 0
+        ? {
+            error: failed.map((f: any) => `${f.supplierVariantId ?? "?"}: ${f.error}`).join("; "),
+          }
+        : {}),
     });
-
-    return NextResponse.json({ ok: true, results });
   } catch (error: any) {
     console.error("[GALAXUS][PRICING] Update failed", error);
     return NextResponse.json(

@@ -36,7 +36,7 @@ function normalizeNumber(value: any): string {
 }
 
 function parseNumberOrNull(value: string): number | null {
-  const trimmed = value.trim();
+  const trimmed = value.trim().replace(/\s/g, "").replace(",", ".");
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
@@ -137,9 +137,23 @@ export default function GalaxusPricingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ updates }),
       });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error ?? "Failed to save changes");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error ?? `Save failed (${res.status})`);
+      }
       const results = Array.isArray(data.results) ? data.results : [];
+      const failures = results.filter((r: any) => r && r.ok === false);
+      if (failures.length > 0) {
+        const msg = failures
+          .map((f: any) => `${f.supplierVariantId ?? "?"}: ${f.error ?? "failed"}`)
+          .join("\n");
+        setError(msg);
+      } else {
+        setError(null);
+      }
+      if (data.ok === false && data.error) {
+        setError((prev) => (prev ? `${prev}\n${data.error}` : data.error));
+      }
       const updatedById = new Map<string, VariantRow>();
       for (const result of results) {
         if (result?.ok && result?.item?.supplierVariantId) {
@@ -151,8 +165,14 @@ export default function GalaxusPricingPage() {
           prev.map((item) => updatedById.get(item.supplierVariantId) ?? item)
         );
       }
-      setEdits({});
-      setLog(`Saved ${updatedById.size} update(s).`);
+      if (failures.length === 0) {
+        setEdits({});
+      }
+      setLog(
+        failures.length > 0
+          ? `Failed ${failures.length} row(s). Saved ${updatedById.size}. Fix errors above.`
+          : `Saved ${updatedById.size} update(s).`
+      );
     } catch (err: any) {
       setError(err.message ?? "Failed to save changes");
     } finally {

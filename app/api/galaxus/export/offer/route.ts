@@ -205,6 +205,7 @@ export async function GET(request: Request) {
     const product = candidate.product as any;
     const providerKey = candidate.providerKey ?? "";
     const sellPrice = Number(candidate.sellPriceExVat);
+    const vatRate = vatRateDefault;
     const manualLock = Boolean(variant?.manualLock);
     const manualPrice = parseNumber(variant?.manualPrice);
     const manualStockRaw = variant?.manualStock;
@@ -220,7 +221,6 @@ export async function GET(request: Request) {
       continue;
     }
     const price = Number.isFinite(priceValue) && priceValue > 0 ? priceValue.toFixed(2) : "";
-    const vatRate = vatRateDefault;
     const rrp = parseNumber(product?.retailPrice);
     const rrpAdjusted = rrp ? (rrp + 30).toFixed(2) : "";
     if (!providerKey || !price) {

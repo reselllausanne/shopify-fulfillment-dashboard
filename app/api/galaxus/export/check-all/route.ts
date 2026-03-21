@@ -236,7 +236,7 @@ function dedupeCandidatesByProviderKey(candidates: any[]) {
 }
 
 function buildMasterRows(candidates: any[]): ExportRow[] {
-  const rows = candidates.map((candidate) => {
+  return candidates.flatMap((candidate): ExportRow[] => {
     const mapping = candidate.mapping;
     const supplierVariant = candidate.variant;
     const product = candidate.product ?? mapping.kickdbVariant?.product;
@@ -250,7 +250,7 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
     const providerKey = candidate.providerKey ?? "";
     const images = extractProductImages(supplierVariant?.hostedImageUrl ?? null);
     if (images.length === 0) {
-      return null;
+      return [];
     }
     const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
     const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
@@ -263,7 +263,7 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
       mapping.providerKey ?? null
     );
 
-    return {
+    const row: ExportRow = {
       ProviderKey: providerKey,
       Gtin: mapping.gtin ?? "",
       ManufacturerKey: manufacturerKey,
@@ -282,9 +282,8 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
       ImageUrl_7: images[7] ?? "",
       ImageUrl_8: images[8] ?? "",
     };
+    return providerKey ? [row] : [];
   });
-
-  return rows.filter((row): row is ExportRow => Boolean(row && row.ProviderKey));
 }
 
 function buildStockRows(candidates: any[]): ExportRow[] {
