@@ -40,7 +40,7 @@ export async function runFeedPipeline(params: {
 }): Promise<FeedRunResult> {
   const { origin, scope, triggerSource } = params;
   const startedAt = new Date();
-  let runId = randomUUID();
+  let runId: string = randomUUID();
   let counts: Record<string, number | null> | undefined;
   let uploaded: Array<{ name: string; path: string; size: number }> | undefined;
   let error: string | undefined;

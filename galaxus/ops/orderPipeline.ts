@@ -26,7 +26,7 @@ async function sendOrdrForOrder(orderId: string) {
     data: { ordrStatus: "PENDING", ordrLastAttemptAt: now },
   });
   try {
-    await sendOutgoingEdi({ orderId, types: ["ORDR"], ordrMode: "AUTO" });
+    await sendOutgoingEdi({ orderId, types: ["ORDR"] });
     await (prisma as any).galaxusOrder.update({
       where: { id: orderId },
       data: { ordrStatus: "SENT", ordrLastError: null, ordrLastAttemptAt: now },
@@ -41,7 +41,7 @@ async function sendOrdrForOrder(orderId: string) {
   }
 }
 
-async function resolveStxKickdbProductIds(orderIds: string[]) {
+async function resolveStxKickdbProductIds(orderIds: string[]): Promise<string[]> {
   if (orderIds.length === 0) return [];
   const lines = await (prisma as any).galaxusOrderLine.findMany({
     where: { orderId: { in: orderIds } },
@@ -92,9 +92,10 @@ async function resolveStxKickdbProductIds(orderIds: string[]) {
     where: { id: { in: kickdbProductIds } },
     select: { kickdbProductId: true },
   });
-  return Array.from(
-    new Set((products ?? []).map((p: any) => String(p.kickdbProductId ?? "").trim()).filter(Boolean))
-  );
+  const externalIds = (products ?? [])
+    .map((p: any) => String(p.kickdbProductId ?? "").trim())
+    .filter((id: string): id is string => id.length > 0);
+  return Array.from(new Set(externalIds));
 }
 
 export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
