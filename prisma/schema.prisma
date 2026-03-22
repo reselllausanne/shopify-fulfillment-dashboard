@@ -679,6 +679,9 @@ model GalaxusOrder {
   ordrStatus          String?
   ordrLastAttemptAt   DateTime?
   ordrLastError       String?
+  archivedAt          DateTime?
+  cancelledAt         DateTime?
+  cancelReason        String?
   buyerPartyId        String?
   buyerPartyGln       String?
   supplierPartyId     String?
@@ -697,6 +700,8 @@ model GalaxusOrder {
   routingIssues       OrderRoutingIssue[]
 
   @@index([orderDate])
+  @@index([archivedAt])
+  @@index([cancelledAt])
   @@schema("public")
 }
 
@@ -794,6 +799,7 @@ model Shipment {
   manualNote     String?
   packageType    ShipmentPackageType @default(PARCEL)
   shippedAt      DateTime?
+  galaxusShippedAt DateTime?
   delrFileName   String?
   delrSentAt     DateTime?
   delrStatus     ShipmentDelrStatus?

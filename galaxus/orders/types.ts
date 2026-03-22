@@ -34,6 +34,7 @@ export type GalaxusShipmentInput = {
   trackingNumber?: string;
   packageType?: "PARCEL" | "PALLET";
   shippedAt?: string;
+  galaxusShippedAt?: string;
   delrFileName?: string;
   delrSentAt?: string;
   delrStatus?: "PENDING" | "UPLOADED" | "ERROR";

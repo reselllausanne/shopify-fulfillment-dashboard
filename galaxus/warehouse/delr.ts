@@ -259,13 +259,16 @@ export async function uploadDelrForShipment(
       }
     );
 
+    const now = new Date();
+    const galaxusShippedAt = shipment.galaxusShippedAt ?? now;
     await prismaAny.shipment.update({
       where: { id: shipment.id },
       data: {
         delrFileName: dispatch.filename,
-        delrSentAt: new Date(),
+        delrSentAt: now,
         delrStatus: "UPLOADED",
         delrError: null,
+        galaxusShippedAt,
       },
     });
 

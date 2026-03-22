@@ -54,6 +54,7 @@ export async function DELETE(
           OR: [
             { delrSentAt: { not: null } },
             { shippedAt: { not: null } },
+            { galaxusShippedAt: { not: null } },
             { trackingNumber: { not: null } },
           ],
         },
@@ -144,6 +145,7 @@ export async function DELETE(
           supplierOrderRef: null,
           delrSentAt: null,
           shippedAt: null,
+          galaxusShippedAt: null,
           trackingNumber: null,
         },
         select: { id: true },

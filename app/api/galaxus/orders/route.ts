@@ -4,42 +4,41 @@ import { prisma } from "@/app/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function isShipmentShipped(shipment: {
+  status: string | null;
+  shippedAt: Date | null;
+  trackingNumber: string | null;
+  galaxusShippedAt: Date | null;
+}) {
+  const status = String(shipment?.status ?? "").toUpperCase();
+  if (status === "MANUAL") return true;
+  if (shipment?.shippedAt) return true;
+  if (shipment?.galaxusShippedAt) return true;
+  if (shipment?.trackingNumber && String(shipment.trackingNumber).trim().length > 0) return true;
+  return false;
+}
+
 export async function GET(request: Request) {
   try {
-    const prismaAny = prisma as any;
     const { searchParams } = new URL(request.url);
     const limit = Math.min(Number(searchParams.get("limit") ?? "20"), 100);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
-    const providerKey = searchParams.get("providerKey")?.trim().toUpperCase() ?? "";
-    if (providerKey && !/^[A-Z]{3}$/.test(providerKey)) {
-      return NextResponse.json({ ok: false, error: "Invalid providerKey" }, { status: 400 });
+    const view = (searchParams.get("view") ?? "active").toLowerCase();
+    if (!["active", "history"].includes(view)) {
+      return NextResponse.json({ ok: false, error: "Invalid view filter" }, { status: 400 });
     }
-
-    let gtinFilter: string[] | null = null;
-    if (providerKey) {
-      const offers: Array<{ gtin: string | null }> = await prismaAny.supplierVariant.findMany({
-        where: {
-          providerKey,
-          gtin: { not: null },
-        },
-        select: { gtin: true },
-      });
-      gtinFilter = offers.map((item) => item.gtin).filter((value): value is string => Boolean(value));
-      if (gtinFilter.length === 0) {
-        return NextResponse.json({ ok: true, items: [], nextOffset: null });
-      }
-    }
+    const where =
+      view === "history"
+        ? {
+            OR: [{ archivedAt: { not: null } }, { cancelledAt: { not: null } }],
+          }
+        : {
+            archivedAt: null,
+            cancelledAt: null,
+          };
 
     const orders = await prisma.galaxusOrder.findMany({
-      where: gtinFilter
-        ? {
-            lines: {
-              some: {
-                gtin: { in: gtinFilter },
-              },
-            },
-          }
-        : undefined,
+      where,
       orderBy: { createdAt: "desc" },
       take: limit,
       skip: offset,
@@ -54,6 +53,12 @@ export async function GET(request: Request) {
         createdAt: true,
         ordrSentAt: true,
         ordrMode: true,
+        archivedAt: true,
+        cancelledAt: true,
+        cancelReason: true,
+        shipments: {
+          select: { status: true, shippedAt: true, trackingNumber: true, galaxusShippedAt: true },
+        },
         _count: {
           select: {
             lines: true,
@@ -63,9 +68,15 @@ export async function GET(request: Request) {
       },
     });
 
+    const items = orders.map((order) => {
+      const shippedCount = order.shipments.filter(isShipmentShipped).length;
+      const { shipments, ...rest } = order;
+      return { ...rest, shippedCount };
+    });
+
     return NextResponse.json({
       ok: true,
-      items: orders,
+      items,
       nextOffset: orders.length === limit ? offset + limit : null,
     });
   } catch (error: any) {
