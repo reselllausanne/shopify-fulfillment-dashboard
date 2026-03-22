@@ -151,6 +151,7 @@ export async function GET(request: Request) {
             manualPrice: true,
             manualStock: true,
             manualLock: true,
+            leadTimeDays: true,
             updatedAt: true,
             deliveryType: true,
           },
@@ -292,6 +293,15 @@ export async function GET(request: Request) {
       const maxPlusOne = addDays(range.max, 1);
       restockDate = toIsoDate(maxPlusOne);
       restockTime = businessDaysBetween(new Date(), minPlusOne).toString();
+    } else {
+      // Fallback: per-variant lead time (calendar days) when no STX order ETA row exists.
+      const leadRaw = variant?.leadTimeDays;
+      const leadParsed =
+        leadRaw === null || leadRaw === undefined ? NaN : Number.parseInt(String(leadRaw), 10);
+      if (Number.isFinite(leadParsed) && leadParsed >= 0) {
+        restockTime = String(leadParsed);
+        restockDate = toIsoDate(addDays(new Date(), leadParsed));
+      }
     }
 
     rows.push({

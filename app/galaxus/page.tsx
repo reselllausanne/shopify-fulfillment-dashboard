@@ -262,8 +262,7 @@ export default function GalaxusDashboardPage() {
   const [allowSplit, setAllowSplit] = useState<boolean>(true);
   const [forceRepack, setForceRepack] = useState<boolean>(true);
   const [forceEdi, setForceEdi] = useState<boolean>(false);
-  const [schedulerStatus, setSchedulerStatus] = useState<any | null>(null);
-  const [schedulerBusy, setSchedulerBusy] = useState(false);
+  const [opsStatus, setOpsStatus] = useState<any | null>(null);
   const [enrichSku, setEnrichSku] = useState<string>("");
   // Enrich-all UI removed; enrichment is cron-driven.
   const [stxImportInput, setStxImportInput] = useState<string>("");
@@ -323,10 +322,12 @@ export default function GalaxusDashboardPage() {
     enrichPendingAt: string | null;
     enrichNotFoundAt: string | null;
   } | null>(null);
-  const formatJobStatus = (runAt: string | null | undefined, result: any) => {
-    if (!runAt) return "—";
-    const status = result?.ok ? "OK" : "FAIL";
-    return `${new Date(runAt).toLocaleString()} · ${status}`;
+  const formatTime = (value: string | null | undefined) =>
+    value ? new Date(value).toLocaleString() : "—";
+  const opsJobLabels: Record<string, string> = {
+    "partner-stock-sync": "Partner stock sync (5h)",
+    "stx-refresh": "StockX/Kicks refresh (24h)",
+    "edi-in": "EDI IN order polling (1h)",
   };
 
   const totalShipments = selectedOrder?.shipments?.length ?? 0;
@@ -505,11 +506,11 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const loadSchedulerStatus = async () => {
+  const loadOpsStatus = async () => {
     try {
-      const res = await fetch("/api/galaxus/pipeline/status", { cache: "no-store" });
+      const res = await fetch("/api/galaxus/ops/status", { cache: "no-store" });
       const data = await res.json();
-      if (data?.ok) setSchedulerStatus(data.status ?? null);
+      if (data?.ok) setOpsStatus(data ?? null);
     } catch {
       // silent
     }
@@ -584,21 +585,24 @@ export default function GalaxusDashboardPage() {
     }
   };
 
-  const toggleScheduler = async (action: "start" | "stop") => {
-    setSchedulerBusy(true);
+  const runOpsAction = async (action: string) => {
+    setBusy(`ops-${action}`);
     setError(null);
+    setOpsLog(null);
     try {
-      const res = await fetch(`/api/galaxus/feeds/scheduler?action=${action}`, {
+      const res = await fetch("/api/galaxus/ops/run", {
         method: "POST",
-        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
       });
-      const data = await res.json();
-      if (!data?.ok) throw new Error(data?.error ?? "Scheduler action failed");
-      setSchedulerStatus(data.status ?? null);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Ops action failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOpsStatus();
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setSchedulerBusy(false);
+      setBusy(null);
     }
   };
 
@@ -606,31 +610,12 @@ export default function GalaxusDashboardPage() {
     // Avoid spiking DB connections on page load in production.
     // Export diagnostics is intentionally manual (button) because it's a heavy endpoint.
     (async () => {
-      await loadSchedulerStatus();
+      await loadOpsStatus();
       await loadRoutingSummary();
       await loadVariantStats();
       await loadStxSlugCounts();
     })();
   }, []);
-
-  const syncSupplier = async () => {
-    setBusy("sync");
-    setError(null);
-    try {
-      const response = await fetch("/api/galaxus/supplier/sync?all=1&mode=stock&stxLimit=100", {
-        method: "POST",
-      });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Sync failed");
-      setOpsLog(JSON.stringify({ sync: data }, null, 2));
-      await loadVariantStats();
-      await loadStxSlugCounts();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const importStxProduct = async () => {
     const input = stxImportInput.trim();
@@ -981,46 +966,6 @@ export default function GalaxusDashboardPage() {
   };
 
 
-  const pollEdiIn = async () => {
-    setBusy("edi-in");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch("/api/galaxus/cron?task=edi-in", { cache: "no-store" });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "EDI IN failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-
-  const uploadFeed = async (type: "product" | "price" | "stock" | "specs") => {
-    setBusy(`feed-${type}`);
-    setError(null);
-    setOpsLog(null);
-    try {
-      const params = new URLSearchParams();
-      if (type === "product") params.set("type", "master");
-      if (type === "price") params.set("type", "offer-stock");
-      if (type === "stock") params.set("type", "stock");
-      if (type === "specs") params.set("type", "specs");
-      const response = await fetch(`/api/galaxus/feeds/upload?${params.toString()}`, {
-        cache: "no-store",
-      });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "Feed upload failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const downloadFeed = (type: "product" | "price" | "stock" | "specs") => {
     window.open(`/api/galaxus/feeds/preview?type=${type}&download=1`, "_blank", "noopener,noreferrer");
   };
@@ -1028,22 +973,6 @@ export default function GalaxusDashboardPage() {
   const downloadMappings = () => {
     const params = new URLSearchParams({ download: "1" });
     window.open(`/api/galaxus/supplier/mappings?${params.toString()}`, "_blank", "noopener,noreferrer");
-  };
-
-  const sendPendingEdiOut = async () => {
-    setBusy("edi-out");
-    setError(null);
-    setOpsLog(null);
-    try {
-      const response = await fetch("/api/galaxus/cron?task=edi-out", { cache: "no-store" });
-      const data = await response.json();
-      if (!data.ok) throw new Error(data.error ?? "EDI OUT failed");
-      setOpsLog(JSON.stringify(data, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(null);
-    }
   };
 
   const packShipments = async () => {
@@ -1738,207 +1667,241 @@ export default function GalaxusDashboardPage() {
           <div className="rounded border bg-gray-50 p-3 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-sm font-medium">Operations</div>
-              <div className="text-xs text-gray-500">
-                Auto-upload: {schedulerStatus?.running ? "ON" : "OFF"}
-              </div>
-            </div>
-            {orderGalaxusLocked ? (
-              <div className="text-xs text-red-600">
-                Galaxus EDI is locked because at least one DELR was sent. ORDR/INVO/DELR actions are disabled, except on
-                manual shipments.
-              </div>
-            ) : null}
-            <div className="rounded border bg-white p-2 text-xs text-gray-600">
-              <div>EDI IN (ORDR pull) every 1 hour</div>
-              <div>Supplier sync every 2 hours</div>
-              <div>Price + stock every 2 hours</div>
-              <div>Full refresh every 10 hours</div>
-              {schedulerStatus?.nextEdiInAt ? (
-                <div>Next EDI IN: {new Date(schedulerStatus.nextEdiInAt).toLocaleString()}</div>
-              ) : null}
-              {schedulerStatus?.nextSupplierSyncAt ? (
-                <div>Next supplier sync: {new Date(schedulerStatus.nextSupplierSyncAt).toLocaleString()}</div>
-              ) : null}
-              {schedulerStatus?.nextOfferStockAt ? (
-                <div>Next price/stock: {new Date(schedulerStatus.nextOfferStockAt).toLocaleString()}</div>
-              ) : null}
-              {schedulerStatus?.nextMasterAt ? (
-                <div>Next full refresh: {new Date(schedulerStatus.nextMasterAt).toLocaleString()}</div>
-              ) : null}
+              <div className="text-xs text-gray-500">Auto-feed sending: ON</div>
             </div>
             <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
+              <div>Partner stock sync every 5 hours</div>
+              <div>StockX/Kicks refresh every 24 hours</div>
+              <div>EDI IN order polling every 1 hour</div>
+              {opsStatus?.feeds?.running ? (
+                <div className="text-amber-600">Feed push is running</div>
+              ) : null}
+            </div>
+
+            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-2">
+              <div className="text-xs font-medium text-gray-700">Active jobs / schedules</div>
+              {Array.isArray(opsStatus?.jobs) && opsStatus.jobs.length > 0 ? (
+                <div className="space-y-2">
+                  {opsStatus.jobs.map((job: any) => (
+                    <div key={job.jobKey} className="border-b last:border-b-0 pb-2">
+                      <div className="flex items-center justify-between">
+                        <div>{opsJobLabels[job.jobKey] ?? job.jobKey}</div>
+                        <div className="text-gray-500">{job.enabled ? "Enabled" : "Disabled"}</div>
+                      </div>
+                      <div className="text-gray-500">
+                        Last run:{" "}
+                        {job.lastRun
+                          ? `${formatTime(job.lastRun.startedAt)} · ${job.lastRun.success ? "OK" : "FAIL"}`
+                          : "—"}
+                      </div>
+                      <div className="text-gray-500">Next run: {formatTime(job.nextRunAt)}</div>
+                      {job.lastRun?.errorMessage ? (
+                        <div className="text-red-600">Last error: {job.lastRun.errorMessage}</div>
+                      ) : null}
+                      {job.lastRun?.resultJson ? (
+                        <div className="text-gray-500">
+                          Counts: {JSON.stringify(job.lastRun.resultJson)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>—</div>
+              )}
+            </div>
+
+            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-2">
+              <div className="text-xs font-medium text-gray-700">Feed pipeline status</div>
               <div>
-                Last EDI IN: {formatJobStatus(schedulerStatus?.lastEdiInRunAt, schedulerStatus?.lastEdiInResult)}
+                Last stock + price:{" "}
+                {opsStatus?.feeds?.lastStockPrice
+                  ? `${formatTime(opsStatus.feeds.lastStockPrice.startedAt)} · ${
+                      opsStatus.feeds.lastStockPrice.success ? "OK" : "FAIL"
+                    }`
+                  : "—"}
+              </div>
+              {opsStatus?.feeds?.lastStockPrice?.triggerSource ? (
+                <div>Stock + price trigger: {opsStatus.feeds.lastStockPrice.triggerSource}</div>
+              ) : null}
+              {opsStatus?.feeds?.lastStockPrice?.countsJson ? (
+                <div>Stock + price counts: {JSON.stringify(opsStatus.feeds.lastStockPrice.countsJson)}</div>
+              ) : null}
+              <div>
+                Last full push:{" "}
+                {opsStatus?.feeds?.lastFull
+                  ? `${formatTime(opsStatus.feeds.lastFull.startedAt)} · ${
+                      opsStatus.feeds.lastFull.success ? "OK" : "FAIL"
+                    }`
+                  : "—"}
+              </div>
+              {opsStatus?.feeds?.lastFull?.triggerSource ? (
+                <div>Full push trigger: {opsStatus.feeds.lastFull.triggerSource}</div>
+              ) : null}
+              {opsStatus?.feeds?.lastFull?.countsJson ? (
+                <div>Full push counts: {JSON.stringify(opsStatus.feeds.lastFull.countsJson)}</div>
+              ) : null}
+              <div>
+                Last master: {formatTime(opsStatus?.feeds?.lastManifests?.master?.createdAt)} ·{" "}
+                {opsStatus?.feeds?.lastManifests?.master?.uploadStatus ?? "—"}
               </div>
               <div>
-                Last supplier sync:{" "}
-                {formatJobStatus(
-                  schedulerStatus?.lastSupplierSyncRunAt,
-                  schedulerStatus?.lastSupplierSyncResult
-                )}
+                Last offer: {formatTime(opsStatus?.feeds?.lastManifests?.offer?.createdAt)} ·{" "}
+                {opsStatus?.feeds?.lastManifests?.offer?.uploadStatus ?? "—"}
               </div>
               <div>
-                Last price/stock:{" "}
-                {formatJobStatus(
-                  schedulerStatus?.lastOfferStockRunAt,
-                  schedulerStatus?.lastOfferStockResult
-                )}
+                Last stock: {formatTime(opsStatus?.feeds?.lastManifests?.stock?.createdAt)} ·{" "}
+                {opsStatus?.feeds?.lastManifests?.stock?.uploadStatus ?? "—"}
               </div>
               <div>
-                Last full refresh:{" "}
-                {formatJobStatus(schedulerStatus?.lastMasterRunAt, schedulerStatus?.lastMasterResult)}
+                Last specs: {formatTime(opsStatus?.feeds?.lastManifests?.specs?.createdAt)} ·{" "}
+                {opsStatus?.feeds?.lastManifests?.specs?.uploadStatus ?? "—"}
               </div>
-              {schedulerStatus?.lastOfferStockResult?.resultJson?.upload?.counts ? (
+              {opsStatus?.feeds?.lastManifests?.master?.validationIssuesJson ? (
                 <div>
-                  Last price/stock counts:{" "}
-                  {JSON.stringify(schedulerStatus.lastOfferStockResult.resultJson.upload.counts)}
+                  Master validation issues:{" "}
+                  {JSON.stringify(
+                    opsStatus.feeds.lastManifests.master.validationIssuesJson.summary ?? {}
+                  )}
                 </div>
               ) : null}
-              {schedulerStatus?.lastMasterResult?.resultJson?.upload?.counts ? (
+              {opsStatus?.feeds?.lastManifests?.offer?.validationIssuesJson ? (
                 <div>
-                  Last full refresh counts:{" "}
-                  {JSON.stringify(schedulerStatus.lastMasterResult.resultJson.upload.counts)}
+                  Offer validation issues:{" "}
+                  {JSON.stringify(
+                    opsStatus.feeds.lastManifests.offer.validationIssuesJson.summary ?? {}
+                  )}
                 </div>
               ) : null}
-              {schedulerStatus?.lastOfferStockResult?.error ? (
-                <div>Last price/stock error: {schedulerStatus.lastOfferStockResult.error}</div>
-              ) : null}
-              {schedulerStatus?.lastMasterResult?.error ? (
-                <div>Last full refresh error: {schedulerStatus.lastMasterResult.error}</div>
-              ) : null}
-              {schedulerStatus?.lastEdiInResult?.error ? (
-                <div>Last EDI IN error: {schedulerStatus.lastEdiInResult.error}</div>
-              ) : null}
-              {schedulerStatus?.lastManifests?.master?.validationIssuesJson ? (
+              {opsStatus?.feeds?.lastManifests?.stock?.validationIssuesJson ? (
                 <div>
-                  Last master validation issues:{" "}
-                  {JSON.stringify(schedulerStatus.lastManifests.master.validationIssuesJson.summary ?? {})}
-                </div>
-              ) : null}
-              {schedulerStatus?.lastManifests?.offer?.validationIssuesJson ? (
-                <div>
-                  Last offer validation issues:{" "}
-                  {JSON.stringify(schedulerStatus.lastManifests.offer.validationIssuesJson.summary ?? {})}
-                </div>
-              ) : null}
-              {schedulerStatus?.lastManifests?.stock?.validationIssuesJson ? (
-                <div>
-                  Last stock validation issues:{" "}
-                  {JSON.stringify(schedulerStatus.lastManifests.stock.validationIssuesJson.summary ?? {})}
+                  Stock validation issues:{" "}
+                  {JSON.stringify(
+                    opsStatus.feeds.lastManifests.stock.validationIssuesJson.summary ?? {}
+                  )}
                 </div>
               ) : null}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
-                onClick={() => toggleScheduler("start")}
-                disabled={schedulerBusy}
-              >
-                {schedulerBusy ? "Working…" : "Enable auto-upload"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-gray-200 text-black disabled:opacity-50"
-                onClick={() => toggleScheduler("stop")}
-                disabled={schedulerBusy}
-              >
-                Disable auto-upload
-              </button>
+
+            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-2">
+              <div className="text-xs font-medium text-gray-700">Order alerts</div>
+              <div>Orders ingested: {opsStatus?.orders?.totalIngested ?? "—"}</div>
+              <div>ORDR sent: {opsStatus?.orders?.ordrSent ?? "—"}</div>
+              <div className="text-amber-700 font-semibold">
+                Missing ORDR: {opsStatus?.orders?.ordrMissing ?? "—"}
+              </div>
+              <div className="text-red-600 font-semibold">
+                ORDR failed: {opsStatus?.orders?.ordrFailed ?? "—"}
+              </div>
+              {Array.isArray(opsStatus?.orders?.recent) && opsStatus.orders.recent.length > 0 ? (
+                <div className="space-y-1">
+                  {opsStatus.orders.recent.slice(0, 8).map((order: any) => (
+                    <div key={order.id} className="border-b last:border-b-0 pb-1">
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">{order.galaxusOrderId}</div>
+                        <div className="text-gray-500">{order.ordrStatus ?? "—"}</div>
+                      </div>
+                      <div className="text-gray-500">
+                        Ingested: {formatTime(order.ingestedAt ?? order.orderDate)}
+                      </div>
+                      {order.source ? (
+                        <div className="text-gray-500">Source: {order.source}</div>
+                      ) : null}
+                      {order.ordrLastError ? (
+                        <div className="text-red-600">Error: {order.ordrLastError}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>—</div>
+              )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
-                onClick={pollEdiIn}
-                disabled={busy !== null}
-              >
-                {busy === "edi-in" ? "Polling…" : "Poll EDI IN"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-gray-700 text-white disabled:opacity-50"
-                onClick={sendPendingEdiOut}
-                disabled={busy !== null}
-              >
-                {busy === "edi-out" ? "Sending…" : "Send EDI OUT"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                onClick={() => fetchOrders(0)}
-                disabled={busy !== null}
-              >
-                {busy === "orders" ? "Loading…" : "Refresh Orders"}
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-50"
-                onClick={connectGalaxusStockxAccount}
-                disabled={busy !== null}
-              >
-                {busy === "stx-login" ? "Logging in…" : "StockX Login (Galaxus)"}
-              </button>
-            </div>
-            <details className="rounded border bg-white p-3">
-              <summary className="cursor-pointer text-sm font-medium">Advanced operations</summary>
-              <div className="mt-3 flex flex-wrap gap-2">
+
+            <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-2">
+              <div className="text-xs font-medium text-gray-700">Manual actions</div>
+              <div className="flex flex-wrap gap-2">
                 <button
-                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-                  onClick={() => uploadFeed("product")}
+                  className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("partner-sync")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-product" ? "Uploading…" : "Upload Master"}
+                  {busy === "ops-partner-sync" ? "Running…" : "Run partner sync now"}
                 </button>
                 <button
-                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-                  onClick={() => uploadFeed("price")}
+                  className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("stx-refresh")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-price" ? "Uploading…" : "Upload Offer + Stock"}
+                  {busy === "ops-stx-refresh" ? "Running…" : "Run StockX/Kicks refresh now"}
                 </button>
                 <button
-                  className="px-3 py-2 rounded bg-gray-800 text-white disabled:opacity-50"
-                  onClick={() => uploadFeed("specs")}
+                  className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("edi-in")}
                   disabled={busy !== null}
                 >
-                  {busy === "feed-specs" ? "Uploading…" : "Upload Specs"}
+                  {busy === "ops-edi-in" ? "Polling…" : "Poll EDI IN now"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("push-full")}
+                  disabled={busy !== null}
+                >
+                  {busy === "ops-push-full" ? "Pushing…" : "Push all feeds now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                  onClick={() => downloadFeed("product")}
+                  onClick={() => fetchOrders(0)}
                   disabled={busy !== null}
                 >
-                  Download Master
+                  {busy === "orders" ? "Loading…" : "Refresh Orders"}
                 </button>
                 <button
-                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                  onClick={() => downloadFeed("price")}
+                  className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-50"
+                  onClick={connectGalaxusStockxAccount}
                   disabled={busy !== null}
                 >
-                  Download Offer
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                  onClick={() => downloadFeed("stock")}
-                  disabled={busy !== null}
-                >
-                  Download Stock
-                </button>
-                <button
-                  className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
-                  onClick={() => downloadFeed("specs")}
-                  disabled={busy !== null}
-                >
-                  Download Specs
+                  {busy === "stx-login" ? "Logging in…" : "StockX Login (Galaxus)"}
                 </button>
               </div>
-            </details>
+              <details className="rounded border bg-gray-50 p-2">
+                <summary className="cursor-pointer text-xs font-medium">Feed tools</summary>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={() => downloadFeed("product")}
+                    disabled={busy !== null}
+                  >
+                    Download Master
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={() => downloadFeed("price")}
+                    disabled={busy !== null}
+                  >
+                    Download Offer
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={() => downloadFeed("stock")}
+                    disabled={busy !== null}
+                  >
+                    Download Stock
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={() => downloadFeed("specs")}
+                    disabled={busy !== null}
+                  >
+                    Download Specs
+                  </button>
+                </div>
+              </details>
+            </div>
           </div>
           <div className="rounded border bg-gray-50 p-3 space-y-3">
             <div className="text-sm font-medium">Catalog & Feeds</div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
-                onClick={syncSupplier}
-                disabled={busy !== null}
-              >
-                {busy === "sync" ? "Syncing…" : "Sync Stock"}
-              </button>
               <button
                 className="px-3 py-2 rounded-md bg-slate-100 text-slate-900 disabled:opacity-50"
                 onClick={loadExportCounts}

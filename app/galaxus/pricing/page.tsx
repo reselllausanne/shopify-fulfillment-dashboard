@@ -12,6 +12,7 @@ type VariantRow = {
   sizeNormalized: string | null;
   price: any;
   stock: number;
+  leadTimeDays?: number | null;
   manualPrice: any;
   manualStock: number | null;
   manualLock: boolean;
@@ -24,6 +25,7 @@ type VariantRow = {
 type EditRow = {
   manualPrice?: string;
   manualStock?: string;
+  leadTimeDays?: string;
   manualLock?: boolean;
   manualNote?: string;
   clearManual?: boolean;
@@ -39,6 +41,13 @@ function parseNumberOrNull(value: string): number | null {
   const trimmed = value.trim().replace(/\s/g, "").replace(",", ".");
   if (!trimmed) return null;
   const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseIntOrNull(value: string): number | null {
+  const trimmed = value.trim().replace(/\s/g, "");
+  if (!trimmed) return null;
+  const parsed = Number.parseInt(trimmed, 10);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -120,6 +129,7 @@ export default function GalaxusPricingPage() {
         if (edit.manualStock !== undefined) payload.manualStock = parseNumberOrNull(edit.manualStock);
         if (edit.manualLock !== undefined) payload.manualLock = edit.manualLock;
         if (edit.manualNote !== undefined) payload.manualNote = edit.manualNote.trim() || null;
+        if (edit.leadTimeDays !== undefined) payload.leadTimeDays = parseIntOrNull(edit.leadTimeDays);
         return payload;
       })
       .filter((entry) => Object.keys(entry).length > 1);
@@ -190,6 +200,11 @@ export default function GalaxusPricingPage() {
         <h1 className="text-2xl font-semibold">Galaxus Pricing Overrides</h1>
         <p className="text-sm text-gray-500">
           Search by ProviderKey/GTIN/SKU, override price or stock, and lock items so sync jobs do not overwrite them.
+          <span className="block mt-1">
+            <strong>Delivery on Galaxus:</strong> set <em>Lead days</em> (calendar days) for the stock feed when there
+            is no StockX order ETA; then upload the <strong>Stock</strong> feed. STX rows with open purchase ETAs still
+            use those dates first.
+          </span>
         </p>
       </div>
 
@@ -318,6 +333,9 @@ export default function GalaxusPricingPage() {
               <th className="px-2 py-2 text-right">Base Price</th>
               <th className="px-2 py-2 text-right">Galaxus Price (inc VAT)</th>
               <th className="px-2 py-2 text-right">Base Stock</th>
+              <th className="px-2 py-2 text-right" title="Calendar days → Galaxus Stock RestockTime/Date (if no STX ETA)">
+                Lead days
+              </th>
               <th className="px-2 py-2 text-right">Manual Price</th>
               <th className="px-2 py-2 text-right">Manual Stock</th>
               <th className="px-2 py-2 text-center">Lock</th>
@@ -335,6 +353,8 @@ export default function GalaxusPricingPage() {
                 edit.manualStock ?? normalizeNumber(item.manualStock ?? "");
               const manualLockValue = edit.manualLock ?? Boolean(item.manualLock);
               const manualNoteValue = edit.manualNote ?? (item.manualNote ?? "");
+              const leadTimeValue =
+                edit.leadTimeDays ?? normalizeNumber(item.leadTimeDays ?? "");
               const sizeLabel = item.sizeNormalized ?? item.sizeRaw ?? "-";
               const galaxusPriceValue =
                 typeof item.galaxusPriceIncVat === "number" ? item.galaxusPriceIncVat : null;
@@ -361,6 +381,19 @@ export default function GalaxusPricingPage() {
                     {galaxusPriceValue !== null ? galaxusPriceValue.toFixed(2) : "-"}
                   </td>
                   <td className="px-2 py-1 text-right">{item.stock}</td>
+                  <td className="px-2 py-1 text-right">
+                    <input
+                      className="w-12 border rounded px-1 py-0.5 text-right"
+                      type="number"
+                      min={0}
+                      step={1}
+                      title="Empty = clear; used in stock CSV when no STX purchase ETA"
+                      value={leadTimeValue}
+                      onChange={(e) =>
+                        updateEdit(item.supplierVariantId, { leadTimeDays: e.target.value })
+                      }
+                    />
+                  </td>
                   <td className="px-2 py-1 text-right">
                     <input
                       className="w-24 border rounded px-1 py-0.5 text-right"
@@ -414,7 +447,7 @@ export default function GalaxusPricingPage() {
             })}
             {items.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-2 py-6 text-center text-xs text-gray-500">
+                <td colSpan={15} className="px-2 py-6 text-center text-xs text-gray-500">
                   No items loaded.
                 </td>
               </tr>

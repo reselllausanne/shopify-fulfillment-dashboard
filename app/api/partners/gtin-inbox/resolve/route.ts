@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -155,6 +156,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    const origin = new URL(request.url).origin;
+    await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     return NextResponse.json({ ok: true, row: updated, supplierVariantId: offer.supplierVariantId });
   } catch (error: any) {
     console.error("[PARTNER][GTIN-INBOX] Resolve failed:", error);

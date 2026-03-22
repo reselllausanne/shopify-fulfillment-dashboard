@@ -12,7 +12,6 @@ import { EdiDocType } from "./filenames";
 import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_OUT_DIR, GALAXUS_SFTP_PASSWORD, GALAXUS_SFTP_PORT, GALAXUS_SFTP_USER, GALAXUS_SUPPLIER_ID } from "./config";
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
 import { upsertEdiFile } from "./ediFiles";
-import { GALAXUS_SUPPLIER_AUTO_SEND_ORDR } from "@/galaxus/config";
 import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder, resolveSupplierVariant } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
@@ -20,6 +19,8 @@ type IncomingResult = {
   file: string;
   status: "processed" | "skipped" | "error";
   message?: string;
+  orderId?: string;
+  galaxusOrderId?: string;
 };
 
 type OutgoingResult = {
@@ -85,6 +86,7 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           }
 
           const orderIdFromName = extractOrderId(file.name);
+          let ingestResult: { orderId: string; galaxusOrderId?: string } | null = null;
           if (docType === "ORDP") {
             const orderInput = parseOrderFromXml(xml, orderIdFromName);
             const missingGtins = orderInput.lines.filter(
@@ -107,19 +109,10 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
             if (orderInput.lines.length === 0) {
               throw new Error("ORDP has no lines with GTIN.");
             }
-            const [ingestResult] = await ingestGalaxusOrders([orderInput]);
-            if (ingestResult) {
-              const supplierResult = await placeSupplierOrderForGalaxusOrder(ingestResult.orderId);
-              if (supplierResult.status === "created" && GALAXUS_SUPPLIER_AUTO_SEND_ORDR) {
-                const gate = await getSupplierGateForOrder(ingestResult.orderId);
-                if (gate.ok && gate.allowedTypes.has("ORDR")) {
-                  await sendOutgoingEdi({
-                    orderId: ingestResult.orderId,
-                    types: ["ORDR"],
-                    ordrMode: supplierResult.ordrMode,
-                  });
-                }
-              }
+            const [ingestRow] = await ingestGalaxusOrders([orderInput]);
+            if (ingestRow) {
+              ingestResult = ingestRow;
+              await placeSupplierOrderForGalaxusOrder(ingestRow.orderId);
             }
           } else if (docType === "CANP") {
             await recordCancelRequest(orderIdFromName, xml);
@@ -144,7 +137,12 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           });
 
           await client.delete(file.path);
-          results.push({ file: file.name, status: "processed" });
+          results.push({
+            file: file.name,
+            status: "processed",
+            orderId: ingestResult?.orderId ?? undefined,
+            galaxusOrderId: ingestResult?.galaxusOrderId ?? undefined,
+          });
         } catch (error: any) {
           await upsertEdiFile({
             filename: file.name,
@@ -228,9 +226,10 @@ export async function sendOutgoingEdi(options: {
     async (client) => {
       for (const type of options.types) {
         try {
-          const gatedTypes: EdiDocType[] = ["ORDR", "DELR", "INVO"];
+          const gatedTypes: EdiDocType[] = ["DELR", "INVO"];
           if (
             !force &&
+            type !== "ORDR" &&
             (lockAll || (gatedTypes.includes(type) && (!gate.ok || !gate.allowedTypes.has(type))))
           ) {
             results.push({

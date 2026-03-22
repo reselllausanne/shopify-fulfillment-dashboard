@@ -675,6 +675,10 @@ model GalaxusOrder {
   supplierOrderId     String?
   ordrSentAt          DateTime?
   ordrMode            String?
+  ingestedAt          DateTime?
+  ordrStatus          String?
+  ordrLastAttemptAt   DateTime?
+  ordrLastError       String?
   buyerPartyId        String?
   buyerPartyGln       String?
   supplierPartyId     String?
@@ -917,14 +921,49 @@ model GalaxusEdiFile {
   @@schema("public")
 }
 
-model GalaxusSchedulerConfig {
+model GalaxusJobDefinition {
   id         String   @id @default(uuid())
-  enabled    Boolean  @default(false)
-  enabledAt  DateTime?
-  disabledAt DateTime?
+  jobKey     String   @unique
+  intervalMs Int
+  enabled    Boolean  @default(true)
+  lastRunAt  DateTime?
+  nextRunAt  DateTime?
+  lastError  String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  @@schema("public")
+}
+
+model GalaxusFeedRun {
+  id              String   @id @default(uuid())
+  runId           String
+  scope           String
+  triggerSource   String?
+  startedAt       DateTime
+  finishedAt      DateTime?
+  success         Boolean  @default(false)
+  errorMessage    String?
+  countsJson      Json?
+  manifestIds     String[]
+  createdAt       DateTime @default(now())
+
+  @@index([runId])
+  @@index([scope, startedAt])
+  @@schema("public")
+}
+
+model GalaxusFeedTrigger {
+  id            String   @id @default(uuid())
+  scope         String
+  triggerSource String?
+  requestedAt   DateTime @default(now())
+  consumedAt    DateTime?
+  status        String   @default("PENDING")
+  createdAt     DateTime @default(now())
+
+  @@index([scope, requestedAt])
+  @@index([status])
   @@schema("public")
 }
 

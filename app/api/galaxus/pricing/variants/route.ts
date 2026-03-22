@@ -7,6 +7,7 @@ import {
   resolvePricingOverrides,
   type PricingOverrides,
 } from "@/galaxus/exports/pricing";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,6 +151,8 @@ type UpdatePayload = {
   manualStock?: number | null;
   manualLock?: boolean;
   manualNote?: string | null;
+  /** Calendar days — used in Stock feed RestockTime/RestockDate when no STX order ETA exists */
+  leadTimeDays?: number | null;
   clearManual?: boolean;
 };
 
@@ -195,23 +198,34 @@ export async function POST(request: Request) {
           }
 
           const data: Prisma.SupplierVariantUpdateInput = {};
+          let touchManualMeta = false;
           if ("manualPrice" in entry) {
             data.manualPrice = toDecimalOrNull(entry.manualPrice ?? null);
+            touchManualMeta = true;
           }
           if ("manualStock" in entry) {
             data.manualStock = entry.manualStock ?? null;
+            touchManualMeta = true;
           }
           if ("manualLock" in entry) {
             data.manualLock = Boolean(entry.manualLock);
+            touchManualMeta = true;
           }
           if ("manualNote" in entry) {
             data.manualNote = entry.manualNote ?? null;
+            touchManualMeta = true;
+          }
+          if ("leadTimeDays" in entry) {
+            const v = entry.leadTimeDays;
+            data.leadTimeDays =
+              v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Math.round(Number(v));
           }
           if (entry.clearManual) {
             data.manualPrice = null;
             data.manualStock = null;
             data.manualLock = false;
             data.manualNote = null;
+            touchManualMeta = true;
           }
           const keysTouched = Object.keys(data).filter((k) => k !== "manualUpdatedAt");
           if (keysTouched.length === 0) {
@@ -222,7 +236,9 @@ export async function POST(request: Request) {
             });
             continue;
           }
-          data.manualUpdatedAt = now;
+          if (touchManualMeta) {
+            data.manualUpdatedAt = now;
+          }
 
           try {
             const updated = await tx.supplierVariant.update({
@@ -246,6 +262,11 @@ export async function POST(request: Request) {
 
     const failed = results.filter((r: any) => r && r.ok === false);
     const ok = failed.length === 0;
+    const succeeded = results.filter((r: any) => r && r.ok === true && r.item);
+    if (succeeded.length > 0) {
+      const origin = new URL(request.url).origin;
+      await requestFeedPush({ origin, scope: "full", triggerSource: "manual-pricing", runNow: true });
+    }
     return NextResponse.json({
       ok,
       results,

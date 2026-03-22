@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
@@ -430,6 +431,11 @@ export async function POST(req: NextRequest) {
       }
     } else {
       removeSkipped = true;
+    }
+
+    if (!dryRun && importedRows > 0) {
+      const origin = new URL(request.url).origin;
+      await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     }
 
     return NextResponse.json({

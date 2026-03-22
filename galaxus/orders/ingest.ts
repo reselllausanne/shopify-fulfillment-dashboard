@@ -328,6 +328,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           supplierOrderId: true,
           ordrSentAt: true,
           ordrMode: true,
+          ingestedAt: true,
+          ordrStatus: true,
           buyerPartyId: true,
           buyerPartyGln: true,
           supplierPartyId: true,
@@ -439,7 +441,15 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           ? existingOrder
           : await tx.galaxusOrder.update({
               where: { id: existingOrder.id },
-              data: orderPayload,
+              data: {
+                ...orderPayload,
+                ...(existingOrder.ingestedAt
+                  ? {}
+                  : {
+                      ingestedAt: new Date(),
+                      ordrStatus: existingOrder.ordrSentAt ? "SENT" : "PENDING",
+                    }),
+              },
             })
         : await tx.galaxusOrder.create({
             data: {
@@ -482,6 +492,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
               supplierOrderId: normalized.supplierOrderId,
               ordrSentAt: normalized.ordrSentAt,
               ordrMode: normalized.ordrMode,
+              ingestedAt: new Date(),
+              ordrStatus: normalized.ordrSentAt ? "SENT" : "PENDING",
               buyerPartyId: normalized.buyerPartyId,
               buyerPartyGln: normalized.buyerPartyGln,
               supplierPartyId: normalized.supplierPartyId,

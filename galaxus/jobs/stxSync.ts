@@ -134,6 +134,51 @@ function pickImages(product: any): string[] | null {
   return images.length > 0 ? Array.from(new Set(images)) : null;
 }
 
+function extractRowsFromPayload(payload: any, productId: string) {
+  const rows: ParsedStxRow[] = [];
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const supplierBrand = pickString(payload?.brand);
+  const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
+  const images = pickImages(payload);
+  const supplierSkuFallback =
+    pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
+
+  for (const variant of variants) {
+    const variantId = pickString(variant?.id);
+    if (!variantId) continue;
+
+    const gtinRaw = pickString(extractVariantGtin(variant));
+    const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+    if (!gtin) continue;
+
+    const selected = selectStxActiveOffer(variant?.prices);
+    if (!selected) continue;
+
+    const supplierVariantId = `${STX_PREFIX}${variantId}`;
+    const providerKey = buildProviderKey(gtin, supplierVariantId);
+    if (!providerKey) continue;
+
+    const stxBasePrice = Number(selected.price);
+    const shippingCHF = resolveStxShippingCHF(payload);
+    const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
+    rows.push({
+      supplierVariantId,
+      supplierSku: supplierSkuFallback,
+      providerKey,
+      gtin,
+      price: stxSellPrice,
+      stock: selected.asks,
+      sizeRaw: pickSizeRawEuFirst(variant),
+      supplierBrand,
+      supplierProductName,
+      images,
+      leadTimeDays: null,
+      deliveryType: selected.deliveryType,
+    });
+  }
+  return rows;
+}
+
 async function removeMissingOrIneligibleStxVariants(activeSupplierVariantIds: string[]) {
   if (activeSupplierVariantIds.length === 0) {
     const removed = await prisma.supplierVariant.deleteMany({
@@ -345,47 +390,9 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
           return;
         }
         processedProducts += 1;
-        const variants = Array.isArray(payload?.variants) ? payload.variants : [];
-        const supplierBrand = pickString(payload?.brand);
-        const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
-        const images = pickImages(payload);
-        const supplierSkuFallback =
-          pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
-
-        for (const variant of variants) {
-          processedVariants += 1;
-          const variantId = pickString(variant?.id);
-          if (!variantId) continue;
-
-          const gtinRaw = pickString(extractVariantGtin(variant));
-          const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
-          if (!gtin) continue;
-
-          const selected = selectStxActiveOffer(variant?.prices);
-          if (!selected) continue;
-
-          const supplierVariantId = `${STX_PREFIX}${variantId}`;
-          const providerKey = buildProviderKey(gtin, supplierVariantId);
-          if (!providerKey) continue;
-
-          const stxBasePrice = Number(selected.price);
-          const shippingCHF = resolveStxShippingCHF(payload);
-          const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
-          parsedRows.push({
-            supplierVariantId,
-            supplierSku: supplierSkuFallback,
-            providerKey,
-            gtin,
-            price: stxSellPrice,
-            stock: selected.asks,
-            sizeRaw: pickSizeRawEuFirst(variant),
-            supplierBrand,
-            supplierProductName,
-            images,
-            leadTimeDays: null,
-            deliveryType: selected.deliveryType,
-          });
-        }
+        const rows = extractRowsFromPayload(payload, productId);
+        processedVariants += rows.length;
+        parsedRows.push(...rows);
       })
     )
   );
@@ -422,6 +429,81 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     mappingInserted: 0,
     mappingUpdated: 0,
     removedMissingOrIneligible: 0,
+    durationMs,
+  });
+
+  return {
+    processedProducts,
+    processedVariants,
+    created: 0,
+    updated,
+    mappingInserted: 0,
+    mappingUpdated: 0,
+    removedMissingOrIneligible: 0,
+    durationMs,
+  };
+}
+
+export async function refreshStxProductsByKickdbProductIds(
+  productIds: string[],
+  options: { concurrency?: number } = {}
+): Promise<StxSyncResult> {
+  const startedAt = Date.now();
+  const concurrency = Math.max(1, options.concurrency ?? 2);
+  const now = new Date();
+
+  const limit = createLimiter(concurrency);
+  let processedProducts = 0;
+  let processedVariants = 0;
+  const parsedRows: ParsedStxRow[] = [];
+
+  await Promise.all(
+    productIds.map((productId) =>
+      limit(async () => {
+        const cleanId = String(productId ?? "").trim();
+        if (!cleanId) return;
+        let payload: any;
+        try {
+          const res = await fetchStockxProductByIdOrSlugRaw(cleanId);
+          payload = res.product;
+        } catch {
+          return;
+        }
+        processedProducts += 1;
+        const rows = extractRowsFromPayload(payload, cleanId);
+        processedVariants += rows.length;
+        parsedRows.push(...rows);
+      })
+    )
+  );
+
+  const dedupBySupplierVariantId = new Map<string, ParsedStxRow>();
+  for (const row of parsedRows) {
+    dedupBySupplierVariantId.set(row.supplierVariantId, row);
+  }
+  const rows = Array.from(dedupBySupplierVariantId.values());
+
+  let updated = 0;
+  for (const batch of chunkArray(rows, 500)) {
+    updated += await bulkUpdateSupplierVariants(
+      batch.map((row) => ({
+        supplierVariantId: row.supplierVariantId,
+        price: row.price,
+        stock: row.stock,
+        deliveryType: row.deliveryType,
+      })),
+      now,
+      { updateGtinWhenProvided: false }
+    );
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:stx-targeted] done", {
+    productsSeen: productIds.length,
+    processedProducts,
+    processedVariants,
+    eligibleRows: rows.length,
+    updated,
     durationMs,
   });
 
