@@ -434,7 +434,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!dryRun && importedRows > 0) {
-      const origin = new URL(request.url).origin;
+      const origin = new URL(req.url).origin;
       await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     }
 
