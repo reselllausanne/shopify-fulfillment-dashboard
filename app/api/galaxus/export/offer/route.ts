@@ -167,7 +167,7 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       keyBy: "gtin",
       requireProductName: false,
-      requireImage: false,
+      requireImage: true,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);

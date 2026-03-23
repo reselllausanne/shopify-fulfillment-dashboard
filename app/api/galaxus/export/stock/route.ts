@@ -105,6 +105,20 @@ export async function GET(request: Request) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
   };
+  const parseNumber = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number.parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    if (value && typeof value === "object") {
+      if ("toString" in value) {
+        const parsed = Number.parseFloat(String(value));
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+    }
+    return null;
+  };
   const resolvePartnerOverrides = (key: string | null) => {
     if (!key) return null;
     const partner = partnerByKey.get(key.toLowerCase());
@@ -170,7 +184,7 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       keyBy: "gtin",
       requireProductName: false,
-      requireImage: false,
+      requireImage: true,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
@@ -267,6 +281,10 @@ export async function GET(request: Request) {
       return;
     }
     const manualLock = Boolean(variant?.manualLock);
+    if (manualLock) {
+      const manualPrice = parseNumber(variant?.manualPrice);
+      if (!manualPrice || manualPrice <= 0) return;
+    }
     const manualStockRaw = variant?.manualStock;
     const manualStock =
       manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);

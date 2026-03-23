@@ -168,6 +168,21 @@ function pickPrimaryImages(hostedImageUrl?: string | null): string[] {
   return [];
 }
 
+function parseNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (value && typeof value === "object") {
+    if ("toString" in value) {
+      const parsed = Number.parseFloat(String(value));
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+  }
+  return null;
+}
+
 function dedupeCandidatesByProviderKey(candidates: any[]) {
   const seen = new Set<string>();
   const unique: any[] = [];
@@ -294,6 +309,28 @@ export async function GET(request: Request) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
+    const manualLock = Boolean(supplierVariant?.manualLock);
+    if (manualLock) {
+      const manualPrice = parseNumber(supplierVariant?.manualPrice);
+      if (!manualPrice || manualPrice <= 0) continue;
+    }
+
+    const manualStockRaw = supplierVariant?.manualStock;
+    const manualStock =
+      manualStockRaw === null || manualStockRaw === undefined
+        ? null
+        : Number.parseInt(String(manualStockRaw), 10);
+    const baseStock = Number.parseInt(String(supplierVariant?.stock ?? 0), 10);
+    const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
+    const supplierVariantId = String(supplierVariant?.supplierVariantId ?? "");
+    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
+    const deliveryType = String(supplierVariant?.deliveryType ?? "");
+    const stxEligible =
+      deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
+    // Galaxus expects master/price/stock to have identical row sets/order.
+    const effectiveStock = isStx ? (stxEligible ? 1 : 0) : rawStock;
+    if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) continue;
+
     const supplierName = sanitizeText(
       supplierVariant?.supplierProductName ?? supplierVariant?.productName ?? ""
     );
