@@ -1,5 +1,5 @@
 import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExportFilePayload } from "./types";
-import { parseDecimal, recordDecathlonExclusion } from "./mapping";
+import { computeDecathlonSellPrice, parseDecimal, recordDecathlonExclusion } from "./mapping";
 import { OFFERS_HEADERS } from "./templates";
 
 function createRow(): Record<string, string> {
@@ -35,10 +35,11 @@ function resolvePrice(candidate: DecathlonExportCandidate): string | null {
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
   const basePrice = parseDecimal(variant?.price);
-  const priceValue =
-    manualLock && manualPrice && manualPrice > 0 ? manualPrice : basePrice;
-  if (!priceValue || priceValue <= 0) return null;
-  return priceValue.toFixed(2);
+  const buyPrice = manualLock && manualPrice && manualPrice > 0 ? manualPrice : basePrice;
+  if (!buyPrice || buyPrice <= 0) return null;
+  const computed = computeDecathlonSellPrice({ buyPrice });
+  if (!computed.withVat || computed.withVat <= 0) return null;
+  return computed.withVat.toFixed(2);
 }
 
 export function buildOfferCsv(
