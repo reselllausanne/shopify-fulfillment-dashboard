@@ -5,6 +5,7 @@ import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runStxPriceStockRefresh } from "@/galaxus/jobs/stxSync";
 import { runFeedPipeline } from "./feedPipeline";
 import { runEdiInPipeline } from "./orderPipeline";
+import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { OpsJobKey } from "./types";
 
 type TickJobResult = {
@@ -70,6 +71,19 @@ async function executeJob(jobKey: OpsJobKey, origin: string) {
   }
   if (jobKey === "edi-in") {
     return runOpsJob(jobKey, async () => runEdiInPipeline());
+  }
+  if (jobKey === "image-sync") {
+    const result = await runOpsJob(jobKey, async () =>
+      runImageSync({
+        limit: 2000,
+        concurrency: 8,
+      })
+    );
+    const summary = result.result as { synced?: number; updatedSource?: number } | undefined;
+    if (result.success && ((summary?.synced ?? 0) > 0 || (summary?.updatedSource ?? 0) > 0)) {
+      await runFeedPipeline({ origin, scope: "full", triggerSource: "image-sync" });
+    }
+    return result;
   }
   throw new Error(`Unknown jobKey ${jobKey}`);
 }

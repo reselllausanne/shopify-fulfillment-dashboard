@@ -329,6 +329,7 @@ export default function GalaxusDashboardPage() {
     "partner-stock-sync": "Partner stock sync (5h)",
     "stx-refresh": "StockX/Kicks refresh (24h)",
     "edi-in": "EDI IN order polling (1h)",
+    "image-sync": "Image sync + host (24h)",
   };
 
   const isShipmentShipped = (shipment: Shipment | null | undefined) => {
@@ -1799,6 +1800,13 @@ export default function GalaxusDashboardPage() {
                   disabled={busy !== null}
                 >
                   {busy === "ops-push-full" ? "Pushing…" : "Push all feeds now"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-indigo-700 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("image-sync")}
+                  disabled={busy !== null}
+                >
+                  {busy === "ops-image-sync" ? "Syncing…" : "Run image sync now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"

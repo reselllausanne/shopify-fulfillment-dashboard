@@ -11,6 +11,7 @@ export const DEFAULT_JOBS: Array<{
   { jobKey: "partner-stock-sync", intervalMs: 5 * HOUR_MS, enabled: true },
   { jobKey: "stx-refresh", intervalMs: 24 * HOUR_MS, enabled: true },
   { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: true },
+  { jobKey: "image-sync", intervalMs: 24 * HOUR_MS, enabled: true },
 ];
 
 export async function ensureJobDefinitions() {

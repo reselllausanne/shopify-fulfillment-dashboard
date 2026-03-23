@@ -34,6 +34,10 @@ export async function POST(request: Request) {
       const data = await runOpsTick(origin, { force: true, only: ["edi-in"] });
       return NextResponse.json({ ok: true, data });
     }
+    if (action === "image-sync") {
+      const data = await runOpsTick(origin, { force: true, only: ["image-sync"] });
+      return NextResponse.json({ ok: true, data });
+    }
 
     if (action === "push-stock-price") {
       const res = await runFeedPipeline({ origin, scope: "stock-price", triggerSource: "manual" });

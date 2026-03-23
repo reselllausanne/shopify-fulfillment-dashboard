@@ -1,4 +1,4 @@
-export type OpsJobKey = "partner-stock-sync" | "stx-refresh" | "edi-in";
+export type OpsJobKey = "partner-stock-sync" | "stx-refresh" | "edi-in" | "image-sync";
 
 export type FeedScope = "stock-price" | "full";
 
@@ -9,5 +9,6 @@ export type FeedTriggerSource =
   | "manual-pricing"
   | "partner-admin"
   | "order-ingest"
+  | "image-sync"
   | "admin"
   | "unknown";
