@@ -48,6 +48,14 @@ function businessDaysBetween(start: Date, end: Date): number {
   return Math.max(0, count - 1);
 }
 
+function publishStxStockFromAsks(asks: number): number {
+  if (!Number.isFinite(asks) || asks < 2) return 0;
+  if (asks <= 5) return 2;
+  if (asks <= 10) return 5;
+  if (asks <= 20) return 8;
+  return 12;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -293,10 +301,11 @@ export async function GET(request: Request) {
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
-    const stxEligible =
-      deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
-    // Temporary single-unit publish strategy until asks-by-price is available.
-    const stock = isStx ? (stxEligible ? 1 : 0) : rawStock;
+    const stock = isStx && deliveryType.startsWith("express_")
+      ? publishStxStockFromAsks(rawStock)
+      : isStx
+        ? 0
+        : rawStock;
 
     if (!Number.isFinite(stock) || stock <= 0) {
       return;

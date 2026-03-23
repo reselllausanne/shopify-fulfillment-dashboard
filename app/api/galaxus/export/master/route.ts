@@ -183,6 +183,14 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
+function publishStxStockFromAsks(asks: number): number {
+  if (!Number.isFinite(asks) || asks < 2) return 0;
+  if (asks <= 5) return 2;
+  if (asks <= 10) return 5;
+  if (asks <= 20) return 8;
+  return 12;
+}
+
 function dedupeCandidatesByProviderKey(candidates: any[]) {
   const seen = new Set<string>();
   const unique: any[] = [];
@@ -325,10 +333,11 @@ export async function GET(request: Request) {
     const supplierVariantId = String(supplierVariant?.supplierVariantId ?? "");
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
-    const stxEligible =
-      deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
-    // Galaxus expects master/price/stock to have identical row sets/order.
-    const effectiveStock = isStx ? (stxEligible ? 1 : 0) : rawStock;
+    const effectiveStock = isStx && deliveryType.startsWith("express_")
+      ? publishStxStockFromAsks(rawStock)
+      : isStx
+        ? 0
+        : rawStock;
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) continue;
 
     const supplierName = sanitizeText(

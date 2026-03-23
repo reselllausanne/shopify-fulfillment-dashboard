@@ -38,6 +38,14 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
+function publishStxStockFromAsks(asks: number): number {
+  if (!Number.isFinite(asks) || asks < 2) return 0;
+  if (asks <= 5) return 2;
+  if (asks <= 10) return 5;
+  if (asks <= 20) return 8;
+  return 12;
+}
+
 export async function GET(request: Request) {
   const prismaAny = prisma as any;
   const { searchParams } = new URL(request.url);
@@ -233,10 +241,11 @@ export async function GET(request: Request) {
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
-    const stxEligible =
-      deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
-    // Keep offer rows aligned with stock export rules.
-    const effectiveStock = isStx ? (stxEligible ? 1 : 0) : rawStock;
+    const effectiveStock = isStx && deliveryType.startsWith("express_")
+      ? publishStxStockFromAsks(rawStock)
+      : isStx
+        ? 0
+        : rawStock;
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) {
       continue;
     }
