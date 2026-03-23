@@ -1008,3 +1008,39 @@ model GalaxusExportManifest {
   @@index([exportType])
   @@schema("public")
 }
+
+model DecathlonExportRun {
+  id             String   @id @default(uuid())
+  runId          String   @unique
+  startedAt      DateTime
+  finishedAt     DateTime?
+  success        Boolean  @default(false)
+  errorMessage   String?
+  countsJson     Json?
+  exclusionsJson Json?
+  createdAt      DateTime @default(now())
+
+  files          DecathlonExportFile[]
+
+  @@index([startedAt])
+  @@schema("public")
+}
+
+model DecathlonExportFile {
+  id         String   @id @default(uuid())
+  runId      String
+  fileType   String
+  rowCount   Int      @default(0)
+  checksum   String?
+  storageUrl String?
+  publicUrl  String?
+  sizeBytes  Int?
+  createdAt  DateTime @default(now())
+
+  exportRun  DecathlonExportRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([fileType])
+  @@index([runId, fileType])
+  @@schema("public")
+}
