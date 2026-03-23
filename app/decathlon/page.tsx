@@ -32,8 +32,6 @@ type DiagnosticsPayload = {
 const FILE_TYPES: Array<{ id: string; label: string }> = [
   { id: "products", label: "Products" },
   { id: "offers", label: "Offers" },
-  { id: "prices", label: "Prices" },
-  { id: "stock", label: "Stock" },
 ];
 
 function formatDate(value?: string | null) {

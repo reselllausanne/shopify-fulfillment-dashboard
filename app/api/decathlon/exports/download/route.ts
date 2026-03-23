@@ -5,12 +5,10 @@ import { getStorageAdapterForUrl } from "@/galaxus/storage/storage";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VALID_TYPES = new Set(["products", "offers", "prices", "stock"]);
+const VALID_TYPES = new Set(["products", "offers"]);
 const FILE_NAMES: Record<string, string> = {
-  products: "products-fr_CH.xlsx",
-  offers: "offers-fr_CH.xlsx",
-  prices: "prices-fr_CH.xlsx",
-  stock: "stock-fr_CH.xlsx",
+  products: "products-fr_CH.csv",
+  offers: "offers-fr_CH.csv",
 };
 
 export async function GET(request: Request) {
@@ -32,11 +30,10 @@ export async function GET(request: Request) {
 
     const storage = getStorageAdapterForUrl(file.storageUrl);
     const blob = await storage.getPdf(file.storageUrl);
-    const filename = FILE_NAMES[type] ?? `decathlon-${type}-${runId}.xlsx`;
+    const filename = FILE_NAMES[type] ?? `decathlon-${type}-${runId}.csv`;
     return new Response(blob.content as unknown as BodyInit, {
       headers: {
-        "content-type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-type": "text/csv; charset=utf-8",
         "content-disposition": `attachment; filename="${filename}"`,
         "content-length": String(blob.content.length ?? 0),
       },

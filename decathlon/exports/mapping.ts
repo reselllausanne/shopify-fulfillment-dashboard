@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier/providerKey";
+import { isAllowedDecathlonBrand } from "./brands";
 import type {
   DecathlonExclusion,
   DecathlonExclusionReason,
@@ -17,6 +18,7 @@ const EXCLUSION_REASONS: DecathlonExclusionReason[] = [
   "MISSING_GTIN",
   "INVALID_GTIN",
   "AMBIGUOUS_MAPPING",
+  "BRAND_NOT_ALLOWED",
   "MISSING_PRODUCT_FIELDS",
   "MISSING_OFFER_FIELDS",
   "MISSING_PRICE",
@@ -57,19 +59,6 @@ export function parseDecimal(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
-}
-
-export function computeDecathlonSellPrice(params: { buyPrice: number }) {
-  const base = params.buyPrice;
-  const platformFeeMultiplier = 1.17;
-  const marginMultiplier = 1.15;
-  const vatRate = 0.081;
-  const exVat = base * platformFeeMultiplier * marginMultiplier;
-  const withVat = exVat * (1 + vatRate);
-  return {
-    exVat: Number.isFinite(exVat) ? exVat : null,
-    withVat: Number.isFinite(withVat) ? withVat : null,
-  };
 }
 
 export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary) {
@@ -145,6 +134,7 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
                 releaseDate: true,
                 retailPrice: true,
                 styleId: true,
+                traitsJson: true,
               },
             },
           },
@@ -220,6 +210,18 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
         recordDecathlonExclusion(summary, {
           reason: "INVALID_PROVIDER_KEY",
           message: `ProviderKey mismatch: expected ${expectedProviderKey}`,
+          supplierVariantId,
+          providerKey,
+          gtin,
+        });
+        continue;
+      }
+
+      const brand = String(variant?.supplierBrand ?? mapping?.kickdbVariant?.product?.brand ?? "").trim();
+      if (!isAllowedDecathlonBrand(brand)) {
+        recordDecathlonExclusion(summary, {
+          reason: "BRAND_NOT_ALLOWED",
+          message: `Brand not allowed: ${brand || "unknown"}`,
           supplierVariantId,
           providerKey,
           gtin,

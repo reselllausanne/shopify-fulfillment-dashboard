@@ -1,4 +1,4 @@
-export type DecathlonExportType = "products" | "offers" | "prices" | "stock";
+export type DecathlonExportType = "products" | "offers";
 
 export type DecathlonExportRow = Record<string, string | number | null | undefined>;
 
@@ -8,6 +8,7 @@ export type DecathlonExclusionReason =
   | "MISSING_GTIN"
   | "INVALID_GTIN"
   | "AMBIGUOUS_MAPPING"
+  | "BRAND_NOT_ALLOWED"
   | "MISSING_PRODUCT_FIELDS"
   | "MISSING_OFFER_FIELDS"
   | "MISSING_PRICE"

@@ -1,12 +1,10 @@
 import { prisma } from "@/app/lib/prisma";
+import { toCsv } from "@/galaxus/exports/csv";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { randomUUID, createHash } from "crypto";
 import { buildOfferCsv } from "./offerCsv";
-import { buildPriceCsv } from "./priceCsv";
 import { buildProductCsv } from "./productCsv";
-import { buildStockCsv } from "./stockCsv";
 import { createDecathlonExclusionSummary, loadDecathlonCandidates } from "./mapping";
-import { buildXlsxBuffer } from "./xlsx";
 
 export type DecathlonExportRunResult = {
   ok: boolean;
@@ -50,30 +48,23 @@ export async function generateDecathlonExport(params?: {
       limit && Number.isFinite(limit) && limit > 0 ? candidates.slice(0, limit) : candidates;
     const productFile = buildProductCsv(slicedCandidates, summary);
     const offerFile = buildOfferCsv(slicedCandidates, summary);
-    const priceFile = buildPriceCsv(slicedCandidates, summary);
-    const stockFile = buildStockCsv(slicedCandidates, summary);
-    const files = [productFile, offerFile, priceFile, stockFile];
+    const files = [productFile, offerFile];
     const filenameByType: Record<string, string> = {
-      products: "products-fr_CH.xlsx",
-      offers: "offers-fr_CH.xlsx",
-      prices: "prices-fr_CH.xlsx",
-      stock: "stock-fr_CH.xlsx",
+      products: "products-fr_CH.csv",
+      offers: "offers-fr_CH.csv",
     };
 
     const storage = getStorageAdapter();
     const storedFiles: DecathlonExportRunResult["files"] = [];
 
     for (const file of files) {
-      const buffer = buildXlsxBuffer(file);
+      const csv = toCsv(file.headers, file.rows);
+      const buffer = Buffer.from(csv, "utf8");
       const checksum = createHash("sha256").update(buffer).digest("hex");
-      const filename = filenameByType[file.type] ?? `${file.type}.xlsx`;
+      const filename = filenameByType[file.type] ?? `${file.type}.csv`;
       const key = `decathlon/exports/${runId}/${filename}`;
       const stored = storage.uploadBinary
-        ? await storage.uploadBinary(
-            key,
-            buffer,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          )
+        ? await storage.uploadBinary(key, buffer, "text/csv")
         : await storage.uploadPdf(key, buffer);
       const rowCount = file.rows.length;
       const sizeBytes = buffer.length;
@@ -105,8 +96,6 @@ export async function generateDecathlonExport(params?: {
       exportableCandidates: slicedCandidates.length,
       products: productFile.rows.length,
       offers: offerFile.rows.length,
-      prices: priceFile.rows.length,
-      stock: stockFile.rows.length,
     };
     if (limit && Number.isFinite(limit) && limit > 0) {
       counts.limitApplied = Math.floor(limit);
