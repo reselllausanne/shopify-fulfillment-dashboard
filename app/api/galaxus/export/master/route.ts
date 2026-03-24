@@ -213,6 +213,7 @@ export async function GET(request: Request) {
   const supplier = searchParams.get("supplier")?.trim();
   const stage = searchParams.get("stage") ?? "1";
   const includeWeight = stage === "2";
+  const report = ["1", "true", "yes"].includes((searchParams.get("report") ?? "").toLowerCase());
   const providerKeys = (searchParams.get("providerKeys") ?? "")
     .split(/[\n,]+/)
     .map((value) => value.trim())
@@ -241,6 +242,32 @@ export async function GET(request: Request) {
   const rows: ExportRow[] = [];
   const skippedProviderKeys: string[] = [];
   const trmExclusionStats = createTrmFeedExclusionStats();
+  const exclusionStats: Record<string, number> = {
+    MISSING_GTIN: 0,
+    INVALID_GTIN: 0,
+    ENRICHMENT_PENDING: 0,
+    KICKDB_NOT_FOUND: 0,
+    MISSING_PRODUCT_NAME: 0,
+    MISSING_IMAGE: 0,
+    INVALID_PRICE: 0,
+    INVALID_PROVIDER_KEY: 0,
+  };
+  const exclusionSamples: Record<string, string[]> = Object.fromEntries(
+    Object.keys(exclusionStats).map((key) => [key, []])
+  );
+  const recordExclude = (payload: { reason: string; mapping?: any; variant?: any }) => {
+    const reason = String(payload?.reason ?? "UNKNOWN");
+    if (!(reason in exclusionStats)) return;
+    exclusionStats[reason] += 1;
+    const sample =
+      payload?.variant?.supplierVariantId ??
+      payload?.mapping?.supplierVariantId ??
+      payload?.mapping?.gtin ??
+      "";
+    if (sample && exclusionSamples[reason].length < 25) {
+      exclusionSamples[reason].push(String(sample));
+    }
+  };
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
@@ -287,6 +314,7 @@ export async function GET(request: Request) {
       requireProductName: false,
       requireImage: true,
       onExclude: (payload) => {
+        recordExclude(payload);
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
         }
@@ -297,7 +325,7 @@ export async function GET(request: Request) {
 
   const candidates = dedupeCandidatesByProviderKey(Array.from(bestByGtin.values()));
   const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
-  if (invalidSupplierVariantIds.length > 0) {
+  if (invalidSupplierVariantIds.length > 0 && !report) {
     return NextResponse.json(
       {
         ok: false,
@@ -306,6 +334,21 @@ export async function GET(request: Request) {
       },
       { status: 409 }
     );
+  }
+  if (report) {
+    return NextResponse.json({
+      ok: true,
+      scope: "master",
+      counts: {
+        candidatesByGtin: bestByGtin.size,
+        dedupedByProviderKey: candidates.length,
+        exportable: exportCandidates.length,
+      },
+      excluded: exclusionStats,
+      excludedSamples: exclusionSamples,
+      providerKeyMismatch: invalidSupplierVariantIds.length,
+      trmExcluded: trmExclusionStats,
+    });
   }
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;

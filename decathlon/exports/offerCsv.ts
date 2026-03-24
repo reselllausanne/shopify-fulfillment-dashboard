@@ -1,7 +1,14 @@
 import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExportFilePayload } from "./types";
 import { parseDecimal, recordDecathlonExclusion } from "./mapping";
 import { OFFERS_HEADERS } from "./templates";
-import { computeDecathlonPriceFromBuyNow, resolveDecathlonBuyNow } from "./pricing";
+import {
+  computeDecathlonPriceFromBuyNow,
+  DECATHLON_BUY_NOW_MULTIPLIER,
+  DECATHLON_NER_BUY_NOW_MULTIPLIER,
+  resolveDecathlonBuyNow,
+} from "./pricing";
+
+const DECATHLON_DEFAULT_OFFER_STATE = "11";
 
 function createRow(): Record<string, string> {
   const row: Record<string, string> = {};
@@ -33,13 +40,24 @@ function resolveEffectiveStock(candidate: DecathlonExportCandidate): number | nu
 
 function resolvePrice(candidate: DecathlonExportCandidate): string | null {
   const variant = candidate.variant ?? {};
+  const manualLock = Boolean(variant?.manualLock);
+  const manualPrice = parseDecimal(variant?.manualPrice);
+  if (manualLock && manualPrice && manualPrice > 0) {
+    return manualPrice.toFixed(2);
+  }
   const buyNow = resolveDecathlonBuyNow({
     buyNowStockx: parseDecimal(variant?.price),
-    manualOverride: parseDecimal(variant?.manualPrice),
-    manualLock: Boolean(variant?.manualLock),
+    manualOverride: manualPrice,
+    manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const computed = computeDecathlonPriceFromBuyNow(buyNow);
+  const providerKey = String(candidate.providerKey ?? "");
+  const supplierVariantId = String(variant?.supplierVariantId ?? "");
+  const isNer =
+    providerKey.toUpperCase().startsWith("NER_") ||
+    supplierVariantId.toLowerCase().startsWith("ner_");
+  const multiplier = isNer ? DECATHLON_NER_BUY_NOW_MULTIPLIER : DECATHLON_BUY_NOW_MULTIPLIER;
+  const computed = computeDecathlonPriceFromBuyNow(buyNow, multiplier);
   if (!computed || computed <= 0) return null;
   return computed.toFixed(2);
 }
@@ -80,11 +98,12 @@ export function buildOfferCsv(
     }
 
     const row = createRow();
-    row["SKU Offre"] = candidate.providerKey;
-    row["ID Produit"] = candidate.providerKey;
-    row["Product ID Type"] = "SHOP_SKU";
-    row["Prix Offre"] = price;
-    row["Quantité Offre"] = String(effectiveStock);
+    row["sku"] = candidate.providerKey;
+    row["product-id"] = candidate.gtin;
+    row["product-id-type"] = "EAN";
+    row["price"] = price;
+    row["quantity"] = String(effectiveStock);
+    row["state"] = DECATHLON_DEFAULT_OFFER_STATE;
 
     rows.push(row);
   }

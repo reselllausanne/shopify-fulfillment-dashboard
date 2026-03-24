@@ -1,9 +1,13 @@
 export const DECATHLON_BUY_NOW_MULTIPLIER = 1.54;
+export const DECATHLON_NER_BUY_NOW_MULTIPLIER = 1.1;
 export const DECATHLON_PRICE_ROUND_TO = 0.01;
 
-export function computeDecathlonPriceFromBuyNow(buyNow: number): number | null {
+export function computeDecathlonPriceFromBuyNow(
+  buyNow: number,
+  multiplier: number = DECATHLON_BUY_NOW_MULTIPLIER
+): number | null {
   if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
-  const raw = buyNow * DECATHLON_BUY_NOW_MULTIPLIER;
+  const raw = buyNow * multiplier;
   if (!Number.isFinite(raw) || raw <= 0) return null;
   return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
 }

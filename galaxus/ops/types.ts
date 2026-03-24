@@ -1,6 +1,6 @@
 export type OpsJobKey = "partner-stock-sync" | "stx-refresh" | "edi-in" | "image-sync";
 
-export type FeedScope = "stock-price" | "full";
+export type FeedScope = "stock-price" | "full" | "master-specs" | "stock" | "price";
 
 export type FeedTriggerSource =
   | "partner-sync"

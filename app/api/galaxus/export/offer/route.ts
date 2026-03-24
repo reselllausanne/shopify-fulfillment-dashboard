@@ -175,7 +175,8 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       keyBy: "gtin",
       requireProductName: false,
-      requireImage: true,
+      // Price feed should not depend on hosted images.
+      requireImage: false,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);

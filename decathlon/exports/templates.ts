@@ -135,9 +135,10 @@ export const PRODUCTS_HEADERS = [
 ];
 
 export const OFFERS_HEADERS = [
-  "SKU Offre",
-  "ID Produit",
-  "Product ID Type",
-  "Prix Offre",
-  "Quantité Offre",
+  "sku",
+  "product-id",
+  "product-id-type",
+  "price",
+  "quantity",
+  "state",
 ];

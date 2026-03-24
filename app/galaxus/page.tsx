@@ -297,9 +297,12 @@ export default function GalaxusDashboardPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [opsLog, setOpsLog] = useState<string | null>(null);
+  const [opsBusy, setOpsBusy] = useState<string | null>(null);
   const [unassignedCount, setUnassignedCount] = useState<number | null>(null);
   const [cleanupStats, setCleanupStats] = useState<any | null>(null);
   const [opsStatus, setOpsStatus] = useState<any | null>(null);
+  const [feedValidation, setFeedValidation] = useState<any | null>(null);
+  const [feedValidationBusy, setFeedValidationBusy] = useState<boolean>(false);
   const [enrichSku, setEnrichSku] = useState<string>("");
   // Enrich-all UI removed; enrichment is cron-driven.
   const [stxImportInput, setStxImportInput] = useState<string>("");
@@ -332,6 +335,8 @@ export default function GalaxusDashboardPage() {
   const [manualFulfillIsStx, setManualFulfillIsStx] = useState<boolean>(false);
   const [manualFulfillBoughtQty, setManualFulfillBoughtQty] = useState<number>(0);
   const [showArchivedShipments, setShowArchivedShipments] = useState(false);
+  const [invoiceLineSelection, setInvoiceLineSelection] = useState<Record<string, boolean>>({});
+  const [invoiceBusy, setInvoiceBusy] = useState<boolean>(false);
   /** Manual parcel builder: qty per order line per column (parcel). */
   const [manualPackCols, setManualPackCols] = useState(2);
   const [manualPackQty, setManualPackQty] = useState<Record<string, number[]>>({});
@@ -674,7 +679,7 @@ export default function GalaxusDashboardPage() {
   };
 
   const runOpsAction = async (action: string) => {
-    setBusy(`ops-${action}`);
+    setOpsBusy(`ops-${action}`);
     setError(null);
     setOpsLog(null);
     try {
@@ -687,6 +692,74 @@ export default function GalaxusDashboardPage() {
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Ops action failed");
       setOpsLog(JSON.stringify(data, null, 2));
       await loadOpsStatus();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setOpsBusy(null);
+    }
+  };
+
+  const normalizeValidationLabel = (message: string) => {
+    if (message.includes("SpecificationKey is empty")) return "Specification Key is missing";
+    if (message.includes("Gtin is empty")) return "GTIN is missing";
+    if (message.includes("Gtin is invalid")) return "GTIN not globally valid";
+    if (message.includes("ProductCategory is empty")) return "Product Type assignment is missing";
+    if (message.includes("PurchasePriceExclVat") || message.includes("PurchasePriceExclVatAndFee")) {
+      return "Purchase price is outside the valid range";
+    }
+    return message;
+  };
+
+  const buildValidationDisplay = (rows: Array<{ message: string; count: number; samples?: string[] }>) => {
+    const merged = new Map<string, number>();
+    const sampleMap = new Map<string, string[]>();
+    for (const row of rows) {
+      const label = normalizeValidationLabel(row.message);
+      merged.set(label, (merged.get(label) ?? 0) + row.count);
+      if (Array.isArray(row.samples) && row.samples.length > 0) {
+        const existing = sampleMap.get(label) ?? [];
+        for (const sample of row.samples) {
+          if (existing.length >= 5) break;
+          if (!existing.includes(sample)) existing.push(sample);
+        }
+        sampleMap.set(label, existing);
+      }
+    }
+    return Array.from(merged.entries())
+      .map(([message, count]) => ({ message, count, samples: sampleMap.get(message) ?? [] }))
+      .sort((a, b) => b.count - a.count);
+  };
+
+  const loadFeedValidation = async () => {
+    setFeedValidationBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/galaxus/export/check-all?all=1&summary=1", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to run feed validation");
+      setFeedValidation(data.report ?? null);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setFeedValidationBusy(false);
+    }
+  };
+
+  const backfillMappingGtins = async (apply: boolean) => {
+    if (apply && !window.confirm("Backfill VariantMapping.gtin from SupplierVariant.gtin?")) {
+      return;
+    }
+    setBusy("backfill-mapping-gtin");
+    setError(null);
+    try {
+      const res = await fetch("/api/galaxus/cleanup/backfill-mapping-gtin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: !apply, confirm: apply }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Backfill failed");
+      setOpsLog(JSON.stringify(data, null, 2));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -714,6 +787,7 @@ export default function GalaxusDashboardPage() {
       setManualPackQty({});
       setManualPackCols(2);
       setManualPackConfirmReplace(false);
+      setInvoiceLineSelection({});
       return;
     }
     setManualPackCols(2);
@@ -723,6 +797,11 @@ export default function GalaxusDashboardPage() {
       next[line.id] = [0, 0];
     }
     setManualPackQty(next);
+    const invoiceNext: Record<string, boolean> = {};
+    for (const line of selectedOrder.lines) {
+      invoiceNext[line.id] = true;
+    }
+    setInvoiceLineSelection(invoiceNext);
   }, [selectedOrder?.id, selectedOrder?.lines?.length, selectedOrder?.shipments?.length]);
 
   const importStxProduct = async () => {
@@ -1036,6 +1115,8 @@ export default function GalaxusDashboardPage() {
     setManualPackQty({});
     setManualPackCols(2);
     setManualPackConfirmReplace(false);
+    setInvoiceLineSelection({});
+    setInvoiceBusy(false);
   };
 
   const closeRowActionsMenu = (el: HTMLElement) => {
@@ -1209,6 +1290,69 @@ export default function GalaxusDashboardPage() {
       setError(e?.message ?? "Pack failed");
     } finally {
       setBusy(null);
+    }
+  };
+
+  const getSelectedInvoiceLineIds = (): string[] => {
+    if (!selectedOrder?.lines?.length) return [];
+    return selectedOrder.lines
+      .filter((line) => Boolean(invoiceLineSelection[line.id]))
+      .map((line) => line.id);
+  };
+
+  const setAllInvoiceLines = (value: boolean) => {
+    if (!selectedOrder?.lines?.length) return;
+    const next: Record<string, boolean> = {};
+    for (const line of selectedOrder.lines) {
+      next[line.id] = value;
+    }
+    setInvoiceLineSelection(next);
+  };
+
+  const toggleInvoiceLine = (lineId: string) => {
+    setInvoiceLineSelection((prev) => ({ ...prev, [lineId]: !prev[lineId] }));
+  };
+
+  const downloadInvoiceXml = () => {
+    if (!selectedOrderId) return;
+    const lineIds = getSelectedInvoiceLineIds();
+    if (lineIds.length === 0) {
+      setError("Select at least one line for invoice XML.");
+      return;
+    }
+    const params = new URLSearchParams({
+      download: "1",
+      orderId: selectedOrderId,
+      type: "INVO",
+      lineIds: lineIds.join(","),
+    });
+    window.open(`/api/galaxus/edi/send?${params.toString()}`, "_blank", "noopener,noreferrer");
+  };
+
+  const sendInvoiceXml = async () => {
+    if (!selectedOrderId) return;
+    const lineIds = getSelectedInvoiceLineIds();
+    if (lineIds.length === 0) {
+      setError("Select at least one line for invoice XML.");
+      return;
+    }
+    setInvoiceBusy(true);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const res = await fetch("/api/galaxus/edi/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: selectedOrderId, types: ["INVO"], lineIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.error ?? "INVO failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOpsStatus();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setInvoiceBusy(false);
     }
   };
 
@@ -1965,37 +2109,51 @@ export default function GalaxusDashboardPage() {
                 <button
                   className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
                   onClick={() => runOpsAction("partner-sync")}
-                  disabled={busy !== null}
+                  disabled={opsBusy !== null}
                 >
-                  {busy === "ops-partner-sync" ? "Running…" : "Run partner sync now"}
+                  {opsBusy === "ops-partner-sync" ? "Running…" : "Run partner sync now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
                   onClick={() => runOpsAction("stx-refresh")}
-                  disabled={busy !== null}
+                  disabled={opsBusy !== null}
                 >
-                  {busy === "ops-stx-refresh" ? "Running…" : "Run StockX/Kicks refresh now"}
+                  {opsBusy === "ops-stx-refresh" ? "Running…" : "Run StockX/Kicks refresh now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
                   onClick={() => runOpsAction("edi-in")}
-                  disabled={busy !== null}
+                  disabled={opsBusy !== null}
                 >
-                  {busy === "ops-edi-in" ? "Polling…" : "Poll EDI IN now"}
+                  {opsBusy === "ops-edi-in" ? "Polling…" : "Poll EDI IN now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-violet-600 text-white disabled:opacity-50"
-                  onClick={() => runOpsAction("push-full")}
-                  disabled={busy !== null}
+                  onClick={() => runOpsAction("push-stock")}
+                  disabled={opsBusy !== null}
                 >
-                  {busy === "ops-push-full" ? "Pushing…" : "Push all feeds now"}
+                  {opsBusy === "ops-push-stock" ? "Pushing…" : "Push stock now"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-violet-700 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("push-price")}
+                  disabled={opsBusy !== null}
+                >
+                  {opsBusy === "ops-push-price" ? "Pushing…" : "Push price now"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-fuchsia-600 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("push-master-specs")}
+                  disabled={opsBusy !== null}
+                >
+                  {opsBusy === "ops-push-master-specs" ? "Pushing…" : "Push master + specs now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-indigo-700 text-white disabled:opacity-50"
                   onClick={() => runOpsAction("image-sync")}
-                  disabled={busy !== null}
+                  disabled={opsBusy !== null}
                 >
-                  {busy === "ops-image-sync" ? "Syncing…" : "Run image sync now"}
+                  {opsBusy === "ops-image-sync" ? "Syncing…" : "Run image sync now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
@@ -2043,6 +2201,89 @@ export default function GalaxusDashboardPage() {
                   >
                     Download Specs
                   </button>
+                </div>
+              </details>
+              <details className="rounded border bg-gray-50 p-2">
+                <summary className="cursor-pointer text-xs font-medium">Feed validation</summary>
+                <div className="mt-2 space-y-2 text-xs text-gray-600">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"
+                      onClick={loadFeedValidation}
+                      disabled={feedValidationBusy}
+                    >
+                      {feedValidationBusy ? "Checking…" : "Run validation now"}
+                    </button>
+                    {feedValidation?.summary ? (
+                      <span>
+                        Master rows: {feedValidation.summary.master?.totalRows ?? "—"} · Stock rows:{" "}
+                        {feedValidation.summary.stock?.totalRows ?? "—"} · Specs rows:{" "}
+                        {feedValidation.summary.specs?.totalRows ?? "—"}
+                      </span>
+                    ) : null}
+                  </div>
+                  {feedValidation?.grouped ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      {["master", "stock", "specs"].map((key) => {
+                        const rows = buildValidationDisplay(feedValidation.grouped?.[key] ?? []);
+                        return (
+                          <div key={key} className="rounded border bg-white p-2">
+                            <div className="font-medium text-gray-700 mb-1 capitalize">{key} issues</div>
+                            {rows.length === 0 ? (
+                              <div>—</div>
+                            ) : (
+                              <div className="space-y-1">
+                                {rows.slice(0, 15).map((row) => (
+                                  <div key={`${key}-${row.message}`} className="space-y-1">
+                                    <div className="flex items-center justify-between">
+                                      <span className="truncate pr-2">{row.message}</span>
+                                      <span className="text-gray-500">{row.count}</span>
+                                    </div>
+                                    {row.samples?.length ? (
+                                      <div className="text-[11px] text-gray-500 break-all">
+                                        e.g. {row.samples.join(", ")}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-gray-500">No validation report loaded.</div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                      onClick={() =>
+                        window.open(
+                          "/api/galaxus/export/check-all?all=1&download=1",
+                          "_blank",
+                          "noopener,noreferrer"
+                        )
+                      }
+                      disabled={feedValidationBusy}
+                    >
+                      Download issues CSV
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                      onClick={() => backfillMappingGtins(false)}
+                      disabled={busy !== null}
+                    >
+                      Preview GTIN backfill
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded bg-amber-600 text-white disabled:opacity-50"
+                      onClick={() => backfillMappingGtins(true)}
+                      disabled={busy !== null}
+                    >
+                      Apply GTIN backfill
+                    </button>
+                  </div>
                 </div>
               </details>
             </div>
@@ -2477,6 +2718,81 @@ export default function GalaxusDashboardPage() {
                   <div>
                     Cancelled: {selectedOrder.cancelledAt ? formatTime(selectedOrder.cancelledAt) : "No"}
                   </div>
+                </div>
+              </div>
+
+              <div className="border rounded bg-white p-2 text-xs">
+                <div className="font-medium text-gray-700 mb-1">Invoice XML</div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+                  <span>
+                    Selected{" "}
+                    {selectedOrder.lines.filter((line) => Boolean(invoiceLineSelection[line.id])).length}/
+                    {selectedOrder.lines.length}
+                  </span>
+                  <button
+                    className="px-2 py-1 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={() => setAllInvoiceLines(true)}
+                    disabled={invoiceBusy}
+                  >
+                    Select all
+                  </button>
+                  <button
+                    className="px-2 py-1 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={() => setAllInvoiceLines(false)}
+                    disabled={invoiceBusy}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="mt-2 max-h-40 overflow-auto border rounded">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-2 py-1 text-left">Send</th>
+                        <th className="px-2 py-1 text-left">Line</th>
+                        <th className="px-2 py-1 text-left">Product</th>
+                        <th className="px-2 py-1 text-right">Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedOrder.lines.map((line) => (
+                        <tr key={line.id} className="border-t">
+                          <td className="px-2 py-1">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(invoiceLineSelection[line.id])}
+                              onChange={() => toggleInvoiceLine(line.id)}
+                              disabled={invoiceBusy}
+                            />
+                          </td>
+                          <td className="px-2 py-1">{line.lineNumber}</td>
+                          <td className="px-2 py-1">
+                            {resolveProductNameForGtin(line.gtin) || line.productName}
+                          </td>
+                          <td className="px-2 py-1 text-right">{line.quantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+                    onClick={sendInvoiceXml}
+                    disabled={invoiceBusy}
+                  >
+                    {invoiceBusy ? "Sending…" : "Send INVO XML"}
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded bg-gray-100 text-black disabled:opacity-50"
+                    onClick={downloadInvoiceXml}
+                    disabled={invoiceBusy}
+                  >
+                    Download INVO XML
+                  </button>
+                </div>
+                <div className="mt-1 text-[11px] text-gray-500">
+                  Uses the OpenTrans INVOICE XML template (per selected lines).
                 </div>
               </div>
 

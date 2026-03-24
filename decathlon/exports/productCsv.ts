@@ -2,9 +2,11 @@ import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExpo
 import { recordDecathlonExclusion } from "./mapping";
 import { PRODUCTS_HEADERS } from "./templates";
 import { resolveDecathlonCategory } from "./categories";
+import { isBasketballTitle } from "./basketballTitles";
 
-const DEFAULT_CONDITION = "neuf";
+const DEFAULT_CONDITION = "11";
 const DEFAULT_PRODUCT_NATURE_SHOES = "Shoes";
+const DEFAULT_SPORTS_VALUE = "sport walking";
 
 const REQUIRED_COLUMNS = [
   "Catégorie",
@@ -62,6 +64,11 @@ function pickTrait(traits: any, keys: string[]): string | null {
     }
   }
   return null;
+}
+
+function resolveSportFromTitle(title: string): string {
+  if (isBasketballTitle(title)) return "basketball";
+  return DEFAULT_SPORTS_VALUE;
 }
 
 function resolveRequiredMissing(row: Record<string, string>) {
@@ -140,8 +147,7 @@ export function buildProductCsv(
     row["codes EAN"] = candidate.gtin;
     row["Brand"] = brand;
     row["état"] = DEFAULT_CONDITION;
-    row["Sports"] =
-      pickTrait(traits, ["sport", "sports", "activity", "discipline"]) ?? "";
+    row["Sports"] = resolveSportFromTitle(productName);
     row["Genre"] =
       gender || pickTrait(traits, ["gender", "sex", "target"]) || "";
     row["Couleur"] =

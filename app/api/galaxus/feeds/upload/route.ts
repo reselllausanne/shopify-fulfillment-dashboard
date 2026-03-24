@@ -78,10 +78,10 @@ export async function POST(request: Request) {
     assertSftpConfig();
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier");
-    const type = (searchParams.get("type") ?? "all").toLowerCase();
-    // Keep backward-compat alias for `stock` only. `offer` must remain offer-only
-    // so manual "price" uploads do not trigger an expensive paired run.
-    const effectiveType = type === "stock" ? "offer-stock" : type;
+    const rawType = (searchParams.get("type") ?? "all").toLowerCase();
+    const type = rawType === "price" ? "offer" : rawType;
+    // Keep backward-compat alias for combined runs, but allow stock-only and offer-only.
+    const effectiveType = type === "stock-price" || type === "offer-stock" ? "offer-stock" : type;
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const limitRaw = searchParams.get("limit");
     const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
@@ -101,11 +101,15 @@ export async function POST(request: Request) {
     const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
     const specsUrl = `${origin}/api/galaxus/export/specifications?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
 
-    const needsMaster = effectiveType === "all" || effectiveType === "master";
+    const needsMaster =
+      effectiveType === "all" || effectiveType === "master" || effectiveType === "master-specs";
     const needsStock = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "stock";
     const needsOffer = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "offer";
     const needsSpecs =
-      effectiveType === "all" || effectiveType === "specs" || effectiveType === "specifications";
+      effectiveType === "all" ||
+      effectiveType === "specs" ||
+      effectiveType === "specifications" ||
+      effectiveType === "master-specs";
     auditId = (await (prisma as any).galaxusJobRun.create({
       data: {
         jobName: "feeds-upload",

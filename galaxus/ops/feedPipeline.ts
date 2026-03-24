@@ -14,7 +14,16 @@ type FeedRunResult = {
 };
 
 async function callFeedUpload(origin: string, scope: FeedScope) {
-  const type = scope === "full" ? "all" : "offer-stock";
+  const type =
+    scope === "full"
+      ? "all"
+      : scope === "master-specs"
+        ? "master-specs"
+        : scope === "stock"
+          ? "stock"
+          : scope === "price"
+            ? "offer"
+            : "offer-stock";
   const url = `${origin}/api/galaxus/feeds/upload?type=${type}`;
   try {
     const res = await fetch(url, {

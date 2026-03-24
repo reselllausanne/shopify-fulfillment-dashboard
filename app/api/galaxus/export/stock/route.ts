@@ -192,7 +192,8 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
       keyBy: "gtin",
       requireProductName: false,
-      requireImage: true,
+      // Stock feed should not depend on hosted images.
+      requireImage: false,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
@@ -235,34 +236,53 @@ export async function GET(request: Request) {
   );
   const stxEtaByGtin = new Map<string, { min: Date; max: Date }>();
   if (stxGtins.length > 0) {
-    let rows: Array<{ gtin: string; etaMin: Date; etaMax: Date }> = [];
-    try {
-      rows = await (prismaAny as any).stxPurchaseUnit.findMany({
-        where: {
-          gtin: { in: stxGtins },
-          cancelledAt: null,
-          stockxOrderId: { not: null },
-          etaMin: { not: null },
-          etaMax: { not: null },
-        },
-        select: { gtin: true, etaMin: true, etaMax: true },
-      });
-    } catch (error: any) {
-      const message = String(error?.message ?? "");
-      if (!message.includes("Unknown argument `cancelledAt`")) {
+    const chunkSize = 500;
+    const batches: string[][] = [];
+    for (let idx = 0; idx < stxGtins.length; idx += chunkSize) {
+      batches.push(stxGtins.slice(idx, idx + chunkSize));
+    }
+    let supportsCancelledAt = true;
+    const rows: Array<{ gtin: string; etaMin: Date; etaMax: Date }> = [];
+    for (const batch of batches) {
+      try {
+        const batchRows = await (prismaAny as any).stxPurchaseUnit.findMany({
+          where: supportsCancelledAt
+            ? {
+                gtin: { in: batch },
+                cancelledAt: null,
+                stockxOrderId: { not: null },
+                etaMin: { not: null },
+                etaMax: { not: null },
+              }
+            : {
+                gtin: { in: batch },
+                stockxOrderId: { not: null },
+                etaMin: { not: null },
+                etaMax: { not: null },
+              },
+          select: { gtin: true, etaMin: true, etaMax: true },
+        });
+        rows.push(...batchRows);
+      } catch (error: any) {
+        const message = String(error?.message ?? "");
+        if (supportsCancelledAt && message.includes("Unknown argument `cancelledAt`")) {
+          supportsCancelledAt = false;
+          const batchRows = await (prismaAny as any).stxPurchaseUnit
+            .findMany({
+              where: {
+                gtin: { in: batch },
+                stockxOrderId: { not: null },
+                etaMin: { not: null },
+                etaMax: { not: null },
+              },
+              select: { gtin: true, etaMin: true, etaMax: true },
+            })
+            .catch(() => []);
+          rows.push(...batchRows);
+          continue;
+        }
         throw error;
       }
-      rows = await (prismaAny as any).stxPurchaseUnit
-        .findMany({
-          where: {
-            gtin: { in: stxGtins },
-            stockxOrderId: { not: null },
-            etaMin: { not: null },
-            etaMax: { not: null },
-          },
-          select: { gtin: true, etaMin: true, etaMax: true },
-        })
-        .catch(() => []);
     }
     for (const row of rows) {
       const gtin = String(row?.gtin ?? "").trim();
@@ -289,10 +309,6 @@ export async function GET(request: Request) {
       return;
     }
     const manualLock = Boolean(variant?.manualLock);
-    if (manualLock) {
-      const manualPrice = parseNumber(variant?.manualPrice);
-      if (!manualPrice || manualPrice <= 0) return;
-    }
     const manualStockRaw = variant?.manualStock;
     const manualStock =
       manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);

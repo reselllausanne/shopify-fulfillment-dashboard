@@ -17,13 +17,13 @@ import type { EdiOrderLine, EdiParty, EdiTotals, EdiVatSummaryLine } from "./ope
 
 export function buildBuyerParty(order: GalaxusOrder): EdiParty {
   return {
-    id: GALAXUS_BUYER_NAME,
-    name: order.recipientName ?? GALAXUS_BUYER_NAME,
-    street: order.recipientAddress1 ?? GALAXUS_BUYER_ADDRESS1,
-    street2: order.recipientAddress2 ?? GALAXUS_BUYER_ADDRESS2,
-    postalCode: order.recipientPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
-    city: order.recipientCity ?? GALAXUS_BUYER_CITY,
-    country: order.recipientCountry ?? GALAXUS_BUYER_COUNTRY,
+    id: order.buyerPartyId ?? GALAXUS_BUYER_NAME,
+    name: order.customerName ?? GALAXUS_BUYER_NAME,
+    street: order.customerAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+    street2: order.customerAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+    postalCode: order.customerPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+    city: order.customerCity ?? GALAXUS_BUYER_CITY,
+    country: order.customerCountry ?? GALAXUS_BUYER_COUNTRY,
     vatId: order.customerVatId ?? null,
   };
 }

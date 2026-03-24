@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
+import { toCsv } from "@/galaxus/exports/csv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,8 @@ type Issue = {
   column?: string;
   message: string;
   value?: string;
+  providerKey?: string;
+  gtin?: string;
 };
 
 type KickDbPayload = {
@@ -643,6 +646,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
+    const summaryOnly = ["1", "true", "yes"].includes((searchParams.get("summary") ?? "").toLowerCase());
     const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
@@ -711,6 +715,61 @@ export async function GET(request: Request) {
     const stockIssues = validateStock(stockRows);
     const specsIssues = validateSpecs(specsRows);
 
+    const attachIssueContext = (issues: Issue[], rows: ExportRow[]) =>
+      issues.map((issue) => {
+        const rowIndex = Math.max(0, issue.row - 2);
+        const row = rows[rowIndex] ?? {};
+        const providerKey = String(row.ProviderKey ?? "").trim();
+        const gtin = String(row.Gtin ?? "").trim();
+        return { ...issue, providerKey: providerKey || undefined, gtin: gtin || undefined };
+      });
+
+    const masterIssuesWithContext = attachIssueContext(masterIssues, masterRows);
+    const stockIssuesWithContext = attachIssueContext(stockIssues, stockRows);
+    const specsIssuesWithContext = attachIssueContext(specsIssues, specsRows);
+
+    const groupIssues = (issues: Issue[]) => {
+      const map = new Map<string, { count: number; samples: string[] }>();
+      for (const issue of issues) {
+        const key = issue.message;
+        const entry = map.get(key) ?? { count: 0, samples: [] };
+        entry.count += 1;
+        const sample = issue.providerKey || issue.gtin || issue.value || "";
+        if (sample && entry.samples.length < 10) {
+          entry.samples.push(sample);
+        }
+        map.set(key, entry);
+      }
+      return Array.from(map.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([message, data]) => ({ message, count: data.count, samples: data.samples }));
+    };
+
+    const download = ["1", "true", "yes"].includes((searchParams.get("download") ?? "").toLowerCase());
+    if (download) {
+      const allIssues = [
+        ...masterIssuesWithContext,
+        ...stockIssuesWithContext,
+        ...specsIssuesWithContext,
+      ];
+      const rows = allIssues.map((issue) => ({
+        Feed: issue.feed,
+        Row: issue.row,
+        Column: issue.column ?? "",
+        Message: issue.message,
+        Value: issue.value ?? "",
+        ProviderKey: issue.providerKey ?? "",
+        Gtin: issue.gtin ?? "",
+      }));
+      const csv = toCsv(["Feed", "Row", "Column", "Message", "Value", "ProviderKey", "Gtin"], rows);
+      return new NextResponse(csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename=\"galaxus-feed-issues-${Date.now()}.csv\"`,
+        },
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       report: {
@@ -719,11 +778,22 @@ export async function GET(request: Request) {
           stock: { totalRows: stockRows.length, totalIssues: stockIssues.length },
           specs: { totalRows: specsRows.length, totalIssues: specsIssues.length },
         },
-        issues: {
-          master: masterIssues,
-          stock: stockIssues,
-          specs: specsIssues,
+        grouped: {
+          master: groupIssues(masterIssuesWithContext),
+          stock: groupIssues(stockIssuesWithContext),
+          specs: groupIssues(specsIssuesWithContext),
         },
+        issues: summaryOnly
+          ? {
+              master: masterIssuesWithContext.slice(0, 200),
+              stock: stockIssuesWithContext.slice(0, 200),
+              specs: specsIssuesWithContext.slice(0, 200),
+            }
+          : {
+              master: masterIssuesWithContext,
+              stock: stockIssuesWithContext,
+              specs: specsIssuesWithContext,
+            },
       },
     });
   } catch (error: any) {

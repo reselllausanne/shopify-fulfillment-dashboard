@@ -15,6 +15,13 @@ export async function GET(request: Request) {
     const orderId = (searchParams.get("orderId") ?? "").trim();
     const type = (searchParams.get("type") ?? "").trim().toUpperCase() as EdiDocType;
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
+    const rawLineIds = (searchParams.get("lineIds") ?? "").trim();
+    const lineIds = rawLineIds
+      ? rawLineIds
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      : undefined;
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
     }
@@ -22,7 +29,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid type" }, { status: 400 });
     }
 
-    const edi = await buildOutgoingEdiXml({ orderId, type, force });
+    const edi = await buildOutgoingEdiXml({ orderId, type, force, lineIds });
     return new NextResponse(edi.content, {
       headers: {
         "Content-Type": "application/xml; charset=utf-8",
@@ -48,6 +55,11 @@ export async function POST(request: Request) {
     const orderId = body?.orderId as string | undefined;
     const types = (body?.types as EdiDocType[] | undefined) ?? ["ORDR", "DELR", "INVO"];
     const force = Boolean(body?.force);
+    const lineIdsRaw = Array.isArray(body?.lineIds) ? body.lineIds : undefined;
+    const lineIds =
+      lineIdsRaw && lineIdsRaw.length > 0
+        ? lineIdsRaw.map((value: any) => String(value)).filter((value: string) => value.trim().length > 0)
+        : undefined;
     const ordrMode =
       body?.ordrMode === "WITH_ARRIVAL_DATES" || body?.ordrMode === "WITHOUT_POSITIONS"
         ? (body.ordrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")
@@ -55,7 +67,7 @@ export async function POST(request: Request) {
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
     }
-    const results = await sendOutgoingEdi({ orderId, types, ordrMode, force });
+    const results = await sendOutgoingEdi({ orderId, types, ordrMode, force, lineIds });
     return NextResponse.json({ ok: true, results });
   } catch (error: any) {
     console.error("[GALAXUS][EDI][SEND] Failed:", error);

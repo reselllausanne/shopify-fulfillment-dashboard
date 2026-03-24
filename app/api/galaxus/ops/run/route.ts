@@ -43,9 +43,21 @@ export async function POST(request: Request) {
       const res = await runFeedPipeline({ origin, scope: "stock-price", triggerSource: "manual" });
       return NextResponse.json({ ok: res.ok, result: res });
     }
+    if (action === "push-stock") {
+      const res = await runFeedPipeline({ origin, scope: "stock", triggerSource: "manual" });
+      return NextResponse.json({ ok: res.ok, result: res });
+    }
+    if (action === "push-price") {
+      const res = await runFeedPipeline({ origin, scope: "price", triggerSource: "manual" });
+      return NextResponse.json({ ok: res.ok, result: res });
+    }
 
     if (action === "push-full") {
       const res = await runFeedPipeline({ origin, scope: "full", triggerSource: "manual" });
+      return NextResponse.json({ ok: res.ok, result: res });
+    }
+    if (action === "push-master-specs") {
+      const res = await runFeedPipeline({ origin, scope: "master-specs", triggerSource: "manual" });
       return NextResponse.json({ ok: res.ok, result: res });
     }
 

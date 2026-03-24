@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
+  const report = ["1", "true", "yes"].includes((searchParams.get("report") ?? "").toLowerCase());
   const providerKeys = (searchParams.get("providerKeys") ?? "")
     .split(/[\n,]+/)
     .map((value) => value.trim())
@@ -31,6 +32,32 @@ export async function GET(request: Request) {
 
   const rows: ExportRow[] = [];
   const trmExclusionStats = createTrmFeedExclusionStats();
+  const exclusionStats: Record<string, number> = {
+    MISSING_GTIN: 0,
+    INVALID_GTIN: 0,
+    ENRICHMENT_PENDING: 0,
+    KICKDB_NOT_FOUND: 0,
+    MISSING_PRODUCT_NAME: 0,
+    MISSING_IMAGE: 0,
+    INVALID_PRICE: 0,
+    INVALID_PROVIDER_KEY: 0,
+  };
+  const exclusionSamples: Record<string, string[]> = Object.fromEntries(
+    Object.keys(exclusionStats).map((key) => [key, []])
+  );
+  const recordExclude = (payload: { reason: string; mapping?: any; variant?: any }) => {
+    const reason = String(payload?.reason ?? "UNKNOWN");
+    if (!(reason in exclusionStats)) return;
+    exclusionStats[reason] += 1;
+    const sample =
+      payload?.variant?.supplierVariantId ??
+      payload?.mapping?.supplierVariantId ??
+      payload?.mapping?.gtin ??
+      "";
+    if (sample && exclusionSamples[reason].length < 25) {
+      exclusionSamples[reason].push(String(sample));
+    }
+  };
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
@@ -94,6 +121,7 @@ export async function GET(request: Request) {
       requireProductName: false,
       requireImage: false,
       onExclude: (payload) => {
+        recordExclude(payload);
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
         }
@@ -105,7 +133,7 @@ export async function GET(request: Request) {
 
   const candidates = Array.from(bestByGtin.values());
   const { valid: exportCandidates, invalidSupplierVariantIds } = filterExportCandidates(candidates);
-  if (invalidSupplierVariantIds.length > 0) {
+  if (invalidSupplierVariantIds.length > 0 && !report) {
     return NextResponse.json(
       {
         ok: false,
@@ -115,6 +143,20 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
+  const specStats = {
+    exportable: exportCandidates.length,
+    withSpecs: 0,
+    withoutSpecs: 0,
+    totalRows: 0,
+    missingTraits: {
+      size: 0,
+      brand: 0,
+      color: 0,
+      gender: 0,
+      material: 0,
+    },
+    missingSpecSamples: [] as string[],
+  };
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
@@ -123,25 +165,36 @@ export async function GET(request: Request) {
     if (!providerKey) continue;
     const traits = product?.traitsJson ?? null;
 
+    let rowsAdded = 0;
     if (variant?.sizeRaw) {
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Schuhgrösse (EU)",
-        SpecificationValue: variant.sizeRaw,
-      });
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Bekleidungsgrösse",
-        SpecificationValue: variant.sizeRaw,
-      });
+      rowsAdded += 2;
+      if (!report) {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Schuhgrösse (EU)",
+          SpecificationValue: variant.sizeRaw,
+        });
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Bekleidungsgrösse",
+          SpecificationValue: variant.sizeRaw,
+        });
+      }
+    } else {
+      specStats.missingTraits.size += 1;
     }
     const supplierBrand = variant?.supplierBrand ?? variant?.brand ?? null;
     if (supplierBrand || product?.brand) {
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Brand",
-        SpecificationValue: supplierBrand || product.brand,
-      });
+      rowsAdded += 1;
+      if (!report) {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Brand",
+          SpecificationValue: supplierBrand || product.brand,
+        });
+      }
+    } else {
+      specStats.missingTraits.brand += 1;
     }
 
     const color = pickTrait(traits, ["color", "colour"]);
@@ -149,26 +202,61 @@ export async function GET(request: Request) {
     const material = pickTrait(traits, ["material"]);
 
     if (color) {
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Color",
-        SpecificationValue: color,
-      });
+      rowsAdded += 1;
+      if (!report) {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Color",
+          SpecificationValue: color,
+        });
+      }
+    } else {
+      specStats.missingTraits.color += 1;
     }
     if (gender) {
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Target group",
-        SpecificationValue: gender,
-      });
+      rowsAdded += 1;
+      if (!report) {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Target group",
+          SpecificationValue: gender,
+        });
+      }
+    } else {
+      specStats.missingTraits.gender += 1;
     }
     if (material) {
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Material",
-        SpecificationValue: material,
-      });
+      rowsAdded += 1;
+      if (!report) {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Material",
+          SpecificationValue: material,
+        });
+      }
+    } else {
+      specStats.missingTraits.material += 1;
     }
+    if (rowsAdded > 0) {
+      specStats.withSpecs += 1;
+      specStats.totalRows += rowsAdded;
+    } else {
+      specStats.withoutSpecs += 1;
+      if (specStats.missingSpecSamples.length < 25) {
+        specStats.missingSpecSamples.push(providerKey);
+      }
+    }
+  }
+  if (report) {
+    return NextResponse.json({
+      ok: true,
+      scope: "specs",
+      counts: specStats,
+      excluded: exclusionStats,
+      excludedSamples: exclusionSamples,
+      providerKeyMismatch: invalidSupplierVariantIds.length,
+      trmExcluded: trmExclusionStats,
+    });
   }
 
   rows.sort((a, b) => a.ProviderKey.localeCompare(b.ProviderKey));

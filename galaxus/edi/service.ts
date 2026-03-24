@@ -166,6 +166,7 @@ export async function sendOutgoingEdi(options: {
   types: EdiDocType[];
   ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS";
   force?: boolean;
+  lineIds?: string[];
 }): Promise<OutgoingResult[]> {
   assertSftpConfig();
   const force = Boolean(options.force);
@@ -184,6 +185,11 @@ export async function sendOutgoingEdi(options: {
   }
 
   const shipment = order.shipments[0] ?? null;
+  const lineIds =
+    Array.isArray(options.lineIds) && options.lineIds.length > 0
+      ? new Set(options.lineIds.map((id) => String(id)))
+      : null;
+  const invoiceLines = lineIds ? order.lines.filter((line) => lineIds.has(String(line.id))) : order.lines;
   const results: OutgoingResult[] = [];
   const runId = randomUUID();
   const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_OUT_DIR}`;
@@ -286,7 +292,16 @@ export async function sendOutgoingEdi(options: {
             await client.delete(path).catch(() => undefined);
           }
 
-          const edi = await buildOutgoingXml(type, order, order.lines);
+          if (type === "INVO" && invoiceLines.length === 0) {
+            results.push({
+              docType: type,
+              filename: "",
+              status: "error",
+              message: "No invoice lines selected",
+            });
+            continue;
+          }
+          const edi = await buildOutgoingXml(type, order, type === "INVO" ? invoiceLines : order.lines);
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
           const checksum = createHash("sha256").update(edi.content).digest("hex");
           await upsertEdiFile({
@@ -328,6 +343,7 @@ export async function buildOutgoingEdiXml(options: {
   orderId: string;
   type: Exclude<EdiDocType, "DELR" | "ORDP" | "CANP">;
   force?: boolean;
+  lineIds?: string[];
 }): Promise<{ filename: string; content: string }> {
   const order =
     (await prisma.galaxusOrder.findUnique({
@@ -347,7 +363,15 @@ export async function buildOutgoingEdiXml(options: {
   if (!force && gatedTypes.includes(options.type) && (!gate.ok || !gate.allowedTypes.has(options.type))) {
     throw new Error(gate.reason ?? "Supplier order not ready");
   }
-  const edi = await buildOutgoingXml(options.type, order, order.lines);
+  const lineIds =
+    Array.isArray(options.lineIds) && options.lineIds.length > 0
+      ? new Set(options.lineIds.map((id) => String(id)))
+      : null;
+  const invoiceLines = lineIds ? order.lines.filter((line) => lineIds.has(String(line.id))) : order.lines;
+  if (options.type === "INVO" && invoiceLines.length === 0) {
+    throw new Error("No invoice lines selected");
+  }
+  const edi = await buildOutgoingXml(options.type, order, options.type === "INVO" ? invoiceLines : order.lines);
   return { filename: edi.filename, content: edi.content };
 }
 
