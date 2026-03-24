@@ -324,7 +324,15 @@ export async function createManualShipmentsForOrder(
       const resolution = await resolveProviderKeyForLine(item.line as any);
       providerKeys.add(resolution.providerKey);
     }
-    const providerKey = Array.from(providerKeys.values()).filter((key) => key && key !== "UNASSIGNED");
+    const distinctProviders = Array.from(providerKeys.values()).filter((key) => key && key !== "UNASSIGNED");
+    if (distinctProviders.length > 1) {
+      return {
+        status: "error",
+        shipments: [],
+        message: `Package ${idx + 1} mixes supplier channels (${distinctProviders.join(", ")}). Put StockX-only and other suppliers in separate parcels.`,
+      };
+    }
+    const providerKey = distinctProviders;
 
     packagesResolved.push({
       items,

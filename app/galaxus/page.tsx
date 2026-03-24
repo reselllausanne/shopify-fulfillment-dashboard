@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  galaxusShipmentHasTrackingSignal,
+  isGalaxusShipmentDispatchConfirmed,
+} from "@/galaxus/orders/shipmentDispatch";
 
 type PreviewItem = {
   supplierVariantId: string;
@@ -111,6 +115,34 @@ type OrderLine = {
   providerKey?: string | null;
   supplierVariantId?: string | null;
 };
+
+/** Mirrors galaxus/stx/purchaseUnits `isStxLine` — used for UI labels only */
+function isStxOrderLine(line: {
+  supplierPid?: string | null;
+  supplierVariantId?: string | null;
+  providerKey?: string | null;
+}): boolean {
+  const supplierPid = String(line?.supplierPid ?? "").trim().toUpperCase();
+  if (supplierPid.startsWith("STX_")) return true;
+  const supplierVariantId = String(line?.supplierVariantId ?? "").trim().toLowerCase();
+  if (supplierVariantId.startsWith("stx_")) return true;
+  const providerKeyRaw = String(line?.providerKey ?? "").trim().toUpperCase();
+  if (providerKeyRaw === "STX" || providerKeyRaw.startsWith("STX_")) return true;
+  return false;
+}
+
+/** Rough channel bucket for packing validation (must match one parcel — no STX + TRM mixed). */
+function packChannelForLine(line: OrderLine): string {
+  const pk = String(line.providerKey ?? "").trim().toUpperCase();
+  if (pk.startsWith("STX") || pk === "STX") return "STX";
+  if (pk) {
+    const head = pk.split(/[:_]/)[0];
+    return head || pk;
+  }
+  const sv = String(line.supplierVariantId ?? "").trim().toLowerCase();
+  if (sv.startsWith("stx_")) return "STX";
+  return "OTHER";
+}
 
 type ShipmentItem = {
   id: string;
@@ -300,6 +332,10 @@ export default function GalaxusDashboardPage() {
   const [manualFulfillIsStx, setManualFulfillIsStx] = useState<boolean>(false);
   const [manualFulfillBoughtQty, setManualFulfillBoughtQty] = useState<number>(0);
   const [showArchivedShipments, setShowArchivedShipments] = useState(false);
+  /** Manual parcel builder: qty per order line per column (parcel). */
+  const [manualPackCols, setManualPackCols] = useState(2);
+  const [manualPackQty, setManualPackQty] = useState<Record<string, number[]>>({});
+  const [manualPackConfirmReplace, setManualPackConfirmReplace] = useState(false);
   const [postLabelUrlByShipment, setPostLabelUrlByShipment] = useState<Record<string, string>>({});
   const [lineStockById, setLineStockById] = useState<
     Record<
@@ -332,22 +368,17 @@ export default function GalaxusDashboardPage() {
     "image-sync": "Image sync + host (24h)",
   };
 
-  const isShipmentShipped = (shipment: Shipment | null | undefined) => {
-    if (!shipment) return false;
-    const status = String(shipment.status ?? "").toUpperCase();
-    if (status === "MANUAL") return true;
-    if (shipment.shippedAt) return true;
-    if (shipment.galaxusShippedAt) return true;
-    if (shipment.trackingNumber && shipment.trackingNumber.trim().length > 0) return true;
-    return false;
-  };
-
   const totalShipments = selectedOrder?.shipments?.length ?? 0;
   const delrUploadedCount =
     selectedOrder?.shipments?.filter(
       (s) => String(s.delrStatus ?? "").toUpperCase() === "UPLOADED" || Boolean(s.delrSentAt)
     ).length ?? 0;
-  const shippedCount = selectedOrder?.shipments?.filter((s) => isShipmentShipped(s)).length ?? 0;
+  const shippedCount =
+    selectedOrder?.shipments?.filter((s) => isGalaxusShipmentDispatchConfirmed(s)).length ?? 0;
+  const parcelsWithTrackingOnly =
+    selectedOrder?.shipments?.filter(
+      (s) => galaxusShipmentHasTrackingSignal(s) && !isGalaxusShipmentDispatchConfirmed(s)
+    ).length ?? 0;
   const orderGalaxusLocked = delrUploadedCount > 0;
 
   const resolveShippingStatus = (shipped: number, total: number) => {
@@ -678,6 +709,22 @@ export default function GalaxusDashboardPage() {
     fetchOrders(0);
   }, [orderView]);
 
+  useEffect(() => {
+    if (!selectedOrder?.id || !selectedOrder.lines?.length) {
+      setManualPackQty({});
+      setManualPackCols(2);
+      setManualPackConfirmReplace(false);
+      return;
+    }
+    setManualPackCols(2);
+    setManualPackConfirmReplace(false);
+    const next: Record<string, number[]> = {};
+    for (const line of selectedOrder.lines) {
+      next[line.id] = [0, 0];
+    }
+    setManualPackQty(next);
+  }, [selectedOrder?.id, selectedOrder?.lines?.length, selectedOrder?.shipments?.length]);
+
   const importStxProduct = async () => {
     const input = stxImportInput.trim();
     if (!input) {
@@ -986,6 +1033,9 @@ export default function GalaxusDashboardPage() {
     setLineStockById({});
     setPostLabelUrlByShipment({});
     setForceShipmentDocs({});
+    setManualPackQty({});
+    setManualPackCols(2);
+    setManualPackConfirmReplace(false);
   };
 
   const closeRowActionsMenu = (el: HTMLElement) => {
@@ -1022,6 +1072,145 @@ export default function GalaxusDashboardPage() {
     }
   };
 
+  const addManualPackColumn = () => {
+    const nextCols = manualPackCols + 1;
+    setManualPackCols(nextCols);
+    setManualPackQty((prev) => {
+      const o = { ...prev };
+      for (const line of selectedOrder?.lines ?? []) {
+        const base = prev[line.id] ?? Array.from({ length: manualPackCols }, () => 0);
+        const row = [...base];
+        while (row.length < nextCols - 1) row.push(0);
+        row.push(0);
+        o[line.id] = row;
+      }
+      return o;
+    });
+  };
+
+  const removeManualPackColumn = () => {
+    if (manualPackCols <= 1) return;
+    const nextCols = manualPackCols - 1;
+    setManualPackCols(nextCols);
+    setManualPackQty((prev) => {
+      const o = { ...prev };
+      for (const line of selectedOrder?.lines ?? []) {
+        const row = (o[line.id] ?? []).slice(0, nextCols);
+        o[line.id] = row;
+      }
+      return o;
+    });
+  };
+
+  const setManualPackCell = (lineId: string, col: number, raw: string) => {
+    const qty = Math.max(0, Math.floor(Number(raw) || 0));
+    setManualPackQty((prev) => {
+      const row = [...(prev[lineId] ?? Array.from({ length: manualPackCols }, () => 0))];
+      while (row.length < manualPackCols) row.push(0);
+      row[col] = qty;
+      return { ...prev, [lineId]: row };
+    });
+  };
+
+  const fillOneParcelAllLines = () => {
+    if (!selectedOrder?.lines?.length) return;
+    const channels = new Set(selectedOrder.lines.map(packChannelForLine));
+    if (channels.size > 1) {
+      setError("One parcel for all lines only if every line is the same channel (e.g. all StockX). Add columns to split TRM vs STX.");
+      return;
+    }
+    setError(null);
+    setManualPackCols(1);
+    const next: Record<string, number[]> = {};
+    for (const line of selectedOrder.lines) {
+      next[line.id] = [line.quantity];
+    }
+    setManualPackQty(next);
+  };
+
+  const fillOneLinePerParcel = () => {
+    if (!selectedOrder?.lines?.length) return;
+    setError(null);
+    const lines = selectedOrder.lines;
+    const n = lines.length;
+    setManualPackCols(n);
+    const next: Record<string, number[]> = {};
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const row = Array.from({ length: n }, () => 0);
+      row[i] = line.quantity;
+      next[line.id] = row;
+    }
+    setManualPackQty(next);
+  };
+
+  const applyManualPackages = async () => {
+    if (!selectedOrder?.id || !selectedOrder.lines.length) return;
+    const lines = selectedOrder.lines;
+    const packages: { items: { lineId: string; quantity: number }[] }[] = [];
+    for (let k = 0; k < manualPackCols; k += 1) {
+      const items: { lineId: string; quantity: number }[] = [];
+      for (const line of lines) {
+        const q = manualPackQty[line.id]?.[k] ?? 0;
+        if (q > 0) items.push({ lineId: line.id, quantity: q });
+      }
+      if (items.length) packages.push({ items });
+    }
+    if (!packages.length) {
+      setError("Put at least one quantity in a parcel column.");
+      return;
+    }
+    for (const line of lines) {
+      const sum = Array.from({ length: manualPackCols }, (_, k) => manualPackQty[line.id]?.[k] ?? 0).reduce(
+        (a, b) => a + b,
+        0
+      );
+      if (sum > line.quantity) {
+        setError(`Line ${line.lineNumber}: packed total (${sum}) > order qty (${line.quantity}).`);
+        return;
+      }
+    }
+    for (const pkg of packages) {
+      const chans = new Set(
+        pkg.items
+          .map((it) => {
+            const line = lines.find((l) => l.id === it.lineId);
+            return line ? packChannelForLine(line) : "";
+          })
+          .filter(Boolean)
+      );
+      if (chans.size > 1) {
+        setError(
+          "Each column must be one supplier channel only (don’t mix StockX and TRM in the same parcel column)."
+        );
+        return;
+      }
+    }
+    const hasShipments = selectedOrder.shipments.length > 0;
+    if (hasShipments && !manualPackConfirmReplace) {
+      setError('Tick “Replace existing draft shipments” if you want to rebuild parcels.');
+      return;
+    }
+    setBusy("manual-pack");
+    setError(null);
+    try {
+      const res = await fetch(`/api/galaxus/orders/${selectedOrder.id}/shipments/pack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          packages,
+          confirmReplace: hasShipments,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Pack failed");
+      await loadOrderDetail(selectedOrder.id);
+    } catch (e: any) {
+      setError(e?.message ?? "Pack failed");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const downloadFeed = (type: "product" | "price" | "stock" | "specs") => {
     window.open(`/api/galaxus/feeds/preview?type=${type}&download=1`, "_blank", "noopener,noreferrer");
@@ -2069,7 +2258,9 @@ export default function GalaxusDashboardPage() {
                   <th className="px-2 py-1 text-left">Order ID</th>
                   <th className="px-2 py-1 text-left">Delivery Type</th>
                   <th className="px-2 py-1 text-right">Lines</th>
-                  <th className="px-2 py-1 text-right">Shipments</th>
+                  <th className="px-2 py-1 text-right" title="Parcels marked shipped / total parcels (tracking alone does not count)">
+                    Dispatched
+                  </th>
                   <th className="px-2 py-1 text-left">ORDR</th>
                   <th className="px-2 py-1 text-left">Shipping</th>
                   <th className="px-2 py-1 text-left">Order Status</th>
@@ -2265,7 +2456,13 @@ export default function GalaxusDashboardPage() {
                     {selectedOrder.ordrSentAt || hasEdiFile("ORDR") ? "Sent" : "Not sent"}
                   </div>
                   <div>
-                    Shipping: {selectedShippingStatus} ({shippedCount}/{totalShipments || 0})
+                    Shipping: {selectedShippingStatus} ({shippedCount}/{totalShipments || 0} dispatched)
+                    {parcelsWithTrackingOnly > 0 ? (
+                      <span className="block text-amber-700 mt-0.5">
+                        {parcelsWithTrackingOnly} parcel(s) have tracking but no ship confirmation (not counted as
+                        shipped).
+                      </span>
+                    ) : null}
                   </div>
                   <div>
                     DELR: {delrUploadedCount}/{totalShipments || 0}{" "}
@@ -2418,9 +2615,41 @@ export default function GalaxusDashboardPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-xs text-gray-500">
-                  Shipments detected. Manage items from the shipment tables below (check stock, manual override, remove
-                  line) so DELR can still be sent for the remaining items.
+                <div className="space-y-2">
+                  <div className="text-xs text-gray-500">
+                    Shipments detected. Package tables only list{" "}
+                    <span className="font-medium">Galaxus dispatch line items</span> — a StockX bucket can still show 4
+                    linked units while only 3 GTINs appear on the STX parcel if one line is missing from the manifest.
+                  </div>
+                  <details className="overflow-auto border rounded bg-white text-xs">
+                    <summary className="cursor-pointer select-none bg-gray-50 px-2 py-1 font-medium">
+                      All Galaxus order lines ({selectedOrder.lines.length})
+                    </summary>
+                    <table className="min-w-full">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-2 py-1 text-left">#</th>
+                          <th className="px-2 py-1 text-left">Channel</th>
+                          <th className="px-2 py-1 text-left">Product</th>
+                          <th className="px-2 py-1 text-left">GTIN</th>
+                          <th className="px-2 py-1 text-right">Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedOrder.lines.map((line) => (
+                          <tr key={line.id} className="border-t">
+                            <td className="px-2 py-1">{line.lineNumber}</td>
+                            <td className="px-2 py-1">{isStxOrderLine(line) ? "StockX" : "Other supplier"}</td>
+                            <td className="px-2 py-1">
+                              {resolveProductNameForGtin(line.gtin) || line.productName}
+                            </td>
+                            <td className="px-2 py-1 font-mono text-[11px]">{line.gtin ?? "—"}</td>
+                            <td className="px-2 py-1 text-right">{line.quantity}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
                 </div>
               )}
 
@@ -2707,6 +2936,132 @@ export default function GalaxusDashboardPage() {
                   </div>
                 </div>
               ) : null}
+
+              {selectedOrder.lines.length > 0 && !selectedOrder.cancelledAt ? (
+                <div className="border rounded bg-amber-50/40 border-amber-200 p-3 space-y-2 text-xs">
+                  <div className="text-sm font-semibold text-amber-950">Build parcels (manual packing)</div>
+                  <p className="text-[11px] text-amber-900 leading-snug">
+                    Assign quantities per <strong>parcel column</strong> (checkbox-style grid). Each column becomes one
+                    shipment with SSCC + delivery note.{" "}
+                    <strong>One supplier channel per column</strong> (don’t mix StockX and TRM in the same column).
+                    Replacing shipments removes packages that are not manual-locked and have no DELR uploaded yet.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded bg-white border border-amber-300 text-amber-950 disabled:opacity-50"
+                      onClick={addManualPackColumn}
+                      disabled={busy !== null}
+                    >
+                      + Add parcel column
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded bg-white border border-amber-300 text-amber-950 disabled:opacity-50"
+                      onClick={removeManualPackColumn}
+                      disabled={busy !== null || manualPackCols <= 1}
+                    >
+                      Remove last column
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded bg-white border border-amber-300 text-amber-950 disabled:opacity-50"
+                      onClick={fillOneParcelAllLines}
+                      disabled={busy !== null}
+                    >
+                      All lines → 1 parcel
+                    </button>
+                    <button
+                      type="button"
+                      className="px-2 py-1 rounded bg-white border border-amber-300 text-amber-950 disabled:opacity-50"
+                      onClick={fillOneLinePerParcel}
+                      disabled={busy !== null}
+                    >
+                      One line per parcel
+                    </button>
+                  </div>
+                  <div className="overflow-auto border rounded bg-white">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-2 py-1 text-left">Line</th>
+                          <th className="px-2 py-1 text-left">Channel</th>
+                          <th className="px-2 py-1 text-left">Product</th>
+                          <th className="px-2 py-1 text-left">GTIN</th>
+                          <th className="px-2 py-1 text-right">Order qty</th>
+                          {Array.from({ length: manualPackCols }, (_, k) => (
+                            <th key={k} className="px-2 py-1 text-center whitespace-nowrap">
+                              Parcel {k + 1}
+                            </th>
+                          ))}
+                          <th className="px-2 py-1 text-right">Packed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedOrder.lines.map((line) => {
+                          const sum = Array.from({ length: manualPackCols }, (_, k) => manualPackQty[line.id]?.[k] ?? 0).reduce(
+                            (a, b) => a + b,
+                            0
+                          );
+                          const rem = line.quantity - sum;
+                          return (
+                            <tr key={line.id} className="border-t">
+                              <td className="px-2 py-1">{line.lineNumber}</td>
+                              <td className="px-2 py-1">{packChannelForLine(line)}</td>
+                              <td className="px-2 py-1">
+                                {resolveProductNameForGtin(line.gtin) || line.productName}
+                              </td>
+                              <td className="px-2 py-1 font-mono text-[11px]">{line.gtin ?? "—"}</td>
+                              <td className="px-2 py-1 text-right">{line.quantity}</td>
+                              {Array.from({ length: manualPackCols }, (_, k) => (
+                                <td key={k} className="px-1 py-1 text-center">
+                                  <input
+                                    className="w-12 border rounded px-1 py-0.5 text-center"
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={manualPackQty[line.id]?.[k] ?? 0}
+                                    onChange={(e) => setManualPackCell(line.id, k, e.target.value)}
+                                    disabled={busy !== null}
+                                  />
+                                </td>
+                              ))}
+                              <td className={`px-2 py-1 text-right ${rem < 0 ? "text-red-600" : rem > 0 ? "text-amber-700" : "text-green-700"}`}>
+                                {sum}
+                                {rem !== 0 ? ` (${rem > 0 ? `+${rem} left` : `${rem} over`})` : " ✓"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {selectedOrder.shipments.length > 0 ? (
+                    <label className="flex items-start gap-2 text-[11px] text-amber-950">
+                      <input
+                        type="checkbox"
+                        checked={manualPackConfirmReplace}
+                        onChange={(e) => setManualPackConfirmReplace(e.target.checked)}
+                        disabled={busy !== null}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        Replace existing <strong>draft</strong> shipments (safe: keeps manual parcels &amp; anything
+                        with DELR uploaded).
+                      </span>
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded bg-amber-600 text-white font-medium disabled:opacity-50"
+                    onClick={() => void applyManualPackages()}
+                    disabled={busy !== null}
+                  >
+                    {busy === "manual-pack" ? "Creating parcels…" : "Create parcels from grid"}
+                  </button>
+                </div>
+              ) : null}
+
               <div className="space-y-2">
                 <div className="text-sm font-medium">Shipments</div>
                 {(() => {
@@ -2735,6 +3090,51 @@ export default function GalaxusDashboardPage() {
                           Active {activeShipments.length} · Archived {archivedShipments.length}
                         </span>
                       </div>
+                      {(() => {
+                        const itemGtins = new Set<string>();
+                        for (const s of selectedOrder.shipments) {
+                          for (const it of s.items ?? []) {
+                            const g = String(it.gtin14 ?? "").trim();
+                            if (g) itemGtins.add(g);
+                          }
+                        }
+                        const stxBuckets = selectedOrder.stx?.buckets ?? [];
+                        const orphanStxBuckets = stxBuckets.filter((b) => {
+                          const g = String(b.gtin ?? "").trim();
+                          return Boolean(g) && !itemGtins.has(g);
+                        });
+                        if (orphanStxBuckets.length === 0) return null;
+                        return (
+                          <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950">
+                            <div className="font-medium">
+                              {orphanStxBuckets.length} StockX bucket(s) on the order are not on any package line
+                            </div>
+                            <p className="mt-1 text-[11px] leading-snug">
+                              The tables below are built from <strong>shipment items</strong> (Galaxus dispatch). StockX
+                              health uses <strong>order lines</strong>. If a GTIN is linked in StockX but missing from every
+                              shipment manifest, it will not show in the StockX parcel table — refresh ingest / check
+                              whether Galaxus split this line into another parcel.
+                            </p>
+                            <ul className="mt-2 list-disc space-y-1 pl-4">
+                              {orphanStxBuckets.map((b) => {
+                                const g = String(b.gtin ?? "").trim();
+                                const line =
+                                  selectedOrder.lines.find(
+                                    (l) => String(l.gtin ?? "").trim() === g && isStxOrderLine(l)
+                                  ) ?? null;
+                                return (
+                                  <li key={g}>
+                                    <span className="font-mono">{g}</span> · {b.supplierVariantId}
+                                    {line
+                                      ? ` · order line ${line.lineNumber} · ${line.productName} ×${line.quantity}`
+                                      : " · (no matching STX order line found)"}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        );
+                      })()}
                       {shipmentsToShow.map((shipment) => {
                         const shipmentIsManual =
                           String(shipment.boxStatus ?? (shipment as any).status ?? "").toUpperCase() === "MANUAL";

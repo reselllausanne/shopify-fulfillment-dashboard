@@ -278,6 +278,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
     const ingestStats = {
       linesRewritten: 0,
       linesSkipped: 0,
+      /** Incoming ORDP had fewer lines than DB — kept existing lines to avoid data loss */
+      linesRewriteSkippedShrinkingPayload: 0,
       shipmentsWritten: 0,
       shipmentsSkipped: 0,
       shipmentItemsRewritten: 0,
@@ -529,37 +531,55 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
         },
       });
 
-      if (!arraysEqual(existingLines as ComparableLine[], lines as ComparableLine[], normalizeLineKey)) {
-        await tx.galaxusOrderLine.deleteMany({
-          where: { orderId: savedOrder.id },
-        });
-        await tx.galaxusOrderLine.createMany({
-          data: lines.map((line) => ({
-            orderId: savedOrder.id,
-            lineNumber: line.lineNumber,
-            supplierPid: line.supplierPid,
-            buyerPid: line.buyerPid,
-            orderUnit: line.orderUnit,
-            supplierSku: line.supplierSku,
-            supplierVariantId: line.supplierVariantId,
-            productName: line.productName,
-            description: line.description,
-            size: line.size,
-            gtin: line.gtin,
-            providerKey: line.providerKey,
-            quantity: line.quantity,
-            qtyConfirmed: line.qtyConfirmed,
-            vatRate: line.vatRate,
-            taxAmountPerUnit: line.taxAmountPerUnit,
-            unitNetPrice: line.unitNetPrice,
-            lineNetAmount: line.lineNetAmount,
-            priceLineAmount: line.priceLineAmount,
-            arrivalDateStart: line.arrivalDateStart,
-            arrivalDateEnd: line.arrivalDateEnd,
-            currencyCode: line.currencyCode,
-          })),
-        });
-        ingestStats.linesRewritten += 1;
+      const linesDiffer = !arraysEqual(
+        existingLines as ComparableLine[],
+        lines as ComparableLine[],
+        normalizeLineKey
+      );
+      const incomingShrinksLineCount =
+        lines.length < existingLines.length && existingLines.length > 0;
+
+      if (linesDiffer) {
+        if (incomingShrinksLineCount) {
+          // Partial / buggy ORDP can send fewer lines than we already stored; never drop lines.
+          ingestStats.linesRewriteSkippedShrinkingPayload += 1;
+          console.warn("[galaxus][ingest] skipped line rewrite: fewer lines in payload than DB", {
+            galaxusOrderId: normalized.galaxusOrderId,
+            dbLineCount: existingLines.length,
+            payloadLineCount: lines.length,
+          });
+        } else {
+          await tx.galaxusOrderLine.deleteMany({
+            where: { orderId: savedOrder.id },
+          });
+          await tx.galaxusOrderLine.createMany({
+            data: lines.map((line) => ({
+              orderId: savedOrder.id,
+              lineNumber: line.lineNumber,
+              supplierPid: line.supplierPid,
+              buyerPid: line.buyerPid,
+              orderUnit: line.orderUnit,
+              supplierSku: line.supplierSku,
+              supplierVariantId: line.supplierVariantId,
+              productName: line.productName,
+              description: line.description,
+              size: line.size,
+              gtin: line.gtin,
+              providerKey: line.providerKey,
+              quantity: line.quantity,
+              qtyConfirmed: line.qtyConfirmed,
+              vatRate: line.vatRate,
+              taxAmountPerUnit: line.taxAmountPerUnit,
+              unitNetPrice: line.unitNetPrice,
+              lineNetAmount: line.lineNetAmount,
+              priceLineAmount: line.priceLineAmount,
+              arrivalDateStart: line.arrivalDateStart,
+              arrivalDateEnd: line.arrivalDateEnd,
+              currencyCode: line.currencyCode,
+            })),
+          });
+          ingestStats.linesRewritten += 1;
+        }
       } else {
         ingestStats.linesSkipped += 1;
       }

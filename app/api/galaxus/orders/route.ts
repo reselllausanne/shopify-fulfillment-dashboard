@@ -1,22 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDispatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function isShipmentShipped(shipment: {
-  status: string | null;
-  shippedAt: Date | null;
-  trackingNumber: string | null;
-  galaxusShippedAt: Date | null;
-}) {
-  const status = String(shipment?.status ?? "").toUpperCase();
-  if (status === "MANUAL") return true;
-  if (shipment?.shippedAt) return true;
-  if (shipment?.galaxusShippedAt) return true;
-  if (shipment?.trackingNumber && String(shipment.trackingNumber).trim().length > 0) return true;
-  return false;
-}
 
 export async function GET(request: Request) {
   try {
@@ -69,7 +56,7 @@ export async function GET(request: Request) {
     });
 
     const items = orders.map((order) => {
-      const shippedCount = order.shipments.filter(isShipmentShipped).length;
+      const shippedCount = order.shipments.filter(isGalaxusShipmentDispatchConfirmed).length;
       const { shipments, ...rest } = order;
       return { ...rest, shippedCount };
     });

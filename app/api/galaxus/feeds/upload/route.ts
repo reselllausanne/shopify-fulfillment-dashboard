@@ -238,26 +238,8 @@ export async function POST(request: Request) {
         { status: 409 }
       );
     }
-    if (needsMaster && needsOffer && masterCount !== offerCount) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Master and price feeds must have the same number of rows.",
-          counts: { master: masterCount, offer: offerCount },
-        },
-        { status: 409 }
-      );
-    }
-    if (needsMaster && needsStock && masterCount !== stockCount) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Master and stock feeds must have the same number of rows.",
-          counts: { master: masterCount, stock: stockCount },
-        },
-        { status: 409 }
-      );
-    }
+    // Keep only stock<->price strict parity.
+    // Master/specs are catalog-oriented and can have more rows.
 
     const masterName = buildFeedFilename("product", providerName, assortmentFile);
     const stockName = buildFeedFilename("stock", providerName, assortmentFile);
