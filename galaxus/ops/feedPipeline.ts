@@ -15,14 +15,34 @@ type FeedRunResult = {
 
 async function callFeedUpload(origin: string, scope: FeedScope) {
   const type = scope === "full" ? "all" : "offer-stock";
-  const res = await fetch(`${origin}/api/galaxus/feeds/upload?type=${type}`, {
-    cache: "no-store",
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
+  const url = `${origin}/api/galaxus/feeds/upload?type=${type}`;
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok) {
+      throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
+    }
+    return data;
+  } catch (networkErr: any) {
+    // VPS/proxy setups can fail self-HTTP calls (DNS/TLS/loopback restrictions).
+    // Fallback to direct in-process route invocation to keep manual/cron feed pushes working.
+    try {
+      const routeModule = await import("@/app/api/galaxus/feeds/upload/route");
+      const req = new Request(url, { method: "POST" });
+      const res = await routeModule.POST(req);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
+      }
+      return data;
+    } catch (fallbackErr: any) {
+      const netMsg = networkErr?.message ? `network=${String(networkErr.message)}` : "network=unknown";
+      const fbMsg = fallbackErr?.message ? `fallback=${String(fallbackErr.message)}` : "fallback=unknown";
+      throw new Error(`Feed upload failed (${netMsg}; ${fbMsg})`);
+    }
   }
-  return data;
 }
 
 async function collectManifestIds(runId: string) {
