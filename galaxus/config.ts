@@ -59,6 +59,10 @@ export const GALAXUS_SUPPLIER_WEBSITE = process.env.GALAXUS_SUPPLIER_WEBSITE ?? 
 export const GALAXUS_SUPPLIER_VAT_ID = process.env.GALAXUS_SUPPLIER_VAT_ID ?? "";
 export const GALAXUS_FEED_SUPPLIER_ALLOWLIST =
   process.env.GALAXUS_FEED_SUPPLIER_ALLOWLIST ?? "";
+const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";
+export const GALAXUS_FEED_UPLOADS_DISABLED = !["0", "false", "no"].includes(
+  uploadsDisabledRaw.toLowerCase()
+);
 
 export const GALAXUS_GS1_COMPANY_PREFIX =
   process.env.GALAXUS_GS1_COMPANY_PREFIX ??

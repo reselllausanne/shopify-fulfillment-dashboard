@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { randomUUID } from "crypto";
 import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
+import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import type { FeedScope, FeedTriggerSource } from "./types";
 
 type FeedRunResult = {
@@ -87,13 +88,17 @@ export async function runFeedPipeline(params: {
     },
   });
 
-  try {
-    const data = await callFeedUpload(origin, scope);
-    runId = String(data?.runId ?? runId);
-    counts = data?.counts ?? undefined;
-    uploaded = Array.isArray(data?.uploaded) ? data.uploaded : undefined;
-  } catch (err: any) {
-    error = err?.message ?? "Feed upload failed";
+  if (GALAXUS_FEED_UPLOADS_DISABLED) {
+    error = "Feed uploads are disabled";
+  } else {
+    try {
+      const data = await callFeedUpload(origin, scope);
+      runId = String(data?.runId ?? runId);
+      counts = data?.counts ?? undefined;
+      uploaded = Array.isArray(data?.uploaded) ? data.uploaded : undefined;
+    } catch (err: any) {
+      error = err?.message ?? "Feed upload failed";
+    }
   }
 
   const manifestIds = await collectManifestIds(runId);

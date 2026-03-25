@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID, createHash } from "crypto";
 import { prisma } from "@/app/lib/prisma";
+import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import {
   GALAXUS_SFTP_HOST,
   GALAXUS_PROVIDER_NAME,
@@ -75,6 +76,12 @@ export async function POST(request: Request) {
   const startedAt = new Date();
   let auditId: string | null = null;
   try {
+    if (GALAXUS_FEED_UPLOADS_DISABLED) {
+      return NextResponse.json(
+        { ok: false, error: "Feed uploads are disabled" },
+        { status: 403 }
+      );
+    }
     assertSftpConfig();
     const { searchParams } = new URL(request.url);
     const supplier = searchParams.get("supplier");

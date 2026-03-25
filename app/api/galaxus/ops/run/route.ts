@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runOpsTick } from "@/galaxus/ops/tick";
 import { runFeedPipeline } from "@/galaxus/ops/feedPipeline";
+import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +38,13 @@ export async function POST(request: Request) {
     if (action === "image-sync") {
       const data = await runOpsTick(origin, { force: true, only: ["image-sync"] });
       return NextResponse.json({ ok: true, data });
+    }
+
+    if (action.startsWith("push-") && GALAXUS_FEED_UPLOADS_DISABLED) {
+      return NextResponse.json(
+        { ok: false, error: "Feed uploads are disabled" },
+        { status: 403 }
+      );
     }
 
     if (action === "push-stock-price") {
