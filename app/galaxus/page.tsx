@@ -431,6 +431,21 @@ export default function GalaxusDashboardPage() {
   const canSendOrdrSelected =
     Boolean(selectedOrder) && !selectedOrder?.archivedAt && !selectedOrder?.cancelledAt && !selectedOrder?.ordrSentAt;
 
+  const summarizeJobResult = (result: any) => {
+    if (!result) return null;
+    if (typeof result !== "object") return String(result);
+    if (Array.isArray(result.items)) {
+      const statusCounts: Record<string, number> = {};
+      for (const item of result.items) {
+        const status = String(item?.status ?? "unknown");
+        statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+      }
+      return JSON.stringify({ items: result.items.length, status: statusCounts });
+    }
+    const text = JSON.stringify(result);
+    return text.length > 320 ? `${text.slice(0, 320)}…` : text;
+  };
+
   const toDateInput = (iso: string | null | undefined): string => {
     const raw = String(iso ?? "").trim();
     if (!raw) return "";
@@ -1939,7 +1954,7 @@ export default function GalaxusDashboardPage() {
           <div className="rounded border bg-gray-50 p-3 space-y-3">
             <div className="flex items-center justify-between">
               <div className="text-sm font-medium">Operations</div>
-              <div className="text-xs text-gray-500">Auto-feed sending: ON</div>
+              <div className="text-xs text-gray-500">Auto-feed sending: OFF</div>
             </div>
             <div className="rounded border bg-white p-2 text-xs text-gray-600 space-y-1">
               <div>Partner stock sync every 5 hours</div>
@@ -1972,7 +1987,7 @@ export default function GalaxusDashboardPage() {
                       ) : null}
                       {job.lastRun?.resultJson ? (
                         <div className="text-gray-500">
-                          Counts: {JSON.stringify(job.lastRun.resultJson)}
+                          Counts: {summarizeJobResult(job.lastRun.resultJson)}
                         </div>
                       ) : null}
                     </div>

@@ -3,7 +3,6 @@ import { runOpsJob } from "./jobRunner";
 import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runStxPriceStockRefresh } from "@/galaxus/jobs/stxSync";
-import { runFeedPipeline } from "./feedPipeline";
 import { runEdiInPipeline } from "./orderPipeline";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { OpsJobKey } from "./types";
@@ -56,34 +55,21 @@ async function runPartnerSyncAll() {
 
 async function executeJob(jobKey: OpsJobKey, origin: string) {
   if (jobKey === "partner-stock-sync") {
-    const result = await runOpsJob(jobKey, async () => runPartnerSyncAll());
-    if (result.success) {
-      await runFeedPipeline({ origin, scope: "stock-price", triggerSource: "partner-sync" });
-    }
-    return result;
+    return runOpsJob(jobKey, async () => runPartnerSyncAll());
   }
   if (jobKey === "stx-refresh") {
-    const result = await runOpsJob(jobKey, async () => runStxPriceStockRefresh());
-    if (result.success) {
-      await runFeedPipeline({ origin, scope: "stock-price", triggerSource: "stx-refresh" });
-    }
-    return result;
+    return runOpsJob(jobKey, async () => runStxPriceStockRefresh());
   }
   if (jobKey === "edi-in") {
     return runOpsJob(jobKey, async () => runEdiInPipeline());
   }
   if (jobKey === "image-sync") {
-    const result = await runOpsJob(jobKey, async () =>
+    return runOpsJob(jobKey, async () =>
       runImageSync({
         limit: 2000,
         concurrency: 8,
       })
     );
-    const summary = result.result as { synced?: number; updatedSource?: number } | undefined;
-    if (result.success && ((summary?.synced ?? 0) > 0 || (summary?.updatedSource ?? 0) > 0)) {
-      await runFeedPipeline({ origin, scope: "full", triggerSource: "image-sync" });
-    }
-    return result;
   }
   throw new Error(`Unknown jobKey ${jobKey}`);
 }
