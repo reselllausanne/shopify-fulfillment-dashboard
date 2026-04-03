@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium, firefox } from "playwright";
+import { chromium, firefox, type Browser, type BrowserContext } from "playwright";
 import { extractOrdersArray, normalizeGoatOrder } from "@/app/lib/goat/normalize";
 
 export const runtime = "nodejs";
@@ -39,9 +39,8 @@ export async function POST(req: NextRequest) {
       : [];
     const antiBotArgs = ["--disable-blink-features=AutomationControlled"];
 
-    let browser: ReturnType<typeof chromium.launch> | ReturnType<typeof firefox.launch> | null =
-      null;
-    let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>>;
+    let browser: Browser | null = null;
+    let context: BrowserContext;
 
     if (persistent) {
       await fs.mkdir(userDataDir, { recursive: true });
