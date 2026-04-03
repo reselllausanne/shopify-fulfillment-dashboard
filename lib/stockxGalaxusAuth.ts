@@ -15,6 +15,26 @@ function normalizeToken(raw: string | null | undefined): string | null {
   return value.length > 0 ? value : null;
 }
 
+function decodeJwtPayload(token: string): Record<string, any> | null {
+  try {
+    const payload = token.split(".")[1] || "";
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    return JSON.parse(json) as Record<string, any>;
+  } catch {
+    return null;
+  }
+}
+
+function isTokenExpired(token: string, skewSeconds = 60): boolean {
+  const payload = decodeJwtPayload(token);
+  const exp = typeof payload?.exp === "number" ? payload.exp : null;
+  if (!exp) return true;
+  const now = Math.floor(Date.now() / 1000);
+  return exp <= now + skewSeconds;
+}
+
 export async function readGalaxusStockxToken(tokenFile = GALAXUS_STOCKX_TOKEN_FILE): Promise<string | null> {
   try {
     const raw = await fs.readFile(tokenFile, "utf8");
@@ -22,9 +42,13 @@ export async function readGalaxusStockxToken(tokenFile = GALAXUS_STOCKX_TOKEN_FI
     if (!trimmed) return null;
     if (trimmed.startsWith("{")) {
       const parsed = JSON.parse(trimmed) as Partial<TokenPayload>;
-      return normalizeToken(parsed?.token ?? null);
+      const token = normalizeToken(parsed?.token ?? null);
+      if (!token || isTokenExpired(token)) return null;
+      return token;
     }
-    return normalizeToken(trimmed);
+    const token = normalizeToken(trimmed);
+    if (!token || isTokenExpired(token)) return null;
+    return token;
   } catch {
     return null;
   }

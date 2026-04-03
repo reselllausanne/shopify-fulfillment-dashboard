@@ -2,10 +2,6 @@ const DEFAULT_CATEGORY = "Textile et chaussures/chaussant/chaussures";
 
 const CATEGORY_RULES: Array<{ category: string; keywords: string[] }> = [
   {
-    category: "Textile et chaussures/chaussures techniques/chaussures à crampons",
-    keywords: ["crampon", "cleat", "football", "soccer", "foot"],
-  },
-  {
     category: "Textile et chaussures/chaussant/bottes",
     keywords: ["botte", "bottes", "boot", "boots", "ankle boot", "chelsea"],
   },

@@ -16,6 +16,7 @@ import {
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { GALAXUS_SHIPMENT_CARRIER_ALLOWLIST } from "@/galaxus/config";
 import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
+import { sendOutgoingEdi } from "@/galaxus/edi/service";
 
 type UploadResult = {
   shipmentId: string;
@@ -130,6 +131,60 @@ async function refreshOrderRecipientFromOrdp(order: any) {
   });
 }
 
+async function resolveDispatchOrdersForShipment(shipment: any) {
+  const prismaAny = prisma as any;
+  const rawItems = (await prismaAny.shipmentItem.findMany({
+    where: { shipmentId: shipment.id },
+    include: { order: { include: { lines: true } } },
+  })) as any[];
+
+  const orderMap = new Map<string, any>();
+  orderMap.set(String(shipment.order.id), shipment.order);
+
+  for (const it of rawItems) {
+    const oid = it.orderId ? String(it.orderId) : String(shipment.orderId);
+    if (!oid) continue;
+    if (!orderMap.has(oid)) {
+      let ord = it.order;
+      if (!ord?.lines?.length) {
+        ord = await prismaAny.galaxusOrder.findUnique({ where: { id: oid }, include: { lines: true } });
+      }
+      if (ord) orderMap.set(oid, await refreshOrderRecipientFromOrdp(ord));
+    }
+  }
+
+  const ordersForMeta = Array.from(orderMap.values());
+  const dispatchItems = rawItems.map((it) => {
+    const oid = it.orderId ? String(it.orderId) : String(shipment.orderId);
+    const src = orderMap.get(oid);
+    const ref = String(src?.galaxusOrderId ?? shipment.order.galaxusOrderId);
+    return {
+      supplierPid: it.supplierPid,
+      gtin14: it.gtin14,
+      buyerPid: it.buyerPid ?? null,
+      quantity: it.quantity,
+      orderReferenceId: ref,
+      galaxusOrderId: ref,
+    };
+  });
+
+  return { ordersForMeta, dispatchItems, rawItems };
+}
+
+async function loadStockxMatchesForOrders(orders: any[]) {
+  const ids = Array.from(new Set(orders.map((o) => o.id).filter(Boolean)));
+  const refs = Array.from(new Set(orders.map((o) => o.galaxusOrderId).filter(Boolean)));
+  if (ids.length === 0 && refs.length === 0) return [];
+  return (await (prisma as any).galaxusStockxMatch
+    .findMany({
+      where: {
+        OR: [{ galaxusOrderId: { in: ids } }, { galaxusOrderRef: { in: refs } }],
+      },
+      select: { id: true, stockxOrderNumber: true },
+    })
+    .catch(() => [])) as any[];
+}
+
 export async function uploadDelrForShipment(
   shipmentId: string,
   options: { force?: boolean } = {}
@@ -148,6 +203,8 @@ export async function uploadDelrForShipment(
 
   shipment.order = await refreshOrderRecipientFromOrdp(shipment.order);
 
+  const { ordersForMeta, dispatchItems } = await resolveDispatchOrdersForShipment(shipment);
+
   if (!shipment.order.ordrSentAt && !options.force) {
     return { shipmentId, status: "error", message: "ORDR not sent yet" };
   }
@@ -157,7 +214,20 @@ export async function uploadDelrForShipment(
   const isStxShipment = providerKey === "STX";
 
   const stxStatus = isStxShipment ? await getStxLinkStatusForShipment(shipment.id).catch(() => null) : null;
-  if (isStxShipment && stxStatus?.hasStxItems && !options.force && !isManual) {
+  const stxMatches = await loadStockxMatchesForOrders(ordersForMeta);
+  const hasStockxMatch =
+    (stxMatches ?? []).some((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0);
+  const isDirect = String(shipment.order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
+  const allowDelrByMatch = Boolean(shipment.order?.ordrSentAt) && hasStockxMatch;
+  if (isDirect && !options.force && !allowDelrByMatch) {
+    return {
+      shipmentId,
+      status: "error",
+      httpStatus: 409,
+      message: "StockX order not linked yet",
+    };
+  }
+  if (!isDirect && isStxShipment && stxStatus?.hasStxItems && !options.force && !isManual && !allowDelrByMatch) {
     if (!stxStatus.allLinked) {
       return {
         shipmentId,
@@ -176,7 +246,7 @@ export async function uploadDelrForShipment(
     }
   }
 
-  if (!isStxShipment) {
+  if (!isDirect && !isStxShipment && !allowDelrByMatch) {
     const placedOnSupplier = await hasPlacedSupplierOrder(shipment);
     if (!placedOnSupplier && !options.force && !isManual) {
       return {
@@ -199,7 +269,17 @@ export async function uploadDelrForShipment(
     };
   }
 
-  if (!shipment.packageId) {
+  const trackingNumber = String(shipment?.trackingNumber ?? "").trim();
+  if (!trackingNumber) {
+    return {
+      shipmentId,
+      status: "error",
+      httpStatus: 409,
+      message: "Missing tracking number",
+    };
+  }
+
+  if (!shipment.packageId && !isDirect) {
     return {
       shipmentId,
       status: "error",
@@ -208,11 +288,13 @@ export async function uploadDelrForShipment(
     };
   }
 
-  const items = (await prismaAny.shipmentItem.findMany({
-    where: { shipmentId: shipment.id },
-  })) as Array<{ supplierPid: string; gtin14: string; quantity: number }>;
+  const items = dispatchItems.map((it) => ({
+    supplierPid: it.supplierPid,
+    gtin14: it.gtin14,
+    quantity: it.quantity,
+  }));
 
-  if (shipment.delrSentAt && !options.force) {
+  if (shipment.delrSentAt) {
     return {
       shipmentId,
       status: "skipped",
@@ -227,18 +309,33 @@ export async function uploadDelrForShipment(
       dispatchNotificationId: shipment.dispatchNotificationId ?? null,
       packageId: shipment.packageId ?? null,
       items,
+      requirePackageId: !isDirect,
     });
     const carrier = resolveCarrier(shipment.carrierFinal ?? null);
-  const arrivalByGtin = await buildArrivalByGtinForShipment({
-    shipment,
-    items,
-    isStxShipment,
-  });
+    if (!carrier) {
+      return {
+        shipmentId,
+        status: "error",
+        httpStatus: 409,
+        message: "Missing shipment carrier",
+      };
+    }
+    const arrivalByGtin = await buildArrivalByGtinForShipment({
+      shipment,
+      items: dispatchItems,
+      isStxShipment,
+    });
     const dispatch = buildDispatchNotification(
       shipment.order,
-      shipment.order.lines,
+      ordersForMeta,
       { ...shipment, carrierFinal: carrier },
-      items,
+      dispatchItems.map(({ supplierPid, gtin14, buyerPid, quantity, orderReferenceId }) => ({
+        supplierPid,
+        gtin14,
+        buyerPid,
+        quantity,
+        orderReferenceId,
+      })),
       { supplierId: GALAXUS_SUPPLIER_ID, arrivalByGtin }
     );
 
@@ -264,6 +361,7 @@ export async function uploadDelrForShipment(
     await prismaAny.shipment.update({
       where: { id: shipment.id },
       data: {
+        status: "FULFILLED",
         delrFileName: dispatch.filename,
         delrSentAt: now,
         delrStatus: "UPLOADED",
@@ -271,6 +369,20 @@ export async function uploadDelrForShipment(
         galaxusShippedAt,
       },
     });
+    if (shipment.orderId) {
+      await prismaAny.orderStatusEvent.create({
+        data: {
+          orderId: shipment.orderId,
+          source: "DELR",
+          type: "FULFILLED",
+          payloadJson: {
+            shipmentId: shipment.id,
+            dispatchFilename: dispatch.filename,
+            sentAt: now.toISOString(),
+          },
+        },
+      }).catch(() => undefined);
+    }
 
     await upsertEdiFile({
       filename: dispatch.filename,
@@ -282,6 +394,13 @@ export async function uploadDelrForShipment(
       shipmentId: shipment.id,
       payloadJson: { shipmentId: shipment.id },
     });
+
+    if (shipment.orderId) {
+      // Keep direct delivery aligned with warehouse flow: send INVO right after DELR.
+      await sendOutgoingEdi({ orderId: shipment.orderId, types: ["INVO"], force: true }).catch(
+        () => undefined
+      );
+    }
 
     return {
       shipmentId,
@@ -326,12 +445,17 @@ export async function buildDelrXmlForShipment(
     throw new Error("ORDR not sent yet");
   }
 
+  const { ordersForMeta, dispatchItems: dispatchItemsForStx } = await resolveDispatchOrdersForShipment(shipment);
+
   const stxStatus = await getStxLinkStatusForShipment(shipment.id).catch(() => null);
-  if (stxStatus?.hasStxItems && !options.force) {
+  const stxMatches = await loadStockxMatchesForOrders(ordersForMeta);
+  const hasStockxMatch =
+    (stxMatches ?? []).some((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0);
+  if (stxStatus?.hasStxItems && !options.force && !hasStockxMatch) {
     if (!stxStatus.allLinked) throw new Error("StockX units are not fully linked yet");
     if (!stxStatus.allEtaPresent) throw new Error("StockX linked units are missing ETA bounds");
   }
-  if (!stxStatus?.hasStxItems) {
+  if (!stxStatus?.hasStxItems && !hasStockxMatch) {
     const placedOnSupplier = await hasPlacedSupplierOrder(shipment);
     if (!placedOnSupplier && !options.force) {
       throw new Error("Supplier order not placed yet");
@@ -343,32 +467,52 @@ export async function buildDelrXmlForShipment(
     throw new Error("Shipment not marked as shipped");
   }
 
+  const trackingNumber = String(shipment?.trackingNumber ?? "").trim();
+  if (!trackingNumber && !options.force) {
+    throw new Error("Missing tracking number");
+  }
+
   if (!shipment.packageId) {
     throw new Error("Missing SSCC package id");
   }
 
-  const items = (await prismaAny.shipmentItem.findMany({
-    where: { shipmentId: shipment.id },
-  })) as Array<{ supplierPid: string; gtin14: string; quantity: number }>;
+  const dispatchItems = dispatchItemsForStx;
 
+  const items = dispatchItems.map((it) => ({
+    supplierPid: it.supplierPid,
+    gtin14: it.gtin14,
+    quantity: it.quantity,
+  }));
+
+  const isDirect = String(shipment.order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
   validateShipment({
     dispatchNotificationId: shipment.dispatchNotificationId ?? null,
     packageId: shipment.packageId ?? null,
     items,
+    requirePackageId: !isDirect,
   });
 
   const carrier = resolveCarrier(shipment.carrierFinal ?? null);
+  if (!carrier && !options.force) {
+    throw new Error("Missing shipment carrier");
+  }
   const arrivalByGtin = await buildArrivalByGtinForShipment({
     shipment,
-    items,
-    isStxShipment: stxStatus?.hasStxItems ?? false,
+    items: dispatchItems,
+    isStxShipment: (stxStatus?.hasStxItems ?? false) || hasStockxMatch,
   });
 
   const dispatch = buildDispatchNotification(
     shipment.order,
-    shipment.order.lines,
+    ordersForMeta,
     { ...shipment, carrierFinal: carrier, shippedAt: shipment.shippedAt ?? (options.force ? new Date() : null) },
-    items,
+    dispatchItems.map(({ supplierPid, gtin14, buyerPid, quantity, orderReferenceId }) => ({
+      supplierPid,
+      gtin14,
+      buyerPid,
+      quantity,
+      orderReferenceId,
+    })),
     { supplierId: GALAXUS_SUPPLIER_ID, arrivalByGtin }
   );
 
@@ -395,11 +539,13 @@ function validateShipment(shipment: {
   dispatchNotificationId: string | null;
   packageId: string | null;
   items: { supplierPid: string; gtin14: string; quantity: number }[];
+  requirePackageId?: boolean;
 }) {
   if (!shipment.dispatchNotificationId) {
     throw new Error("Missing dispatch notification id");
   }
-  if (!shipment.packageId) {
+  const requirePackageId = shipment.requirePackageId ?? true;
+  if (requirePackageId && !shipment.packageId) {
     throw new Error("Missing SSCC package id");
   }
   if (!shipment.items.length) {
@@ -415,12 +561,17 @@ function validateShipment(shipment: {
 }
 
 function resolveCarrier(value: string | null) {
-  if (!value) return null;
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
   const allowlist = GALAXUS_SHIPMENT_CARRIER_ALLOWLIST.split(",")
     .map((item) => item.trim())
     .filter(Boolean);
-  if (allowlist.length === 0) return null;
-  return allowlist.includes(value) ? value : null;
+  if (allowlist.length === 0) {
+    return raw;
+  }
+  const normalize = (input: string) => input.toLowerCase().replace(/\s+/g, "");
+  const found = allowlist.find((item) => normalize(item) === normalize(raw));
+  return found ?? null;
 }
 
 function resolveShipmentShipped(shipment: any): boolean {
@@ -481,7 +632,12 @@ function addDays(base: Date, days: number) {
 
 async function buildArrivalByGtinForShipment(params: {
   shipment: any;
-  items: Array<{ supplierPid: string; gtin14: string; quantity: number }>;
+  items: Array<{
+    supplierPid: string;
+    gtin14: string;
+    quantity: number;
+    galaxusOrderId?: string | null;
+  }>;
   isStxShipment: boolean;
 }) {
   const { shipment, items, isStxShipment } = params;
@@ -491,11 +647,18 @@ async function buildArrivalByGtinForShipment(params: {
   );
 
   if (isStxShipment && gtins.length > 0) {
+    const orderIds = Array.from(
+      new Set(
+        items
+          .map((i) => String(i.galaxusOrderId ?? shipment.order.galaxusOrderId ?? "").trim())
+          .filter(Boolean)
+      )
+    );
     let rows: Array<{ gtin: string; etaMin: Date; etaMax: Date; awb: string | null }> = [];
     try {
       rows = await (prisma as any).stxPurchaseUnit.findMany({
         where: {
-          galaxusOrderId: shipment.order.galaxusOrderId,
+          galaxusOrderId: { in: orderIds },
           gtin: { in: gtins },
           cancelledAt: null,
           etaMin: { not: null },
@@ -507,7 +670,7 @@ async function buildArrivalByGtinForShipment(params: {
       if (!isUnknownCancelledAtArg(error)) throw error;
       rows = await (prisma as any).stxPurchaseUnit.findMany({
         where: {
-          galaxusOrderId: shipment.order.galaxusOrderId,
+          galaxusOrderId: { in: orderIds },
           gtin: { in: gtins },
           etaMin: { not: null },
           etaMax: { not: null },

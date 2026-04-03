@@ -141,4 +141,12 @@ export const OFFERS_HEADERS = [
   "price",
   "quantity",
   "state",
+  "logistic-class",
+  "leadtime-to-ship",
+  "min-order-quantity",
+  "max-order-quantity",
+  "discount-price",
+  "discount-start-date",
+  "discount-end-date",
+  "description",
 ];

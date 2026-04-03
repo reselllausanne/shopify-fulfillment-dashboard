@@ -18,6 +18,7 @@ export type EdiOrderLine = {
   unitNetPrice: number;
   lineNetAmount: number;
   vatRate: number;
+  taxAmountPerUnit?: number | null;
   supplierPid?: string | null;
   buyerPid?: string | null;
   orderUnit?: string | null;
@@ -84,6 +85,8 @@ export type EdiInvoiceDocument = EdiBaseDocument & {
   deliveryEndDate?: Date | null;
   supplierOrderId?: string | null;
   deliveryParty?: EdiParty | null;
+  deliveryCharge?: number | null;
+  deliveryChargeVatRate?: number | null;
   lines: EdiOrderLine[];
   totals: EdiTotals;
   vatSummary: EdiVatSummaryLine[];

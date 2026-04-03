@@ -312,7 +312,12 @@ export function buildInvoiceXml(doc: EdiInvoiceDocument): string {
     price.ele("PRICE_AMOUNT", { xmlns: BMECAT_NS }).txt(line.unitNetPrice.toString());
     const tax = price.ele("TAX_DETAILS_FIX");
     tax.ele("TAX", { xmlns: BMECAT_NS }).txt((line.vatRate / 100).toFixed(3));
-    tax.ele("TAX_AMOUNT").txt(((line.lineNetAmount * line.vatRate) / 100).toFixed(2));
+    const explicitVat =
+      line.taxAmountPerUnit != null && Number.isFinite(line.taxAmountPerUnit)
+        ? line.taxAmountPerUnit * line.quantity
+        : null;
+    const taxAmount = explicitVat != null ? explicitVat : (line.lineNetAmount * line.vatRate) / 100;
+    tax.ele("TAX_AMOUNT").txt(taxAmount.toFixed(2));
     item.ele("PRICE_LINE_AMOUNT").txt(line.lineNetAmount.toString());
     const orderRef = item.ele("ORDER_REFERENCE");
     orderRef.ele("ORDER_ID").txt(line.orderReferenceId ?? doc.orderId);
@@ -332,8 +337,16 @@ export function buildInvoiceXml(doc: EdiInvoiceDocument): string {
   }
 
   const summary = root.ele("INVOICE_SUMMARY");
-  summary.ele("NET_VALUE_GOODS").txt(doc.totals.net.toString());
-  summary.ele("TOTAL_AMOUNT").txt(doc.totals.gross.toString());
+  summary.ele("NET_VALUE_GOODS").txt(doc.totals.net.toFixed(2));
+  summary.ele("TOTAL_AMOUNT").txt(doc.totals.gross.toFixed(2));
+  if (doc.deliveryCharge != null && Number.isFinite(doc.deliveryCharge) && doc.deliveryCharge > 0) {
+    const charges = summary.ele("ALLOW_OR_CHARGES_FIX");
+    const charge = charges.ele("ALLOW_OR_CHARGE", { type: "surcharge" });
+    charge.ele("ALLOW_OR_CHARGE_TYPE").txt("freight");
+    const value = charge.ele("ALLOW_OR_CHARGE_VALUE");
+    value.ele("AOC_MONETARY_AMOUNT").txt(doc.deliveryCharge.toFixed(2));
+    charges.ele("ALLOW_OR_CHARGES_TOTAL_AMOUNT").txt(doc.deliveryCharge.toFixed(2));
+  }
   const totalTax = summary.ele("TOTAL_TAX");
   const taxDetails = totalTax.ele("TAX_DETAILS_FIX");
   const topRate = doc.vatSummary[0]?.vatRate ?? 0;

@@ -182,6 +182,144 @@ export class DocumentService {
 
     return results;
   }
+
+  /** PDF preview for EDI invoice: same line selection (+ optional delivery charge) as INVO XML. */
+  async generateInvoicePdfForSelectedLines(options: {
+    orderId: string;
+    lineIds?: string[] | null;
+    deliveryCharge?: number | null;
+  }): Promise<Buffer> {
+    const order =
+      (await prisma.galaxusOrder.findUnique({
+        where: { id: options.orderId },
+        include: { lines: true },
+      })) ??
+      (await prisma.galaxusOrder.findUnique({
+        where: { galaxusOrderId: options.orderId },
+        include: { lines: true },
+      }));
+    if (!order) {
+      throw new Error(`Order not found: ${options.orderId}`);
+    }
+    let dbLines = [...order.lines];
+    if (options.lineIds && options.lineIds.length > 0) {
+      const set = new Set(options.lineIds.map(String));
+      dbLines = dbLines.filter((l) => set.has(l.id));
+    }
+    if (dbLines.length === 0) {
+      throw new Error("No order lines selected for invoice PDF");
+    }
+    let orderLines = buildOrderLines(dbLines);
+    const charge =
+      typeof options.deliveryCharge === "number" && Number.isFinite(options.deliveryCharge)
+        ? Math.max(0, options.deliveryCharge)
+        : 0;
+    if (charge > 0) {
+      const rate = orderLines[0]?.vatRate ?? 8.1;
+      const maxNo = Math.max(...orderLines.map((l) => l.lineNumber));
+      orderLines = [
+        ...orderLines,
+        {
+          lineNumber: maxNo + 1,
+          articleNumber: "",
+          description: "Handling / delivery (surcharge)",
+          size: null,
+          gtin: null,
+          providerKey: null,
+          sku: null,
+          quantity: 1,
+          vatRate: rate,
+          unitNetPrice: charge,
+          lineNetAmount: charge,
+        },
+      ];
+    }
+    const data = buildInvoiceDataFromOrderLines(order, orderLines);
+    const html = renderInvoiceHtml(data);
+    return renderPdfFromHtml({ html, format: "A4", showPageNumbers: false });
+  }
+
+  /** PDF for manually entered lines (warehouse collective invoice UI). */
+  async generateInvoicePdfFromCustomLines(options: {
+    baseOrderId: string;
+    lines: Array<{
+      description: string;
+      quantity: number;
+      unitNetPrice: number;
+      vatRate: number;
+      lineNetAmount?: number | null;
+      supplierPid?: string | null;
+      buyerPid?: string | null;
+      gtin?: string | null;
+    }>;
+    deliveryCharge?: number | null;
+  }): Promise<Buffer> {
+    const order =
+      (await prisma.galaxusOrder.findUnique({
+        where: { id: options.baseOrderId },
+        include: { lines: true },
+      })) ??
+      (await prisma.galaxusOrder.findUnique({
+        where: { galaxusOrderId: options.baseOrderId },
+        include: { lines: true },
+      }));
+    if (!order) {
+      throw new Error(`Order not found: ${options.baseOrderId}`);
+    }
+    if (String(order.deliveryType ?? "").toLowerCase() === "direct_delivery") {
+      throw new Error("Custom invoice PDF is only for warehouse delivery orders.");
+    }
+    if (!options.lines.length) {
+      throw new Error("At least one line is required");
+    }
+    const orderLines: OrderLine[] = options.lines.map((line, index) => {
+      const qty = Number(line.quantity) || 0;
+      const unit = Number(line.unitNetPrice) || 0;
+      const explicit = line.lineNetAmount != null ? Number(line.lineNetAmount) : NaN;
+      const net = Number.isFinite(explicit) ? explicit : qty * unit;
+      return {
+        lineNumber: index + 1,
+        articleNumber: line.supplierPid ?? line.buyerPid ?? line.gtin ?? "",
+        description: line.description || "Item",
+        size: null,
+        gtin: line.gtin ?? null,
+        providerKey: line.supplierPid ?? null,
+        sku: line.supplierPid ?? null,
+        quantity: qty,
+        vatRate: Number(line.vatRate) || 0,
+        unitNetPrice: unit,
+        lineNetAmount: net,
+      };
+    });
+    let finalLines = orderLines;
+    const charge =
+      typeof options.deliveryCharge === "number" && Number.isFinite(options.deliveryCharge)
+        ? Math.max(0, options.deliveryCharge)
+        : 0;
+    if (charge > 0 && finalLines.length > 0) {
+      const rate = finalLines[0]?.vatRate ?? 8.1;
+      const maxNo = Math.max(...finalLines.map((l) => l.lineNumber));
+      finalLines = [
+        ...finalLines,
+        {
+          lineNumber: maxNo + 1,
+          articleNumber: "",
+          description: "Handling / delivery (surcharge)",
+          size: null,
+          gtin: null,
+          providerKey: null,
+          sku: null,
+          quantity: 1,
+          vatRate: rate,
+          unitNetPrice: charge,
+          lineNetAmount: charge,
+        },
+      ];
+    }
+    const data = buildInvoiceDataFromOrderLines(order, finalLines);
+    const html = renderInvoiceHtml(data);
+    return renderPdfFromHtml({ html, format: "A4", showPageNumbers: false });
+  }
 }
 
 function buildSupplier(): Company {
@@ -207,15 +345,13 @@ function buildBuyer() {
 }
 
 function buildSupplierAddress() {
-  const [line1, postalLine, countryLine] = GALAXUS_SUPPLIER_ADDRESS_LINES;
-  const { postalCode, city } = parsePostalLine(postalLine);
   return {
-    name: GALAXUS_SUPPLIER_NAME,
-    line1: line1 ?? "",
+    name: "",
+    line1: "",
     line2: null,
-    postalCode,
-    city,
-    country: countryLine ?? "",
+    postalCode: "",
+    city: "",
+    country: "",
   };
 }
 
@@ -264,29 +400,48 @@ function buildRecipient(order: GalaxusOrder) {
 }
 
 function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
-  return lines.map((line) => ({
-    lineNumber: line.lineNumber,
-    articleNumber:
-      (line as any).buyerPid ??
-      line.providerKey ??
-      buildProviderKey(line.gtin, line.supplierVariantId) ??
-      line.gtin ??
-      "",
-    description: line.productName,
-    size: line.size,
-    gtin: line.gtin,
-    providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
-    sku:
-      line.providerKey ??
-      line.supplierSku ??
-      line.supplierVariantId ??
-      buildProviderKey(line.gtin, line.supplierVariantId) ??
-      null,
-    quantity: line.quantity,
-    vatRate: Number(line.vatRate),
-    unitNetPrice: Number(line.unitNetPrice),
-    lineNetAmount: Number(line.lineNetAmount),
-  }));
+  return lines.map((line) => {
+    const unitNetPrice = Number(line.unitNetPrice);
+    const lineNetAmount = Number(line.lineNetAmount);
+    const rawVatRate = Number(line.vatRate);
+    const rawTaxPerUnit =
+      "taxAmountPerUnit" in line && line.taxAmountPerUnit != null
+        ? Number(line.taxAmountPerUnit)
+        : null;
+    const derivedVatRate =
+      rawTaxPerUnit != null &&
+      Number.isFinite(rawTaxPerUnit) &&
+      unitNetPrice > 0 &&
+      (!Number.isFinite(rawVatRate) || rawVatRate === 0)
+        ? (rawTaxPerUnit / unitNetPrice) * 100
+        : rawVatRate;
+
+    return {
+      lineNumber: line.lineNumber,
+      articleNumber:
+        (line as any).buyerPid ??
+        line.providerKey ??
+        buildProviderKey(line.gtin, line.supplierVariantId) ??
+        line.gtin ??
+        "",
+      description: line.productName,
+      size: line.size,
+      gtin: line.gtin,
+      providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
+      sku:
+        line.providerKey ??
+        line.supplierSku ??
+        line.supplierVariantId ??
+        buildProviderKey(line.gtin, line.supplierVariantId) ??
+        null,
+      quantity: line.quantity,
+      vatRate: derivedVatRate,
+      unitNetPrice,
+      lineNetAmount,
+      taxAmountPerUnit:
+        rawTaxPerUnit != null && Number.isFinite(rawTaxPerUnit) ? rawTaxPerUnit : null,
+    };
+  });
 }
 
 function buildInvoiceData(order: GalaxusOrder, lines: GalaxusOrderLine[]): InvoiceData {
@@ -295,8 +450,9 @@ function buildInvoiceData(order: GalaxusOrder, lines: GalaxusOrderLine[]): Invoi
 
   return {
     invoiceNumber: buildInvoiceNumber(order),
-    orderNumber: order.orderNumber ?? null,
+    orderNumber: order.orderNumber ?? order.galaxusOrderId ?? null,
     orderDate: order.orderDate,
+    invoiceDate: new Date(),
     deliveryDate: order.deliveryDate,
     currency: order.currencyCode,
     buyer: buildBuyer(),
@@ -329,7 +485,7 @@ function buildDeliveryNoteData(
     orderReference: order.orderNumber ?? order.galaxusOrderId,
     referencePerson: order.referencePerson ?? null,
     yourReference: order.yourReference ?? null,
-    buyerPhone: order.recipientPhone ?? null,
+    buyerPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
     afterSalesHandling: order.afterSalesHandling ?? false,
     legalNotice: null,
     groups: [
@@ -363,7 +519,7 @@ function buildDeliveryNoteDataFromLines(
     orderReference: order.orderNumber ?? order.galaxusOrderId,
     referencePerson: order.referencePerson ?? null,
     yourReference: order.yourReference ?? null,
-    buyerPhone: order.recipientPhone ?? null,
+    buyerPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
     afterSalesHandling: order.afterSalesHandling ?? false,
     legalNotice: null,
     groups: [
@@ -410,6 +566,20 @@ function buildShipmentOrderLines(
       throw new Error(`Missing order line for shipment item ${item.gtin14}`);
     }
     const unitNetPrice = Number(line.unitNetPrice);
+    const rawVat = Number(line.vatRate);
+    const taxPerUnit =
+      "taxAmountPerUnit" in line && line.taxAmountPerUnit != null
+        ? Number(line.taxAmountPerUnit)
+        : null;
+    const vatRate =
+      taxPerUnit != null &&
+      Number.isFinite(taxPerUnit) &&
+      unitNetPrice > 0 &&
+      (!Number.isFinite(rawVat) || rawVat === 0)
+        ? (taxPerUnit / unitNetPrice) * 100
+        : rawVat;
+    const qty = item.quantity;
+    const lineNet = unitNetPrice * qty;
     lines.push({
       lineNumber: line.lineNumber,
       articleNumber:
@@ -422,10 +592,12 @@ function buildShipmentOrderLines(
       gtin: line.gtin,
       providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
       sku: line.supplierSku ?? line.supplierVariantId ?? null,
-      quantity: item.quantity,
-      vatRate: Number(line.vatRate),
+      quantity: qty,
+      vatRate,
       unitNetPrice,
-      lineNetAmount: unitNetPrice * item.quantity,
+      lineNetAmount: lineNet,
+      taxAmountPerUnit:
+        taxPerUnit != null && Number.isFinite(taxPerUnit) ? taxPerUnit : null,
     });
   }
   return lines;
@@ -438,7 +610,11 @@ function calculateTotals(lines: OrderLine[]): { vatSummary: VatSummaryLine[]; to
 
   for (const line of lines) {
     const lineNet = line.lineNetAmount;
-    const lineVat = (lineNet * line.vatRate) / 100;
+    const explicitVat =
+      line.taxAmountPerUnit != null && Number.isFinite(line.taxAmountPerUnit)
+        ? line.taxAmountPerUnit * line.quantity
+        : null;
+    const lineVat = explicitVat != null ? explicitVat : (lineNet * line.vatRate) / 100;
     const lineGross = lineNet + lineVat;
     net += lineNet;
     vat += lineVat;
@@ -495,6 +671,23 @@ export function buildInvoiceNumber(order: GalaxusOrder): string {
   const stamp = formatInvoiceTimestamp(stampSource);
   const suffix = order.id.replace(/-/g, "").slice(0, 6).toUpperCase();
   return `GX-INV-${stamp}-${suffix}`;
+}
+
+function buildInvoiceDataFromOrderLines(order: GalaxusOrder, lines: OrderLine[]): InvoiceData {
+  const { vatSummary, totals } = calculateTotals(lines);
+  return {
+    invoiceNumber: buildInvoiceNumber(order),
+    orderNumber: order.orderNumber ?? order.galaxusOrderId ?? null,
+    orderDate: order.orderDate,
+    invoiceDate: new Date(),
+    deliveryDate: order.deliveryDate,
+    currency: order.currencyCode,
+    buyer: buildBuyer(),
+    supplier: buildSupplier(),
+    lines,
+    vatSummary,
+    totals,
+  };
 }
 
 function buildDeliveryNoteNumber(order: GalaxusOrder): string {

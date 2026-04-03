@@ -11,9 +11,10 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "200"), 1), 200);
+    const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "200"), 1), 2000);
     const concurrency = Math.min(Math.max(Number(searchParams.get("concurrency") ?? "3"), 1), 5);
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
+    const supplierVariantIdPrefix = searchParams.get("supplierVariantIdPrefix")?.trim() || null;
 
     const lastRun = await (prisma as any).galaxusJobRun.findFirst({
       where: { jobName: "kickdb-enrich-missing", success: true },
@@ -27,6 +28,9 @@ export async function POST(request: Request) {
 
     const job = await runJob("kickdb-enrich-missing", async () => {
       const startedAt = Date.now();
+      const prefixFilter = supplierVariantIdPrefix
+        ? Prisma.sql`AND sv."supplierVariantId" ILIKE ${`${supplierVariantIdPrefix}%`}`
+        : Prisma.sql``;
       const candidates = await prisma.$queryRaw<Array<{ supplierVariantId: string; createdAt: Date }>>(
         Prisma.sql`
         SELECT sv."supplierVariantId", sv."createdAt"
@@ -36,6 +40,7 @@ export async function POST(request: Request) {
         WHERE vm."supplierVariantId" IS NULL
            OR vm."gtin" IS NULL
            OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN','NOT_FOUND')
+          ${prefixFilter}
           ${recentRun && !force ? Prisma.sql`AND sv."createdAt" >= ${newCutoff}` : Prisma.sql``}
         ORDER BY sv."createdAt" DESC, sv."updatedAt" DESC
         LIMIT ${limit}
@@ -74,6 +79,7 @@ export async function POST(request: Request) {
         enrichedRows,
         enrichErrors,
         recentRun,
+        supplierVariantIdPrefix,
         durationMs,
       });
 
@@ -84,6 +90,7 @@ export async function POST(request: Request) {
         enrichedRows,
         enrichErrors,
         recentRun,
+        supplierVariantIdPrefix,
         durationMs,
       };
     });

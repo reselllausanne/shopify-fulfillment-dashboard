@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chromium, firefox } from "playwright";
+import { chromium, firefox, type Browser, type BrowserContext } from "playwright";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,6 +67,13 @@ const isStockxJwt = (value: string | null): boolean => {
   }
 };
 
+const extractJwtFromText = (value: string | null): string | null => {
+  if (!value) return null;
+  const match = value.match(/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+  if (!match) return null;
+  return isStockxJwt(match[0]) ? match[0] : null;
+};
+
 const normalizeBearer = (value: string | null): string | null => {
   const extracted = extractTokenValue(value);
   if (!extracted) return null;
@@ -106,6 +113,27 @@ const extractTokenFromStorage = (store: Record<string, string | null>): string |
   return null;
 };
 
+const extractTokenFromCookies = (cookies: Array<{ name: string; value: string }>): string | null => {
+  for (const cookie of cookies) {
+    const token = extractJwtFromText(cookie.value);
+    if (token) return `Bearer ${token}`;
+  }
+  return null;
+};
+
+const isTokenExpired = (token: string, skewSeconds = 60): boolean => {
+  try {
+    const payloadRaw = base64UrlDecode(token.split(".")[1] || "");
+    const payload = JSON.parse(payloadRaw) as Record<string, any>;
+    const exp = typeof payload?.exp === "number" ? payload.exp : null;
+    if (!exp) return true;
+    const now = Math.floor(Date.now() / 1000);
+    return exp <= now + skewSeconds;
+  } catch {
+    return true;
+  }
+};
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -123,47 +151,133 @@ export async function POST(req: NextRequest) {
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
     const tokenFile = resolveOptionalFile(body?.tokenFile);
     const maxWaitMs = Math.min(Number(body?.maxWaitMs || 600000), 900000);
-    const forceLogin = Boolean(body?.forceLogin ?? false);
+    let forceLogin = Boolean(body?.forceLogin ?? false);
+    const waitForUserClose = Boolean(body?.waitForUserClose ?? false);
+    const waitForCloseMs = Math.min(Number(body?.waitForCloseMs || 120000), 600000);
+    const autoNavigate = Boolean(body?.autoNavigate ?? true);
+    const startUrl = String(body?.startUrl || "https://stockx.com/login");
+    const reuseTokenFile = Boolean(body?.reuseTokenFile ?? true);
+    const persistent = Boolean(body?.persistent ?? false);
+    const userDataDir = String(
+      body?.userDataDir || path.join(process.cwd(), ".data", "stockx-profile")
+    );
+    const userAgent = String(
+      body?.userAgent ||
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    );
 
     await ensureSessionDir(sessionFile);
     if (tokenFile) await ensureSessionDir(tokenFile);
 
+    if (tokenFile && !forceLogin) {
+      try {
+        await fs.access(tokenFile);
+      } catch {
+        // No token yet => force a fresh login once
+        forceLogin = true;
+      }
+    }
+
+    if (!forceLogin && reuseTokenFile && tokenFile) {
+      try {
+        const rawToken = await fs.readFile(tokenFile, "utf8");
+        const parsed = JSON.parse(rawToken) as { token?: string };
+        const raw = extractTokenValue(parsed?.token || rawToken);
+        const token = stripBearer(raw);
+        if (token && isStockxJwt(token) && !isTokenExpired(token)) {
+          return NextResponse.json({
+            ok: true,
+            token: token,
+            sessionFile,
+            tokenFile,
+            reused: true,
+          });
+        }
+      } catch {
+        // ignore token reuse failures
+      }
+    }
+
+    const baseArgs =
+      browserType === "chromium"
+        ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"]
+        : ["--no-sandbox", "--disable-setuid-sandbox"];
     const launchOptions = {
       headless,
       slowMo: headless ? 0 : 50,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: baseArgs,
       env: {
         ...process.env,
         MOZ_DISABLE_CONTENT_SANDBOX: "1",
       },
     };
-    const browser =
-      browserType === "chromium"
-        ? await chromium.launch(launchOptions)
-        : await firefox.launch(launchOptions);
 
-    let context;
-    if (forceLogin) {
-      try {
-        await fs.unlink(sessionFile);
-        console.log("[STOCKX-PW] Deleted existing session (force login)");
-      } catch {
-        // ignore missing file
+    let browser: Browser | null = null;
+    let context: BrowserContext;
+
+    if (persistent) {
+      if (forceLogin) {
+        try {
+          await fs.rm(userDataDir, { recursive: true, force: true });
+          console.log("[STOCKX-PW] Deleted persistent profile (force login)");
+        } catch {
+          // ignore removal errors
+        }
       }
-      context = await browser.newContext();
-      console.log("[STOCKX-PW] Force login: fresh context");
+      await fs.mkdir(userDataDir, { recursive: true });
+      if (browserType === "chromium") {
+        context = await chromium.launchPersistentContext(userDataDir, {
+          ...launchOptions,
+          locale: "fr-FR",
+          timezoneId: "Europe/Paris",
+          userAgent,
+        });
+      } else {
+        context = await firefox.launchPersistentContext(userDataDir, {
+          ...launchOptions,
+          locale: "fr-FR",
+          timezoneId: "Europe/Paris",
+          userAgent,
+        });
+      }
+      browser = context.browser();
+      console.log("[STOCKX-PW] Using persistent context");
     } else {
-      try {
-        await fs.access(sessionFile);
-        context = await browser.newContext({ storageState: sessionFile });
-        console.log("[STOCKX-PW] Loaded existing session");
-      } catch {
-        context = await browser.newContext();
-        console.log("[STOCKX-PW] No session found, fresh context");
+      browser =
+        browserType === "chromium"
+          ? await chromium.launch(launchOptions)
+          : await firefox.launch(launchOptions);
+
+      if (forceLogin) {
+        try {
+          await fs.unlink(sessionFile);
+          console.log("[STOCKX-PW] Deleted existing session (force login)");
+        } catch {
+          // ignore missing file
+        }
+        context = await browser.newContext({ userAgent });
+        console.log("[STOCKX-PW] Force login: fresh context");
+      } else {
+        try {
+          await fs.access(sessionFile);
+          context = await browser.newContext({ storageState: sessionFile, userAgent });
+          console.log("[STOCKX-PW] Loaded existing session");
+        } catch {
+          context = await browser.newContext({ userAgent });
+          console.log("[STOCKX-PW] No session found, fresh context");
+        }
       }
     }
 
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
+
     let capturedToken: string | null = null;
+    const consoleLogs: string[] = [];
+    const pageErrors: string[] = [];
+    const requestFails: string[] = [];
+    const authResponses: Array<{ url: string; status: number }> = [];
 
     context.on("request", (req) => {
       const url = req.url();
@@ -196,6 +310,9 @@ export async function POST(req: NextRequest) {
         return;
       }
       const headers = res.headers();
+      if (/auth|login|session/i.test(url)) {
+        authResponses.push({ url, status: res.status() });
+      }
       const auth = headers["authorization"] || headers["Authorization"] || headers["x-auth-token"];
       const normalized = normalizeBearer(auth || null);
       if (
@@ -208,12 +325,75 @@ export async function POST(req: NextRequest) {
     });
 
     const page = await context.newPage();
-    await page.goto("https://stockx.com/login", { waitUntil: "domcontentloaded" });
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (text) consoleLogs.push(text);
+    });
+    page.on("pageerror", (err) => {
+      const text = err?.message || String(err);
+      if (text) pageErrors.push(text);
+    });
+    page.on("requestfailed", (req) => {
+      const url = req.url();
+      const failure = req.failure();
+      requestFails.push(`${url} :: ${failure?.errorText || "failed"}`);
+    });
+    await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+    const currentUrl = page.url();
+    const pageTitle = await page.title().catch(() => "");
+    const cloudflareDetected =
+      /cdn-cgi|challenges\.cloudflare\.com/i.test(currentUrl) ||
+      /just a moment|cloudflare/i.test(pageTitle);
+    if (cloudflareDetected) {
+      const cleanupTargets = [userDataDir, sessionFile];
+      if (tokenFile) cleanupTargets.push(tokenFile);
+      for (const target of cleanupTargets) {
+        try {
+          await fs.rm(target, { recursive: true, force: true });
+        } catch {
+          // ignore cleanup failures
+        }
+      }
+      if (persistent) {
+        await context.close();
+      } else {
+        await browser?.close();
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Cloudflare challenge detected. Profile reset; please retry login.",
+          reset: true,
+          url: currentUrl,
+          title: pageTitle,
+        },
+        { status: 403 }
+      );
+    }
+    try {
+      await page.waitForURL(/stockx\.com\/(login|account|profile|browse)/i, {
+        timeout: 15000,
+      });
+    } catch {
+      // ignore URL wait timeout
+    }
 
     const start = Date.now();
+    let lastKick = 0;
     while (!capturedToken && Date.now() - start < maxWaitMs) {
       await page.waitForTimeout(2000);
       if (capturedToken) break;
+      if (autoNavigate && !waitForUserClose) {
+        const now = Date.now();
+        if (now - lastKick > 15000) {
+          lastKick = now;
+          try {
+            await page.goto(startUrl, { waitUntil: "domcontentloaded" });
+          } catch {
+            // ignore navigation errors
+          }
+        }
+      }
       const localStorageDump = await page.evaluate(() => {
         const out: Record<string, string | null> = {};
         for (const key of Object.keys(localStorage)) {
@@ -238,17 +418,67 @@ export async function POST(req: NextRequest) {
         capturedToken = sessionToken;
         break;
       }
+      const cookies = await context.cookies();
+      const cookieToken = extractTokenFromCookies(cookies as Array<{ name: string; value: string }>);
+      if (cookieToken) {
+        capturedToken = cookieToken;
+        break;
+      }
     }
 
-    await context.storageState({ path: sessionFile });
-    console.log("[STOCKX-PW] Session saved");
-    await browser.close();
+    if (!persistent) {
+      await context.storageState({ path: sessionFile });
+      console.log("[STOCKX-PW] Session saved");
+    }
+    if (persistent) {
+      await context.close();
+    } else {
+      await browser?.close();
+    }
 
     if (!capturedToken) {
+      const debugDir = path.join(process.cwd(), ".data");
+      await fs.mkdir(debugDir, { recursive: true });
+      const screenshotPath = path.join(debugDir, "stockx-login-failed.png");
+      const htmlPath = path.join(debugDir, "stockx-login-failed.html");
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+      } catch {
+        // ignore screenshot failures
+      }
+      try {
+        const html = await page.content();
+        await fs.writeFile(htmlPath, html, "utf-8");
+      } catch {
+        // ignore html capture failures
+      }
       return NextResponse.json(
-        { ok: false, error: "StockX token not found. Login may be incomplete." },
+        {
+          ok: false,
+          error: "StockX token not found. Login may be incomplete.",
+          debug: {
+            lastUrl: page.url(),
+            screenshotPath,
+            htmlPath,
+            consoleLogs: consoleLogs.slice(-50),
+            pageErrors: pageErrors.slice(-20),
+            requestFails: requestFails.slice(-20),
+            authResponses: authResponses.slice(-10),
+          },
+        },
         { status: 401 }
       );
+    }
+
+    if (waitForUserClose) {
+      try {
+        await Promise.race([
+          page.waitForEvent("close"),
+          page.waitForTimeout(waitForCloseMs),
+        ]);
+      } catch {
+        // ignore wait errors
+      }
     }
 
     if (tokenFile) {

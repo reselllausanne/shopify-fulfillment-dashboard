@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { randomUUID, createHash } from "crypto";
 import { prisma } from "@/app/lib/prisma";
-import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
+import {
+  GALAXUS_FEED_UPLOADS_DISABLED,
+  GALAXUS_FEED_UPLOADS_MANUAL_ONLY,
+} from "@/galaxus/config";
 import {
   GALAXUS_SFTP_HOST,
   GALAXUS_PROVIDER_NAME,
@@ -71,6 +74,22 @@ function buildFeedFilename(
   return `ProductData_${safeProvider}${suffix}.csv`;
 }
 
+function countCriticalGtinIssues(report: any): number {
+  const grouped = [
+    ...(report?.grouped?.master ?? []),
+    ...(report?.grouped?.stock ?? []),
+    ...(report?.grouped?.specs ?? []),
+  ];
+  return grouped.reduce((sum: number, issue: any) => {
+    const message = String(issue?.message ?? "").toLowerCase();
+    const isCritical =
+      message.includes("gtin is empty") ||
+      message.includes("gtin is invalid") ||
+      message.includes("wrong check digit");
+    return isCritical ? sum + Number(issue?.count ?? 0) : sum;
+  }, 0);
+}
+
 export async function POST(request: Request) {
   const runId = randomUUID();
   const startedAt = new Date();
@@ -82,8 +101,15 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
-    assertSftpConfig();
     const { searchParams } = new URL(request.url);
+    const manual = ["1", "true", "yes"].includes((searchParams.get("manual") ?? "").toLowerCase());
+    if (GALAXUS_FEED_UPLOADS_MANUAL_ONLY && !manual) {
+      return NextResponse.json(
+        { ok: false, error: "Feed uploads are manual-only" },
+        { status: 403 }
+      );
+    }
+    assertSftpConfig();
     const supplier = searchParams.get("supplier");
     const rawType = (searchParams.get("type") ?? "all").toLowerCase();
     const type = rawType === "price" ? "offer" : rawType;
@@ -177,7 +203,9 @@ export async function POST(request: Request) {
       (report?.summary?.master?.totalIssues ?? 0) +
       (report?.summary?.stock?.totalIssues ?? 0) +
       (report?.summary?.specs?.totalIssues ?? 0);
-    if (shouldRunValidation && !force && totalIssues > 0) {
+    const criticalGtinIssues = shouldRunValidation ? countCriticalGtinIssues(report) : 0;
+    const mustBlockForCriticalGtin = shouldRunValidation && criticalGtinIssues > 0;
+    if (mustBlockForCriticalGtin || (shouldRunValidation && !force && totalIssues > 0)) {
       const blockedManifests = [];
       if (needsMaster && masterCsv) {
         blockedManifests.push({
@@ -218,7 +246,10 @@ export async function POST(request: Request) {
             storagePointer: null,
             destination: null,
             uploadStatus: "blocked",
-            responseJson: { error: "validation_failed" },
+            responseJson: {
+              error: mustBlockForCriticalGtin ? "critical_gtin_validation_failed" : "validation_failed",
+              criticalGtinIssues,
+            },
             validationIssuesJson: report ?? undefined,
           },
         });
@@ -229,13 +260,22 @@ export async function POST(request: Request) {
           data: {
             finishedAt: new Date(),
             success: false,
-            errorMessage: "Validation failed",
-            resultJson: { validation: report },
+            errorMessage: mustBlockForCriticalGtin
+              ? "Critical GTIN validation failed"
+              : "Validation failed",
+            resultJson: { validation: report, criticalGtinIssues },
           },
         });
       }
       return NextResponse.json(
-        { ok: false, error: "Validation failed. Fix issues or pass force=1.", report },
+        {
+          ok: false,
+          error: mustBlockForCriticalGtin
+            ? "Critical GTIN validation failed. Missing/invalid GTIN rows can never be sent."
+            : "Validation failed. Fix issues or pass force=1.",
+          report,
+          criticalGtinIssues,
+        },
         { status: 409 }
       );
     }

@@ -84,6 +84,7 @@ export default function PartnerDashboardPage() {
   const [editPrice, setEditPrice] = useState<Record<string, string>>({});
   const [pushBusy, setPushBusy] = useState(false);
   const [pushLog, setPushLog] = useState<string | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -242,6 +243,35 @@ export default function PartnerDashboardPage() {
       setError(err.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const downloadCatalogCsv = async () => {
+    setDownloadBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/partners/catalog/export", { cache: "no-store" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Download failed");
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const match =
+        disposition.match(/filename\*=UTF-8''([^;]+)$/i) ||
+        disposition.match(/filename="([^"]+)"/i) ||
+        disposition.match(/filename=([^;]+)/i);
+      const filename = match?.[1] ? decodeURIComponent(match[1]) : "partner-stock-enriched.csv";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setDownloadBusy(false);
     }
   };
 
@@ -605,13 +635,22 @@ export default function PartnerDashboardPage() {
               Products currently in the system under your supplier key.
             </div>
           </div>
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black text-xs"
-            onClick={() => loadHistory()}
-            disabled={busy}
-          >
-            Refresh
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="px-3 py-2 rounded bg-gray-100 text-black text-xs"
+              onClick={() => loadHistory()}
+              disabled={busy}
+            >
+              Refresh
+            </button>
+            <button
+              className="px-3 py-2 rounded bg-blue-600 text-white text-xs disabled:opacity-50"
+              onClick={downloadCatalogCsv}
+              disabled={busy || downloadBusy}
+            >
+              {downloadBusy ? "Preparing…" : "Download enriched stock CSV"}
+            </button>
+          </div>
         </div>
 
         {catalog.length === 0 && historyLoaded && (

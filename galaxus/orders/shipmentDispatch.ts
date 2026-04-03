@@ -16,6 +16,8 @@ export type GalaxusShipmentDispatchFields = {
   shippedAt?: Date | string | null;
   galaxusShippedAt?: Date | string | null;
   trackingNumber?: string | null;
+  delrSentAt?: Date | string | null;
+  delrStatus?: string | null;
 };
 
 /**
@@ -27,8 +29,10 @@ export function isGalaxusShipmentDispatchConfirmed(
 ): boolean {
   if (!shipment) return false;
   const status = String(shipment.status ?? "").toUpperCase();
+  const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
+  if (delrStatus === "SENT") return true;
+  if (hasTruthyDate(shipment.delrSentAt)) return true;
   if (status === "MANUAL") return true;
-  if (hasTruthyDate(shipment.shippedAt)) return true;
   if (hasTruthyDate(shipment.galaxusShippedAt)) return true;
   return false;
 }

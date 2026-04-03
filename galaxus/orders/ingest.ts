@@ -214,7 +214,7 @@ function normalizeOrder(order: GalaxusOrderInput) {
     recipientCountry: order.recipientCountry ?? null,
     recipientCountryCode: order.recipientCountryCode ?? null,
     recipientEmail: order.recipientEmail ?? null,
-    recipientPhone: order.recipientPhone ?? null,
+    recipientPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
     referencePerson: order.referencePerson ?? null,
     yourReference: order.yourReference ?? null,
     afterSalesHandling: order.afterSalesHandling ?? false,

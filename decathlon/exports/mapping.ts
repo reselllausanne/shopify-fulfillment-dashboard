@@ -23,6 +23,9 @@ const EXCLUSION_REASONS: DecathlonExclusionReason[] = [
   "MISSING_OFFER_FIELDS",
   "MISSING_PRICE",
   "MISSING_STOCK",
+  "MISSING_REQUIRED_ATTRIBUTE",
+  "PRODUCT_ALREADY_LIVE",
+  "PRODUCT_NOT_LIVE",
 ];
 
 export function createDecathlonExclusionSummary(): DecathlonExclusionSummary {

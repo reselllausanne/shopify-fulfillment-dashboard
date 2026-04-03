@@ -376,7 +376,10 @@ export function useSupplierOrders() {
       const data = await response.json();
       if (data.errors) {
         setLastErrors(data.errors);
-        return null;
+        // Allow partial data when buying payload exists
+        if (!data.data?.viewer?.buying) {
+          return null;
+        }
       }
 
       setLastErrors([]);

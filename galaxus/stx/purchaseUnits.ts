@@ -1,6 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 
-type StxNeed = {
+export type StxNeed = {
   gtin: string;
   supplierVariantId: string;
   needed: number;
@@ -42,6 +42,88 @@ function makeNeedKey(gtin: string, supplierVariantId: string) {
   return `${gtin}::${supplierVariantId}`;
 }
 
+/** Normalize GTIN/EAN for lookups (digits only, strip leading zeros). */
+export function normalizeGtinKey(raw: string | null | undefined): string {
+  const digits = String(raw ?? "")
+    .trim()
+    .replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.replace(/^0+/, "") || "0";
+}
+
+/** Expand GTIN forms so DB rows stored with different padding still match. */
+export function expandGtinsForDbLookup(gtins: Iterable<string>): string[] {
+  const out = new Set<string>();
+  for (const g of gtins) {
+    const d = String(g).trim().replace(/\D/g, "");
+    if (!d) continue;
+    out.add(d);
+    const n = d.replace(/^0+/, "") || "0";
+    out.add(n);
+    out.add(n.padStart(13, "0"));
+    out.add(n.padStart(14, "0"));
+  }
+  return Array.from(out);
+}
+
+/**
+ * Map aggregated GTIN quantities to StockX supplier variant ids (stx_*) via variantMapping — same rules as Galaxus STX sync.
+ */
+export async function resolveStxNeedsFromGtinQuantities(gtinQty: Map<string, number>): Promise<StxNeed[]> {
+  if (gtinQty.size === 0) return [];
+  const lookupGtins = expandGtinsForDbLookup(gtinQty.keys());
+  if (lookupGtins.length === 0) return [];
+
+  const mappings = await (prisma as any).variantMapping.findMany({
+    where: {
+      gtin: { in: lookupGtins },
+      supplierVariantId: { startsWith: "stx_" },
+      status: { in: ["SUPPLIER_GTIN", "MATCHED", "PARTNER_GTIN"] },
+    },
+    include: { supplierVariant: true },
+    orderBy: { updatedAt: "desc" },
+  });
+
+  const bestByNorm = new Map<string, any>();
+  for (const mapping of mappings) {
+    const norm = normalizeGtinKey(String(mapping?.gtin ?? ""));
+    if (!norm) continue;
+    const supplierVariantId = String(mapping?.supplierVariantId ?? "").trim();
+    if (!supplierVariantId.startsWith("stx_")) continue;
+    const existing = bestByNorm.get(norm);
+    if (!existing) {
+      bestByNorm.set(norm, mapping);
+      continue;
+    }
+    const existingStock = Number(existing?.supplierVariant?.stock ?? 0);
+    const nextStock = Number(mapping?.supplierVariant?.stock ?? 0);
+    if (nextStock > existingStock) {
+      bestByNorm.set(norm, mapping);
+      continue;
+    }
+    if (nextStock === existingStock) {
+      const existingUpdated = new Date(existing?.updatedAt ?? 0).getTime();
+      const nextUpdated = new Date(mapping?.updatedAt ?? 0).getTime();
+      if (nextUpdated > existingUpdated) bestByNorm.set(norm, mapping);
+    }
+  }
+
+  const needs: StxNeed[] = [];
+  for (const [gtinKey, qty] of gtinQty.entries()) {
+    const norm = normalizeGtinKey(gtinKey);
+    if (!norm || qty <= 0) continue;
+    const mapping = bestByNorm.get(norm);
+    const supplierVariantId = String(mapping?.supplierVariantId ?? "").trim();
+    if (!supplierVariantId.startsWith("stx_")) continue;
+    needs.push({
+      gtin: norm,
+      supplierVariantId,
+      needed: qty,
+    });
+  }
+  return needs;
+}
+
 function isUnknownCancelledAtArg(error: any): boolean {
   const message = String(error?.message ?? "");
   return (
@@ -66,63 +148,15 @@ async function resolveStxNeedsForOrder(order: Awaited<ReturnType<typeof resolveG
     // Only STX-designated lines should be handled by the StockX linking flow.
     // TRM/GLD lines can share GTINs with StockX catalog, but they must not create STX purchase unit needs.
     if (!isStxLine(line)) continue;
-    const gtin = typeof line.gtin === "string" ? line.gtin.trim() : "";
+    const norm = normalizeGtinKey(typeof line.gtin === "string" ? line.gtin : "");
     const qty = Number(line.quantity ?? 0);
-    if (!gtin || qty <= 0) continue;
-    gtinQty.set(gtin, (gtinQty.get(gtin) ?? 0) + qty);
+    if (!norm || qty <= 0) continue;
+    gtinQty.set(norm, (gtinQty.get(norm) ?? 0) + qty);
   }
-  const gtins = Array.from(gtinQty.keys());
-  if (gtins.length === 0) return [] as StxNeed[];
-
-  const mappings = await (prisma as any).variantMapping.findMany({
-    where: {
-      gtin: { in: gtins },
-      supplierVariantId: { startsWith: "stx_" },
-      status: { in: ["SUPPLIER_GTIN", "MATCHED", "PARTNER_GTIN"] },
-    },
-    include: { supplierVariant: true },
-    orderBy: { updatedAt: "desc" },
-  });
-
-  const bestByGtin = new Map<string, any>();
-  for (const mapping of mappings) {
-    const gtin = String(mapping?.gtin ?? "").trim();
-    if (!gtin) continue;
-    const supplierVariantId = String(mapping?.supplierVariantId ?? "").trim();
-    if (!supplierVariantId.startsWith("stx_")) continue;
-    const existing = bestByGtin.get(gtin);
-    if (!existing) {
-      bestByGtin.set(gtin, mapping);
-      continue;
-    }
-    const existingStock = Number(existing?.supplierVariant?.stock ?? 0);
-    const nextStock = Number(mapping?.supplierVariant?.stock ?? 0);
-    if (nextStock > existingStock) {
-      bestByGtin.set(gtin, mapping);
-      continue;
-    }
-    if (nextStock === existingStock) {
-      const existingUpdated = new Date(existing?.updatedAt ?? 0).getTime();
-      const nextUpdated = new Date(mapping?.updatedAt ?? 0).getTime();
-      if (nextUpdated > existingUpdated) bestByGtin.set(gtin, mapping);
-    }
-  }
-
-  const needs: StxNeed[] = [];
-  for (const [gtin, qty] of gtinQty.entries()) {
-    const mapping = bestByGtin.get(gtin);
-    const supplierVariantId = String(mapping?.supplierVariantId ?? "").trim();
-    if (!supplierVariantId.startsWith("stx_")) continue;
-    needs.push({
-      gtin,
-      supplierVariantId,
-      needed: qty,
-    });
-  }
-  return needs;
+  return resolveStxNeedsFromGtinQuantities(gtinQty);
 }
 
-function buildBucketsFromNeeds(
+export function buildBucketsFromNeeds(
   needs: StxNeed[],
   units: Array<{
     gtin: string;
@@ -222,17 +256,42 @@ export async function getStxLinkStatusForOrder(orderIdOrRef: string): Promise<St
     }
   }
   const buckets = buildBucketsFromNeeds(needs, units);
+  const matchLinks = await (prisma as any).galaxusStockxMatch
+    .findMany({
+      where: {
+        OR: [{ galaxusOrderId: order.id }, { galaxusOrderRef: order.galaxusOrderId }],
+      },
+      select: { galaxusGtin: true, stockxOrderNumber: true },
+    })
+    .catch(() => []);
+  const matchedGtins = new Set(
+    (matchLinks ?? [])
+      .filter((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0)
+      .map((row: any) => String(row?.galaxusGtin ?? "").trim())
+      .filter((gtin: string) => gtin.length > 0)
+  );
+  const enrichedBuckets = buckets.map((bucket) => {
+    if (matchedGtins.has(bucket.gtin)) {
+      return {
+        ...bucket,
+        linked: bucket.needed,
+        linkedWithEta: bucket.needed,
+        linkedWithAwb: bucket.needed,
+      };
+    }
+    return bucket;
+  });
   const hasStxItems = buckets.length > 0;
-  const allLinked = buckets.every((bucket) => bucket.linked >= bucket.needed);
-  const allEtaPresent = buckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
-  const allAwbPresent = buckets.every((bucket) => bucket.linkedWithAwb >= bucket.needed);
+  const allLinked = enrichedBuckets.every((bucket) => bucket.linked >= bucket.needed);
+  const allEtaPresent = enrichedBuckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
+  const allAwbPresent = enrichedBuckets.every((bucket) => bucket.linkedWithAwb >= bucket.needed);
   return {
     galaxusOrderId: order.galaxusOrderId,
     hasStxItems,
     allLinked: hasStxItems ? allLinked : true,
     allEtaPresent: hasStxItems ? allEtaPresent : true,
     allAwbPresent: hasStxItems ? allAwbPresent : true,
-    buckets,
+    buckets: enrichedBuckets,
   };
 }
 
@@ -378,32 +437,49 @@ export async function linkOldestPendingStxUnit(params: {
 export async function getStxLinkStatusForShipment(shipmentId: string): Promise<StxOrderLinkStatus | null> {
   const shipment = await prisma.shipment.findUnique({
     where: { id: shipmentId },
-    include: { order: true, items: true },
+    include: { order: true, items: { include: { order: true } } },
   });
   if (!shipment?.order) return null;
 
-  const orderStatus = await getStxLinkStatusForOrder(shipment.order.galaxusOrderId);
-  const neededByGtin = new Map<string, number>();
+  const itemsByGalaxusOrderId = new Map<string, typeof shipment.items>();
   for (const item of shipment.items) {
-    const gtin = String(item?.gtin14 ?? "").trim();
-    const qty = Number(item?.quantity ?? 0);
-    if (!gtin || qty <= 0) continue;
-    neededByGtin.set(gtin, (neededByGtin.get(gtin) ?? 0) + qty);
+    const gid = String(item?.order?.galaxusOrderId ?? shipment.order.galaxusOrderId ?? "").trim();
+    if (!gid) continue;
+    const list = itemsByGalaxusOrderId.get(gid) ?? [];
+    list.push(item);
+    itemsByGalaxusOrderId.set(gid, list);
   }
-  const shipmentGtins = new Set(
-    shipment.items
-      .map((item) => String(item.gtin14 ?? "").trim())
-      .filter((gtin) => gtin.length > 0)
-  );
-  const relevantBuckets = orderStatus.buckets
-    .filter((bucket) => shipmentGtins.has(bucket.gtin))
-    .map((bucket) => {
-      const shipmentNeeded = neededByGtin.get(bucket.gtin) ?? bucket.needed;
-      return { ...bucket, needed: Math.min(bucket.needed, shipmentNeeded) };
-    });
-  if (relevantBuckets.length === 0) {
+
+  const mergedBuckets: StxLinkBucket[] = [];
+  let anchorStatus: StxOrderLinkStatus | null = null;
+
+  for (const [galaxusOrderId, groupItems] of itemsByGalaxusOrderId) {
+    const orderStatus = await getStxLinkStatusForOrder(galaxusOrderId);
+    if (!anchorStatus) anchorStatus = orderStatus;
+
+    const neededByGtin = new Map<string, number>();
+    for (const item of groupItems) {
+      const gtin = String(item?.gtin14 ?? "").trim();
+      const qty = Number(item?.quantity ?? 0);
+      if (!gtin || qty <= 0) continue;
+      neededByGtin.set(gtin, (neededByGtin.get(gtin) ?? 0) + qty);
+    }
+    const shipmentGtins = new Set(
+      groupItems.map((item) => String(item.gtin14 ?? "").trim()).filter((gtin) => gtin.length > 0)
+    );
+    const relevantBuckets = orderStatus.buckets
+      .filter((bucket) => shipmentGtins.has(bucket.gtin))
+      .map((bucket) => {
+        const shipmentNeeded = neededByGtin.get(bucket.gtin) ?? bucket.needed;
+        return { ...bucket, needed: Math.min(bucket.needed, shipmentNeeded) };
+      });
+    mergedBuckets.push(...relevantBuckets);
+  }
+
+  if (mergedBuckets.length === 0) {
+    const base = anchorStatus ?? (await getStxLinkStatusForOrder(shipment.order.galaxusOrderId));
     return {
-      ...orderStatus,
+      ...base,
       hasStxItems: false,
       allLinked: true,
       allEtaPresent: true,
@@ -412,16 +488,16 @@ export async function getStxLinkStatusForShipment(shipmentId: string): Promise<S
     };
   }
 
-  const allLinked = relevantBuckets.every((bucket) => bucket.linked >= bucket.needed);
-  const allEtaPresent = relevantBuckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
-  const allAwbPresent = relevantBuckets.every((bucket) => bucket.linkedWithAwb >= bucket.needed);
+  const allLinked = mergedBuckets.every((bucket) => bucket.linked >= bucket.needed);
+  const allEtaPresent = mergedBuckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
+  const allAwbPresent = mergedBuckets.every((bucket) => bucket.linkedWithAwb >= bucket.needed);
   return {
-    galaxusOrderId: orderStatus.galaxusOrderId,
+    galaxusOrderId: shipment.order.galaxusOrderId,
     hasStxItems: true,
     allLinked,
     allEtaPresent,
     allAwbPresent,
-    buckets: relevantBuckets,
+    buckets: mergedBuckets,
   };
 }
 

@@ -462,7 +462,7 @@ function buildDeliveryAddress(order: GalaxusOrder) {
   const street1 = order.recipientAddress1 ?? order.customerAddress1;
   const street2 = order.recipientAddress2 ?? order.customerAddress2 ?? "";
   const countryCode = normalizeCountryCode(null, order.recipientCountry ?? order.customerCountry);
-  const phone = order.recipientPhone ?? GALAXUS_SUPPLIER_PHONE ?? "";
+  const phone = GALAXUS_SUPPLIER_PHONE ?? "";
   const email = GALAXUS_SUPPLIER_EMAIL ?? "";
 
   return {

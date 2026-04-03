@@ -30,6 +30,8 @@ function resolveEffectiveStock(candidate: DecathlonExportCandidate): number | nu
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock) ?? 0;
   const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
+  const supplierKey = extractSupplierKey(candidate);
+  if (supplierKey === "gld" || supplierKey === "trm") return 0;
   const supplierVariantId = String(variant?.supplierVariantId ?? "");
   const isStx = supplierVariantId.startsWith("stx_") || candidate.providerKey.startsWith("STX_");
   const deliveryType = String(variant?.deliveryType ?? "");
@@ -60,6 +62,61 @@ function resolvePrice(candidate: DecathlonExportCandidate): string | null {
   const computed = computeDecathlonPriceFromBuyNow(buyNow, multiplier);
   if (!computed || computed <= 0) return null;
   return computed.toFixed(2);
+}
+
+function extractSupplierKey(candidate: DecathlonExportCandidate): string | null {
+  const supplierVariantId = String(candidate?.variant?.supplierVariantId ?? "").trim();
+  const providerKey = String(candidate?.providerKey ?? "").trim();
+  const raw = supplierVariantId || providerKey;
+  if (!raw) return null;
+  const rawKey = raw.includes(":") ? raw.split(":")[0] : raw.includes("_") ? raw.split("_")[0] : raw;
+  return rawKey ? rawKey.toLowerCase() : null;
+}
+
+export function resolveOfferLogisticClass(candidate: DecathlonExportCandidate): string {
+  const variant = candidate.variant ?? {};
+  const raw =
+    variant?.logisticClass ??
+    variant?.logistic_class ??
+    variant?.logisticClassCode ??
+    variant?.logistic_class_code ??
+    variant?.logisticClassName ??
+    variant?.logistic_class_name ??
+    "";
+  return String(raw ?? "").trim();
+}
+
+export function resolveOfferLeadTimeToShip(candidate: DecathlonExportCandidate): string {
+  const supplierKey = extractSupplierKey(candidate);
+  if (supplierKey === "the") return "2";
+  const deliveryType = String(candidate?.variant?.deliveryType ?? "").toLowerCase();
+  if (deliveryType.includes("expedited")) return "1";
+  if (deliveryType.includes("express")) return "2";
+  return "";
+}
+
+export function resolveOfferMinOrderQuantity(): "" {
+  return "";
+}
+
+export function resolveOfferMaxOrderQuantity(): "" {
+  return "";
+}
+
+export function resolveOfferDiscountPrice(): "" {
+  return "";
+}
+
+export function resolveOfferDiscountStartDate(): "" {
+  return "";
+}
+
+export function resolveOfferDiscountEndDate(): "" {
+  return "";
+}
+
+export function resolveOfferDescription(): "" {
+  return "";
 }
 
 export function buildOfferCsv(
@@ -104,6 +161,14 @@ export function buildOfferCsv(
     row["price"] = price;
     row["quantity"] = String(effectiveStock);
     row["state"] = DECATHLON_DEFAULT_OFFER_STATE;
+    row["logistic-class"] = resolveOfferLogisticClass(candidate);
+    row["leadtime-to-ship"] = resolveOfferLeadTimeToShip(candidate);
+    row["min-order-quantity"] = resolveOfferMinOrderQuantity();
+    row["max-order-quantity"] = resolveOfferMaxOrderQuantity();
+    row["discount-price"] = resolveOfferDiscountPrice();
+    row["discount-start-date"] = resolveOfferDiscountStartDate();
+    row["discount-end-date"] = resolveOfferDiscountEndDate();
+    row["description"] = resolveOfferDescription();
 
     rows.push(row);
   }

@@ -63,6 +63,10 @@ const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";
 export const GALAXUS_FEED_UPLOADS_DISABLED = !["0", "false", "no"].includes(
   uploadsDisabledRaw.toLowerCase()
 );
+const uploadsManualOnlyRaw = process.env.GALAXUS_FEED_UPLOADS_MANUAL_ONLY ?? "true";
+export const GALAXUS_FEED_UPLOADS_MANUAL_ONLY = !["0", "false", "no"].includes(
+  uploadsManualOnlyRaw.toLowerCase()
+);
 
 export const GALAXUS_GS1_COMPANY_PREFIX =
   process.env.GALAXUS_GS1_COMPANY_PREFIX ??

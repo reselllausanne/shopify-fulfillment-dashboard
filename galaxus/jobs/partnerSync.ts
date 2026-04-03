@@ -15,6 +15,7 @@ type PartnerSyncOptions = {
 };
 
 type PartnerSyncResult = {
+  scanned: number;
   processed: number;
   created: number;
   updated: number;
@@ -46,6 +47,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
     take: limit,
     skip: offset,
   });
+  const scanned = rows.length;
 
   let processed = 0;
   let created = 0;
@@ -192,6 +194,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
 
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:partner] done", {
+    scanned,
     processed,
     insertedCount: created,
     updatedCount: updated,
@@ -203,6 +206,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   });
 
   return {
+    scanned,
     processed,
     created,
     updated,

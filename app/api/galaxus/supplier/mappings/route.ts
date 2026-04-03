@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { validateGtin } from "@/app/lib/normalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,18 +12,30 @@ export async function GET(request: Request) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const supplier = searchParams.get("supplier")?.trim();
+  const q = (searchParams.get("q") ?? "").trim();
   const download = ["1", "true", "yes"].includes((searchParams.get("download") ?? "").toLowerCase());
 
   const whereSupplier = supplier
     ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
     : {};
 
+  const where: Record<string, unknown> = {
+    ...whereSupplier,
+  };
+  if (q) {
+    where.OR = [
+      { supplierVariantId: { contains: q, mode: "insensitive" } },
+      { providerKey: { contains: q, mode: "insensitive" } },
+      { gtin: { contains: q, mode: "insensitive" } },
+      { supplierVariant: { supplierSku: { contains: q, mode: "insensitive" } } },
+      { supplierVariant: { supplierProductName: { contains: q, mode: "insensitive" } } },
+    ];
+  }
+
   const items = download
     ? []
     : await (prisma as any).variantMapping.findMany({
-        where: {
-          ...whereSupplier,
-        },
+        where,
         include: {
           supplierVariant: true,
           kickdbVariant: { include: { product: true } },
@@ -171,5 +184,136 @@ export async function GET(request: Request) {
       "Content-Disposition": `attachment; filename="${filename}"`,
     },
   });
+}
+
+type UpdatePayload = {
+  id?: string;
+  supplierVariantId?: string;
+  gtin?: string | null;
+  status?: string | null;
+  kickdbVariantId?: string | null;
+};
+
+function normalizeGtin(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  return raw ? raw : null;
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json().catch(() => ({}))) as {
+      updates?: UpdatePayload[];
+      createIfMissing?: boolean;
+    };
+    const updates = Array.isArray(body.updates) ? body.updates : [];
+    const createIfMissing = body.createIfMissing !== false;
+    if (updates.length === 0) {
+      return NextResponse.json({ ok: false, error: "No updates provided" }, { status: 400 });
+    }
+
+    const results = await prisma.$transaction(
+      async (tx) => {
+        const output: Array<Record<string, unknown>> = [];
+        for (const entry of updates) {
+          const id = String(entry.id ?? "").trim();
+          const supplierVariantId = String(entry.supplierVariantId ?? "").trim();
+          if (!id && !supplierVariantId) {
+            output.push({ ok: false, error: "Missing id or supplierVariantId" });
+            continue;
+          }
+
+          const existing = id
+            ? await (tx as any).variantMapping.findUnique({ where: { id } })
+            : await (tx as any).variantMapping.findUnique({
+                where: { supplierVariantId: supplierVariantId || undefined },
+              });
+
+          if (!existing && !createIfMissing) {
+            output.push({ ok: false, error: "Mapping not found", supplierVariantId });
+            continue;
+          }
+
+          const normalizedGtin = "gtin" in entry ? normalizeGtin(entry.gtin ?? null) : undefined;
+          if (normalizedGtin && !validateGtin(normalizedGtin)) {
+            output.push({
+              ok: false,
+              error: "Invalid GTIN",
+              supplierVariantId: supplierVariantId || existing?.supplierVariantId || null,
+            });
+            continue;
+          }
+          const mappingSupplierVariantId =
+            supplierVariantId || existing?.supplierVariantId || "";
+          const computedProviderKey =
+            normalizedGtin === undefined
+              ? undefined
+              : normalizedGtin
+                ? buildProviderKey(normalizedGtin, mappingSupplierVariantId) ?? null
+                : null;
+          if (normalizedGtin && !computedProviderKey) {
+            output.push({
+              ok: false,
+              error: "Failed to build providerKey from GTIN",
+              supplierVariantId: mappingSupplierVariantId || null,
+            });
+            continue;
+          }
+
+          const statusValue =
+            "status" in entry
+              ? entry.status ?? null
+              : normalizedGtin
+                ? "SUPPLIER_GTIN"
+                : "PENDING_GTIN";
+
+          if (existing) {
+            const data: Record<string, unknown> = {};
+            if ("gtin" in entry) data.gtin = normalizedGtin ?? null;
+            if ("gtin" in entry) data.providerKey = computedProviderKey ?? null;
+            if ("status" in entry || "gtin" in entry) data.status = statusValue ?? existing.status;
+            if ("kickdbVariantId" in entry) data.kickdbVariantId = entry.kickdbVariantId ?? null;
+            const keysTouched = Object.keys(data);
+            if (keysTouched.length === 0) {
+              output.push({ ok: true, skipped: true, supplierVariantId: existing.supplierVariantId });
+              continue;
+            }
+            const updated = await (tx as any).variantMapping.update({
+              where: { id: existing.id },
+              data,
+            });
+            output.push({ ok: true, item: updated });
+          } else {
+            const created = await (tx as any).variantMapping.create({
+              data: {
+                supplierVariantId: mappingSupplierVariantId || null,
+                gtin: normalizedGtin ?? null,
+                providerKey: computedProviderKey ?? null,
+                status: statusValue ?? "PENDING_GTIN",
+                kickdbVariantId: entry.kickdbVariantId ?? null,
+              },
+            });
+            output.push({ ok: true, item: created });
+          }
+        }
+        return output;
+      },
+      { maxWait: 15000, timeout: 60000 }
+    );
+
+    const failed = results.filter((r: any) => r && r.ok === false);
+    return NextResponse.json({
+      ok: failed.length === 0,
+      results,
+      ...(failed.length > 0
+        ? { error: failed.map((f: any) => `${f.supplierVariantId ?? "?"}: ${f.error}`).join("; ") }
+        : {}),
+    });
+  } catch (error: any) {
+    console.error("[GALAXUS][SUPPLIER][MAPPINGS] Update failed", error);
+    return NextResponse.json(
+      { ok: false, error: error?.message ?? "Update failed" },
+      { status: 500 }
+    );
+  }
 }
 

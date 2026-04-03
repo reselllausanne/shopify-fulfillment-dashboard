@@ -429,7 +429,7 @@ export async function GET(request: Request) {
 
     const row: ExportRow = {
       ProviderKey: providerKey,
-      Gtin: mapping.gtin ?? "",
+      Gtin: candidate.gtin ?? mapping.gtin ?? "",
       ManufacturerKey: manufacturerKey,
       BrandName: supplierBrand || normalizeBrand(payload?.brand ?? product?.brand ?? ""),
       ProductCategory: buildProductCategory(payload) || "Sneakers",

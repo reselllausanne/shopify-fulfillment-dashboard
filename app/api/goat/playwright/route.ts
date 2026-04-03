@@ -22,31 +22,98 @@ export async function POST(req: NextRequest) {
     const sessionFile = String(body?.sessionFile || DEFAULT_SESSION_FILE);
     const maxWaitMs = Math.min(Number(body?.maxWaitMs || 120000), 300000);
     const includeRaw = Boolean(body?.includeRaw ?? false);
+    const forceLogin = Boolean(body?.forceLogin ?? false);
+    const persistent = Boolean(body?.persistent ?? false);
+    const userDataDir = String(
+      body?.userDataDir || path.join(process.cwd(), ".data", "goat-profile")
+    );
+    const userAgent = String(
+      body?.userAgent ||
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    );
 
     await ensureSessionDir(sessionFile);
 
-    const launchArgs = headless ? ["--no-sandbox", "--disable-setuid-sandbox"] : [];
-    const browser =
-      browserType === "chromium"
-        ? await chromium.launch({ headless, slowMo: 50, args: launchArgs })
-        : await firefox.launch({ headless, slowMo: 50, args: launchArgs });
+    const launchArgs = headless
+      ? ["--no-sandbox", "--disable-setuid-sandbox"]
+      : [];
+    const antiBotArgs = ["--disable-blink-features=AutomationControlled"];
 
-    let context;
-    try {
-      await fs.access(sessionFile);
-      context = await browser.newContext({ storageState: sessionFile });
-      console.log("[GOAT-PW] Loaded existing session");
-    } catch {
-      context = await browser.newContext();
-      console.log("[GOAT-PW] No session found, fresh context");
+    let browser: ReturnType<typeof chromium.launch> | ReturnType<typeof firefox.launch> | null =
+      null;
+    let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>>;
+
+    if (persistent) {
+      await fs.mkdir(userDataDir, { recursive: true });
+      context = await chromium.launchPersistentContext(userDataDir, {
+        headless,
+        slowMo: 50,
+        args: [...launchArgs, ...antiBotArgs],
+        locale: "fr-FR",
+        timezoneId: "Europe/Paris",
+        userAgent,
+      });
+      browser = context.browser();
+      console.log("[GOAT-PW] Using persistent context");
+    } else {
+      browser =
+        browserType === "chromium"
+          ? await chromium.launch({ headless, slowMo: 50, args: [...launchArgs, ...antiBotArgs] })
+          : await firefox.launch({ headless, slowMo: 50, args: launchArgs });
+
+      if (forceLogin) {
+        try {
+          await fs.unlink(sessionFile);
+          console.log("[GOAT-PW] Deleted existing session (force login)");
+        } catch {
+          // ignore missing file
+        }
+        context = await browser.newContext({ userAgent });
+        console.log("[GOAT-PW] Force login: fresh context");
+      } else {
+        try {
+          await fs.access(sessionFile);
+          context = await browser.newContext({ storageState: sessionFile, userAgent });
+          console.log("[GOAT-PW] Loaded existing session");
+        } catch {
+          context = await browser.newContext({ userAgent });
+          console.log("[GOAT-PW] No session found, fresh context");
+        }
+      }
     }
+
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
 
     const page = await context.newPage();
     const allOrdersRaw: any[] = [];
+    const consoleLogs: string[] = [];
+    const pageErrors: string[] = [];
+    const requestFails: string[] = [];
+    const loginResponses: Array<{ url: string; status: number }> = [];
+
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (text) consoleLogs.push(text);
+    });
+    page.on("pageerror", (err) => {
+      const text = err?.message || String(err);
+      if (text) pageErrors.push(text);
+    });
+    page.on("requestfailed", (req) => {
+      const url = req.url();
+      const failure = req.failure();
+      requestFails.push(`${url} :: ${failure?.errorText || "failed"}`);
+    });
 
     page.on("response", async (response) => {
       try {
-        if (!response.url().includes("/web-api/v1/orders")) return;
+        const url = response.url();
+        if (/\/login|\/sessions|\/session|\/auth/i.test(url)) {
+          loginResponses.push({ url, status: response.status() });
+        }
+        if (!url.includes("/web-api/v1/orders")) return;
         if (response.request().method() !== "GET") return;
         const json = await response.json();
         const items = extractOrdersArray(json);
@@ -66,15 +133,48 @@ export async function POST(req: NextRequest) {
     }
 
     if (allOrdersRaw.length === 0) {
-      await browser.close();
+      const debugDir = path.join(process.cwd(), ".data");
+      await fs.mkdir(debugDir, { recursive: true });
+      const screenshotPath = path.join(debugDir, "goat-login-failed.png");
+      const htmlPath = path.join(debugDir, "goat-login-failed.html");
+      try {
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+      } catch {
+        // ignore screenshot failures
+      }
+      try {
+        const html = await page.content();
+        await fs.writeFile(htmlPath, html, "utf-8");
+      } catch {
+        // ignore html capture failures
+      }
+      if (persistent) {
+        await context.close();
+      } else {
+        await browser?.close();
+      }
       return NextResponse.json(
-        { ok: false, error: "No GOAT orders detected. Login required." },
+        {
+          ok: false,
+          error: "No GOAT orders detected. Login required.",
+          debug: {
+            lastUrl: page.url(),
+            screenshotPath,
+            htmlPath,
+            consoleLogs: consoleLogs.slice(-50),
+            pageErrors: pageErrors.slice(-20),
+            requestFails: requestFails.slice(-20),
+            loginResponses: loginResponses.slice(-10),
+          },
+        },
         { status: 401 }
       );
     }
 
-    await context.storageState({ path: sessionFile });
-    console.log("[GOAT-PW] Session saved");
+    if (!persistent) {
+      await context.storageState({ path: sessionFile });
+      console.log("[GOAT-PW] Session saved");
+    }
 
     // Pagination via fetch inside browser context (keeps cookies)
     let pageNum = 2;
@@ -95,7 +195,11 @@ export async function POST(req: NextRequest) {
       await page.waitForTimeout(200);
     }
 
-    await browser.close();
+    if (persistent) {
+      await context.close();
+    } else {
+      await browser?.close();
+    }
 
     const normalized = allOrdersRaw
       .map((raw) => normalizeGoatOrder(raw))

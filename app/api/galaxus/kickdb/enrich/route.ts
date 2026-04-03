@@ -15,6 +15,10 @@ export async function POST(request: Request) {
     const raw = searchParams.get("raw") === "1";
     const supplierVariantId = searchParams.get("supplierVariantId")?.trim() || null;
     const supplierSku = searchParams.get("supplierSku")?.trim() || null;
+    const supplierVariantIdPrefix = searchParams.get("supplierVariantIdPrefix")?.trim() || null;
+    const includeNotFound = ["1", "true", "yes"].includes(
+      (searchParams.get("includeNotFound") ?? "").toLowerCase()
+    );
 
     if (all && !supplierVariantId && !supplierSku) {
       const { results } = await runKickdbEnrich({
@@ -22,6 +26,8 @@ export async function POST(request: Request) {
         debug,
         force,
         raw,
+        supplierVariantIdPrefix,
+        includeNotFound,
       });
       return NextResponse.json({
         ok: true,
@@ -39,6 +45,8 @@ export async function POST(request: Request) {
       raw,
       supplierVariantId,
       supplierSku,
+      supplierVariantIdPrefix,
+      includeNotFound,
     });
 
     return NextResponse.json({ ok: true, limit, offset, results });

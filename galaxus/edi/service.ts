@@ -7,11 +7,18 @@ import {
   buildInvoice,
   buildOrderResponse,
   buildOutOfStockNotice,
+  buildCustomInvoice,
+  type CustomInvoiceLineInput,
 } from "./documents";
 import { EdiDocType } from "./filenames";
 import { assertSftpConfig, GALAXUS_SFTP_HOST, GALAXUS_SFTP_IN_DIR, GALAXUS_SFTP_OUT_DIR, GALAXUS_SFTP_PASSWORD, GALAXUS_SFTP_PORT, GALAXUS_SFTP_USER, GALAXUS_SUPPLIER_ID } from "./config";
 import { downloadRemoteFile, listRemoteFiles, uploadTempThenRename, withSftp } from "./sftpClient";
 import { upsertEdiFile } from "./ediFiles";
+import {
+  assertCustomInvoiceAllowed,
+  assertOutgoingInvoiceAllowed,
+  getInvoicedQuantitiesByOrderLineId,
+} from "./invoiceCoverage";
 import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder, resolveSupplierVariant } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
@@ -42,6 +49,41 @@ const parser = new XMLParser({
 function clampXml(xml: string, max = 200_000): string {
   if (xml.length <= max) return xml;
   return xml.slice(0, max);
+}
+
+function toSafeNumber(value: unknown, fallback = 0) {
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function buildInvoicePayloadItems(lines: any[], fallbackOrderRef: string) {
+  return lines.map((line: any, index: number) => {
+    const quantity = toSafeNumber(line?.quantity, 0);
+    const unitNetPrice = toSafeNumber(line?.unitNetPrice, 0);
+    const explicitLineNet = line?.lineNetAmount != null ? toSafeNumber(line.lineNetAmount, NaN) : NaN;
+    const lineNetAmount = Number.isFinite(explicitLineNet)
+      ? explicitLineNet
+      : Number((unitNetPrice * quantity).toFixed(2));
+    const orderLineId =
+      line?.id != null
+        ? String(line.id)
+        : line?.orderLineId != null
+          ? String(line.orderLineId)
+          : null;
+    return {
+      lineNumber: toSafeNumber(line?.lineNumber, index + 1),
+      description: String(line?.productName ?? line?.description ?? "Item"),
+      quantity,
+      unitNetPrice,
+      lineNetAmount,
+      vatRate: toSafeNumber(line?.vatRate, 0),
+      supplierPid: line?.supplierPid ?? null,
+      buyerPid: line?.buyerPid ?? null,
+      gtin: line?.gtin ?? null,
+      orderReferenceId: String(line?.orderReferenceId ?? fallbackOrderRef),
+      orderLineId,
+    };
+  });
 }
 
 export async function pollIncomingEdi(): Promise<IncomingResult[]> {
@@ -167,6 +209,7 @@ export async function sendOutgoingEdi(options: {
   ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS";
   force?: boolean;
   lineIds?: string[];
+  deliveryCharge?: number | null;
 }): Promise<OutgoingResult[]> {
   assertSftpConfig();
   const force = Boolean(options.force);
@@ -279,6 +322,30 @@ export async function sendOutgoingEdi(options: {
             continue;
           }
 
+          if (type === "INVO" && invoiceLines.length === 0) {
+            results.push({
+              docType: type,
+              filename: "",
+              status: "error",
+              message: "No invoice lines selected",
+            });
+            continue;
+          }
+          if (type === "INVO") {
+            try {
+              const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+              assertOutgoingInvoiceAllowed(order.lines, invoiceLines, invoicedSoFar);
+            } catch (coverageErr: any) {
+              results.push({
+                docType: type,
+                filename: "",
+                status: "error",
+                message: coverageErr?.message ?? "Invoice coverage check failed",
+              });
+              continue;
+            }
+          }
+
           const alreadySent = await (prisma as any).galaxusEdiFile.findFirst({
             where: {
               direction: "OUT",
@@ -292,18 +359,22 @@ export async function sendOutgoingEdi(options: {
             await client.delete(path).catch(() => undefined);
           }
 
-          if (type === "INVO" && invoiceLines.length === 0) {
-            results.push({
-              docType: type,
-              filename: "",
-              status: "error",
-              message: "No invoice lines selected",
-            });
-            continue;
-          }
-          const edi = await buildOutgoingXml(type, order, type === "INVO" ? invoiceLines : order.lines);
+          const edi = await buildOutgoingXml(
+            type,
+            order,
+            type === "INVO" ? invoiceLines : order.lines,
+            { deliveryCharge: options.deliveryCharge }
+          );
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
           const checksum = createHash("sha256").update(edi.content).digest("hex");
+          const payloadJson =
+            type === "INVO"
+              ? {
+                  rawXml: clampXml(edi.content),
+                  items: buildInvoicePayloadItems(invoiceLines, order.galaxusOrderId),
+                  deliveryCharge: options.deliveryCharge ?? null,
+                }
+              : undefined;
           await upsertEdiFile({
             filename: edi.filename,
             direction: "OUT",
@@ -311,6 +382,7 @@ export async function sendOutgoingEdi(options: {
             orderId: order.id,
             orderRef: order.galaxusOrderId,
             status: "uploaded",
+            payloadJson,
           });
           await createManifest({
             exportType: "edi-out",
@@ -325,8 +397,19 @@ export async function sendOutgoingEdi(options: {
             await prisma.galaxusOrder.update({
               where: { id: order.id },
               data: (ordrMode
-                ? { ordrSentAt: new Date(), ordrMode }
-                : { ordrSentAt: new Date() }) as unknown as Record<string, unknown>,
+                ? {
+                    ordrSentAt: new Date(),
+                    ordrMode,
+                    ordrStatus: "SENT",
+                    ordrLastAttemptAt: new Date(),
+                    ordrLastError: null,
+                  }
+                : {
+                    ordrSentAt: new Date(),
+                    ordrStatus: "SENT",
+                    ordrLastAttemptAt: new Date(),
+                    ordrLastError: null,
+                  }) as unknown as Record<string, unknown>,
             });
           }
         } catch (error: any) {
@@ -344,6 +427,7 @@ export async function buildOutgoingEdiXml(options: {
   type: Exclude<EdiDocType, "DELR" | "ORDP" | "CANP">;
   force?: boolean;
   lineIds?: string[];
+  deliveryCharge?: number | null;
 }): Promise<{ filename: string; content: string }> {
   const order =
     (await prisma.galaxusOrder.findUnique({
@@ -371,8 +455,111 @@ export async function buildOutgoingEdiXml(options: {
   if (options.type === "INVO" && invoiceLines.length === 0) {
     throw new Error("No invoice lines selected");
   }
-  const edi = await buildOutgoingXml(options.type, order, options.type === "INVO" ? invoiceLines : order.lines);
+  if (options.type === "INVO") {
+    const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+    assertOutgoingInvoiceAllowed(order.lines, invoiceLines, invoicedSoFar);
+  }
+  const edi = await buildOutgoingXml(
+    options.type,
+    order,
+    options.type === "INVO" ? invoiceLines : order.lines,
+    { deliveryCharge: options.deliveryCharge }
+  );
   return { filename: edi.filename, content: edi.content };
+}
+
+async function loadOrderForCustomInvoice(baseOrderId: string) {
+  const order =
+    (await prisma.galaxusOrder.findUnique({
+      where: { id: baseOrderId },
+      include: { shipments: true, lines: true },
+    })) ??
+    (await prisma.galaxusOrder.findUnique({
+      where: { galaxusOrderId: baseOrderId },
+      include: { shipments: true, lines: true },
+    }));
+  if (!order) {
+    throw new Error(`Order not found: ${baseOrderId}`);
+  }
+  const deliveryType = String((order as any)?.deliveryType ?? "").toLowerCase();
+  if (deliveryType === "direct_delivery") {
+    throw new Error("Custom invoices are only allowed for warehouse delivery orders.");
+  }
+  return order;
+}
+
+/** Build XML only (no SFTP). Use to preview / download before send. */
+export async function buildCustomInvoicePreview(options: {
+  baseOrderId: string;
+  lines: CustomInvoiceLineInput[];
+  deliveryCharge?: number | null;
+}): Promise<{ filename: string; content: string }> {
+  const order = await loadOrderForCustomInvoice(options.baseOrderId);
+  if (!Array.isArray(options.lines) || options.lines.length === 0) {
+    throw new Error("At least one invoice line is required.");
+  }
+  const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+  assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
+  const edi = buildCustomInvoice(order, options.lines, {
+    supplierId: GALAXUS_SUPPLIER_ID,
+    deliveryCharge: options.deliveryCharge,
+  });
+  return { filename: edi.filename, content: edi.content };
+}
+
+export async function sendCustomInvoice(options: {
+  baseOrderId: string;
+  lines: CustomInvoiceLineInput[];
+  deliveryCharge?: number | null;
+  force?: boolean;
+}): Promise<{ filename: string; status: "uploaded" | "error"; message?: string }> {
+  assertSftpConfig();
+  const order = await loadOrderForCustomInvoice(options.baseOrderId);
+  if (!Array.isArray(options.lines) || options.lines.length === 0) {
+    throw new Error("At least one invoice line is required.");
+  }
+  const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+  assertCustomInvoiceAllowed(order.lines, options.lines, invoicedSoFar);
+
+  const edi = buildCustomInvoice(order, options.lines, {
+    supplierId: GALAXUS_SUPPLIER_ID,
+    deliveryCharge: options.deliveryCharge,
+  });
+
+  await withSftp(
+    {
+      host: GALAXUS_SFTP_HOST,
+      port: GALAXUS_SFTP_PORT,
+      username: GALAXUS_SFTP_USER,
+      password: GALAXUS_SFTP_PASSWORD,
+    },
+    async (client) => {
+      await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
+    }
+  );
+  const checksum = createHash("sha256").update(edi.content).digest("hex");
+  const payloadJson = {
+    rawXml: clampXml(edi.content),
+    items: buildInvoicePayloadItems(options.lines, order.galaxusOrderId),
+    deliveryCharge: options.deliveryCharge ?? null,
+    orderRefs: Array.from(
+      new Set(
+        options.lines
+          .map((line) => String(line?.orderReferenceId ?? "").trim())
+          .filter((value) => value.length > 0)
+      )
+    ),
+  };
+  await upsertEdiFile({
+    filename: edi.filename,
+    direction: "OUT",
+    docType: "INVO",
+    orderId: order.id,
+    orderRef: order.galaxusOrderId,
+    status: "uploaded",
+    payloadJson,
+  });
+  return { filename: edi.filename, status: "uploaded" };
 }
 
 export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[]> {
@@ -454,7 +641,12 @@ function deriveOrderResponseStatus(lines: Array<{ responseStatus?: OrderResponse
   return "REJECTED";
 }
 
-async function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
+async function buildOutgoingXml(
+  docType: EdiDocType,
+  order: any,
+  lines: any[],
+  options: { deliveryCharge?: number | null } = {}
+) {
   if (docType === "ORDR") {
     const linesWithStatus = await attachOrderResponseStatus(lines);
     const status = deriveOrderResponseStatus(linesWithStatus);
@@ -478,6 +670,7 @@ async function buildOutgoingXml(docType: EdiDocType, order: any, lines: any[]) {
   if (docType === "INVO") {
     return buildInvoice(order, lines, {
       supplierId: GALAXUS_SUPPLIER_ID,
+      deliveryCharge: options.deliveryCharge,
     });
   }
   throw new Error(`Unsupported doc type: ${docType}`);
@@ -643,7 +836,7 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
     recipientCountry: delivery?.country ?? undefined,
     recipientCountryCode: delivery?.countryCode ?? undefined,
     recipientEmail: delivery?.email ?? undefined,
-    recipientPhone: delivery?.phone ?? undefined,
+    recipientPhone: deliveryType === "direct_delivery" ? undefined : delivery?.phone ?? undefined,
     referencePerson: findValue(data, "REFERENCE_PERSON") ?? undefined,
     yourReference: findValue(data, "YOUR_REFERENCE") ?? undefined,
     afterSalesHandling: Boolean(findValue(data, "AFTER_SALES_HANDLING") ?? false),
@@ -847,10 +1040,18 @@ function extractPartyIds(raw: any) {
   return result;
 }
 
-function findAllByPath(data: any, path: string[]): any[] {
-  const node = getNestedNode(data, path);
+function collectNodesByPath(node: any, path: string[], index: number): any[] {
   if (!node) return [];
-  return Array.isArray(node) ? node : [node];
+  if (index >= path.length) return [node];
+  if (Array.isArray(node)) {
+    return node.flatMap((entry) => collectNodesByPath(entry, path, index));
+  }
+  if (typeof node !== "object") return [];
+  return collectNodesByPath(node[path[index]], path, index + 1);
+}
+
+function findAllByPath(data: any, path: string[]): any[] {
+  return collectNodesByPath(data, path, 0).flat();
 }
 
 function getNestedValue(data: any, path: string[]): string | null {

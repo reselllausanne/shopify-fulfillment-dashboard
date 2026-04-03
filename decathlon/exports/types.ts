@@ -12,7 +12,10 @@ export type DecathlonExclusionReason =
   | "MISSING_PRODUCT_FIELDS"
   | "MISSING_OFFER_FIELDS"
   | "MISSING_PRICE"
-  | "MISSING_STOCK";
+  | "MISSING_STOCK"
+  | "MISSING_REQUIRED_ATTRIBUTE"
+  | "PRODUCT_ALREADY_LIVE"
+  | "PRODUCT_NOT_LIVE";
 
 export type DecathlonExclusion = {
   reason: DecathlonExclusionReason;

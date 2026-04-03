@@ -15,6 +15,7 @@ export async function POST(request: Request) {
     if (all) {
       const batchSize = 1000;
       let currentOffset = 0;
+      let totalScanned = 0;
       let totalProcessed = 0;
       let totalCreated = 0;
       let totalUpdated = 0;
@@ -26,24 +27,27 @@ export async function POST(request: Request) {
           runPartnerSync({ limit: batchSize, offset: currentOffset })
         );
         const payload = result.result ?? {
+          scanned: 0,
           processed: 0,
           created: 0,
           updated: 0,
           skippedInvalid: 0,
           removedZeroStock: 0,
         };
+        totalScanned += payload.scanned ?? 0;
         totalProcessed += payload.processed ?? 0;
         totalCreated += payload.created ?? 0;
         totalUpdated += payload.updated ?? 0;
         totalSkipped += payload.skippedInvalid ?? 0;
         totalRemovedZeroStock += payload.removedZeroStock ?? 0;
-        lastBatch = payload.processed ?? 0;
+        lastBatch = payload.scanned ?? 0;
         currentOffset += batchSize;
       } while (lastBatch === batchSize);
 
       return NextResponse.json({
         ok: true,
         mode: "all",
+        scanned: totalScanned,
         processed: totalProcessed,
         created: totalCreated,
         updated: totalUpdated,

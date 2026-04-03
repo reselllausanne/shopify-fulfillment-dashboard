@@ -34,6 +34,8 @@ export type OrderLine = {
   vatRate: number;
   unitNetPrice: number;
   lineNetAmount: number;
+  /** Per unit; when set, VAT column uses this × qty (Galaxus lines often store this while vatRate is 0). */
+  taxAmountPerUnit?: number | null;
 };
 
 export type VatSummaryLine = {
@@ -47,6 +49,8 @@ export type InvoiceData = {
   invoiceNumber: string;
   orderNumber?: string | null;
   orderDate: Date;
+  /** Date printed as “Invoice date” (generation time). */
+  invoiceDate: Date;
   deliveryDate?: Date | null;
   currency: string;
   buyer: Address;

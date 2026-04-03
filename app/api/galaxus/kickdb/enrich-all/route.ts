@@ -29,7 +29,10 @@ async function releaseLock() {
   await prisma.$queryRaw(Prisma.sql`SELECT pg_advisory_unlock(${ENRICH_LOCK_KEY})`);
 }
 
-async function countRemaining() {
+async function countRemaining(supplierVariantIdPrefix?: string | null) {
+  const prefixFilter = supplierVariantIdPrefix
+    ? Prisma.sql`AND sv."supplierVariantId" ILIKE ${`${supplierVariantIdPrefix}%`}`
+    : Prisma.sql``;
   const res = await prisma.$queryRaw<Array<{ count: number }>>(Prisma.sql`
     SELECT COUNT(*)::int AS "count"
     FROM "public"."SupplierVariant" sv
@@ -38,11 +41,15 @@ async function countRemaining() {
     WHERE vm."supplierVariantId" IS NULL
        OR vm."gtin" IS NULL
        OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN')
+    ${prefixFilter}
   `);
   return res?.[0]?.count ?? 0;
 }
 
-async function fetchNextBatch(batchSize: number) {
+async function fetchNextBatch(batchSize: number, supplierVariantIdPrefix?: string | null) {
+  const prefixFilter = supplierVariantIdPrefix
+    ? Prisma.sql`AND sv."supplierVariantId" ILIKE ${`${supplierVariantIdPrefix}%`}`
+    : Prisma.sql``;
   const res = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>(Prisma.sql`
     SELECT sv."supplierVariantId"
     FROM "public"."SupplierVariant" sv
@@ -51,6 +58,7 @@ async function fetchNextBatch(batchSize: number) {
     WHERE vm."supplierVariantId" IS NULL
        OR vm."gtin" IS NULL
        OR vm."status" IN ('PENDING_GTIN','AMBIGUOUS_GTIN')
+    ${prefixFilter}
     ORDER BY COALESCE(vm."updatedAt", sv."updatedAt") ASC
     LIMIT ${batchSize}
   `);
@@ -79,7 +87,11 @@ async function updateJob(
   });
 }
 
-async function runEnrichAll(jobId: string, forceMissing: boolean) {
+async function runEnrichAll(
+  jobId: string,
+  forceMissing: boolean,
+  supplierVariantIdPrefix?: string | null
+) {
   // Larger batches and moderate parallelism reduce total wall time
   // while staying below aggressive external API pressure.
   const batchSize = 500;
@@ -97,7 +109,7 @@ async function runEnrichAll(jobId: string, forceMissing: boolean) {
   try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const batch = await fetchNextBatch(batchSize);
+      const batch = await fetchNextBatch(batchSize, supplierVariantIdPrefix);
       if (batch.length === 0) break;
 
       const batchStatuses = await Promise.all(
@@ -138,14 +150,14 @@ async function runEnrichAll(jobId: string, forceMissing: boolean) {
 
       batchIndex += 1;
       if (batchIndex % 2 === 0) {
-        const remaining = await countRemaining();
+        const remaining = await countRemaining(supplierVariantIdPrefix);
         await updateJob(jobId, { processed, remaining, errors, lastError, running: true, lastResults });
       } else {
         await updateJob(jobId, { processed, remaining: null, errors, lastError, running: true, lastResults });
       }
     }
   } finally {
-    const remaining = await countRemaining();
+    const remaining = await countRemaining(supplierVariantIdPrefix);
     await updateJob(jobId, { processed, remaining, errors, lastError, running: false, lastResults });
     await releaseLock();
   }
@@ -177,8 +189,9 @@ export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const forceMissing = ["1", "true", "yes"].includes((searchParams.get("forceMissing") ?? "").toLowerCase());
+    const supplierVariantIdPrefix = searchParams.get("supplierVariantIdPrefix")?.trim() || null;
     const startedAt = new Date();
-    const remaining = await countRemaining();
+    const remaining = await countRemaining(supplierVariantIdPrefix);
     const job = await (prisma as any).galaxusJobRun.create({
       data: {
         jobName: "kickdb-enrich-all",
@@ -192,15 +205,23 @@ export async function POST(request: Request) {
           lastError: null,
           running: true,
           forceMissing,
+          supplierVariantIdPrefix,
         },
       },
     });
 
     setTimeout(() => {
-      void runEnrichAll(job.id, forceMissing);
+      void runEnrichAll(job.id, forceMissing, supplierVariantIdPrefix);
     }, 0);
 
-    return NextResponse.json({ ok: true, running: true, jobId: job.id, remaining, forceMissing });
+    return NextResponse.json({
+      ok: true,
+      running: true,
+      jobId: job.id,
+      remaining,
+      forceMissing,
+      supplierVariantIdPrefix,
+    });
   } catch (error: any) {
     await releaseLock();
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

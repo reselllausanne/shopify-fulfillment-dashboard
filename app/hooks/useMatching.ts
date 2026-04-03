@@ -37,10 +37,6 @@ const GET_BUY_ORDER_TRACKING_QUERY = `
   query GET_BUY_ORDER(
     $chainId: String
     $orderId: String
-    $country: String
-    $market: String
-    $isShipByDateEnabled: Boolean!
-    $isDFSUpdatesEnabled: Boolean!
   ) {
     viewer {
       order(chainId: $chainId, orderId: $orderId) {
@@ -376,20 +372,16 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
               variables: {
                 chainId,
                 orderId,
-                country: "CH",
-                market: "CH",
-                isShipByDateEnabled: true,
-                isDFSUpdatesEnabled: true,
               },
             });
-
-            if (!detailRes.ok || detailRes.data?.errors?.length) {
+            const buyOrder = detailRes.data?.data?.viewer?.order;
+            // StockX can return partial GraphQL errors while still providing a valid order payload.
+            // Accept partial responses when viewer.order exists so tracking/AWB backfill can proceed.
+            if (!detailRes.ok && !buyOrder) {
               apiErrors += 1;
               skipped += 1;
               continue;
             }
-
-            const buyOrder = detailRes.data?.data?.viewer?.order;
             if (!buyOrder) {
               skipped += 1;
               continue;

@@ -90,9 +90,11 @@ export default function Home() {
     count: number;
     goatCount: number;
     criticalCount: number;
+    warningCount: number;
     items: any[];
     goatItems: any[];
     criticalItems: any[];
+    warningItems: any[];
   } | null>(null);
   const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
   const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
@@ -129,9 +131,11 @@ export default function Home() {
           count: data.count || 0,
           goatCount: data.goatCount || 0,
           criticalCount: data.criticalCount || 0,
+          warningCount: data.warningCount || 0,
           items: data.items || [],
           goatItems: data.goatItems || [],
           criticalItems: data.criticalItems || [],
+          warningItems: data.warningItems || [],
         });
       } else {
         setTrackingAlertError(data?.error || "Failed to load tracking alerts");
@@ -342,14 +346,67 @@ export default function Home() {
   const handleGoatLogin = async () => {
     setGoatDebugLoading(true);
     try {
+      const basePayload = {
+        headless: false,
+        includeRaw: false,
+        browser: "chromium",
+        persistent: true,
+      };
       const res = await fetch("/api/goat/playwright", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ headless: false, includeRaw: false }),
+        body: JSON.stringify(basePayload),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {
-        alert(`❌ GOAT login failed: ${json?.error || `HTTP ${res.status}`}`);
+        const message = String(json?.error || `HTTP ${res.status}`);
+        // Retry once with a fresh session (clears stale cookies that can block login)
+        if (/login required|no goat orders detected/i.test(message)) {
+          const retryRes = await fetch("/api/goat/playwright", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...basePayload, forceLogin: true }),
+          });
+          const retryJson = await retryRes.json().catch(() => ({}));
+          if (!retryRes.ok || retryJson?.ok === false) {
+            alert(`❌ GOAT login failed: ${retryJson?.error || `HTTP ${retryRes.status}`}`);
+            return;
+          }
+          alert(`✅ GOAT session ready. Orders: ${retryJson?.count || 0}. Added to results table.`);
+          const goatOrdersRaw = Array.isArray(retryJson?.orders) ? retryJson.orders : [];
+          const goatRows = goatOrdersRaw.map((o: any) => ({
+            ...o,
+            provider: "GOAT",
+            productTitleB: o.productTitle || o.displayName || null,
+            brandB: null,
+            sizeB: o.size || null,
+            thumbUrlB: o.thumbUrl || null,
+            imageUrlB: o.thumbUrl || null,
+            statusB: o.statusTitle || o.statusKey || null,
+            statusKeyB: o.statusKey || null,
+            estimatedDeliveryB: o.estimatedDeliveryDate || null,
+            latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+            styleId: o.skuKey || o.styleId || null,
+          }));
+          if (goatRows.length > 0) {
+            const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
+            const combinedRows = [...existingRows, ...goatRows];
+            const seen = new Set<string>();
+            const dedupedRows = combinedRows.filter((row: any) => {
+              const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            setOrders(dedupedRows as OrderNode[]);
+            setEnrichedOrders(dedupedRows);
+          }
+          setLastStatus(retryRes.status);
+          setLastErrors([]);
+          setPageInfo(null);
+          return;
+        }
+        alert(`❌ GOAT login failed: ${message}`);
         return;
       }
       const goatOrdersRaw = Array.isArray(json?.orders) ? json.orders : [];
@@ -465,7 +522,12 @@ export default function Home() {
       const res = await fetch("/api/stockx/playwright", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ headless: false, forceLogin: false }),
+        body: JSON.stringify({
+          headless: false,
+          forceLogin: false,
+          browser: "chromium",
+          persistent: true,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {
@@ -875,11 +937,40 @@ export default function Home() {
               </div>
             )}
 
+            {(trackingAlert?.warningCount || 0) > 0 && (
+              <div className="border rounded-lg p-4 bg-yellow-50 border-yellow-200">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold text-yellow-800">
+                    ⚠️ Orders missing tracking more than 9 days old (warning):{" "}
+                    {trackingAlert?.warningCount || 0}
+                  </div>
+                  <button
+                    onClick={loadTrackingAlert}
+                    disabled={trackingAlertLoading}
+                    className="text-xs px-2 py-1 bg-yellow-200 text-yellow-900 rounded hover:bg-yellow-300 disabled:opacity-60"
+                  >
+                    {trackingAlertLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+                <div className="mt-2 space-y-1 text-xs text-yellow-900">
+                  {trackingAlert?.warningItems?.map((item: any) => (
+                    <div key={item.id} className="flex flex-wrap gap-2">
+                      <span className="font-semibold">{item.shopifyOrderName}</span>
+                      <span>Ref: {item.stockxOrderNumber}</span>
+                      <span>Age: {item.ageDays ?? "—"}d</span>
+                      <span>ETA: {formatDate(item.deliveryDate)}</span>
+                      <span className="font-semibold">WARNING (&gt;9d)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {(trackingAlert?.criticalCount || 0) > 0 && (
               <div className="border rounded-lg p-4 bg-red-50 border-red-200">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-red-800">
-                    ⚠️ Orders missing tracking near/past delivery or older than 14 days:{" "}
+                    ⚠️ Orders missing tracking near/past delivery or older than 9 days:{" "}
                     {trackingAlert?.criticalCount || 0}
                   </div>
                   <button

@@ -148,6 +148,62 @@ model OrderMatch {
   @@schema("public")
 }
 
+model GalaxusStockxMatch {
+  id                 String   @id @default(uuid())
+
+  galaxusOrderId     String
+  galaxusOrderRef    String?
+  galaxusOrderDate   DateTime?
+  galaxusOrderLineId String   @unique
+  galaxusLineNumber  Int?
+  galaxusProductName String
+  galaxusDescription String?
+  galaxusSize        String?
+  galaxusGtin        String?
+  galaxusProviderKey String?
+  galaxusSupplierSku String?
+  galaxusQuantity    Int
+  galaxusUnitNetPrice Decimal @db.Decimal(10, 2)
+  galaxusLineNetAmount Decimal @db.Decimal(10, 2)
+  galaxusVatRate     Decimal @db.Decimal(5, 2)
+  galaxusCurrencyCode String   @default("CHF")
+
+  stockxChainId      String?
+  stockxOrderId      String?
+  stockxOrderNumber  String
+  stockxVariantId    String?
+  stockxProductName  String?
+  stockxSkuKey       String?
+  stockxSizeEU       String?
+  stockxPurchaseDate DateTime?
+  stockxAmount       Decimal? @db.Decimal(10, 2)
+  stockxCurrencyCode String?
+  stockxStatus       String?
+  stockxEstimatedDelivery DateTime?
+  stockxLatestEstimatedDelivery DateTime?
+  stockxAwb          String?
+  stockxTrackingUrl  String?
+  stockxCheckoutType String?
+  stockxStates       Json?
+
+  matchConfidence    String?
+  matchScore         Decimal? @db.Decimal(5, 2)
+  matchType          String?
+  matchReasons       String?
+  timeDiffHours      Decimal? @db.Decimal(10, 2)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  order              GalaxusOrder     @relation(fields: [galaxusOrderId], references: [id], onDelete: Cascade)
+  orderLine          GalaxusOrderLine @relation(fields: [galaxusOrderLineId], references: [id], onDelete: Cascade)
+
+  @@index([galaxusOrderId])
+  @@index([stockxOrderNumber])
+  @@index([stockxVariantId])
+  @@schema("public")
+}
+
 model StockXStatusEvent {
   id             String   @id @default(uuid())
   orderMatchId   String
@@ -698,6 +754,7 @@ model GalaxusOrder {
   statusEvents        OrderStatusEvent[]
   ediFiles            GalaxusEdiFile[]
   routingIssues       OrderRoutingIssue[]
+  stockxMatches       GalaxusStockxMatch[]
 
   @@index([orderDate])
   @@index([archivedAt])
@@ -750,12 +807,173 @@ model GalaxusOrderLine {
   arrivalDateStart DateTime?
   arrivalDateEnd   DateTime?
   currencyCode    String   @default("CHF")
+  /// Operator marked this line shipped in warehouse UI (independent of Galaxus DELR).
+  warehouseMarkedShippedAt DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   order           GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockxMatches   GalaxusStockxMatch[]
 
   @@index([orderId])
+  @@schema("public")
+}
+
+model DecathlonOrder {
+  id                  String   @id @default(uuid())
+  orderId             String   @unique
+  orderNumber         String?
+  orderDate           DateTime
+  orderState          String?
+  currencyCode        String   @default("CHF")
+  totalPrice          Decimal? @db.Decimal(10, 2)
+  shippingPrice       Decimal? @db.Decimal(10, 2)
+  customerName        String?
+  customerEmail       String?
+  customerPhone       String?
+  customerAddress1    String?
+  customerAddress2    String?
+  customerPostalCode  String?
+  customerCity        String?
+  customerCountry     String?
+  customerCountryCode String?
+  recipientName       String?
+  recipientEmail      String?
+  recipientPhone      String?
+  recipientAddress1   String?
+  recipientAddress2   String?
+  recipientPostalCode String?
+  recipientCity       String?
+  recipientCountry    String?
+  recipientCountryCode String?
+  rawJson             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  lines               DecathlonOrderLine[]
+  documents           DecathlonOrderDocument[]
+  shipments           DecathlonShipment[]
+  stockxMatches       DecathlonStockxMatch[]
+
+  @@index([orderDate])
+  @@index([orderState])
+  @@schema("public")
+}
+
+model DecathlonOrderLine {
+  id              String   @id @default(uuid())
+  orderId         String
+  orderLineId     String   @unique
+  lineNumber      Int?
+  offerSku        String?
+  productSku      String?
+  productTitle    String?
+  description     String?
+  size            String?
+  gtin            String?
+  providerKey     String?
+  supplierSku     String?
+  quantity        Int
+  unitPrice       Decimal? @db.Decimal(10, 2)
+  lineTotal       Decimal? @db.Decimal(10, 2)
+  currencyCode    String?  @default("CHF")
+  rawJson         Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  order           DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockxMatch     DecathlonStockxMatch?
+
+  @@index([orderId])
+  @@index([offerSku])
+  @@schema("public")
+}
+
+model DecathlonStockxMatch {
+  id                 String   @id @default(uuid())
+  decathlonOrderId   String
+  decathlonOrderLineId String  @unique
+  decathlonOrderDate DateTime?
+  decathlonLineNumber Int?
+  decathlonProductName String?
+  decathlonDescription String?
+  decathlonSize       String?
+  decathlonGtin       String?
+  decathlonProviderKey String?
+  decathlonSupplierSku String?
+  decathlonQuantity   Int
+  decathlonUnitNetPrice Decimal? @db.Decimal(10, 2)
+  decathlonLineNetAmount Decimal? @db.Decimal(10, 2)
+  decathlonVatRate    Decimal? @db.Decimal(5, 2)
+  decathlonCurrencyCode String? @default("CHF")
+  stockxChainId      String?
+  stockxOrderId      String?
+  stockxOrderNumber  String
+  stockxVariantId    String?
+  stockxProductName  String?
+  stockxSkuKey       String?
+  stockxSizeEU       String?
+  stockxPurchaseDate DateTime?
+  stockxAmount       Decimal? @db.Decimal(10, 2)
+  stockxCurrencyCode String?
+  stockxStatus       String?
+  stockxEstimatedDelivery DateTime?
+  stockxLatestEstimatedDelivery DateTime?
+  stockxAwb          String?
+  stockxTrackingUrl  String?
+  stockxCheckoutType String?
+  stockxStates       Json?
+  matchConfidence    String?
+  matchScore         Decimal? @db.Decimal(5, 2)
+  matchType          String?
+  matchReasons       String?
+  timeDiffHours      Decimal? @db.Decimal(10, 2)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  order              DecathlonOrder     @relation(fields: [decathlonOrderId], references: [id], onDelete: Cascade)
+  line               DecathlonOrderLine @relation(fields: [decathlonOrderLineId], references: [id], onDelete: Cascade)
+
+  @@index([decathlonOrderId])
+  @@index([stockxOrderNumber])
+  @@index([stockxVariantId])
+  @@schema("public")
+}
+
+model DecathlonShipment {
+  id             String   @id @default(uuid())
+  orderId        String
+  carrierRaw     String?
+  carrierFinal   String?
+  trackingNumber String?
+  shippedAt      DateTime?
+  labelGeneratedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order          DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  documents      DecathlonOrderDocument[]
+
+  @@index([orderId])
+  @@schema("public")
+}
+
+model DecathlonOrderDocument {
+  id               String   @id @default(uuid())
+  orderId          String?
+  shipmentId       String?
+  type             DocumentType
+  version          Int      @default(1)
+  storageUrl       String
+  checksum         String?
+  miraklDocumentId String?
+  createdAt        DateTime @default(now())
+
+  order            DecathlonOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment         DecathlonShipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([shipmentId])
   @@schema("public")
 }
 
@@ -1042,5 +1260,80 @@ model DecathlonExportFile {
   @@index([runId])
   @@index([fileType])
   @@index([runId, fileType])
+  @@schema("public")
+}
+
+enum DecathlonImportFlow {
+  OF01
+  STO01
+  PRI01
+  P41
+
+  @@schema("public")
+}
+
+enum DecathlonImportMode {
+  NORMAL
+  REPLACE
+  TEST
+
+  @@schema("public")
+}
+
+enum DecathlonImportStatus {
+  CREATED
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+
+  @@schema("public")
+}
+
+model DecathlonOfferSync {
+  id                String   @id @default(uuid())
+  providerKey       String   @unique
+  supplierVariantId String?
+  gtin              String?
+  productStatus     String?
+  productStatusCheckedAt DateTime?
+  lastProductSyncAt DateTime?
+  lastStock         Int?
+  lastPrice         Decimal? @db.Decimal(10, 2)
+  lastStockSyncedAt DateTime?
+  lastPriceSyncedAt DateTime?
+  offerCreatedAt    DateTime?
+  lastOfferSyncAt   DateTime?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([supplierVariantId])
+  @@schema("public")
+}
+
+model DecathlonImportRun {
+  id               String                @id @default(uuid())
+  runId            String                @unique
+  flow             DecathlonImportFlow
+  mode             DecathlonImportMode
+  status           DecathlonImportStatus @default(CREATED)
+  importId         String?
+  rowsSent         Int                   @default(0)
+  linesInError     Int?
+  startedAt        DateTime              @default(now())
+  finishedAt       DateTime?
+  summaryJson      Json?
+  errorSummaryJson Json?
+  errorStorageUrl  String?
+  errorPublicUrl   String?
+  errorChecksum    String?
+  errorSizeBytes   Int?
+  errorSampleJson  Json?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([flow, startedAt])
+  @@index([importId])
   @@schema("public")
 }

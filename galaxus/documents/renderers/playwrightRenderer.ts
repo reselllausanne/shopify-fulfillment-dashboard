@@ -6,6 +6,10 @@ type RenderOptions = {
   width?: string;
   height?: string;
   showPageNumbers?: boolean;
+  marginTop?: string;
+  marginRight?: string;
+  marginBottom?: string;
+  marginLeft?: string;
 };
 
 export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer> {
@@ -35,10 +39,10 @@ export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer>
       headerTemplate: "<div></div>",
       footerTemplate,
       margin: {
-        top: "14mm",
-        bottom: options.showPageNumbers ? "16mm" : "14mm",
-        left: "12mm",
-        right: "12mm",
+        top: options.marginTop ?? "14mm",
+        bottom: options.marginBottom ?? (options.showPageNumbers ? "16mm" : "14mm"),
+        left: options.marginLeft ?? "12mm",
+        right: options.marginRight ?? "12mm",
       },
     });
 

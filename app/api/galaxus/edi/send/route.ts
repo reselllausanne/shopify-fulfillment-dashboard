@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { buildOutgoingEdiXml, sendOutgoingEdi, sendPendingOutgoingEdi } from "@/galaxus/edi/service";
+import {
+  buildOutgoingEdiXml,
+  sendOutgoingEdi,
+  sendPendingOutgoingEdi,
+  sendCustomInvoice,
+  buildCustomInvoicePreview,
+} from "@/galaxus/edi/service";
 import type { EdiDocType } from "@/galaxus/edi/filenames";
 
 export const runtime = "nodejs";
@@ -15,6 +21,11 @@ export async function GET(request: Request) {
     const orderId = (searchParams.get("orderId") ?? "").trim();
     const type = (searchParams.get("type") ?? "").trim().toUpperCase() as EdiDocType;
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
+    const deliveryChargeRaw = (searchParams.get("deliveryCharge") ?? "").trim();
+    const deliveryCharge =
+      deliveryChargeRaw && Number.isFinite(Number(deliveryChargeRaw))
+        ? Number(deliveryChargeRaw)
+        : undefined;
     const rawLineIds = (searchParams.get("lineIds") ?? "").trim();
     const lineIds = rawLineIds
       ? rawLineIds
@@ -29,7 +40,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid type" }, { status: 400 });
     }
 
-    const edi = await buildOutgoingEdiXml({ orderId, type, force, lineIds });
+    const edi = await buildOutgoingEdiXml({ orderId, type, force, lineIds, deliveryCharge });
     return new NextResponse(edi.content, {
       headers: {
         "Content-Type": "application/xml; charset=utf-8",
@@ -51,10 +62,57 @@ export async function POST(request: Request) {
       const results = await sendPendingOutgoingEdi(limit);
       return NextResponse.json({ ok: true, results });
     }
+    if (mode === "custom-invoice") {
+      const baseOrderId = String(body?.baseOrderId ?? body?.orderId ?? "").trim();
+      if (!baseOrderId) {
+        return NextResponse.json({ ok: false, error: "baseOrderId is required" }, { status: 400 });
+      }
+      const lines = Array.isArray(body?.lines) ? body.lines : [];
+      const deliveryChargeRaw = body?.deliveryCharge;
+      const deliveryCharge =
+        deliveryChargeRaw != null && Number.isFinite(Number(deliveryChargeRaw))
+          ? Number(deliveryChargeRaw)
+          : undefined;
+      const result = await sendCustomInvoice({
+        baseOrderId,
+        lines,
+        deliveryCharge,
+        force: Boolean(body?.force),
+      });
+      return NextResponse.json({ ok: true, result });
+    }
+    if (mode === "custom-invoice-download") {
+      const baseOrderId = String(body?.baseOrderId ?? body?.orderId ?? "").trim();
+      if (!baseOrderId) {
+        return NextResponse.json({ ok: false, error: "baseOrderId is required" }, { status: 400 });
+      }
+      const lines = Array.isArray(body?.lines) ? body.lines : [];
+      const deliveryChargeRaw = body?.deliveryCharge;
+      const deliveryCharge =
+        deliveryChargeRaw != null && Number.isFinite(Number(deliveryChargeRaw))
+          ? Number(deliveryChargeRaw)
+          : undefined;
+      const { filename, content } = await buildCustomInvoicePreview({
+        baseOrderId,
+        lines,
+        deliveryCharge,
+      });
+      return new NextResponse(content, {
+        headers: {
+          "Content-Type": "application/xml; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+        },
+      });
+    }
 
     const orderId = body?.orderId as string | undefined;
     const types = (body?.types as EdiDocType[] | undefined) ?? ["ORDR", "DELR", "INVO"];
     const force = Boolean(body?.force);
+    const deliveryChargeRaw = body?.deliveryCharge;
+    const deliveryCharge =
+      deliveryChargeRaw != null && Number.isFinite(Number(deliveryChargeRaw))
+        ? Number(deliveryChargeRaw)
+        : undefined;
     const lineIdsRaw = Array.isArray(body?.lineIds) ? body.lineIds : undefined;
     const lineIds =
       lineIdsRaw && lineIdsRaw.length > 0
@@ -67,7 +125,7 @@ export async function POST(request: Request) {
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
     }
-    const results = await sendOutgoingEdi({ orderId, types, ordrMode, force, lineIds });
+    const results = await sendOutgoingEdi({ orderId, types, ordrMode, force, lineIds, deliveryCharge });
     return NextResponse.json({ ok: true, results });
   } catch (error: any) {
     console.error("[GALAXUS][EDI][SEND] Failed:", error);

@@ -16,7 +16,11 @@ function renderLine(line: OrderLine): string {
       <td>${descriptionParts.join("")}</td>
       <td class="right nowrap">${line.quantity}</td>
       <td class="right nowrap">${formatVatRate(line.vatRate)}%</td>
-      <td class="right nowrap">${formatNumber((line.lineNetAmount * line.vatRate) / 100)}</td>
+      <td class="right nowrap">${formatNumber(
+        line.taxAmountPerUnit != null && Number.isFinite(line.taxAmountPerUnit)
+          ? line.taxAmountPerUnit * line.quantity
+          : (line.lineNetAmount * line.vatRate) / 100
+      )}</td>
       <td class="right nowrap">${formatNumber(line.unitNetPrice)}</td>
       <td class="right nowrap">${formatNumber(line.lineNetAmount)}</td>
     </tr>
@@ -71,7 +75,7 @@ export function renderInvoiceHtml(data: InvoiceData): string {
           </div>
           <div class="col right">
             <div><strong>Invoice no.:</strong> ${escapeHtml(data.invoiceNumber)}</div>
-            <div><strong>Invoice date:</strong> ${formatDate(data.orderDate)}</div>
+            <div><strong>Invoice date:</strong> ${formatDate(data.invoiceDate)}</div>
             <div><strong>Delivery date:</strong> ${formatDate(data.deliveryDate)}</div>
             <div><strong>Order no. (PO):</strong> ${escapeHtml(data.orderNumber ?? "")}</div>
           </div>

@@ -24,8 +24,9 @@ const buildNextAt = (lastRunAt: Date | null, intervalMs: number) => {
 async function runPartnerSyncAll() {
   const batchSize = 1000;
   let offset = 0;
-  let lastProcessed = 0;
+  let lastScanned = 0;
   let totals = {
+    scanned: 0,
     processed: 0,
     created: 0,
     updated: 0,
@@ -37,8 +38,9 @@ async function runPartnerSyncAll() {
 
   do {
     const res = await runPartnerSync({ limit: batchSize, offset });
-    lastProcessed = res.processed ?? 0;
+    lastScanned = res.scanned ?? 0;
     totals = {
+      scanned: totals.scanned + (res.scanned ?? 0),
       processed: totals.processed + (res.processed ?? 0),
       created: totals.created + (res.created ?? 0),
       updated: totals.updated + (res.updated ?? 0),
@@ -48,7 +50,7 @@ async function runPartnerSyncAll() {
       mappingUpdated: totals.mappingUpdated + (res.mappingUpdated ?? 0),
     };
     offset += batchSize;
-  } while (lastProcessed === batchSize);
+  } while (lastScanned === batchSize);
 
   return totals;
 }
@@ -99,27 +101,34 @@ export async function runOpsTick(origin: string, options?: { force?: boolean; on
       continue;
     }
 
-    const locked = await withAdvisoryLock(`galaxus:ops:${jobKey}`, async () => {
-      const res = await executeJob(jobKey, origin);
-      const nextRunAt = buildNextAt(now, def.intervalMs);
-      await updateJobDefinition(jobKey, {
-        lastRunAt: now,
-        nextRunAt,
-        lastError: res.success ? null : res.error ?? null,
-      });
-      return res;
-    });
+    // Important: do NOT update job definition inside the advisory-lock transaction.
+    // With low `connection_limit` in local dev, the transaction can keep the single
+    // connection busy and cause pool timeouts on the later UPDATE.
+    const locked = await withAdvisoryLock(`galaxus:ops:${jobKey}`, async () => executeJob(jobKey, origin));
 
     if (!locked.locked) {
       results[jobKey] = { due: true, ran: false, skipped: "locked", nextAt: nextAt.toISOString() };
       continue;
     }
 
+    const res = locked.result;
+    const nextRunAt = buildNextAt(now, def.intervalMs);
+    try {
+      await updateJobDefinition(jobKey, {
+        lastRunAt: now,
+        nextRunAt,
+        lastError: res.success ? null : res.error ?? null,
+      });
+    } catch (e) {
+      console.error(`[galaxus][ops][tick] failed to update job definition`, { jobKey, error: e });
+      // Don't fail the whole tick if we can't persist audit data.
+    }
+
     results[jobKey] = {
       due: true,
       ran: true,
-      lastError: locked.result?.success ? null : locked.result?.error ?? null,
-      result: locked.result?.result ?? locked.result,
+      lastError: res?.success ? null : res?.error ?? null,
+      result: res?.result ?? res,
       nextAt: buildNextAt(now, def.intervalMs).toISOString(),
     };
   }

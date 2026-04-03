@@ -14,11 +14,30 @@ import {
   buildSupplierParty,
   calculateTotals,
 } from "./mapper";
+import type { DispatchShipmentItemInput } from "./mapper";
+import type { EdiOrderLine } from "./opentrans/types";
 
 type EdiOutput = {
   docType: EdiDocType;
   filename: string;
   content: string;
+};
+
+export type CustomInvoiceLineInput = {
+  orderReferenceId: string;
+  description: string;
+  quantity: number;
+  unitNetPrice: number;
+  vatRate: number;
+  lineNetAmount?: number | null;
+  taxAmountPerUnit?: number | null;
+  supplierPid?: string | null;
+  buyerPid?: string | null;
+  orderUnit?: string | null;
+  gtin?: string | null;
+  providerKey?: string | null;
+  /** When set, ties the line to a GalaxusOrderLine for duplicate-invoice checks */
+  orderLineId?: string | null;
 };
 
 export function buildOrderResponse(
@@ -89,48 +108,70 @@ function addBusinessDays(date: Date, days: number): Date {
   return result;
 }
 
+function buildDispatchMetaMaps(orders: Array<GalaxusOrder & { lines: GalaxusOrderLine[] }>) {
+  const metaByKey: Record<string, { description: string; lineNumber: number }> = {};
+  const metaBySupplierPid: Record<string, { description: string; lineNumber: number }> = {};
+  for (const ord of orders) {
+    const oid = String(ord.galaxusOrderId ?? "").trim();
+    for (const line of ord.lines ?? []) {
+      const supplierPid =
+        ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ??
+        (line as any).providerKey ??
+        null;
+      const sp = String(supplierPid ?? "").trim();
+      const gtin = String((line as any).gtin ?? "").trim();
+      if (oid && sp && gtin) {
+        metaByKey[`${oid}|${sp}|${gtin}`] = {
+          description: line.productName,
+          lineNumber: line.lineNumber,
+        };
+      }
+      if (sp && !metaBySupplierPid[sp]) {
+        metaBySupplierPid[sp] = {
+          description: line.productName,
+          lineNumber: line.lineNumber,
+        };
+      }
+    }
+  }
+  return { metaByKey, metaBySupplierPid };
+}
+
 export function buildDispatchNotification(
   order: GalaxusOrder,
-  lines: GalaxusOrderLine[],
+  /** All orders that contribute lines to this dispatch (same delivery party expected). Each must include `lines`. */
+  ordersForMeta: Array<GalaxusOrder & { lines: GalaxusOrderLine[] }>,
   shipment: Shipment & {
     packageId?: string | null;
     dispatchNotificationId?: string | null;
     carrierFinal?: string | null;
+    carrierRaw?: string | null;
+    trackingNumber?: string | null;
   },
-  items: Array<{
-    supplierPid: string;
-    gtin14: string;
-    buyerPid?: string | null;
-    quantity: number;
-  }>,
+  items: DispatchShipmentItemInput[],
   options: {
     supplierId: string;
     arrivalByGtin?: Record<string, { start: Date; end: Date }>;
   }
 ): EdiOutput {
-  const metaBySupplierPid = new Map<string, { description: string; lineNumber: number }>();
-  for (const line of lines) {
-    const supplierPid =
-      ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ??
-      line.providerKey ??
-      null;
-    if (supplierPid) {
-      metaBySupplierPid.set(supplierPid, {
-        description: line.productName,
-        lineNumber: line.lineNumber,
-      });
-    }
-  }
+  const { metaByKey, metaBySupplierPid } = buildDispatchMetaMaps(ordersForMeta);
 
   const packageId = shipment.packageId ?? "";
+  const isDirect =
+    String(order.deliveryType ?? "").toLowerCase() === "direct_delivery" ||
+    String((shipment as any)?.deliveryType ?? "").toLowerCase() === "direct_delivery";
   const ediLines = buildDispatchLines(
     items,
     order.galaxusOrderId,
     packageId,
-    Object.fromEntries(metaBySupplierPid),
-    options.arrivalByGtin ?? {}
+    metaByKey,
+    metaBySupplierPid,
+    options.arrivalByGtin ?? {},
+    { includeLogisticsDetails: !isDirect }
   );
   const dispatchNotificationId = shipment.dispatchNotificationId ?? buildDocNumber("GDELR");
+  const shipmentId = shipment.trackingNumber ?? null;
+  const shipmentCarrier = shipment.carrierFinal ?? shipment.carrierRaw ?? null;
   const xml = buildDispatchXml({
     docId: dispatchNotificationId,
     orderId: order.galaxusOrderId,
@@ -143,8 +184,8 @@ export function buildDispatchNotification(
     buyer: buildBuyerParty(order),
     supplier: buildSupplierParty(),
     lines: ediLines,
-    shipmentId: shipment.shipmentId,
-    shipmentCarrier: null,
+    shipmentId,
+    shipmentCarrier,
     deliveryParty: buildDeliveryParty(order),
   });
 
@@ -229,11 +270,20 @@ export function buildCancelResponse(
 export function buildInvoice(
   order: GalaxusOrder,
   lines: GalaxusOrderLine[],
-  options: { supplierId: string; invoiceNoPartner?: string | null }
+  options: { supplierId: string; invoiceNoPartner?: string | null; deliveryCharge?: number | null }
 ): EdiOutput {
   const docId = buildDocNumber("GINVO");
   const ediLines = buildEdiLines(lines);
-  const { totals, vatSummary } = calculateTotals(ediLines);
+  const { totals: goodsTotals, vatSummary } = calculateTotals(ediLines);
+  const explicitDeliveryCharge =
+    typeof options.deliveryCharge === "number" && Number.isFinite(options.deliveryCharge)
+      ? Math.max(0, options.deliveryCharge)
+      : null;
+  const isDirectDelivery = String((order as { deliveryType?: string | null }).deliveryType ?? "")
+    .toLowerCase()
+    .trim() === "direct_delivery";
+  const deliveryCharge = explicitDeliveryCharge ?? (isDirectDelivery ? 6 : null);
+  const totals = buildInvoiceTotals(goodsTotals, vatSummary, deliveryCharge);
   const orderAny = order as unknown as {
     supplierOrderId?: string | null;
     deliveryDate?: Date | null;
@@ -261,6 +311,112 @@ export function buildInvoice(
     buyer: buildBuyerParty(order),
     supplier: buildSupplierParty(),
     deliveryParty: buildDeliveryParty(order),
+    deliveryCharge,
+    lines: ediLines,
+    totals,
+    vatSummary,
+  });
+
+  return {
+    docType: "INVO",
+    filename: buildEdiFilename({
+      docType: "INVO",
+      supplierId: options.supplierId,
+      orderId: order.galaxusOrderId,
+      docNo: docId,
+    }),
+    content: xml,
+  };
+}
+
+function buildInvoiceTotals(
+  goodsTotals: { net: number; vat: number; gross: number },
+  vatSummary: { vatRate: number }[],
+  deliveryCharge: number | null
+) {
+  const topRate = vatSummary[0]?.vatRate ?? 0;
+  const deliveryVatRate = Number.isFinite(topRate) ? topRate : 0;
+  const charge = deliveryCharge && deliveryCharge > 0 ? deliveryCharge : 0;
+  const deliveryVat = charge > 0 ? (charge * deliveryVatRate) / 100 : 0;
+  const deliveryGross = charge + deliveryVat;
+  return {
+    net: goodsTotals.net,
+    vat: goodsTotals.vat + deliveryVat,
+    gross: goodsTotals.net + goodsTotals.vat + deliveryGross,
+  };
+}
+
+function toNumber(value: unknown, fallback = 0) {
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+export function buildCustomInvoice(
+  order: GalaxusOrder,
+  lines: CustomInvoiceLineInput[],
+  options: { supplierId: string; invoiceNoPartner?: string | null; deliveryCharge?: number | null }
+): EdiOutput {
+  const docId = buildDocNumber("GINVO");
+  const ediLines: EdiOrderLine[] = lines.map((line, index) => {
+    const quantity = toNumber(line.quantity, 0);
+    const unitNetPrice = toNumber(line.unitNetPrice, 0);
+    const explicitLineNet = line.lineNetAmount != null ? toNumber(line.lineNetAmount, NaN) : NaN;
+    const lineNetAmount = Number.isFinite(explicitLineNet)
+      ? explicitLineNet
+      : Number((unitNetPrice * quantity).toFixed(2));
+    return {
+      lineNumber: index + 1,
+      description: line.description?.trim() || "Item",
+      quantity,
+      unitNetPrice,
+      lineNetAmount,
+      vatRate: toNumber(line.vatRate, 0),
+      taxAmountPerUnit:
+        line.taxAmountPerUnit != null ? toNumber(line.taxAmountPerUnit, 0) : null,
+      supplierPid: line.supplierPid ?? null,
+      buyerPid: line.buyerPid ?? null,
+      orderUnit: line.orderUnit ?? null,
+      providerKey: line.providerKey ?? null,
+      gtin: line.gtin ?? null,
+      orderReferenceId: line.orderReferenceId?.trim() || order.galaxusOrderId,
+    };
+  });
+
+  const { totals: goodsTotals, vatSummary } = calculateTotals(ediLines);
+  const deliveryCharge =
+    typeof options.deliveryCharge === "number" && Number.isFinite(options.deliveryCharge)
+      ? Math.max(0, options.deliveryCharge)
+      : null;
+  const totals = buildInvoiceTotals(goodsTotals, vatSummary, deliveryCharge);
+
+  const orderAny = order as unknown as {
+    supplierOrderId?: string | null;
+    deliveryDate?: Date | null;
+    shipments?: Array<{
+      dispatchNotificationId?: string | null;
+      shippedAt?: Date | null;
+    }>;
+  };
+  const shipment = orderAny.shipments?.[0] ?? null;
+  const fallbackDelivery = addBusinessDays(new Date(), 4);
+  const deliveryStartDate = orderAny.deliveryDate ?? shipment?.shippedAt ?? fallbackDelivery;
+  const deliveryEndDate = orderAny.deliveryDate ?? shipment?.shippedAt ?? deliveryStartDate;
+  const xml = buildInvoiceXml({
+    docId,
+    orderId: order.galaxusOrderId,
+    orderNumber: order.orderNumber ?? null,
+    orderDate: order.orderDate,
+    generationDate: new Date(),
+    invoiceDate: new Date(),
+    deliveryNoteId: shipment?.dispatchNotificationId ?? null,
+    deliveryStartDate,
+    deliveryEndDate,
+    supplierOrderId: orderAny.supplierOrderId ?? order.galaxusOrderId,
+    currency: order.currencyCode,
+    buyer: buildBuyerParty(order),
+    supplier: buildSupplierParty(),
+    deliveryParty: buildDeliveryParty(order),
+    deliveryCharge,
     lines: ediLines,
     totals,
     vatSummary,

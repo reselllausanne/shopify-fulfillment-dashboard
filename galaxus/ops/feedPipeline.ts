@@ -14,7 +14,7 @@ type FeedRunResult = {
   error?: string;
 };
 
-async function callFeedUpload(origin: string, scope: FeedScope) {
+async function callFeedUpload(origin: string, scope: FeedScope, manual: boolean) {
   const type =
     scope === "full"
       ? "all"
@@ -25,7 +25,8 @@ async function callFeedUpload(origin: string, scope: FeedScope) {
           : scope === "price"
             ? "offer"
             : "offer-stock";
-  const url = `${origin}/api/galaxus/feeds/upload?type=${type}`;
+  const manualParam = manual ? "&manual=1" : "";
+  const url = `${origin}/api/galaxus/feeds/upload?type=${type}${manualParam}`;
   try {
     const res = await fetch(url, {
       cache: "no-store",
@@ -92,7 +93,7 @@ export async function runFeedPipeline(params: {
     error = "Feed uploads are disabled";
   } else {
     try {
-      const data = await callFeedUpload(origin, scope);
+      const data = await callFeedUpload(origin, scope, triggerSource === "manual");
       runId = String(data?.runId ?? runId);
       counts = data?.counts ?? undefined;
       uploaded = Array.isArray(data?.uploaded) ? data.uploaded : undefined;

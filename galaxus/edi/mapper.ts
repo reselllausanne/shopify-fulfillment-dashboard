@@ -37,6 +37,7 @@ export function buildDeliveryParty(order: GalaxusOrder): EdiParty {
     "recipientEmail" in order ? (order as { recipientEmail?: string | null }).recipientEmail : null;
   const recipientPhone =
     "recipientPhone" in order ? (order as { recipientPhone?: string | null }).recipientPhone : null;
+  const allowPhone = order.deliveryType !== "direct_delivery";
   return {
     id: deliveryPartyId ?? "delivery",
     name: order.recipientName ?? "",
@@ -47,7 +48,7 @@ export function buildDeliveryParty(order: GalaxusOrder): EdiParty {
     country: order.recipientCountry ?? "",
     vatId: null,
     email: recipientEmail ?? null,
-    phone: recipientPhone ?? null,
+    phone: allowPhone ? recipientPhone ?? null : null,
   };
 }
 
@@ -77,13 +78,30 @@ export function buildEdiLines(lines: GalaxusOrderLine[]): EdiOrderLine[] {
     const responseReason =
       "responseReason" in line ? (line as { responseReason?: string | null }).responseReason : null;
 
+    const unitNetPrice = Number(line.unitNetPrice);
+    const lineNetAmount = Number(line.lineNetAmount);
+    const rawVatRate = Number(line.vatRate);
+    const rawTaxPerUnit =
+      "taxAmountPerUnit" in line && line.taxAmountPerUnit != null
+        ? Number(line.taxAmountPerUnit)
+        : null;
+    const derivedVatRate =
+      rawTaxPerUnit != null &&
+      Number.isFinite(rawTaxPerUnit) &&
+      unitNetPrice > 0 &&
+      (!Number.isFinite(rawVatRate) || rawVatRate === 0)
+        ? (rawTaxPerUnit / unitNetPrice) * 100
+        : rawVatRate;
+
     return {
       lineNumber: line.lineNumber,
       description: line.productName,
       quantity: line.quantity,
-      unitNetPrice: Number(line.unitNetPrice),
-      lineNetAmount: Number(line.lineNetAmount),
-      vatRate: Number(line.vatRate),
+      unitNetPrice,
+      lineNetAmount,
+      vatRate: derivedVatRate,
+      taxAmountPerUnit:
+        rawTaxPerUnit != null && Number.isFinite(rawTaxPerUnit) ? rawTaxPerUnit : null,
       supplierPid:
         ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ??
         null,
@@ -113,7 +131,11 @@ export function calculateTotals(lines: EdiOrderLine[]): { totals: EdiTotals; vat
 
   for (const line of lines) {
     const lineNet = line.lineNetAmount;
-    const lineVat = (lineNet * line.vatRate) / 100;
+    const explicitVat =
+      line.taxAmountPerUnit != null && Number.isFinite(line.taxAmountPerUnit)
+        ? line.taxAmountPerUnit * line.quantity
+        : null;
+    const lineVat = explicitVat != null ? explicitVat : (lineNet * line.vatRate) / 100;
     const lineGross = lineNet + lineVat;
     net += lineNet;
     vat += lineVat;
@@ -139,24 +161,35 @@ export function calculateTotals(lines: EdiOrderLine[]): { totals: EdiTotals; vat
   };
 }
 
-type ShipmentItemLike = {
+export type DispatchShipmentItemInput = {
   supplierPid: string;
   gtin14: string;
   buyerPid?: string | null;
   quantity: number;
+  /** Galaxus customer order id (shown in ORDER_REFERENCE / ORDER_ID per DELR line). */
+  orderReferenceId: string;
 };
 
+function dispatchMetaKey(orderRef: string, supplierPid: string, gtin14: string) {
+  return `${orderRef}|${String(supplierPid ?? "").trim()}|${String(gtin14 ?? "").trim()}`;
+}
+
 export function buildDispatchLines(
-  items: ShipmentItemLike[],
-  orderId: string,
+  items: DispatchShipmentItemInput[],
+  fallbackOrderId: string,
   packageId: string,
+  metaByKey: Record<string, { description: string; lineNumber: number }>,
   metaBySupplierPid: Record<string, { description: string; lineNumber: number }>,
-  arrivalByGtin: Record<string, { start: Date; end: Date }> = {}
+  arrivalByGtin: Record<string, { start: Date; end: Date }> = {},
+  options: { includeLogisticsDetails?: boolean } = {}
 ): EdiOrderLine[] {
+  const includeLogisticsDetails = options.includeLogisticsDetails ?? true;
   return items.map((item, index) => {
-    const meta = metaBySupplierPid[item.supplierPid];
+    const ref = String(item.orderReferenceId ?? fallbackOrderId).trim() || fallbackOrderId;
+    const k = dispatchMetaKey(ref, item.supplierPid, item.gtin14);
+    const meta = metaByKey[k] ?? metaBySupplierPid[item.supplierPid];
     const arrival = arrivalByGtin[item.gtin14] ?? null;
-    return {
+    const base: EdiOrderLine = {
       lineNumber: meta?.lineNumber ?? index + 1,
       description: meta?.description ?? "Item",
     quantity: item.quantity,
@@ -168,15 +201,20 @@ export function buildDispatchLines(
     orderUnit: null,
     providerKey: item.supplierPid ?? null,
     gtin: item.gtin14,
-    orderReferenceId: orderId,
+    orderReferenceId: ref,
     arrivalDateStart: arrival?.start ?? null,
     arrivalDateEnd: arrival?.end ?? null,
-    dispatchPackages: [
-      {
-        packageId,
-        quantity: item.quantity,
-      },
-    ],
+    };
+
+    if (!includeLogisticsDetails) return base;
+    return {
+      ...base,
+      dispatchPackages: [
+        {
+          packageId,
+          quantity: item.quantity,
+        },
+      ],
     };
   });
 }
