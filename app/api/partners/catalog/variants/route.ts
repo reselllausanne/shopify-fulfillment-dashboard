@@ -28,6 +28,7 @@ type UpdatePayload = {
   imageSyncError?: string | null;
   deliveryType?: string | null;
   lastSyncAt?: string | null;
+  leadTimeDays?: number | null;
 };
 
 function ownsVariant(supplierVariantId: string, partnerKey: string) {
@@ -120,6 +121,7 @@ export async function GET(req: NextRequest) {
       imageSyncError: item.imageSyncError ?? null,
       deliveryType: item.deliveryType ?? null,
       lastSyncAt: item.lastSyncAt ?? null,
+      leadTimeDays: item.leadTimeDays ?? null,
     };
   });
 
@@ -215,6 +217,19 @@ export async function POST(req: NextRequest) {
           }
           if ("lastSyncAt" in entry) {
             data.lastSyncAt = parseDateOrNull(entry.lastSyncAt);
+          }
+          if ("leadTimeDays" in entry) {
+            const v = entry.leadTimeDays;
+            if (v === null || v === undefined || !Number.isFinite(Number(v))) {
+              data.leadTimeDays = null;
+            } else {
+              const n = Math.round(Number(v));
+              if (n < 0 || n > 365) {
+                output.push({ ok: false, error: "leadTimeDays must be 0–365 or null", supplierVariantId });
+                continue;
+              }
+              data.leadTimeDays = n;
+            }
           }
 
           const keysTouched = Object.keys(data);

@@ -7,6 +7,8 @@ type PartnerInfo = {
   id: string;
   key: string;
   name: string;
+  active?: boolean;
+  defaultLeadTimeDays?: number | null;
 };
 
 type UploadResult = {
@@ -69,6 +71,8 @@ export default function PartnerDashboardPage() {
   const [pushBusy, setPushBusy] = useState(false);
   const [pushLog, setPushLog] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [defaultLeadDraft, setDefaultLeadDraft] = useState("");
+  const [leadSaveBusy, setLeadSaveBusy] = useState(false);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -100,11 +104,51 @@ export default function PartnerDashboardPage() {
       const data = await res.json();
       if (data.ok) {
         setPartner(data.partner);
+        const d = data.partner?.defaultLeadTimeDays;
+        setDefaultLeadDraft(d != null ? String(d) : "");
         loadHistory();
       }
     };
     load();
   }, [router]);
+
+  const saveDefaultLeadTime = async (override?: { defaultLeadTimeDays: number | null }) => {
+    setLeadSaveBusy(true);
+    setError(null);
+    try {
+      let body: { defaultLeadTimeDays: number | null };
+      if (override) {
+        body = { defaultLeadTimeDays: override.defaultLeadTimeDays };
+      } else {
+        const trimmed = defaultLeadDraft.trim();
+        if (trimmed === "") {
+          body = { defaultLeadTimeDays: null };
+        } else {
+          const n = Number.parseInt(trimmed, 10);
+          if (!Number.isFinite(n) || n < 0 || n > 365) {
+            throw new Error("Lead time must be a whole number from 0 to 365 days.");
+          }
+          body = { defaultLeadTimeDays: n };
+        }
+      }
+      const res = await fetch("/api/partners/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Save failed");
+      setPartner(data.partner);
+      const d = data.partner?.defaultLeadTimeDays;
+      setDefaultLeadDraft(d != null ? String(d) : "");
+    } catch (err: any) {
+      setError(err.message ?? "Save failed");
+    } finally {
+      setLeadSaveBusy(false);
+    }
+  };
+
+  const clearDefaultLeadTime = () => saveDefaultLeadTime({ defaultLeadTimeDays: null });
 
   const downloadTemplate = () => {
     const content = `${TEMPLATE_HEADERS.join(",")}\n`;
@@ -243,6 +287,48 @@ export default function PartnerDashboardPage() {
       </div>
 
       {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="text-sm font-semibold text-slate-900">Galaxus lead time (account default)</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Used for supplier orders (including direct delivery) when a product has no per-variant lead time. Leave empty
+          to use the system default configured on the server.
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="text-xs text-slate-600">
+            Default days to ship
+            <input
+              type="number"
+              min={0}
+              max={365}
+              className="mt-1 block w-32 rounded border border-slate-200 px-2 py-2 text-sm"
+              placeholder="e.g. 5"
+              value={defaultLeadDraft}
+              onChange={(e) => setDefaultLeadDraft(e.target.value)}
+              disabled={leadSaveBusy}
+            />
+          </label>
+          <button
+            type="button"
+            className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
+            onClick={() => saveDefaultLeadTime()}
+            disabled={leadSaveBusy}
+          >
+            {leadSaveBusy ? "Saving…" : "Save default"}
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-600"
+            onClick={() => clearDefaultLeadTime()}
+            disabled={leadSaveBusy}
+          >
+            Clear (use system default)
+          </button>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-400">
+          Override per SKU in Catalog → Full edit → &quot;Lead time to ship (days)&quot;.
+        </p>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-4">

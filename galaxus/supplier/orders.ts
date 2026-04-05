@@ -271,6 +271,32 @@ export async function getSupplierGateForOrder(orderId: string): Promise<Supplier
   return { ok: true, statusByOrderRef, allowedTypes };
 }
 
+const partnerDefaultLeadCache = new Map<string, number | null>();
+
+async function partnerDefaultLeadDaysForVariantId(supplierVariantId: string): Promise<number | null> {
+  const raw = supplierVariantId.split(":")[0]?.trim() ?? "";
+  if (!raw) return null;
+  const k = raw.toUpperCase();
+  if (partnerDefaultLeadCache.has(k)) {
+    return partnerDefaultLeadCache.get(k) ?? null;
+  }
+  const row = await prisma.partner.findUnique({
+    where: { key: k },
+    select: { defaultLeadTimeDays: true },
+  });
+  const d = row?.defaultLeadTimeDays ?? null;
+  partnerDefaultLeadCache.set(k, d);
+  return d;
+}
+
+async function resolveLeadDays(supplierVariant: SupplierVariant, supplierVariantId: string): Promise<number> {
+  if (supplierVariant.leadTimeDays != null) {
+    return supplierVariant.leadTimeDays;
+  }
+  const partnerDefault = await partnerDefaultLeadDaysForVariantId(supplierVariantId);
+  return partnerDefault ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS;
+}
+
 async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> {
   const resolved: ResolvedLine[] = [];
   for (const line of lines) {
@@ -279,6 +305,7 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
       throw new Error(`Missing supplier variant mapping for line ${line.lineNumber}`);
     }
     const supplierKey = resolveSupplierKey(supplierVariant.supplierVariantId);
+    const leadDays = await resolveLeadDays(supplierVariant, supplierVariant.supplierVariantId);
 
     const sizeId = parseGoldenSizeId(supplierVariant.supplierVariantId);
     if (sizeId) {
@@ -286,7 +313,7 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
         line,
         supplierVariant,
         item: { sizeId, quantity: line.quantity },
-        leadDays: supplierVariant.leadTimeDays ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
+        leadDays,
         supplierKey,
       });
       continue;
@@ -305,7 +332,7 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
           sizeUs: sizeUs ?? "",
           quantity: line.quantity,
         },
-        leadDays: supplierVariant.leadTimeDays ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
+        leadDays,
         supplierKey,
       });
       continue;
@@ -314,7 +341,7 @@ async function resolveLines(lines: GalaxusOrderLine[]): Promise<ResolvedLine[]> 
       line,
       supplierVariant,
       item: { sku: supplierVariant.supplierSku, sizeUs, quantity: line.quantity },
-      leadDays: supplierVariant.leadTimeDays ?? GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS,
+      leadDays,
       supplierKey,
     });
   }

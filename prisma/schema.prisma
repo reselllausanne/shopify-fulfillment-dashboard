@@ -562,6 +562,8 @@ model Partner {
   contactEmail     String?
   contactName      String?
   priorityRank     Int?
+  /// Default lead time (days) for Galaxus supplier ORDR when variant `leadTimeDays` is null.
+  defaultLeadTimeDays Int?
 
   // Pricing overrides (null = use defaults)
   targetMargin     Decimal? @db.Decimal(5, 4)

@@ -47,11 +47,50 @@ function isAbsoluteUrl(value: string): boolean {
   }
 }
 
+function urlFromImageEntry(value: unknown): string | null {
+  if (typeof value === "string") {
+    const t = value.trim();
+    return t && isAbsoluteUrl(t) ? t : null;
+  }
+  if (value && typeof value === "object") {
+    const o = value as Record<string, unknown>;
+    for (const k of ["url", "src", "href", "imageUrl", "image"]) {
+      const u = o[k];
+      if (typeof u === "string" && isAbsoluteUrl(u.trim())) return u.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * Normalize `SupplierVariant.images` (Json) into absolute image URLs.
+ * Handles: string[], objects with url/src, JSON stored as string, nested single-element arrays.
+ */
 function extractAbsoluteImages(images: unknown): string[] {
-  if (!Array.isArray(images)) return [];
-  return images
-    .map((value) => (typeof value === "string" ? value.trim() : ""))
-    .filter((value) => value.length > 0 && isAbsoluteUrl(value));
+  let current: unknown = images;
+  if (typeof current === "string") {
+    const s = current.trim();
+    if (!s) return [];
+    try {
+      current = JSON.parse(s);
+    } catch {
+      return isAbsoluteUrl(s) ? [s] : [];
+    }
+  }
+  if (!Array.isArray(current)) return [];
+  const out: string[] = [];
+  for (const el of current) {
+    const direct = urlFromImageEntry(el);
+    if (direct) {
+      out.push(direct);
+      continue;
+    }
+    if (Array.isArray(el) && el.length > 0) {
+      const nested = urlFromImageEntry(el[0]);
+      if (nested) out.push(nested);
+    }
+  }
+  return out;
 }
 
 function resolveSourceImageUrl(row: any): string | null {

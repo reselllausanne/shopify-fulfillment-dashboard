@@ -25,6 +25,7 @@ type CatalogItem = {
   imageSyncError?: string | null;
   deliveryType?: string | null;
   lastSyncAt?: string | null;
+  leadTimeDays?: number | null;
 };
 
 type UpdatePayload = {
@@ -48,6 +49,7 @@ type UpdatePayload = {
   imageSyncError?: string | null;
   deliveryType?: string | null;
   lastSyncAt?: string | null;
+  leadTimeDays?: number | null;
 };
 
 function normalizeNumber(value: any): string {
@@ -139,6 +141,7 @@ export default function PartnerCatalogPage() {
       imageSyncError: row.imageSyncError ?? "",
       deliveryType: row.deliveryType ?? "",
       lastSyncAt: row.lastSyncAt ?? "",
+      leadTimeDays: normalizeNumber(row.leadTimeDays ?? ""),
     };
     setModalEdit(next);
   };
@@ -235,6 +238,14 @@ export default function PartnerCatalogPage() {
         imageSyncError: modalEdit.imageSyncError?.trim() || null,
         deliveryType: modalEdit.deliveryType?.trim() || null,
         lastSyncAt: modalEdit.lastSyncAt?.trim() || null,
+        ...(() => {
+          const leadRaw = (modalEdit.leadTimeDays ?? "").trim();
+          if (leadRaw === "") return { leadTimeDays: null as number | null };
+          const parsed = parseIntOrNull(leadRaw);
+          if (parsed === null) throw new Error("Lead time must be a whole number of days.");
+          if (parsed < 0 || parsed > 365) throw new Error("Lead time must be between 0 and 365 days.");
+          return { leadTimeDays: parsed };
+        })(),
       };
       await applyUpdates([payload]);
       closeFullEdit();
@@ -458,6 +469,7 @@ export default function PartnerCatalogPage() {
                 ["imageLastSyncedAt", "Image last synced"],
                 ["imageSyncError", "Image sync error"],
                 ["deliveryType", "Delivery type"],
+                ["leadTimeDays", "Lead time to ship (days)"],
                 ["lastSyncAt", "Last sync"],
               ].map(([key, label]) => (
                 <label key={key} className="text-xs text-slate-600">
@@ -487,6 +499,11 @@ export default function PartnerCatalogPage() {
                     }))
                   }
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Image hosting reads the first absolute URL from this JSON array (or from Source image URL). After
+                  saving, run the image sync job (ops / Galaxus admin) or wait for the scheduled sync to upload to
+                  Supabase storage.
+                </p>
               </label>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
