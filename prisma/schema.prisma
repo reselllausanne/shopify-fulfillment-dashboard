@@ -408,6 +408,14 @@ enum CashOutCategory {
   @@schema("public")
 }
 
+enum ForecastMode {
+  AUTO
+  MANUAL
+  HYBRID
+
+  @@schema("public")
+}
+
 model ShopifyPayout {
   id               String   @id
   issuedAt         DateTime
@@ -483,6 +491,23 @@ model CashLedgerDaily {
 
   @@unique([date])
   @@index([date])
+  @@schema("public")
+}
+
+model ForecastAssumption {
+  id                  String          @id @default(uuid())
+  channel             MarketplaceChannel
+  mode                ForecastMode    @default(HYBRID)
+  expectedDailySales  Decimal         @db.Decimal(12, 2) @default(0)
+  expectedDailyOrders Int?
+  growthRatePct       Decimal?        @db.Decimal(5, 2)
+  payoutDelayDays     Decimal?        @db.Decimal(5, 2)
+  commissionRatePct   Decimal?        @db.Decimal(5, 2)
+  refundRatePct       Decimal?        @db.Decimal(5, 2)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([channel])
   @@schema("public")
 }
 
@@ -977,6 +1002,7 @@ model DecathlonOrder {
   orderNumber         String?
   orderDate           DateTime
   orderState          String?
+  partnerKey          String?
   currencyCode        String   @default("CHF")
   totalPrice          Decimal? @db.Decimal(10, 2)
   shippingPrice       Decimal? @db.Decimal(10, 2)
@@ -1009,6 +1035,7 @@ model DecathlonOrder {
 
   @@index([orderDate])
   @@index([orderState])
+  @@index([partnerKey])
   @@schema("public")
 }
 

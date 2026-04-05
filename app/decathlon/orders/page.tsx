@@ -17,6 +17,7 @@ type OrderListItem = {
   shippedCount?: number;
   linkedCount?: number;
   orderState?: string | null;
+  partnerKey?: string | null;
   _count?: { lines: number; shipments: number };
 };
 
@@ -131,6 +132,7 @@ export default function DecathlonOrdersPage() {
   }, [orderedList, leftTab]);
 
   const needsLinking = (order: OrderListItem) => {
+    if (order.partnerKey) return false;
     const lines = order._count?.lines ?? 0;
     const linked = order.linkedCount ?? 0;
     return lines > 0 && linked < lines;
@@ -343,26 +345,41 @@ export default function DecathlonOrdersPage() {
               const lineCount = order._count?.lines ?? 0;
               const linked = order.linkedCount ?? 0;
               const allLinesLinked = lineCount > 0 && linked >= lineCount;
+              const isPartnerOrder = Boolean(order.partnerKey);
+              const partnerTone =
+                order.orderState === "SHIPPED" ? "border-emerald-500 bg-emerald-50" : "border-blue-500 bg-blue-50";
+              const baseTone = isPartnerOrder
+                ? partnerTone
+                : needsLinking(order)
+                  ? "border-red-500 bg-red-50"
+                  : allLinesLinked
+                  ? "border-green-500 bg-green-50"
+                  : newOrderIds.has(order.id)
+                  ? "border-emerald-500 bg-emerald-50"
+                  : "border-gray-200";
               return (
               <button
                 key={order.id}
                 onClick={() => setSelectedOrderId(order.id)}
                 className={`w-full text-left border rounded p-2 text-sm ${
-                  needsLinking(order)
-                    ? "border-red-500 bg-red-50"
-                    : allLinesLinked
-                    ? "border-green-500 bg-green-50"
-                    : newOrderIds.has(order.id)
-                    ? "border-emerald-500 bg-emerald-50"
-                    : selectedOrderId === order.id
-                    ? "border-black"
-                    : "border-gray-200"
+                  selectedOrderId === order.id ? "border-black" : baseTone
                 }`}
               >
-                <div className="font-medium">{order.orderNumber ?? order.orderId}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium">{order.orderNumber ?? order.orderId}</div>
+                  {order.partnerKey ? (
+                    <span
+                      className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                        order.orderState === "SHIPPED" ? "bg-emerald-600 text-white" : "bg-blue-600 text-white"
+                      }`}
+                    >
+                      Partner {order.partnerKey}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="text-xs text-gray-500">
                   {new Date(order.orderDate).toLocaleDateString("fr-CH")} •{" "}
-                  {order.linkedCount ?? 0}/{order._count?.lines ?? 0} linked
+                  {order.partnerKey ? `${lineCount} lines` : `${linked}/${lineCount} linked`}
                 </div>
               </button>
             );

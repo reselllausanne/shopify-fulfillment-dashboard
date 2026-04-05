@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
@@ -106,13 +108,26 @@ function attachmentFilename(miraklOrderId: string): string {
 
 /** Browser download: PDF body + Content-Disposition attachment. Still uploads to S3 and records DB. */
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
     const { orderId } = await params;
     const order = await resolveDecathlonOrder(orderId);
     if (!order) {
+      return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+    }
+    const { searchParams } = new URL(request.url);
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
+    const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
+    const partnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+    if (scope === "partner" && !partnerSession) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (scope === "partner" && !partnerKey) {
+      return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
+    }
+    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
     const fetched = await fetchPackingSlipPdfFromMirakl(order);
@@ -141,13 +156,26 @@ export async function GET(
 
 /** JSON metadata (e.g. S3 URL) for tools that do not need a raw download. */
 export async function POST(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
     const { orderId } = await params;
     const order = await resolveDecathlonOrder(orderId);
     if (!order) {
+      return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+    }
+    const { searchParams } = new URL(request.url);
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
+    const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
+    const partnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+    if (scope === "partner" && !partnerSession) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (scope === "partner" && !partnerKey) {
+      return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
+    }
+    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
     const fetched = await fetchPackingSlipPdfFromMirakl(order);

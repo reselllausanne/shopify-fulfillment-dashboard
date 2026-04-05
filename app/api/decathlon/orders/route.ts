@@ -1,16 +1,30 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const view = String(searchParams.get("view") ?? "active").trim();
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
     const where: Record<string, unknown> = {};
+    if (scope === "partner") {
+      const partnerSession = await getPartnerSession(request);
+      if (!partnerSession) {
+        return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      }
+      const sessionPartnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+      if (!sessionPartnerKey) {
+        return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
+      }
+      where.partnerKey = sessionPartnerKey;
+    }
     if (view === "fulfilled") {
       where.orderState = "SHIPPED";
     } else if (view === "to_process") {
@@ -45,6 +59,7 @@ export async function GET(request: Request) {
       orderNumber: order.orderNumber ?? order.orderId,
       orderDate: order.orderDate,
       orderState: order.orderState ?? null,
+      partnerKey: order.partnerKey ?? null,
       shippedCount: order.shipments?.filter((s: { shippedAt: unknown }) => Boolean(s.shippedAt)).length ?? 0,
       linkedCount: linkedByOrder.get(order.id) ?? 0,
       _count: order._count ?? { lines: 0, shipments: 0 },

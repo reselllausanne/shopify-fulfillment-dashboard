@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 
@@ -7,11 +9,21 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
     const { orderId } = await params;
+    const { searchParams } = new URL(request.url);
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
+    const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
+    const partnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+    if (scope === "partner" && !partnerSession) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (scope === "partner" && !partnerKey) {
+      return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
+    }
     const order =
       (await prisma.decathlonOrder.findUnique({
         where: { id: orderId },
@@ -32,6 +44,9 @@ export async function GET(
         },
       }));
     if (!order) {
+      return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+    }
+    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 

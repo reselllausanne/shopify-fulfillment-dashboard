@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
-import { pickMiraklLineGtin } from "@/decathlon/mirakl/orderLineFields";
+import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,29 @@ function pickOrderAmount(order: any): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function resolvePartnerKeyFromLine(line: any): string | null {
+  const candidates = pickMiraklLineSkuCandidates(line);
+  for (const candidate of candidates) {
+    const key = normalizeProviderKey(candidate);
+    if (key) return key;
+    const raw = String(candidate ?? "").trim().toUpperCase();
+    const prefix = raw.slice(0, 3);
+    if (/^[A-Z]{3}$/.test(prefix)) return prefix;
+  }
+  return null;
+}
+
+function resolveOrderPartnerKey(lines: any[], knownPartnerKeys: Set<string>): string | null {
+  const keys = new Set<string>();
+  for (const line of lines) {
+    const key = resolvePartnerKeyFromLine(line);
+    if (key) keys.add(key);
+  }
+  if (keys.size !== 1) return null;
+  const only = Array.from(keys)[0];
+  return knownPartnerKeys.has(only) ? only : null;
+}
+
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -45,6 +69,10 @@ export async function POST(request: Request) {
     const payload: any = await client.listOrders(params);
     const orders: any[] =
       payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
+    const partnerRows = await prisma.partner.findMany({ select: { key: true } });
+    const partnerKeys = new Set(
+      partnerRows.map((row) => normalizeProviderKey(row.key)).filter((key): key is string => Boolean(key))
+    );
     let upserted = 0;
     for (const order of orders) {
       const orderId = String(order?.id ?? order?.order_id ?? order?.orderId ?? "").trim();
@@ -52,12 +80,14 @@ export async function POST(request: Request) {
       const orderDate = order?.created_date ?? order?.date_created ?? order?.order_date ?? null;
       const parsedOrderDate = orderDate ? new Date(orderDate) : new Date();
       const lines = Array.isArray(order?.order_lines) ? order.order_lines : order?.lines ?? [];
+      const partnerKey = resolveOrderPartnerKey(lines, partnerKeys);
       const orderRow = await prisma.decathlonOrder.upsert({
         where: { orderId },
         update: {
           orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
           orderDate: parsedOrderDate,
           orderState: String(order?.order_state ?? order?.state ?? order?.status ?? ""),
+          partnerKey,
           currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
           totalPrice: pickOrderAmount(order),
           shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
@@ -86,6 +116,7 @@ export async function POST(request: Request) {
           orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
           orderDate: parsedOrderDate,
           orderState: String(order?.order_state ?? order?.state ?? order?.status ?? ""),
+          partnerKey,
           currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
           totalPrice: pickOrderAmount(order),
           shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
