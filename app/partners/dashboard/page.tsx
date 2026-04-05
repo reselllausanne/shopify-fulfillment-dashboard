@@ -392,9 +392,8 @@ export default function PartnerDashboardPage() {
           <div>
             <div className="text-sm font-semibold text-slate-900">Enrichment</div>
             <div className="text-xs text-slate-500">
-              Run after upload to resolve GTINs via KickDB for new rows. Force re-enrich runs lookup again (slower). If
-              you fix a SKU in Catalog, the GTIN inbox and this dashboard read the same live catalog row (refresh the page
-              if you have it open).
+              Run after upload for new rows in the enrichment queue. Use force re-enrich to run KickDB again—including
+              for lines still in the GTIN inbox—after you change a SKU or size in Catalog.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">

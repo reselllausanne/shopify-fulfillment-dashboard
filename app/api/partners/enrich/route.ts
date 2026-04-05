@@ -30,10 +30,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
     }
 
+    const statusFilter = force
+      ? { in: ["PENDING_ENRICH", "PENDING_GTIN", "AMBIGUOUS_GTIN"] as const }
+      : "PENDING_ENRICH";
+
     const pendingRows = await prismaAny.partnerUploadRow.findMany({
       where: {
         providerKey: partnerKey,
-        status: "PENDING_ENRICH",
+        status: statusFilter,
       },
       orderBy: { updatedAt: "desc" },
       take: all ? undefined : limit,

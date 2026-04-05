@@ -115,10 +115,7 @@ export default function PartnerGtinInboxPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">GTIN Inbox</h1>
-        <p className="text-sm text-slate-500">
-          Resolve missing or ambiguous GTINs. SKU, size, stock, and price match your catalog when you have edited them
-          there (refresh after saving in Catalog).
-        </p>
+        <p className="text-sm text-slate-500">Resolve missing or ambiguous GTINs.</p>
       </div>
 
       {error && (
