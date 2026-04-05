@@ -1,8 +1,12 @@
--- CreateEnum
-CREATE TYPE "MarketplaceChannel" AS ENUM ('SHOPIFY', 'GALAXUS', 'DECATHLON');
+-- CreateEnum (idempotent)
+DO $$ BEGIN
+  CREATE TYPE "MarketplaceChannel" AS ENUM ('SHOPIFY', 'GALAXUS', 'DECATHLON');
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- CreateTable
-CREATE TABLE "ShopifyPayout" (
+CREATE TABLE IF NOT EXISTS "ShopifyPayout" (
     "id" TEXT NOT NULL,
     "issuedAt" TIMESTAMP(3) NOT NULL,
     "status" TEXT NOT NULL,
@@ -18,7 +22,7 @@ CREATE TABLE "ShopifyPayout" (
 );
 
 -- CreateTable
-CREATE TABLE "MarketplaceCashAssumption" (
+CREATE TABLE IF NOT EXISTS "MarketplaceCashAssumption" (
     "id" TEXT NOT NULL,
     "channel" "MarketplaceChannel" NOT NULL,
     "lagDays" INTEGER NOT NULL DEFAULT 2,
@@ -34,7 +38,7 @@ CREATE TABLE "MarketplaceCashAssumption" (
 );
 
 -- CreateTable
-CREATE TABLE "MarketplaceRemittance" (
+CREATE TABLE IF NOT EXISTS "MarketplaceRemittance" (
     "id" TEXT NOT NULL,
     "channel" "MarketplaceChannel" NOT NULL,
     "paidAt" TIMESTAMP(3) NOT NULL,
@@ -49,10 +53,10 @@ CREATE TABLE "MarketplaceRemittance" (
 );
 
 -- CreateIndex
-CREATE INDEX "ShopifyPayout_issuedAt_idx" ON "ShopifyPayout"("issuedAt");
+CREATE INDEX IF NOT EXISTS "ShopifyPayout_issuedAt_idx" ON "ShopifyPayout"("issuedAt");
 
 -- CreateIndex
-CREATE INDEX "MarketplaceCashAssumption_channel_activeFrom_idx" ON "MarketplaceCashAssumption"("channel", "activeFrom");
+CREATE INDEX IF NOT EXISTS "MarketplaceCashAssumption_channel_activeFrom_idx" ON "MarketplaceCashAssumption"("channel", "activeFrom");
 
 -- CreateIndex
-CREATE INDEX "MarketplaceRemittance_channel_paidAt_idx" ON "MarketplaceRemittance"("channel", "paidAt");
+CREATE INDEX IF NOT EXISTS "MarketplaceRemittance_channel_paidAt_idx" ON "MarketplaceRemittance"("channel", "paidAt");

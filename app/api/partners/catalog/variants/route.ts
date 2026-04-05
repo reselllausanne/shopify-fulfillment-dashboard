@@ -247,7 +247,7 @@ export async function POST(req: NextRequest) {
     const succeeded = results.filter((r: any) => r && r.ok === true && r.item);
     if (succeeded.length > 0) {
       const origin = new URL(req.url).origin;
-      await requestFeedPush({ origin, scope: "full", triggerSource: "partner-catalog", runNow: true });
+      await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     }
     return NextResponse.json({
       ok: failed.length === 0,

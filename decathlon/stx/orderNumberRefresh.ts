@@ -64,10 +64,14 @@ async function refreshOneMatch(
   const stockxPatch = applyStockxDetailsToDecathlonMatchFields(listNode, details, {
     matchReasons: ["DECATHLON_STOCKX_ORDER_NUMBER_SYNC"],
   });
+  const safePatch = {
+    ...stockxPatch,
+    stockxOrderNumber: stockxPatch.stockxOrderNumber ?? match.stockxOrderNumber,
+  };
 
   await prisma.decathlonStockxMatch.update({
     where: { id: match.id },
-    data: { ...stockxPatch, updatedAt: new Date() },
+    data: { ...safePatch, updatedAt: new Date() },
   });
   return { ok: true };
 }

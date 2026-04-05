@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { toNumberSafe } from "@/app/utils/numbers";
@@ -152,7 +153,8 @@ export async function POST(req: NextRequest) {
 
     while (hasNextPage && pages < maxPages) {
       pages += 1;
-      const result = await shopifyGraphQL<PayoutQueryResponse>(PAYOUTS_QUERY, {
+      const result: { data: PayoutQueryResponse; errors?: Array<{ message: string; extensions?: any }> } =
+        await shopifyGraphQL<PayoutQueryResponse>(PAYOUTS_QUERY, {
         first: PAGE_SIZE,
         after: cursor,
       });
@@ -185,7 +187,7 @@ export async function POST(req: NextRequest) {
             transactionType: node.transactionType ?? null,
             netAmount,
             currencyCode: node.net?.currencyCode || "CHF",
-            summaryJson: node.summary ?? null,
+            summaryJson: node.summary ?? Prisma.DbNull,
             rawJson: node as any,
           },
           update: {
@@ -194,7 +196,7 @@ export async function POST(req: NextRequest) {
             transactionType: node.transactionType ?? null,
             netAmount,
             currencyCode: node.net?.currencyCode || "CHF",
-            summaryJson: node.summary ?? null,
+            summaryJson: node.summary ?? Prisma.DbNull,
             rawJson: node as any,
           },
         });

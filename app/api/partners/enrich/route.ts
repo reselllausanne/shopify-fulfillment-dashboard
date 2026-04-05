@@ -272,7 +272,7 @@ export async function POST(request: NextRequest) {
 
     if (resolvedCount > 0) {
       const origin = new URL(request.url).origin;
-      await requestFeedPush({ origin, scope: "full", triggerSource: "partner-enrich", runNow: true });
+      await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     }
 
     return NextResponse.json({
