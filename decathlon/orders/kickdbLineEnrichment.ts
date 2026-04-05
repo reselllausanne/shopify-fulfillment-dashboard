@@ -4,6 +4,8 @@ import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mir
 
 /** Minimal KickDB fields for Decathlon line UI (size + variant name + style id). */
 export type DecathlonLineKickdb = {
+  /** `KickDBProduct.name` (product title from style record — canonical name / “real” catalog title). */
+  productTitle: string | null;
   /** Brand + product title (no size — size is separate). */
   variantName: string | null;
   /** EU / US combined for display (from `KickDBVariant.sizeEu` / `sizeUs`). */
@@ -35,10 +37,12 @@ function mappingToKickdb(m: any, supplierSizeRaw?: string | null): DecathlonLine
     buildKickdbSizeRaw({ sizeEu, sizeUs }) ?? (supplierSizeRaw?.trim() ? supplierSizeRaw.trim() : null);
   const brand = p?.brand?.trim() || null;
   const name = p?.name?.trim() || null;
+  const productTitle = name || null;
   const variantName = [brand, name].filter(Boolean).join(" ").trim() || null;
   const styleId = p?.styleId != null ? String(p.styleId).trim() || null : null;
 
   return {
+    productTitle,
     variantName,
     sizeRaw,
     sizeEu,

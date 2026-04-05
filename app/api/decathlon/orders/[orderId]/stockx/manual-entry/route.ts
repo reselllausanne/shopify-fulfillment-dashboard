@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import {
   applyStockxDetailsToDecathlonMatchFields,
   resolveStockxBuyForManualDecathlon,
@@ -25,7 +27,7 @@ function trimStr(v: unknown): string {
 }
 
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
@@ -52,6 +54,30 @@ export async function POST(
     const line = (order.lines || []).find((l: any) => l.id === lineId);
     if (!line) {
       return NextResponse.json({ ok: false, error: "Line not found" }, { status: 404 });
+    }
+
+    const partnerSession = await getPartnerSession(request);
+    if (partnerSession) {
+      const pk = normalizeProviderKey(partnerSession.partnerKey ?? null);
+      if (!pk || normalizeProviderKey(order.partnerKey ?? null) !== pk) {
+        return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+      }
+      const existing = await prisma.decathlonStockxMatch.findUnique({
+        where: { decathlonOrderLineId: lineId },
+      });
+      const alreadyLinked =
+        existing &&
+        (trimStr(existing.stockxOrderNumber).length > 0 || trimStr(existing.stockxOrderId).length > 0);
+      if (alreadyLinked) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "This line already has a StockX link on the admin dashboard. Duplicates are not allowed — contact an admin to change it.",
+          },
+          { status: 403 }
+        );
+      }
     }
 
     const orderNumberInput = trimStr(data.stockxOrderNumber);
