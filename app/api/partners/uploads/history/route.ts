@@ -104,6 +104,13 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
+  const pendingEnrichCount = await prismaAny.partnerUploadRow.count({
+    where: {
+      providerKey,
+      status: "PENDING_ENRICH",
+    },
+  });
+
   const pending = pendingRows.map((r: any) => ({
     id: r.id,
     sku: r.sku ?? "",
@@ -123,6 +130,7 @@ export async function GET(req: NextRequest) {
     uploads: uploadHistory,
     pendingRows: pending,
     pendingCount: pending.length,
+    pendingEnrichCount,
     nextOffset: catalogRows.length === limit ? offset + limit : null,
   });
 }

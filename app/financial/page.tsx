@@ -461,6 +461,12 @@ export default function FinancialOverviewPage() {
             >
               💰 Expenses
             </a>
+            <a
+              href="/cash-flow"
+              className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors font-medium"
+            >
+              💧 Cash Flow
+            </a>
             <span className="text-gray-900 font-bold py-2 px-3 bg-purple-100 rounded-md">
               📈 Financial (Current)
             </span>

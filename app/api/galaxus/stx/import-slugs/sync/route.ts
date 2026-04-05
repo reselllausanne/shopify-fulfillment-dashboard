@@ -9,7 +9,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const limitRaw = Number(body?.limit ?? 50);
-    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 50, 1), 200);
+    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 50, 1), 1000);
     const prismaAny = prisma as any;
 
     const pending = await prismaAny.stxImportSlug.findMany({

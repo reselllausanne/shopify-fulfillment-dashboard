@@ -5,7 +5,7 @@ type ManualEntryModalProps = {
   mode: "create" | "edit";
   initialData: any;
   shopifyItem?: any | null;
-  context?: "shopify" | "galaxus";
+  context?: "shopify" | "galaxus" | "decathlon";
   onSave: (data: any, mode: "create" | "edit") => void;
   onClose: () => void;
 };
@@ -40,6 +40,8 @@ export default function GalaxusManualEntryModal({
   });
 
   const isGalaxus = context === "galaxus";
+  const isDecathlon = context === "decathlon";
+  const sourceLabel = isGalaxus ? "Galaxus" : isDecathlon ? "Decathlon" : "Shopify";
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
@@ -64,11 +66,11 @@ export default function GalaxusManualEntryModal({
             </h3>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div>
-                <span className="font-medium">{isGalaxus ? "Order:" : "Order:"}</span>{" "}
+                <span className="font-medium">Order:</span>{" "}
                 {localData.shopifyOrderName || shopifyItem?.orderName || "N/A"}
               </div>
               <div>
-                <span className="font-medium">{isGalaxus ? "Sell price:" : "Revenue:"}</span>{" "}
+                <span className="font-medium">{isGalaxus || isDecathlon ? "Sell price:" : "Revenue:"}</span>{" "}
                 {localData.shopifyTotalPrice != null
                   ? `CHF ${Number(localData.shopifyTotalPrice).toFixed(2)}`
                   : "N/A"}
@@ -87,7 +89,7 @@ export default function GalaxusManualEntryModal({
               </div>
               <div className="col-span-2">
                 <label className="block text-xs font-medium text-gray-700">
-                  {isGalaxus ? "Order date" : "Shopify Created At"}
+                  {isGalaxus || isDecathlon ? "Order date" : "Shopify Created At"}
                 </label>
                 <input
                   type="date"
@@ -105,13 +107,19 @@ export default function GalaxusManualEntryModal({
 
           {/* Supplier order info */}
           <div className="space-y-3">
-            <h3 className="font-semibold text-gray-900">🏪 Supplier</h3>
+            <h3 className="font-semibold text-gray-900">🏪 Supplier (StockX)</h3>
+            {isDecathlon ? (
+              <p className="text-xs text-gray-600">
+                Enter the StockX buy order number; saving loads chain/order, variant, cost, ETA, and tracking when the
+                token is configured. Leave other fields blank to fill from StockX, or type values to override.
+              </p>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               <input
                 type="text"
                 value={localData.stockxOrderNumber || ""}
                 onChange={(e) => update({ stockxOrderNumber: e.target.value })}
-                placeholder="Supplier Order Number"
+                placeholder={isDecathlon ? "StockX order #" : "Supplier Order Number"}
                 className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
               />
               <input

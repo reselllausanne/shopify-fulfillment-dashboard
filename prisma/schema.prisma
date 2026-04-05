@@ -370,6 +370,61 @@ model RecurringExpense {
   @@schema("public")
 }
 
+enum MarketplaceChannel {
+  SHOPIFY
+  GALAXUS
+  DECATHLON
+
+  @@schema("public")
+}
+
+model ShopifyPayout {
+  id               String   @id
+  issuedAt         DateTime
+  status           String
+  transactionType  String?
+  netAmount        Decimal  @db.Decimal(10, 2)
+  currencyCode     String   @default("CHF")
+  summaryJson      Json?
+  rawJson          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([issuedAt])
+  @@schema("public")
+}
+
+model MarketplaceCashAssumption {
+  id           String             @id @default(uuid())
+  channel      MarketplaceChannel
+  lagDays      Int                @default(2)
+  feePercent   Decimal?           @db.Decimal(5, 2)
+  feeFlatChf   Decimal?           @db.Decimal(10, 2)
+  activeFrom   DateTime           @default(now())
+  activeTo     DateTime?
+  notes        String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([channel, activeFrom])
+  @@schema("public")
+}
+
+model MarketplaceRemittance {
+  id           String             @id @default(uuid())
+  channel      MarketplaceChannel
+  paidAt       DateTime
+  amountChf    Decimal            @db.Decimal(10, 2)
+  currencyCode String             @default("CHF")
+  reference    String?
+  sourceFile   String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([channel, paidAt])
+  @@schema("public")
+}
+
 enum DocumentType {
   INVOICE
   DELIVERY_NOTE

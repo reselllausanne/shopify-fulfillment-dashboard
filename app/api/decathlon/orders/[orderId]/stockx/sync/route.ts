@@ -16,6 +16,7 @@ import {
   buildDecathlonStxLineTargets,
   getDecathlonStxLinkStatusForOrder,
 } from "@/decathlon/stx/linkStatus";
+import { refreshDecathlonStockxMatchesBySavedOrderNumber } from "@/decathlon/stx/orderNumberRefresh";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,7 +64,9 @@ export async function POST(
     }
 
     const targets = await buildDecathlonStxLineTargets(order);
-    const initialStatus = await getDecathlonStxLinkStatusForOrder(order.id);
+
+    /** AWB + full buy payload from the StockX order # / chain id already on each match (manual modal or prior sync). */
+    const orderNumberRefresh = await refreshDecathlonStockxMatchesBySavedOrderNumber(token, order.id);
 
     const existingMatches = await prisma.decathlonStockxMatch.findMany({
       where: { decathlonOrderId: order.id },
@@ -83,6 +86,7 @@ export async function POST(
     const pendingSupplierVariantIds = new Set(unmatchedTargets.map((t) => t.supplierVariantId));
 
     if (pendingSupplierVariantIds.size === 0) {
+      const status = await getDecathlonStxLinkStatusForOrder(order.id);
       return NextResponse.json({
         ok: true,
         orderId: order.orderId,
@@ -100,14 +104,15 @@ export async function POST(
           skippedNoVariant: 0,
           skippedNotPendingVariant: 0,
           errors: 0,
+          orderNumberRefresh,
         },
         status: {
-          miraklOrderId: initialStatus.miraklOrderId,
-          hasStxItems: initialStatus.hasStxItems,
-          allLinked: initialStatus.allLinked,
-          allEtaPresent: initialStatus.allEtaPresent,
-          allAwbPresent: initialStatus.allAwbPresent,
-          buckets: initialStatus.buckets,
+          miraklOrderId: status.miraklOrderId,
+          hasStxItems: status.hasStxItems,
+          allLinked: status.allLinked,
+          allEtaPresent: status.allEtaPresent,
+          allAwbPresent: status.allAwbPresent,
+          buckets: status.buckets,
         },
       });
     }
@@ -313,6 +318,7 @@ export async function POST(
         skippedNoVariant,
         skippedNotPendingVariant,
         errors,
+        orderNumberRefresh,
       },
       status: {
         miraklOrderId: status.miraklOrderId,

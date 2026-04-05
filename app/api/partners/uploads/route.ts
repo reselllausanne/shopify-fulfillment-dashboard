@@ -5,8 +5,7 @@ import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
 import { buildDuplicateKey, computeLastRowByKey } from "@/app/lib/partnerImport";
-import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
-import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { chunkArray } from "@/galaxus/jobs/bulkSql";
 
 export const runtime = "nodejs";
@@ -57,13 +56,21 @@ export async function POST(req: NextRequest) {
     const errors: Array<{ row: number; field: string; message: string }> = [];
     const rowResults: Array<{
       row: number;
-      status: "RESOLVED" | "PENDING_GTIN" | "AMBIGUOUS_GTIN" | "ERROR" | "DUPLICATE_IGNORED" | "DRY_RUN";
+      status:
+        | "RESOLVED"
+        | "PENDING_GTIN"
+        | "AMBIGUOUS_GTIN"
+        | "PENDING_ENRICH"
+        | "ERROR"
+        | "DUPLICATE_IGNORED"
+        | "DRY_RUN";
       gtin?: string | null;
       gtinCandidates?: string[];
       error?: string;
       warning?: string;
     }> = [];
     let importedRows = 0;
+    let newRows = 0;
     const partner = await prismaAny.partner.findUnique({
       where: { id: session.partnerId },
     });
@@ -193,36 +200,20 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      let resolvedGtin: string | null = null;
-      let gtinCandidates: string[] = [];
-      let isAmbiguous = false;
-      try {
-        const enrich = await runKickdbEnrich({ supplierVariantId, force: true });
-        const match = enrich?.results?.find((result) => result.supplierVariantId === supplierVariantId);
-        const mapping = await prismaAny.variantMapping.findUnique({
-          where: { supplierVariantId },
-          select: { gtin: true },
-        });
-        gtinCandidates = match?.gtinCandidates ?? [];
-        isAmbiguous = match?.status === "AMBIGUOUS_GTIN" || gtinCandidates.length > 1;
-        resolvedGtin = match?.gtin ?? mapping?.gtin ?? null;
-      } catch (err: any) {
-        const message = err?.message ?? "Enrichment failed";
-        errors.push({ row: i + 1, field: "gtin", message });
-        rowResults.push({ row: i + 1, status: "ERROR", error: message });
-        continue;
-      }
+      const resolvedGtin = existingGtin && validateGtin(existingGtin) ? existingGtin : null;
+      const shouldEnrich = !resolvedGtin;
+      const existingPending = await prismaAny.partnerUploadRow?.findFirst({
+        where: {
+          providerKey: providerKeyValue,
+          sku: normalizedSku,
+          sizeNormalized: normalizedSize,
+          status: { in: ["PENDING_ENRICH", "PENDING_GTIN", "AMBIGUOUS_GTIN"] },
+        },
+        orderBy: { updatedAt: "desc" },
+      });
 
-      if (isAmbiguous) {
-        const existingPending = await prismaAny.partnerUploadRow?.findFirst({
-          where: {
-            providerKey: providerKeyValue,
-            sku: normalizedSku,
-            sizeNormalized: normalizedSize,
-            status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
-          },
-          orderBy: { updatedAt: "desc" },
-        });
+      if (shouldEnrich) {
+        newRows += 1;
         if (existingPending) {
           await prismaAny.partnerUploadRow?.update({
             where: { id: existingPending.id },
@@ -235,9 +226,8 @@ export async function POST(req: NextRequest) {
               sizeNormalized: normalizedSize,
               rawStock: stock,
               price,
-              status: "AMBIGUOUS_GTIN",
+              status: "PENDING_ENRICH",
               gtinResolved: null,
-              gtinCandidatesJson: gtinCandidates,
               updatedAt: now,
             },
           });
@@ -252,150 +242,26 @@ export async function POST(req: NextRequest) {
               sizeNormalized: normalizedSize,
               rawStock: stock,
               price,
-              status: "AMBIGUOUS_GTIN",
+              status: "PENDING_ENRICH",
               gtinResolved: null,
-              gtinCandidatesJson: gtinCandidates,
             },
           });
         }
-        rowResults.push({
-          row: i + 1,
-          status: "AMBIGUOUS_GTIN",
-          gtinCandidates,
-        });
+        rowResults.push({ row: i + 1, status: "PENDING_ENRICH" });
         importedRows += 1;
         continue;
       }
 
-      if (!resolvedGtin || !validateGtin(resolvedGtin)) {
-        const existingPending = await prismaAny.partnerUploadRow?.findFirst({
-          where: {
-            providerKey: providerKeyValue,
-            sku: normalizedSku,
-            sizeNormalized: normalizedSize,
-            status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
-          },
-          orderBy: { updatedAt: "desc" },
-        });
-        const errorsJson = !resolvedGtin
-          ? [{ message: "GTIN not resolved" }]
-          : [{ message: "Invalid GTIN" }];
-        if (existingPending) {
-          await prismaAny.partnerUploadRow?.update({
-            where: { id: existingPending.id },
-            data: {
-              uploadId: upload?.id ?? null,
-              partnerId: session.partnerId,
-              providerKey: providerKeyValue,
-              sku: normalizedSku,
-              sizeRaw,
-              sizeNormalized: normalizedSize,
-              rawStock: stock,
-              price,
-              status: "PENDING_GTIN",
-              gtinResolved: null,
-              errorsJson,
-              updatedAt: now,
-            },
-          });
-        } else {
-          await prismaAny.partnerUploadRow?.create({
-            data: {
-              uploadId: upload?.id ?? null,
-              partnerId: session.partnerId,
-              providerKey: providerKeyValue,
-              sku: normalizedSku,
-              sizeRaw,
-              sizeNormalized: normalizedSize,
-              rawStock: stock,
-              price,
-              status: "PENDING_GTIN",
-              gtinResolved: null,
-              errorsJson,
-            },
-          });
-        }
-        rowResults.push({ row: i + 1, status: "PENDING_GTIN" });
-        importedRows += 1;
-        continue;
-      }
-
-      const fullProviderKey = buildProviderKey(resolvedGtin, supplierVariantId);
-      if (!fullProviderKey) {
-        errors.push({ row: i + 1, field: "gtin", message: "Invalid GTIN" });
-        rowResults.push({ row: i + 1, status: "ERROR", error: "Invalid GTIN" });
-        continue;
-      }
-      assertMappingIntegrity({
-        supplierVariantId,
-        gtin: resolvedGtin,
-        providerKey: fullProviderKey,
-        status: "MATCHED",
-      });
-      let offer = await prismaAny.supplierVariant.findUnique({
-        where: { providerKey_gtin: { providerKey: fullProviderKey, gtin: resolvedGtin } },
-      });
-      if (offer) {
-        offer = await prismaAny.supplierVariant.update({
-          where: { supplierVariantId: offer.supplierVariantId },
+      if (existingPending) {
+        await prismaAny.partnerUploadRow?.update({
+          where: { id: existingPending.id },
           data: {
-            supplierSku: normalizedSku,
-            providerKey: fullProviderKey,
-            gtin: resolvedGtin,
-            sizeRaw,
-            sizeNormalized,
-            stock,
-            price,
-            lastSyncAt: now,
-          },
-        });
-      } else {
-        offer = await prismaAny.supplierVariant.upsert({
-          where: { supplierVariantId },
-          create: {
-            supplierVariantId,
-            supplierSku: normalizedSku,
-            providerKey: fullProviderKey,
-            gtin: resolvedGtin,
-            sizeRaw,
-            sizeNormalized: normalizedSize,
-            stock,
-            price,
-            lastSyncAt: now,
-          },
-          update: {
-            supplierSku: normalizedSku,
-            providerKey: fullProviderKey,
-            gtin: resolvedGtin,
-            sizeRaw,
-            sizeNormalized,
-            stock,
-            price,
-            lastSyncAt: now,
+            status: "RESOLVED",
+            gtinResolved: resolvedGtin,
+            updatedAt: now,
           },
         });
       }
-
-      if (offer.supplierVariantId !== supplierVariantId) {
-        const existingMapping = await prismaAny.variantMapping.findUnique({
-          where: { supplierVariantId: offer.supplierVariantId },
-          select: { supplierVariantId: true },
-        });
-        if (existingMapping) {
-          await prismaAny.variantMapping.deleteMany({
-            where: { supplierVariantId },
-          });
-        } else {
-          await prismaAny.variantMapping.updateMany({
-            where: { supplierVariantId },
-            data: { supplierVariantId: offer.supplierVariantId },
-          });
-        }
-        await prismaAny.supplierVariant.deleteMany({
-          where: { supplierVariantId },
-        });
-      }
-
       rowResults.push({ row: i + 1, status: "RESOLVED", gtin: resolvedGtin });
       importedRows += 1;
     }
@@ -443,6 +309,7 @@ export async function POST(req: NextRequest) {
       result: {
         uploadId: upload?.id ?? null,
         importedRows,
+        newRows,
         errorRows: errors.length,
         errors,
         rows: rowResults,

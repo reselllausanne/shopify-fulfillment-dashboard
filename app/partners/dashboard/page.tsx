@@ -13,26 +13,19 @@ type UploadResult = {
   uploadId?: string;
   importedRows?: number;
   errorRows?: number;
+  newRows?: number;
   errors?: Array<{ row: number; field: string; message: string }>;
-  rows?: Array<{ row: number; status: "RESOLVED" | "PENDING_GTIN" | "ERROR"; gtin?: string | null; error?: string }>;
+  rows?: Array<{
+    row: number;
+    status: "RESOLVED" | "PENDING_GTIN" | "AMBIGUOUS_GTIN" | "PENDING_ENRICH" | "ERROR";
+    gtin?: string | null;
+    error?: string;
+  }>;
 };
 
 type CatalogRow = {
   supplierVariantId: string;
   providerKey: string;
-  supplierSku: string;
-  gtin: string;
-  sizeRaw: string;
-  price: string | number;
-  stock: number;
-  lastSyncAt: string | null;
-  updatedAt: string | null;
-  mappingStatus: string;
-  kickdbBrand: string;
-  kickdbName: string;
-  kickdbImageUrl: string;
-  supplierProductName: string;
-  supplierBrand: string;
 };
 
 type UploadLog = {
@@ -57,14 +50,7 @@ type PendingRow = {
   updatedAt: string | null;
 };
 
-
-const TEMPLATE_HEADERS = [
-  "providerKey",
-  "sku",
-  "size",
-  "rawStock",
-  "price",
-];
+const TEMPLATE_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
 
 export default function PartnerDashboardPage() {
   const [partner, setPartner] = useState<PartnerInfo | null>(null);
@@ -76,12 +62,10 @@ export default function PartnerDashboardPage() {
   const [pushKeysInput, setPushKeysInput] = useState<string>("");
   const [catalog, setCatalog] = useState<CatalogRow[]>([]);
   const [catalogCount, setCatalogCount] = useState<number>(0);
-  const [catalogNextOffset, setCatalogNextOffset] = useState<number | null>(null);
   const [uploadHistory, setUploadHistory] = useState<UploadLog[]>([]);
   const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
+  const [pendingEnrichCount, setPendingEnrichCount] = useState<number>(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [editStock, setEditStock] = useState<Record<string, string>>({});
-  const [editPrice, setEditPrice] = useState<Record<string, string>>({});
   const [pushBusy, setPushBusy] = useState(false);
   const [pushLog, setPushLog] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
@@ -89,18 +73,17 @@ export default function PartnerDashboardPage() {
 
   const loadHistory = async (offset = 0) => {
     try {
-      const res = await fetch(
-        `/api/partners/uploads/history?limit=100&offset=${offset}`,
-        { cache: "no-store" }
-      );
+      const res = await fetch(`/api/partners/uploads/history?limit=100&offset=${offset}`, {
+        cache: "no-store",
+      });
       if (!res.ok) return;
       const data = await res.json();
       if (!data.ok) return;
       setCatalog(data.catalog ?? []);
       setCatalogCount(data.catalogCount ?? 0);
-      setCatalogNextOffset(data.nextOffset ?? null);
       setUploadHistory(data.uploads ?? []);
       setPendingRows(data.pendingRows ?? []);
+      setPendingEnrichCount(data.pendingEnrichCount ?? 0);
       setHistoryLoaded(true);
     } catch {
       // silent
@@ -122,12 +105,6 @@ export default function PartnerDashboardPage() {
     };
     load();
   }, [router]);
-
-  const logout = async () => {
-    await fetch("/api/partners/auth/logout", { method: "POST" });
-    router.push("/partners/login");
-    router.refresh();
-  };
 
   const downloadTemplate = () => {
     const content = `${TEMPLATE_HEADERS.join(",")}\n`;
@@ -166,17 +143,18 @@ export default function PartnerDashboardPage() {
     }
   };
 
-  const enrichAll = async (force = false) => {
+  const enrichPending = async (force = false) => {
     setBusy(true);
     setError(null);
     setEnrichLog(null);
     try {
-      const res = await fetch(`/api/partners/enrich?all=1&debug=1&force=${force ? 1 : 0}`, {
+      const res = await fetch(`/api/partners/enrich?mode=new&debug=1&force=${force ? 1 : 0}`, {
         method: "POST",
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Enrich failed");
       setEnrichLog(JSON.stringify(data.results ?? [], null, 2));
+      await loadHistory();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -225,26 +203,6 @@ export default function PartnerDashboardPage() {
     }
   };
 
-  const updateCatalogRow = async (row: CatalogRow) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const stock = editStock[row.supplierVariantId] ?? String(row.stock ?? 0);
-      const price = editPrice[row.supplierVariantId] ?? String(row.price ?? "");
-      const res = await fetch(`/api/partners/variants/${encodeURIComponent(row.supplierVariantId)}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stock, price }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Update failed");
-      await loadHistory();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const downloadCatalogCsv = async () => {
     setDownloadBusy(true);
@@ -275,155 +233,167 @@ export default function PartnerDashboardPage() {
     }
   };
 
-  const removeCatalogRow = async (row: CatalogRow) => {
-    if (!confirm(`Remove ${row.supplierSku} (${row.sizeRaw})?`)) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/partners/variants/${encodeURIComponent(row.supplierVariantId)}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Delete failed");
-      await loadHistory();
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Partner Dashboard</h1>
-        <p className="text-sm text-gray-500">
+    <div className="space-y-8">
+      <div className="space-y-2">
+        <h1 className="text-2xl font-semibold text-slate-900">Partner Dashboard</h1>
+        <p className="text-sm text-slate-500">
           {partner ? `${partner.name} (${partner.key})` : "Loading partner…"}
         </p>
       </div>
-      <div>
+
+      {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-slate-400">Catalog</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{catalogCount}</div>
+          <div className="text-xs text-slate-500">Total products in DB</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-slate-400">Enrichment Queue</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{pendingEnrichCount}</div>
+          <div className="text-xs text-slate-500">New products waiting to enrich</div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="text-xs uppercase tracking-wide text-slate-400">GTIN Inbox</div>
+          <div className="mt-2 text-2xl font-semibold text-slate-900">{pendingRows.length}</div>
+          <div className="text-xs text-slate-500">Rows needing GTIN resolution</div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
         <button
-          className="px-3 py-2 rounded bg-gray-200 text-black text-xs"
-          onClick={logout}
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
+          onClick={() => router.push("/partners/catalog")}
         >
-          Sign out
+          <div className="text-xs uppercase tracking-wide text-slate-400">Catalog Management</div>
+          <div className="mt-2 text-lg font-semibold text-slate-900">Open Catalog</div>
+          <div className="text-xs text-slate-500">Edit prices, stock, and full product data.</div>
         </button>
         <button
-          className="ml-2 px-3 py-2 rounded bg-gray-100 text-black text-xs"
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/gtin-inbox")}
         >
-          GTIN Inbox
+          <div className="text-xs uppercase tracking-wide text-slate-400">GTIN Inbox</div>
+          <div className="mt-2 text-lg font-semibold text-slate-900">Resolve GTINs</div>
+          <div className="text-xs text-slate-500">Handle missing and ambiguous GTINs.</div>
         </button>
         <button
-          className="ml-2 px-3 py-2 rounded bg-gray-100 text-black text-xs"
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/orders")}
         >
-          Fulfillment
+          <div className="text-xs uppercase tracking-wide text-slate-400">Orders</div>
+          <div className="mt-2 text-lg font-semibold text-slate-900">Fulfillment</div>
+          <div className="text-xs text-slate-500">Confirm tracking and ship items.</div>
         </button>
       </div>
 
-      {error && <div className="text-sm text-red-600">{error}</div>}
-
-      <div className="border rounded bg-white p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">Catalog Upload</div>
-            <div className="text-xs text-gray-500">Upload your CSV catalog in the template format.</div>
-          </div>
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black"
-            onClick={downloadTemplate}
-            disabled={busy}
-          >
-            Download template
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-          />
-          <button
-            className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
-            onClick={uploadCsv}
-            disabled={busy}
-          >
-            {busy ? "Uploading…" : "Upload CSV"}
-          </button>
-        </div>
-
-        {uploadResult && (
-          <div className="space-y-2 text-xs text-gray-700">
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              Imported: {uploadResult.importedRows ?? 0}, Errors: {uploadResult.errorRows ?? 0}
-            </div>
-            {uploadResult.rows && uploadResult.rows.length > 0 && (
-              <div className="overflow-auto border rounded bg-gray-50">
-                <table className="min-w-full text-xs">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="px-2 py-1 text-left">Row</th>
-                      <th className="px-2 py-1 text-left">Status</th>
-                      <th className="px-2 py-1 text-left">GTIN</th>
-                      <th className="px-2 py-1 text-left">Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {uploadResult.rows.map((row) => (
-                      <tr key={`${row.row}-${row.status}`} className="border-t">
-                        <td className="px-2 py-1">{row.row}</td>
-                        <td className="px-2 py-1">{row.status}</td>
-                        <td className="px-2 py-1">{row.gtin ?? ""}</td>
-                        <td className="px-2 py-1">{row.error ?? ""}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="text-sm font-semibold text-slate-900">Catalog Upload</div>
+              <div className="text-xs text-slate-500">
+                Upload your stock CSV. Newly added products will be queued for enrichment.
               </div>
-            )}
+            </div>
+            <button
+              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:border-[#55b3f3]"
+              onClick={downloadTemplate}
+              disabled={busy}
+            >
+              Download template
+            </button>
           </div>
-        )}
-      </div>
-
-      <div className="border rounded bg-white p-4 space-y-3">
-        <div className="text-sm font-medium">Enrichment</div>
-        <div className="flex gap-2">
-          <button
-            className="px-3 py-2 rounded bg-green-600 text-white disabled:opacity-50"
-            onClick={() => enrichAll(false)}
-            disabled={busy}
-          >
-            Enrich GTIN
-          </button>
-          <button
-            className="px-3 py-2 rounded bg-green-100 text-green-900 disabled:opacity-50"
-            onClick={() => enrichAll(true)}
-            disabled={busy}
-          >
-            Enrich GTIN (force)
-          </button>
-        </div>
-        {enrichLog && (
-          <div className="border rounded bg-gray-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
-            {enrichLog}
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+            <button
+              className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
+              onClick={uploadCsv}
+              disabled={busy}
+            >
+              {busy ? "Uploading…" : "Upload CSV"}
+            </button>
           </div>
-        )}
-      </div>
-
-      <div className="border rounded bg-white p-4 space-y-3">
-        <div className="text-sm font-medium">Fast Push to Galaxus</div>
-        <div className="text-xs text-gray-500">
-          Sync partner catalog and upload feeds immediately (skip cron).
+          {uploadResult && (
+            <div className="space-y-2 text-xs text-slate-600">
+              <div>
+                Imported: {uploadResult.importedRows ?? 0}, New: {uploadResult.newRows ?? 0}, Errors:{" "}
+                {uploadResult.errorRows ?? 0}
+              </div>
+              {uploadResult.rows && uploadResult.rows.length > 0 && (
+                <div className="overflow-auto rounded border border-slate-200">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="px-2 py-1 text-left">Row</th>
+                        <th className="px-2 py-1 text-left">Status</th>
+                        <th className="px-2 py-1 text-left">GTIN</th>
+                        <th className="px-2 py-1 text-left">Error</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {uploadResult.rows.map((row) => (
+                        <tr key={`${row.row}-${row.status}`} className="border-t">
+                          <td className="px-2 py-1">{row.row}</td>
+                          <td className="px-2 py-1">{row.status}</td>
+                          <td className="px-2 py-1">{row.gtin ?? ""}</td>
+                          <td className="px-2 py-1">{row.error ?? ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        <div className="space-y-2">
-          <div className="text-xs text-gray-500">
-            Optional: paste ProviderKeys (one per line) to push only those rows.
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Enrichment</div>
+            <div className="text-xs text-slate-500">
+              Enrich newly added products after upload. Existing SKUs reuse stored data.
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="px-2 py-1 rounded bg-gray-100 text-xs"
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              onClick={() => enrichPending(false)}
+              disabled={busy}
+            >
+              Enrich new products
+            </button>
+            <button
+              className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
+              onClick={() => enrichPending(true)}
+              disabled={busy}
+            >
+              Force re-enrich
+            </button>
+          </div>
+          {enrichLog && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
+              {enrichLog}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+        <div className="text-sm font-semibold text-slate-900">Fast Push to Galaxus</div>
+        <div className="text-xs text-slate-500">
+          Sync partner catalog and upload feeds immediately (skip cron).
+        </div>
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
               onClick={() => {
                 const keys = catalog.map((row) => row.providerKey).filter(Boolean);
                 setPushKeysInput(keys.join("\n"));
@@ -433,7 +403,7 @@ export default function PartnerDashboardPage() {
               Use all catalog keys
             </button>
             <button
-              className="px-2 py-1 rounded bg-gray-100 text-xs"
+              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(pushKeysInput);
@@ -445,18 +415,25 @@ export default function PartnerDashboardPage() {
             >
               Copy keys
             </button>
+            <button
+              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
+              onClick={downloadCatalogCsv}
+              disabled={busy || downloadBusy}
+            >
+              {downloadBusy ? "Preparing…" : "Download enriched CSV"}
+            </button>
           </div>
           <textarea
-            className="w-full border rounded px-2 py-1 text-xs font-mono"
+            className="w-full rounded border border-slate-200 px-2 py-1 text-xs font-mono"
             rows={3}
             placeholder="NER_1234567890123&#10;THE_1234567890123"
             value={pushKeysInput}
             onChange={(e) => setPushKeysInput(e.target.value)}
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
-            className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
+            className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
             onClick={() =>
               pushToGalaxusNow(
                 "all",
@@ -468,10 +445,10 @@ export default function PartnerDashboardPage() {
             }
             disabled={busy || pushBusy}
           >
-            {pushBusy ? "Pushing…" : "Push Master + Specs + Offer/Stock"}
+            {pushBusy ? "Pushing…" : "Push master + specs + offer/stock"}
           </button>
           <button
-            className="px-3 py-2 rounded bg-indigo-100 text-indigo-900 disabled:opacity-50"
+            className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
             onClick={() =>
               pushToGalaxusNow(
                 "offer-stock",
@@ -483,27 +460,24 @@ export default function PartnerDashboardPage() {
             }
             disabled={busy || pushBusy}
           >
-            Push Offer/Stock only
+            Push offer/stock only
           </button>
         </div>
         {pushLog && (
-          <div className="border rounded bg-gray-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
+          <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
             {pushLog}
           </div>
         )}
       </div>
 
-      {/* ─── Upload History ─── */}
-      <div className="border rounded bg-white p-4 space-y-4">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium">Upload History</div>
-            <div className="text-xs text-gray-500">
-              Past CSV uploads and their status.
-            </div>
+            <div className="text-sm font-semibold text-slate-900">Upload History</div>
+            <div className="text-xs text-slate-500">Past CSV uploads and their status.</div>
           </div>
           <button
-            className="px-3 py-2 rounded bg-gray-100 text-black text-xs"
+            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
             onClick={() => loadHistory()}
             disabled={busy}
           >
@@ -512,13 +486,13 @@ export default function PartnerDashboardPage() {
         </div>
 
         {uploadHistory.length === 0 && historyLoaded && (
-          <div className="text-xs text-gray-400">No uploads yet.</div>
+          <div className="text-xs text-slate-400">No uploads yet.</div>
         )}
 
         {uploadHistory.length > 0 && (
-          <div className="overflow-auto border rounded bg-gray-50">
+          <div className="overflow-auto rounded border border-slate-200">
             <table className="min-w-full text-xs">
-              <thead className="bg-gray-100">
+              <thead className="bg-slate-50">
                 <tr>
                   <th className="px-2 py-1 text-left">Date</th>
                   <th className="px-2 py-1 text-left">File</th>
@@ -539,12 +513,12 @@ export default function PartnerDashboardPage() {
                       <span
                         className={
                           u.status === "COMPLETED"
-                            ? "text-green-700"
+                            ? "text-emerald-700"
                             : u.status === "FAILED"
                             ? "text-red-600"
                             : u.status === "COMPLETED_WITH_ERRORS"
-                            ? "text-yellow-700"
-                            : "text-gray-600"
+                            ? "text-amber-700"
+                            : "text-slate-600"
                         }
                       >
                         {u.status}
@@ -553,11 +527,7 @@ export default function PartnerDashboardPage() {
                     <td className="px-2 py-1 text-right">{u.totalRows}</td>
                     <td className="px-2 py-1 text-right">{u.importedRows}</td>
                     <td className="px-2 py-1 text-right">
-                      {u.errorRows > 0 ? (
-                        <span className="text-red-600">{u.errorRows}</span>
-                      ) : (
-                        u.errorRows
-                      )}
+                      {u.errorRows > 0 ? <span className="text-red-600">{u.errorRows}</span> : u.errorRows}
                     </td>
                   </tr>
                 ))}
@@ -567,25 +537,21 @@ export default function PartnerDashboardPage() {
         )}
       </div>
 
-      {/* ─── Pending GTIN Rows ─── */}
       {pendingRows.length > 0 && (
-        <div className="border rounded bg-white p-4 space-y-3">
-          <div className="text-sm font-medium">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+          <div className="text-sm font-semibold text-slate-900">
             Pending GTIN Resolution ({pendingRows.length})
           </div>
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-slate-500">
             These rows need GTIN resolution before they appear in exports. Go to{" "}
-            <button
-              className="underline text-blue-600"
-              onClick={() => router.push("/partners/gtin-inbox")}
-            >
+            <button className="text-[#55b3f3] underline" onClick={() => router.push("/partners/gtin-inbox")}>
               GTIN Inbox
             </button>{" "}
             to resolve them.
           </div>
-          <div className="overflow-auto border rounded bg-gray-50">
+          <div className="overflow-auto rounded border border-slate-200">
             <table className="min-w-full text-xs">
-              <thead className="bg-gray-100">
+              <thead className="bg-slate-50">
                 <tr>
                   <th className="px-2 py-1 text-left">SKU</th>
                   <th className="px-2 py-1 text-left">Size</th>
@@ -603,13 +569,7 @@ export default function PartnerDashboardPage() {
                     <td className="px-2 py-1 text-right">{r.rawStock}</td>
                     <td className="px-2 py-1 text-right">{r.price}</td>
                     <td className="px-2 py-1">
-                      <span
-                        className={
-                          r.status === "PENDING_GTIN"
-                            ? "text-yellow-700"
-                            : "text-orange-600"
-                        }
-                      >
+                      <span className={r.status === "PENDING_GTIN" ? "text-amber-700" : "text-orange-600"}>
                         {r.status}
                       </span>
                     </td>
@@ -623,159 +583,6 @@ export default function PartnerDashboardPage() {
           </div>
         </div>
       )}
-
-      {/* ─── My Catalog in DB ─── */}
-      <div className="border rounded bg-white p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm font-medium">
-              My Catalog ({catalogCount} variants)
-            </div>
-            <div className="text-xs text-gray-500">
-              Products currently in the system under your supplier key.
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              className="px-3 py-2 rounded bg-gray-100 text-black text-xs"
-              onClick={() => loadHistory()}
-              disabled={busy}
-            >
-              Refresh
-            </button>
-            <button
-              className="px-3 py-2 rounded bg-blue-600 text-white text-xs disabled:opacity-50"
-              onClick={downloadCatalogCsv}
-              disabled={busy || downloadBusy}
-            >
-              {downloadBusy ? "Preparing…" : "Download enriched stock CSV"}
-            </button>
-          </div>
-        </div>
-
-        {catalog.length === 0 && historyLoaded && (
-          <div className="text-xs text-gray-400">
-            No products in DB yet. Upload a CSV above.
-          </div>
-        )}
-
-        {catalog.length > 0 && (
-          <div className="overflow-auto border rounded bg-gray-50">
-            <table className="min-w-full text-xs">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="px-2 py-1 text-left">Variant ID</th>
-                  <th className="px-2 py-1 text-left">SKU</th>
-                  <th className="px-2 py-1 text-left">GTIN</th>
-                  <th className="px-2 py-1 text-left">Size</th>
-                  <th className="px-2 py-1 text-right">Price</th>
-                  <th className="px-2 py-1 text-right">Stock</th>
-                  <th className="px-2 py-1 text-left">Mapping</th>
-                  <th className="px-2 py-1 text-left">KickDB Name</th>
-                  <th className="px-2 py-1 text-left">Brand</th>
-                  <th className="px-2 py-1 text-left">Image</th>
-                  <th className="px-2 py-1 text-left">Updated</th>
-                  <th className="px-2 py-1 text-left">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {catalog.map((row) => (
-                  <tr key={row.supplierVariantId} className="border-t align-top">
-                    <td className="px-2 py-1 font-mono">{row.supplierVariantId}</td>
-                    <td className="px-2 py-1">{row.supplierSku}</td>
-                    <td className="px-2 py-1 font-mono">{row.gtin}</td>
-                    <td className="px-2 py-1">{row.sizeRaw}</td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        className="w-20 border rounded px-1 py-0.5 text-right"
-                        value={editPrice[row.supplierVariantId] ?? String(row.price ?? "")}
-                        onChange={(e) =>
-                          setEditPrice((prev) => ({
-                            ...prev,
-                            [row.supplierVariantId]: e.target.value,
-                          }))
-                        }
-                      />
-                    </td>
-                    <td className="px-2 py-1 text-right">
-                      <input
-                        className="w-16 border rounded px-1 py-0.5 text-right"
-                        value={editStock[row.supplierVariantId] ?? String(row.stock ?? 0)}
-                        onChange={(e) =>
-                          setEditStock((prev) => ({
-                            ...prev,
-                            [row.supplierVariantId]: e.target.value,
-                          }))
-                        }
-                      />
-                    </td>
-                    <td className="px-2 py-1">
-                      <span
-                        className={
-                          row.mappingStatus === "MATCHED"
-                            ? "text-green-700"
-                            : row.mappingStatus === "NO_MAPPING"
-                            ? "text-red-600"
-                            : "text-yellow-700"
-                        }
-                      >
-                        {row.mappingStatus}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1">{row.kickdbName || row.supplierProductName || ""}</td>
-                    <td className="px-2 py-1">{row.kickdbBrand || row.supplierBrand || ""}</td>
-                    <td className="px-2 py-1">
-                      {row.kickdbImageUrl ? (
-                        <a
-                          className="underline text-blue-600"
-                          href={row.kickdbImageUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          view
-                        </a>
-                      ) : (
-                        <span className="text-gray-400">-</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1">
-                      {row.updatedAt ? new Date(row.updatedAt).toLocaleString() : ""}
-                    </td>
-                    <td className="px-2 py-1">
-                      <div className="flex gap-2">
-                        <button
-                          className="px-2 py-1 text-xs rounded bg-blue-600 text-white disabled:opacity-50"
-                          onClick={() => updateCatalogRow(row)}
-                          disabled={busy}
-                        >
-                          Save
-                        </button>
-                        <button
-                          className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 disabled:opacity-50"
-                          onClick={() => removeCatalogRow(row)}
-                          disabled={busy}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {catalogNextOffset !== null && (
-          <button
-            className="px-3 py-2 rounded bg-gray-100 text-black text-xs"
-            onClick={() => loadHistory(catalogNextOffset)}
-            disabled={busy}
-          >
-            Load more
-          </button>
-        )}
-      </div>
-
     </div>
   );
 }

@@ -65,8 +65,8 @@ function PartnerLoginForm() {
 
   return (
     <div className="mt-8 space-y-6">
-      <details className="rounded border border-gray-100 p-3">
-        <summary className="text-xs font-semibold text-gray-500 uppercase tracking-wide cursor-pointer">
+      <details className="rounded border border-slate-800 bg-slate-950/60 p-3">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-400">
           Email login (optional)
         </summary>
         <form className="mt-3 space-y-4" onSubmit={handleSubmit}>
@@ -78,7 +78,7 @@ function PartnerLoginForm() {
                 name="email"
                 type="email"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full rounded-t-md border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-100 placeholder-slate-500 focus:z-10 focus:border-[#55b3f3] focus:outline-none focus:ring-1 focus:ring-[#55b3f3]"
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -92,7 +92,7 @@ function PartnerLoginForm() {
                 name="password"
                 type="password"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                className="appearance-none rounded-none relative block w-full rounded-b-md border border-slate-800 bg-slate-900 px-3 py-3 text-sm text-slate-100 placeholder-slate-500 focus:z-10 focus:border-[#55b3f3] focus:outline-none focus:ring-1 focus:ring-[#55b3f3]"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -104,7 +104,7 @@ function PartnerLoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 disabled:cursor-not-allowed transition-colors"
+            className="group relative flex w-full justify-center rounded-md border border-transparent bg-[#55b3f3] px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#6cc1f5] disabled:cursor-not-allowed disabled:bg-slate-600"
           >
             {loading ? "Signing in…" : "Sign In"}
           </button>
@@ -112,22 +112,22 @@ function PartnerLoginForm() {
       </details>
 
       <div className="border-t pt-4">
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
           Quick access (recommended)
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-slate-500">
           Use your partner key and access code. Keys are short (e.g. 3 letters).
         </p>
         <form className="mt-3 space-y-3" onSubmit={handleQuickAccess}>
           <input
-            className="w-full px-3 py-2 border rounded text-sm"
+            className="w-full rounded border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-[#55b3f3] focus:outline-none focus:ring-1 focus:ring-[#55b3f3]"
             placeholder="Partner key (e.g. ABC)"
             value={partnerKey}
             onChange={(e) => setPartnerKey(e.target.value)}
             required
           />
           <input
-            className="w-full px-3 py-2 border rounded text-sm"
+            className="w-full rounded border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-[#55b3f3] focus:outline-none focus:ring-1 focus:ring-[#55b3f3]"
             placeholder="Access code"
             type="password"
             value={accessCode}
@@ -136,7 +136,7 @@ function PartnerLoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full px-3 py-2 rounded bg-gray-900 text-white text-sm disabled:opacity-50"
+            className="w-full rounded bg-white px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
           >
             {loading ? "Starting…" : "Enter partner dashboard"}
           </button>
@@ -144,7 +144,7 @@ function PartnerLoginForm() {
       </div>
 
       {error && (
-        <div className="text-red-500 text-sm text-center font-medium bg-red-50 py-2 rounded">
+        <div className="rounded bg-red-500/20 py-2 text-center text-sm font-medium text-red-200">
           {error}
         </div>
       )}
@@ -154,18 +154,19 @@ function PartnerLoginForm() {
 
 export default function PartnerLoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg border border-gray-100">
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
+      <div className="max-w-md w-full space-y-8 rounded-2xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
         <div>
-          <h2 className="mt-2 text-center text-3xl font-extrabold text-gray-900">
+          <div className="text-center text-xs uppercase tracking-[0.3em] text-slate-400">
             Partner Portal
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Sign in to upload and manage your catalog.
+          </div>
+          <h2 className="mt-2 text-center text-3xl font-semibold text-white">Welcome back</h2>
+          <p className="mt-2 text-center text-sm text-slate-400">
+            Sign in to upload, enrich, and manage your catalog.
           </p>
         </div>
 
-        <Suspense fallback={<div className="text-center text-gray-400">Loading…</div>}>
+        <Suspense fallback={<div className="text-center text-slate-500">Loading…</div>}>
           <PartnerLoginForm />
         </Suspense>
       </div>

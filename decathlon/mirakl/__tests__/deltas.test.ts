@@ -63,6 +63,21 @@ describe("mirakl deltas", () => {
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
   });
 
+  it("applies no margin for THE_* own-inventory suppliers (feed price = sell price)", () => {
+    const candidate = makeCandidate({
+      providerKey: "THE_1234567890123",
+      variant: {
+        supplierVariantId: "the_warehouse-1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 99.5,
+      },
+    });
+    expect(resolveEffectivePrice(candidate)).toBe("99.50");
+  });
+
   it("emits new offers when offerCreatedAt is missing", () => {
     const candidate = makeCandidate();
     const syncByKey = new Map([

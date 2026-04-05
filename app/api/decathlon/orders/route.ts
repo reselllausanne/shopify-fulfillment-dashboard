@@ -26,15 +26,18 @@ export async function GET(request: Request) {
       skip: offset,
       include: {
         _count: { select: { lines: true, shipments: true } },
+        shipments: { select: { shippedAt: true } },
       },
     });
-    const lineCounts = await prisma.decathlonStockxMatch.groupBy({
-      by: ["decathlonOrderId"],
-      _count: { _all: true },
+    const matchRows = await prisma.decathlonStockxMatch.findMany({
+      select: { decathlonOrderId: true, stockxOrderNumber: true, stockxOrderId: true },
     });
     const linkedByOrder = new Map<string, number>();
-    for (const row of lineCounts) {
-      linkedByOrder.set(row.decathlonOrderId, row._count._all ?? 0);
+    for (const row of matchRows) {
+      const onum = String(row.stockxOrderNumber ?? "").trim();
+      const oid = String(row.stockxOrderId ?? "").trim();
+      if (!onum && !oid) continue;
+      linkedByOrder.set(row.decathlonOrderId, (linkedByOrder.get(row.decathlonOrderId) ?? 0) + 1);
     }
     const items = orders.map((order: any) => ({
       id: order.id,
@@ -42,7 +45,7 @@ export async function GET(request: Request) {
       orderNumber: order.orderNumber ?? order.orderId,
       orderDate: order.orderDate,
       orderState: order.orderState ?? null,
-      shippedCount: order.shipments?.filter((s: any) => Boolean(s.shippedAt)).length ?? 0,
+      shippedCount: order.shipments?.filter((s: { shippedAt: unknown }) => Boolean(s.shippedAt)).length ?? 0,
       linkedCount: linkedByOrder.get(order.id) ?? 0,
       _count: order._count ?? { lines: 0, shipments: 0 },
     }));

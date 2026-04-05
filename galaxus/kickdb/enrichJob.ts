@@ -173,6 +173,28 @@ function pickString(...values: Array<unknown>) {
   return null;
 }
 
+/** Fill `KickDBVariant.sizeEu` / `sizeUs` from API, including `sizes[]` when top-level fields are empty. */
+function pickPersistedKickdbSizes(matchedVariant: any): { sizeEu: string | null; sizeUs: string | null } {
+  let sizeEu = pickString(matchedVariant?.size_eu);
+  let sizeUs = pickString(matchedVariant?.size_us);
+  if ((!sizeEu || !sizeUs) && matchedVariant && typeof matchedVariant === "object") {
+    for (const { type, size } of collectVariantSizes(matchedVariant)) {
+      const t = type.toLowerCase();
+      if (!sizeEu && t === "eu") sizeEu = pickString(size);
+      if (!sizeUs && (t === "us m" || t === "us w" || t === "us" || t === "usm" || t === "usw")) {
+        sizeUs = pickString(size);
+      }
+    }
+  }
+  const st = String(matchedVariant?.size_type ?? "").toLowerCase();
+  const rawSize = pickString(matchedVariant?.size);
+  if (rawSize) {
+    if (!sizeEu && st.includes("eu")) sizeEu = rawSize;
+    if (!sizeUs && st.includes("us")) sizeUs = rawSize;
+  }
+  return { sizeEu, sizeUs };
+}
+
 function extractBrand(productRecord: any): string | null {
   const direct = pickString(productRecord?.brand, productRecord?.manufacturer, productRecord?.make);
   if (direct) return direct;
@@ -951,14 +973,15 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const kickdbVariantExternalId =
       pickString(matchedVariant?.id) ??
       (kickdbProductId ? `${kickdbProductId}:${variantId}` : variantId);
+    const { sizeEu: persistedEu, sizeUs: persistedUs } = pickPersistedKickdbSizes(matchedVariant);
     const savedVariant = allowVariantLink
       ? await prisma.kickDBVariant.upsert({
           where: { kickdbVariantId: kickdbVariantExternalId },
           create: {
             kickdbVariantId: kickdbVariantExternalId,
             productId: savedProduct.id,
-            sizeUs: pickString(matchedVariant?.size_us),
-            sizeEu: pickString(matchedVariant?.size_eu),
+            sizeUs: persistedUs,
+            sizeEu: persistedEu,
             gtin: pickString(finalGtin),
             ean: pickString(matchedVariant?.ean),
             providerKey: providerKey ?? null,
@@ -967,8 +990,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
           },
           update: {
             productId: savedProduct.id,
-            sizeUs: pickString(matchedVariant?.size_us),
-            sizeEu: pickString(matchedVariant?.size_eu),
+            sizeUs: persistedUs,
+            sizeEu: persistedEu,
             gtin: pickString(finalGtin),
             ean: pickString(matchedVariant?.ean),
             providerKey: providerKey ?? null,

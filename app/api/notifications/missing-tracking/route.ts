@@ -87,8 +87,14 @@ export async function GET() {
     });
 
     const goatItems = normalized.filter((i) => i.isGoat);
-    const criticalItems = normalized.filter((i) => i.isOverdue || i.isDueSoon || i.isOlderThan9);
     const warningItems = normalized.filter((i) => i.isOver9Days && !i.isOverdue && !i.isDueSoon);
+    // Avoid duplicate rows: "warning" is the >9d age-only bucket; critical keeps overdue/due-soon and 9d edge case.
+    const criticalItems = normalized.filter((i) => {
+      const inWarningOnlyBucket =
+        i.isOver9Days && !i.isOverdue && !i.isDueSoon;
+      if (inWarningOnlyBucket) return false;
+      return i.isOverdue || i.isDueSoon || i.isOlderThan9;
+    });
 
     return NextResponse.json({
       ok: true,

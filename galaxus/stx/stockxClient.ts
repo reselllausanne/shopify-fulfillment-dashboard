@@ -1,7 +1,7 @@
 import { DEFAULT_QUERY } from "@/app/lib/constants";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 
-type StockxBuyingNode = {
+export type StockxBuyingNode = {
   chainId: string | null;
   orderId: string | null;
   orderNumber: string | null;
@@ -344,6 +344,21 @@ async function callStockx<T>(
   return data as T;
 }
 
+function normalizeOrderNumberKey(raw: string): string {
+  return String(raw ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
+/** Loose match for manual lookup (user may paste partial order #). */
+export function buyOrderNumbersMatch(stored: string | null | undefined, search: string | null | undefined): boolean {
+  const a = normalizeOrderNumberKey(String(stored ?? ""));
+  const b = normalizeOrderNumberKey(String(search ?? ""));
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 export async function fetchRecentStockxBuyingOrders(
   token: string,
   options?: { first?: number; maxPages?: number; state?: string | null; query?: string | null }
@@ -352,6 +367,8 @@ export async function fetchRecentStockxBuyingOrders(
   const maxPages = Math.max(1, options?.maxPages ?? 4);
   const out: StockxBuyingNode[] = [];
   let after = "";
+  /** `undefined` → PENDING; explicit `null` = any buying state (used when searching by order #). */
+  const stateForQuery = options?.state === undefined ? "PENDING" : options.state;
 
   for (let page = 0; page < maxPages; page += 1) {
     const response = await callStockx<any>(token, "Buying", DEFAULT_QUERY, {
@@ -359,8 +376,7 @@ export async function fetchRecentStockxBuyingOrders(
       after,
       currencyCode: "CHF",
       query: options?.query ?? null,
-      // StockX buying query can return empty when state is null; default to PENDING.
-      state: options?.state ?? "PENDING",
+      state: stateForQuery,
       sort: "MATCHED_AT",
       order: "DESC",
     });
@@ -385,6 +401,67 @@ export async function fetchRecentStockxBuyingOrders(
   }
 
   return out;
+}
+
+/**
+ * Find a buying list node by human-readable order number (search + scan).
+ * Tries: all states with query, PENDING with query, then recent PENDING pages without query.
+ */
+export async function findBuyOrderListNodeByOrderNumber(
+  token: string,
+  orderNumber: string
+): Promise<StockxBuyingNode | null> {
+  const needle = orderNumber.trim();
+  if (!needle) return null;
+
+  const key = (n: StockxBuyingNode) => `${String(n.chainId ?? "")}::${String(n.orderId ?? "")}`;
+  const seen = new Set<string>();
+  const merged: StockxBuyingNode[] = [];
+
+  const addBatch = (batch: StockxBuyingNode[]) => {
+    for (const n of batch) {
+      const k = key(n);
+      if (!n.orderId || seen.has(k)) continue;
+      seen.add(k);
+      merged.push(n);
+    }
+  };
+
+  addBatch(
+    await fetchRecentStockxBuyingOrders(token, {
+      first: 50,
+      maxPages: 12,
+      state: null,
+      query: needle,
+    })
+  );
+  addBatch(
+    await fetchRecentStockxBuyingOrders(token, {
+      first: 50,
+      maxPages: 8,
+      state: "PENDING",
+      query: needle,
+    })
+  );
+
+  for (const n of merged) {
+    if (buyOrderNumbersMatch(n.orderNumber, needle)) return n;
+  }
+
+  addBatch(
+    await fetchRecentStockxBuyingOrders(token, {
+      first: 50,
+      maxPages: 8,
+      state: "PENDING",
+      query: null,
+    })
+  );
+
+  for (const n of merged) {
+    if (buyOrderNumbersMatch(n.orderNumber, needle)) return n;
+  }
+
+  return null;
 }
 
 export async function fetchStockxBuyOrderDetails(

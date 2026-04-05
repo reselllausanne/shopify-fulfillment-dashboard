@@ -8,8 +8,7 @@ import {
 import type { DecathlonExclusionSummary, DecathlonExportCandidate } from "@/decathlon/exports/types";
 import {
   computeDecathlonPriceFromBuyNow,
-  DECATHLON_BUY_NOW_MULTIPLIER,
-  DECATHLON_NER_BUY_NOW_MULTIPLIER,
+  decathlonSellPriceMultiplierForCandidate,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
@@ -79,12 +78,10 @@ export function resolveEffectivePrice(candidate: DecathlonExportCandidate): stri
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const providerKey = String(candidate.providerKey ?? "");
-  const supplierVariantId = String(variant?.supplierVariantId ?? "");
-  const isNer =
-    providerKey.toUpperCase().startsWith("NER_") ||
-    supplierVariantId.toLowerCase().startsWith("ner_");
-  const multiplier = isNer ? DECATHLON_NER_BUY_NOW_MULTIPLIER : DECATHLON_BUY_NOW_MULTIPLIER;
+  const multiplier = decathlonSellPriceMultiplierForCandidate({
+    providerKey: candidate.providerKey,
+    supplierVariantId: variant?.supplierVariantId ?? null,
+  });
   const computed = computeDecathlonPriceFromBuyNow(buyNow, multiplier);
   if (!computed || computed <= 0) return null;
   return computed.toFixed(2);

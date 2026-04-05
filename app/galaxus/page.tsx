@@ -761,19 +761,19 @@ export function GalaxusWarehouseDashboard() {
     }
   };
 
-  const syncFirstStxSlugs = async () => {
-    setBusy("stx-slug-sync");
+  const syncStxSlugs = async (limit: number, busyKey: string) => {
+    setBusy(busyKey);
     setError(null);
     try {
       const response = await fetch("/api/galaxus/stx/import-slugs/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: 150 }),
+        body: JSON.stringify({ limit }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error ?? "STX slug sync failed");
       setStxSlugCounts(data.counts ?? null);
-      setOpsLog(JSON.stringify({ stxSlugSync: data }, null, 2));
+      setOpsLog(JSON.stringify({ stxSlugSync: data, limit }, null, 2));
       await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
@@ -2087,10 +2087,17 @@ export function GalaxusWarehouseDashboard() {
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-indigo-600 text-white disabled:opacity-50"
-                  onClick={syncFirstStxSlugs}
+                  onClick={() => void syncStxSlugs(150, "stx-slug-sync-150")}
                   disabled={busy !== null}
                 >
-                  {busy === "stx-slug-sync" ? "Syncing…" : "Sync first 150 STX slugs"}
+                  {busy === "stx-slug-sync-150" ? "Syncing…" : "Sync first 150 STX slugs"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-indigo-800 text-white disabled:opacity-50"
+                  onClick={() => void syncStxSlugs(1000, "stx-slug-sync-1000")}
+                  disabled={busy !== null}
+                >
+                  {busy === "stx-slug-sync-1000" ? "Syncing…" : "Sync next 1000 STX slugs"}
                 </button>
                 <span className="text-xs text-gray-500">
                   Pending: {stxSlugCounts?.pending ?? "—"} · Imported: {stxSlugCounts?.imported ?? "—"} · Error:{" "}

@@ -112,34 +112,46 @@ export default function PartnerGtinInboxPage() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">GTIN Inbox</h1>
-        <p className="text-sm text-gray-500">Resolve missing or ambiguous GTINs.</p>
+        <h1 className="text-2xl font-semibold text-slate-900">GTIN Inbox</h1>
+        <p className="text-sm text-slate-500">Resolve missing or ambiguous GTINs.</p>
       </div>
 
-      {error && <div className="text-sm text-red-600">{error}</div>}
+      {error && (
+        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-4">
         <input
-          className="px-2 py-2 border rounded text-sm w-64"
+          className="w-64 rounded border border-slate-200 px-2 py-2 text-sm"
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value)}
           placeholder="Statuses (comma-separated)"
         />
         <input
-          className="px-2 py-2 border rounded text-sm w-64"
+          className="w-64 rounded border border-slate-200 px-2 py-2 text-sm"
           value={uploadIdFilter}
           onChange={(event) => setUploadIdFilter(event.target.value)}
           placeholder="Upload ID filter"
         />
-        <button className="px-3 py-2 rounded bg-gray-200" onClick={fetchRows} disabled={busy !== null}>
+        <button
+          className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
+          onClick={fetchRows}
+          disabled={busy !== null}
+        >
           {busy === "load" ? "Loading…" : "Apply"}
         </button>
-        <button className="px-3 py-2 rounded bg-gray-100" onClick={exportPending} disabled={busy !== null}>
+        <button
+          className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-600"
+          onClick={exportPending}
+          disabled={busy !== null}
+        >
           Export pending GTIN
         </button>
-        <label className="px-3 py-2 rounded bg-gray-100 cursor-pointer">
+        <label className="cursor-pointer rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-600">
           Bulk resolve CSV
           <input
             type="file"
@@ -153,9 +165,9 @@ export default function PartnerGtinInboxPage() {
         </label>
       </div>
 
-      <div className="overflow-auto border rounded bg-white">
+      <div className="overflow-auto rounded-2xl border border-slate-200 bg-white">
         <table className="min-w-full text-xs">
-          <thead className="bg-gray-50">
+          <thead className="bg-slate-50">
             <tr>
               <th className="px-2 py-1 text-left">ProviderKey</th>
               <th className="px-2 py-1 text-left">SKU</th>
@@ -191,7 +203,7 @@ export default function PartnerGtinInboxPage() {
                 </td>
                 <td className="px-2 py-1">
                   <input
-                    className="px-2 py-1 border rounded text-xs w-40"
+                    className="w-40 rounded border border-slate-200 px-2 py-1 text-xs"
                     value={gtinInputs[row.id] ?? ""}
                     onChange={(event) =>
                       setGtinInputs((prev) => ({ ...prev, [row.id]: event.target.value }))
@@ -201,7 +213,7 @@ export default function PartnerGtinInboxPage() {
                 </td>
                 <td className="px-2 py-1">
                   <button
-                    className="px-2 py-1 rounded bg-blue-600 text-white"
+                    className="rounded-full bg-[#55b3f3] px-3 py-1 text-xs font-semibold text-slate-950"
                     onClick={() => resolveRow(row.id)}
                     disabled={busy !== null}
                   >

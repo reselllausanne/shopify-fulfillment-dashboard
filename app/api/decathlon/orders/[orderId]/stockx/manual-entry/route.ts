@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import {
+  applyStockxDetailsToDecathlonMatchFields,
+  resolveStockxBuyForManualDecathlon,
+} from "@/decathlon/stx/manualStockxEnrich";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +20,10 @@ function parseMaybeNumber(value: any): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
+function trimStr(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ orderId: string }> }
@@ -25,16 +33,17 @@ export async function POST(
     const body = await request.json().catch(() => ({}));
     const lineId = String(body?.lineId ?? "").trim();
     const data = body?.data ?? {};
+    const enrichFromStockx = body?.enrichFromStockx !== false;
     if (!lineId) {
       return NextResponse.json({ ok: false, error: "Missing lineId" }, { status: 400 });
     }
 
     const order =
-      (await (prisma as any).decathlonOrder.findUnique({
+      (await prisma.decathlonOrder.findUnique({
         where: { id: orderId },
         include: { lines: true },
       })) ??
-      (await (prisma as any).decathlonOrder.findUnique({
+      (await prisma.decathlonOrder.findUnique({
         where: { orderId },
         include: { lines: true },
       }));
@@ -45,10 +54,41 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Line not found" }, { status: 404 });
     }
 
-    const resolvedCost =
+    const orderNumberInput = trimStr(data.stockxOrderNumber);
+    let auto: ReturnType<typeof applyStockxDetailsToDecathlonMatchFields> | null = null;
+    let stockxEnrich: { attempted: boolean; ok: boolean; reason?: string } = {
+      attempted: false,
+      ok: false,
+    };
+
+    if (enrichFromStockx && orderNumberInput) {
+      stockxEnrich.attempted = true;
+      const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
+      if (resolved.ok) {
+        auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details);
+        stockxEnrich = { attempted: true, ok: true };
+      } else {
+        stockxEnrich = { attempted: true, ok: false, reason: resolved.reason };
+      }
+    }
+
+    const a = auto ?? ({} as ReturnType<typeof applyStockxDetailsToDecathlonMatchFields>);
+
+    const manualCost =
       parseMaybeNumber(data.stockxAmount) ??
       parseMaybeNumber(data.supplierCost) ??
       parseMaybeNumber(data.manualCostOverride);
+    const resolvedCost =
+      manualCost !== null
+        ? manualCost
+        : a.stockxAmount != null
+          ? Number(a.stockxAmount)
+          : null;
+
+    const stockxOrderNumberFinal =
+      trimStr(data.stockxOrderNumber) ||
+      a.stockxOrderNumber ||
+      `MANUAL-${order.orderId}-${line.lineNumber ?? 1}`;
 
     const payload = {
       decathlonOrderId: order.id,
@@ -66,39 +106,44 @@ export async function POST(
       decathlonLineNetAmount: line.lineTotal ?? null,
       decathlonVatRate: null,
       decathlonCurrencyCode: order.currencyCode ?? "CHF",
-      stockxChainId: String(data.stockxChainId ?? "").trim() || null,
-      stockxOrderId: String(data.stockxOrderId ?? "").trim() || null,
-      stockxOrderNumber:
-        String(data.stockxOrderNumber ?? "").trim() || `MANUAL-${order.orderId}-${line.lineNumber ?? 1}`,
-      stockxVariantId: String(data.stockxVariantId ?? "").trim() || null,
-      stockxProductName: String(data.stockxProductName ?? "").trim() || null,
-      stockxSkuKey: String(data.stockxSkuKey ?? "").trim() || null,
-      stockxSizeEU: String(data.stockxSizeEU ?? "").trim() || null,
-      stockxPurchaseDate: parseMaybeDate(data.stockxPurchaseDate),
+      stockxChainId: trimStr(data.stockxChainId) || a.stockxChainId || null,
+      stockxOrderId: trimStr(data.stockxOrderId) || a.stockxOrderId || null,
+      stockxOrderNumber: stockxOrderNumberFinal,
+      stockxVariantId: trimStr(data.stockxVariantId) || a.stockxVariantId || null,
+      stockxProductName: trimStr(data.stockxProductName) || a.stockxProductName || null,
+      stockxSkuKey: trimStr(data.stockxSkuKey) || a.stockxSkuKey || null,
+      stockxSizeEU: trimStr(data.stockxSizeEU) || a.stockxSizeEU || null,
+      stockxPurchaseDate: parseMaybeDate(data.stockxPurchaseDate) ?? a.stockxPurchaseDate ?? null,
       stockxAmount: resolvedCost,
-      stockxCurrencyCode: String(data.shopifyCurrencyCode ?? data.stockxCurrencyCode ?? order.currencyCode ?? "CHF").trim(),
-      stockxStatus: String(data.stockxStatus ?? "MANUAL").trim() || "MANUAL",
-      stockxEstimatedDelivery: parseMaybeDate(data.stockxEstimatedDelivery),
-      stockxLatestEstimatedDelivery: parseMaybeDate(data.stockxLatestEstimatedDelivery),
-      stockxAwb: String(data.stockxAwb ?? "").trim() || null,
-      stockxTrackingUrl: String(data.stockxTrackingUrl ?? "").trim() || null,
-      stockxCheckoutType: String(data.stockxCheckoutType ?? "").trim() || null,
-      stockxStates: data.stockxStates ?? null,
+      stockxCurrencyCode:
+        trimStr(data.shopifyCurrencyCode ?? data.stockxCurrencyCode) ||
+        trimStr(a.stockxCurrencyCode) ||
+        String(order.currencyCode ?? "CHF").trim(),
+      stockxStatus: trimStr(data.stockxStatus) || a.stockxStatus || "MANUAL",
+      stockxEstimatedDelivery: parseMaybeDate(data.stockxEstimatedDelivery) ?? a.stockxEstimatedDelivery ?? null,
+      stockxLatestEstimatedDelivery:
+        parseMaybeDate(data.stockxLatestEstimatedDelivery) ?? a.stockxLatestEstimatedDelivery ?? null,
+      stockxAwb: trimStr(data.stockxAwb) || a.stockxAwb || null,
+      stockxTrackingUrl: trimStr(data.stockxTrackingUrl) || a.stockxTrackingUrl || null,
+      stockxCheckoutType: trimStr(data.stockxCheckoutType) || a.stockxCheckoutType || null,
+      stockxStates: data.stockxStates ?? a.stockxStates ?? null,
       matchConfidence: "high",
       matchScore: 1,
-      matchType: "MANUAL",
-      matchReasons: JSON.stringify(["MANUAL_ENTRY"]),
+      matchType: auto ? "SYNC" : "MANUAL",
+      matchReasons: auto
+        ? JSON.stringify(["MANUAL_STOCKX_ORDER_LOOKUP"])
+        : JSON.stringify(["MANUAL_ENTRY"]),
       timeDiffHours: null,
       updatedAt: new Date(),
     };
 
-    const match = await (prisma as any).decathlonStockxMatch.upsert({
+    const match = await prisma.decathlonStockxMatch.upsert({
       where: { decathlonOrderLineId: line.id },
       update: payload,
       create: payload,
     });
 
-    return NextResponse.json({ ok: true, match });
+    return NextResponse.json({ ok: true, match, stockxEnrich });
   } catch (error: any) {
     return NextResponse.json(
       { ok: false, error: error?.message ?? "Manual entry failed" },

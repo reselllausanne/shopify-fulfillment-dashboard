@@ -115,16 +115,16 @@ export default function PartnerOrdersPage() {
   }, [statusFilter]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-lg font-semibold">Partner Fulfillment</h1>
-        <div className="text-xs text-gray-500">
+        <h1 className="text-lg font-semibold text-slate-900">Partner Fulfillment</h1>
+        <div className="text-xs text-slate-500">
           Enter tracking, then use Fulfill to generate DELR, SSCC, and shipping labels.
         </div>
         <div className="flex items-center gap-2 text-sm">
           <span>Status</span>
           <select
-            className="border rounded px-2 py-1"
+            className="rounded border border-slate-200 px-2 py-1"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
             disabled={busy !== null}
@@ -135,7 +135,7 @@ export default function PartnerOrdersPage() {
             <option value="ALL">All</option>
           </select>
           <button
-            className="px-2 py-1 rounded bg-gray-200"
+            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
             onClick={() => loadShipments(statusFilter)}
             disabled={busy !== null}
           >
@@ -144,27 +144,31 @@ export default function PartnerOrdersPage() {
         </div>
       </div>
 
-      {error && <div className="text-sm text-red-600">{error}</div>}
+      {error && (
+        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       <div className="space-y-3">
         {shipments.map((shipment) => (
-          <div key={shipment.id} className="border rounded bg-white p-3 space-y-2">
-            <div className="text-xs text-gray-600">
+          <div key={shipment.id} className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
+            <div className="text-xs text-slate-600">
               {shipment.shipmentId} · Provider {shipment.providerKey ?? "—"} · SSCC{" "}
               {shipment.packageId ?? "—"} · DELR {shipment.delrStatus ?? "—"}
             </div>
-            <div className="text-xs text-gray-500">
+            <div className="text-xs text-slate-500">
               Status: {shipment.trackingNumber ? "Tracking set" : "Missing tracking"} ·{" "}
               {shipment.labelPdfUrl ? "SSCC ready" : "SSCC missing"} ·{" "}
               {shipment.shippingLabelPdfUrl ? "Shipping label ready" : "Shipping label missing"}
             </div>
-            <div className="text-xs text-gray-500">
+            <div className="text-xs text-slate-500">
               Order {shipment.order?.galaxusOrderId ?? "—"} ·{" "}
               {shipment.order?.orderNumber ?? "—"} · {shipment.order?.deliveryType ?? "—"}
             </div>
             <div className="flex gap-2 flex-wrap items-center text-xs">
               <input
-                className="border rounded px-2 py-1"
+                className="rounded border border-slate-200 px-2 py-1"
                 placeholder="Tracking number"
                 value={trackingById[shipment.id] ?? shipment.trackingNumber ?? ""}
                 onChange={(event) =>
@@ -173,7 +177,7 @@ export default function PartnerOrdersPage() {
                 disabled={busy !== null}
               />
               <input
-                className="border rounded px-2 py-1"
+                className="rounded border border-slate-200 px-2 py-1"
                 placeholder="Carrier (optional)"
                 value={carrierById[shipment.id] ?? shipment.carrierFinal ?? ""}
                 onChange={(event) =>
@@ -182,14 +186,14 @@ export default function PartnerOrdersPage() {
                 disabled={busy !== null}
               />
               <button
-                className="px-2 py-1 rounded bg-blue-600 text-white disabled:opacity-50"
+                className="rounded-full bg-[#55b3f3] px-3 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50"
                 onClick={() => submitTracking(shipment.id)}
                 disabled={busy !== null}
               >
                 {busy === `track-${shipment.id}` ? "Saving…" : "Confirm tracking + send DELR"}
               </button>
               <button
-                className="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-50"
+                className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
                 onClick={() => fulfillShipment(shipment.id)}
                 disabled={busy !== null}
               >
@@ -197,7 +201,7 @@ export default function PartnerOrdersPage() {
               </button>
               {shipment.labelPdfUrl && (
                 <a
-                  className="px-2 py-1 rounded bg-gray-100"
+                  className="rounded-full border border-slate-200 px-3 py-1"
                   href={shipment.labelPdfUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -207,7 +211,7 @@ export default function PartnerOrdersPage() {
               )}
               {shipment.deliveryNotePdfUrl && (
                 <a
-                  className="px-2 py-1 rounded bg-gray-100"
+                  className="rounded-full border border-slate-200 px-3 py-1"
                   href={shipment.deliveryNotePdfUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -217,7 +221,7 @@ export default function PartnerOrdersPage() {
               )}
               {shipment.shippingLabelPdfUrl && (
                 <a
-                  className="px-2 py-1 rounded bg-gray-100"
+                  className="rounded-full border border-slate-200 px-3 py-1"
                   href={shipment.shippingLabelPdfUrl}
                   target="_blank"
                   rel="noreferrer"
@@ -226,9 +230,9 @@ export default function PartnerOrdersPage() {
                 </a>
               )}
             </div>
-            <div className="overflow-auto border rounded">
+            <div className="overflow-auto rounded border border-slate-200">
               <table className="min-w-full text-xs">
-                <thead className="bg-gray-50">
+                <thead className="bg-slate-50">
                   <tr>
                     <th className="px-2 py-1 text-left">Supplier PID</th>
                     <th className="px-2 py-1 text-left">GTIN</th>
@@ -245,7 +249,7 @@ export default function PartnerOrdersPage() {
                   ))}
                   {shipment.items.length === 0 && (
                     <tr>
-                      <td className="px-2 py-2 text-gray-500" colSpan={3}>
+                      <td className="px-2 py-2 text-slate-500" colSpan={3}>
                         No shipment items.
                       </td>
                     </tr>
@@ -256,7 +260,7 @@ export default function PartnerOrdersPage() {
           </div>
         ))}
         {shipments.length === 0 && (
-          <div className="text-sm text-gray-500">No shipments yet.</div>
+          <div className="text-sm text-slate-500">No shipments yet.</div>
         )}
       </div>
     </div>
