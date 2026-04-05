@@ -5,6 +5,28 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type ShopifyOrdersSyncData = {
+  orders: {
+    edges: Array<{
+      cursor: string;
+      node: {
+        id: string;
+        name: string;
+        createdAt: string;
+        cancelledAt: string | null;
+        displayFinancialStatus: string;
+        displayFulfillmentStatus: string;
+        paymentGatewayNames: string[];
+        currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
+        totalRefundedSet: { shopMoney: { amount: string; currencyCode: string } } | null;
+      };
+    }>;
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+};
+
+type ShopifyGqlResult<T> = { data: T; errors?: { message: string }[] };
+
 /**
  * POST /api/sync/shopify-orders
  * 
@@ -80,12 +102,12 @@ export async function POST(req: Request) {
     let errors_count = 0;
     while (hasNextPage) {
       pages += 1;
-      const result = await shopifyGraphQL<{
-        orders: {
-          edges: { node: any; cursor: string }[];
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-        };
-      }>(QUERY, { first: PAGE_SIZE, query: search, after: cursor });
+      const result: ShopifyGqlResult<ShopifyOrdersSyncData> =
+        await shopifyGraphQL<ShopifyOrdersSyncData>(QUERY, {
+          first: PAGE_SIZE,
+          query: search,
+          after: cursor,
+        });
       const { data, errors } = result;
 
       if (errors?.length) {
