@@ -3,19 +3,13 @@ import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
 import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { buildSupplierVariantId } from "@/app/lib/partnerImport";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price", "gtin"];
-
-function buildSupplierVariantId(providerKey: string, sku: string, sizeNormalized: string) {
-  const cleanKey = providerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-  const cleanSku = sku.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-  const cleanSize = sizeNormalized.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-  return `${cleanKey}:${cleanSku}-${cleanSize}`;
-}
 
 export async function POST(req: NextRequest) {
   const session = await getPartnerSession(req);
@@ -96,12 +90,18 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      let supplierVariantIdForRow: string;
+      try {
+        supplierVariantIdForRow = buildSupplierVariantId(supplierCode, sku, sizeNormalized);
+      } catch {
+        errors.push({ row: i + 1, field: "providerKey", message: "Invalid providerKey" });
+        continue;
+      }
       const pendingRow = await prismaAny.partnerUploadRow.findFirst({
         where: {
           providerKey: supplierCode,
-          sku,
-          sizeNormalized,
           status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
+          OR: [{ supplierVariantId: supplierVariantIdForRow }, { sku, sizeNormalized }],
         },
         orderBy: { updatedAt: "desc" },
       });
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const supplierVariantId = buildSupplierVariantId(supplierCode, sku, sizeNormalized);
+      const supplierVariantId = supplierVariantIdForRow;
       const fullProviderKey = buildProviderKey(gtin, supplierVariantId);
       if (!fullProviderKey) {
         errors.push({ row: i + 1, field: "gtin", message: "Invalid GTIN" });

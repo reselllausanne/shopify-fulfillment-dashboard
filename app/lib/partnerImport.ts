@@ -1,6 +1,41 @@
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { normalizeSize, normalizeSku } from "@/app/lib/normalize";
 
+/** Canonical SupplierVariant id for partner CSV imports (normalized sku + size). */
+export function buildSupplierVariantId(providerKeyRaw: string, skuNormalized: string, sizeNormalized: string): string {
+  const providerKey = normalizeProviderKey(providerKeyRaw);
+  if (!providerKey) {
+    throw new Error("Invalid providerKey for supplierVariantId");
+  }
+  const cleanKey = providerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  const cleanSku = skuNormalized.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
+  const cleanSize = sizeNormalized.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
+  return `${cleanKey}:${cleanSku}-${cleanSize}`;
+}
+
+/** Resolve SupplierVariant id for a GTIN inbox / upload row (stored id or derived from legacy sku+size). */
+export function inboxRowSupplierVariantId(row: {
+  supplierVariantId?: string | null;
+  providerKey: string;
+  sku: string;
+  sizeNormalized: string;
+  sizeRaw?: string | null;
+}): string | null {
+  const trimmed = row.supplierVariantId?.trim();
+  if (trimmed) return trimmed;
+  const pk = normalizeProviderKey(row.providerKey);
+  if (!pk) return null;
+  const sku = normalizeSku(row.sku) ?? row.sku;
+  const size =
+    normalizeSize(row.sizeNormalized || row.sizeRaw || "") ?? row.sizeNormalized ?? row.sizeRaw ?? "";
+  if (!sku || !size) return null;
+  try {
+    return buildSupplierVariantId(pk, sku, size);
+  } catch {
+    return null;
+  }
+}
+
 function canonicalizeSku(value: string): string {
   return value
     .toUpperCase()

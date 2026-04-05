@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { inboxRowSupplierVariantId } from "@/app/lib/partnerImport";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { toCsv } from "@/galaxus/exports/csv";
 
@@ -37,15 +38,42 @@ export async function GET(request: NextRequest) {
       orderBy: { updatedAt: "desc" },
     });
 
+    const variantIds = Array.from(
+      new Set(
+        rows
+          .map((r: any) => inboxRowSupplierVariantId(r))
+          .filter((id: string | null): id is string => typeof id === "string" && id.length > 0)
+      )
+    ) as string[];
+    const variants =
+      variantIds.length > 0
+        ? await prisma.supplierVariant.findMany({
+            where: { supplierVariantId: { in: variantIds } },
+            select: {
+              supplierVariantId: true,
+              supplierSku: true,
+              sizeRaw: true,
+              sizeNormalized: true,
+              stock: true,
+              price: true,
+            },
+          })
+        : [];
+    const variantById = new Map(variants.map((v) => [v.supplierVariantId, v]));
+
     const headers = ["providerKey", "sku", "size", "rawStock", "price", "gtin"];
-    const csvRows = rows.map((row: any) => ({
-      providerKey: row.providerKey,
-      sku: row.sku,
-      size: row.sizeRaw,
-      rawStock: row.rawStock?.toString() ?? "",
-      price: row.price?.toString() ?? "",
-      gtin: "",
-    }));
+    const csvRows = rows.map((row: any) => {
+      const sid = inboxRowSupplierVariantId(row);
+      const v = sid ? variantById.get(sid) : undefined;
+      return {
+        providerKey: row.providerKey,
+        sku: v?.supplierSku ?? row.sku,
+        size: v?.sizeRaw ?? row.sizeRaw,
+        rawStock: (v?.stock ?? row.rawStock)?.toString() ?? "",
+        price: (v?.price ?? row.price)?.toString() ?? "",
+        gtin: "",
+      };
+    });
 
     const csv = toCsv(headers, csvRows);
     const filename = `pending-gtin-${partnerKey}-${Date.now()}.csv`;

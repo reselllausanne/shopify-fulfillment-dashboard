@@ -4,7 +4,7 @@ import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
-import { buildDuplicateKey, computeLastRowByKey } from "@/app/lib/partnerImport";
+import { buildDuplicateKey, buildSupplierVariantId, computeLastRowByKey } from "@/app/lib/partnerImport";
 import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { chunkArray } from "@/galaxus/jobs/bulkSql";
 
@@ -81,13 +81,6 @@ export async function POST(req: NextRequest) {
     const cleanPartnerKey = partnerKey ? partnerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "") : null;
     const seenSupplierVariantIds = new Set<string>();
 
-    const buildSupplierVariantId = (providerKey: string, sku: string, sizeValue: string) => {
-      const cleanKey = providerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-      const cleanSku = sku.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-      const cleanSize = sizeValue.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-      return `${cleanKey}:${cleanSku}-${cleanSize}`;
-    };
-
     const lastRowByKey = computeLastRowByKey(rows, headerMap);
 
     for (let i = 1; i < rows.length; i += 1) {
@@ -158,7 +151,13 @@ export async function POST(req: NextRequest) {
       const providerKeyValue = providerKey!;
       const normalizedSku = sku!;
       const normalizedSize = sizeNormalized!;
-      const supplierVariantId = buildSupplierVariantId(providerKeyValue, normalizedSku, normalizedSize);
+      let supplierVariantId: string;
+      try {
+        supplierVariantId = buildSupplierVariantId(providerKeyValue, normalizedSku, normalizedSize);
+      } catch {
+        rowResults.push({ row: i + 1, status: "ERROR", error: "Invalid providerKey for variant id" });
+        continue;
+      }
       seenSupplierVariantIds.add(supplierVariantId);
       const now = new Date();
 
@@ -220,6 +219,7 @@ export async function POST(req: NextRequest) {
             data: {
               uploadId: upload?.id ?? null,
               partnerId: session.partnerId,
+              supplierVariantId,
               providerKey: providerKeyValue,
               sku: normalizedSku,
               sizeRaw,
@@ -236,6 +236,7 @@ export async function POST(req: NextRequest) {
             data: {
               uploadId: upload?.id ?? null,
               partnerId: session.partnerId,
+              supplierVariantId,
               providerKey: providerKeyValue,
               sku: normalizedSku,
               sizeRaw,
@@ -256,6 +257,7 @@ export async function POST(req: NextRequest) {
         await prismaAny.partnerUploadRow?.update({
           where: { id: existingPending.id },
           data: {
+            supplierVariantId,
             status: "RESOLVED",
             gtinResolved: resolvedGtin,
             updatedAt: now,

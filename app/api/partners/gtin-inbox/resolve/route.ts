@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { inboxRowSupplierVariantId } from "@/app/lib/partnerImport";
 import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
@@ -12,13 +13,6 @@ type ResolveBody = {
   rowId?: string;
   gtin?: string;
 };
-
-function buildSupplierVariantId(providerKey: string, sku: string, sizeNormalized: string) {
-  const cleanKey = providerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-  const cleanSku = sku.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-  const cleanSize = sizeNormalized.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-  return `${cleanKey}:${cleanSku}-${cleanSize}`;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -51,9 +45,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Row not found" }, { status: 404 });
     }
 
-    const sku = normalizeSku(row.sku) ?? row.sku;
-    const sizeNormalized = normalizeSize(row.sizeNormalized ?? row.sizeRaw) ?? row.sizeRaw;
-    const supplierVariantId = buildSupplierVariantId(partnerKey, sku, sizeNormalized);
+    const supplierVariantId = inboxRowSupplierVariantId(row);
+    if (!supplierVariantId) {
+      return NextResponse.json({ ok: false, error: "Could not resolve variant id for row" }, { status: 400 });
+    }
+    const variantRow = await prismaAny.supplierVariant.findUnique({
+      where: { supplierVariantId },
+      select: {
+        supplierSku: true,
+        sizeRaw: true,
+        sizeNormalized: true,
+        stock: true,
+        price: true,
+      },
+    });
+    const sku = normalizeSku(variantRow?.supplierSku ?? row.sku) ?? row.sku;
+    const sizeNormalized =
+      normalizeSize(variantRow?.sizeNormalized ?? variantRow?.sizeRaw ?? row.sizeNormalized ?? row.sizeRaw) ??
+      row.sizeNormalized ??
+      row.sizeRaw;
+    const sizeRaw = variantRow?.sizeRaw ?? row.sizeRaw;
+    const stockVal = variantRow?.stock ?? row.rawStock;
+    const priceVal = variantRow?.price ?? row.price;
     const providerKey = buildProviderKey(gtin, supplierVariantId);
     if (!providerKey) {
       return NextResponse.json({ ok: false, error: "Invalid GTIN" }, { status: 400 });
@@ -76,10 +89,10 @@ export async function POST(request: NextRequest) {
           supplierSku: sku,
           providerKey,
           gtin,
-          sizeRaw: row.sizeRaw,
+          sizeRaw,
           sizeNormalized,
-          stock: row.rawStock,
-          price: row.price,
+          stock: stockVal,
+          price: priceVal,
           lastSyncAt: now,
         },
       });
@@ -91,20 +104,20 @@ export async function POST(request: NextRequest) {
           supplierSku: sku,
           providerKey,
           gtin,
-          sizeRaw: row.sizeRaw,
+          sizeRaw,
           sizeNormalized,
-          stock: row.rawStock,
-          price: row.price,
+          stock: stockVal,
+          price: priceVal,
           lastSyncAt: now,
         },
         update: {
           supplierSku: sku,
           providerKey,
           gtin,
-          sizeRaw: row.sizeRaw,
+          sizeRaw,
           sizeNormalized,
-          stock: row.rawStock,
-          price: row.price,
+          stock: stockVal,
+          price: priceVal,
           lastSyncAt: now,
         },
       });

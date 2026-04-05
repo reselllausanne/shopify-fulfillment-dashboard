@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { buildSupplierVariantId } from "@/app/lib/partnerImport";
 import { validateGtin } from "@/app/lib/normalize";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
@@ -8,13 +9,6 @@ import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function buildSupplierVariantId(providerKey: string, sku: string, sizeValue: string) {
-  const cleanKey = providerKey.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-  const cleanSku = sku.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-  const cleanSize = sizeValue.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, "");
-  return `${cleanKey}:${cleanSku}-${cleanSize}`;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -69,7 +63,9 @@ export async function POST(request: NextRequest) {
         });
         continue;
       }
-      const supplierVariantId = buildSupplierVariantId(providerKeyValue, sku, sizeNormalized);
+      const supplierVariantId =
+        String(row.supplierVariantId ?? "").trim() ||
+        buildSupplierVariantId(providerKeyValue, sku, sizeNormalized);
 
       let resolvedGtin: string | null = null;
       let gtinCandidates: string[] = [];

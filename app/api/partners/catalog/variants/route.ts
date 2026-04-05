@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeSize, normalizeSku } from "@/app/lib/normalize";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -243,6 +245,38 @@ export async function POST(req: NextRequest) {
               where: { supplierVariantId: target.supplierVariantId },
               data,
             });
+            const pkForRow = normalizeProviderKey(session.partnerKey);
+            const prevSku = normalizeSku(target.supplierSku ?? "") ?? String(target.supplierSku ?? "").trim();
+            const prevSize =
+              normalizeSize(target.sizeNormalized ?? target.sizeRaw ?? "") ??
+              String(target.sizeNormalized ?? target.sizeRaw ?? "").trim();
+            const skuForRow = normalizeSku(updated.supplierSku ?? "") ?? String(updated.supplierSku ?? "").trim();
+            const sizeForRow =
+              normalizeSize(updated.sizeNormalized ?? updated.sizeRaw ?? "") ??
+              String(updated.sizeNormalized ?? updated.sizeRaw ?? "").trim();
+            if (pkForRow && prevSku && prevSize && skuForRow && sizeForRow) {
+              await (tx as any).partnerUploadRow.updateMany({
+                where: {
+                  providerKey: pkForRow,
+                  status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN", "PENDING_ENRICH"] },
+                  OR: [
+                    { supplierVariantId: updated.supplierVariantId },
+                    {
+                      AND: [{ sku: prevSku }, { sizeNormalized: prevSize }, { partnerId: session.partnerId }],
+                    },
+                  ],
+                },
+                data: {
+                  supplierVariantId: updated.supplierVariantId,
+                  sku: skuForRow,
+                  sizeRaw: updated.sizeRaw ?? "",
+                  sizeNormalized: sizeForRow,
+                  price: updated.price,
+                  rawStock: updated.stock ?? 0,
+                  updatedAt: new Date(),
+                },
+              });
+            }
             output.push({ ok: true, item: updated });
           } catch (rowErr: any) {
             output.push({

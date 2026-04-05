@@ -25,11 +25,6 @@ type UploadResult = {
   }>;
 };
 
-type CatalogRow = {
-  supplierVariantId: string;
-  providerKey: string;
-};
-
 type UploadLog = {
   id: string;
   filename: string;
@@ -61,15 +56,11 @@ export default function PartnerDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [enrichLog, setEnrichLog] = useState<string | null>(null);
-  const [pushKeysInput, setPushKeysInput] = useState<string>("");
-  const [catalog, setCatalog] = useState<CatalogRow[]>([]);
   const [catalogCount, setCatalogCount] = useState<number>(0);
   const [uploadHistory, setUploadHistory] = useState<UploadLog[]>([]);
   const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
   const [pendingEnrichCount, setPendingEnrichCount] = useState<number>(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [pushBusy, setPushBusy] = useState(false);
-  const [pushLog, setPushLog] = useState<string | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [defaultLeadDraft, setDefaultLeadDraft] = useState("");
   const [leadSaveBusy, setLeadSaveBusy] = useState(false);
@@ -83,7 +74,6 @@ export default function PartnerDashboardPage() {
       if (!res.ok) return;
       const data = await res.json();
       if (!data.ok) return;
-      setCatalog(data.catalog ?? []);
       setCatalogCount(data.catalogCount ?? 0);
       setUploadHistory(data.uploads ?? []);
       setPendingRows(data.pendingRows ?? []);
@@ -205,48 +195,6 @@ export default function PartnerDashboardPage() {
       setBusy(false);
     }
   };
-
-  const pushToGalaxusNow = async (mode: "all" | "offer-stock", providerKeys?: string[]) => {
-    if (!partner?.key) {
-      setError("Partner key missing.");
-      return;
-    }
-    setPushBusy(true);
-    setError(null);
-    setPushLog(null);
-    try {
-      const supplier = partner.key.trim().toLowerCase();
-      const partnerRes = await fetch("/api/galaxus/partners/sync?all=1", {
-        method: "POST",
-        cache: "no-store",
-      });
-      const partnerData = await partnerRes.json().catch(() => ({}));
-      if (!partnerRes.ok || !partnerData.ok) {
-        throw new Error(partnerData?.error ?? "Partner sync failed");
-      }
-      const providerKeysParam =
-        providerKeys && providerKeys.length > 0
-          ? `&providerKeys=${encodeURIComponent(providerKeys.join(","))}`
-          : "";
-      const uploadRes = await fetch(
-        `/api/galaxus/feeds/upload?type=${mode}&supplier=${encodeURIComponent(supplier)}&all=1${providerKeysParam}`,
-        {
-          method: "POST",
-          cache: "no-store",
-        }
-      );
-      const uploadData = await uploadRes.json().catch(() => ({}));
-      if (!uploadRes.ok || !uploadData.ok) {
-        throw new Error(uploadData?.error ?? "Galaxus upload failed");
-      }
-      setPushLog(JSON.stringify({ partner: partnerData, upload: uploadData }, null, 2));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
 
   const downloadCatalogCsv = async () => {
     setDownloadBusy(true);
@@ -444,12 +392,14 @@ export default function PartnerDashboardPage() {
           <div>
             <div className="text-sm font-semibold text-slate-900">Enrichment</div>
             <div className="text-xs text-slate-500">
-              Enrich newly added products after upload. Existing SKUs reuse stored data.
+              Run after upload to resolve GTINs via KickDB for new rows. Force re-enrich runs lookup again (slower). If
+              you fix a SKU in Catalog, the GTIN inbox and this dashboard read the same live catalog row (refresh the page
+              if you have it open).
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
               onClick={() => enrichPending(false)}
               disabled={busy}
             >
@@ -462,6 +412,13 @@ export default function PartnerDashboardPage() {
             >
               Force re-enrich
             </button>
+            <button
+              className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
+              onClick={downloadCatalogCsv}
+              disabled={busy || downloadBusy}
+            >
+              {downloadBusy ? "Preparing…" : "Download enriched CSV"}
+            </button>
           </div>
           {enrichLog && (
             <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
@@ -469,91 +426,6 @@ export default function PartnerDashboardPage() {
             </div>
           )}
         </div>
-      </div>
-
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
-        <div className="text-sm font-semibold text-slate-900">Fast Push to Galaxus</div>
-        <div className="text-xs text-slate-500">
-          Sync partner catalog and upload feeds immediately (skip cron).
-        </div>
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-            <button
-              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
-              onClick={() => {
-                const keys = catalog.map((row) => row.providerKey).filter(Boolean);
-                setPushKeysInput(keys.join("\n"));
-              }}
-              disabled={busy || pushBusy || catalog.length === 0}
-            >
-              Use all catalog keys
-            </button>
-            <button
-              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(pushKeysInput);
-                } catch {
-                  // ignore clipboard errors
-                }
-              }}
-              disabled={busy || pushBusy || !pushKeysInput.trim()}
-            >
-              Copy keys
-            </button>
-            <button
-              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
-              onClick={downloadCatalogCsv}
-              disabled={busy || downloadBusy}
-            >
-              {downloadBusy ? "Preparing…" : "Download enriched CSV"}
-            </button>
-          </div>
-          <textarea
-            className="w-full rounded border border-slate-200 px-2 py-1 text-xs font-mono"
-            rows={3}
-            placeholder="NER_1234567890123&#10;THE_1234567890123"
-            value={pushKeysInput}
-            onChange={(e) => setPushKeysInput(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
-            onClick={() =>
-              pushToGalaxusNow(
-                "all",
-                pushKeysInput
-                  .split(/[\n,]+/)
-                  .map((value) => value.trim())
-                  .filter(Boolean)
-              )
-            }
-            disabled={busy || pushBusy}
-          >
-            {pushBusy ? "Pushing…" : "Push master + specs + offer/stock"}
-          </button>
-          <button
-            className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
-            onClick={() =>
-              pushToGalaxusNow(
-                "offer-stock",
-                pushKeysInput
-                  .split(/[\n,]+/)
-                  .map((value) => value.trim())
-                  .filter(Boolean)
-              )
-            }
-            disabled={busy || pushBusy}
-          >
-            Push offer/stock only
-          </button>
-        </div>
-        {pushLog && (
-          <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
-            {pushLog}
-          </div>
-        )}
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">

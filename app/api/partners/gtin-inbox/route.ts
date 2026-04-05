@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { inboxRowSupplierVariantId } from "@/app/lib/partnerImport";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
@@ -37,11 +38,48 @@ export async function GET(request: NextRequest) {
       ...(uploadId ? { uploadId } : {}),
     };
 
-    const items = await prismaAny.partnerUploadRow.findMany({
+    const rows = await prismaAny.partnerUploadRow.findMany({
       where,
       orderBy: { updatedAt: "desc" },
       take: limit,
       skip: offset,
+    });
+
+    const variantIds = Array.from(
+      new Set(
+        rows
+          .map((r: any) => inboxRowSupplierVariantId(r))
+          .filter((id: string | null): id is string => typeof id === "string" && id.length > 0)
+      )
+    ) as string[];
+    const variants =
+      variantIds.length > 0
+        ? await prisma.supplierVariant.findMany({
+            where: { supplierVariantId: { in: variantIds } },
+            select: {
+              supplierVariantId: true,
+              supplierSku: true,
+              sizeRaw: true,
+              sizeNormalized: true,
+              stock: true,
+              price: true,
+            },
+          })
+        : [];
+    const variantById = new Map(variants.map((v) => [v.supplierVariantId, v]));
+
+    const items = rows.map((r: any) => {
+      const sid = inboxRowSupplierVariantId(r);
+      const v = sid ? variantById.get(sid) : undefined;
+      return {
+        ...r,
+        supplierVariantId: r.supplierVariantId ?? sid ?? null,
+        sku: v?.supplierSku ?? r.sku,
+        sizeRaw: v?.sizeRaw ?? r.sizeRaw,
+        sizeNormalized: v?.sizeNormalized ?? r.sizeNormalized,
+        rawStock: v?.stock ?? r.rawStock,
+        price: v?.price != null ? String(v.price) : String(r.price ?? ""),
+      };
     });
 
     const total = await prismaAny.partnerUploadRow.count({ where });

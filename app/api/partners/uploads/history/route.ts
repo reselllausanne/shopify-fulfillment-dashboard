@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { inboxRowSupplierVariantId } from "@/app/lib/partnerImport";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest) {
   }));
 
   // 5) PartnerUploadRow pending/ambiguous (not yet resolved)
-  const pendingRows = await prismaAny.partnerUploadRow.findMany({
+  const pendingUploadRows = await prismaAny.partnerUploadRow.findMany({
     where: {
       providerKey,
       status: { in: ["PENDING_GTIN", "AMBIGUOUS_GTIN"] },
@@ -104,6 +105,29 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
+  const pendingVariantIds = Array.from(
+    new Set(
+      pendingUploadRows
+        .map((r: any) => inboxRowSupplierVariantId(r))
+        .filter((id: string | null): id is string => typeof id === "string" && id.length > 0)
+    )
+  ) as string[];
+  const pendingVariants =
+    pendingVariantIds.length > 0
+      ? await prisma.supplierVariant.findMany({
+          where: { supplierVariantId: { in: pendingVariantIds } },
+          select: {
+            supplierVariantId: true,
+            supplierSku: true,
+            sizeRaw: true,
+            sizeNormalized: true,
+            stock: true,
+            price: true,
+          },
+        })
+      : [];
+  const pendingVariantById = new Map(pendingVariants.map((v) => [v.supplierVariantId, v]));
+
   const pendingEnrichCount = await prismaAny.partnerUploadRow.count({
     where: {
       providerKey,
@@ -111,16 +135,20 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const pending = pendingRows.map((r: any) => ({
-    id: r.id,
-    sku: r.sku ?? "",
-    sizeRaw: r.sizeRaw ?? "",
-    rawStock: r.rawStock ?? 0,
-    price: String(r.price ?? ""),
-    status: r.status ?? "",
-    gtinResolved: r.gtinResolved ?? "",
-    updatedAt: r.updatedAt ?? null,
-  }));
+  const pending = pendingUploadRows.map((r: any) => {
+    const sid = inboxRowSupplierVariantId(r);
+    const v = sid ? pendingVariantById.get(sid) : undefined;
+    return {
+      id: r.id,
+      sku: v?.supplierSku ?? r.sku ?? "",
+      sizeRaw: v?.sizeRaw ?? r.sizeRaw ?? "",
+      rawStock: v?.stock ?? r.rawStock ?? 0,
+      price: String(v?.price ?? r.price ?? ""),
+      status: r.status ?? "",
+      gtinResolved: r.gtinResolved ?? "",
+      updatedAt: r.updatedAt ?? null,
+    };
+  });
 
   return NextResponse.json({
     ok: true,
