@@ -138,14 +138,30 @@ export default function PartnerOrdersPage() {
     }
   };
 
+  const refreshData = async () => {
+    await loadOrders();
+    if (selectedOrderId) {
+      await loadOrderDetail(selectedOrderId);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Decathlon Orders</h1>
-        <p className="text-sm text-slate-500">
-          Same line details as the admin dashboard (KickDB + feed). StockX links are read-only here when already set
-          on the main site — duplicates are blocked.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Decathlon Orders</h1>
+          <p className="text-sm text-slate-500">
+            Same line details as the admin dashboard (KickDB + feed). StockX links are read-only here when already set
+            on the main site — duplicates are blocked.
+          </p>
+        </div>
+        <button
+          onClick={refreshData}
+          disabled={loadingOrders || loadingOrder}
+          className="px-3 py-1.5 rounded text-xs border border-slate-200 bg-white"
+        >
+          {loadingOrders || loadingOrder ? "Refreshing…" : "Refresh orders"}
+        </button>
       </div>
 
       {loadingOrders ? <div className="text-xs text-slate-500">Loading orders…</div> : null}
@@ -247,6 +263,7 @@ export default function PartnerOrdersPage() {
                 {(selectedOrder.lines || []).map((line: any) => {
                   const match = matchesByLine.get(line.id);
                   const cat = line.catalog ?? null;
+                  const hasMatch = Boolean(match);
                   const lineOk = isStockxMatchLinked(match);
                   const grossLine = decathlonGrossLineAmount(line);
                   const sizeDisplay =
@@ -264,7 +281,10 @@ export default function PartnerOrdersPage() {
                         : match?.stockxOrderNumber
                           ? `Linked ${match.stockxOrderNumber}`
                           : "Linked (StockX)"
-                      : "Not linked yet";
+                      : hasMatch
+                        ? "Matched (admin)"
+                        : "Not linked yet";
+                  const statusLabel = match?.stockxStatus ? String(match.stockxStatus) : hasMatch ? "MATCHED" : null;
                   const catalogPrice = cat?.catalogPrice ?? null;
                   const catalogPriceText =
                     catalogPrice != null ? `CHF ${Number(catalogPrice).toFixed(2)}` : "—";
@@ -280,9 +300,10 @@ export default function PartnerOrdersPage() {
                         lineOk ? "border-green-400 bg-green-50/50" : "border-slate-200"
                       }`}
                     >
-                      {lineOk ? (
+                      {hasMatch ? (
                         <div className="mb-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 text-[11px] text-red-900">
-                          <span className="font-semibold">Already linked on the admin dashboard.</span>{" "}
+                          <span className="font-semibold">Matched on the admin dashboard.</span>{" "}
+                          {statusLabel ? `Status: ${statusLabel}. ` : ""}
                           StockX data is read-only here — you cannot add a duplicate link. Fulfillment (packing slip /
                           ship) still uses this order.
                         </div>
@@ -355,6 +376,7 @@ export default function PartnerOrdersPage() {
                           <div className={`font-medium ${lineOk ? "text-green-700" : "text-amber-700"}`}>
                             {linkedLabel}
                           </div>
+                          {statusLabel ? <div className="text-slate-500">Status: {statusLabel}</div> : null}
                           <div className="text-slate-500">
                             ETA:{" "}
                             {match?.stockxEstimatedDelivery

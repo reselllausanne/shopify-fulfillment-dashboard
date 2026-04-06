@@ -65,15 +65,13 @@ export async function POST(
       const existing = await prisma.decathlonStockxMatch.findUnique({
         where: { decathlonOrderLineId: lineId },
       });
-      const alreadyLinked =
-        existing &&
-        (trimStr(existing.stockxOrderNumber).length > 0 || trimStr(existing.stockxOrderId).length > 0);
-      if (alreadyLinked) {
+      if (existing) {
+        const status = trimStr(existing.stockxStatus) || "MATCHED";
         return NextResponse.json(
           {
             ok: false,
             error:
-              "This line already has a StockX link on the admin dashboard. Duplicates are not allowed — contact an admin to change it.",
+              `This line already has a StockX record on the admin dashboard (status: ${status}). Duplicates are not allowed — contact an admin to change it.`,
           },
           { status: 403 }
         );

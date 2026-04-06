@@ -27,9 +27,27 @@ function buildKickdbSizeRaw(variant: { sizeEu?: string | null; sizeUs?: string |
   return null;
 }
 
+type KickdbVariantLike = {
+  sizeEu?: string | null;
+  sizeUs?: string | null;
+  product?: {
+    brand?: string | null;
+    name?: string | null;
+    styleId?: string | null;
+  } | null;
+};
+
 function mappingToKickdb(m: any, supplierSizeRaw?: string | null): DecathlonLineKickdb | null {
   const kv = m.kickdbVariant;
   if (!kv) return null;
+  return kickdbVariantToPayload(kv, supplierSizeRaw);
+}
+
+function kickdbVariantToPayload(
+  kv: KickdbVariantLike,
+  supplierSizeRaw?: string | null
+): DecathlonLineKickdb | null {
+  if (!kv?.product) return null;
   const p = kv.product;
   const sizeEu = kv.sizeEu != null ? String(kv.sizeEu).trim() || null : null;
   const sizeUs = kv.sizeUs != null ? String(kv.sizeUs).trim() || null : null;
@@ -127,6 +145,22 @@ export async function enrichDecathlonOrderLinesWithKickdb(lines: any[]): Promise
         })
       : [];
 
+  const fallbackVariants =
+    expandedGtins.length > 0 || skuList.length > 0
+      ? await prisma.kickDBVariant.findMany({
+          where: {
+            OR: [
+              ...(expandedGtins.length > 0
+                ? [{ gtin: { in: expandedGtins } }, { ean: { in: expandedGtins } }]
+                : []),
+              ...(skuList.length > 0 ? [{ providerKey: { in: skuList } }] : []),
+            ],
+          },
+          include: { product: true },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+
   const byNormGtin = new Map<string, (typeof mappings)[0]>();
   const byProviderKey = new Map<string, (typeof mappings)[0]>();
   for (const m of mappings) {
@@ -134,6 +168,17 @@ export async function enrichDecathlonOrderLinesWithKickdb(lines: any[]): Promise
     if (n && !byNormGtin.has(n)) byNormGtin.set(n, m);
     const pk = String(m.providerKey ?? "").trim();
     if (pk && !byProviderKey.has(pk)) byProviderKey.set(pk, m);
+  }
+
+  const fallbackByNormGtin = new Map<string, (typeof fallbackVariants)[0]>();
+  const fallbackByProviderKey = new Map<string, (typeof fallbackVariants)[0]>();
+  for (const v of fallbackVariants) {
+    const g = normalizeGtinKey(v.gtin);
+    if (g && !fallbackByNormGtin.has(g)) fallbackByNormGtin.set(g, v);
+    const e = normalizeGtinKey(v.ean);
+    if (e && !fallbackByNormGtin.has(e)) fallbackByNormGtin.set(e, v);
+    const pk = String(v.providerKey ?? "").trim();
+    if (pk && !fallbackByProviderKey.has(pk)) fallbackByProviderKey.set(pk, v);
   }
 
   for (const line of lines) {
@@ -146,9 +191,11 @@ export async function enrichDecathlonOrderLinesWithKickdb(lines: any[]): Promise
     for (const c of pickMiraklLineSkuCandidates(line)) {
       const svId = skuToSupplierVariantId.get(c);
       if (svId) {
+        if (supplierSizeRaw == null) {
+          supplierSizeRaw = supplierSizeRawByVariantId.get(svId) ?? null;
+        }
         m = bySupplierVariantId.get(svId);
         if (m) {
-          supplierSizeRaw = supplierSizeRawByVariantId.get(svId) ?? null;
           break;
         }
       }
@@ -164,7 +211,22 @@ export async function enrichDecathlonOrderLinesWithKickdb(lines: any[]): Promise
       const g = normalizeGtinKey(pickMiraklLineGtin(line) ?? line?.gtin);
       if (g) m = byNormGtin.get(g);
     }
-    if (!m) continue;
+    if (!m) {
+      let fallback: (typeof fallbackVariants)[0] | undefined;
+      for (const c of pickMiraklLineSkuCandidates(line)) {
+        fallback = fallbackByProviderKey.get(c);
+        if (fallback) break;
+      }
+      if (!fallback) {
+        const g = normalizeGtinKey(pickMiraklLineGtin(line) ?? line?.gtin);
+        if (g) fallback = fallbackByNormGtin.get(g);
+      }
+      if (fallback) {
+        const payload = kickdbVariantToPayload(fallback, supplierSizeRaw ?? null);
+        if (payload) out.set(lineId, payload);
+      }
+      continue;
+    }
     const payload = mappingToKickdb(m, supplierSizeRaw ?? null);
     if (payload) out.set(lineId, payload);
   }
