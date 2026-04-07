@@ -208,6 +208,69 @@ export async function bulkInsertSupplierVariantsByProviderKeyGtin(
   return result?.[0]?.count ?? 0;
 }
 
+/**
+ * Partner CSV import: upsert catalog rows by supplierVariantId.
+ * Preserves existing providerKey + gtin on conflict (only stock/price/size/sku/lastSyncAt refresh).
+ */
+export async function bulkUpsertSupplierVariantsPartnerImport(
+  rows: Array<{
+    supplierVariantId: string;
+    supplierSku: string;
+    providerKey: string | null;
+    gtin: string | null;
+    price: number;
+    stock: number;
+    sizeRaw: string | null;
+    sizeNormalized: string | null;
+  }>,
+  now: Date
+): Promise<void> {
+  if (rows.length === 0) return;
+  const values = rows.map((r) =>
+    Prisma.sql`(
+      ${Prisma.sql`gen_random_uuid()`},
+      ${r.supplierVariantId},
+      ${r.supplierSku},
+      ${r.providerKey},
+      ${r.gtin},
+      ${r.price},
+      ${r.stock},
+      ${r.sizeRaw},
+      ${r.sizeNormalized},
+      ${now},
+      ${now},
+      ${now}
+    )`
+  );
+  await prisma.$executeRaw(
+    Prisma.sql`
+      INSERT INTO "public"."SupplierVariant" (
+        "id",
+        "supplierVariantId",
+        "supplierSku",
+        "providerKey",
+        "gtin",
+        "price",
+        "stock",
+        "sizeRaw",
+        "sizeNormalized",
+        "lastSyncAt",
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT ("supplierVariantId") DO UPDATE SET
+        "supplierSku" = EXCLUDED."supplierSku",
+        "sizeRaw" = EXCLUDED."sizeRaw",
+        "sizeNormalized" = EXCLUDED."sizeNormalized",
+        "stock" = EXCLUDED."stock",
+        "price" = EXCLUDED."price",
+        "lastSyncAt" = EXCLUDED."lastSyncAt",
+        "updatedAt" = EXCLUDED."updatedAt"
+    `
+  );
+}
+
 export async function bulkUpdateSupplierVariantsByProviderKeyGtin(
   rows: Array<{
     providerKey: string;

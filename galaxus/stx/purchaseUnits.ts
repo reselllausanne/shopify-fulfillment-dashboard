@@ -272,11 +272,11 @@ export async function getStxLinkStatusForOrder(orderIdOrRef: string): Promise<St
   );
   const enrichedBuckets = buckets.map((bucket) => {
     if (matchedGtins.has(bucket.gtin)) {
+      // A saved `GalaxusStockxMatch` counts as “linked” for ops, but do not pretend ETA/AWB exist
+      // unless the match row or purchase units actually have them (avoids green UI with AWB: —).
       return {
         ...bucket,
-        linked: bucket.needed,
-        linkedWithEta: bucket.needed,
-        linkedWithAwb: bucket.needed,
+        linked: Math.max(bucket.linked, bucket.needed),
       };
     }
     return bucket;
@@ -369,10 +369,15 @@ export async function linkOldestPendingStxUnit(params: {
   etaMin?: Date | null;
   etaMax?: Date | null;
   checkoutType?: string | null;
+  stockxOrderNumber?: string | null;
+  stockxSettledAmount?: number | null;
+  stockxSettledCurrency?: string | null;
+  /** When true (saved-match / manual chain+order path), still persist buy id + AWB even if ETA missing. */
+  allowMissingEta?: boolean;
 }) {
   const stockxOrderId = params.stockxOrderId.trim();
   if (!stockxOrderId) return { status: "invalid_order_id" as const };
-  if (!params.etaMin || !params.etaMax) {
+  if (!params.allowMissingEta && (!params.etaMin || !params.etaMax)) {
     return { status: "missing_eta" as const };
   }
 
@@ -413,10 +418,23 @@ export async function linkOldestPendingStxUnit(params: {
   }
 
   try {
+    const settled =
+      params.stockxSettledAmount != null && Number.isFinite(params.stockxSettledAmount)
+        ? params.stockxSettledAmount
+        : null;
     const updated = await (prisma as any).stxPurchaseUnit.update({
       where: { id: pendingUnit.id },
       data: {
         stockxOrderId,
+        stockxOrderNumber:
+          typeof params.stockxOrderNumber === "string" && params.stockxOrderNumber.trim()
+            ? params.stockxOrderNumber.trim()
+            : null,
+        stockxSettledAmount: settled,
+        stockxSettledCurrency:
+          typeof params.stockxSettledCurrency === "string" && params.stockxSettledCurrency.trim()
+            ? params.stockxSettledCurrency.trim()
+            : null,
         awb: params.awb ?? null,
         etaMin: params.etaMin ?? null,
         etaMax: params.etaMax ?? null,

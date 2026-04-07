@@ -7,6 +7,7 @@ import { runJob } from "@/galaxus/jobs/jobRunner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
 
 export async function POST(request: Request) {
   try {

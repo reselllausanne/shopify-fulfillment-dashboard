@@ -278,8 +278,9 @@ model ExpenseCategory {
   type      ExpenseType   @default(PERSONAL)
   createdAt DateTime      @default(now())
   
-  expenses  PersonalExpense[]
-  recurringExpenses RecurringExpense[]
+  expenses            PersonalExpense[]
+  recurringExpenses   RecurringExpense[]
+  manualFinanceEvents ManualFinanceEvent[]
 
   @@schema("public")
 }
@@ -356,6 +357,7 @@ model RecurringExpense {
   dayOfMonth   Int      @default(1)
   intervalMonths Int    @default(1) // 1=monthly, 3=quarterly, etc.
   startDate    DateTime @default(now())
+  endDate      DateTime?
   nextRunDate  DateTime
   lastRunAt    DateTime?
   active       Boolean  @default(true)
@@ -412,6 +414,178 @@ enum ForecastMode {
   AUTO
   MANUAL
   HYBRID
+
+  @@schema("public")
+}
+
+enum BankAccountType {
+  BANK
+  CARD
+
+  @@schema("public")
+}
+
+enum BankImportSource {
+  CAMT053
+  CSV
+
+  @@schema("public")
+}
+
+enum FinanceDirection {
+  IN
+  OUT
+
+  @@schema("public")
+}
+
+enum FinanceCategory {
+  SALES
+  REFUND
+  COGS
+  COMMISSION
+  SHIPPING
+  ADS
+  SUBSCRIPTION
+  OWNER_DRAW
+  INSURANCE
+  FUEL
+  TAX
+  OTHER
+
+  @@schema("public")
+}
+
+enum ManualEventSourceType {
+  MANUAL
+  RECURRING
+  IMPORT
+
+  @@schema("public")
+}
+
+enum OperatingEventType {
+  SALE
+  REFUND
+  COGS
+  AD_SPEND
+  SHIPPING_COST
+  SUBSCRIPTION_COST
+  MARKETPLACE_COMMISSION
+  OWNER_DRAW
+  INSURANCE
+  FUEL
+  TAX
+  VAT
+  BANK_FEE
+  MANUAL_ADJUSTMENT
+  OTHER_EXPENSE
+  OTHER_INCOME
+
+  @@schema("public")
+}
+
+enum OperatingEventCategory {
+  REVENUE
+  DIRECT_COST
+  MARKETING
+  LOGISTICS
+  SOFTWARE
+  MARKETPLACE
+  PERSONAL_DRAW
+  TAXES
+  FINANCE
+  MANUAL
+  OTHER
+
+  @@schema("public")
+}
+
+enum OperatingDirection {
+  IN
+  OUT
+  NEUTRAL
+
+  @@schema("public")
+}
+
+enum OperatingSourceType {
+  SHOPIFY_ORDER
+  GALAXUS_ORDER_LINE
+  DECATHLON_ORDER_LINE
+  ORDER_MATCH
+  GALAXUS_STOCKX_MATCH
+  DECATHLON_STOCKX_MATCH
+  DAILY_AD_SPEND
+  MONTHLY_VARIABLE_COST
+  RECURRING_EXPENSE
+  PERSONAL_EXPENSE
+  MANUAL_FINANCE_EVENT
+  SYSTEM_GENERATED
+
+  @@schema("public")
+}
+
+enum OperatingEventStatus {
+  ACTIVE
+  VOID
+  SUPERSEDED
+  PARTIAL
+  PENDING_REVIEW
+
+  @@schema("public")
+}
+
+enum ConfidenceLevel {
+  HIGH
+  MEDIUM
+  LOW
+
+  @@schema("public")
+}
+
+enum ExpectedCashSourceType {
+  OPERATING_EVENT
+  MANUAL_FINANCE_EVENT
+  RULE_GENERATED
+  SYSTEM_GENERATED
+
+  @@schema("public")
+}
+
+enum ExpectedCashDerivationMethod {
+  RULE_BASED
+  SAME_DAY
+  OFFSET_DAYS
+  MANUAL_OVERRIDE
+
+  @@schema("public")
+}
+
+enum ExpectedCashStatus {
+  PENDING
+  ACTUALIZED
+  VOID
+  SUPERSEDED
+
+  @@schema("public")
+}
+
+enum ReconciliationLinkedType {
+  MANUAL_EVENT
+  EXPECTED_CASH
+  OPERATING_EVENT
+  SHOPIFY_PAYOUT
+  MARKETPLACE_REMITTANCE
+  OTHER
+
+  @@schema("public")
+}
+
+enum ReconciliationStatus {
+  UNMATCHED
+  MATCHED
+  PARTIAL
 
   @@schema("public")
 }
@@ -508,6 +682,229 @@ model ForecastAssumption {
   updatedAt           DateTime        @updatedAt
 
   @@unique([channel])
+  @@schema("public")
+}
+
+model BankAccount {
+  id           String          @id @default(uuid())
+  name         String
+  iban         String?         @unique
+  bankName     String?
+  currencyCode String          @default("CHF")
+  accountType  BankAccountType @default(BANK)
+  isPrimary    Boolean         @default(false)
+  notes        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  imports           BankStatementImport[]
+  transactions      BankTransaction[]
+  balanceSnapshots  BankBalanceSnapshot[]
+  manualEvents      ManualFinanceEvent[]
+
+  @@schema("public")
+}
+
+model BankStatementImport {
+  id             String           @id @default(uuid())
+  bankAccountId  String
+  sourceType     BankImportSource
+  sourceFileName String?
+  fileHash       String
+  statementFrom  DateTime?
+  statementTo    DateTime?
+  importedAt     DateTime         @default(now())
+  metadataJson   Json?
+
+  bankAccount    BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions   BankTransaction[]
+
+  @@unique([bankAccountId, fileHash])
+  @@index([bankAccountId, importedAt])
+  @@schema("public")
+}
+
+model BankTransaction {
+  id               String          @id @default(uuid())
+  bankAccountId    String
+  statementImportId String?
+  externalId       String?
+  bookingDate      DateTime
+  valueDate        DateTime?
+  amount           Decimal         @db.Decimal(12, 2)
+  currencyCode     String          @default("CHF")
+  direction        FinanceDirection
+  counterpartyName String?
+  counterpartyIban String?
+  reference        String?
+  remittanceInfo   String?
+  transactionType  String?
+  fingerprint      String
+  rawJson          Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  bankAccount      BankAccount     @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  statementImport  BankStatementImport? @relation(fields: [statementImportId], references: [id], onDelete: SetNull)
+  reconciliations  BankReconciliationLink[]
+  expectedCashEvents ExpectedCashEvent[] @relation("ExpectedCashActualized")
+
+  @@unique([bankAccountId, fingerprint])
+  @@index([bankAccountId, bookingDate])
+  @@index([bankAccountId, externalId])
+  @@schema("public")
+}
+
+model BankBalanceSnapshot {
+  id            String      @id @default(uuid())
+  bankAccountId String
+  snapshotDate  DateTime
+  balance       Decimal     @db.Decimal(12, 2)
+  currencyCode  String      @default("CHF")
+  note          String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([bankAccountId, snapshotDate])
+  @@index([bankAccountId, snapshotDate])
+  @@schema("public")
+}
+
+model ManualFinanceEvent {
+  id               String             @id @default(uuid())
+  eventDate        DateTime
+  amount           Decimal            @db.Decimal(12, 2)
+  currencyCode     String             @default("CHF")
+  direction        FinanceDirection
+  category         FinanceCategory    @default(OTHER)
+  description      String?
+  expenseCategoryId String?
+  bankAccountId    String?
+  sourceType       ManualEventSourceType @default(MANUAL)
+  sourceId         String?
+  metadataJson     Json?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  expenseCategory  ExpenseCategory?   @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  bankAccount      BankAccount?       @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  operatingEvents  OperatingEvent[]   @relation("ManualFinanceOperatingEvents")
+  expectedCashEvents ExpectedCashEvent[] @relation("ManualFinanceExpectedCashEvents")
+
+  @@unique([sourceType, sourceId, eventDate])
+  @@index([eventDate])
+  @@index([sourceType, sourceId])
+  @@schema("public")
+}
+
+model OperatingEvent {
+  id           String                @id @default(uuid())
+  eventKey     String                @unique
+  eventDate    DateTime
+  channel      MarketplaceChannel?
+  eventType    OperatingEventType
+  direction    OperatingDirection
+  category     OperatingEventCategory
+  subcategory  String?
+  amount       Decimal               @db.Decimal(12, 2)
+  currencyCode String                @default("CHF")
+  description  String?
+
+  sourceType    OperatingSourceType
+  sourceRecordId String?
+  sourceLineId  String?
+  sourceTable   String?
+  sourceReference String?
+  paymentMethod String?
+  materializedAt DateTime            @default(now())
+
+  orderId          String?
+  orderLineId      String?
+  externalOrderRef String?
+  sku              String?
+  providerKey      String?
+  counterparty     String?
+
+  status       OperatingEventStatus @default(ACTIVE)
+  confidence   ConfidenceLevel      @default(MEDIUM)
+  isManual     Boolean              @default(false)
+  isDerived    Boolean              @default(false)
+  isEstimated  Boolean              @default(false)
+  notes        String?
+  metadataJson Json?
+
+  manualFinanceEventId String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  manualFinanceEvent ManualFinanceEvent? @relation("ManualFinanceOperatingEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
+  expectedCashEvents ExpectedCashEvent[] @relation("OperatingExpectedCash")
+
+  @@index([eventDate])
+  @@index([channel])
+  @@index([sourceType])
+  @@index([sourceRecordId])
+  @@schema("public")
+}
+
+model ExpectedCashEvent {
+  id             String                @id @default(uuid())
+  expectedEventKey String              @unique
+  expectedDate   DateTime
+  amount         Decimal               @db.Decimal(12, 2)
+  currencyCode   String                @default("CHF")
+  direction      FinanceDirection
+  category       FinanceCategory       @default(OTHER)
+  subcategory    String?
+  description    String?
+  channel        MarketplaceChannel?
+  paymentMethod  String?
+
+  sourceType       ExpectedCashSourceType
+  sourceRuleId     String?
+  derivationMethod ExpectedCashDerivationMethod
+  derivationVersion String?
+
+  operatingEventId           String?
+  manualFinanceEventId       String?
+  isActualized               Boolean              @default(false)
+  actualizedByBankTransactionId String?
+  status                     ExpectedCashStatus   @default(PENDING)
+  confidence                 ConfidenceLevel      @default(MEDIUM)
+  notes                      String?
+  metadataJson               Json?
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+
+  operatingEvent        OperatingEvent?     @relation("OperatingExpectedCash", fields: [operatingEventId], references: [id], onDelete: SetNull)
+  manualFinanceEvent    ManualFinanceEvent? @relation("ManualFinanceExpectedCashEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
+  actualizedByBankTransaction BankTransaction? @relation("ExpectedCashActualized", fields: [actualizedByBankTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([expectedDate])
+  @@index([channel])
+  @@index([sourceType])
+  @@index([operatingEventId])
+  @@schema("public")
+}
+
+model BankReconciliationLink {
+  id               String                 @id @default(uuid())
+  bankTransactionId String
+  linkedType       ReconciliationLinkedType
+  linkedId         String
+  status           ReconciliationStatus   @default(MATCHED)
+  matchedAmount    Decimal?               @db.Decimal(12, 2)
+  confidence       Int?
+  notes            String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  bankTransaction  BankTransaction        @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([linkedType, linkedId])
+  @@index([status])
   @@schema("public")
 }
 
@@ -836,6 +1233,10 @@ model StxPurchaseUnit {
   gtin              String
   supplierVariantId String
   stockxOrderId     String?  @unique
+  stockxOrderNumber String?
+  /// StockX buy order payment settled amount (from API), for margin vs Galaxus line net.
+  stockxSettledAmount   Decimal? @db.Decimal(12, 2)
+  stockxSettledCurrency String?
   awb               String?
   etaMin            DateTime?
   etaMax            DateTime?

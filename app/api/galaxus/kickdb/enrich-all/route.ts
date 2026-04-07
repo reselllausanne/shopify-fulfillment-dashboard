@@ -6,6 +6,7 @@ import { createLimiter } from "@/galaxus/jobs/bulkSql";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
 
 const ENRICH_LOCK_KEY = 912347; // arbitrary, stable lock key
 

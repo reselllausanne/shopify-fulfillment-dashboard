@@ -28,10 +28,10 @@ export async function GET(request: NextRequest) {
     if (view === "fulfilled") {
       where.orderState = "SHIPPED";
     } else if (view === "to_process") {
-      where.OR = [
-        { orderState: { not: "SHIPPED" } },
-        { orderState: null },
-      ];
+      where.OR = [{ orderState: "OPEN" }, { orderState: null }];
+    } else if (view === "canceled") {
+      where.orderState = { notIn: ["OPEN", "SHIPPED"] };
+      where.NOT = { orderState: null };
     }
     const orders = await prisma.decathlonOrder.findMany({
       where,

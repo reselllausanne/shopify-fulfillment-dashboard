@@ -80,7 +80,12 @@ export function StockxOrderTools({
       if (!data.ok) throw new Error(data.error ?? "Sync failed");
       setLog(
         JSON.stringify(
-          { stockxBuyingOrdersEnriched: data.stockxBuyingOrdersEnriched ?? [], ok: data.ok, sync: data.sync ?? null },
+          {
+            stockxBuyingOrdersEnriched: data.stockxBuyingOrdersEnriched ?? [],
+            ok: data.ok,
+            sync: data.sync ?? null,
+            stockxListWarning: data.stockxListWarning ?? null,
+          },
           null,
           2
         )

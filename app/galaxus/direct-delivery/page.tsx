@@ -335,6 +335,11 @@ export default function GalaxusDirectDeliveryPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
+      if (json.stockxEnrich?.attempted && !json.stockxEnrich?.ok) {
+        setError(
+          `StockX lookup: ${json.stockxEnrich.reason ?? "failed"} — check order # and token file. See ops log for full JSON.`
+        );
+      }
       setOpsLog(JSON.stringify(json, null, 2));
       setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
       await loadOrderDetail(orderId);

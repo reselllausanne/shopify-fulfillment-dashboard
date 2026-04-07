@@ -157,6 +157,21 @@ function enrichGalaxusOrderLine(
   return { ...line, productName, size, supplierSku, sizeRaw };
 }
 
+function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
+  const gtin = String(line?.gtin ?? "").trim();
+  const sv = String(line?.supplierVariantId ?? "").trim();
+  if (!gtin) return null;
+  return (
+    stxUnits.find(
+      (u: any) =>
+        String(u?.gtin ?? "") === gtin &&
+        String(u?.supplierVariantId ?? "") === sv &&
+        u?.stockxOrderId
+    ) ?? stxUnits.find((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId) ??
+    null
+  );
+}
+
 /** Per-line procurement: DB match row and/or STX purchase units (sync + AWB). */
 function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], stxUnits: any[]) {
   const matchByLineId = new Map<string, any>();
@@ -175,11 +190,33 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
     let stockxOrderNumber: string | null = orderNum || null;
     let stockxOrderId: string | null = null;
     let awb: string | null = null;
+    let stockxCostChf: number | null = null;
+    let stockxCostCurrency: string | null = null;
 
     if (orderNum) {
       ok = true;
       source = "galaxus_match";
       awb = match?.stockxAwb != null ? String(match.stockxAwb) : null;
+      stockxOrderId = match?.stockxOrderId != null ? String(match.stockxOrderId).trim() || null : null;
+      const amt = match?.stockxAmount != null ? Number(match.stockxAmount) : null;
+      if (amt != null && Number.isFinite(amt)) {
+        stockxCostChf = amt;
+        stockxCostCurrency =
+          match?.stockxCurrencyCode != null ? String(match.stockxCurrencyCode).trim() : null;
+      }
+      const unit = pickStxPurchaseUnitForLine(line, stxUnits);
+      if (unit) {
+        if (!awb && unit.awb != null) awb = String(unit.awb);
+        if (!stockxOrderId && unit.stockxOrderId != null) stockxOrderId = String(unit.stockxOrderId);
+        if (stockxCostChf == null && unit.stockxSettledAmount != null) {
+          const n = Number(unit.stockxSettledAmount);
+          if (Number.isFinite(n)) {
+            stockxCostChf = n;
+            stockxCostCurrency =
+              unit.stockxSettledCurrency != null ? String(unit.stockxSettledCurrency).trim() : null;
+          }
+        }
+      }
     } else if (gtin && stx?.buckets?.length && isStxSupplierLine(line)) {
       const sv = String(line?.supplierVariantId ?? "").trim();
       const bucket =
@@ -197,7 +234,18 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
         const buLoose = bu ?? stxUnits.find((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId);
         stockxOrderId = buLoose?.stockxOrderId != null ? String(buLoose.stockxOrderId) : null;
         awb = buLoose?.awb != null ? String(buLoose.awb) : null;
-        stockxOrderNumber = stockxOrderId;
+        const numFromUnit =
+          buLoose?.stockxSettledAmount != null ? Number(buLoose.stockxSettledAmount) : null;
+        if (numFromUnit != null && Number.isFinite(numFromUnit)) {
+          stockxCostChf = numFromUnit;
+          stockxCostCurrency =
+            buLoose?.stockxSettledCurrency != null
+              ? String(buLoose.stockxSettledCurrency).trim()
+              : null;
+        }
+        stockxOrderNumber =
+          (buLoose?.stockxOrderNumber != null && String(buLoose.stockxOrderNumber).trim()) ||
+          stockxOrderId;
       }
     }
 
@@ -209,6 +257,8 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
         stockxOrderNumber,
         stockxOrderId,
         awb,
+        stockxCostChf,
+        stockxCostCurrency,
       },
     };
   });
@@ -278,6 +328,9 @@ export async function GET(
           gtin: true,
           supplierVariantId: true,
           stockxOrderId: true,
+          stockxOrderNumber: true,
+          stockxSettledAmount: true,
+          stockxSettledCurrency: true,
           awb: true,
           etaMin: true,
           etaMax: true,

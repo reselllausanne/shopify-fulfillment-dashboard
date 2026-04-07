@@ -6,12 +6,27 @@ import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
 import { buildDuplicateKey, buildSupplierVariantId, computeLastRowByKey } from "@/app/lib/partnerImport";
 import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
-import { chunkArray } from "@/galaxus/jobs/bulkSql";
+import { bulkUpsertSupplierVariantsPartnerImport, chunkArray } from "@/galaxus/jobs/bulkSql";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/** Large CSV + batched DB; allow long runs on Vercel / serverless where supported */
+export const maxDuration = 900;
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
+
+const PARTNER_PENDING_STATUSES = ["PENDING_ENRICH", "PENDING_GTIN", "AMBIGUOUS_GTIN"] as const;
+
+type ValidImportRow = {
+  rowNum: number;
+  supplierVariantId: string;
+  providerKeyValue: string;
+  normalizedSku: string;
+  normalizedSize: string;
+  sizeRaw: string;
+  stock: number;
+  price: number;
+};
 
 export async function POST(req: NextRequest) {
   const session = await getPartnerSession(req);
@@ -54,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
 
     const errors: Array<{ row: number; field: string; message: string }> = [];
-    const rowResults: Array<{
+    type RowOutcome = {
       row: number;
       status:
         | "RESOLVED"
@@ -68,7 +83,8 @@ export async function POST(req: NextRequest) {
       gtinCandidates?: string[];
       error?: string;
       warning?: string;
-    }> = [];
+    };
+    const rowOutcomes: RowOutcome[] = [];
     let importedRows = 0;
     let newRows = 0;
     const partner = await prismaAny.partner.findUnique({
@@ -82,6 +98,7 @@ export async function POST(req: NextRequest) {
     const seenSupplierVariantIds = new Set<string>();
 
     const lastRowByKey = computeLastRowByKey(rows, headerMap);
+    const validImports: ValidImportRow[] = [];
 
     for (let i = 1; i < rows.length; i += 1) {
       const row = rows[i];
@@ -97,7 +114,7 @@ export async function POST(req: NextRequest) {
       const dupeKey = buildDuplicateKey(providerKeyRaw, skuRaw, sizeRaw);
       if (dupeKey) {
         if (lastRowByKey.get(dupeKey) !== i) {
-          rowResults.push({
+          rowOutcomes.push({
             row: i + 1,
             status: "DUPLICATE_IGNORED",
             warning: "Duplicate row, last occurrence wins",
@@ -134,7 +151,7 @@ export async function POST(req: NextRequest) {
 
       if (rowErrors.length > 0) {
         rowErrors.forEach((err) => errors.push({ row: i + 1, ...err }));
-        rowResults.push({
+        rowOutcomes.push({
           row: i + 1,
           status: "ERROR",
           error: rowErrors.map((item) => `${item.field}: ${item.message}`).join("; "),
@@ -143,7 +160,7 @@ export async function POST(req: NextRequest) {
       }
 
       if (dryRun) {
-        rowResults.push({ row: i + 1, status: "DRY_RUN" });
+        rowOutcomes.push({ row: i + 1, status: "DRY_RUN" });
         importedRows += 1;
         continue;
       }
@@ -155,117 +172,179 @@ export async function POST(req: NextRequest) {
       try {
         supplierVariantId = buildSupplierVariantId(providerKeyValue, normalizedSku, normalizedSize);
       } catch {
-        rowResults.push({ row: i + 1, status: "ERROR", error: "Invalid providerKey for variant id" });
+        rowOutcomes.push({ row: i + 1, status: "ERROR", error: "Invalid providerKey for variant id" });
         continue;
       }
       seenSupplierVariantIds.add(supplierVariantId);
-      const now = new Date();
-
-      // DELTA import: rows absent from this CSV remain unchanged.
-      const existingVariant = await prismaAny.supplierVariant.findUnique({
-        where: { supplierVariantId },
-        select: { gtin: true, providerKey: true },
-      });
-      const existingGtin = existingVariant?.gtin ?? null;
-      const existingProviderKey = existingVariant?.providerKey ?? null;
-      assertMappingIntegrity({
+      validImports.push({
+        rowNum: i + 1,
         supplierVariantId,
-        gtin: existingGtin,
-        providerKey: existingProviderKey,
-        status: existingGtin ? "MATCHED" : "PENDING_GTIN",
+        providerKeyValue,
+        normalizedSku,
+        normalizedSize,
+        sizeRaw,
+        stock,
+        price,
       });
-      await prismaAny.supplierVariant.upsert({
-        where: { supplierVariantId },
-        create: {
-          supplierVariantId,
-          supplierSku: normalizedSku,
-          providerKey: existingProviderKey,
-          gtin: existingGtin,
-          sizeRaw,
-          sizeNormalized: normalizedSize,
-          stock,
-          price,
-          lastSyncAt: now,
-        },
-        update: {
-          supplierSku: normalizedSku,
-          providerKey: existingProviderKey,
-          gtin: existingGtin,
-          sizeRaw,
-          sizeNormalized: normalizedSize,
-          stock,
-          price,
-          lastSyncAt: now,
-        },
-      });
+    }
 
-      const resolvedGtin = existingGtin && validateGtin(existingGtin) ? existingGtin : null;
-      const shouldEnrich = !resolvedGtin;
-      const existingPending = await prismaAny.partnerUploadRow?.findFirst({
+    if (!dryRun && validImports.length > 0) {
+      const now = new Date();
+      const uniqueIds = [...new Set(validImports.map((v) => v.supplierVariantId))];
+      const existingById = new Map<string, { gtin: string | null; providerKey: string | null }>();
+      for (const batch of chunkArray(uniqueIds, 500)) {
+        const found = await prismaAny.supplierVariant.findMany({
+          where: { supplierVariantId: { in: batch } },
+          select: { supplierVariantId: true, gtin: true, providerKey: true },
+        });
+        for (const r of found) {
+          existingById.set(r.supplierVariantId, { gtin: r.gtin ?? null, providerKey: r.providerKey ?? null });
+        }
+      }
+
+      const pendingRows = await prismaAny.partnerUploadRow.findMany({
         where: {
-          providerKey: providerKeyValue,
-          sku: normalizedSku,
-          sizeNormalized: normalizedSize,
-          status: { in: ["PENDING_ENRICH", "PENDING_GTIN", "AMBIGUOUS_GTIN"] },
+          partnerId: session.partnerId,
+          status: { in: [...PARTNER_PENDING_STATUSES] },
         },
         orderBy: { updatedAt: "desc" },
       });
-
-      if (shouldEnrich) {
-        newRows += 1;
-        if (existingPending) {
-          await prismaAny.partnerUploadRow?.update({
-            where: { id: existingPending.id },
-            data: {
-              uploadId: upload?.id ?? null,
-              partnerId: session.partnerId,
-              supplierVariantId,
-              providerKey: providerKeyValue,
-              sku: normalizedSku,
-              sizeRaw,
-              sizeNormalized: normalizedSize,
-              rawStock: stock,
-              price,
-              status: "PENDING_ENRICH",
-              gtinResolved: null,
-              updatedAt: now,
-            },
-          });
-        } else {
-          await prismaAny.partnerUploadRow?.create({
-            data: {
-              uploadId: upload?.id ?? null,
-              partnerId: session.partnerId,
-              supplierVariantId,
-              providerKey: providerKeyValue,
-              sku: normalizedSku,
-              sizeRaw,
-              sizeNormalized: normalizedSize,
-              rawStock: stock,
-              price,
-              status: "PENDING_ENRICH",
-              gtinResolved: null,
-            },
-          });
-        }
-        rowResults.push({ row: i + 1, status: "PENDING_ENRICH" });
-        importedRows += 1;
-        continue;
+      const pendingByTriple = new Map<string, { id: string }>();
+      for (const pr of pendingRows) {
+        const k = `${pr.providerKey}|${pr.sku}|${pr.sizeNormalized}`;
+        if (!pendingByTriple.has(k)) pendingByTriple.set(k, { id: pr.id });
       }
 
-      if (existingPending) {
-        await prismaAny.partnerUploadRow?.update({
-          where: { id: existingPending.id },
-          data: {
-            supplierVariantId,
-            status: "RESOLVED",
-            gtinResolved: resolvedGtin,
-            updatedAt: now,
-          },
+      const variantBulk: Array<{
+        supplierVariantId: string;
+        supplierSku: string;
+        providerKey: string | null;
+        gtin: string | null;
+        price: number;
+        stock: number;
+        sizeRaw: string | null;
+        sizeNormalized: string | null;
+      }> = [];
+
+      for (const v of validImports) {
+        const existing = existingById.get(v.supplierVariantId);
+        const existingGtin = existing?.gtin ?? null;
+        const existingProviderKey = existing?.providerKey ?? null;
+        assertMappingIntegrity({
+          supplierVariantId: v.supplierVariantId,
+          gtin: existingGtin,
+          providerKey: existingProviderKey,
+          status: existingGtin ? "MATCHED" : "PENDING_GTIN",
+        });
+        variantBulk.push({
+          supplierVariantId: v.supplierVariantId,
+          supplierSku: v.normalizedSku,
+          providerKey: existingProviderKey,
+          gtin: existingGtin,
+          price: v.price,
+          stock: v.stock,
+          sizeRaw: v.sizeRaw,
+          sizeNormalized: v.normalizedSize,
         });
       }
-      rowResults.push({ row: i + 1, status: "RESOLVED", gtin: resolvedGtin });
-      importedRows += 1;
+
+      for (const batch of chunkArray(variantBulk, 400)) {
+        await bulkUpsertSupplierVariantsPartnerImport(batch, now);
+      }
+
+      type UploadCreate = {
+        uploadId: string | null;
+        partnerId: string;
+        supplierVariantId: string;
+        providerKey: string;
+        sku: string;
+        sizeRaw: string;
+        sizeNormalized: string;
+        rawStock: number;
+        price: number;
+        status: string;
+        gtinResolved: null;
+      };
+      const uploadCreates: UploadCreate[] = [];
+      const uploadUpdates: Array<{ id: string; data: Record<string, unknown> }> = [];
+
+      for (const v of validImports) {
+        const existing = existingById.get(v.supplierVariantId);
+        const existingGtin = existing?.gtin ?? null;
+        const resolvedGtin = existingGtin && validateGtin(existingGtin) ? existingGtin : null;
+        const shouldEnrich = !resolvedGtin;
+        const tripleKey = `${v.providerKeyValue}|${v.normalizedSku}|${v.normalizedSize}`;
+        const existingPending = pendingByTriple.get(tripleKey);
+
+        if (shouldEnrich) {
+          newRows += 1;
+          if (existingPending) {
+            uploadUpdates.push({
+              id: existingPending.id,
+              data: {
+                uploadId: upload?.id ?? null,
+                partnerId: session.partnerId,
+                supplierVariantId: v.supplierVariantId,
+                providerKey: v.providerKeyValue,
+                sku: v.normalizedSku,
+                sizeRaw: v.sizeRaw,
+                sizeNormalized: v.normalizedSize,
+                rawStock: v.stock,
+                price: v.price,
+                status: "PENDING_ENRICH",
+                gtinResolved: null,
+                updatedAt: now,
+              },
+            });
+          } else {
+            uploadCreates.push({
+              uploadId: upload?.id ?? null,
+              partnerId: session.partnerId,
+              supplierVariantId: v.supplierVariantId,
+              providerKey: v.providerKeyValue,
+              sku: v.normalizedSku,
+              sizeRaw: v.sizeRaw,
+              sizeNormalized: v.normalizedSize,
+              rawStock: v.stock,
+              price: v.price,
+              status: "PENDING_ENRICH",
+              gtinResolved: null,
+            });
+          }
+          rowOutcomes.push({ row: v.rowNum, status: "PENDING_ENRICH" });
+        } else {
+          if (existingPending) {
+            uploadUpdates.push({
+              id: existingPending.id,
+              data: {
+                supplierVariantId: v.supplierVariantId,
+                status: "RESOLVED",
+                gtinResolved: resolvedGtin,
+                updatedAt: now,
+              },
+            });
+          }
+          rowOutcomes.push({ row: v.rowNum, status: "RESOLVED", gtin: resolvedGtin });
+        }
+        importedRows += 1;
+      }
+
+      for (const batch of chunkArray(uploadCreates, 300)) {
+        if (batch.length === 0) continue;
+        await prismaAny.partnerUploadRow.createMany({ data: batch });
+      }
+
+      for (const batch of chunkArray(uploadUpdates, 40)) {
+        if (batch.length === 0) continue;
+        await prisma.$transaction(
+          batch.map((u) =>
+            prismaAny.partnerUploadRow.update({
+              where: { id: u.id },
+              data: u.data,
+            })
+          )
+        );
+      }
     }
 
     if (upload) {
@@ -306,6 +385,8 @@ export async function POST(req: NextRequest) {
       await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     }
 
+    rowOutcomes.sort((a, b) => a.row - b.row);
+
     return NextResponse.json({
       ok: true,
       result: {
@@ -314,7 +395,7 @@ export async function POST(req: NextRequest) {
         newRows,
         errorRows: errors.length,
         errors,
-        rows: rowResults,
+        rows: rowOutcomes,
         dryRun,
         removedMissing,
         removeSkipped,

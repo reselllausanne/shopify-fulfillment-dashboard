@@ -108,10 +108,11 @@ export default function GalaxusManualEntryModal({
           {/* Supplier order info */}
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">🏪 Supplier (StockX)</h3>
-            {isDecathlon ? (
+            {isDecathlon || isGalaxus ? (
               <p className="text-xs text-gray-600">
-                Enter the StockX buy order number; saving loads chain/order, variant, cost, ETA, and tracking when the
-                token is configured. Leave other fields blank to fill from StockX, or type values to override.
+                Enter the StockX buy order number (as in Pro). Saving loads chain/order id, variant, settled cost, ETA,
+                and AWB when the Galaxus token file is set (same token as Decathlon). Leave other fields blank to fill
+                from StockX, or type values to override.
               </p>
             ) : null}
             <div className="grid grid-cols-2 gap-3">
@@ -119,7 +120,7 @@ export default function GalaxusManualEntryModal({
                 type="text"
                 value={localData.stockxOrderNumber || ""}
                 onChange={(e) => update({ stockxOrderNumber: e.target.value })}
-                placeholder={isDecathlon ? "StockX order #" : "Supplier Order Number"}
+                placeholder={isDecathlon || isGalaxus ? "StockX order #" : "Supplier Order Number"}
                 className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
               />
               <input
@@ -150,17 +151,13 @@ export default function GalaxusManualEntryModal({
                 placeholder={isGalaxus ? "Supplier PID" : "Chain ID (optional)"}
                 className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
               />
-              {!isGalaxus ? (
-                <input
-                  type="text"
-                  value={localData.stockxOrderId || ""}
-                  onChange={(e) => update({ stockxOrderId: e.target.value })}
-                  placeholder="Order ID (optional)"
-                  className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
-                />
-              ) : (
-                <div />
-              )}
+              <input
+                type="text"
+                value={localData.stockxOrderId || ""}
+                onChange={(e) => update({ stockxOrderId: e.target.value })}
+                placeholder={isGalaxus ? "Order ID (optional, filled by lookup)" : "Order ID (optional)"}
+                className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-3">

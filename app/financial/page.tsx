@@ -21,6 +21,7 @@ import AdsSpendManager from "@/app/components/AdsSpendManager";
 import MonthlyVariableCostsManager from "@/app/components/MonthlyVariableCostsManager";
 import RecurringExpensesManager from "@/app/components/RecurringExpensesManager";
 import { getJson } from "@/app/lib/api";
+import { extractRecurringIdFromNote } from "@/app/lib/recurring-schedule";
 import { toNumberSafe } from "@/app/utils/numbers";
 
 type SalesRow = {
@@ -142,12 +143,6 @@ export default function FinancialOverviewPage() {
 
       // Recurring expenses (scheduled + recorded)
       const recurringItems = recurringJson.data?.items || [];
-      const recurringMarker = (note?: string | null) => {
-        if (!note) return null;
-        const match = note.match(/\[RECURRING:([^\]]+)\]/);
-        return match?.[1] || null;
-      };
-
       const recordedByKey = new Set<string>();
       const recordedByDay = new Map<string, number>();
       let recordedTotal = 0;
@@ -155,7 +150,7 @@ export default function FinancialOverviewPage() {
       let recordedBusiness = 0;
 
       expensesList.forEach((exp) => {
-        const rid = recurringMarker(exp.note);
+        const rid = extractRecurringIdFromNote(exp.note);
         if (!rid) return;
         const dateKey = new Date(exp.date).toISOString().split("T")[0];
         recordedByKey.add(`${rid}|${dateKey}`);
@@ -188,6 +183,8 @@ export default function FinancialOverviewPage() {
         if (!item.active) return;
         const start = item.startDate ? new Date(item.startDate) : new Date();
         if (isNaN(start.getTime())) return;
+        const end = item.endDate ? new Date(item.endDate) : null;
+        if (end && !isNaN(end.getTime()) && end < fromDate) return;
         const startMonth = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
         const interval = Math.max(Number(item.intervalMonths) || 1, 1);
         const dayOfMonth = Number(item.dayOfMonth) || 1;
@@ -204,6 +201,7 @@ export default function FinancialOverviewPage() {
 
           const runDate = getRunDate(cursor.getUTCFullYear(), cursor.getUTCMonth(), dayOfMonth);
           if (runDate < start || runDate < fromDate || runDate > toDate) continue;
+          if (end && !isNaN(end.getTime()) && runDate > end) continue;
 
           const dateKey = runDate.toISOString().split("T")[0];
           if (recordedByKey.has(`${item.id}|${dateKey}`)) continue;
@@ -263,125 +261,72 @@ export default function FinancialOverviewPage() {
       };
       setMonthlyData(normMonthly(monthlyJson.data ?? monthlyJson));
 
-      // Calculate daily financials
-      const dailyMap = new Map<string, any>();
-
-      // Add sales data
-      sales.forEach((day: any) => {
-        dailyMap.set(day.date, {
-          date: day.date,
-          sales: day.sales,
-          costs: day.sales - day.marginChf,
-          expenses: 0,
-          personalExpenses: 0,
-          businessExpenses: 0,
-          vat: day.sales * VAT_RATE,
-          margin: 0
-        });
-      });
-
-      // Add expenses data (group by day, split personal/business)
-      const dailyExpenses = new Map<string, { personal: number; business: number }>();
+      // Daily chart: spread personal + recurring (posted & unposted) evenly; keep business one-off, COGS, ads on actual dates
+      const toKeyStr = toDate.toISOString().split("T")[0];
+      let smoothPosted = 0;
+      const businessOneOffByDay = new Map<string, number>();
       expensesList.forEach((exp) => {
-        const date = new Date(exp.date).toISOString().split('T')[0];
-        const current = dailyExpenses.get(date) || { personal: 0, business: 0 };
-        if (exp.isBusiness) {
-          current.business += exp.amount;
+        const dateKey = new Date(exp.date).toISOString().split("T")[0];
+        if (dateKey < fromStr || dateKey > toKeyStr) return;
+        const amount = toNumberSafe(exp.amount, 0);
+        const rid = extractRecurringIdFromNote(exp.note);
+        if (!exp.isBusiness || rid) {
+          smoothPosted += amount;
         } else {
-          current.personal += exp.amount;
+          businessOneOffByDay.set(dateKey, (businessOneOffByDay.get(dateKey) || 0) + amount);
         }
-        dailyExpenses.set(date, current);
       });
+      const smoothTotal = smoothPosted + scheduledTotal;
+      const dayKeys: string[] = [];
+      for (
+        let t = Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate());
+        t <= Date.UTC(toDate.getUTCFullYear(), toDate.getUTCMonth(), toDate.getUTCDate());
+        t += 86400000
+      ) {
+        dayKeys.push(new Date(t).toISOString().split("T")[0]);
+      }
+      const dayCount = Math.max(1, dayKeys.length);
+      const dailySmooth = smoothTotal / dayCount;
 
-      dailyExpenses.forEach((amounts, date) => {
-        const existing = dailyMap.get(date) || {
+      const dailyMap = new Map<string, any>();
+      for (const date of dayKeys) {
+        dailyMap.set(date, {
           date,
           sales: 0,
           costs: 0,
-          expenses: 0,
-          personalExpenses: 0,
-          businessExpenses: 0,
+          smoothedExpenses: dailySmooth,
+          businessOneOff: businessOneOffByDay.get(date) || 0,
           adsSpend: 0,
-          recurringExpenses: 0,
           vat: 0,
-          margin: 0
-        };
-        existing.personalExpenses = amounts.personal;
-        existing.businessExpenses = amounts.business;
-        existing.expenses = amounts.personal + amounts.business;
-        dailyMap.set(date, existing);
+          margin: 0,
+        });
+      }
+
+      sales.forEach((day: any) => {
+        const row = dailyMap.get(day.date);
+        if (row) {
+          row.sales = day.sales;
+          row.costs = day.sales - day.marginChf;
+          row.vat = day.sales * VAT_RATE;
+        }
       });
 
-      // Apply recorded recurring (for display only)
-      recordedByDay.forEach((amount, date) => {
-        const existing = dailyMap.get(date) || {
-          date,
-          sales: 0,
-          costs: 0,
-          expenses: 0,
-          personalExpenses: 0,
-          businessExpenses: 0,
-          adsSpend: 0,
-          recurringExpenses: 0,
-          vat: 0,
-          margin: 0
-        };
-        existing.recurringExpenses += amount;
-        dailyMap.set(date, existing);
-      });
-
-      // Apply scheduled recurring (adds to expenses + recurring)
-      scheduledByDay.forEach((amounts, date) => {
-        const existing = dailyMap.get(date) || {
-          date,
-          sales: 0,
-          costs: 0,
-          expenses: 0,
-          personalExpenses: 0,
-          businessExpenses: 0,
-          adsSpend: 0,
-          recurringExpenses: 0,
-          vat: 0,
-          margin: 0
-        };
-        existing.personalExpenses += amounts.personal;
-        existing.businessExpenses += amounts.business;
-        existing.expenses += amounts.total;
-        existing.recurringExpenses += amounts.total;
-        dailyMap.set(date, existing);
-      });
-
-      // Add ads spend by day
       const dailyAds = new Map<string, number>();
       adsRecords.forEach((r: any) => {
         const date = String(r.date);
-        const current = dailyAds.get(date) || 0;
-        dailyAds.set(date, current + toNumberSafe(r.amountChf, 0));
+        dailyAds.set(date, (dailyAds.get(date) || 0) + toNumberSafe(r.amountChf, 0));
       });
-
       dailyAds.forEach((amount, date) => {
-        const existing = dailyMap.get(date) || {
-          date,
-          sales: 0,
-          costs: 0,
-          expenses: 0,
-          personalExpenses: 0,
-          businessExpenses: 0,
-          adsSpend: 0,
-          vat: 0,
-          margin: 0
-        };
-        existing.adsSpend = amount;
-        dailyMap.set(date, existing);
+        const row = dailyMap.get(date);
+        if (row) row.adsSpend = amount;
       });
 
-      // Calculate final margin for each day
-      const dailyArray = Array.from(dailyMap.values())
-        .map((d) => {
-          d.margin = d.sales - d.costs - d.expenses - d.adsSpend - d.vat;
-          return d;
-        })
-        .sort((a, b) => a.date.localeCompare(b.date));
+      const dailyArray = dayKeys.map((date) => {
+        const d = dailyMap.get(date)!;
+        d.margin =
+          d.sales - d.costs - d.smoothedExpenses - d.businessOneOff - d.adsSpend - d.vat;
+        return d;
+      });
 
       setDailyFinancials(dailyArray);
 
@@ -461,12 +406,6 @@ export default function FinancialOverviewPage() {
             >
               💰 Expenses
             </a>
-            <a
-              href="/cash-flow"
-              className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors font-medium"
-            >
-              💧 Cash Flow
-            </a>
             <span className="text-gray-900 font-bold py-2 px-3 bg-purple-100 rounded-md">
               📈 Financial (Current)
             </span>
@@ -534,7 +473,7 @@ export default function FinancialOverviewPage() {
           <>
         {/* Period Selector */}
         <div className="mb-6 flex gap-2">
-          {[7, 30, 90].map((d) => (
+          {[7, 30, 90, 365].map((d) => (
             <button
               key={d}
               onClick={() => setDays(d)}
@@ -602,7 +541,12 @@ export default function FinancialOverviewPage() {
 
         {/* Daily P&L Chart */}
         <div className="bg-white p-6 rounded-lg shadow mb-8">
-          <h2 className="text-xl font-bold text-gray-900 mb-4">📊 Daily Profit & Loss</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">📊 Daily Profit & Loss</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Personal spend and recurring subscriptions (posted + scheduled) are spread evenly across the selected
+            period for this chart only. Supplier costs, manual ads, VAT, and one-off business expenses stay on their
+            dates.
+          </p>
           <ResponsiveContainer width="100%" height={400}>
             <ComposedChart data={dailyFinancials}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -614,13 +558,16 @@ export default function FinancialOverviewPage() {
               />
               <Legend />
               <Bar dataKey="sales" name="Sales" fill="#3b82f6" />
-              <Bar dataKey="costs" name="Costs" fill="#f97316" />
-                  <Bar dataKey="personalExpenses" name="Personal Expenses" fill="#fbbf24" stackId="expenses" />
-                  <Bar dataKey="businessExpenses" name="Business Expenses" fill="#ef4444" stackId="expenses" />
-              <Bar dataKey="adsSpend" name="Ads Spend" fill="#fb923c" />
-              <Bar dataKey="recurringExpenses" name="Recurring" fill="#8b5cf6" stackId="expenses" />
+              <Bar dataKey="costs" name="Supplier costs" fill="#f97316" />
+              <Bar
+                dataKey="smoothedExpenses"
+                name="Personal + recurring (smoothed / day)"
+                fill="#fbbf24"
+              />
+              <Bar dataKey="businessOneOff" name="Business one-off (actual date)" fill="#ef4444" />
+              <Bar dataKey="adsSpend" name="Ads spend" fill="#fb923c" />
               <Bar dataKey="vat" name="VAT" fill="#a855f7" />
-              <Line type="monotone" dataKey="margin" name="Final Margin" stroke="#10b981" strokeWidth={3} />
+              <Line type="monotone" dataKey="margin" name="Final margin" stroke="#10b981" strokeWidth={3} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

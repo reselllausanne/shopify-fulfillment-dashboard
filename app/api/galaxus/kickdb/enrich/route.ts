@@ -3,6 +3,7 @@ import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
 
 export async function POST(request: Request) {
   try {

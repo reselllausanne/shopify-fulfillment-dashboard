@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import {
+  applyStockxDetailsToDecathlonMatchFields,
+  resolveStockxBuyForManualDecathlon,
+} from "@/decathlon/stx/manualStockxEnrich";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,15 +20,17 @@ function parseMaybeNumber(value: any): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ orderId: string }> }
-) {
+function trimStr(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
+export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
   try {
     const { orderId } = await params;
     const body = await request.json().catch(() => ({}));
     const lineId = String(body?.lineId ?? "").trim();
     const data = body?.data ?? {};
+    const enrichFromStockx = body?.enrichFromStockx !== false;
     if (!lineId) {
       return NextResponse.json({ ok: false, error: "Missing lineId" }, { status: 400 });
     }
@@ -45,10 +51,53 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Line not found" }, { status: 404 });
     }
 
-    const resolvedCost =
+    const prismaAny = prisma as any;
+    const existing = await prismaAny.galaxusStockxMatch.findUnique({
+      where: { galaxusOrderLineId: line.id },
+    });
+
+    const orderNumberInput = trimStr(data.stockxOrderNumber);
+    let auto: ReturnType<typeof applyStockxDetailsToDecathlonMatchFields> | null = null;
+    let stockxEnrich: { attempted: boolean; ok: boolean; reason?: string } = {
+      attempted: false,
+      ok: false,
+    };
+
+    if (enrichFromStockx && orderNumberInput) {
+      stockxEnrich.attempted = true;
+      const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
+      if (resolved.ok) {
+        auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {
+          matchReasons: ["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"],
+        });
+        stockxEnrich = { attempted: true, ok: true };
+      } else {
+        stockxEnrich = { attempted: true, ok: false, reason: resolved.reason };
+      }
+    }
+
+    const a = auto ?? ({} as ReturnType<typeof applyStockxDetailsToDecathlonMatchFields>);
+
+    const manualCost =
       parseMaybeNumber(data.stockxAmount) ??
       parseMaybeNumber(data.supplierCost) ??
       parseMaybeNumber(data.manualCostOverride);
+    const autoAmount = a.stockxAmount != null ? Number(a.stockxAmount) : null;
+    const existingAmount = existing?.stockxAmount != null ? Number(existing.stockxAmount) : null;
+    const resolvedCost =
+      manualCost !== null
+        ? manualCost
+        : autoAmount != null && Number.isFinite(autoAmount)
+          ? autoAmount
+          : existingAmount != null && Number.isFinite(existingAmount)
+            ? existingAmount
+            : null;
+
+    const stockxOrderNumberFinal =
+      trimStr(data.stockxOrderNumber) ||
+      trimStr(a.stockxOrderNumber) ||
+      trimStr(existing?.stockxOrderNumber) ||
+      `MANUAL-${order.galaxusOrderId}-${line.lineNumber ?? 1}`;
 
     const payload = {
       galaxusOrderId: order.id,
@@ -67,39 +116,59 @@ export async function POST(
       galaxusLineNetAmount: line.lineNetAmount,
       galaxusVatRate: line.vatRate,
       galaxusCurrencyCode: order.currencyCode ?? "CHF",
-      // Keep Galaxus matches minimal: do not persist StockX identifiers here.
-      stockxChainId: null,
-      stockxOrderId: null,
-      stockxOrderNumber: String(data.stockxOrderNumber ?? "").trim() || `MANUAL-${order.galaxusOrderId}-${line.lineNumber}`,
-      stockxVariantId: String(data.stockxVariantId ?? "").trim() || null,
-      stockxProductName: String(data.stockxProductName ?? "").trim() || null,
-      stockxSkuKey: String(data.stockxSkuKey ?? "").trim() || null,
-      stockxSizeEU: String(data.stockxSizeEU ?? "").trim() || null,
-      stockxPurchaseDate: parseMaybeDate(data.stockxPurchaseDate),
+      stockxChainId: trimStr(data.stockxChainId) || trimStr(a.stockxChainId) || trimStr(existing?.stockxChainId) || null,
+      stockxOrderId: trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null,
+      stockxOrderNumber: stockxOrderNumberFinal,
+      stockxVariantId: trimStr(data.stockxVariantId) || trimStr(a.stockxVariantId) || trimStr(existing?.stockxVariantId) || null,
+      stockxProductName:
+        trimStr(data.stockxProductName) || trimStr(a.stockxProductName) || trimStr(existing?.stockxProductName) || null,
+      stockxSkuKey: trimStr(data.stockxSkuKey) || trimStr(a.stockxSkuKey) || trimStr(existing?.stockxSkuKey) || null,
+      stockxSizeEU: trimStr(data.stockxSizeEU) || trimStr(a.stockxSizeEU) || trimStr(existing?.stockxSizeEU) || null,
+      stockxPurchaseDate:
+        parseMaybeDate(data.stockxPurchaseDate) ?? a.stockxPurchaseDate ?? existing?.stockxPurchaseDate ?? null,
       stockxAmount: resolvedCost,
-      stockxCurrencyCode: String(data.shopifyCurrencyCode ?? data.stockxCurrencyCode ?? order.currencyCode ?? "CHF").trim(),
-      stockxStatus: String(data.stockxStatus ?? "MANUAL").trim() || "MANUAL",
-      stockxEstimatedDelivery: parseMaybeDate(data.stockxEstimatedDelivery),
-      stockxLatestEstimatedDelivery: parseMaybeDate(data.stockxLatestEstimatedDelivery),
-      stockxAwb: String(data.stockxAwb ?? "").trim() || null,
-      stockxTrackingUrl: String(data.stockxTrackingUrl ?? "").trim() || null,
-      stockxCheckoutType: String(data.stockxCheckoutType ?? "").trim() || null,
-      stockxStates: data.stockxStates ?? null,
+      stockxCurrencyCode:
+        trimStr(data.shopifyCurrencyCode ?? data.stockxCurrencyCode) ||
+        trimStr(a.stockxCurrencyCode) ||
+        trimStr(existing?.stockxCurrencyCode) ||
+        String(order.currencyCode ?? "CHF").trim(),
+      stockxStatus: trimStr(data.stockxStatus) || trimStr(a.stockxStatus) || trimStr(existing?.stockxStatus) || "MANUAL",
+      stockxEstimatedDelivery:
+        parseMaybeDate(data.stockxEstimatedDelivery) ??
+        a.stockxEstimatedDelivery ??
+        existing?.stockxEstimatedDelivery ??
+        null,
+      stockxLatestEstimatedDelivery:
+        parseMaybeDate(data.stockxLatestEstimatedDelivery) ??
+        a.stockxLatestEstimatedDelivery ??
+        existing?.stockxLatestEstimatedDelivery ??
+        null,
+      stockxAwb: trimStr(data.stockxAwb) || trimStr(a.stockxAwb) || trimStr(existing?.stockxAwb) || null,
+      stockxTrackingUrl:
+        trimStr(data.stockxTrackingUrl) || trimStr(a.stockxTrackingUrl) || trimStr(existing?.stockxTrackingUrl) || null,
+      stockxCheckoutType:
+        trimStr(data.stockxCheckoutType) ||
+        trimStr(a.stockxCheckoutType) ||
+        trimStr(existing?.stockxCheckoutType) ||
+        null,
+      stockxStates: data.stockxStates !== undefined ? data.stockxStates : a.stockxStates ?? existing?.stockxStates ?? null,
       matchConfidence: "high",
       matchScore: 1,
-      matchType: "MANUAL",
-      matchReasons: JSON.stringify(["MANUAL_ENTRY"]),
+      matchType: auto ? "SYNC" : "MANUAL",
+      matchReasons: auto
+        ? JSON.stringify(["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"])
+        : JSON.stringify(["MANUAL_ENTRY"]),
       timeDiffHours: null,
       updatedAt: new Date(),
     };
 
-    const match = await (prisma as any).galaxusStockxMatch.upsert({
+    const match = await prismaAny.galaxusStockxMatch.upsert({
       where: { galaxusOrderLineId: line.id },
       update: payload,
       create: payload,
     });
 
-    return NextResponse.json({ ok: true, match });
+    return NextResponse.json({ ok: true, match, stockxEnrich });
   } catch (error: any) {
     return NextResponse.json(
       { ok: false, error: error?.message ?? "Manual entry failed" },

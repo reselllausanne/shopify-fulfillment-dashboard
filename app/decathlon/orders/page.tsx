@@ -32,7 +32,7 @@ export default function DecathlonOrdersPage() {
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
   const [polling, setPolling] = useState(false);
-  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
+  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "canceled">("to_process");
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
     mode: "create" | "edit";
@@ -40,6 +40,9 @@ export default function DecathlonOrdersPage() {
     orderId: string | null;
     initialData: any;
   }>({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+  const [partners, setPartners] = useState<Array<{ id: string; key: string; name: string }>>([]);
+  const [assigningPartner, setAssigningPartner] = useState(false);
+  const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
 
   const loadOrders = async () => {
     setLoadingOrders(true);
@@ -65,6 +68,18 @@ export default function DecathlonOrdersPage() {
       setError(err.message);
     } finally {
       setLoadingOrders(false);
+    }
+  };
+
+  const loadPartners = async () => {
+    try {
+      const res = await fetch("/api/partners/list", { cache: "no-store" });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        setPartners(Array.isArray(data.items) ? data.items : []);
+      }
+    } catch (err: any) {
+      setError(err?.message ?? "Failed to load partners");
     }
   };
 
@@ -96,9 +111,33 @@ export default function DecathlonOrdersPage() {
     }
   };
 
+  const assignPartner = async () => {
+    if (!selectedOrderId || !selectedPartnerKey) return;
+    setAssigningPartner(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/assign`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ partnerKey: selectedPartnerKey }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Assignment failed");
+      await Promise.all([loadOrderDetail(selectedOrderId), loadOrders()]);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setAssigningPartner(false);
+    }
+  };
+
   useEffect(() => {
     loadOrders();
   }, [leftTab]);
+
+  useEffect(() => {
+    loadPartners();
+  }, []);
 
   useEffect(() => {
     if (selectedOrderId) {
@@ -106,6 +145,10 @@ export default function DecathlonOrdersPage() {
       loadOrderDetail(selectedOrderId);
     }
   }, [selectedOrderId]);
+
+  useEffect(() => {
+    setSelectedPartnerKey(selectedOrder?.partnerKey ?? "");
+  }, [selectedOrder?.partnerKey]);
 
   const matchesByLine = useMemo(() => {
     const map = new Map<string, any>();
@@ -116,6 +159,7 @@ export default function DecathlonOrdersPage() {
   }, [selectedOrder]);
 
   const buildLineTitle = (line: any) => line.productTitle || line.description || line.offerSku || "—";
+  const normalizeState = (state?: string | null) => String(state ?? "").trim().toUpperCase();
 
   const orderedList = useMemo(() => {
     if (newOrderIds.size === 0) return orders;
@@ -126,8 +170,13 @@ export default function DecathlonOrdersPage() {
 
   const ordersByTab = useMemo(() => {
     return orderedList.filter((order) => {
-      if (leftTab === "fulfilled") return order.orderState === "SHIPPED";
-      return order.orderState !== "SHIPPED";
+      const state = normalizeState(order.orderState);
+      const isShipped = state === "SHIPPED";
+      const isOpen = state === "OPEN" || !state;
+      const isCanceled = !isShipped && !isOpen;
+      if (leftTab === "fulfilled") return isShipped;
+      if (leftTab === "canceled") return isCanceled;
+      return isOpen;
     });
   }, [orderedList, leftTab]);
 
@@ -156,6 +205,11 @@ export default function DecathlonOrdersPage() {
       return Number.isFinite(c) ? c : null;
     });
   }, [selectedOrder?.lines, matchesByLine]);
+
+  const canFulfill = useMemo(() => {
+    const state = normalizeState(selectedOrder?.orderState);
+    return state === "" || state === "OPEN";
+  }, [selectedOrder?.orderState]);
 
   const openManualEntry = (line: any) => {
     if (!selectedOrderId || !selectedOrder) {
@@ -326,7 +380,7 @@ export default function DecathlonOrdersPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded p-3">
           <div className="font-semibold mb-2">Orders</div>
-          <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
+          <div className="mb-2 grid grid-cols-3 gap-1 text-xs">
             <button
               className={`rounded border px-2 py-1 ${leftTab === "to_process" ? "bg-black text-white border-black" : "bg-white border-gray-300"}`}
               onClick={() => setLeftTab("to_process")}
@@ -339,6 +393,12 @@ export default function DecathlonOrdersPage() {
             >
               Fulfilled
             </button>
+            <button
+              className={`rounded border px-2 py-1 ${leftTab === "canceled" ? "bg-black text-white border-black" : "bg-white border-gray-300"}`}
+              onClick={() => setLeftTab("canceled")}
+            >
+              Canceled
+            </button>
           </div>
           <div className="space-y-2 max-h-[500px] overflow-auto">
             {ordersByTab.map((order) => {
@@ -346,17 +406,25 @@ export default function DecathlonOrdersPage() {
               const linked = order.linkedCount ?? 0;
               const allLinesLinked = lineCount > 0 && linked >= lineCount;
               const isPartnerOrder = Boolean(order.partnerKey);
+              const state = normalizeState(order.orderState);
+              const isCanceled = Boolean(state && state !== "OPEN" && state !== "SHIPPED");
               const partnerTone =
-                order.orderState === "SHIPPED" ? "border-emerald-500 bg-emerald-50" : "border-blue-500 bg-blue-50";
+                state === "SHIPPED"
+                  ? "border-emerald-500 bg-emerald-50"
+                  : isCanceled
+                    ? "border-amber-500 bg-amber-50"
+                    : "border-blue-500 bg-blue-50";
               const baseTone = isPartnerOrder
                 ? partnerTone
-                : needsLinking(order)
-                  ? "border-red-500 bg-red-50"
-                  : allLinesLinked
-                  ? "border-green-500 bg-green-50"
-                  : newOrderIds.has(order.id)
-                  ? "border-emerald-500 bg-emerald-50"
-                  : "border-gray-200";
+                : isCanceled
+                  ? "border-amber-500 bg-amber-50"
+                  : needsLinking(order)
+                    ? "border-red-500 bg-red-50"
+                    : allLinesLinked
+                      ? "border-green-500 bg-green-50"
+                      : newOrderIds.has(order.id)
+                        ? "border-emerald-500 bg-emerald-50"
+                        : "border-gray-200";
               return (
               <button
                 key={order.id}
@@ -400,6 +468,32 @@ export default function DecathlonOrdersPage() {
               await loadOrders();
             }}
           />
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-gray-600">Assign partner</span>
+            <select
+              value={selectedPartnerKey}
+              onChange={(event) => setSelectedPartnerKey(event.target.value)}
+              disabled={!selectedOrderId}
+              className="border rounded px-2 py-1 text-xs"
+            >
+              <option value="">Select partner...</option>
+              {partners.map((partner) => (
+                <option key={partner.id} value={partner.key}>
+                  {partner.name} ({partner.key})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={assignPartner}
+              disabled={!selectedOrderId || !selectedPartnerKey || assigningPartner}
+              className="px-2 py-1 bg-gray-900 text-white rounded text-xs"
+            >
+              {assigningPartner ? "Assigning..." : "Assign"}
+            </button>
+            {selectedOrder?.partnerKey ? (
+              <span className="text-gray-500">Current: {selectedOrder.partnerKey}</span>
+            ) : null}
+          </div>
           <p className="text-xs text-gray-600">
             StockX sync updates every line that already has a buy reference: it re-fetches by saved order # (or
             chain/order id) for AWB, ETAs, and tracking—no variant matching. After that, it still tries to link
@@ -415,12 +509,16 @@ export default function DecathlonOrdersPage() {
             </button>
             <button
               onClick={shipOrder}
-              disabled={!selectedOrderId}
+              disabled={!selectedOrderId || !canFulfill}
+              title={!canFulfill ? "Canceled orders cannot be fulfilled" : undefined}
               className="px-3 py-1.5 bg-gray-900 text-white rounded text-xs"
             >
               Generate label + ship
             </button>
           </div>
+          {!canFulfill && selectedOrder ? (
+            <div className="text-xs text-amber-600">This order is canceled and cannot be fulfilled.</div>
+          ) : null}
 
           {loadingOrder ? (
             <div className="text-sm text-gray-500">Loading...</div>

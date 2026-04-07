@@ -7,6 +7,14 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const OPEN_STATES = new Set(["OPEN"]);
+const NON_CANCEL_OVERRIDE_STATES = new Set(["OPEN", "SHIPPED", ""]);
+
+function normalizeOrderState(order: any): string {
+  const raw = String(order?.order_state ?? order?.state ?? order?.status ?? "").trim();
+  return raw.toUpperCase();
+}
+
 function pickLineAmount(line: any): number | null {
   const raw =
     line?.line_price ??
@@ -56,6 +64,94 @@ function resolveOrderPartnerKey(lines: any[], knownPartnerKeys: Set<string>): st
   return knownPartnerKeys.has(only) ? only : null;
 }
 
+async function upsertDecathlonOrder(payload: {
+  order: any;
+  orderId: string;
+  partnerKey: string | null;
+  preserveCanceled?: boolean;
+}) {
+  const { order, orderId, partnerKey, preserveCanceled } = payload;
+  const orderDate = order?.created_date ?? order?.date_created ?? order?.order_date ?? null;
+  const parsedOrderDate = orderDate ? new Date(orderDate) : new Date();
+  const incomingState = normalizeOrderState(order);
+  const existing = await prisma.decathlonOrder.findUnique({
+    where: { orderId },
+    select: { id: true, orderState: true },
+  });
+  let orderState = incomingState || null;
+  if (preserveCanceled && existing?.orderState) {
+    const existingState = String(existing.orderState ?? "").trim().toUpperCase();
+    if (
+      existingState &&
+      !NON_CANCEL_OVERRIDE_STATES.has(existingState) &&
+      (incomingState === "" || OPEN_STATES.has(incomingState))
+    ) {
+      orderState = existingState;
+    }
+  }
+  const orderRow = await prisma.decathlonOrder.upsert({
+    where: { orderId },
+    update: {
+      orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
+      orderDate: parsedOrderDate,
+      orderState,
+      partnerKey,
+      currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
+      totalPrice: pickOrderAmount(order),
+      shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
+      customerName: order?.customer?.name ?? order?.customer?.name1 ?? null,
+      customerEmail: order?.customer?.email ?? null,
+      customerPhone: order?.customer?.phone ?? null,
+      customerAddress1: order?.customer?.address1 ?? order?.customer?.street1 ?? null,
+      customerAddress2: order?.customer?.address2 ?? order?.customer?.street2 ?? null,
+      customerPostalCode: order?.customer?.zip_code ?? order?.customer?.zipCode ?? null,
+      customerCity: order?.customer?.city ?? null,
+      customerCountry: order?.customer?.country ?? null,
+      customerCountryCode: order?.customer?.country_code ?? order?.customer?.countryCode ?? null,
+      recipientName: order?.shipping?.name ?? order?.shipping?.name1 ?? null,
+      recipientEmail: order?.shipping?.email ?? null,
+      recipientPhone: order?.shipping?.phone ?? null,
+      recipientAddress1: order?.shipping?.address1 ?? order?.shipping?.street1 ?? null,
+      recipientAddress2: order?.shipping?.address2 ?? order?.shipping?.street2 ?? null,
+      recipientPostalCode: order?.shipping?.zip_code ?? order?.shipping?.zipCode ?? null,
+      recipientCity: order?.shipping?.city ?? null,
+      recipientCountry: order?.shipping?.country ?? null,
+      recipientCountryCode: order?.shipping?.country_code ?? order?.shipping?.countryCode ?? null,
+      rawJson: order ?? null,
+    },
+    create: {
+      orderId,
+      orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
+      orderDate: parsedOrderDate,
+      orderState,
+      partnerKey,
+      currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
+      totalPrice: pickOrderAmount(order),
+      shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
+      customerName: order?.customer?.name ?? order?.customer?.name1 ?? null,
+      customerEmail: order?.customer?.email ?? null,
+      customerPhone: order?.customer?.phone ?? null,
+      customerAddress1: order?.customer?.address1 ?? order?.customer?.street1 ?? null,
+      customerAddress2: order?.customer?.address2 ?? order?.customer?.street2 ?? null,
+      customerPostalCode: order?.customer?.zip_code ?? order?.customer?.zipCode ?? null,
+      customerCity: order?.customer?.city ?? null,
+      customerCountry: order?.customer?.country ?? null,
+      customerCountryCode: order?.customer?.country_code ?? order?.customer?.countryCode ?? null,
+      recipientName: order?.shipping?.name ?? order?.shipping?.name1 ?? null,
+      recipientEmail: order?.shipping?.email ?? null,
+      recipientPhone: order?.shipping?.phone ?? null,
+      recipientAddress1: order?.shipping?.address1 ?? order?.shipping?.street1 ?? null,
+      recipientAddress2: order?.shipping?.address2 ?? order?.shipping?.street2 ?? null,
+      recipientPostalCode: order?.shipping?.zip_code ?? order?.shipping?.zipCode ?? null,
+      recipientCity: order?.shipping?.city ?? null,
+      recipientCountry: order?.shipping?.country ?? null,
+      recipientCountryCode: order?.shipping?.country_code ?? order?.shipping?.countryCode ?? null,
+      rawJson: order ?? null,
+    },
+  });
+  return { orderRow, existingId: existing?.id ?? null };
+}
+
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -63,12 +159,32 @@ export async function POST(request: Request) {
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
     const client = buildDecathlonOrdersClient();
     const params: Record<string, string | number> = { max: limit };
-    if (state) {
-      params.order_state_codes = state;
-    }
+    if (state) params.order_state_codes = state;
+    const [latestOrder] = await prisma.decathlonOrder.findMany({
+      orderBy: { updatedAt: "desc" },
+      take: 1,
+      select: { updatedAt: true },
+    });
+    const lastSyncAt = latestOrder?.updatedAt ?? null;
     const payload: any = await client.listOrders(params);
-    const orders: any[] =
-      payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
+    const orders: any[] = payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
+    let canceledOrders: any[] = [];
+    if (!state || state.toUpperCase() !== "CANCELED") {
+      const canceledParams: Record<string, string | number> = {
+        max: limit,
+        order_state_codes: "CANCELED",
+      };
+      if (lastSyncAt) {
+        canceledParams.start_update_date = lastSyncAt.toISOString();
+      }
+      const canceledPayload: any = await client.listOrders(canceledParams);
+      canceledOrders =
+        canceledPayload?.orders ??
+        canceledPayload?.order_list ??
+        canceledPayload?.orderList ??
+        canceledPayload?.data ??
+        [];
+    }
     const partnerRows = await prisma.partner.findMany({ select: { key: true } });
     const partnerKeys = new Set(
       partnerRows.map((row) => normalizeProviderKey(row.key)).filter((key): key is string => Boolean(key))
@@ -77,69 +193,13 @@ export async function POST(request: Request) {
     for (const order of orders) {
       const orderId = String(order?.id ?? order?.order_id ?? order?.orderId ?? "").trim();
       if (!orderId) continue;
-      const orderDate = order?.created_date ?? order?.date_created ?? order?.order_date ?? null;
-      const parsedOrderDate = orderDate ? new Date(orderDate) : new Date();
       const lines = Array.isArray(order?.order_lines) ? order.order_lines : order?.lines ?? [];
       const partnerKey = resolveOrderPartnerKey(lines, partnerKeys);
-      const orderRow = await prisma.decathlonOrder.upsert({
-        where: { orderId },
-        update: {
-          orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
-          orderDate: parsedOrderDate,
-          orderState: String(order?.order_state ?? order?.state ?? order?.status ?? ""),
-          partnerKey,
-          currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
-          totalPrice: pickOrderAmount(order),
-          shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
-          customerName: order?.customer?.name ?? order?.customer?.name1 ?? null,
-          customerEmail: order?.customer?.email ?? null,
-          customerPhone: order?.customer?.phone ?? null,
-          customerAddress1: order?.customer?.address1 ?? order?.customer?.street1 ?? null,
-          customerAddress2: order?.customer?.address2 ?? order?.customer?.street2 ?? null,
-          customerPostalCode: order?.customer?.zip_code ?? order?.customer?.zipCode ?? null,
-          customerCity: order?.customer?.city ?? null,
-          customerCountry: order?.customer?.country ?? null,
-          customerCountryCode: order?.customer?.country_code ?? order?.customer?.countryCode ?? null,
-          recipientName: order?.shipping?.name ?? order?.shipping?.name1 ?? null,
-          recipientEmail: order?.shipping?.email ?? null,
-          recipientPhone: order?.shipping?.phone ?? null,
-          recipientAddress1: order?.shipping?.address1 ?? order?.shipping?.street1 ?? null,
-          recipientAddress2: order?.shipping?.address2 ?? order?.shipping?.street2 ?? null,
-          recipientPostalCode: order?.shipping?.zip_code ?? order?.shipping?.zipCode ?? null,
-          recipientCity: order?.shipping?.city ?? null,
-          recipientCountry: order?.shipping?.country ?? null,
-          recipientCountryCode: order?.shipping?.country_code ?? order?.shipping?.countryCode ?? null,
-          rawJson: order ?? null,
-        },
-        create: {
-          orderId,
-          orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
-          orderDate: parsedOrderDate,
-          orderState: String(order?.order_state ?? order?.state ?? order?.status ?? ""),
-          partnerKey,
-          currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
-          totalPrice: pickOrderAmount(order),
-          shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
-          customerName: order?.customer?.name ?? order?.customer?.name1 ?? null,
-          customerEmail: order?.customer?.email ?? null,
-          customerPhone: order?.customer?.phone ?? null,
-          customerAddress1: order?.customer?.address1 ?? order?.customer?.street1 ?? null,
-          customerAddress2: order?.customer?.address2 ?? order?.customer?.street2 ?? null,
-          customerPostalCode: order?.customer?.zip_code ?? order?.customer?.zipCode ?? null,
-          customerCity: order?.customer?.city ?? null,
-          customerCountry: order?.customer?.country ?? null,
-          customerCountryCode: order?.customer?.country_code ?? order?.customer?.countryCode ?? null,
-          recipientName: order?.shipping?.name ?? order?.shipping?.name1 ?? null,
-          recipientEmail: order?.shipping?.email ?? null,
-          recipientPhone: order?.shipping?.phone ?? null,
-          recipientAddress1: order?.shipping?.address1 ?? order?.shipping?.street1 ?? null,
-          recipientAddress2: order?.shipping?.address2 ?? order?.shipping?.street2 ?? null,
-          recipientPostalCode: order?.shipping?.zip_code ?? order?.shipping?.zipCode ?? null,
-          recipientCity: order?.shipping?.city ?? null,
-          recipientCountry: order?.shipping?.country ?? null,
-          recipientCountryCode: order?.shipping?.country_code ?? order?.shipping?.countryCode ?? null,
-          rawJson: order ?? null,
-        },
+      const { orderRow } = await upsertDecathlonOrder({
+        order,
+        orderId,
+        partnerKey,
+        preserveCanceled: true,
       });
       if (Array.isArray(lines) && lines.length > 0) {
         for (const line of lines) {
@@ -188,6 +248,21 @@ export async function POST(request: Request) {
         }
       }
       upserted += 1;
+    }
+    if (canceledOrders.length > 0) {
+      for (const order of canceledOrders) {
+        const orderId = String(order?.id ?? order?.order_id ?? order?.orderId ?? "").trim();
+        if (!orderId) continue;
+        const lines = Array.isArray(order?.order_lines) ? order.order_lines : order?.lines ?? [];
+        const partnerKey = resolveOrderPartnerKey(lines, partnerKeys);
+        await upsertDecathlonOrder({
+          order,
+          orderId,
+          partnerKey,
+          preserveCanceled: false,
+        });
+      }
+      upserted += canceledOrders.length;
     }
     return NextResponse.json({ ok: true, fetched: orders.length, upserted });
   } catch (error: any) {

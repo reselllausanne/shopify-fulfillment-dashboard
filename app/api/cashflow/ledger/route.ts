@@ -15,7 +15,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ChannelKey = "SHOPIFY" | "GALAXUS" | "DECATHLON";
-type ForecastMode = "AUTO" | "MANUAL" | "HYBRID";
 
 type CashInRuleRow = {
   channel: ChannelKey;
@@ -40,7 +39,7 @@ type CashInEvent = {
   date: string;
   amount: number;
   channel: ChannelKey;
-  source: "order" | "projection";
+  source: "order";
 };
 
 type CashOutEvent = {
@@ -48,18 +47,8 @@ type CashOutEvent = {
   amount: number;
   category: string;
   channel?: ChannelKey | null;
-  source?: "order" | "projection" | "fixed";
+  source?: "order" | "fixed" | "estimated";
 };
-
-type ObservedStats = {
-  observedDays: number;
-  totalSales: number;
-  avgDailySales: number;
-  conservativeDailySales: number;
-};
-
-const OBSERVED_WINDOW_DAYS = 90;
-const OBSERVED_MIN_DAYS = 30;
 
 const DEFAULT_CASH_IN_RULES: CashInRuleRow[] = [
   { channel: "SHOPIFY", paymentMethod: "paypal", delayType: "BUSINESS_DAYS", delayValueDays: 6, priority: 300 },
@@ -83,12 +72,6 @@ function parseDateParam(value: string | null, endOfDay: boolean) {
     : new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 }
 
-function confidenceLevel(observedDays: number) {
-  if (observedDays >= 60) return "high";
-  if (observedDays >= 30) return "medium";
-  if (observedDays >= 10) return "low";
-  return "very_low";
-}
 
 function matchRule(
   channel: ChannelKey,
@@ -115,24 +98,6 @@ function applyDelay(orderDate: Date, rule: CashInRuleRow) {
   return addCalendarDays(orderDate, delay);
 }
 
-function scenarioMultiplier(value: string | null) {
-  if (!value) return 1;
-  switch (value.toLowerCase()) {
-    case "conservative":
-      return 0.8;
-    case "growth":
-      return 1.15;
-    default:
-      return 1;
-  }
-}
-
-function effectiveGrowthRate(value: number, scenario: string | null) {
-  if (scenario?.toLowerCase() === "conservative") {
-    return Math.min(0, value);
-  }
-  return value;
-}
 
 function matchesRuleWindow(date: Date, rule: CashOutRuleRow) {
   if (rule.startDate && date < rule.startDate) return false;
@@ -192,107 +157,32 @@ function buildFixedCostEvents(
   return events;
 }
 
-function normalizeAssumption(channel: ChannelKey, raw?: any) {
-  return {
-    channel,
-    mode: (raw?.mode || "HYBRID") as ForecastMode,
-    expectedDailySales: toNumberSafe(raw?.expectedDailySales, 0),
-    expectedDailyOrders: raw?.expectedDailyOrders ?? null,
-    growthRatePct: toNumberSafe(raw?.growthRatePct, 0),
-    payoutDelayDays:
-      raw?.payoutDelayDays === null || raw?.payoutDelayDays === undefined
-        ? null
-        : toNumberSafe(raw?.payoutDelayDays, 0),
-    commissionRatePct: toNumberSafe(raw?.commissionRatePct, 0),
-    refundRatePct: toNumberSafe(raw?.refundRatePct, 0),
-  };
+function ensureDayMap(
+  store: Map<ChannelKey, Map<string, number>>,
+  channel: ChannelKey
+) {
+  if (!store.has(channel)) {
+    store.set(channel, new Map());
+  }
+  return store.get(channel)!;
 }
 
-async function computeShopifyObserved(start: Date, end: Date) {
-  const orders = await prisma.shopifyOrder.findMany({
-    where: { createdAt: { gte: start, lte: end } },
-    select: { createdAt: true, totalSalesChf: true, netSalesChf: true },
-  });
-  const byDate = new Map<string, number>();
-  let total = 0;
-  for (const order of orders) {
-    const amount =
-      toNumberSafe(order.netSalesChf, 0) || toNumberSafe(order.totalSalesChf, 0);
-    if (amount <= 0) continue;
-    const key = toDateKey(order.createdAt);
-    byDate.set(key, (byDate.get(key) || 0) + amount);
-    total += amount;
-  }
-  const observedDays = Array.from(byDate.values()).filter((v) => v > 0).length;
-  const avgDailySales = observedDays > 0 ? total / observedDays : 0;
-  const conservativeDailySales = total / OBSERVED_WINDOW_DAYS;
-  return { observedDays, totalSales: total, avgDailySales, conservativeDailySales };
+function addToDayMap(
+  store: Map<ChannelKey, Map<string, number>>,
+  channel: ChannelKey,
+  dateKey: string,
+  amount: number
+) {
+  if (amount <= 0) return;
+  const dayMap = ensureDayMap(store, channel);
+  dayMap.set(dateKey, (dayMap.get(dateKey) || 0) + amount);
 }
 
-async function computeGalaxusObserved(start: Date, end: Date) {
-  const lines = await prisma.galaxusOrderLine.findMany({
-    where: { order: { orderDate: { gte: start, lte: end } } },
-    select: {
-      lineNetAmount: true,
-      unitNetPrice: true,
-      quantity: true,
-      order: { select: { orderDate: true } },
-    },
-  });
-  const byDate = new Map<string, number>();
-  let total = 0;
-  for (const line of lines) {
-    const orderDate = line.order?.orderDate;
-    if (!orderDate) continue;
-    const net = toNumberSafe(line.lineNetAmount, 0);
-    const fallback = toNumberSafe(line.unitNetPrice, 0) * Number(line.quantity ?? 0);
-    const amount = net > 0 ? net : fallback;
-    if (amount <= 0) continue;
-    const key = toDateKey(orderDate);
-    byDate.set(key, (byDate.get(key) || 0) + amount);
-    total += amount;
-  }
-  const observedDays = Array.from(byDate.values()).filter((v) => v > 0).length;
-  const avgDailySales = observedDays > 0 ? total / observedDays : 0;
-  const conservativeDailySales = total / OBSERVED_WINDOW_DAYS;
-  return { observedDays, totalSales: total, avgDailySales, conservativeDailySales };
-}
-
-async function computeDecathlonObserved(start: Date, end: Date) {
-  const lines = await prisma.decathlonOrderLine.findMany({
-    where: { order: { orderDate: { gte: start, lte: end } } },
-    select: {
-      lineTotal: true,
-      unitPrice: true,
-      quantity: true,
-      order: { select: { orderDate: true } },
-    },
-  });
-  const byDate = new Map<string, number>();
-  let total = 0;
-  for (const line of lines) {
-    const orderDate = line.order?.orderDate;
-    if (!orderDate) continue;
-    const totalLine = toNumberSafe(line.lineTotal, 0);
-    const fallback = toNumberSafe(line.unitPrice, 0) * Number(line.quantity ?? 0);
-    const amount = totalLine > 0 ? totalLine : fallback;
-    if (amount <= 0) continue;
-    const key = toDateKey(orderDate);
-    byDate.set(key, (byDate.get(key) || 0) + amount);
-    total += amount;
-  }
-  const observedDays = Array.from(byDate.values()).filter((v) => v > 0).length;
-  const avgDailySales = observedDays > 0 ? total / observedDays : 0;
-  const conservativeDailySales = total / OBSERVED_WINDOW_DAYS;
-  return { observedDays, totalSales: total, avgDailySales, conservativeDailySales };
-}
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const range = Number(searchParams.get("range") || 30);
-    const projectionDays = Number(searchParams.get("projection") || 30);
-    const scenario = searchParams.get("scenario");
     const channelsParam = searchParams.getAll("channels");
     const fromParam = searchParams.get("from");
     const toParam = searchParams.get("to");
@@ -301,8 +191,7 @@ export async function GET(req: NextRequest) {
     const startDate =
       parseDateParam(fromParam, false) ??
       new Date(endDate.getTime() - (range - 1) * 24 * 60 * 60 * 1000);
-    const projectionEnd = addCalendarDays(endDate, Math.max(projectionDays, 0));
-    const observedStart = addCalendarDays(endDate, -(OBSERVED_WINDOW_DAYS - 1));
+    const projectionEnd = endDate;
 
     const channelFilter = new Set<ChannelKey>(
       channelsParam.length
@@ -310,11 +199,10 @@ export async function GET(req: NextRequest) {
         : ["SHOPIFY", "GALAXUS", "DECATHLON"]
     );
 
-    const [config, cashInRuleRows, cashOutRuleRows, assumptionRows] = await Promise.all([
+    const [config, cashInRuleRows, cashOutRuleRows] = await Promise.all([
       prisma.cashFlowConfig.findFirst(),
       prisma.cashInRule.findMany({ where: { active: true }, orderBy: [{ priority: "desc" }] }),
       prisma.cashOutRule.findMany({ where: { active: true } }),
-      prisma.forecastAssumption.findMany(),
     ]);
 
     const cashInRules: CashInRuleRow[] = cashInRuleRows.length
@@ -338,44 +226,6 @@ export async function GET(req: NextRequest) {
       endDate: rule.endDate ?? null,
     }));
 
-    const assumptionByChannel = new Map<ChannelKey, ReturnType<typeof normalizeAssumption>>();
-    for (const channel of ["SHOPIFY", "GALAXUS", "DECATHLON"] as ChannelKey[]) {
-      const raw = assumptionRows.find((row) => row.channel === channel);
-      assumptionByChannel.set(channel, normalizeAssumption(channel, raw));
-    }
-
-    const [shopifyObserved, galaxusObserved, decathlonObserved] = await Promise.all([
-      computeShopifyObserved(observedStart, endDate),
-      computeGalaxusObserved(observedStart, endDate),
-      computeDecathlonObserved(observedStart, endDate),
-    ]);
-
-    const observedByChannel: Record<ChannelKey, ObservedStats> = {
-      SHOPIFY: shopifyObserved,
-      GALAXUS: galaxusObserved,
-      DECATHLON: decathlonObserved,
-    };
-
-    const confidenceByChannel = Object.fromEntries(
-      (Object.keys(observedByChannel) as ChannelKey[]).map((channel) => {
-        const observedDays = observedByChannel[channel].observedDays;
-        return [
-          channel,
-          { observedDays, level: confidenceLevel(observedDays) },
-        ];
-      })
-    ) as Record<ChannelKey, { observedDays: number; level: string }>;
-
-    const warnings: string[] = [];
-    for (const channel of Object.keys(confidenceByChannel) as ChannelKey[]) {
-      if (confidenceByChannel[channel].observedDays < OBSERVED_MIN_DAYS) {
-        warnings.push(
-          "Forecast quality is limited because some channels have less than 30 observed days of data."
-        );
-        break;
-      }
-    }
-
     const cogsRule = cashOutRules.find((rule) => rule.category === "COGS");
     const cogsOffsetDays = cogsRule?.offsetDays ?? 0;
 
@@ -396,18 +246,15 @@ export async function GET(req: NextRequest) {
     const cashInEvents: CashInEvent[] = [];
     const cashOutEvents: CashOutEvent[] = [];
     const cogsRatioByChannel = new Map<ChannelKey, number>();
+    const salesByDayByChannel = new Map<ChannelKey, Map<string, number>>();
+    const matchedCogsByDayByChannel = new Map<ChannelKey, Map<string, number>>();
 
     const maxRuleDelay = cashInRules.reduce((max, rule) => {
       if (rule.delayType === "NEXT_FRIDAY") return Math.max(max, 7);
       const val = rule.delayValueDays ?? 0;
       return Math.max(max, Math.ceil(val));
     }, 0);
-    const maxManualDelay = Array.from(assumptionByChannel.values()).reduce(
-      (max, assumption) =>
-        Math.max(max, assumption.payoutDelayDays ? Math.ceil(assumption.payoutDelayDays) : 0),
-      0
-    );
-    const orderWindowStart = addCalendarDays(startDate, -(maxRuleDelay + maxManualDelay + 7));
+    const orderWindowStart = addCalendarDays(startDate, -(maxRuleDelay + 7));
     const orderWindowEnd = projectionEnd;
 
     if (channelFilter.has("SHOPIFY")) {
@@ -436,6 +283,14 @@ export async function GET(req: NextRequest) {
             source: "order",
           });
         }
+        if (order.createdAt >= startDate && order.createdAt <= endDate) {
+          addToDayMap(
+            salesByDayByChannel,
+            "SHOPIFY",
+            toDateKey(order.createdAt),
+            amount
+          );
+        }
       }
 
       const matches = await prisma.orderMatch.findMany({
@@ -458,6 +313,12 @@ export async function GET(req: NextRequest) {
         const sale = toNumberSafe(match.shopifyTotalPrice, 0);
         salesWithCogs += sale;
         cogs += cost;
+        addToDayMap(
+          matchedCogsByDayByChannel,
+          "SHOPIFY",
+          toDateKey(match.shopifyCreatedAt),
+          cost
+        );
         const outDate = addCalendarDays(match.shopifyCreatedAt, cogsOffsetDays);
         if (outDate >= startDate && outDate <= projectionEnd) {
           cashOutEvents.push({
@@ -511,6 +372,14 @@ export async function GET(req: NextRequest) {
             source: "order",
           });
         }
+        if (entry.date >= startDate && entry.date <= endDate) {
+          addToDayMap(
+            salesByDayByChannel,
+            "GALAXUS",
+            toDateKey(entry.date),
+            entry.amount
+          );
+        }
       }
 
       const matches = await prisma.galaxusStockxMatch.findMany({
@@ -532,6 +401,12 @@ export async function GET(req: NextRequest) {
         const sale = toNumberSafe(match.galaxusLineNetAmount, 0);
         salesWithCogs += sale;
         cogs += cost;
+        addToDayMap(
+          matchedCogsByDayByChannel,
+          "GALAXUS",
+          toDateKey(orderDate),
+          cost
+        );
         const outDate = addCalendarDays(orderDate, cogsOffsetDays);
         if (outDate >= startDate && outDate <= projectionEnd) {
           cashOutEvents.push({
@@ -585,6 +460,14 @@ export async function GET(req: NextRequest) {
             source: "order",
           });
         }
+        if (entry.date >= startDate && entry.date <= endDate) {
+          addToDayMap(
+            salesByDayByChannel,
+            "DECATHLON",
+            toDateKey(entry.date),
+            entry.amount
+          );
+        }
       }
 
       const matches = await prisma.decathlonStockxMatch.findMany({
@@ -606,6 +489,12 @@ export async function GET(req: NextRequest) {
         const sale = toNumberSafe(match.decathlonLineNetAmount, 0);
         salesWithCogs += sale;
         cogs += cost;
+        addToDayMap(
+          matchedCogsByDayByChannel,
+          "DECATHLON",
+          toDateKey(orderDate),
+          cost
+        );
         const outDate = addCalendarDays(orderDate, cogsOffsetDays);
         if (outDate >= startDate && outDate <= projectionEnd) {
           cashOutEvents.push({
@@ -625,11 +514,6 @@ export async function GET(req: NextRequest) {
     const adSpendRecords = await prisma.dailyAdSpend.findMany({
       where: { date: { gte: startDate, lte: projectionEnd } },
     });
-    const adSpendRecent = await prisma.dailyAdSpend.findMany({
-      where: { date: { gte: observedStart, lte: endDate } },
-    });
-
-    let adSpendTotal = 0;
     for (const record of adSpendRecords) {
       const amount = toNumberSafe(record.amountChf, 0);
       if (amount <= 0) continue;
@@ -639,22 +523,6 @@ export async function GET(req: NextRequest) {
         category: "ADS",
         source: "order",
       });
-    }
-    for (const record of adSpendRecent) {
-      adSpendTotal += toNumberSafe(record.amountChf, 0);
-    }
-    const adSpendAvg = OBSERVED_WINDOW_DAYS > 0 ? adSpendTotal / OBSERVED_WINDOW_DAYS : 0;
-
-    if (projectionDays > 0 && adSpendAvg > 0) {
-      const futureDates = buildDateRange(addCalendarDays(endDate, 1), projectionEnd);
-      for (const date of futureDates) {
-        cashOutEvents.push({
-          date: toDateKey(date),
-          amount: Number(adSpendAvg.toFixed(2)),
-          category: "ADS",
-          source: "projection",
-        });
-      }
     }
 
     const monthlyCosts = await prisma.monthlyVariableCosts.findMany({
@@ -693,92 +561,7 @@ export async function GET(req: NextRequest) {
       ...buildFixedCostEvents(cashOutRules.filter((r) => r.category !== "COGS"), startDate, projectionEnd)
     );
 
-    if (projectionDays > 0) {
-      const futureDates = buildDateRange(addCalendarDays(endDate, 1), projectionEnd);
-      const scenarioFactor = scenarioMultiplier(scenario);
 
-      for (const channel of channelFilter) {
-        const observed = observedByChannel[channel];
-        const assumption = assumptionByChannel.get(channel)!;
-        const observedDays = observed.observedDays;
-        const mode = assumption.mode;
-
-        let baseDailyGross = 0;
-        let forecastSource = "auto";
-
-        if (mode === "MANUAL") {
-          baseDailyGross = assumption.expectedDailySales;
-          forecastSource = "manual";
-        } else if (mode === "AUTO") {
-          if (observedDays >= OBSERVED_MIN_DAYS) {
-            baseDailyGross = observed.avgDailySales;
-          } else {
-            baseDailyGross = observed.conservativeDailySales;
-          }
-          forecastSource = "auto";
-        } else {
-          if (observedDays >= OBSERVED_MIN_DAYS) {
-            baseDailyGross = observed.avgDailySales;
-            forecastSource = "hybrid-auto";
-          } else {
-            baseDailyGross = assumption.expectedDailySales;
-            forecastSource = "hybrid-manual";
-          }
-        }
-
-        baseDailyGross = baseDailyGross * scenarioFactor;
-        const commissionRate = Math.max(0, Math.min(100, assumption.commissionRatePct));
-        const refundRate = Math.max(0, Math.min(100, assumption.refundRatePct));
-        const netFactor = Math.max(0, 1 - commissionRate / 100 - refundRate / 100);
-        const growthRate = effectiveGrowthRate(assumption.growthRatePct, scenario) / 100;
-
-        futureDates.forEach((date, index) => {
-          if (baseDailyGross <= 0) return;
-          const growthMultiplier = Math.pow(1 + growthRate, index);
-          const gross = baseDailyGross * growthMultiplier;
-          const net = gross * netFactor;
-          if (net <= 0) return;
-
-          const manualDelay =
-            (forecastSource.includes("manual") && assumption.payoutDelayDays != null)
-              ? assumption.payoutDelayDays
-              : null;
-
-          let expectedDate: Date;
-          if (manualDelay != null) {
-            expectedDate = addCalendarDays(date, manualDelay);
-          } else {
-            const rule = matchRule(channel, null, cashInRules);
-            if (!rule) return;
-            expectedDate = applyDelay(date, rule);
-          }
-
-          if (expectedDate >= startDate && expectedDate <= projectionEnd) {
-            cashInEvents.push({
-              date: toDateKey(expectedDate),
-              amount: Number(net.toFixed(2)),
-              channel,
-              source: "projection",
-            });
-          }
-
-          const ratio = cogsRatioByChannel.get(channel) || 0;
-          if (ratio > 0) {
-            const projectedCogs = gross * ratio;
-            const outDate = addCalendarDays(date, cogsOffsetDays);
-            if (outDate >= startDate && outDate <= projectionEnd) {
-              cashOutEvents.push({
-                date: toDateKey(outDate),
-                amount: Number(projectedCogs.toFixed(2)),
-                category: "COGS",
-                channel,
-                source: "projection",
-              });
-            }
-          }
-        });
-      }
-    }
 
     const cashInByDate = new Map<string, number>();
     for (const event of cashInEvents) {
@@ -797,7 +580,6 @@ export async function GET(req: NextRequest) {
       cashIn: number;
       cashOut: number;
       closingBalance: number;
-      isForecast: boolean;
     }> = [];
 
     let balance = toNumberSafe(config?.initialBalanceChf, 0);
@@ -817,63 +599,12 @@ export async function GET(req: NextRequest) {
         cashIn,
         cashOut,
         closingBalance,
-        isForecast: day > endDate,
       });
       balance = closingBalance;
       minBalance = Math.min(minBalance, closingBalance);
       if (day <= endDate) closingAtEnd = closingBalance;
       closingAtProjection = closingBalance;
     }
-
-    const forecastRows = rows.filter((row) => row.isForecast);
-    const forecastCashInByChannel: Record<ChannelKey, number> = {
-      SHOPIFY: 0,
-      GALAXUS: 0,
-      DECATHLON: 0,
-    };
-    const forecastCashOutByCategory: Record<string, number> = {};
-
-    const forecastDatesSet = new Set(forecastRows.map((row) => row.date));
-
-    for (const event of cashInEvents) {
-      if (!forecastDatesSet.has(event.date)) continue;
-      if (event.source !== "projection") continue;
-      forecastCashInByChannel[event.channel] += event.amount;
-    }
-
-    for (const event of cashOutEvents) {
-      if (!forecastDatesSet.has(event.date)) continue;
-      if (event.source !== "projection" && event.source !== "fixed") continue;
-      forecastCashOutByCategory[event.category] =
-        (forecastCashOutByCategory[event.category] || 0) + event.amount;
-    }
-
-    const assumptionsUsed = (Object.keys(observedByChannel) as ChannelKey[]).map((channel) => {
-      const assumption = assumptionByChannel.get(channel)!;
-      const observed = observedByChannel[channel];
-      const confidence = confidenceByChannel[channel].level;
-      let forecastSource = assumption.mode.toLowerCase();
-      if (assumption.mode === "HYBRID") {
-        forecastSource =
-          observed.observedDays >= OBSERVED_MIN_DAYS ? "hybrid-auto" : "hybrid-manual";
-      }
-      if (assumption.mode === "AUTO" && observed.observedDays < OBSERVED_MIN_DAYS) {
-        forecastSource = "auto-conservative";
-      }
-      return {
-        channel,
-        mode: assumption.mode,
-        expectedDailySales: assumption.expectedDailySales,
-        expectedDailyOrders: assumption.expectedDailyOrders,
-        growthRatePct: assumption.growthRatePct,
-        payoutDelayDays: assumption.payoutDelayDays,
-        commissionRatePct: assumption.commissionRatePct,
-        refundRatePct: assumption.refundRatePct,
-        observedDays: observed.observedDays,
-        confidence,
-        forecastSource,
-      };
-    });
 
     return NextResponse.json({
       rows,
@@ -882,40 +613,12 @@ export async function GET(req: NextRequest) {
         currentBalance: Number(closingAtEnd.toFixed(2)),
         projectedBalance: Number(closingAtProjection.toFixed(2)),
       },
-      confidenceByChannel,
-      assumptionsUsed,
-      warnings,
-      forecastBreakdown: {
-        cashInByChannel: {
-          SHOPIFY: Number(forecastCashInByChannel.SHOPIFY.toFixed(2)),
-          GALAXUS: Number(forecastCashInByChannel.GALAXUS.toFixed(2)),
-          DECATHLON: Number(forecastCashInByChannel.DECATHLON.toFixed(2)),
-        },
-        cashOut: {
-          COGS: Number((forecastCashOutByCategory.COGS || 0).toFixed(2)),
-          ADS: Number((forecastCashOutByCategory.ADS || 0).toFixed(2)),
-          SHIPPING: Number((forecastCashOutByCategory.SHIPPING || 0).toFixed(2)),
-          OWNER_DRAW: Number((forecastCashOutByCategory.OWNER_DRAW || 0).toFixed(2)),
-          FIXED: Number(
-            (
-              (forecastCashOutByCategory.SUBSCRIPTION || 0) +
-              (forecastCashOutByCategory.INSURANCE || 0) +
-              (forecastCashOutByCategory.FUEL || 0) +
-              (forecastCashOutByCategory.OTHER || 0)
-            ).toFixed(2)
-          ),
-        },
-      },
       metadata: {
         startDate: toDateKey(startDate),
         endDate: toDateKey(endDate),
         projectionEnd: toDateKey(projectionEnd),
-        scenario: scenario || "base",
         timezone: CASHFLOW_TIMEZONE,
         channels: Array.from(channelFilter),
-        observedWindowDays: OBSERVED_WINDOW_DAYS,
-        observedWindowStart: toDateKey(observedStart),
-        observedWindowEnd: toDateKey(endDate),
       },
     });
   } catch (error: any) {

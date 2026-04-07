@@ -58,9 +58,21 @@ export async function POST(
 
     const partnerSession = await getPartnerSession(request);
     if (partnerSession) {
-      const pk = normalizeProviderKey(partnerSession.partnerKey ?? null);
-      if (!pk || normalizeProviderKey(order.partnerKey ?? null) !== pk) {
-        return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+      const sessionPk = normalizeProviderKey(partnerSession.partnerKey ?? null);
+      if (!sessionPk) {
+        return NextResponse.json({ ok: false, error: "Invalid partner session" }, { status: 403 });
+      }
+      const orderPk = normalizeProviderKey(order.partnerKey ?? null);
+      // Only enforce tenant isolation when the order is assigned to a partner (non-null partnerKey).
+      if (orderPk != null && orderPk !== sessionPk) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "This Decathlon order is linked to another partner account. Use the admin Decathlon page without partner login, or fix order.partnerKey.",
+          },
+          { status: 403 }
+        );
       }
       const existing = await prisma.decathlonStockxMatch.findUnique({
         where: { decathlonOrderLineId: lineId },

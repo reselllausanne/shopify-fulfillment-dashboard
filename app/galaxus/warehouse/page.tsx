@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
+import { galaxusLineNetRevenueChf, galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
 
 type OrderListItem = {
   id: string;
@@ -266,6 +267,11 @@ export default function WarehouseBulkPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
+      if (json.stockxEnrich?.attempted && !json.stockxEnrich?.ok) {
+        setError(
+          `StockX lookup: ${json.stockxEnrich.reason ?? "failed"} (saved your form values). Check order # and .data/stockx-token-galaxus.json.`
+        );
+      }
       setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
       await loadDetail(orderId);
       await loadOrders();
@@ -416,6 +422,19 @@ export default function WarehouseBulkPage() {
                       const shippedAt = line.warehouseMarkedShippedAt;
                       const isShipped = Boolean(shippedAt);
                       const shipBusy = busy === `ship-${line.id}`;
+                      const revenueChf = galaxusLineNetRevenueChf(line);
+                      const costChf =
+                        proc?.stockxCostChf != null && Number.isFinite(Number(proc.stockxCostChf))
+                          ? Number(proc.stockxCostChf)
+                          : null;
+                      const costCur =
+                        proc?.stockxCostCurrency != null
+                          ? String(proc.stockxCostCurrency).trim()
+                          : null;
+                      const profitRow =
+                        linked && revenueChf != null && costChf != null
+                          ? galaxusProfitFromRevenueAndStockxCost(revenueChf, costChf)
+                          : null;
                       return (
                         <div
                           key={line.id}
@@ -449,9 +468,27 @@ export default function WarehouseBulkPage() {
                               </div>
                               <div className="text-gray-500 text-xs">Qty {line.quantity}</div>
                               {linked && proc && !isShipped ? (
-                                <div className="text-green-800 text-[11px]">
-                                  {proc.source === "galaxus_match" ? "Saved match" : "StockX sync"} · AWB:{" "}
-                                  {proc.awb ?? "—"}
+                                <div className="text-green-800 text-[11px] space-y-0.5">
+                                  <div>
+                                    {proc.source === "galaxus_match" ? "Saved match" : "StockX sync"} · AWB:{" "}
+                                    {proc.awb ?? "—"}
+                                  </div>
+                                  {profitRow ? (
+                                    <div className="text-gray-800">
+                                      Galaxus net {detail?.currencyCode ?? "CHF"} {profitRow.revenueChf.toFixed(2)} ·
+                                      StockX {costCur || "CHF"} {profitRow.stockxCostChf.toFixed(2)} · Profit{" "}
+                                      {profitRow.profitChf.toFixed(2)}
+                                      {profitRow.profitPercentOfRevenue != null
+                                        ? ` (${profitRow.profitPercentOfRevenue.toFixed(1)}% of net line)`
+                                        : ""}
+                                    </div>
+                                  ) : linked && revenueChf != null && costChf == null ? (
+                                    <div className="text-amber-900">
+                                      StockX cost not stored: add amount in manual supplier, or run{" "}
+                                      <span className="font-medium">Sync orders + AWB</span> (needs buys visible in
+                                      StockX — not only archived / other tabs).
+                                    </div>
+                                  ) : null}
                                 </div>
                               ) : null}
                               {!linked ? (
