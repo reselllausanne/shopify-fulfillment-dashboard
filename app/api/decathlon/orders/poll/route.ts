@@ -8,11 +8,27 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const OPEN_STATES = new Set(["OPEN"]);
-const NON_CANCEL_OVERRIDE_STATES = new Set(["OPEN", "SHIPPED", ""]);
+const CANCELLED_STATES = new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]);
 
 function normalizeOrderState(order: any): string {
   const raw = String(order?.order_state ?? order?.state ?? order?.status ?? "").trim();
   return raw.toUpperCase();
+}
+
+function extractOrders(payload: any): any[] {
+  return payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
+}
+
+async function listOrdersSafe(
+  client: ReturnType<typeof buildDecathlonOrdersClient>,
+  params: Record<string, string | number>
+) {
+  try {
+    return await client.listOrders(params);
+  } catch (error) {
+    console.error("[DECATHLON][ORDERS][POLL] listOrders failed", { params, error });
+    return null;
+  }
 }
 
 function pickLineAmount(line: any): number | null {
@@ -83,7 +99,7 @@ async function upsertDecathlonOrder(payload: {
     const existingState = String(existing.orderState ?? "").trim().toUpperCase();
     if (
       existingState &&
-      !NON_CANCEL_OVERRIDE_STATES.has(existingState) &&
+      CANCELLED_STATES.has(existingState) &&
       (incomingState === "" || OPEN_STATES.has(incomingState))
     ) {
       orderState = existingState;
@@ -167,23 +183,32 @@ export async function POST(request: Request) {
     });
     const lastSyncAt = latestOrder?.updatedAt ?? null;
     const payload: any = await client.listOrders(params);
-    const orders: any[] = payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
+    const orders: any[] = extractOrders(payload);
     let canceledOrders: any[] = [];
     if (!state || state.toUpperCase() !== "CANCELED") {
-      const canceledParams: Record<string, string | number> = {
-        max: limit,
-        order_state_codes: "CANCELED",
-      };
-      if (lastSyncAt) {
-        canceledParams.start_update_date = lastSyncAt.toISOString();
+      const baseParams: Record<string, string | number> = { max: limit };
+      if (lastSyncAt) baseParams.start_update_date = lastSyncAt.toISOString();
+      const [refundedPayload, canceledPayload, closedPayload] = await Promise.all([
+        listOrdersSafe(client, {
+          ...baseParams,
+          order_state_codes: "CANCELED",
+          refund_state_codes: "REFUNDED",
+        }),
+        listOrdersSafe(client, { ...baseParams, order_state_codes: "CANCELED" }),
+        listOrdersSafe(client, { ...baseParams, order_state_codes: "CLOSED" }),
+      ]);
+      const merged = [
+        ...extractOrders(refundedPayload),
+        ...extractOrders(canceledPayload),
+        ...extractOrders(closedPayload),
+      ];
+      const unique = new Map<string, any>();
+      for (const order of merged) {
+        const orderId = String(order?.id ?? order?.order_id ?? order?.orderId ?? "").trim();
+        if (!orderId) continue;
+        if (!unique.has(orderId)) unique.set(orderId, order);
       }
-      const canceledPayload: any = await client.listOrders(canceledParams);
-      canceledOrders =
-        canceledPayload?.orders ??
-        canceledPayload?.order_list ??
-        canceledPayload?.orderList ??
-        canceledPayload?.data ??
-        [];
+      canceledOrders = Array.from(unique.values());
     }
     const partnerRows = await prisma.partner.findMany({ select: { key: true } });
     const partnerKeys = new Set(

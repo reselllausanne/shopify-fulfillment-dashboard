@@ -1788,6 +1788,30 @@ model GalaxusJobRun {
   @@schema("public")
 }
 
+model GalaxusJobQueue {
+  id           String   @id @default(uuid())
+  jobType      String
+  status       String   @default("PENDING")
+  groupKey     String?
+  payloadJson  Json?
+  resultJson   Json?
+  priority     Int      @default(0)
+  attempts     Int      @default(0)
+  maxAttempts  Int      @default(5)
+  lockedAt     DateTime?
+  lockedBy     String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([jobType, status, priority, createdAt])
+  @@index([status])
+  @@index([groupKey])
+  @@schema("public")
+}
+
 model GalaxusExportManifest {
   id                    String   @id @default(uuid())
   runId                 String

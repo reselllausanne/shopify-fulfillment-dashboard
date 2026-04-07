@@ -25,13 +25,16 @@ export async function GET(request: NextRequest) {
       }
       where.partnerKey = sessionPartnerKey;
     }
+    const canceledStates = ["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"];
     if (view === "fulfilled") {
       where.orderState = "SHIPPED";
     } else if (view === "to_process") {
-      where.OR = [{ orderState: "OPEN" }, { orderState: null }];
+      where.OR = [
+        { orderState: { notIn: ["SHIPPED", ...canceledStates] } },
+        { orderState: null },
+      ];
     } else if (view === "canceled") {
-      where.orderState = { notIn: ["OPEN", "SHIPPED"] };
-      where.NOT = { orderState: null };
+      where.orderState = { in: canceledStates };
     }
     const orders = await prisma.decathlonOrder.findMany({
       where,

@@ -63,7 +63,7 @@ describe("mirakl deltas", () => {
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
   });
 
-  it("applies no margin for THE_* own-inventory suppliers (feed price = sell price)", () => {
+  it("applies same list rule for THE_* as other suppliers (buy × 1.5 + 13)", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -75,7 +75,7 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate)).toBe("99.50");
+    expect(resolveEffectivePrice(candidate)).toBe("162.25");
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {

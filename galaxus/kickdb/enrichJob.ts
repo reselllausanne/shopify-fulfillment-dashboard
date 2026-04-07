@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { createGoldenSupplierClient } from "@/galaxus/supplier/client";
+import { bulkUpsertVariantMappings } from "@/galaxus/jobs/bulkSql";
 import {
   fetchStockxProductByIdOrSlug,
   fetchStockxProductByIdOrSlugRaw,
@@ -11,6 +12,9 @@ import { Prisma } from "@prisma/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { shouldFetchKickDb } from "@/galaxus/kickdb/cache";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
+
+const GOLDEN_CATALOG_TTL_MS = 5 * 60 * 1000;
+let goldenCatalogCache: { loadedAt: number; byVariantId: Map<string, string> } | null = null;
 
 type KickdbEnrichOptions = {
   limit?: number;
@@ -449,15 +453,61 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     error?: string;
     debug?: DebugInfo;
   }> = [];
+  const mappingByVariantId = new Map<string, any>();
+  if (supplierVariants.length) {
+    const mappingRows = await prismaAny.variantMapping.findMany({
+      where: { supplierVariantId: { in: supplierVariants.map((variant) => variant.supplierVariantId) } },
+    });
+    for (const row of mappingRows) {
+      if (row?.supplierVariantId) {
+        mappingByVariantId.set(row.supplierVariantId, row);
+      }
+    }
+  }
+  const pendingMappingUpserts: Array<{
+    supplierVariantId: string;
+    gtin: string | null;
+    providerKey: string | null;
+    status: string;
+    kickdbVariantId?: string | null;
+  }> = [];
+  const flushMappingUpserts = async () => {
+    if (pendingMappingUpserts.length === 0) return;
+    const batch = pendingMappingUpserts.splice(0, pendingMappingUpserts.length);
+    await bulkUpsertVariantMappings(batch, new Date());
+  };
+  const queueMappingUpsert = async (row: {
+    supplierVariantId: string;
+    gtin: string | null;
+    providerKey: string | null;
+    status: string;
+    kickdbVariantId?: string | null;
+  }) => {
+    pendingMappingUpserts.push(row);
+    const existing = mappingByVariantId.get(row.supplierVariantId) ?? {};
+    mappingByVariantId.set(row.supplierVariantId, { ...existing, ...row });
+    if (pendingMappingUpserts.length >= 50) {
+      await flushMappingUpserts();
+    }
+  };
   const needsProductName = supplierVariants.some((variant) => !variant.supplierSku);
   const productNameByVariantId = new Map<string, string>();
   if (needsProductName) {
-    const supplierClient = createGoldenSupplierClient();
-    const catalog = await supplierClient.fetchCatalog();
-    for (const item of catalog) {
-      if (item.sourcePayload.product_name) {
-        productNameByVariantId.set(item.supplierVariantId, item.sourcePayload.product_name);
+    const now = Date.now();
+    const cacheValid = goldenCatalogCache && now - goldenCatalogCache.loadedAt < GOLDEN_CATALOG_TTL_MS;
+    if (!cacheValid) {
+      const supplierClient = createGoldenSupplierClient();
+      const catalog = await supplierClient.fetchCatalog();
+      const byVariantId = new Map<string, string>();
+      for (const item of catalog) {
+        if (item.sourcePayload.product_name) {
+          byVariantId.set(item.supplierVariantId, item.sourcePayload.product_name);
+        }
       }
+      goldenCatalogCache = { loadedAt: now, byVariantId };
+    }
+    for (const [variantId, name] of goldenCatalogCache!.byVariantId.entries()) {
+      productNameByVariantId.set(variantId, name);
     }
   }
 
@@ -467,11 +517,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const variantBrand = (variant as any)?.supplierBrand ?? null;
     const variantName =
       productNameByVariantId.get(variant.supplierVariantId) ?? variant?.supplierProductName ?? null;
-    const mappingWhere = { supplierVariantId: variant.supplierVariantId };
-
-    const mapping = await prismaAny.variantMapping.findUnique({
-      where: mappingWhere as any,
-    });
+    const mapping = mappingByVariantId.get(variant.supplierVariantId) ?? null;
     const mappingStatus = String(mapping?.status ?? "");
     const mappingGtinRaw = mapping?.gtin ?? null;
     const mappingGtin = mappingGtinRaw && validateGtin(mappingGtinRaw) ? mappingGtinRaw : null;
@@ -498,19 +544,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         mappingStatus === "PENDING_GTIN" ||
         mappingStatus === "AMBIGUOUS_GTIN";
       if (needsMappingUpdate) {
-        await prismaAny.variantMapping.upsert({
-          where: mappingWhere as any,
-          create: {
-            ...(mappingCreateBase as any),
-            gtin: existingGtin,
-            providerKey,
-            status: normalizedStatus,
-          },
-          update: {
-            gtin: existingGtin,
-            providerKey,
-            status: normalizedStatus,
-          },
+        await queueMappingUpsert({
+          supplierVariantId: variant.supplierVariantId,
+          gtin: existingGtin,
+          providerKey,
+          status: normalizedStatus,
+          kickdbVariantId: mapping?.kickdbVariantId ?? null,
         });
       }
       if (variant?.gtin !== existingGtin || variant?.providerKey !== providerKey) {
@@ -549,9 +588,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         providerKey: null,
         status: normalizedStatus,
       });
-      await prismaAny.variantMapping.update({
-        where: mappingWhere as any,
-        data: { gtin: null, providerKey: null, status: normalizedStatus },
+      await queueMappingUpsert({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: normalizedStatus,
+        kickdbVariantId: mapping?.kickdbVariantId ?? null,
       });
     }
 
@@ -609,19 +651,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         providerKey: null,
         status: "PENDING_GTIN",
       });
-      await prismaAny.variantMapping.upsert({
-        where: mappingWhere as any,
-        create: {
-          ...(mappingCreateBase as any),
-          gtin: null,
-          providerKey: null,
-          status: "PENDING_GTIN",
-        },
-        update: {
-          gtin: null,
-          providerKey: null,
-          status: "PENDING_GTIN",
-        },
+      await queueMappingUpsert({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "PENDING_GTIN",
+        kickdbVariantId: mapping?.kickdbVariantId ?? null,
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
@@ -689,19 +724,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         providerKey: null,
         status: "PENDING_GTIN",
       });
-      await prismaAny.variantMapping.upsert({
-        where: mappingWhere as any,
-        create: {
-          ...(mappingCreateBase as any),
-          gtin: null,
-          providerKey: null,
-          status: "NOT_FOUND",
-        },
-        update: {
-          gtin: null,
-          providerKey: null,
-          status: "NOT_FOUND",
-        },
+      await queueMappingUpsert({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "NOT_FOUND",
+        kickdbVariantId: mapping?.kickdbVariantId ?? null,
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
@@ -740,19 +768,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         providerKey: null,
         status: "NOT_FOUND",
       });
-      await prismaAny.variantMapping.upsert({
-        where: mappingWhere as any,
-        create: {
-          ...(mappingCreateBase as any),
-          gtin: null,
-          providerKey: null,
-          status: "NOT_FOUND",
-        },
-        update: {
-          gtin: null,
-          providerKey: null,
-          status: "NOT_FOUND",
-        },
+      await queueMappingUpsert({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "NOT_FOUND",
+        kickdbVariantId: mapping?.kickdbVariantId ?? null,
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
@@ -822,19 +843,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         providerKey: null,
         status: "PENDING_GTIN",
       });
-      await prismaAny.variantMapping.upsert({
-        where: mappingWhere as any,
-        create: {
-          ...(mappingCreateBase as any),
-          gtin: null,
-          providerKey: null,
-          status: "PENDING_GTIN",
-        },
-        update: {
-          gtin: null,
-          providerKey: null,
-          status: "PENDING_GTIN",
-        },
+      await queueMappingUpsert({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: null,
+        providerKey: null,
+        status: "PENDING_GTIN",
+        kickdbVariantId: mapping?.kickdbVariantId ?? null,
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
@@ -854,21 +868,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         providerKey: providerKeyStrict ?? null,
         status: "SUPPLIER_GTIN",
       });
-      await prismaAny.variantMapping.upsert({
-        where: mappingWhere as any,
-        create: {
-          ...(mappingCreateBase as any),
-          kickdbVariantId: null,
-          gtin: supplierGtinValid,
-          providerKey: providerKeyStrict ?? null,
-          status: "SUPPLIER_GTIN",
-        },
-        update: {
-          kickdbVariantId: null,
-          gtin: supplierGtinValid,
-          providerKey: providerKeyStrict ?? null,
-          status: "SUPPLIER_GTIN",
-        },
+      await queueMappingUpsert({
+        supplierVariantId: variant.supplierVariantId,
+        gtin: supplierGtinValid,
+        providerKey: providerKeyStrict ?? null,
+        status: "SUPPLIER_GTIN",
+        kickdbVariantId: null,
       });
       results.push({
         supplierVariantId: variant.supplierVariantId,
@@ -1014,21 +1019,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
       providerKey: providerKey ?? null,
       status: resolvedStatus,
     });
-    await prismaAny.variantMapping.upsert({
-      where: mappingWhere as any,
-      create: {
-        ...(mappingCreateBase as any),
-        kickdbVariantId: savedVariant?.id ?? null,
-        gtin: finalGtin ?? null,
-        providerKey: providerKey ?? null,
-        status: resolvedStatus,
-      },
-      update: {
-        kickdbVariantId: savedVariant?.id ?? null,
-        gtin: finalGtin ?? null,
-        providerKey: providerKey ?? null,
-        status: resolvedStatus,
-      },
+    await queueMappingUpsert({
+      supplierVariantId: variant.supplierVariantId,
+      gtin: finalGtin ?? null,
+      providerKey: providerKey ?? null,
+      status: resolvedStatus,
+      kickdbVariantId: savedVariant?.id ?? null,
     });
 
     if (finalGtin) {
@@ -1101,5 +1097,6 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     });
   }
 
+  await flushMappingUpserts();
   return { results, limit, offset };
 }

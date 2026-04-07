@@ -160,6 +160,10 @@ export default function DecathlonOrdersPage() {
 
   const buildLineTitle = (line: any) => line.productTitle || line.description || line.offerSku || "—";
   const normalizeState = (state?: string | null) => String(state ?? "").trim().toUpperCase();
+  const canceledStates = useMemo(
+    () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
+    []
+  );
 
   const orderedList = useMemo(() => {
     if (newOrderIds.size === 0) return orders;
@@ -172,13 +176,13 @@ export default function DecathlonOrdersPage() {
     return orderedList.filter((order) => {
       const state = normalizeState(order.orderState);
       const isShipped = state === "SHIPPED";
-      const isOpen = state === "OPEN" || !state;
-      const isCanceled = !isShipped && !isOpen;
+      const isCanceled = canceledStates.has(state);
+      const isOpen = !state || (!isShipped && !isCanceled);
       if (leftTab === "fulfilled") return isShipped;
       if (leftTab === "canceled") return isCanceled;
       return isOpen;
     });
-  }, [orderedList, leftTab]);
+  }, [orderedList, leftTab, canceledStates]);
 
   const needsLinking = (order: OrderListItem) => {
     if (order.partnerKey) return false;
@@ -208,8 +212,9 @@ export default function DecathlonOrdersPage() {
 
   const canFulfill = useMemo(() => {
     const state = normalizeState(selectedOrder?.orderState);
-    return state === "" || state === "OPEN";
-  }, [selectedOrder?.orderState]);
+    if (!state) return true;
+    return state !== "SHIPPED" && !canceledStates.has(state);
+  }, [selectedOrder?.orderState, canceledStates]);
 
   const openManualEntry = (line: any) => {
     if (!selectedOrderId || !selectedOrder) {
@@ -407,7 +412,7 @@ export default function DecathlonOrdersPage() {
               const allLinesLinked = lineCount > 0 && linked >= lineCount;
               const isPartnerOrder = Boolean(order.partnerKey);
               const state = normalizeState(order.orderState);
-              const isCanceled = Boolean(state && state !== "OPEN" && state !== "SHIPPED");
+              const isCanceled = canceledStates.has(state);
               const partnerTone =
                 state === "SHIPPED"
                   ? "border-emerald-500 bg-emerald-50"
