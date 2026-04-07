@@ -7,6 +7,7 @@ import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app
 import { buildDuplicateKey, buildSupplierVariantId, computeLastRowByKey } from "@/app/lib/partnerImport";
 import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { bulkUpsertSupplierVariantsPartnerImport, chunkArray } from "@/galaxus/jobs/bulkSql";
+import { enqueueJob } from "@/galaxus/jobs/queue";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,6 +88,7 @@ export async function POST(req: NextRequest) {
     const rowOutcomes: RowOutcome[] = [];
     let importedRows = 0;
     let newRows = 0;
+    let enrichJobId: string | null = null;
     const partner = await prismaAny.partner.findUnique({
       where: { id: session.partnerId },
     });
@@ -387,12 +389,31 @@ export async function POST(req: NextRequest) {
       await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
     }
 
+    if (!dryRun && newRows > 0 && cleanPartnerKey) {
+      const limit = Math.min(Math.max(newRows, 200), 2000);
+      const job = await enqueueJob(
+        "kickdb-enrich-missing",
+        {
+          limit,
+          concurrency: 8,
+          supplierVariantIdPrefix: `${cleanPartnerKey}:`,
+          partnerId: session.partnerId,
+          includeNotFound: true,
+          respectRecentRun: false,
+          autoDrain: true,
+        },
+        { priority: 5, groupKey: `partner:${session.partnerId}` }
+      );
+      enrichJobId = job.id;
+    }
+
     rowOutcomes.sort((a, b) => a.row - b.row);
 
     return NextResponse.json({
       ok: true,
       result: {
         uploadId: upload?.id ?? null,
+        enrichJobId,
         importedRows,
         newRows,
         errorRows: errors.length,

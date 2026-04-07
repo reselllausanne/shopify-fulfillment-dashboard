@@ -53,6 +53,7 @@ export async function runKickdbEnrichMissing(options: EnrichMissingOptions) {
       LIMIT ${limit}
     `
   );
+  const candidateCount = candidates.length;
 
   let processed = 0;
   let enrichedRows = 0;
@@ -82,6 +83,7 @@ export async function runKickdbEnrichMissing(options: EnrichMissingOptions) {
   return {
     limit,
     concurrency,
+    candidates: candidateCount,
     processed,
     enrichedRows,
     enrichErrors,

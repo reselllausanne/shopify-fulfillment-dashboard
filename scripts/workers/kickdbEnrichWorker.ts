@@ -1,5 +1,5 @@
 import os from "os";
-import { claimJob, completeJob, failJob } from "@/galaxus/jobs/queue";
+import { claimJob, completeJob, enqueueJob, failJob } from "@/galaxus/jobs/queue";
 import { runKickdbEnrichMissing } from "@/galaxus/kickdb/enrichMissingJob";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -11,6 +11,8 @@ type KickdbEnrichJobPayload = {
   includeNotFound?: boolean;
   respectRecentRun?: boolean;
   force?: boolean;
+  autoDrain?: boolean;
+  partnerId?: string;
 };
 
 async function run() {
@@ -41,6 +43,16 @@ async function run() {
       });
       await completeJob(job.id, { ...payload, result });
       console.info("[worker] job completed", { jobId: job.id, processed: result.processed });
+
+      const autoDrain = payload.autoDrain !== false;
+      const limit = Math.max(Number(payload.limit ?? 0), 0);
+      if (autoDrain && limit > 0 && result.candidates >= limit && result.processed > 0) {
+        await enqueueJob(
+          jobType,
+          { ...payload },
+          { priority: 0, groupKey: job.groupKey ?? null }
+        );
+      }
     } catch (error: any) {
       const message = error?.message ?? "Job failed";
       const retry = job.attempts < job.maxAttempts;

@@ -15,11 +15,20 @@ export async function POST(request: Request) {
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const supplierVariantIdPrefix = searchParams.get("supplierVariantIdPrefix")?.trim() || null;
     const asyncMode = !["0", "false", "no"].includes((searchParams.get("async") ?? "").toLowerCase());
+    const autoDrain = !["0", "false", "no"].includes((searchParams.get("autoDrain") ?? "").toLowerCase());
 
     if (asyncMode) {
       const job = await enqueueJob(
         "kickdb-enrich-missing",
-        { limit, concurrency, force, supplierVariantIdPrefix, includeNotFound: true, respectRecentRun: true },
+        {
+          limit,
+          concurrency,
+          force,
+          supplierVariantIdPrefix,
+          includeNotFound: true,
+          respectRecentRun: true,
+          autoDrain,
+        },
         { priority: 0 }
       );
       return NextResponse.json({ ok: true, queued: true, jobId: job.id, limit, concurrency });
