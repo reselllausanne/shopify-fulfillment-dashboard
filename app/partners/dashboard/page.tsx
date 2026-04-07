@@ -182,12 +182,19 @@ export default function PartnerDashboardPage() {
     setError(null);
     setEnrichLog(null);
     try {
-      const res = await fetch(`/api/partners/enrich?mode=new&debug=1&force=${force ? 1 : 0}`, {
-        method: "POST",
-      });
+      const res = await fetch(
+        `/api/partners/enrich?mode=new&autoDrain=1&limit=500&force=${force ? 1 : 0}`,
+        {
+          method: "POST",
+        }
+      );
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Enrich failed");
-      setEnrichLog(JSON.stringify(data.results ?? [], null, 2));
+      if (data.queued) {
+        setEnrichLog(`Queued enrichment job ${data.jobId} (limit ${data.limit}).`);
+      } else {
+        setEnrichLog(JSON.stringify(data.results ?? [], null, 2));
+      }
       await loadHistory();
     } catch (err: any) {
       setError(err.message);
