@@ -5,13 +5,17 @@ import { getJob } from "@/galaxus/jobs/queue";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
   const session = await getPartnerSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const job = await getJob(params.id);
+  const { id } = params;
+  const job = await getJob(id);
   if (!job) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
