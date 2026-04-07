@@ -159,6 +159,8 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
+      const rowPrice = price!;
+
       if (dryRun) {
         rowOutcomes.push({ row: i + 1, status: "DRY_RUN" });
         importedRows += 1;
@@ -184,7 +186,7 @@ export async function POST(req: NextRequest) {
         normalizedSize,
         sizeRaw,
         stock,
-        price,
+        price: rowPrice,
       });
     }
 

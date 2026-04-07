@@ -68,7 +68,7 @@ const normalizeTransactions = (
 ): ParsedBankTransaction[] =>
   rows
     .filter((row) => row.bookingDate)
-    .map((row) => {
+    .map((row): ParsedBankTransaction => {
       const amount = Number(row.amount.toFixed(2));
       const currencyCode = row.currencyCode || defaultCurrency || "CHF";
       const direction: "IN" | "OUT" = amount < 0 ? "OUT" : "IN";

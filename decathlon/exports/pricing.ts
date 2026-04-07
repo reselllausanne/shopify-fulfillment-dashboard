@@ -2,30 +2,13 @@ export const DECATHLON_BUY_NOW_MULTIPLIER = 1.54;
 export const DECATHLON_NER_BUY_NOW_MULTIPLIER = 1.1;
 export const DECATHLON_PRICE_ROUND_TO = 0.01;
 
-/** Mirakl commission share of list price (seller net model). */
-export const DECATHLON_MARKETPLACE_FEE_RATE = 0.17;
-/** VAT share of list price reducing seller net in this model (e.g. CH 8%). */
-export const DECATHLON_VAT_RATE = 0.08;
-
 /**
- * Target **Mirakl payout** (after −17% commission and −~8% VAT on order total) = buy × multiplier × this + shipping.
- * 20% margin on your buy (after fees are priced in via gross-up).
+ * Liste Decathlon = `buyNow × (1 + this) + DECATHLON_SHIPPING_COVER_CHF` (ex. 115 → 115×1.5+13 ≈ 185.50).
  */
-export const DECATHLON_TARGET_NET_MARGIN = 1.2;
+export const DECATHLON_BUY_MARKUP_FRACTION = 0.5;
 
-/** Fixed CHF to recover per unit in target net (e.g. outbound ship). */
+/** Fixed CHF added on top (fulfilment). */
 export const DECATHLON_SHIPPING_COVER_CHF = 13;
-
-/**
- * Portion of list price kept as “real payout” after fee + VAT: 1 − 17% − 8%.
- */
-export function decathlonNetRetentionRate(): number {
-  return 1 - DECATHLON_MARKETPLACE_FEE_RATE - DECATHLON_VAT_RATE;
-}
-
-function isBarePassthroughMultiplier(multiplier: number): boolean {
-  return Math.abs(multiplier - 1) < 1e-9;
-}
 
 /**
  * Sell price = supplier `price` × multiplier. `THE_*` is treated as your own inventory: multiplier 1 (no margin).
@@ -49,25 +32,18 @@ export function decathlonSellPriceMultiplierForCandidate(candidate: {
 }
 
 /**
- * List price on Decathlon/Mirakl so that **payout** (order total − commission − VAT) matches your target:
- * - `targetNet = buyNow × multiplier × 1.2 + 13 CHF` (20% on buy after fees + ship recovery)
- * - `listPrice = targetNet / (1 − 0.17 − 0.08)` — matches ~178.82 → ~135 CHF net on a typical line.
- *
- * `THE_*` (multiplier 1): no extra 20% on cost, only gross-up for fees + fixed ship: `buyNow + 13`.
+ * Prix catalogue offre = `buyNow × (1 + DECATHLON_BUY_MARKUP_FRACTION) + DECATHLON_SHIPPING_COVER_CHF`.
+ * Le multiplicateur STX/NER/THE n’entre plus en ligne (uniquement le buy now).
  */
 export function computeDecathlonOfferListPriceFromBuyNow(
   buyNow: number,
-  multiplier: number = DECATHLON_BUY_NOW_MULTIPLIER
+  _multiplier?: number
 ): number | null {
   if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
-  if (!Number.isFinite(multiplier) || multiplier <= 0) return null;
-  const retention = decathlonNetRetentionRate();
-  if (!Number.isFinite(retention) || retention <= 0) return null;
-
   const shipping = Number.isFinite(DECATHLON_SHIPPING_COVER_CHF) ? DECATHLON_SHIPPING_COVER_CHF : 0;
-  const marginMult = isBarePassthroughMultiplier(multiplier) ? 1 : DECATHLON_TARGET_NET_MARGIN;
-  const targetNet = buyNow * multiplier * marginMult + shipping;
-  const raw = targetNet / retention;
+  const factor = 1 + DECATHLON_BUY_MARKUP_FRACTION;
+  if (!Number.isFinite(factor) || factor <= 0) return null;
+  const raw = buyNow * factor + shipping;
   if (!Number.isFinite(raw) || raw <= 0) return null;
   return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
 }
