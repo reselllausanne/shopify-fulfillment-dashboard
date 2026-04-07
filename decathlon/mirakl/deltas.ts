@@ -7,7 +7,7 @@ import {
 } from "@/decathlon/exports/mapping";
 import type { DecathlonExclusionSummary, DecathlonExportCandidate } from "@/decathlon/exports/types";
 import {
-  computeDecathlonPriceFromBuyNow,
+  computeDecathlonOfferListPriceFromBuyNow,
   decathlonSellPriceMultiplierForCandidate,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
@@ -82,7 +82,7 @@ export function resolveEffectivePrice(candidate: DecathlonExportCandidate): stri
     providerKey: candidate.providerKey,
     supplierVariantId: variant?.supplierVariantId ?? null,
   });
-  const computed = computeDecathlonPriceFromBuyNow(buyNow, multiplier);
+  const computed = computeDecathlonOfferListPriceFromBuyNow(buyNow, multiplier);
   if (!computed || computed <= 0) return null;
   return computed.toFixed(2);
 }

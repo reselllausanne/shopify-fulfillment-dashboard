@@ -2,7 +2,7 @@ import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExpo
 import { parseDecimal, recordDecathlonExclusion } from "./mapping";
 import { OFFERS_HEADERS } from "./templates";
 import {
-  computeDecathlonPriceFromBuyNow,
+  computeDecathlonOfferListPriceFromBuyNow,
   decathlonSellPriceMultiplierForCandidate,
   resolveDecathlonBuyNow,
 } from "./pricing";
@@ -56,7 +56,7 @@ function resolvePrice(candidate: DecathlonExportCandidate): string | null {
     providerKey: candidate.providerKey,
     supplierVariantId: variant?.supplierVariantId ?? null,
   });
-  const computed = computeDecathlonPriceFromBuyNow(buyNow, multiplier);
+  const computed = computeDecathlonOfferListPriceFromBuyNow(buyNow, multiplier);
   if (!computed || computed <= 0) return null;
   return computed.toFixed(2);
 }
