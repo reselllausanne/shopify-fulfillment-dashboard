@@ -61,11 +61,88 @@ function extractSwissPostTracking(response: any): string | null {
   return null;
 }
 
+type SwissPostRecipient = {
+  name1?: string | null;
+  firstName?: string | null;
+  name2?: string | null;
+  street?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  country?: string | null;
+  phone?: string | null;
+  email?: string | null;
+};
+
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function buildFullName(first: unknown, last: unknown): string | null {
+  const parts = [first, last].map((value) => String(value ?? "").trim()).filter(Boolean);
+  return parts.length ? parts.join(" ") : null;
+}
+
+function resolveRawRecipient(order: any) {
+  const raw = order?.rawJson;
+  if (!raw || typeof raw !== "object") return null;
+  const source =
+    raw?.shipping_address ??
+    raw?.shippingAddress ??
+    raw?.shipping ??
+    raw?.delivery_address ??
+    raw?.deliveryAddress ??
+    raw?.delivery ??
+    raw?.customer?.shipping_address ??
+    raw?.customer?.shippingAddress ??
+    raw?.customer?.delivery_address ??
+    raw?.customer?.deliveryAddress ??
+    raw?.customer?.delivery ??
+    raw?.customer?.billing_address ??
+    raw?.customer?.billingAddress ??
+    null;
+  if (!source || typeof source !== "object") return null;
+  const firstName = pickString(source.firstname, source.first_name, source.firstName);
+  const lastName = pickString(source.lastname, source.last_name, source.lastName);
+  const fullName = buildFullName(firstName, lastName);
+  const name = pickString(
+    source.name,
+    source.name1,
+    source.full_name,
+    fullName,
+    source.company,
+    source.company_2
+  );
+  return {
+    name,
+    email: pickString(source.email),
+    phone: pickString(source.phone, source.phone_number, source.mobile, source.mobile_phone),
+    address1: pickString(
+      source.address1,
+      source.street1,
+      source.street_1,
+      source.address_1,
+      source.street
+    ),
+    address2: pickString(source.address2, source.street2, source.street_2, source.address_2),
+    postalCode: pickString(source.zip_code, source.zipCode, source.zip, source.postal_code, source.postcode),
+    city: pickString(source.city, source.town),
+    country: pickString(source.country, source.country_code, source.countryCode, source.country_iso_code),
+    countryCode: pickString(source.country_code, source.countryCode, source.country_iso_code, source.country),
+  };
+}
+
 function normalizeCountryCode(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
   const upper = raw.toUpperCase();
   if (/^[A-Z]{2}$/.test(upper)) return upper;
+  const iso3: Record<string, string> = { CHE: "CH", DEU: "DE", FRA: "FR", ITA: "IT", AUT: "AT" };
+  if (iso3[upper]) return iso3[upper];
   const lower = raw.toLowerCase();
   if (["schweiz", "suisse", "svizzera", "switzerland", "swiss"].includes(lower)) return "CH";
   if (["deutschland", "germany"].includes(lower)) return "DE";
@@ -81,33 +158,64 @@ function normalizePostalCode(value: unknown): string | null {
   return raw.replace(/^CH[\s-]*/i, "").trim();
 }
 
-function buildRecipient(order: any) {
-  const hasRecipient =
-    Boolean(order.recipientName) ||
-    Boolean(order.recipientAddress1) ||
-    Boolean(order.recipientPostalCode) ||
-    Boolean(order.recipientCity) ||
-    Boolean(order.recipientCountry);
+function extractOrderDetails(payload: any) {
+  if (!payload) return null;
+  if (payload?.order) return payload.order;
+  if (payload?.orders && Array.isArray(payload.orders) && payload.orders[0]) return payload.orders[0];
+  return payload;
+}
+
+function isRecipientComplete(recipient: SwissPostRecipient | null | undefined) {
+  return Boolean(
+    recipient?.name1?.trim() &&
+      recipient?.street?.trim() &&
+      recipient?.zip?.trim() &&
+      recipient?.city?.trim()
+  );
+}
+
+function buildRecipient(order: any): SwissPostRecipient {
+  const rawRecipient = resolveRawRecipient(order);
+  const recipientName = pickString(order.recipientName, rawRecipient?.name);
+  const recipientAddress1 = pickString(order.recipientAddress1, rawRecipient?.address1);
+  const recipientAddress2 = pickString(order.recipientAddress2, rawRecipient?.address2);
+  const recipientPostalCode = pickString(order.recipientPostalCode, rawRecipient?.postalCode);
+  const recipientCity = pickString(order.recipientCity, rawRecipient?.city);
+  const recipientCountry = pickString(order.recipientCountry, rawRecipient?.country);
+  const recipientCountryCode = pickString(order.recipientCountryCode, rawRecipient?.countryCode);
+  const recipientPhone = pickString(order.recipientPhone, rawRecipient?.phone);
+  const recipientEmail = pickString(order.recipientEmail, rawRecipient?.email, order.customerEmail);
+  const hasRecipient = Boolean(
+    recipientName ||
+      recipientAddress1 ||
+      recipientPostalCode ||
+      recipientCity ||
+      recipientCountry ||
+      recipientCountryCode
+  );
   if (hasRecipient) {
-    const country = normalizeCountryCode(order.recipientCountryCode ?? order.recipientCountry) ?? "CH";
-    const zip = normalizePostalCode(order.recipientPostalCode) ?? "";
-    const baseStreet = order.recipientAddress1 ?? "";
-    const extraStreet = order.recipientAddress2 ? String(order.recipientAddress2).trim() : "";
+    const country = normalizeCountryCode(recipientCountryCode ?? recipientCountry) ?? "CH";
+    const zip = normalizePostalCode(recipientPostalCode) ?? "";
+    const baseStreet = recipientAddress1 ?? "";
+    const extraStreet = recipientAddress2 ? String(recipientAddress2).trim() : "";
     const street = extraStreet && !baseStreet.includes(extraStreet)
       ? `${baseStreet}, ${extraStreet}`
       : baseStreet;
     return {
-      name1: order.recipientName ?? "",
+      name1: recipientName ?? "",
       firstName: null,
       name2: null,
       street,
       zip,
-      city: order.recipientCity ?? "",
+      city: recipientCity ?? "",
       country,
-      phone: order.recipientPhone ?? null,
-      email: order.recipientEmail ?? order.customerEmail ?? null,
+      phone: recipientPhone ?? null,
+      email: recipientEmail ?? null,
     };
   }
+  const customerName = pickString(order.customerName);
+  const customerCity = pickString(order.customerCity);
+  const customerPhone = pickString(order.customerPhone);
   const country = normalizeCountryCode(order.customerCountryCode ?? order.customerCountry) ?? "CH";
   const zip = normalizePostalCode(order.customerPostalCode) ?? "";
   const baseStreet = order.customerAddress1 ?? "";
@@ -116,19 +224,19 @@ function buildRecipient(order: any) {
     ? `${baseStreet}, ${extraStreet}`
     : baseStreet;
   return {
-    name1: order.customerName ?? "",
+    name1: customerName ?? "",
     firstName: null,
     name2: null,
     street,
     zip,
-    city: order.customerCity ?? "",
+    city: customerCity ?? "",
     country,
-    phone: order.customerPhone ?? null,
+    phone: customerPhone ?? null,
     email: order.customerEmail ?? null,
   };
 }
 
-function buildSwissPostPayload(order: any, trackingNumber: string) {
+function buildSwissPostPayload(order: any, trackingNumber: string, recipientOverride?: SwissPostRecipient) {
   const language = process.env.SWISS_POST_LANGUAGE || "DE";
   const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
@@ -162,13 +270,17 @@ function buildSwissPostPayload(order: any, trackingNumber: string) {
     logoVerticalAlign: process.env.SWISS_POST_CUSTOMER_LOGO_VALIGN || "TOP",
   };
 
-  const recipient = buildRecipient(order);
+  const recipient = recipientOverride ?? buildRecipient(order);
+  const labelLayout =
+    process.env.DECATHLON_SWISS_POST_LABEL_LAYOUT ||
+    process.env.SWISS_POST_LABEL_LAYOUT ||
+    "A6";
   return {
     language,
     frankingLicense,
     ppFranking,
     labelDefinition: {
-      labelLayout: process.env.SWISS_POST_LABEL_LAYOUT || "A7",
+      labelLayout,
       printAddresses: process.env.SWISS_POST_LABEL_PRINT_ADDRESSES || "ONLY_RECIPIENT",
       imageFileType: (process.env.SWISS_POST_IMAGE_FILE_TYPE || "JPG").toUpperCase(),
       imageResolution,
@@ -228,7 +340,44 @@ export async function POST(
     const body = (await request.json().catch(() => ({}))) as { trackingNumber?: string };
     const trackingNumber = String(body?.trackingNumber ?? "").trim() || String(order.orderId ?? "").trim();
 
-    const payload = buildSwissPostPayload(order, trackingNumber);
+    let recipient = buildRecipient(order);
+    if (!isRecipientComplete(recipient)) {
+      try {
+        const client = buildDecathlonOrdersClient();
+        const detailsPayload = await client.getOrder(order.orderId);
+        const detailsOrder = extractOrderDetails(detailsPayload);
+        if (detailsOrder) {
+          const enrichedOrder = { ...order, rawJson: detailsOrder };
+          const enrichedRecipient = buildRecipient(enrichedOrder);
+          if (isRecipientComplete(enrichedRecipient)) {
+            recipient = enrichedRecipient;
+            const rawRecipient = resolveRawRecipient(enrichedOrder);
+            await (prisma as any).decathlonOrder.update({
+              where: { id: order.id },
+              data: {
+                recipientName: pickString(order.recipientName, rawRecipient?.name),
+                recipientEmail: pickString(order.recipientEmail, rawRecipient?.email),
+                recipientPhone: pickString(order.recipientPhone, rawRecipient?.phone),
+                recipientAddress1: pickString(order.recipientAddress1, rawRecipient?.address1),
+                recipientAddress2: pickString(order.recipientAddress2, rawRecipient?.address2),
+                recipientPostalCode: pickString(order.recipientPostalCode, rawRecipient?.postalCode),
+                recipientCity: pickString(order.recipientCity, rawRecipient?.city),
+                recipientCountry: pickString(order.recipientCountry, rawRecipient?.country),
+                recipientCountryCode: pickString(
+                  order.recipientCountryCode,
+                  rawRecipient?.countryCode
+                ),
+                rawJson: detailsOrder,
+              },
+            });
+          }
+        }
+      } catch (detailError) {
+        console.warn("[DECATHLON][SHIP] Failed to load order details for recipient fallback", detailError);
+      }
+    }
+
+    const payload = buildSwissPostPayload(order, trackingNumber, recipient);
     const swissRes = await requestSwissPostLabel(payload);
     if (!swissRes.ok) {
       return NextResponse.json(
@@ -270,7 +419,7 @@ export async function POST(
 
     const client = buildDecathlonOrdersClient();
     await client.setTracking(order.orderId, {
-      carrier_code: "swisspost",
+      carrier_code: "SWISSPOST",
       carrier_name: "Swiss Post",
       tracking_number: swissPostLabelId,
     });

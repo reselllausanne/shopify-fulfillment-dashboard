@@ -19,6 +19,92 @@ function extractOrders(payload: any): any[] {
   return payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
 }
 
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function buildFullName(first: unknown, last: unknown): string | null {
+  const parts = [first, last].map((value) => String(value ?? "").trim()).filter(Boolean);
+  return parts.length ? parts.join(" ") : null;
+}
+
+function resolveCustomerSource(order: any): any | null {
+  return (
+    order?.customer ??
+    order?.customer_address ??
+    order?.customerAddress ??
+    order?.billing_address ??
+    order?.billingAddress ??
+    order?.billing ??
+    order?.customer?.billing_address ??
+    order?.customer?.billingAddress ??
+    null
+  );
+}
+
+function resolveShippingSource(order: any): any | null {
+  return (
+    order?.shipping ??
+    order?.shipping_address ??
+    order?.shippingAddress ??
+    order?.delivery_address ??
+    order?.deliveryAddress ??
+    order?.delivery ??
+    order?.customer?.shipping_address ??
+    order?.customer?.shippingAddress ??
+    order?.customer?.delivery_address ??
+    order?.customer?.deliveryAddress ??
+    null
+  );
+}
+
+function normalizeAddress(source: any): {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  address1: string | null;
+  address2: string | null;
+  postalCode: string | null;
+  city: string | null;
+  country: string | null;
+  countryCode: string | null;
+} | null {
+  if (!source || typeof source !== "object") return null;
+  const firstName = pickString(source.firstname, source.first_name, source.firstName);
+  const lastName = pickString(source.lastname, source.last_name, source.lastName);
+  const fullName = buildFullName(firstName, lastName);
+  const name = pickString(
+    source.name,
+    source.name1,
+    source.full_name,
+    fullName,
+    source.company,
+    source.company_2
+  );
+  return {
+    name,
+    email: pickString(source.email),
+    phone: pickString(source.phone, source.phone_number, source.mobile, source.mobile_phone),
+    address1: pickString(
+      source.address1,
+      source.street1,
+      source.street_1,
+      source.address_1,
+      source.street
+    ),
+    address2: pickString(source.address2, source.street2, source.street_2, source.address_2),
+    postalCode: pickString(source.zip_code, source.zipCode, source.zip, source.postal_code, source.postcode),
+    city: pickString(source.city, source.town),
+    country: pickString(source.country, source.country_code, source.countryCode, source.country_iso_code),
+    countryCode: pickString(source.country_code, source.countryCode, source.country_iso_code, source.country),
+  };
+}
+
 async function listOrdersSafe(
   client: ReturnType<typeof buildDecathlonOrdersClient>,
   params: Record<string, string | number>
@@ -90,6 +176,8 @@ async function upsertDecathlonOrder(payload: {
   const orderDate = order?.created_date ?? order?.date_created ?? order?.order_date ?? null;
   const parsedOrderDate = orderDate ? new Date(orderDate) : new Date();
   const incomingState = normalizeOrderState(order);
+  const customer = normalizeAddress(resolveCustomerSource(order));
+  const shipping = normalizeAddress(resolveShippingSource(order));
   const existing = await prisma.decathlonOrder.findUnique({
     where: { orderId },
     select: { id: true, orderState: true },
@@ -115,24 +203,24 @@ async function upsertDecathlonOrder(payload: {
       currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
       totalPrice: pickOrderAmount(order),
       shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
-      customerName: order?.customer?.name ?? order?.customer?.name1 ?? null,
-      customerEmail: order?.customer?.email ?? null,
-      customerPhone: order?.customer?.phone ?? null,
-      customerAddress1: order?.customer?.address1 ?? order?.customer?.street1 ?? null,
-      customerAddress2: order?.customer?.address2 ?? order?.customer?.street2 ?? null,
-      customerPostalCode: order?.customer?.zip_code ?? order?.customer?.zipCode ?? null,
-      customerCity: order?.customer?.city ?? null,
-      customerCountry: order?.customer?.country ?? null,
-      customerCountryCode: order?.customer?.country_code ?? order?.customer?.countryCode ?? null,
-      recipientName: order?.shipping?.name ?? order?.shipping?.name1 ?? null,
-      recipientEmail: order?.shipping?.email ?? null,
-      recipientPhone: order?.shipping?.phone ?? null,
-      recipientAddress1: order?.shipping?.address1 ?? order?.shipping?.street1 ?? null,
-      recipientAddress2: order?.shipping?.address2 ?? order?.shipping?.street2 ?? null,
-      recipientPostalCode: order?.shipping?.zip_code ?? order?.shipping?.zipCode ?? null,
-      recipientCity: order?.shipping?.city ?? null,
-      recipientCountry: order?.shipping?.country ?? null,
-      recipientCountryCode: order?.shipping?.country_code ?? order?.shipping?.countryCode ?? null,
+      customerName: customer?.name ?? null,
+      customerEmail: customer?.email ?? null,
+      customerPhone: customer?.phone ?? null,
+      customerAddress1: customer?.address1 ?? null,
+      customerAddress2: customer?.address2 ?? null,
+      customerPostalCode: customer?.postalCode ?? null,
+      customerCity: customer?.city ?? null,
+      customerCountry: customer?.country ?? customer?.countryCode ?? null,
+      customerCountryCode: customer?.countryCode ?? customer?.country ?? null,
+      recipientName: shipping?.name ?? null,
+      recipientEmail: shipping?.email ?? null,
+      recipientPhone: shipping?.phone ?? null,
+      recipientAddress1: shipping?.address1 ?? null,
+      recipientAddress2: shipping?.address2 ?? null,
+      recipientPostalCode: shipping?.postalCode ?? null,
+      recipientCity: shipping?.city ?? null,
+      recipientCountry: shipping?.country ?? shipping?.countryCode ?? null,
+      recipientCountryCode: shipping?.countryCode ?? shipping?.country ?? null,
       rawJson: order ?? null,
     },
     create: {
@@ -144,24 +232,24 @@ async function upsertDecathlonOrder(payload: {
       currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
       totalPrice: pickOrderAmount(order),
       shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
-      customerName: order?.customer?.name ?? order?.customer?.name1 ?? null,
-      customerEmail: order?.customer?.email ?? null,
-      customerPhone: order?.customer?.phone ?? null,
-      customerAddress1: order?.customer?.address1 ?? order?.customer?.street1 ?? null,
-      customerAddress2: order?.customer?.address2 ?? order?.customer?.street2 ?? null,
-      customerPostalCode: order?.customer?.zip_code ?? order?.customer?.zipCode ?? null,
-      customerCity: order?.customer?.city ?? null,
-      customerCountry: order?.customer?.country ?? null,
-      customerCountryCode: order?.customer?.country_code ?? order?.customer?.countryCode ?? null,
-      recipientName: order?.shipping?.name ?? order?.shipping?.name1 ?? null,
-      recipientEmail: order?.shipping?.email ?? null,
-      recipientPhone: order?.shipping?.phone ?? null,
-      recipientAddress1: order?.shipping?.address1 ?? order?.shipping?.street1 ?? null,
-      recipientAddress2: order?.shipping?.address2 ?? order?.shipping?.street2 ?? null,
-      recipientPostalCode: order?.shipping?.zip_code ?? order?.shipping?.zipCode ?? null,
-      recipientCity: order?.shipping?.city ?? null,
-      recipientCountry: order?.shipping?.country ?? null,
-      recipientCountryCode: order?.shipping?.country_code ?? order?.shipping?.countryCode ?? null,
+      customerName: customer?.name ?? null,
+      customerEmail: customer?.email ?? null,
+      customerPhone: customer?.phone ?? null,
+      customerAddress1: customer?.address1 ?? null,
+      customerAddress2: customer?.address2 ?? null,
+      customerPostalCode: customer?.postalCode ?? null,
+      customerCity: customer?.city ?? null,
+      customerCountry: customer?.country ?? customer?.countryCode ?? null,
+      customerCountryCode: customer?.countryCode ?? customer?.country ?? null,
+      recipientName: shipping?.name ?? null,
+      recipientEmail: shipping?.email ?? null,
+      recipientPhone: shipping?.phone ?? null,
+      recipientAddress1: shipping?.address1 ?? null,
+      recipientAddress2: shipping?.address2 ?? null,
+      recipientPostalCode: shipping?.postalCode ?? null,
+      recipientCity: shipping?.city ?? null,
+      recipientCountry: shipping?.country ?? shipping?.countryCode ?? null,
+      recipientCountryCode: shipping?.countryCode ?? shipping?.country ?? null,
       rawJson: order ?? null,
     },
   });

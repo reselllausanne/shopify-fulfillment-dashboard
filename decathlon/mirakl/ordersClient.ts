@@ -49,11 +49,18 @@ async function fetchJson<T>(url: string, auth: MiraklAuthConfig, init?: RequestI
     ...init,
     headers: buildHeaders(auth, { accept: "application/json", ...(init?.headers as Record<string, string>) }),
   });
+  const body = await response.text();
   if (!response.ok) {
-    const body = await response.text();
     throw new Error(`Mirakl request failed (${response.status}): ${body}`);
   }
-  return response.json() as Promise<T>;
+  if (!body || !body.trim()) {
+    return {} as T;
+  }
+  try {
+    return JSON.parse(body) as T;
+  } catch (error) {
+    throw new Error(`Mirakl response not JSON (${response.status}): ${body}`);
+  }
 }
 
 async function fetchBinary(url: string, auth: MiraklAuthConfig): Promise<{ buffer: Buffer; contentType: string | null }> {
@@ -82,6 +89,8 @@ export function buildDecathlonOrdersClient() {
   return {
     listOrders: (params?: Record<string, string | number | boolean>) =>
       fetchJson(buildUrl(auth.baseUrl, "/api/orders", params), auth),
+    getOrder: (orderId: string) => fetchJson(buildUrl(auth.baseUrl, `/api/orders/${orderId}`), auth),
+    listCarriers: () => fetchJson(buildUrl(auth.baseUrl, "/api/shipping/carriers"), auth),
     acceptOrder: (orderId: string, payload: unknown) =>
       putJson(buildUrl(auth.baseUrl, `/api/orders/${orderId}/accept`), auth, payload),
     setTracking: (orderId: string, payload: unknown) =>

@@ -26,12 +26,18 @@ export async function GET(request: NextRequest) {
       where.partnerKey = sessionPartnerKey;
     }
     const canceledStates = ["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"];
+    const nonProcessStates = ["SHIPPED", ...canceledStates];
     if (view === "fulfilled") {
-      where.orderState = "SHIPPED";
+      where.shipments = { some: { shippedAt: { not: null } } };
     } else if (view === "to_process") {
-      where.OR = [
-        { orderState: { notIn: ["SHIPPED", ...canceledStates] } },
-        { orderState: null },
+      where.AND = [
+        { shipments: { none: {} } },
+        {
+          OR: [
+            { orderState: { notIn: nonProcessStates } },
+            { orderState: null },
+          ],
+        },
       ];
     } else if (view === "canceled") {
       where.orderState = { in: canceledStates };

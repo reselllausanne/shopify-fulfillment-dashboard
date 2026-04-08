@@ -98,30 +98,42 @@ export default function PartnerOrdersPage() {
   const displayLineTitle = (line: any) =>
     line.kickdb?.variantName || line.kickdb?.productTitle || miraklLineLabel(line);
 
+  const downloadPdf = async (url: string, fallbackName: string) => {
+    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error ?? "Download failed");
+    }
+    const blob = await res.blob();
+    const rawName = res.headers.get("content-disposition")?.split("filename=")?.[1] ?? "";
+    const filename = rawName.replace(/^['"]|['"]$/g, "") || fallbackName;
+    const urlObj = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = urlObj;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(urlObj);
+  };
+
   const generatePackingSlip = async () => {
     if (!selectedOrderId) return;
     setError(null);
     try {
-      const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/documents/packing-slip?scope=partner`, {
-        method: "GET",
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Packing slip failed");
-      }
-      const blob = await res.blob();
-      const rawName = res.headers.get("content-disposition")?.split("filename=")?.[1] ?? "";
-      const filename =
-        rawName.replace(/^['"]|['"]$/g, "") || `decathlon-delivery_${selectedOrderId}.pdf`;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      await downloadPdf(
+        `/api/decathlon/orders/${selectedOrderId}/documents/packing-slip?scope=partner`,
+        `decathlon-delivery_${selectedOrderId}.pdf`
+      );
     } catch (err: any) {
       setError(err.message ?? "Packing slip failed");
     }
+  };
+
+  const downloadLabel = async () => {
+    if (!selectedOrderId) return;
+    await downloadPdf(
+      `/api/decathlon/orders/${selectedOrderId}/documents/label?scope=partner`,
+      `decathlon-label_${selectedOrderId}.pdf`
+    );
   };
 
   const shipOrder = async () => {
@@ -131,6 +143,7 @@ export default function PartnerOrdersPage() {
       const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/ship?scope=partner`, { method: "POST" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Ship failed");
+      await downloadLabel();
       await loadOrderDetail(selectedOrderId);
       await loadOrders();
     } catch (err: any) {

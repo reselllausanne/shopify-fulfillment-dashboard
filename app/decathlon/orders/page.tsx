@@ -44,6 +44,30 @@ export default function DecathlonOrdersPage() {
   const [assigningPartner, setAssigningPartner] = useState(false);
   const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
 
+  const downloadPdf = async (url: string, fallbackName: string) => {
+    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    const ct = res.headers.get("content-type") ?? "";
+    if (!res.ok) {
+      const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+      throw new Error((data as any).error ?? `Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const dispo = res.headers.get("Content-Disposition") ?? "";
+    const m = /filename\*?=(?:UTF-8''|)([^";\n]+)|filename="([^"]+)"/i.exec(dispo);
+    const rawName = (m?.[1] || m?.[2] || "").trim();
+    const filename = rawName.replace(/^["']|["']$/g, "") || fallbackName;
+    const urlObj = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = urlObj;
+    a.download = filename;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(urlObj);
+    return filename;
+  };
+
   const loadOrders = async () => {
     setLoadingOrders(true);
     setError(null);
@@ -175,7 +199,8 @@ export default function DecathlonOrdersPage() {
   const ordersByTab = useMemo(() => {
     return orderedList.filter((order) => {
       const state = normalizeState(order.orderState);
-      const isShipped = state === "SHIPPED";
+      const shippedCount = order._count?.shipments ?? order.shippedCount ?? 0;
+      const isShipped = shippedCount > 0;
       const isCanceled = canceledStates.has(state);
       const isOpen = !state || (!isShipped && !isCanceled);
       if (leftTab === "fulfilled") return isShipped;
@@ -212,9 +237,12 @@ export default function DecathlonOrdersPage() {
 
   const canFulfill = useMemo(() => {
     const state = normalizeState(selectedOrder?.orderState);
+    const hasShipment =
+      Array.isArray(selectedOrder?.shipments) && selectedOrder.shipments.length > 0;
+    if (hasShipment) return false;
     if (!state) return true;
-    return state !== "SHIPPED" && !canceledStates.has(state);
-  }, [selectedOrder?.orderState, canceledStates]);
+    return !hasShipment && !canceledStates.has(state);
+  }, [selectedOrder?.orderState, selectedOrder?.shipments?.length, canceledStates]);
 
   const openManualEntry = (line: any) => {
     if (!selectedOrderId || !selectedOrder) {
@@ -312,35 +340,24 @@ export default function DecathlonOrdersPage() {
     setOpsLog(null);
     setError(null);
     try {
-      const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/documents/packing-slip`, {
-        method: "GET",
-        cache: "no-store",
-      });
-      const ct = res.headers.get("content-type") ?? "";
-      if (!res.ok) {
-        const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
-        throw new Error((data as any).error ?? `Download failed (${res.status})`);
-      }
-      const blob = await res.blob();
-      const dispo = res.headers.get("Content-Disposition") ?? "";
-      const m = /filename\*?=(?:UTF-8''|)([^";\n]+)|filename="([^"]+)"/i.exec(dispo);
-      const rawName = (m?.[1] || m?.[2] || "").trim();
-      const filename =
-        rawName.replace(/^["']|["']$/g, "") || `decathlon-delivery_${selectedOrderId}.pdf`;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const filename = await downloadPdf(
+        `/api/decathlon/orders/${selectedOrderId}/documents/packing-slip`,
+        `decathlon-delivery_${selectedOrderId}.pdf`
+      );
       setOpsLog(`Saved to Downloads: ${filename}`);
       await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);
     }
+  };
+
+  const downloadLabel = async () => {
+    if (!selectedOrderId) return;
+    const filename = await downloadPdf(
+      `/api/decathlon/orders/${selectedOrderId}/documents/label`,
+      `decathlon-label_${selectedOrderId}.pdf`
+    );
+    setOpsLog(`Saved to Downloads: ${filename}`);
   };
 
   const shipOrder = async () => {
@@ -352,6 +369,7 @@ export default function DecathlonOrdersPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Ship failed");
       setOpsLog(JSON.stringify(data, null, 2));
+      await downloadLabel();
       await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);
