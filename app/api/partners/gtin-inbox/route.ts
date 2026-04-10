@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 200);
+    const limit = Math.min(Number(searchParams.get("limit") ?? "200"), 400);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const uploadId = searchParams.get("uploadId")?.trim() ?? "";
     const statusParam = searchParams.get("status")?.trim() ?? "";

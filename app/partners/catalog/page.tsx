@@ -88,7 +88,7 @@ export default function PartnerCatalogPage() {
   const [modalEdit, setModalEdit] = useState<Record<string, string>>({});
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const loadItems = async (next = 0) => {
+  const loadItems = async (next = 0, mode: "replace" | "append" = "replace") => {
     setLoading(true);
     setError(null);
     try {
@@ -100,11 +100,22 @@ export default function PartnerCatalogPage() {
       const res = await fetch(`/api/partners/catalog/variants?${params.toString()}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load catalog");
-      setItems(data.items ?? []);
+      const incoming = Array.isArray(data.items) ? data.items : [];
+      setItems((prev) => {
+        if (mode === "replace") return incoming;
+        const seen = new Set(prev.map((item) => item.supplierVariantId));
+        const merged = [...prev];
+        for (const item of incoming) {
+          if (!seen.has(item.supplierVariantId)) merged.push(item);
+        }
+        return merged;
+      });
       setNextOffset(data.nextOffset ?? null);
       setOffset(next);
-      setEditPrice({});
-      setEditStock({});
+      if (mode === "replace") {
+        setEditPrice({});
+        setEditStock({});
+      }
     } catch (err: any) {
       setError(err.message ?? "Failed to load catalog");
     } finally {
@@ -116,7 +127,7 @@ export default function PartnerCatalogPage() {
     loadItems();
   }, []);
 
-  const applySearch = () => loadItems(0);
+  const applySearch = () => loadItems(0, "replace");
 
   const openFullEdit = (row: CatalogItem) => {
     setModalRow(row);
@@ -286,7 +297,7 @@ export default function PartnerCatalogPage() {
             Full catalog view with read-only access to all products and full control over your own.
           </p>
         </div>
-        <div className="text-xs text-slate-500">Owned: {ownedCount} · Total: {items.length}</div>
+        <div className="text-xs text-slate-500">Owned: {ownedCount} · Loaded: {items.length}</div>
       </div>
 
       {error && (
@@ -426,7 +437,7 @@ export default function PartnerCatalogPage() {
       {nextOffset !== null && (
         <button
           className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-600"
-          onClick={() => loadItems(nextOffset)}
+          onClick={() => loadItems(nextOffset, "append")}
           disabled={loading}
         >
           Load more

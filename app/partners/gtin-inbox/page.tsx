@@ -26,6 +26,10 @@ export default function PartnerGtinInboxPage() {
   const [gtinInputs, setGtinInputs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [limit, setLimit] = useState(200);
+  const [offset, setOffset] = useState(0);
+  const [nextOffset, setNextOffset] = useState<number | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -39,17 +43,31 @@ export default function PartnerGtinInboxPage() {
     load();
   }, [router]);
 
-  const fetchRows = async () => {
-    setBusy("load");
+  const fetchRows = async (next = 0, mode: "replace" | "append" = "replace") => {
+    setBusy(mode === "append" ? "load-more" : "load");
     setError(null);
     try {
       const params = new URLSearchParams();
       if (statusFilter) params.set("status", statusFilter);
       if (uploadIdFilter) params.set("uploadId", uploadIdFilter);
+      params.set("limit", String(limit));
+      params.set("offset", String(next));
       const res = await fetch(`/api/partners/gtin-inbox?${params.toString()}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Load failed");
-      setRows(data.items ?? []);
+      const incoming = Array.isArray(data.items) ? data.items : [];
+      setRows((prev) => {
+        if (mode === "replace") return incoming;
+        const seen = new Set(prev.map((row) => row.id));
+        const merged = [...prev];
+        for (const row of incoming) {
+          if (!seen.has(row.id)) merged.push(row);
+        }
+        return merged;
+      });
+      setOffset(next);
+      setNextOffset(data.nextOffset ?? null);
+      setTotal(typeof data.total === "number" ? data.total : null);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -137,9 +155,18 @@ export default function PartnerGtinInboxPage() {
           onChange={(event) => setUploadIdFilter(event.target.value)}
           placeholder="Upload ID filter"
         />
+        <select
+          className="rounded border border-slate-200 px-2 py-2 text-xs text-slate-600"
+          value={limit}
+          onChange={(event) => setLimit(Number(event.target.value))}
+        >
+          <option value={100}>100 rows</option>
+          <option value={200}>200 rows</option>
+          <option value={400}>400 rows</option>
+        </select>
         <button
           className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white"
-          onClick={fetchRows}
+          onClick={() => fetchRows(0, "replace")}
           disabled={busy !== null}
         >
           {busy === "load" ? "Loading…" : "Apply"}
@@ -163,6 +190,14 @@ export default function PartnerGtinInboxPage() {
             }}
           />
         </label>
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-slate-500">
+        <div>
+          Loaded: {rows.length}
+          {typeof total === "number" ? ` / ${total}` : ""}
+        </div>
+        <div>Offset: {offset}</div>
       </div>
 
       <div className="overflow-auto rounded-2xl border border-slate-200 bg-white">
@@ -232,6 +267,16 @@ export default function PartnerGtinInboxPage() {
           </tbody>
         </table>
       </div>
+
+      {nextOffset !== null && (
+        <button
+          className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-600"
+          onClick={() => fetchRows(nextOffset, "append")}
+          disabled={busy !== null}
+        >
+          {busy === "load-more" ? "Loading…" : "Load more"}
+        </button>
+      )}
     </div>
   );
 }
