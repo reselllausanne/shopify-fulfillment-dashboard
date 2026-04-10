@@ -37,6 +37,20 @@ export async function claimJob(
   options?: { groupLimit?: number }
 ): Promise<QueueJob | null> {
   const groupLimit = Math.max(Number(options?.groupLimit ?? 0), 0);
+  const staleMs = Math.max(Number(process.env.WORKER_STALE_MS ?? "900000"), 0);
+  if (staleMs > 0) {
+    await prisma.$executeRaw(Prisma.sql`
+      UPDATE "public"."GalaxusJobQueue"
+      SET
+        "status" = 'PENDING',
+        "lockedAt" = NULL,
+        "lockedBy" = NULL,
+        "updatedAt" = NOW()
+      WHERE "status" = 'RUNNING'
+        AND "lockedAt" IS NOT NULL
+        AND "lockedAt" < NOW() - (${staleMs} * INTERVAL '1 millisecond');
+    `);
+  }
   const rows = await prisma.$queryRaw<Array<QueueJob>>(Prisma.sql`
     WITH running_groups AS (
       SELECT "groupKey"
@@ -83,6 +97,14 @@ export async function claimJob(
       q."createdAt";
   `);
   return rows?.[0] ?? null;
+}
+
+export async function touchJob(id: string, workerId: string): Promise<boolean> {
+  const result = await (prisma as any).galaxusJobQueue.updateMany({
+    where: { id, status: "RUNNING", lockedBy: workerId },
+    data: { lockedAt: new Date(), updatedAt: new Date() },
+  });
+  return (result?.count ?? 0) > 0;
 }
 
 export async function completeJob(id: string, result?: unknown): Promise<void> {

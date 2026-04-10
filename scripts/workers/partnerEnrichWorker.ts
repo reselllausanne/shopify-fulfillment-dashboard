@@ -1,5 +1,5 @@
 import os from "os";
-import { claimJob, completeJob, enqueueJob, failJob } from "@/galaxus/jobs/queue";
+import { claimJob, completeJob, enqueueJob, failJob, touchJob } from "@/galaxus/jobs/queue";
 import { runPartnerUploadEnrich } from "@/galaxus/partners/enrichUploadJob";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,6 +17,7 @@ async function run() {
   const pollMs = Math.max(Number(process.env.WORKER_POLL_MS ?? "2000"), 500);
   const jobType = process.env.WORKER_JOB_TYPE || "partner-upload-enrich";
   const groupLimit = Math.max(Number(process.env.WORKER_GROUP_LIMIT ?? "1"), 0);
+  const heartbeatMs = Math.max(Number(process.env.WORKER_HEARTBEAT_MS ?? "60000"), 5000);
 
   console.info(`[worker] start ${workerId} (${jobType}) poll=${pollMs}ms`);
 
@@ -28,7 +29,21 @@ async function run() {
       continue;
     }
 
+    let stopHeartbeat: (() => void) | null = null;
     try {
+      if (heartbeatMs > 0) {
+        const tick = async () => {
+          try {
+            await touchJob(job.id, workerId);
+          } catch (error: any) {
+            console.warn("[worker] heartbeat failed", { jobId: job.id, error: error?.message ?? error });
+          }
+        };
+        await tick();
+        const interval = setInterval(tick, heartbeatMs);
+        stopHeartbeat = () => clearInterval(interval);
+      }
+
       const payload = (job.payloadJson || {}) as PartnerEnrichJobPayload;
       const result = await runPartnerUploadEnrich({
         partnerKey: payload.partnerKey,
@@ -54,6 +69,8 @@ async function run() {
       const retry = job.attempts < job.maxAttempts;
       await failJob(job.id, message, retry);
       console.error("[worker] job failed", { jobId: job.id, error: message, retry });
+    } finally {
+      if (stopHeartbeat) stopHeartbeat();
     }
   }
 }
