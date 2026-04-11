@@ -56,6 +56,8 @@ export default function PartnerDashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [enrichLog, setEnrichLog] = useState<string | null>(null);
+  const [importQueueLog, setImportQueueLog] = useState<string | null>(null);
+  const [importPollUploadId, setImportPollUploadId] = useState<string | null>(null);
   const [catalogCount, setCatalogCount] = useState<number>(0);
   const [uploadHistory, setUploadHistory] = useState<UploadLog[]>([]);
   const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
@@ -83,6 +85,27 @@ export default function PartnerDashboardPage() {
       // silent
     }
   };
+
+  useEffect(() => {
+    if (!importPollUploadId) return;
+    const id = window.setInterval(() => {
+      void loadHistory();
+    }, 2500);
+    return () => window.clearInterval(id);
+  }, [importPollUploadId]);
+
+  useEffect(() => {
+    if (!importPollUploadId) return;
+    const u = uploadHistory.find((x) => x.id === importPollUploadId);
+    if (u && !["QUEUED", "PROCESSING"].includes(u.status)) {
+      setImportPollUploadId(null);
+      setImportQueueLog(
+        u.status === "FAILED"
+          ? "Import failed — open Upload History for details."
+          : `Import finished: ${u.importedRows} rows imported, ${u.errorRows} row errors.`
+      );
+    }
+  }, [uploadHistory, importPollUploadId]);
 
   useEffect(() => {
     const load = async () => {
@@ -159,6 +182,8 @@ export default function PartnerDashboardPage() {
     setBusy(true);
     setError(null);
     setUploadResult(null);
+    setImportQueueLog(null);
+    setImportPollUploadId(null);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -168,8 +193,16 @@ export default function PartnerDashboardPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Upload failed");
+      if (data.queued && data.uploadId) {
+        setImportPollUploadId(data.uploadId);
+        setImportQueueLog(
+          `Import queued (job ${data.jobId}). Large files are processed in the background; upload history refreshes automatically.`
+        );
+        await loadHistory();
+        return;
+      }
       setUploadResult(data.result ?? data);
-      loadHistory();
+      await loadHistory();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -358,9 +391,14 @@ export default function PartnerDashboardPage() {
               onClick={uploadCsv}
               disabled={busy}
             >
-              {busy ? "Uploading…" : "Upload CSV"}
+              {busy ? "Uploading…" : importPollUploadId ? "Processing…" : "Upload CSV"}
             </button>
           </div>
+          {importQueueLog && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+              {importQueueLog}
+            </div>
+          )}
           {uploadResult && (
             <div className="space-y-2 text-xs text-slate-600">
               <div>
