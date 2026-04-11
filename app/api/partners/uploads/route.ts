@@ -5,8 +5,13 @@ import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { parseCsv } from "@/app/lib/csv";
 import { normalizeSize, normalizeSku, parsePriceSafe, validateGtin } from "@/app/lib/normalize";
 import { buildDuplicateKey, buildSupplierVariantId, computeLastRowByKey } from "@/app/lib/partnerImport";
-import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
-import { bulkUpsertSupplierVariantsPartnerImport, chunkArray } from "@/galaxus/jobs/bulkSql";
+import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import {
+  bulkUpsertSupplierVariantsPartnerImport,
+  bulkUpsertVariantMappings,
+  bulkUpdateSupplierVariants,
+  chunkArray,
+} from "@/galaxus/jobs/bulkSql";
 import { enqueueJob } from "@/galaxus/jobs/queue";
 
 export const runtime = "nodejs";
@@ -27,6 +32,10 @@ type ValidImportRow = {
   sizeRaw: string;
   stock: number;
   price: number;
+  productName?: string | null;
+  brand?: string | null;
+  imageUrl?: string | null;
+  gtinProvided?: string | null;
 };
 
 export async function POST(req: NextRequest) {
@@ -111,6 +120,10 @@ export async function POST(req: NextRequest) {
       const sizeRaw = read("size");
       const stockRaw = read("rawStock");
       const priceRaw = read("price");
+      const gtinRaw = read("gtin");
+      const productNameRaw = read("productName");
+      const brandRaw = read("brand");
+      const imageRaw = read("image");
       const rowErrors: Array<{ field: string; message: string }> = [];
 
       const dupeKey = buildDuplicateKey(providerKeyRaw, skuRaw, sizeRaw);
@@ -150,6 +163,13 @@ export async function POST(req: NextRequest) {
       if (price === null) {
         rowErrors.push({ field: "price", message: "Invalid number" });
       }
+      const gtinProvided = gtinRaw ? (validateGtin(gtinRaw) ? gtinRaw : null) : null;
+      if (gtinRaw && !gtinProvided) {
+        rowErrors.push({ field: "gtin", message: "Invalid GTIN" });
+      }
+      const productName = productNameRaw ? productNameRaw.trim() : null;
+      const brand = brandRaw ? brandRaw.trim() : null;
+      const imageUrl = imageRaw ? imageRaw.trim() : null;
 
       if (rowErrors.length > 0) {
         rowErrors.forEach((err) => errors.push({ row: i + 1, ...err }));
@@ -189,6 +209,10 @@ export async function POST(req: NextRequest) {
         sizeRaw,
         stock,
         price: rowPrice,
+        productName,
+        brand,
+        imageUrl,
+        gtinProvided,
       });
     }
 
@@ -229,31 +253,80 @@ export async function POST(req: NextRequest) {
         sizeRaw: string | null;
         sizeNormalized: string | null;
       }> = [];
+      const supplierUpdates: Array<{
+        supplierVariantId: string;
+        supplierSku?: string;
+        providerKey?: string | null;
+        gtin?: string | null;
+        supplierBrand?: string | null;
+        supplierProductName?: string | null;
+        images?: unknown;
+      }> = [];
+      const mappingUpserts: Array<{
+        supplierVariantId: string;
+        gtin: string | null;
+        providerKey: string | null;
+        status: string;
+        kickdbVariantId?: string | null;
+      }> = [];
 
       for (const v of validImports) {
         const existing = existingById.get(v.supplierVariantId);
         const existingGtin = existing?.gtin ?? null;
         const existingProviderKey = existing?.providerKey ?? null;
+        const providedGtin = v.gtinProvided ?? null;
+        const effectiveGtin = providedGtin ?? existingGtin;
+        const providerKeyFromGtin = effectiveGtin
+          ? buildProviderKey(effectiveGtin, v.supplierVariantId)
+          : existingProviderKey;
         assertMappingIntegrity({
           supplierVariantId: v.supplierVariantId,
-          gtin: existingGtin,
-          providerKey: existingProviderKey,
-          status: existingGtin ? "MATCHED" : "PENDING_GTIN",
+          gtin: effectiveGtin,
+          providerKey: providerKeyFromGtin,
+          status: effectiveGtin ? "MATCHED" : "PENDING_GTIN",
         });
         variantBulk.push({
           supplierVariantId: v.supplierVariantId,
           supplierSku: v.normalizedSku,
-          providerKey: existingProviderKey,
-          gtin: existingGtin,
+          providerKey: providerKeyFromGtin ?? existingProviderKey,
+          gtin: effectiveGtin,
           price: v.price,
           stock: v.stock,
           sizeRaw: v.sizeRaw,
           sizeNormalized: v.normalizedSize,
         });
+        if (providedGtin) {
+          mappingUpserts.push({
+            supplierVariantId: v.supplierVariantId,
+            gtin: providedGtin,
+            providerKey: providerKeyFromGtin ?? null,
+            status: "SUPPLIER_GTIN",
+            kickdbVariantId: null,
+          });
+        }
+        if (v.productName || v.brand || v.imageUrl || providedGtin) {
+          supplierUpdates.push({
+            supplierVariantId: v.supplierVariantId,
+            supplierSku: v.normalizedSku,
+            providerKey: providerKeyFromGtin ?? undefined,
+            gtin: providedGtin ?? undefined,
+            supplierBrand: v.brand ?? undefined,
+            supplierProductName: v.productName ?? undefined,
+            images: v.imageUrl ? [v.imageUrl] : undefined,
+          });
+        }
       }
 
       for (const batch of chunkArray(variantBulk, 400)) {
         await bulkUpsertSupplierVariantsPartnerImport(batch, now);
+      }
+      for (const batch of chunkArray(mappingUpserts, 200)) {
+        if (batch.length === 0) continue;
+        await bulkUpsertVariantMappings(batch, now, { doNotDowngradeFromMatched: false });
+      }
+      for (const batch of chunkArray(supplierUpdates, 200)) {
+        if (batch.length === 0) continue;
+        await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: true });
       }
 
       type UploadCreate = {
@@ -275,7 +348,9 @@ export async function POST(req: NextRequest) {
       for (const v of validImports) {
         const existing = existingById.get(v.supplierVariantId);
         const existingGtin = existing?.gtin ?? null;
-        const resolvedGtin = existingGtin && validateGtin(existingGtin) ? existingGtin : null;
+        const resolvedGtin =
+          v.gtinProvided ??
+          (existingGtin && validateGtin(existingGtin) ? existingGtin : null);
         const shouldEnrich = !resolvedGtin;
         const tripleKey = `${v.providerKeyValue}|${v.normalizedSku}|${v.normalizedSize}`;
         const existingPending = pendingByTriple.get(tripleKey);
