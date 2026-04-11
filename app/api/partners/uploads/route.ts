@@ -11,6 +11,7 @@ import {
   bulkUpsertVariantMappings,
   bulkUpdateSupplierVariants,
   chunkArray,
+  remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 import { enqueueJob } from "@/galaxus/jobs/queue";
 
@@ -243,7 +244,7 @@ export async function POST(req: NextRequest) {
         if (!pendingByTriple.has(k)) pendingByTriple.set(k, { id: pr.id });
       }
 
-      const variantBulk: Array<{
+      type VariantBulkRow = {
         supplierVariantId: string;
         supplierSku: string;
         providerKey: string | null;
@@ -252,7 +253,8 @@ export async function POST(req: NextRequest) {
         stock: number;
         sizeRaw: string | null;
         sizeNormalized: string | null;
-      }> = [];
+      };
+      const variantBulkScratch: VariantBulkRow[] = [];
       const supplierUpdates: Array<{
         supplierVariantId: string;
         supplierSku?: string;
@@ -269,6 +271,15 @@ export async function POST(req: NextRequest) {
         status: string;
         kickdbVariantId?: string | null;
       }> = [];
+      /** Aligns with validImports[i] after (providerKey,gtin) canonical remap */
+      const canonicalIdByImportIndex: string[] = new Array(validImports.length);
+
+      type RowWork = {
+        v: ValidImportRow;
+        providerKeyFromGtin: string | null;
+        providedGtin: string | null;
+      };
+      const rowWork: RowWork[] = [];
 
       for (const v of validImports) {
         const existing = existingById.get(v.supplierVariantId);
@@ -278,26 +289,56 @@ export async function POST(req: NextRequest) {
         const effectiveGtin = providedGtin ?? existingGtin;
         const providerKeyFromGtin = effectiveGtin
           ? buildProviderKey(effectiveGtin, v.supplierVariantId)
+          : null;
+        const providerKeyForDb = effectiveGtin
+          ? (providerKeyFromGtin ?? existingProviderKey)
           : existingProviderKey;
-        assertMappingIntegrity({
-          supplierVariantId: v.supplierVariantId,
-          gtin: effectiveGtin,
-          providerKey: providerKeyFromGtin,
-          status: effectiveGtin ? "MATCHED" : "PENDING_GTIN",
-        });
-        variantBulk.push({
+
+        if (effectiveGtin) {
+          assertMappingIntegrity({
+            supplierVariantId: v.supplierVariantId,
+            gtin: effectiveGtin,
+            providerKey: providerKeyFromGtin,
+            status: providedGtin ? "SUPPLIER_GTIN" : "MATCHED",
+          });
+        }
+
+        variantBulkScratch.push({
           supplierVariantId: v.supplierVariantId,
           supplierSku: v.normalizedSku,
-          providerKey: providerKeyFromGtin ?? existingProviderKey,
+          providerKey: providerKeyForDb,
           gtin: effectiveGtin,
           price: v.price,
           stock: v.stock,
           sizeRaw: v.sizeRaw,
           sizeNormalized: v.normalizedSize,
         });
+        rowWork.push({ v, providerKeyFromGtin, providedGtin });
+      }
+
+      const { rows: remappedVariantRows } = await remapRowsToExistingProviderKeyGtin(
+        variantBulkScratch.map((row) => ({
+          supplierVariantId: row.supplierVariantId,
+          providerKey: row.providerKey,
+          gtin: row.gtin,
+        }))
+      );
+
+      const remappedScratch: VariantBulkRow[] = variantBulkScratch.map((row, i) => ({
+        ...row,
+        supplierVariantId: remappedVariantRows[i]!.supplierVariantId,
+      }));
+
+      for (let idx = 0; idx < rowWork.length; idx += 1) {
+        const { v, providerKeyFromGtin, providedGtin } = rowWork[idx]!;
+        const canonicalId = remappedVariantRows[idx]!.supplierVariantId;
+        canonicalIdByImportIndex[idx] = canonicalId;
+        seenSupplierVariantIds.add(v.supplierVariantId);
+        seenSupplierVariantIds.add(canonicalId);
+
         if (providedGtin) {
           mappingUpserts.push({
-            supplierVariantId: v.supplierVariantId,
+            supplierVariantId: canonicalId,
             gtin: providedGtin,
             providerKey: providerKeyFromGtin ?? null,
             status: "SUPPLIER_GTIN",
@@ -306,7 +347,7 @@ export async function POST(req: NextRequest) {
         }
         if (v.productName || v.brand || v.imageUrl || providedGtin) {
           supplierUpdates.push({
-            supplierVariantId: v.supplierVariantId,
+            supplierVariantId: canonicalId,
             supplierSku: v.normalizedSku,
             providerKey: providerKeyFromGtin ?? undefined,
             gtin: providedGtin ?? undefined,
@@ -316,6 +357,12 @@ export async function POST(req: NextRequest) {
           });
         }
       }
+
+      const variantBulkDedup = new Map<string, VariantBulkRow>();
+      for (const row of remappedScratch) {
+        variantBulkDedup.set(row.supplierVariantId, row);
+      }
+      const variantBulk = [...variantBulkDedup.values()];
 
       for (const batch of chunkArray(variantBulk, 400)) {
         await bulkUpsertSupplierVariantsPartnerImport(batch, now);
@@ -345,7 +392,9 @@ export async function POST(req: NextRequest) {
       const uploadCreates: UploadCreate[] = [];
       const uploadUpdates: Array<{ id: string; data: Record<string, unknown> }> = [];
 
-      for (const v of validImports) {
+      for (let vi = 0; vi < validImports.length; vi += 1) {
+        const v = validImports[vi]!;
+        const catalogId = canonicalIdByImportIndex[vi] ?? v.supplierVariantId;
         const existing = existingById.get(v.supplierVariantId);
         const existingGtin = existing?.gtin ?? null;
         const resolvedGtin =
@@ -363,7 +412,7 @@ export async function POST(req: NextRequest) {
               data: {
                 uploadId: upload?.id ?? null,
                 partnerId: session.partnerId,
-                supplierVariantId: v.supplierVariantId,
+                supplierVariantId: catalogId,
                 providerKey: v.providerKeyValue,
                 sku: v.normalizedSku,
                 sizeRaw: v.sizeRaw,
@@ -379,7 +428,7 @@ export async function POST(req: NextRequest) {
             uploadCreates.push({
               uploadId: upload?.id ?? null,
               partnerId: session.partnerId,
-              supplierVariantId: v.supplierVariantId,
+              supplierVariantId: catalogId,
               providerKey: v.providerKeyValue,
               sku: v.normalizedSku,
               sizeRaw: v.sizeRaw,
@@ -396,7 +445,7 @@ export async function POST(req: NextRequest) {
             uploadUpdates.push({
               id: existingPending.id,
               data: {
-                supplierVariantId: v.supplierVariantId,
+                supplierVariantId: catalogId,
                 status: "RESOLVED",
                 gtinResolved: resolvedGtin,
                 updatedAt: now,

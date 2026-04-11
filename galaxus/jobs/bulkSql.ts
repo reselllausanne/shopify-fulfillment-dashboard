@@ -265,6 +265,11 @@ export async function bulkUpsertSupplierVariantsPartnerImport(
         "sizeNormalized" = EXCLUDED."sizeNormalized",
         "stock" = EXCLUDED."stock",
         "price" = EXCLUDED."price",
+        "gtin" = COALESCE("SupplierVariant"."gtin", EXCLUDED."gtin"),
+        "providerKey" = CASE
+          WHEN EXCLUDED."gtin" IS NULL THEN "SupplierVariant"."providerKey"
+          ELSE COALESCE("SupplierVariant"."providerKey", EXCLUDED."providerKey")
+        END,
         "lastSyncAt" = EXCLUDED."lastSyncAt",
         "updatedAt" = EXCLUDED."updatedAt"
     `
