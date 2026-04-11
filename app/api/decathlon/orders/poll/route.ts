@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
+import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
@@ -117,6 +118,31 @@ async function listOrdersSafe(
   }
 }
 
+async function listOrdersPaged(
+  client: ReturnType<typeof buildDecathlonOrdersClient>,
+  params: Record<string, string | number>,
+  options?: { maxPages?: number; maxTotal?: number; safe?: boolean }
+) {
+  const perPageRaw = Number(params.max ?? 50);
+  const perPage = Number.isFinite(perPageRaw) ? Math.min(Math.max(perPageRaw, 1), 200) : 50;
+  const maxPages = Math.min(Math.max(Number(options?.maxPages ?? 5), 1), 50);
+  const maxTotal = Math.min(Math.max(Number(options?.maxTotal ?? perPage * maxPages), 1), 5000);
+  const useSafe = options?.safe ?? false;
+  const orders: any[] = [];
+  let offset = Number(params.offset ?? 0);
+  for (let page = 0; page < maxPages; page += 1) {
+    const pageParams = { ...params, max: perPage, offset };
+    const payload = useSafe ? await listOrdersSafe(client, pageParams) : await client.listOrders(pageParams);
+    const batch = extractOrders(payload);
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    orders.push(...batch);
+    if (batch.length < perPage) break;
+    if (orders.length >= maxTotal) break;
+    offset += perPage;
+  }
+  return orders.slice(0, maxTotal);
+}
+
 function pickLineAmount(line: any): number | null {
   const raw =
     line?.line_price ??
@@ -172,7 +198,7 @@ async function upsertDecathlonOrder(payload: {
   partnerKey: string | null;
   preserveCanceled?: boolean;
 }) {
-  const { order, orderId, partnerKey, preserveCanceled } = payload;
+  const { order, orderId, partnerKey: resolvedPartnerKey, preserveCanceled } = payload;
   const orderDate = order?.created_date ?? order?.date_created ?? order?.order_date ?? null;
   const parsedOrderDate = orderDate ? new Date(orderDate) : new Date();
   const incomingState = normalizeOrderState(order);
@@ -180,8 +206,19 @@ async function upsertDecathlonOrder(payload: {
   const shipping = normalizeAddress(resolveShippingSource(order));
   const existing = await prisma.decathlonOrder.findUnique({
     where: { orderId },
-    select: { id: true, orderState: true },
+    select: { id: true, orderState: true, partnerKey: true },
   });
+  const resolvedPk =
+    resolvedPartnerKey != null && String(resolvedPartnerKey).trim() !== ""
+      ? String(resolvedPartnerKey).trim()
+      : null;
+  const existingPk =
+    existing?.partnerKey != null && String(existing.partnerKey).trim() !== ""
+      ? String(existing.partnerKey).trim()
+      : null;
+  /** Prefer Mirakl-derived partner when present; otherwise keep admin-assigned partnerKey. */
+  const partnerKeyForUpsert = resolvedPk ?? existingPk ?? null;
+
   let orderState = incomingState || null;
   if (preserveCanceled && existing?.orderState) {
     const existingState = String(existing.orderState ?? "").trim().toUpperCase();
@@ -199,7 +236,7 @@ async function upsertDecathlonOrder(payload: {
       orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
       orderDate: parsedOrderDate,
       orderState,
-      partnerKey,
+      partnerKey: partnerKeyForUpsert,
       currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
       totalPrice: pickOrderAmount(order),
       shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
@@ -228,7 +265,7 @@ async function upsertDecathlonOrder(payload: {
       orderNumber: String(order?.order_number ?? order?.orderNumber ?? orderId),
       orderDate: parsedOrderDate,
       orderState,
-      partnerKey,
+      partnerKey: partnerKeyForUpsert,
       currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
       totalPrice: pickOrderAmount(order),
       shippingPrice: order?.shipping_price ?? order?.shippingPrice ?? null,
@@ -261,6 +298,7 @@ export async function POST(request: Request) {
     const { searchParams } = new URL(request.url);
     const state = String(searchParams.get("state") ?? "").trim();
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
+    const maxPages = Math.min(Math.max(Number(searchParams.get("pages") ?? "5"), 1), 50);
     const client = buildDecathlonOrdersClient();
     const params: Record<string, string | number> = { max: limit };
     if (state) params.order_state_codes = state;
@@ -270,26 +308,33 @@ export async function POST(request: Request) {
       select: { updatedAt: true },
     });
     const lastSyncAt = latestOrder?.updatedAt ?? null;
-    const payload: any = await client.listOrders(params);
-    const orders: any[] = extractOrders(payload);
+    const orders: any[] = await listOrdersPaged(client, params, { maxPages });
     let canceledOrders: any[] = [];
     if (!state || state.toUpperCase() !== "CANCELED") {
       const baseParams: Record<string, string | number> = { max: limit };
       if (lastSyncAt) baseParams.start_update_date = lastSyncAt.toISOString();
-      const [refundedPayload, canceledPayload, closedPayload] = await Promise.all([
-        listOrdersSafe(client, {
-          ...baseParams,
-          order_state_codes: "CANCELED",
-          refund_state_codes: "REFUNDED",
-        }),
-        listOrdersSafe(client, { ...baseParams, order_state_codes: "CANCELED" }),
-        listOrdersSafe(client, { ...baseParams, order_state_codes: "CLOSED" }),
+      const [refundedOrders, canceledOnlyOrders, closedOrders] = await Promise.all([
+        listOrdersPaged(
+          client,
+          {
+            ...baseParams,
+            order_state_codes: "CANCELED",
+            refund_state_codes: "REFUNDED",
+          },
+          { maxPages, safe: true }
+        ),
+        listOrdersPaged(
+          client,
+          { ...baseParams, order_state_codes: "CANCELED" },
+          { maxPages, safe: true }
+        ),
+        listOrdersPaged(
+          client,
+          { ...baseParams, order_state_codes: "CLOSED" },
+          { maxPages, safe: true }
+        ),
       ]);
-      const merged = [
-        ...extractOrders(refundedPayload),
-        ...extractOrders(canceledPayload),
-        ...extractOrders(closedPayload),
-      ];
+      const merged = [...refundedOrders, ...canceledOnlyOrders, ...closedOrders];
       const unique = new Map<string, any>();
       for (const order of merged) {
         const orderId = String(order?.id ?? order?.order_id ?? order?.orderId ?? "").trim();
@@ -360,6 +405,7 @@ export async function POST(request: Request) {
           });
         }
       }
+      await repairDecathlonStockxMatchLineRefs(orderRow.id);
       upserted += 1;
     }
     if (canceledOrders.length > 0) {

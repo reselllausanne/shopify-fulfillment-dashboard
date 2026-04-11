@@ -34,13 +34,13 @@ export async function GET(request: NextRequest) {
         { shipments: { none: {} } },
         {
           OR: [
-            { orderState: { notIn: nonProcessStates } },
+            { orderState: { notIn: nonProcessStates, mode: "insensitive" } },
             { orderState: null },
           ],
         },
       ];
     } else if (view === "canceled") {
-      where.orderState = { in: canceledStates };
+      where.orderState = { in: canceledStates, mode: "insensitive" };
     }
     const orders = await prisma.decathlonOrder.findMany({
       where,
@@ -53,13 +53,19 @@ export async function GET(request: NextRequest) {
       },
     });
     const matchRows = await prisma.decathlonStockxMatch.findMany({
-      select: { decathlonOrderId: true, stockxOrderNumber: true, stockxOrderId: true },
+      select: {
+        decathlonOrderId: true,
+        stockxOrderNumber: true,
+        stockxOrderId: true,
+        stockxChainId: true,
+      },
     });
     const linkedByOrder = new Map<string, number>();
     for (const row of matchRows) {
       const onum = String(row.stockxOrderNumber ?? "").trim();
       const oid = String(row.stockxOrderId ?? "").trim();
-      if (!onum && !oid) continue;
+      const chain = String(row.stockxChainId ?? "").trim();
+      if (!onum && !oid && !chain) continue;
       linkedByOrder.set(row.decathlonOrderId, (linkedByOrder.get(row.decathlonOrderId) ?? 0) + 1);
     }
     const items = orders.map((order: any) => ({

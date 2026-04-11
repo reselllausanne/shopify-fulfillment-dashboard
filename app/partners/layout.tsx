@@ -13,6 +13,7 @@ type PartnerInfo = {
 const NAV_ITEMS = [
   { href: "/partners/dashboard", label: "Dashboard" },
   { href: "/partners/catalog", label: "Catalog" },
+  { href: "/partners/alternative-products", label: "Alternative Products" },
   { href: "/partners/gtin-inbox", label: "GTIN Inbox" },
   { href: "/partners/orders", label: "Orders" },
 ];

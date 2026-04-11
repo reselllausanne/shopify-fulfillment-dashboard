@@ -363,6 +363,9 @@ export default function GalaxusDirectDeliveryPage() {
           <a href="/galaxus/warehouse" className="px-3 py-2 rounded bg-gray-100 text-sm">
             Warehouse
           </a>
+          <a href="/galaxus/warehouse-shipments" className="px-3 py-2 rounded bg-gray-100 text-sm">
+            Warehouse shipments
+          </a>
           <a href="/galaxus/pricing" className="px-3 py-2 rounded bg-gray-100 text-sm">
             Pricing &amp; DB
           </a>

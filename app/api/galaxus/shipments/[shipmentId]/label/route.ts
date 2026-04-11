@@ -41,13 +41,16 @@ export async function POST(
     const { shipmentId } = await params;
     const shipment = (await prisma.shipment.findUnique({
       where: { id: shipmentId },
-      include: { order: true },
+      include: { order: true, items: { include: { order: true } } },
     })) as {
       id: string;
       order: import("@prisma/client").GalaxusOrder | null;
       packageId?: string | null;
       labelZpl?: string | null;
       labelPdfUrl?: string | null;
+      shipmentId?: string | null;
+      dispatchNotificationId?: string | null;
+      items?: Array<{ order?: import("@prisma/client").GalaxusOrder | null }>;
     } | null;
     if (!shipment || !shipment.order) {
       return NextResponse.json({ ok: false, error: "Shipment not found" }, { status: 404 });
@@ -56,7 +59,20 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Missing SSCC package id" }, { status: 400 });
     }
 
-    const label = await generateSsccLabelPdf(shipment.order, shipment.packageId);
+    const orderNumbers = Array.from(
+      new Set(
+        [
+          shipment.order.orderNumber ?? shipment.order.galaxusOrderId,
+          ...(shipment.items ?? [])
+            .map((item) => item.order?.orderNumber ?? item.order?.galaxusOrderId)
+            .filter(Boolean),
+        ].filter(Boolean)
+      )
+    );
+    const label = await generateSsccLabelPdf(shipment.order, shipment.packageId, {
+      shipmentId: shipment.dispatchNotificationId ?? shipment.shipmentId ?? shipment.order.galaxusOrderId,
+      orderNumbers,
+    });
     const storage = getStorageAdapter();
     const key = `galaxus/${shipment.order.galaxusOrderId}/shipments/${shipment.id}/sscc-label.pdf`;
     const stored = await storage.uploadPdf(key, label.pdf);

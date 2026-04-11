@@ -1666,6 +1666,12 @@ export function GalaxusWarehouseDashboard() {
           </a>
           <a
             className="inline-flex items-center rounded bg-gray-200 px-3 py-1 text-xs font-medium text-gray-900"
+            href="/galaxus/warehouse-shipments"
+          >
+            Warehouse shipments
+          </a>
+          <a
+            className="inline-flex items-center rounded bg-gray-200 px-3 py-1 text-xs font-medium text-gray-900"
             href="/galaxus/invoices"
           >
             Invoices
@@ -2443,6 +2449,9 @@ export function GalaxusDashboardHome() {
         </a>
         <a href="/galaxus/warehouse" className="px-3 py-2 bg-gray-100 text-gray-900 rounded">
           Warehouse
+        </a>
+        <a href="/galaxus/warehouse-shipments" className="px-3 py-2 bg-gray-100 text-gray-900 rounded">
+          Warehouse shipments
         </a>
         <a href="/galaxus/pricing" className="px-3 py-2 bg-gray-100 text-gray-900 rounded">
           Pricing &amp; DB

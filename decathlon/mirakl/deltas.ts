@@ -8,7 +8,6 @@ import {
 import type { DecathlonExclusionSummary, DecathlonExportCandidate } from "@/decathlon/exports/types";
 import {
   computeDecathlonOfferListPriceFromBuyNow,
-  decathlonSellPriceMultiplierForCandidate,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
@@ -78,11 +77,7 @@ export function resolveEffectivePrice(candidate: DecathlonExportCandidate): stri
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const multiplier = decathlonSellPriceMultiplierForCandidate({
-    providerKey: candidate.providerKey,
-    supplierVariantId: variant?.supplierVariantId ?? null,
-  });
-  const computed = computeDecathlonOfferListPriceFromBuyNow(buyNow, multiplier);
+  const computed = computeDecathlonOfferListPriceFromBuyNow(buyNow);
   if (!computed || computed <= 0) return null;
   return computed.toFixed(2);
 }

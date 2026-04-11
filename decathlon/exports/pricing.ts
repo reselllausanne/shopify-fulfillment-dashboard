@@ -1,62 +1,98 @@
-export const DECATHLON_BUY_NOW_MULTIPLIER = 1.54;
-export const DECATHLON_NER_BUY_NOW_MULTIPLIER = 1.1;
+export const DECATHLON_COMMISSION_RATE = 0.17;
+export const DECATHLON_VAT_RATE = 0.08;
+export const DECATHLON_FIXED_COST_CHF = 13;
 export const DECATHLON_PRICE_ROUND_TO = 0.01;
 
-/**
- * Liste Decathlon = `buyNow × (1 + this) + DECATHLON_SHIPPING_COVER_CHF` (ex. 115 → 115×1.5+13 ≈ 185.50).
- */
-export const DECATHLON_BUY_MARKUP_FRACTION = 0.5;
+export type DecathlonSalePriceInputs = {
+  buyPrice: number;
+  fixedCost?: number;
+  commissionRate?: number;
+  vatRate?: number;
+  targetNetMargin: number;
+};
 
-/** Fixed CHF added on top (fulfilment). */
-export const DECATHLON_SHIPPING_COVER_CHF = 13;
+export type DecathlonSalePriceOverrides = {
+  fixedCost?: number;
+  commissionRate?: number;
+  vatRate?: number;
+  targetNetMargin?: number;
+};
 
 /**
- * Sell price = supplier `price` × multiplier. `THE_*` is treated as your own inventory: multiplier 1 (no margin).
- * `NER_*` uses the lighter NER multiplier; everything else (e.g. STX) uses the default buy-now margin.
+ * Tiered target margin based on buy price.
+ * Buy prices below 80 CHF use the same tier as 80-100 CHF.
  */
-export function decathlonSellPriceMultiplierForCandidate(candidate: {
-  providerKey?: string;
-  supplierVariantId?: string | null;
+export function computeDecathlonTargetMargin(buyPrice: number): number | null {
+  if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
+  if (buyPrice < 100) return 0.2;
+  if (buyPrice < 120) return 0.18;
+  if (buyPrice < 150) return 0.17;
+  if (buyPrice < 200) return 0.16;
+  if (buyPrice < 300) return 0.15;
+  if (buyPrice < 500) return 0.14;
+  if (buyPrice < 700) return 0.13;
+  if (buyPrice < 1000) return 0.12;
+  return 0.1;
+}
+
+export function computeDecathlonRetainedRate({
+  commissionRate = DECATHLON_COMMISSION_RATE,
+  vatRate = DECATHLON_VAT_RATE,
+}: {
+  commissionRate?: number;
+  vatRate?: number;
 }): number {
-  const pk = String(candidate.providerKey ?? "").trim();
-  const sv = String(candidate.supplierVariantId ?? "").trim();
-  const pkU = pk.toUpperCase();
-  const svL = sv.toLowerCase();
-  if (pkU.startsWith("THE_") || svL.startsWith("the_") || svL.startsWith("the:")) {
-    return 1;
-  }
-  if (pkU.startsWith("NER_") || svL.startsWith("ner_")) {
-    return DECATHLON_NER_BUY_NOW_MULTIPLIER;
-  }
-  return DECATHLON_BUY_NOW_MULTIPLIER;
+  if (!Number.isFinite(commissionRate) || !Number.isFinite(vatRate)) return 0;
+  return 1 - commissionRate - vatRate / (1 + vatRate);
+}
+
+export function computeDecathlonSalePriceTTC({
+  buyPrice,
+  fixedCost = DECATHLON_FIXED_COST_CHF,
+  commissionRate = DECATHLON_COMMISSION_RATE,
+  vatRate = DECATHLON_VAT_RATE,
+  targetNetMargin,
+}: DecathlonSalePriceInputs): number | null {
+  if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
+  if (!Number.isFinite(targetNetMargin)) return null;
+  const retainedRate = computeDecathlonRetainedRate({ commissionRate, vatRate });
+  const denominator = retainedRate - targetNetMargin;
+  if (!Number.isFinite(denominator) || denominator <= 0) return null;
+  const raw = (buyPrice + fixedCost) / denominator;
+  return Number.isFinite(raw) ? raw : null;
 }
 
 /**
- * Prix catalogue offre = `buyNow × (1 + DECATHLON_BUY_MARKUP_FRACTION) + DECATHLON_SHIPPING_COVER_CHF`.
- * Le multiplicateur STX/NER/THE n’entre plus en ligne (uniquement le buy now).
+ * Prix catalogue offre = TTC price from target net margin (tiered).
  */
 export function computeDecathlonOfferListPriceFromBuyNow(
   buyNow: number,
-  _multiplier?: number
+  overrides?: DecathlonSalePriceOverrides
 ): number | null {
   if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
-  const shipping = Number.isFinite(DECATHLON_SHIPPING_COVER_CHF) ? DECATHLON_SHIPPING_COVER_CHF : 0;
-  const factor = 1 + DECATHLON_BUY_MARKUP_FRACTION;
-  if (!Number.isFinite(factor) || factor <= 0) return null;
-  const raw = buyNow * factor + shipping;
-  if (!Number.isFinite(raw) || raw <= 0) return null;
+  const targetNetMargin =
+    overrides?.targetNetMargin ?? computeDecathlonTargetMargin(buyNow);
+  if (targetNetMargin == null) return null;
+  const raw = computeDecathlonSalePriceTTC({
+    buyPrice: buyNow,
+    fixedCost: overrides?.fixedCost ?? DECATHLON_FIXED_COST_CHF,
+    commissionRate: overrides?.commissionRate ?? DECATHLON_COMMISSION_RATE,
+    vatRate: overrides?.vatRate ?? DECATHLON_VAT_RATE,
+    targetNetMargin,
+  });
+  if (raw == null || raw <= 0) return null;
   return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
 }
 
-/** Raw list price without fee gross-up (legacy: buy × multiplier only). Prefer `computeDecathlonOfferListPriceFromBuyNow` for exports. */
+/**
+ * Raw list price without overrides (legacy signature).
+ * Prefer `computeDecathlonOfferListPriceFromBuyNow` for exports.
+ */
 export function computeDecathlonPriceFromBuyNow(
   buyNow: number,
-  multiplier: number = DECATHLON_BUY_NOW_MULTIPLIER
+  overrides?: DecathlonSalePriceOverrides
 ): number | null {
-  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
-  const raw = buyNow * multiplier;
-  if (!Number.isFinite(raw) || raw <= 0) return null;
-  return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
+  return computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
 }
 
 export function resolveDecathlonBuyNow(input: {

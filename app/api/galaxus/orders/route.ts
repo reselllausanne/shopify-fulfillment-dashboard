@@ -116,6 +116,21 @@ export async function GET(request: Request) {
         // If the table isn't available yet, just skip linked counts.
       }
     }
+    const warehouseShippedByOrderId = new Map<string, number>();
+    if (orderIds.length > 0) {
+      try {
+        const rows = await prisma.galaxusOrderLine.groupBy({
+          by: ["orderId"],
+          where: { orderId: { in: orderIds }, warehouseMarkedShippedAt: { not: null } },
+          _count: { _all: true },
+        });
+        for (const row of rows) {
+          warehouseShippedByOrderId.set(row.orderId, Number(row._count?._all ?? 0) || 0);
+        }
+      } catch {
+        // Ignore if warehouseMarkedShippedAt is not available.
+      }
+    }
 
     const items = orders.map((order) => {
       const isDirect = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
@@ -129,6 +144,7 @@ export async function GET(request: Request) {
             return Boolean(shipment.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
           }).length;
       const linkedCount = linkedCountByOrderId.get(order.id) ?? 0;
+      const warehouseLinesShipped = warehouseShippedByOrderId.get(order.id) ?? 0;
       const fulfillmentState =
         fulfilledCount > 0
           ? "fulfilled"
@@ -142,6 +158,7 @@ export async function GET(request: Request) {
         shippedCount,
         fulfilledCount,
         linkedCount,
+        warehouseLinesShipped,
         fulfillmentState,
         invoiceLinesFullyInvoiced:
           invoiceProgressByOrderId != null ? (inv?.linesFullyInvoiced ?? 0) : null,

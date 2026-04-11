@@ -6,6 +6,10 @@ import { renderBasicSsccLabelHtml, renderLabelHtml } from "@/galaxus/documents/t
 import { renderPdfFromHtml } from "@/galaxus/documents/renderers/playwrightRenderer";
 import type { Address, LabelData } from "@/galaxus/documents/types";
 import {
+  GALAXUS_SUPPLIER_ADDRESS_LINES,
+  GALAXUS_SUPPLIER_NAME,
+  GALAXUS_SSCC_SENDER_ADDRESS_LINES,
+  GALAXUS_SSCC_SENDER_NAME,
   GALAXUS_SSCC_RECIPIENT_CITY,
   GALAXUS_SSCC_RECIPIENT_COUNTRY,
   GALAXUS_SSCC_RECIPIENT_LINE2,
@@ -21,12 +25,21 @@ type SsccLabelResult = {
   barcodeDataUrl: string;
 };
 
-export async function generateSsccLabelPdf(order: GalaxusOrder, sscc: string): Promise<SsccLabelResult> {
+export async function generateSsccLabelPdf(
+  order: GalaxusOrder,
+  sscc: string,
+  options?: { shipmentId?: string | null; orderNumbers?: string[] | null }
+): Promise<SsccLabelResult> {
   const normalized = normalizeSscc(sscc);
   const barcodeDataUrl = await createSsccBarcodeDataUrl(normalized);
+  const fallbackOrder = order.orderNumber ?? order.galaxusOrderId;
+  const orderNumbers = (options?.orderNumbers?.length ? options.orderNumbers : [fallbackOrder]).filter(
+    (value): value is string => Boolean(value)
+  );
+  const shipmentId = options?.shipmentId ?? order.galaxusOrderId ?? "";
   const data: LabelData = {
-    shipmentId: "",
-    orderNumbers: [order.orderNumber ?? order.galaxusOrderId],
+    shipmentId,
+    orderNumbers,
     sender: buildSupplierAddress(),
     recipient: buildRecipient(),
     sscc: normalized,
@@ -158,13 +171,46 @@ function buildSsccZpl(sscc: string): string {
 }
 
 function buildSupplierAddress(): Address {
+  const overrideLines = Array.isArray(GALAXUS_SSCC_SENDER_ADDRESS_LINES)
+    ? GALAXUS_SSCC_SENDER_ADDRESS_LINES
+    : [];
+  const lines = overrideLines.length > 0 ? overrideLines : GALAXUS_SUPPLIER_ADDRESS_LINES;
+  const clean = lines.map((line) => String(line ?? "").trim()).filter(Boolean);
+  const line1 = clean[0] ?? "";
+  let line2: string | null = null;
+  let postalCode = "";
+  let city = "";
+  let country = "";
+
+  const looksPostal = (value: string) => /\d/.test(value) || value.toUpperCase().startsWith("CH-");
+  if (clean.length >= 2) {
+    if (looksPostal(clean[1])) {
+      const parsed = parsePostalLine(clean[1]);
+      postalCode = parsed.postalCode;
+      city = parsed.city;
+      country = clean[2] ?? "";
+    } else {
+      line2 = clean[1];
+      if (clean.length >= 3 && looksPostal(clean[2])) {
+        const parsed = parsePostalLine(clean[2]);
+        postalCode = parsed.postalCode;
+        city = parsed.city;
+        country = clean[3] ?? "";
+      } else {
+        country = clean[2] ?? "";
+      }
+    }
+  }
+  if (!country && clean.length > 0) {
+    country = clean[clean.length - 1] ?? "";
+  }
   return {
-    name: "",
-    line1: "",
-    line2: null,
-    postalCode: "",
-    city: "",
-    country: "",
+    name: GALAXUS_SSCC_SENDER_NAME || GALAXUS_SUPPLIER_NAME,
+    line1,
+    line2,
+    postalCode,
+    city,
+    country,
     vatId: null,
   };
 }

@@ -2,9 +2,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  computeDecathlonPriceFromBuyNow,
-  DECATHLON_BUY_NOW_MULTIPLIER,
-  DECATHLON_NER_BUY_NOW_MULTIPLIER,
+  computeDecathlonOfferListPriceFromBuyNow,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
 
@@ -620,17 +618,9 @@ export default function GalaxusCatalogPage() {
                     manualOverride,
                     manualLock: manualLockValue,
                   });
-                  const providerKeyRaw = String(item.providerKey ?? "");
-                  const supplierVariantIdRaw = String(item.supplierVariantId ?? "");
-                  const isNer =
-                    providerKeyRaw.toUpperCase().startsWith("NER_") ||
-                    supplierVariantIdRaw.toLowerCase().startsWith("ner_");
-                  const decathlonMultiplier = isNer
-                    ? DECATHLON_NER_BUY_NOW_MULTIPLIER
-                    : DECATHLON_BUY_NOW_MULTIPLIER;
                   const decathlonSellPrice =
                     decathlonBuyNow !== null
-                      ? computeDecathlonPriceFromBuyNow(decathlonBuyNow, decathlonMultiplier)
+                      ? computeDecathlonOfferListPriceFromBuyNow(decathlonBuyNow)
                       : null;
                   return (
                     <tr key={item.supplierVariantId} className="border-t">

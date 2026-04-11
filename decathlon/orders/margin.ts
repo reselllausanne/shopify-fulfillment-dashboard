@@ -1,10 +1,15 @@
 /**
- * Decathlon keeps 16% of Mirakl line sell. For margin vs buy cost, use sell × (1 − rate) per line.
+ * Decathlon payout logic:
+ * - 17% marketplace commission on the sell price
+ * - 8% VAT portion withheld (not paid out later)
  */
-export const DECATHLON_MARKETPLACE_COMMISSION_RATE = 0.16;
+export const DECATHLON_MARKETPLACE_COMMISSION_RATE = 0.17;
+export const DECATHLON_VAT_RATE = 0.08;
+const DECATHLON_PAYOUT_RATE =
+  1 - DECATHLON_MARKETPLACE_COMMISSION_RATE - DECATHLON_VAT_RATE;
 
 export type DecathlonMarginBreakdown = {
-  /** Mirakl line sell after Decathlon fee (same as `decathlonGrossLineAmount`). */
+  /** Mirakl line sell after Decathlon commission + VAT (same as `decathlonGrossLineAmount`). */
   lineAfterDecathlon: number;
   supplierCost: number;
   margin: number;
@@ -27,7 +32,7 @@ export function decathlonMiraklSellTotal(line: {
 }
 
 /**
- * “Gross (line)” for economics: Decathlon sell minus 16% marketplace fee.
+ * “Gross (line)” for economics: Decathlon sell minus 17% commission and 8% VAT.
  */
 export function decathlonGrossLineAmount(line: {
   lineTotal?: unknown;
@@ -36,10 +41,10 @@ export function decathlonGrossLineAmount(line: {
 }): number | null {
   const sell = decathlonMiraklSellTotal(line);
   if (sell == null) return null;
-  return sell * (1 - DECATHLON_MARKETPLACE_COMMISSION_RATE);
+  return sell * DECATHLON_PAYOUT_RATE;
 }
 
-/** Margin vs StockX cost; first arg is already sell after Decathlon 16%. */
+/** Margin vs StockX cost; first arg is already sell after Decathlon deductions. */
 export function decathlonMarginFromGrossAndCost(
   lineAfterDecathlon: number,
   supplierCost: number
@@ -56,7 +61,7 @@ export function decathlonMarginFromGrossAndCost(
 }
 
 export type DecathlonOrderMarginRollup = {
-  /** Sum of per-line sell after Decathlon 16%. */
+  /** Sum of per-line sell after Decathlon commission + VAT. */
   linesNetAfterDecathlon: number;
   costLinkedLines: number;
   linesWithCost: number;

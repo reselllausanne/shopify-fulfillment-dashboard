@@ -127,7 +127,26 @@ export default function DecathlonOrdersPage() {
       const res = await fetch(`/api/decathlon/orders/${orderId}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
-      setSelectedOrder(data.order);
+      const order = data.order;
+      setSelectedOrder(order);
+      if (order) {
+        const shippedCount = Array.isArray(order.shipments)
+          ? order.shipments.filter((s: any) => Boolean(s?.shippedAt)).length
+          : 0;
+        const shipmentCount = Array.isArray(order.shipments) ? order.shipments.length : 0;
+        setOrders((prev) =>
+          prev.map((item) =>
+            item.id === order.id
+              ? {
+                  ...item,
+                  orderState: order.orderState ?? item.orderState ?? null,
+                  shippedCount,
+                  _count: { ...(item._count ?? { lines: 0, shipments: 0 }), shipments: shipmentCount },
+                }
+              : item
+          )
+        );
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -221,7 +240,8 @@ export default function DecathlonOrdersPage() {
     if (!match) return false;
     const onum = String(match.stockxOrderNumber ?? "").trim();
     const oid = String(match.stockxOrderId ?? "").trim();
-    return onum.length > 0 || oid.length > 0;
+    const chain = String(match.stockxChainId ?? "").trim();
+    return onum.length > 0 || oid.length > 0 || chain.length > 0;
   };
 
   const orderMarginRollup = useMemo(() => {
@@ -351,15 +371,6 @@ export default function DecathlonOrdersPage() {
     }
   };
 
-  const downloadLabel = async () => {
-    if (!selectedOrderId) return;
-    const filename = await downloadPdf(
-      `/api/decathlon/orders/${selectedOrderId}/documents/label`,
-      `decathlon-label_${selectedOrderId}.pdf`
-    );
-    setOpsLog(`Saved to Downloads: ${filename}`);
-  };
-
   const shipOrder = async () => {
     if (!selectedOrderId) return;
     setOpsLog(null);
@@ -369,7 +380,6 @@ export default function DecathlonOrdersPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Ship failed");
       setOpsLog(JSON.stringify(data, null, 2));
-      await downloadLabel();
       await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);

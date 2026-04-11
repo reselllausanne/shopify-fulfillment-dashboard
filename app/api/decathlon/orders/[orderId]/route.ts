@@ -4,6 +4,7 @@ import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
+import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,7 +51,13 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    const lines = order.lines ?? [];
+    await repairDecathlonStockxMatchLineRefs(order.id);
+    const stockxMatches = await prisma.decathlonStockxMatch.findMany({
+      where: { decathlonOrderId: order.id },
+    });
+    const orderWithMatches = { ...order, stockxMatches };
+
+    const lines = orderWithMatches.lines ?? [];
     const [kickdbByLineId, catalogByLineId] = await Promise.all([
       enrichDecathlonOrderLinesWithKickdb(lines),
       enrichDecathlonOrderLinesWithSupplierCatalog(lines),
@@ -63,7 +70,7 @@ export async function GET(
 
     return NextResponse.json({
       ok: true,
-      order: { ...order, lines: linesEnriched },
+      order: { ...orderWithMatches, lines: linesEnriched },
     });
   } catch (error: any) {
     return NextResponse.json(

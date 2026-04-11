@@ -1090,6 +1090,8 @@ model Partner {
   variants         PartnerVariant[]
   uploads          PartnerUpload[]
   uploadRows       PartnerUploadRow[]
+  alternativeProductUploads AlternativeProductUpload[]
+  alternativeProducts AlternativeProduct[]
   orders           PartnerOrder[]
 
   createdAt        DateTime @default(now())
@@ -1160,6 +1162,69 @@ model PartnerUploadRow {
   @@index([status])
   @@index([supplierVariantId])
   @@index([providerKey, sku, sizeNormalized])
+  @@schema("public")
+}
+
+model AlternativeProductUpload {
+  id           String   @id @default(uuid())
+  partnerId    String
+  filename     String
+  status       String
+  totalRows    Int      @default(0)
+  importedRows Int      @default(0)
+  errorRows    Int      @default(0)
+  errorsJson   Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  products     AlternativeProduct[]
+
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model AlternativeProduct {
+  id                     String   @id @default(uuid())
+  partnerId              String
+  uploadId               String?
+  externalKey            String
+  gtin                   String
+  providerKey            String
+  brand                  String
+  title                  String
+  variantName            String?
+  description            String
+  category               String
+  size                   String
+  mainImageUrl           String
+  extraImageUrls         Json?
+  color                  String?
+  gender                 String?
+  material               String?
+  stock                  Int
+  priceExVat             Decimal  @db.Decimal(10, 2)
+  vatRate                Decimal  @db.Decimal(5, 4)
+  currency               String   @default("CHF")
+  leadTimeDays           Int?
+  specsJson              Json?
+  decathlonLogisticClass String?
+  decathlonLeadTimeToShip Int?
+  exportEnabled          Boolean  @default(true)
+  status                 String   @default("ACTIVE")
+  validationErrorsJson   Json?
+  archivedAt             DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  partner                Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  upload                 AlternativeProductUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+
+  @@index([partnerId])
+  @@index([uploadId])
+  @@index([gtin])
+  @@index([providerKey])
+  @@index([externalKey])
   @@schema("public")
 }
 

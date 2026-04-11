@@ -57,6 +57,12 @@ export const GALAXUS_SUPPLIER_PHONE = process.env.GALAXUS_SUPPLIER_PHONE ?? "";
 export const GALAXUS_SUPPLIER_EMAIL = process.env.GALAXUS_SUPPLIER_EMAIL ?? "";
 export const GALAXUS_SUPPLIER_WEBSITE = process.env.GALAXUS_SUPPLIER_WEBSITE ?? "";
 export const GALAXUS_SUPPLIER_VAT_ID = process.env.GALAXUS_SUPPLIER_VAT_ID ?? "";
+export const GALAXUS_SSCC_SENDER_NAME = process.env.GALAXUS_SSCC_SENDER_NAME ?? "";
+export const GALAXUS_SSCC_SENDER_ADDRESS_LINES =
+  (process.env.GALAXUS_SSCC_SENDER_ADDRESS_LINES ?? "")
+    .split("|")
+    .map((line) => line.trim())
+    .filter(Boolean);
 export const GALAXUS_FEED_SUPPLIER_ALLOWLIST =
   process.env.GALAXUS_FEED_SUPPLIER_ALLOWLIST ?? "";
 const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";

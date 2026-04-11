@@ -30,11 +30,10 @@ export function isGalaxusShipmentDispatchConfirmed(
   if (!shipment) return false;
   const status = String(shipment.status ?? "").toUpperCase();
   const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
-  if (delrStatus === "SENT") return true;
+  if (delrStatus === "SENT" || delrStatus === "UPLOADED") return true;
   if (hasTruthyDate(shipment.delrSentAt)) return true;
-  if (status === "MANUAL") return true;
   if (hasTruthyDate(shipment.galaxusShippedAt)) return true;
-  return false;
+  return status === "FULFILLED";
 }
 
 /** Non-empty tracking string — informational (label / carrier ref), not “shipped”. */

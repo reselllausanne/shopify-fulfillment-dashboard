@@ -182,7 +182,10 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
           },
         });
 
-        const label = await generateSsccLabelPdf(order, String(packageId));
+        const label = await generateSsccLabelPdf(order, String(packageId), {
+          shipmentId: created.dispatchNotificationId ?? created.shipmentId ?? order.galaxusOrderId,
+          orderNumbers: [order.orderNumber ?? order.galaxusOrderId].filter(Boolean),
+        });
         const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
         const stored = await storage.uploadPdf(key, label.pdf);
 
@@ -416,7 +419,10 @@ export async function createManualShipmentsForOrder(
       },
     });
 
-    const label = await generateSsccLabelPdf(order, packageId);
+    const label = await generateSsccLabelPdf(order, packageId, {
+      shipmentId: created.dispatchNotificationId ?? created.shipmentId ?? order.galaxusOrderId,
+      orderNumbers: [order.orderNumber ?? order.galaxusOrderId].filter(Boolean),
+    });
     const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
     const stored = await storage.uploadPdf(key, label.pdf);
 
@@ -836,7 +842,17 @@ export async function createCompositeWarehouseShipment(
     },
   });
 
-  const label = await generateSsccLabelPdf(anchor, String(packageId));
+  const orderNumbers = Array.from(
+    new Set(
+      packed
+        .map((item) => item.sourceOrder.orderNumber ?? item.sourceOrder.galaxusOrderId)
+        .filter(Boolean)
+    )
+  );
+  const label = await generateSsccLabelPdf(anchor, String(packageId), {
+    shipmentId: created.dispatchNotificationId ?? created.shipmentId ?? anchor.galaxusOrderId,
+    orderNumbers,
+  });
   const key = `galaxus/${anchor.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
   const stored = await storage.uploadPdf(key, label.pdf);
 

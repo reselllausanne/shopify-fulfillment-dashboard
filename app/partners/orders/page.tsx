@@ -82,7 +82,8 @@ export default function PartnerOrdersPage() {
     if (!match) return false;
     const onum = String(match.stockxOrderNumber ?? "").trim();
     const oid = String(match.stockxOrderId ?? "").trim();
-    return onum.length > 0 || oid.length > 0;
+    const chain = String(match.stockxChainId ?? "").trim();
+    return onum.length > 0 || oid.length > 0 || chain.length > 0;
   };
 
   const ordersByTab = useMemo(() => {

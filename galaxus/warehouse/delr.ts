@@ -203,7 +203,7 @@ export async function uploadDelrForShipment(
 
   shipment.order = await refreshOrderRecipientFromOrdp(shipment.order);
 
-  const { ordersForMeta, dispatchItems } = await resolveDispatchOrdersForShipment(shipment);
+  const { ordersForMeta, dispatchItems, rawItems } = await resolveDispatchOrdersForShipment(shipment);
 
   if (!shipment.order.ordrSentAt && !options.force) {
     return { shipmentId, status: "error", message: "ORDR not sent yet" };
@@ -369,6 +369,26 @@ export async function uploadDelrForShipment(
         galaxusShippedAt,
       },
     });
+    const shippedAt = now;
+    const uniqueItemKeys = new Set<string>();
+    for (const item of rawItems ?? []) {
+      const orderId = item?.orderId ? String(item.orderId) : shipment.orderId ? String(shipment.orderId) : "";
+      const supplierPid = String(item?.supplierPid ?? "").trim();
+      const gtin = String(item?.gtin14 ?? "").trim();
+      if (!orderId || !supplierPid || !gtin) continue;
+      const key = `${orderId}|${supplierPid}|${gtin}`;
+      if (uniqueItemKeys.has(key)) continue;
+      uniqueItemKeys.add(key);
+      await prismaAny.galaxusOrderLine.updateMany({
+        where: {
+          orderId,
+          supplierPid,
+          gtin,
+          warehouseMarkedShippedAt: null,
+        },
+        data: { warehouseMarkedShippedAt: shippedAt },
+      });
+    }
     if (shipment.orderId) {
       await prismaAny.orderStatusEvent.create({
         data: {

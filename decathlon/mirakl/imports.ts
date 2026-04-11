@@ -779,9 +779,11 @@ export async function runOf01Import(params?: {
     offerBlockedMissingP41: blockedMissingP41,
     offersOnly: Boolean(params?.offersOnly),
   };
+  const mode: MiraklImportMode =
+    params?.mode === "TEST" || DECATHLON_MIRAKL_TEST_MODE ? "TEST" : "REPLACE";
   return runImportFlow({
     flow: "OF01",
-    mode: params?.mode ?? (DECATHLON_MIRAKL_TEST_MODE ? "TEST" : "NORMAL"),
+    mode,
     rows: eligibleOffers,
     csv,
     withProducts: false,

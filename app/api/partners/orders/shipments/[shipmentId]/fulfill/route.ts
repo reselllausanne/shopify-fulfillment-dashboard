@@ -204,7 +204,10 @@ export async function POST(
 
     let ssccLabel: { labelPdfUrl?: string | null; labelZpl?: string | null } | null = null;
     if (shipment.packageId && (forceLabels || !shipment.labelPdfUrl)) {
-      const label = await generateSsccLabelPdf(shipment.order, shipment.packageId);
+      const label = await generateSsccLabelPdf(shipment.order, shipment.packageId, {
+        shipmentId: shipment.dispatchNotificationId ?? shipment.shipmentId ?? shipment.order.galaxusOrderId,
+        orderNumbers: [shipment.order.orderNumber ?? shipment.order.galaxusOrderId].filter(Boolean),
+      });
       const storage = getStorageAdapter();
       const key = `galaxus/${shipment.order.galaxusOrderId}/shipments/${shipment.id}/sscc-label.pdf`;
       const stored = await storage.uploadPdf(key, label.pdf);

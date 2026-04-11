@@ -15,7 +15,7 @@ const LABEL_OUTPUT_DIR =
   process.env.SWISS_POST_LABEL_OUTPUT_DIR ||
   path.join(process.cwd(), "swiss-post-labels");
 const PRINT_COMMAND = process.env.SWISS_POST_PRINT_COMMAND || "lp";
-const DEFAULT_PRINT_MEDIA = "62x82.74mm";
+const DEFAULT_PRINT_MEDIA = "62x66mm";
 
 type PrintJobResult = {
   ok: boolean;

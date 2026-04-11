@@ -905,6 +905,9 @@ export default function GalaxusInvoicesPage() {
           <a href="/galaxus/warehouse" className="px-3 py-2 rounded bg-gray-100 text-sm">
             Warehouse
           </a>
+          <a href="/galaxus/warehouse-shipments" className="px-3 py-2 rounded bg-gray-100 text-sm">
+            Warehouse shipments
+          </a>
         </div>
       </section>
 

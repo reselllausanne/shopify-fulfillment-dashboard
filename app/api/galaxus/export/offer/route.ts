@@ -5,6 +5,11 @@ import { toCsv } from "@/galaxus/exports/csv";
 import { computeGalaxusSellPriceExVat, getDefaultPricing, resolvePricingOverrides } from "@/galaxus/exports/pricing";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
+  buildGalaxusAlternativeOfferRows,
+  filterAlternativeProducts,
+  loadAlternativeProductsForExport,
+} from "@/galaxus/exports/alternative";
+import {
   buildFeedMappingsWhere,
   createTrmFeedExclusionStats,
   recordTrmFeedExclusion,
@@ -267,8 +272,37 @@ export async function GET(request: Request) {
       VatRatePercentage: vatRate ? String(vatRate * 100) : "8.1",
     });
   }
+  let finalRows = rows;
+  const allowAlternatives = !supplier || supplier.toLowerCase() === "ner";
+  if (allowAlternatives) {
+    const normalByGtin = new Map<string, number>();
+    const normalByProviderKey = new Map<string, number>();
+    for (const candidate of exportCandidates) {
+      const gtin = String(candidate?.gtin ?? "").trim();
+      const providerKey = String(candidate?.providerKey ?? "").trim();
+      const price = Number(candidate?.sellPriceExVat);
+      if (gtin && Number.isFinite(price)) normalByGtin.set(gtin, price);
+      if (providerKey && Number.isFinite(price)) normalByProviderKey.set(providerKey, price);
+    }
+    const alternatives = await loadAlternativeProductsForExport({
+      providerKeys: providerKeys.length > 0 ? providerKeys : undefined,
+    });
+    const { exportable } = filterAlternativeProducts({
+      alternatives,
+      normalByGtin,
+      normalByProviderKey,
+    });
+    const altRows = buildGalaxusAlternativeOfferRows(exportable, { priceHeader, isMerchant });
+    finalRows = [...rows, ...altRows];
+    if (finalRows.length < rows.length) {
+      return NextResponse.json(
+        { ok: false, error: "Alternative merge would shrink export rows." },
+        { status: 409 }
+      );
+    }
+  }
 
-  const csv = toCsv(headers, rows);
+  const csv = toCsv(headers, finalRows);
   const filename = `galaxus-offer-${supplier ?? "all"}-${Date.now()}.csv`;
   const trmExcluded = totalTrmFeedExclusions(trmExclusionStats);
   if (trmExcluded > 0) {
@@ -285,7 +319,7 @@ export async function GET(request: Request) {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Total-Rows": rows.length.toString(),
+      "X-Total-Rows": finalRows.length.toString(),
       "X-Offset": offset.toString(),
       "X-TRM-Excluded": trmFeedExclusionsHeaderValue(trmExclusionStats),
       "X-Skipped-Invalid-Price": skippedInvalidPrice.toString(),
