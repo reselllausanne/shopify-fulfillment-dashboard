@@ -384,6 +384,29 @@ export async function runPartnerCsvImport(
       await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: true });
     }
 
+    /** After upserts, GTIN may only exist on the canonical (remapped) SupplierVariant row */
+    const resolutionIds = new Set<string>();
+    for (let vi = 0; vi < validImports.length; vi += 1) {
+      const v = validImports[vi]!;
+      resolutionIds.add(canonicalIdByImportIndex[vi] ?? v.supplierVariantId);
+      resolutionIds.add(v.supplierVariantId);
+    }
+    const gtinBySupplierVariantId = new Map<string, string | null>();
+    for (const batch of chunkArray([...resolutionIds], 500)) {
+      if (batch.length === 0) continue;
+      const found = await prismaAny.supplierVariant.findMany({
+        where: { supplierVariantId: { in: batch } },
+        select: { supplierVariantId: true, gtin: true },
+      });
+      for (const r of found) {
+        gtinBySupplierVariantId.set(r.supplierVariantId, r.gtin ?? null);
+      }
+    }
+    const pickValidGtin = (id: string): string | null => {
+      const g = gtinBySupplierVariantId.get(id) ?? null;
+      return g && validateGtin(g) ? g : null;
+    };
+
     type UploadCreate = {
       uploadId: string | null;
       partnerId: string;
@@ -403,10 +426,8 @@ export async function runPartnerCsvImport(
     for (let vi = 0; vi < validImports.length; vi += 1) {
       const v = validImports[vi]!;
       const catalogId = canonicalIdByImportIndex[vi] ?? v.supplierVariantId;
-      const existing = existingById.get(v.supplierVariantId);
-      const existingGtin = existing?.gtin ?? null;
       const resolvedGtin =
-        v.gtinProvided ?? (existingGtin && validateGtin(existingGtin) ? existingGtin : null);
+        v.gtinProvided ?? pickValidGtin(catalogId) ?? pickValidGtin(v.supplierVariantId);
       const shouldEnrich = !resolvedGtin;
       const tripleKey = `${v.providerKeyValue}|${v.normalizedSku}|${v.normalizedSize}`;
       const existingPending = pendingByTriple.get(tripleKey);
