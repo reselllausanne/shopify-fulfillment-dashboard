@@ -28,7 +28,14 @@ async function run() {
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const job = await claimJob(jobType, workerId, { groupLimit });
+    let job: Awaited<ReturnType<typeof claimJob>> = null;
+    try {
+      job = await claimJob(jobType, workerId, { groupLimit });
+    } catch (err: any) {
+      console.error("[worker] claimJob error:", err?.message ?? err);
+      await sleep(pollMs);
+      continue;
+    }
     if (!job) {
       await sleep(pollMs);
       continue;

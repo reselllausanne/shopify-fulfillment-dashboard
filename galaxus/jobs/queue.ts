@@ -74,7 +74,15 @@ export async function claimJob(
   `);
 
   const pick = candidates.find((c) => !c.groupKey || !blockedSet.has(c.groupKey));
-  if (!pick) return null;
+  if (!pick) {
+    if (candidates.length > 0) {
+      console.warn("[queue] candidates found but all blocked by group limit", {
+        candidates: candidates.length,
+        blocked: [...blockedSet],
+      });
+    }
+    return null;
+  }
 
   const rows = await prisma.$queryRaw<Array<QueueJob>>(Prisma.sql`
     UPDATE "public"."GalaxusJobQueue"
