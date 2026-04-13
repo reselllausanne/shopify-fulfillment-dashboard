@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const dryRun = ["1", "true", "yes"].includes((searchParams.get("dryRun") ?? "").toLowerCase());
   const sync = searchParams.get("sync") === "1";
+  const enrich = ["1", "true", "yes"].includes((searchParams.get("enrich") ?? "").toLowerCase());
 
   const formData = await req.formData();
   const file = formData.get("file") as File | null;
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
         uploadId: null,
         dryRun: true,
         origin: null,
+        enrich,
       });
       return NextResponse.json({ ok: true, result });
     } catch (error: any) {
@@ -63,6 +65,7 @@ export async function POST(req: NextRequest) {
         uploadId: upload.id,
         dryRun: false,
         origin,
+        enrich,
       });
       return NextResponse.json({ ok: true, result });
     } catch (error: any) {
@@ -102,7 +105,7 @@ export async function POST(req: NextRequest) {
 
   const job = await enqueueJob(
     "partner-csv-import",
-    { uploadId: upload.id, partnerId: session.partnerId, origin },
+    { uploadId: upload.id, partnerId: session.partnerId, origin, enrich },
     { priority: 5, groupKey: `partner:${session.partnerId}` }
   );
 

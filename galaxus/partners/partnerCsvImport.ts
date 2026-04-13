@@ -11,7 +11,6 @@ import {
   chunkArray,
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
-import { enqueueJob } from "@/galaxus/jobs/queue";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
@@ -56,6 +55,8 @@ export type PartnerCsvImportContext = {
   dryRun: boolean;
   /** Base URL for feed push (e.g. https://example.com) */
   origin: string | null;
+  /** If true, allow PENDING_ENRICH for rows missing GTIN */
+  enrich?: boolean;
 };
 
 export type PartnerCsvImportResult = {
@@ -105,6 +106,7 @@ export async function runPartnerCsvImport(
   const dryRun = ctx.dryRun;
   const errors: Array<{ row: number; field: string; message: string }> = [];
   const rowOutcomes: PartnerCsvImportRowOutcome[] = [];
+  const allowEnrich = ctx.enrich === true;
   let importedRows = 0;
   let newRows = 0;
   let enrichJobId: string | null = null;
@@ -428,7 +430,7 @@ export async function runPartnerCsvImport(
       const catalogId = canonicalIdByImportIndex[vi] ?? v.supplierVariantId;
       const resolvedGtin =
         v.gtinProvided ?? pickValidGtin(catalogId) ?? pickValidGtin(v.supplierVariantId);
-      const shouldEnrich = !resolvedGtin;
+      const shouldEnrich = allowEnrich && !resolvedGtin;
       const tripleKey = `${v.providerKeyValue}|${v.normalizedSku}|${v.normalizedSize}`;
       const existingPending = pendingByTriple.get(tripleKey);
 
@@ -480,7 +482,12 @@ export async function runPartnerCsvImport(
             },
           });
         }
-        rowOutcomes.push({ row: v.rowNum, status: "RESOLVED", gtin: resolvedGtin });
+        rowOutcomes.push({
+          row: v.rowNum,
+          status: "RESOLVED",
+          gtin: resolvedGtin,
+          warning: !resolvedGtin && !allowEnrich ? "Enrich disabled (no GTIN)" : undefined,
+        });
       }
       importedRows += 1;
     }
@@ -545,23 +552,9 @@ export async function runPartnerCsvImport(
     });
   }
 
-  if (!dryRun && newRows > 0 && cleanPartnerKey) {
-    const limit = Math.min(Math.max(newRows, 200), 2000);
-    const job = await enqueueJob(
-      "kickdb-enrich-missing",
-      {
-        limit,
-        concurrency: 8,
-        supplierVariantIdPrefix: `${cleanPartnerKey}:`,
-        partnerId: ctx.partnerId,
-        includeNotFound: true,
-        respectRecentRun: false,
-        autoDrain: true,
-      },
-      { priority: 5, groupKey: `partner:${ctx.partnerId}` }
-    );
-    enrichJobId = job.id;
-  }
+  // Do not enqueue kickdb-enrich-missing here: it scans the whole partner prefix and
+  // autoDrain would keep retrying NOT_FOUND / weak-mapping rows. Use "Enrich new products"
+  // (partner-upload-enrich) to process PENDING_ENRICH inbox lines, or the Galaxus admin API.
 
   rowOutcomes.sort((a, b) => a.row - b.row);
 
