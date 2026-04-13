@@ -55,8 +55,6 @@ export type PartnerCsvImportContext = {
   dryRun: boolean;
   /** Base URL for feed push (e.g. https://example.com) */
   origin: string | null;
-  /** If true, allow PENDING_ENRICH for rows missing GTIN */
-  enrich?: boolean;
 };
 
 export type PartnerCsvImportResult = {
@@ -106,7 +104,6 @@ export async function runPartnerCsvImport(
   const dryRun = ctx.dryRun;
   const errors: Array<{ row: number; field: string; message: string }> = [];
   const rowOutcomes: PartnerCsvImportRowOutcome[] = [];
-  const allowEnrich = ctx.enrich === true;
   let importedRows = 0;
   let newRows = 0;
   let enrichJobId: string | null = null;
@@ -430,7 +427,8 @@ export async function runPartnerCsvImport(
       const catalogId = canonicalIdByImportIndex[vi] ?? v.supplierVariantId;
       const resolvedGtin =
         v.gtinProvided ?? pickValidGtin(catalogId) ?? pickValidGtin(v.supplierVariantId);
-      const shouldEnrich = allowEnrich && !resolvedGtin;
+      const isNewRow = !existingById.has(v.supplierVariantId);
+      const shouldEnrich = isNewRow && !resolvedGtin;
       const tripleKey = `${v.providerKeyValue}|${v.normalizedSku}|${v.normalizedSize}`;
       const existingPending = pendingByTriple.get(tripleKey);
 
@@ -486,7 +484,6 @@ export async function runPartnerCsvImport(
           row: v.rowNum,
           status: "RESOLVED",
           gtin: resolvedGtin,
-          warning: !resolvedGtin && !allowEnrich ? "Enrich disabled (no GTIN)" : undefined,
         });
       }
       importedRows += 1;

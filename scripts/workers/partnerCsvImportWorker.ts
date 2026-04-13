@@ -13,7 +13,6 @@ type PartnerCsvImportJobPayload = {
   uploadId: string;
   partnerId: string;
   origin?: string | null;
-  enrich?: boolean;
 };
 
 async function run() {
@@ -90,7 +89,6 @@ async function run() {
         uploadId,
         dryRun: false,
         origin,
-        enrich: payload.enrich ?? false,
       });
 
       await unlink(queuePath).catch(() => {});
