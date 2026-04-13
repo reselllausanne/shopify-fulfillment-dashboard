@@ -59,12 +59,12 @@ async function run() {
       await completeJob(job.id, { ...payload, result });
       console.info("[worker] job completed", { jobId: job.id, processed: result.processed });
 
-      const autoDrain = payload.autoDrain !== false;
+      const autoDrain = payload.autoDrain === true;
       const limit = Math.max(Number(payload.limit ?? 0), 0);
-      if (autoDrain && limit > 0 && result.candidates >= limit && result.processed > 0) {
+      if (autoDrain && limit > 0 && result.candidates >= limit && result.enrichedRows > 0) {
         await enqueueJob(
           jobType,
-          { ...payload },
+          { ...payload, includeNotFound: false },
           { priority: 0, groupKey: job.groupKey ?? null }
         );
       }
