@@ -39,17 +39,22 @@ export async function claimJob(
   const groupLimit = Math.max(Number(options?.groupLimit ?? 0), 0);
   const staleMs = Math.max(Number(process.env.WORKER_STALE_MS ?? "900000"), 0);
   if (staleMs > 0) {
-    await prisma.$executeRaw(Prisma.sql`
-      UPDATE "public"."GalaxusJobQueue"
-      SET
-        "status" = 'PENDING',
-        "lockedAt" = NULL,
-        "lockedBy" = NULL,
-        "updatedAt" = NOW()
-      WHERE "status" = 'RUNNING'
-        AND "lockedAt" IS NOT NULL
-        AND "lockedAt" < NOW() - (${staleMs} * INTERVAL '1 millisecond')
-    `);
+    const staleCutoff = new Date(Date.now() - staleMs);
+    try {
+      await prisma.$executeRaw(Prisma.sql`
+        UPDATE "public"."GalaxusJobQueue"
+        SET
+          "status" = 'PENDING',
+          "lockedAt" = NULL,
+          "lockedBy" = NULL,
+          "updatedAt" = NOW()
+        WHERE "status" = 'RUNNING'
+          AND "lockedAt" IS NOT NULL
+          AND "lockedAt" < ${staleCutoff}
+      `);
+    } catch (err: any) {
+      console.warn("[queue] stale recovery failed:", err?.message ?? err);
+    }
   }
 
   const blockedGroups = groupLimit > 0
