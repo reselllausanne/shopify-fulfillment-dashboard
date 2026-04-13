@@ -48,53 +48,55 @@ export async function claimJob(
         "updatedAt" = NOW()
       WHERE "status" = 'RUNNING'
         AND "lockedAt" IS NOT NULL
-        AND "lockedAt" < NOW() - (${staleMs} * INTERVAL '1 millisecond');
+        AND "lockedAt" < NOW() - (${staleMs} * INTERVAL '1 millisecond')
     `);
   }
+
+  const blockedGroups = groupLimit > 0
+    ? await prisma.$queryRaw<Array<{ groupKey: string }>>(Prisma.sql`
+        SELECT "groupKey"
+        FROM "public"."GalaxusJobQueue"
+        WHERE "status" = 'RUNNING' AND "groupKey" IS NOT NULL
+        GROUP BY "groupKey"
+        HAVING COUNT(*) >= ${groupLimit}
+      `)
+    : [];
+  const blockedSet = new Set(blockedGroups.map((r) => r.groupKey));
+
+  const candidates = await prisma.$queryRaw<Array<{ id: string; groupKey: string | null }>>(Prisma.sql`
+    SELECT "id", "groupKey"
+    FROM "public"."GalaxusJobQueue"
+    WHERE "status" = 'PENDING'
+      AND "jobType" = ${jobType}
+      AND "attempts" < "maxAttempts"
+    ORDER BY "priority" DESC, "createdAt" ASC
+    LIMIT 20
+  `);
+
+  const pick = candidates.find((c) => !c.groupKey || !blockedSet.has(c.groupKey));
+  if (!pick) return null;
+
   const rows = await prisma.$queryRaw<Array<QueueJob>>(Prisma.sql`
-    WITH running_groups AS (
-      SELECT "groupKey"
-      FROM "public"."GalaxusJobQueue"
-      WHERE "status" = 'RUNNING'
-        AND "groupKey" IS NOT NULL
-      GROUP BY "groupKey"
-      HAVING COUNT(*) >= ${groupLimit}
-    ),
-    next AS (
-      SELECT "id"
-      FROM "public"."GalaxusJobQueue"
-      WHERE "status" = 'PENDING'
-        AND "jobType" = ${jobType}
-        AND "attempts" < "maxAttempts"
-        AND (
-          ${groupLimit} = 0
-          OR "groupKey" IS NULL
-          OR "groupKey" NOT IN (SELECT "groupKey" FROM running_groups)
-        )
-      ORDER BY "priority" DESC, "createdAt" ASC
-      LIMIT 1
-      FOR UPDATE SKIP LOCKED
-    )
-    UPDATE "public"."GalaxusJobQueue" AS q
+    UPDATE "public"."GalaxusJobQueue"
     SET
       "status" = 'RUNNING',
       "lockedAt" = NOW(),
       "lockedBy" = ${workerId},
-      "attempts" = q."attempts" + 1,
-      "startedAt" = COALESCE(q."startedAt", NOW()),
+      "attempts" = "attempts" + 1,
+      "startedAt" = COALESCE("startedAt", NOW()),
       "updatedAt" = NOW()
-    FROM next
-    WHERE q."id" = next."id"
+    WHERE "id" = ${pick.id}
+      AND "status" = 'PENDING'
     RETURNING
-      q."id",
-      q."jobType",
-      q."status",
-      q."groupKey",
-      q."payloadJson",
-      q."resultJson",
-      q."attempts",
-      q."maxAttempts",
-      q."createdAt";
+      "id",
+      "jobType",
+      "status",
+      "groupKey",
+      "payloadJson",
+      "resultJson",
+      "attempts",
+      "maxAttempts",
+      "createdAt"
   `);
   return rows?.[0] ?? null;
 }
