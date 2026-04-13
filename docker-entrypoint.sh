@@ -12,4 +12,8 @@ if [ "${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-0}" = "1" ]; then
   websockify --web=/usr/share/novnc 6080 localhost:5900 >/tmp/novnc.log 2>&1 &
 fi
 
-exec npm start
+if [ $# -gt 0 ]; then
+  exec "$@"
+else
+  exec npm start
+fi
