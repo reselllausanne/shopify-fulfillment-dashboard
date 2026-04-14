@@ -30,7 +30,7 @@ export async function GET(
         where: { id: orderId },
         include: {
           lines: true,
-          shipments: true,
+          shipments: { include: { lines: true } },
           documents: true,
           stockxMatches: true,
         },
@@ -39,7 +39,7 @@ export async function GET(
         where: { orderId },
         include: {
           lines: true,
-          shipments: true,
+          shipments: { include: { lines: true } },
           documents: true,
           stockxMatches: true,
         },
@@ -47,7 +47,12 @@ export async function GET(
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
-    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey) {
+    const hasPartnerLine = partnerKey
+      ? (order.lines ?? []).some((line: any) =>
+          String(line.offerSku ?? "").toUpperCase().startsWith(`${partnerKey}_`)
+        )
+      : false;
+    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey && !hasPartnerLine) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
@@ -57,7 +62,12 @@ export async function GET(
     });
     const orderWithMatches = { ...order, stockxMatches };
 
-    const lines = orderWithMatches.lines ?? [];
+    let lines: any[] = orderWithMatches.lines ?? [];
+    if (scope === "partner" && partnerKey) {
+      lines = lines.filter((line: any) =>
+        String(line.offerSku ?? "").toUpperCase().startsWith(`${partnerKey}_`)
+      );
+    }
     const [kickdbByLineId, catalogByLineId] = await Promise.all([
       enrichDecathlonOrderLinesWithKickdb(lines),
       enrichDecathlonOrderLinesWithSupplierCatalog(lines),

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
@@ -13,35 +14,53 @@ export async function GET(request: NextRequest) {
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const view = String(searchParams.get("view") ?? "active").trim();
     const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
-    const where: Record<string, unknown> = {};
+    const productSearch = String(searchParams.get("product") ?? "").trim();
+    let where: Prisma.DecathlonOrderWhereInput = {};
+    let sessionPartnerKey: string | null = null;
     if (scope === "partner") {
       const partnerSession = await getPartnerSession(request);
       if (!partnerSession) {
         return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
       }
-      const sessionPartnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+      sessionPartnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
       if (!sessionPartnerKey) {
         return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
       }
-      where.partnerKey = sessionPartnerKey;
+      const keyPrefix = `${sessionPartnerKey}_`;
+      where.OR = [
+        { partnerKey: sessionPartnerKey },
+        { lines: { some: { offerSku: { startsWith: keyPrefix } } } },
+      ];
     }
     const canceledStates = ["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"];
-    const nonProcessStates = ["SHIPPED", ...canceledStates];
-    if (view === "fulfilled") {
-      where.shipments = { some: { shippedAt: { not: null } } };
-    } else if (view === "to_process") {
-      where.AND = [
-        { shipments: { none: {} } },
-        {
-          OR: [
-            { orderState: { notIn: nonProcessStates, mode: "insensitive" } },
-            { orderState: null },
-          ],
-        },
-      ];
-    } else if (view === "canceled") {
+    if (view === "canceled") {
       where.orderState = { in: canceledStates, mode: "insensitive" };
     }
+
+    if (productSearch.length > 0) {
+      const byLineName: Prisma.DecathlonOrderWhereInput = {
+        lines: {
+          some: {
+            OR: [
+              { productTitle: { contains: productSearch, mode: "insensitive" } },
+              { description: { contains: productSearch, mode: "insensitive" } },
+            ],
+          },
+        },
+      };
+      if (Array.isArray(where.AND)) {
+        where = { ...where, AND: [...where.AND, byLineName] };
+      } else {
+        const keys = Object.keys(where);
+        if (keys.length === 0) {
+          where = byLineName;
+        } else {
+          const prior = { ...where };
+          where = { AND: [prior, byLineName] };
+        }
+      }
+    }
+
     const orders = await prisma.decathlonOrder.findMany({
       where,
       orderBy: { orderDate: "desc" },
@@ -49,7 +68,8 @@ export async function GET(request: NextRequest) {
       skip: offset,
       include: {
         _count: { select: { lines: true, shipments: true } },
-        shipments: { select: { shippedAt: true } },
+        lines: { select: { id: true, quantity: true } },
+        shipments: { select: { shippedAt: true, lines: { select: { orderLineId: true, quantity: true } } } },
       },
     });
     const matchRows = await prisma.decathlonStockxMatch.findMany({
@@ -68,17 +88,30 @@ export async function GET(request: NextRequest) {
       if (!onum && !oid && !chain) continue;
       linkedByOrder.set(row.decathlonOrderId, (linkedByOrder.get(row.decathlonOrderId) ?? 0) + 1);
     }
-    const items = orders.map((order: any) => ({
-      id: order.id,
-      orderId: order.orderId,
-      orderNumber: order.orderNumber ?? order.orderId,
-      orderDate: order.orderDate,
-      orderState: order.orderState ?? null,
-      partnerKey: order.partnerKey ?? null,
-      shippedCount: order.shipments?.filter((s: { shippedAt: unknown }) => Boolean(s.shippedAt)).length ?? 0,
-      linkedCount: linkedByOrder.get(order.id) ?? 0,
-      _count: order._count ?? { lines: 0, shipments: 0 },
-    }));
+    const items = orders.map((order: any) => {
+      const lines = Array.isArray(order.lines) ? order.lines : [];
+      const totalUnits = lines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
+      const shipmentLines = (order.shipments ?? []).flatMap((shipment: any) => shipment.lines ?? []);
+      const hasLegacyShipment = shipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
+      const shippedUnits = hasLegacyShipment
+        ? totalUnits
+        : shipmentLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
+      const remainingUnits = Math.max(totalUnits - shippedUnits, 0);
+      return {
+        id: order.id,
+        orderId: order.orderId,
+        orderNumber: order.orderNumber ?? order.orderId,
+        orderDate: order.orderDate,
+        orderState: order.orderState ?? null,
+        partnerKey: order.partnerKey ?? null,
+        shippedCount: order.shipments?.filter((s: { shippedAt: unknown }) => Boolean(s.shippedAt)).length ?? 0,
+        shippedUnits,
+        totalUnits,
+        remainingUnits,
+        linkedCount: linkedByOrder.get(order.id) ?? 0,
+        _count: order._count ?? { lines: 0, shipments: 0 },
+      };
+    });
     return NextResponse.json({ ok: true, items });
   } catch (error: any) {
     return NextResponse.json(

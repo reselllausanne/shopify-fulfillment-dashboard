@@ -271,7 +271,43 @@ function isRecipientComplete(recipient: SwissPostRecipient | null | undefined) {
   );
 }
 
-function buildRecipient(order: any): SwissPostRecipient {
+const SWISS_POST_FIELD_MAX = 35;
+
+/**
+ * Swiss Post fields (street, name2, addressSuffix) are capped at 35 chars each.
+ * Split address1 + address2 across street / addressSuffix / name2 so nothing overflows.
+ */
+function fitAddress(address1: string, address2: string): {
+  street: string;
+  addressSuffix: string | null;
+  name2: string | null;
+} {
+  const a1 = address1.trim();
+  const a2 = address2.trim();
+
+  if (a1.length <= SWISS_POST_FIELD_MAX && !a2) {
+    return { street: a1, addressSuffix: null, name2: null };
+  }
+
+  if (a1.length <= SWISS_POST_FIELD_MAX && a2.length <= SWISS_POST_FIELD_MAX) {
+    return { street: a1, addressSuffix: a2, name2: null };
+  }
+
+  if (a1.length <= SWISS_POST_FIELD_MAX && a2.length > SWISS_POST_FIELD_MAX) {
+    return {
+      street: a1,
+      addressSuffix: a2.slice(0, SWISS_POST_FIELD_MAX),
+      name2: a2.length > SWISS_POST_FIELD_MAX ? a2.slice(SWISS_POST_FIELD_MAX, SWISS_POST_FIELD_MAX * 2).trim() || null : null,
+    };
+  }
+
+  const street = a1.slice(0, SWISS_POST_FIELD_MAX);
+  const overflow = a1.slice(SWISS_POST_FIELD_MAX).trim();
+  const suffix = (overflow ? `${overflow} ${a2}`.trim() : a2).slice(0, SWISS_POST_FIELD_MAX) || null;
+  return { street, addressSuffix: suffix, name2: null };
+}
+
+function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: string | null } {
   const rawRecipient = resolveRawRecipient(order);
   const recipientName = pickString(order.recipientName, rawRecipient?.name);
   const recipientAddress1 = pickString(order.recipientAddress1, rawRecipient?.address1);
@@ -293,18 +329,15 @@ function buildRecipient(order: any): SwissPostRecipient {
   if (hasRecipient) {
     const country = normalizeCountryCode(recipientCountryCode ?? recipientCountry) ?? "CH";
     const zip = normalizePostalCode(recipientPostalCode) ?? "";
-    const baseStreet = recipientAddress1 ?? "";
-    const extraStreet = recipientAddress2 ? String(recipientAddress2).trim() : "";
-    const street = extraStreet && !baseStreet.includes(extraStreet)
-      ? `${baseStreet}, ${extraStreet}`
-      : baseStreet;
+    const { street, addressSuffix, name2 } = fitAddress(recipientAddress1 ?? "", recipientAddress2 ?? "");
     return {
-      name1: recipientName ?? "",
+      name1: (recipientName ?? "").slice(0, SWISS_POST_FIELD_MAX),
       firstName: null,
-      name2: null,
+      name2,
       street,
+      addressSuffix,
       zip,
-      city: recipientCity ?? "",
+      city: (recipientCity ?? "").slice(0, SWISS_POST_FIELD_MAX),
       country,
       phone: recipientPhone ?? null,
       email: recipientEmail ?? null,
@@ -315,18 +348,15 @@ function buildRecipient(order: any): SwissPostRecipient {
   const customerPhone = pickString(order.customerPhone);
   const country = normalizeCountryCode(order.customerCountryCode ?? order.customerCountry) ?? "CH";
   const zip = normalizePostalCode(order.customerPostalCode) ?? "";
-  const baseStreet = order.customerAddress1 ?? "";
-  const extraStreet = order.customerAddress2 ? String(order.customerAddress2).trim() : "";
-  const street = extraStreet && !baseStreet.includes(extraStreet)
-    ? `${baseStreet}, ${extraStreet}`
-    : baseStreet;
+  const { street, addressSuffix, name2 } = fitAddress(order.customerAddress1 ?? "", order.customerAddress2 ?? "");
   return {
-    name1: customerName ?? "",
+    name1: (customerName ?? "").slice(0, SWISS_POST_FIELD_MAX),
     firstName: null,
-    name2: null,
+    name2,
     street,
+    addressSuffix,
     zip,
-    city: customerCity ?? "",
+    city: (customerCity ?? "").slice(0, SWISS_POST_FIELD_MAX),
     country,
     phone: customerPhone ?? null,
     email: order.customerEmail ?? null,
@@ -425,8 +455,14 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
     }
     const order =
-      (await (prisma as any).decathlonOrder.findUnique({ where: { id: orderId } })) ??
-      (await (prisma as any).decathlonOrder.findUnique({ where: { orderId } }));
+      (await (prisma as any).decathlonOrder.findUnique({
+        where: { id: orderId },
+        include: { lines: true, shipments: { include: { lines: true } } },
+      })) ??
+      (await (prisma as any).decathlonOrder.findUnique({
+        where: { orderId },
+        include: { lines: true, shipments: { include: { lines: true } } },
+      }));
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
@@ -434,8 +470,93 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    const body = (await request.json().catch(() => ({}))) as { trackingNumber?: string };
+    const body = (await request.json().catch(() => ({}))) as {
+      trackingNumber?: string;
+      items?: Array<{ lineId?: string; orderLineId?: string; quantity?: number }>;
+    };
     const trackingNumber = String(body?.trackingNumber ?? "").trim() || String(order.orderId ?? "").trim();
+
+    const orderLines = Array.isArray(order.lines) ? order.lines : [];
+    if (orderLines.length === 0) {
+      return NextResponse.json({ ok: false, error: "Order has no lines" }, { status: 400 });
+    }
+
+    const shipmentLines = (order.shipments ?? []).flatMap((shipment: any) => shipment.lines ?? []);
+    const shippedByLineId = new Map<string, number>();
+    for (const line of shipmentLines) {
+      const lineId = String(line.orderLineId ?? "").trim();
+      if (!lineId) continue;
+      const qty = Number(line.quantity ?? 0);
+      shippedByLineId.set(lineId, (shippedByLineId.get(lineId) ?? 0) + (Number.isFinite(qty) ? qty : 0));
+    }
+    const hasLegacyShipment = shipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
+    if (hasLegacyShipment) {
+      return NextResponse.json({ ok: false, error: "Order already shipped" }, { status: 400 });
+    }
+
+    const resolveRemainingQty = (line: any) => {
+      const ordered = Number(line?.quantity ?? 0);
+      const shipped = shippedByLineId.get(line.id) ?? 0;
+      if (!Number.isFinite(ordered)) return 0;
+      return Math.max(ordered - shipped, 0);
+    };
+
+    const normalizeQty = (value: unknown) => {
+      const parsed = Number.parseInt(String(value ?? ""), 10);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const requestedItems = Array.isArray(body.items) ? body.items : [];
+    const itemsProvided = requestedItems.length > 0;
+    const itemsToShip: Array<{ line: any; quantity: number }> = [];
+
+    if (itemsProvided) {
+      const requestedByLine = new Map<string, { line: any; quantity: number }>();
+      for (const item of requestedItems) {
+        const quantity = normalizeQty(item?.quantity);
+        if (quantity <= 0) {
+          return NextResponse.json({ ok: false, error: "Invalid shipment quantity" }, { status: 400 });
+        }
+        const line = item?.lineId
+          ? orderLines.find((l: any) => l.id === item.lineId)
+          : item?.orderLineId
+            ? orderLines.find((l: any) => l.orderLineId === item.orderLineId)
+            : null;
+        if (!line) {
+          return NextResponse.json({ ok: false, error: "Order line not found" }, { status: 400 });
+        }
+        const miraklLineId = String(line.orderLineId ?? "").trim();
+        if (!miraklLineId) {
+          return NextResponse.json({ ok: false, error: "Order line is missing Mirakl id" }, { status: 400 });
+        }
+        const remaining = resolveRemainingQty(line);
+        if (remaining <= 0) {
+          return NextResponse.json({ ok: false, error: "Order line already shipped" }, { status: 400 });
+        }
+        const existing = requestedByLine.get(line.id);
+        const nextQty = (existing?.quantity ?? 0) + quantity;
+        if (nextQty > remaining) {
+          return NextResponse.json({ ok: false, error: "Shipment exceeds remaining quantity" }, { status: 400 });
+        }
+        requestedByLine.set(line.id, { line, quantity: nextQty });
+      }
+      itemsToShip.push(...requestedByLine.values());
+    } else {
+      for (const line of orderLines) {
+        if (scope === "partner" && partnerKey) {
+          const sku = String(line.offerSku ?? "").toUpperCase();
+          if (!sku.startsWith(`${partnerKey}_`)) continue;
+        }
+        const remaining = resolveRemainingQty(line);
+        if (remaining > 0) {
+          itemsToShip.push({ line, quantity: remaining });
+        }
+      }
+    }
+
+    if (itemsToShip.length === 0) {
+      return NextResponse.json({ ok: false, error: "No remaining quantity to ship" }, { status: 400 });
+    }
 
     let recipient = buildRecipient(order);
     if (!isRecipientComplete(recipient)) {
@@ -504,32 +625,64 @@ export async function POST(
     const nextVersion = existingDocs[0]?.version ? existingDocs[0].version + 1 : 1;
     const key = `decathlon/${order.orderId}/shipping-labels/v${nextVersion}.${labelPayload.extension}`;
     const stored = await storage.uploadPdf(key, buffer);
-    const document = await (prisma as any).decathlonOrderDocument.create({
-      data: {
-        orderId: order.id,
-        type: DocumentType.LABEL,
-        version: nextVersion,
-        storageUrl: stored.storageUrl,
-        checksum: null,
-      },
-    });
-
     const client = buildDecathlonOrdersClient();
-    await client.setTracking(order.orderId, {
-      carrier_code: "SWISSPOST",
-      carrier_name: "Swiss Post",
-      tracking_number: swissPostLabelId,
-    });
-    await client.shipOrder(order.orderId, {});
+    let miraklShipmentId: string | null = null;
+    if (itemsProvided) {
+      const st01 = await client.createShipments({
+        shipments: [
+          {
+            order_id: order.orderId,
+            shipment_lines: itemsToShip.map(({ line, quantity }) => ({
+              order_line_id: String(line.orderLineId ?? "").trim(),
+              quantity,
+            })),
+            tracking: {
+              carrier_code: "SWISSPOST",
+              carrier_name: "Swiss Post",
+              tracking_number: swissPostLabelId,
+            },
+            shipped: true,
+          },
+        ],
+      });
+      miraklShipmentId = String(st01?.shipment_success?.[0]?.id ?? "").trim() || null;
+    } else {
+      await client.setTracking(order.orderId, {
+        carrier_code: "SWISSPOST",
+        carrier_name: "Swiss Post",
+        tracking_number: swissPostLabelId,
+      });
+      await client.shipOrder(order.orderId, {});
+    }
 
     const shipment = await (prisma as any).decathlonShipment.create({
       data: {
         orderId: order.id,
+        miraklShipmentId,
         carrierFinal: "swisspost",
         carrierRaw: "swisspost",
         trackingNumber: swissPostLabelId,
         shippedAt: new Date(),
         labelGeneratedAt: new Date(),
+      },
+    });
+
+    await (prisma as any).decathlonShipmentLine.createMany({
+      data: itemsToShip.map(({ line, quantity }) => ({
+        shipmentId: shipment.id,
+        orderLineId: line.id,
+        quantity,
+      })),
+    });
+
+    const document = await (prisma as any).decathlonOrderDocument.create({
+      data: {
+        orderId: order.id,
+        shipmentId: shipment.id,
+        type: DocumentType.LABEL,
+        version: nextVersion,
+        storageUrl: stored.storageUrl,
+        checksum: null,
       },
     });
 
@@ -554,6 +707,7 @@ export async function POST(
       labelUrl: stored.storageUrl,
       trackingNumber: swissPostLabelId,
       shipmentId: shipment.id,
+      miraklShipmentId,
       printJobResult,
     });
   } catch (error: any) {
