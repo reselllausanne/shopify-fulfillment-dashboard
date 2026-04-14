@@ -2,7 +2,9 @@ import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExpo
 import { parseDecimal, recordDecathlonExclusion } from "./mapping";
 import { OFFERS_HEADERS } from "./templates";
 import {
+  applyDecathlonPartnerListPriceMultipliers,
   computeDecathlonOfferListPriceFromBuyNow,
+  decathlonOfferListPriceFromManualLockedPrice,
   resolveDecathlonBuyNow,
 } from "./pricing";
 
@@ -38,12 +40,15 @@ function resolveEffectiveStock(candidate: DecathlonExportCandidate): number | nu
   return isStx ? (stxEligible ? 1 : 0) : rawStock;
 }
 
-function resolvePrice(candidate: DecathlonExportCandidate): string | null {
+function resolvePrice(
+  candidate: DecathlonExportCandidate,
+  partnerKeysLower: Set<string>
+): string | null {
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
   if (manualLock && manualPrice && manualPrice > 0) {
-    return manualPrice.toFixed(2);
+    return decathlonOfferListPriceFromManualLockedPrice(manualPrice).toFixed(2);
   }
   const buyNow = resolveDecathlonBuyNow({
     buyNowStockx: parseDecimal(variant?.price),
@@ -51,9 +56,16 @@ function resolvePrice(candidate: DecathlonExportCandidate): string | null {
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const computed = computeDecathlonOfferListPriceFromBuyNow(buyNow);
-  if (!computed || computed <= 0) return null;
-  return computed.toFixed(2);
+  const sk = extractSupplierKey(candidate);
+  const isPartner = sk && (sk === "ner" || partnerKeysLower.has(sk));
+  if (isPartner) {
+    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
+    return listTtc.toFixed(2);
+  }
+  const base = computeDecathlonOfferListPriceFromBuyNow(buyNow);
+  if (!base || base <= 0) return null;
+  const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);
+  return listTtc.toFixed(2);
 }
 
 function extractSupplierKey(candidate: DecathlonExportCandidate): string | null {
@@ -113,14 +125,15 @@ export function resolveOfferDescription(): "" {
 
 export function buildOfferCsv(
   candidates: DecathlonExportCandidate[],
-  summary: DecathlonExclusionSummary
+  summary: DecathlonExclusionSummary,
+  partnerKeysLower: Set<string> = new Set()
 ): DecathlonExportFilePayload {
   const rows = [];
 
   for (const candidate of candidates) {
     const variant = candidate.variant ?? {};
 
-    const price = resolvePrice(candidate);
+    const price = resolvePrice(candidate, partnerKeysLower);
     if (!price) {
       recordDecathlonExclusion(summary, {
         reason: "MISSING_PRICE",

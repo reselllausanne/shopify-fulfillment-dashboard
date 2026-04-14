@@ -7,10 +7,13 @@ import {
 } from "@/decathlon/exports/mapping";
 import type { DecathlonExclusionSummary, DecathlonExportCandidate } from "@/decathlon/exports/types";
 import {
+  applyDecathlonPartnerListPriceMultipliers,
   computeDecathlonOfferListPriceFromBuyNow,
+  decathlonOfferListPriceFromManualLockedPrice,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
 
 export type DecathlonSyncRow = {
   providerKey: string;
@@ -64,12 +67,24 @@ export function resolveEffectiveStock(candidate: DecathlonExportCandidate): numb
   return Math.max(0, baseStock);
 }
 
-export function resolveEffectivePrice(candidate: DecathlonExportCandidate): string | null {
+function extractDecathlonSupplierKey(candidate: DecathlonExportCandidate): string | null {
+  const supplierVariantId = String(candidate?.variant?.supplierVariantId ?? "").trim();
+  const providerKey = String(candidate?.providerKey ?? "").trim();
+  const raw = supplierVariantId || providerKey;
+  if (!raw) return null;
+  const rawKey = raw.includes(":") ? raw.split(":")[0] : raw.includes("_") ? raw.split("_")[0] : raw;
+  return rawKey ? rawKey.toLowerCase() : null;
+}
+
+export function resolveEffectivePrice(
+  candidate: DecathlonExportCandidate,
+  partnerKeysLower: Set<string> = new Set()
+): string | null {
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
   if (manualLock && manualPrice && manualPrice > 0) {
-    return manualPrice.toFixed(2);
+    return decathlonOfferListPriceFromManualLockedPrice(manualPrice).toFixed(2);
   }
   const buyNow = resolveDecathlonBuyNow({
     buyNowStockx: parseDecimal(variant?.price),
@@ -77,9 +92,16 @@ export function resolveEffectivePrice(candidate: DecathlonExportCandidate): stri
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const computed = computeDecathlonOfferListPriceFromBuyNow(buyNow);
-  if (!computed || computed <= 0) return null;
-  return computed.toFixed(2);
+  const sk = extractDecathlonSupplierKey(candidate);
+  const isPartner = sk && (sk === "ner" || partnerKeysLower.has(sk));
+  if (isPartner) {
+    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
+    return listTtc.toFixed(2);
+  }
+  const base = computeDecathlonOfferListPriceFromBuyNow(buyNow);
+  if (!base || base <= 0) return null;
+  const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);
+  return listTtc.toFixed(2);
 }
 
 function normalizePrice(value: unknown): string | null {
@@ -116,11 +138,12 @@ export function computeDecathlonDeltasFromCandidates(
     string,
     { providerKey: string; lastStock: number | null; lastPrice: unknown; offerCreatedAt: Date | null }
   >,
-  params?: { includeAll?: boolean; limitApplied?: number }
+  params?: { includeAll?: boolean; limitApplied?: number; partnerKeysLower?: Set<string> }
 ) {
   const newOffers: DecathlonSyncRow[] = [];
   const stockUpdates: DecathlonSyncRow[] = [];
   const priceUpdates: DecathlonSyncRow[] = [];
+  const partnerKeysLower = params?.partnerKeysLower ?? new Set<string>();
 
   let skippedMissingPrice = 0;
   let skippedMissingStock = 0;
@@ -139,7 +162,7 @@ export function computeDecathlonDeltasFromCandidates(
     });
     const sync = syncByKey.get(canonicalProviderKey) ?? syncByKey.get(rawProviderKey);
 
-    const price = resolveEffectivePrice(candidate);
+    const price = resolveEffectivePrice(candidate, partnerKeysLower);
     const stock = resolveEffectiveStock(candidate);
     if (price === null) {
       skippedMissingPrice += 1;
@@ -246,10 +269,12 @@ export async function buildDecathlonDeltas(params?: {
   });
   const syncByKey = new Map(syncRows.map((row) => [row.providerKey, row]));
 
+  const decathlonPartnerKeysLower = await loadPartnerKeysLowerFromDb();
   const computed = computeDecathlonDeltasFromCandidates(limited, syncByKey, {
     includeAll: params?.includeAll,
     limitApplied:
       params?.limit && Number.isFinite(params.limit) && params.limit > 0 ? Math.floor(params.limit) : undefined,
+    partnerKeysLower: decathlonPartnerKeysLower,
   });
 
   const summary = {
