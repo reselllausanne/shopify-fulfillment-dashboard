@@ -95,10 +95,9 @@ export function resolvePricingOverrides(overrides?: PricingOverrides | null) {
 const GALAXUS_NER_SUPPLIER_KEY = "ner";
 
 /**
- * Galaxus retail feed:
- * - `ner` = sell ex VAT equals partner buy (0% margin)
- * - Other partners = +10% on buy ex VAT
- * - Own products (stx/the) = full net-margin formula
+ * Galaxus retail feed: `ner` = sell ex VAT equals partner buy (0% margin).
+ * Other partner keys = +10% on buy ex VAT.
+ * Everything else (e.g. StockX) uses env net-margin rules.
  */
 export function resolveGalaxusSellExVatForChannel(
   buyPriceExVatCHF: number,
