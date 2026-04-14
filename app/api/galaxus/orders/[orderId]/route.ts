@@ -174,17 +174,21 @@ function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
   );
 }
 
-/** Per-line procurement: DB match row and/or STX purchase units (sync + AWB). */
+/** Per-line procurement: DB match rows (one per unit) and/or STX purchase units (sync + AWB). */
 function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], stxUnits: any[]) {
-  const matchByLineId = new Map<string, any>();
+  const matchesByLineId = new Map<string, any[]>();
   for (const m of stockxMatches ?? []) {
     const lid = String(m?.galaxusOrderLineId ?? "").trim();
-    if (lid) matchByLineId.set(lid, m);
+    if (!lid) continue;
+    const arr = matchesByLineId.get(lid) ?? [];
+    arr.push(m);
+    matchesByLineId.set(lid, arr);
   }
 
   return lines.map((line) => {
     const gtin = String(line?.gtin ?? "").trim();
-    const match = matchByLineId.get(String(line?.id ?? ""));
+    const lineMatches = matchesByLineId.get(String(line?.id ?? "")) ?? [];
+    const match = lineMatches[0] ?? null;
     const orderNum = match ? String(match.stockxOrderNumber ?? "").trim() : "";
 
     let ok = false;
@@ -251,16 +255,33 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
       }
     }
 
+    const qty = Math.max(Number(line.quantity ?? 1), 1);
+    const units = Array.from({ length: qty }, (_, i) => {
+      const unitMatch = lineMatches.find((m: any) => Number(m?.unitIndex ?? 0) === i) ?? null;
+      if (!unitMatch) return { unitIndex: i, linked: false };
+      return {
+        unitIndex: i,
+        linked: true,
+        stockxOrderNumber: unitMatch.stockxOrderNumber ?? null,
+        stockxOrderId: unitMatch.stockxOrderId ?? null,
+        stockxAmount: unitMatch.stockxAmount != null ? Number(unitMatch.stockxAmount) : null,
+        stockxCurrencyCode: unitMatch.stockxCurrencyCode ?? null,
+        awb: unitMatch.stockxAwb ?? null,
+      };
+    });
+    const allLinked = units.every((u) => u.linked);
+
     return {
       ...line,
       procurement: {
-        ok,
+        ok: ok || allLinked,
         source,
         stockxOrderNumber,
         stockxOrderId,
         awb,
         stockxCostChf,
         stockxCostCurrency,
+        units,
       },
     };
   });

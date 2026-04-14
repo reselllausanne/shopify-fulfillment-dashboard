@@ -267,126 +267,131 @@ export async function POST(
     const results: any[] = [];
 
     for (const line of order.lines) {
-      const supplierVariantId = String(line?.supplierVariantId ?? "").trim();
-      const variantId = supplierVariantId.startsWith("stx_")
-        ? supplierVariantId.replace(/^stx_/, "")
-        : null;
-      const candidates = variantId
-        ? availableSupplier.filter(
-            (s) =>
-              s.productVariantId === variantId &&
-              !usedSupplierNumbers.has(s.supplierOrderNumber)
-          )
-        : [];
-
-      let match = null as any;
-      if (candidates.length > 0) {
-      const orderDate =
-        typeof order.orderDate === "string"
-          ? order.orderDate
-          : order.orderDate
-          ? new Date(order.orderDate).toISOString()
-          : new Date().toISOString();
-        const scored = candidates
-          .map((c) => ({
-            order: c,
-            timeDiff: computeTimeDiffHours(orderDate, c.purchaseDate),
-          }))
-          .filter((c) => c.timeDiff != null)
-          .sort((a, b) => (a.timeDiff ?? 0) - (b.timeDiff ?? 0));
-        if (scored.length > 0) {
-          match = {
-            supplierOrder: scored[0].order,
-            score: 999,
-            confidence: "high",
-            reasons: ["VARIANT_ID"],
-            timeDiffHours: scored[0].timeDiff ?? null,
-          };
-        }
-      }
-
-      if (!match) {
-        const item = buildLineItem(order, line);
-        const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
-        match = result.bestMatch;
-      }
-
-      if (!match?.supplierOrder?.supplierOrderNumber) {
-        results.push({ lineId: line.id, status: "unmatched" });
-        continue;
-      }
-
-      usedSupplierNumbers.add(match.supplierOrder.supplierOrderNumber);
-
-      const tracking =
-        match.supplierOrder.chainId && match.supplierOrder.orderId
-          ? await fetchTrackingDetails(token, match.supplierOrder.chainId, match.supplierOrder.orderId)
+      const qty = Math.max(Number(line.quantity ?? 1), 1);
+      for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
+        const supplierVariantId = String(line?.supplierVariantId ?? "").trim();
+        const variantId = supplierVariantId.startsWith("stx_")
+          ? supplierVariantId.replace(/^stx_/, "")
           : null;
+        const candidates = variantId
+          ? availableSupplier.filter(
+              (s) =>
+                s.productVariantId === variantId &&
+                !usedSupplierNumbers.has(s.supplierOrderNumber)
+            )
+          : [];
 
-      const matchReasons = Array.isArray(match.reasons) ? match.reasons : [];
-      const matchType = matchReasons.includes("VARIANT_ID") ? "VARIANT_ID" : "NAME_SIZE_TIME";
+        let match = null as any;
+        if (candidates.length > 0) {
+          const orderDate =
+            typeof order.orderDate === "string"
+              ? order.orderDate
+              : order.orderDate
+              ? new Date(order.orderDate).toISOString()
+              : new Date().toISOString();
+          const scored = candidates
+            .map((c) => ({
+              order: c,
+              timeDiff: computeTimeDiffHours(orderDate, c.purchaseDate),
+            }))
+            .filter((c) => c.timeDiff != null)
+            .sort((a, b) => (a.timeDiff ?? 0) - (b.timeDiff ?? 0));
+          if (scored.length > 0) {
+            match = {
+              supplierOrder: scored[0].order,
+              score: 999,
+              confidence: "high",
+              reasons: ["VARIANT_ID"],
+              timeDiffHours: scored[0].timeDiff ?? null,
+            };
+          }
+        }
 
-      const payload = {
-        galaxusOrderId: order.id,
-        galaxusOrderRef: order.galaxusOrderId ?? null,
-        galaxusOrderDate: order.orderDate ? new Date(order.orderDate) : null,
-        galaxusOrderLineId: line.id,
-        galaxusLineNumber: line.lineNumber ?? null,
-        galaxusProductName: line.productName ?? "Item",
-        galaxusDescription: line.description ?? null,
-        galaxusSize: line.size ?? null,
-        galaxusGtin: line.gtin ?? null,
-        galaxusProviderKey: line.providerKey ?? null,
-        galaxusSupplierSku: line.supplierSku ?? null,
-        galaxusQuantity: Number(line.quantity ?? 0),
-        galaxusUnitNetPrice: line.unitNetPrice,
-        galaxusLineNetAmount: line.lineNetAmount,
-        galaxusVatRate: line.vatRate,
-        galaxusCurrencyCode: order.currencyCode ?? "CHF",
-        stockxChainId: match.supplierOrder.chainId || null,
-        stockxOrderId: match.supplierOrder.orderId || null,
-        stockxOrderNumber: match.supplierOrder.supplierOrderNumber,
-        stockxVariantId: match.supplierOrder.productVariantId || null,
-        stockxProductName: match.supplierOrder.productTitle || null,
-        stockxSkuKey: match.supplierOrder.skuKey || null,
-        stockxSizeEU: match.supplierOrder.sizeEU || null,
-        stockxPurchaseDate: match.supplierOrder.purchaseDate
-          ? new Date(match.supplierOrder.purchaseDate)
-          : null,
-        stockxAmount: match.supplierOrder.offerAmount ?? null,
-        stockxCurrencyCode: match.supplierOrder.currencyCode ?? null,
-        stockxStatus: tracking?.stockxStatus ?? match.supplierOrder.statusKey ?? null,
-        stockxEstimatedDelivery: tracking?.estimatedDelivery
-          ? new Date(tracking.estimatedDelivery)
-          : null,
-        stockxLatestEstimatedDelivery: tracking?.latestEstimatedDelivery
-          ? new Date(tracking.latestEstimatedDelivery)
-          : null,
-        stockxAwb: tracking?.awb ?? null,
-        stockxTrackingUrl: tracking?.trackingUrl ?? null,
-        stockxCheckoutType: tracking?.checkoutType ?? match.supplierOrder.stockxCheckoutType ?? null,
-        stockxStates: tracking?.states ?? match.supplierOrder.stockxStates ?? null,
-        matchConfidence: match.confidence ?? null,
-        matchScore: match.score ?? null,
-        matchType,
-        matchReasons: JSON.stringify(matchReasons),
-        timeDiffHours: match.timeDiffHours ?? null,
-      };
+        if (!match) {
+          const item = buildLineItem(order, line);
+          const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+          match = result.bestMatch;
+        }
 
-      const saved = await (prisma as any).galaxusStockxMatch.upsert({
-        where: { galaxusOrderLineId: line.id },
-        update: {
-          ...payload,
-          updatedAt: new Date(),
-        },
-        create: payload,
-      });
+        if (!match?.supplierOrder?.supplierOrderNumber) {
+          results.push({ lineId: line.id, unitIndex, status: "unmatched" });
+          continue;
+        }
 
-      results.push({
-        lineId: line.id,
-        status: "matched",
-        stockxOrderNumber: saved.stockxOrderNumber,
-      });
+        usedSupplierNumbers.add(match.supplierOrder.supplierOrderNumber);
+
+        const tracking =
+          match.supplierOrder.chainId && match.supplierOrder.orderId
+            ? await fetchTrackingDetails(token, match.supplierOrder.chainId, match.supplierOrder.orderId)
+            : null;
+
+        const matchReasons = Array.isArray(match.reasons) ? match.reasons : [];
+        const matchType = matchReasons.includes("VARIANT_ID") ? "VARIANT_ID" : "NAME_SIZE_TIME";
+
+        const payload = {
+          galaxusOrderId: order.id,
+          galaxusOrderRef: order.galaxusOrderId ?? null,
+          galaxusOrderDate: order.orderDate ? new Date(order.orderDate) : null,
+          galaxusOrderLineId: line.id,
+          unitIndex,
+          galaxusLineNumber: line.lineNumber ?? null,
+          galaxusProductName: line.productName ?? "Item",
+          galaxusDescription: line.description ?? null,
+          galaxusSize: line.size ?? null,
+          galaxusGtin: line.gtin ?? null,
+          galaxusProviderKey: line.providerKey ?? null,
+          galaxusSupplierSku: line.supplierSku ?? null,
+          galaxusQuantity: qty,
+          galaxusUnitNetPrice: line.unitNetPrice,
+          galaxusLineNetAmount: line.lineNetAmount,
+          galaxusVatRate: line.vatRate,
+          galaxusCurrencyCode: order.currencyCode ?? "CHF",
+          stockxChainId: match.supplierOrder.chainId || null,
+          stockxOrderId: match.supplierOrder.orderId || null,
+          stockxOrderNumber: match.supplierOrder.supplierOrderNumber,
+          stockxVariantId: match.supplierOrder.productVariantId || null,
+          stockxProductName: match.supplierOrder.productTitle || null,
+          stockxSkuKey: match.supplierOrder.skuKey || null,
+          stockxSizeEU: match.supplierOrder.sizeEU || null,
+          stockxPurchaseDate: match.supplierOrder.purchaseDate
+            ? new Date(match.supplierOrder.purchaseDate)
+            : null,
+          stockxAmount: match.supplierOrder.offerAmount ?? null,
+          stockxCurrencyCode: match.supplierOrder.currencyCode ?? null,
+          stockxStatus: tracking?.stockxStatus ?? match.supplierOrder.statusKey ?? null,
+          stockxEstimatedDelivery: tracking?.estimatedDelivery
+            ? new Date(tracking.estimatedDelivery)
+            : null,
+          stockxLatestEstimatedDelivery: tracking?.latestEstimatedDelivery
+            ? new Date(tracking.latestEstimatedDelivery)
+            : null,
+          stockxAwb: tracking?.awb ?? null,
+          stockxTrackingUrl: tracking?.trackingUrl ?? null,
+          stockxCheckoutType: tracking?.checkoutType ?? match.supplierOrder.stockxCheckoutType ?? null,
+          stockxStates: tracking?.states ?? match.supplierOrder.stockxStates ?? null,
+          matchConfidence: match.confidence ?? null,
+          matchScore: match.score ?? null,
+          matchType,
+          matchReasons: JSON.stringify(matchReasons),
+          timeDiffHours: match.timeDiffHours ?? null,
+        };
+
+        const saved = await (prisma as any).galaxusStockxMatch.upsert({
+          where: { galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex } },
+          update: {
+            ...payload,
+            updatedAt: new Date(),
+          },
+          create: payload,
+        });
+
+        results.push({
+          lineId: line.id,
+          unitIndex,
+          status: "matched",
+          stockxOrderNumber: saved.stockxOrderNumber,
+        });
+      }
     }
 
     return NextResponse.json({

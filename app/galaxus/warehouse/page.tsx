@@ -49,8 +49,9 @@ export default function WarehouseBulkPage() {
     mode: "create" | "edit";
     line: any | null;
     orderId: string | null;
+    unitIndex: number;
     initialData: any;
-  }>({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+  }>({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
 
   const selected = useMemo(
     () => orders.find((order) => order.id === selectedOrderId) ?? null,
@@ -168,7 +169,7 @@ export default function WarehouseBulkPage() {
     }
   };
 
-  const openManualEntry = (line: any) => {
+  const openManualEntry = (line: any, unitIndex: number = 0) => {
     if (!selectedOrderId || !detail) {
       setError("Order detail not loaded yet");
       return;
@@ -230,6 +231,7 @@ export default function WarehouseBulkPage() {
       mode: match ? "edit" : "create",
       line,
       orderId: selectedOrderId ?? null,
+      unitIndex,
       initialData,
     });
   };
@@ -262,6 +264,7 @@ export default function WarehouseBulkPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           lineId: manualEntryModal.line.id,
+          unitIndex: manualEntryModal.unitIndex,
           data,
         }),
       });
@@ -509,7 +512,41 @@ export default function WarehouseBulkPage() {
                                   ) : null}
                                 </div>
                               ) : null}
-                              {!linked ? (
+                              {proc?.units && proc.units.length > 1 ? (
+                                <div className="mt-1 space-y-1">
+                                  {proc.units.map((unit: any) => (
+                                    <div
+                                      key={unit.unitIndex}
+                                      className={`text-[11px] flex items-center gap-2 px-1.5 py-0.5 rounded ${
+                                        unit.linked ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"
+                                      }`}
+                                    >
+                                      <span className="font-medium">Unit {unit.unitIndex + 1}/{proc.units.length}</span>
+                                      {unit.linked ? (
+                                        <>
+                                          <span>✓ {unit.stockxOrderNumber ?? "linked"}</span>
+                                          {unit.stockxAmount != null ? (
+                                            <span className="font-mono">{unit.stockxCurrencyCode ?? "CHF"} {Number(unit.stockxAmount).toFixed(2)}</span>
+                                          ) : null}
+                                          {unit.awb ? <span>AWB: {unit.awb}</span> : null}
+                                        </>
+                                      ) : (
+                                        <span>Not linked</span>
+                                      )}
+                                      {!unit.linked ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => openManualEntry(line, unit.unitIndex)}
+                                          disabled={busy !== null || !detail}
+                                          className="ml-auto px-1.5 py-0.5 rounded bg-blue-600 text-white text-[10px] disabled:opacity-50"
+                                        >
+                                          Link
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : !linked ? (
                                 <div className="text-amber-800 text-[11px]">
                                   Sync or manual supplier entry to link, then you can mark shipped.
                                 </div>

@@ -52,8 +52,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     }
 
     const prismaAny = prisma as any;
+    const unitIndex = Number(body?.unitIndex ?? 0);
     const existing = await prismaAny.galaxusStockxMatch.findUnique({
-      where: { galaxusOrderLineId: line.id },
+      where: { galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex } },
     });
 
     const orderNumberInput = trimStr(data.stockxOrderNumber);
@@ -104,6 +105,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       galaxusOrderRef: order.galaxusOrderId ?? null,
       galaxusOrderDate: order.orderDate ?? null,
       galaxusOrderLineId: line.id,
+      unitIndex,
       galaxusLineNumber: line.lineNumber ?? null,
       galaxusProductName: line.productName ?? "Item",
       galaxusDescription: line.description ?? null,
@@ -163,7 +165,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     };
 
     const match = await prismaAny.galaxusStockxMatch.upsert({
-      where: { galaxusOrderLineId: line.id },
+      where: { galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex } },
       update: payload,
       create: payload,
     });

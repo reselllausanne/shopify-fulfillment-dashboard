@@ -155,7 +155,8 @@ model GalaxusStockxMatch {
   galaxusOrderId     String
   galaxusOrderRef    String?
   galaxusOrderDate   DateTime?
-  galaxusOrderLineId String   @unique
+  galaxusOrderLineId String
+  unitIndex          Int      @default(0)
   galaxusLineNumber  Int?
   galaxusProductName String
   galaxusDescription String?
@@ -199,6 +200,7 @@ model GalaxusStockxMatch {
   order              GalaxusOrder     @relation(fields: [galaxusOrderId], references: [id], onDelete: Cascade)
   orderLine          GalaxusOrderLine @relation(fields: [galaxusOrderLineId], references: [id], onDelete: Cascade)
 
+  @@unique([galaxusOrderLineId, unitIndex])
   @@index([galaxusOrderId])
   @@index([stockxOrderNumber])
   @@index([stockxVariantId])
