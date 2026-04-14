@@ -131,13 +131,15 @@ function enrichGalaxusOrderLine(
   skuByGtin: Record<string, string>,
   sizeByGtin: Record<string, string>,
   sizeRawByGtin: Record<string, string>,
-  productNameByGtin: Record<string, string>
+  productNameByGtin: Record<string, string>,
+  catalogPriceByGtin: Record<string, number> = {}
 ) {
   const gtin = String(line?.gtin ?? "").trim();
   const nameFromGtin = gtin ? productNameByGtin[gtin] ?? "" : "";
   const sizeFromGtin = gtin ? sizeByGtin[gtin] ?? "" : "";
   const skuFromGtin = gtin ? skuByGtin[gtin] ?? "" : "";
   const sizeRawFromMap = gtin ? sizeRawByGtin[gtin] ?? "" : "";
+  const catalogPrice = gtin ? catalogPriceByGtin[gtin] ?? null : null;
 
   const desc = line.description ? String(line.description).trim() : "";
   const rawName = line.productName ? String(line.productName).trim() : "";
@@ -154,7 +156,7 @@ function enrichGalaxusOrderLine(
   const sizeRaw =
     (sizeRawFromMap && String(sizeRawFromMap).trim()) || (line.size ? String(line.size).trim() : null) || null;
 
-  return { ...line, productName, size, supplierSku, sizeRaw };
+  return { ...line, productName, size, supplierSku, sizeRaw, catalogPrice };
 }
 
 function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
@@ -367,6 +369,7 @@ export async function GET(
     const sizeByGtin: Record<string, string> = {};
     const sizeRawByGtin: Record<string, string> = {};
     const productNameByGtin: Record<string, string> = {};
+    const catalogPriceByGtin: Record<string, number> = {};
     if (gtinQueryKeys.length > 0) {
       const supplierVariantIdsFromLines = Array.from(
         new Set(
@@ -476,6 +479,10 @@ export async function GET(
             if (kickdbName) productNameByGtin[canon] = kickdbName;
           }
         }
+        if (catalogPriceByGtin[canon] == null) {
+          const p = Number(mapping?.supplierVariant?.price);
+          if (Number.isFinite(p) && p > 0) catalogPriceByGtin[canon] = p;
+        }
       }
     }
     const pickLatest = (docs: any[]) => {
@@ -493,7 +500,7 @@ export async function GET(
     };
 
     const enrichedLines = (orderRow.lines ?? []).map((line: any) =>
-      enrichGalaxusOrderLine(line, skuByGtin, sizeByGtin, sizeRawByGtin, productNameByGtin)
+      enrichGalaxusOrderLine(line, skuByGtin, sizeByGtin, sizeRawByGtin, productNameByGtin, catalogPriceByGtin)
     );
     const linesWithProcurement = attachProcurementToLines(enrichedLines, stx, stockxMatches, stxUnits);
 

@@ -469,7 +469,22 @@ export default function WarehouseBulkPage() {
                               <div className="text-gray-600 text-xs">
                                 SKU: {line.supplierSku ?? "—"} · GTIN: {line.gtin ?? "—"}
                               </div>
-                              <div className="text-gray-500 text-xs">Qty {line.quantity}</div>
+                              <div className="text-gray-500 text-xs">
+                                Qty {line.quantity}
+                                {line.unitNetPrice != null ? (
+                                  <span className="ml-2">
+                                    Sell: <span className="font-mono">{line.currencyCode ?? "CHF"} {Number(line.unitNetPrice).toFixed(2)}</span>
+                                    {line.lineNetAmount != null ? (
+                                      <span className="text-gray-400 ml-1">(line {Number(line.lineNetAmount).toFixed(2)})</span>
+                                    ) : null}
+                                  </span>
+                                ) : null}
+                                {line.catalogPrice != null ? (
+                                  <span className="ml-2 text-blue-600">
+                                    DB: <span className="font-mono">{Number(line.catalogPrice).toFixed(2)}</span>
+                                  </span>
+                                ) : null}
+                              </div>
                               {linked && proc && !isShipped ? (
                                 <div className="text-green-800 text-[11px] space-y-0.5">
                                   <div>
