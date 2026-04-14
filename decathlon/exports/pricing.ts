@@ -191,8 +191,8 @@ export function resolveDecathlonBuyNow(input: {
 const DECATHLON_NER_SUPPLIER_KEY = "ner";
 
 /**
- * After {@link computeDecathlonOfferListPriceFromBuyNow}: multiply list TTC
- * by 1.25 for all partner lines, by 1.01 for own products (+1% to track price sensitivity).
+ * Partner products: 25% margin on final sell price → `price / 0.75`.
+ * Own products: +1% to track price sensitivity.
  */
 export function applyDecathlonPartnerListPriceMultipliers(
   baseListPriceTtc: number,
@@ -202,7 +202,7 @@ export function applyDecathlonPartnerListPriceMultipliers(
   if (!Number.isFinite(baseListPriceTtc) || baseListPriceTtc <= 0) return baseListPriceTtc;
   const k = supplierKey?.toLowerCase() ?? "";
   if (k === DECATHLON_NER_SUPPLIER_KEY || partnerKeysLower.has(k)) {
-    return roundToIncrement(baseListPriceTtc * 1.25, DECATHLON_PRICE_ROUND_TO);
+    return roundToIncrement(baseListPriceTtc / 0.75, DECATHLON_PRICE_ROUND_TO);
   }
   return roundToIncrement(baseListPriceTtc * 1.01, DECATHLON_PRICE_ROUND_TO);
 }
