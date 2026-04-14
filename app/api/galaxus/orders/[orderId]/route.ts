@@ -256,26 +256,48 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
     }
 
     const qty = Math.max(Number(line.quantity ?? 1), 1);
+
+    const relevantStxUnits = gtin
+      ? stxUnits.filter((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId && !u?.cancelledAt)
+      : [];
+
     const units = Array.from({ length: qty }, (_, i) => {
       const unitMatch = lineMatches.find((m: any) => Number(m?.unitIndex ?? 0) === i) ?? null;
-      if (!unitMatch) return { unitIndex: i, linked: false };
-      return {
-        unitIndex: i,
-        linked: true,
-        stockxOrderNumber: unitMatch.stockxOrderNumber ?? null,
-        stockxOrderId: unitMatch.stockxOrderId ?? null,
-        stockxAmount: unitMatch.stockxAmount != null ? Number(unitMatch.stockxAmount) : null,
-        stockxCurrencyCode: unitMatch.stockxCurrencyCode ?? null,
-        awb: unitMatch.stockxAwb ?? null,
-      };
+      if (unitMatch) {
+        return {
+          unitIndex: i,
+          linked: true,
+          source: "galaxus_match" as const,
+          stockxOrderNumber: unitMatch.stockxOrderNumber ?? null,
+          stockxOrderId: unitMatch.stockxOrderId ?? null,
+          stockxAmount: unitMatch.stockxAmount != null ? Number(unitMatch.stockxAmount) : null,
+          stockxCurrencyCode: unitMatch.stockxCurrencyCode ?? null,
+          awb: unitMatch.stockxAwb ?? null,
+        };
+      }
+      const stxUnit = relevantStxUnits[i] ?? null;
+      if (stxUnit) {
+        return {
+          unitIndex: i,
+          linked: true,
+          source: "stx_sync" as const,
+          stockxOrderNumber: stxUnit.stockxOrderNumber ?? stxUnit.stockxOrderId ?? null,
+          stockxOrderId: stxUnit.stockxOrderId ?? null,
+          stockxAmount: stxUnit.stockxSettledAmount != null ? Number(stxUnit.stockxSettledAmount) : null,
+          stockxCurrencyCode: stxUnit.stockxSettledCurrency ?? null,
+          awb: stxUnit.awb ?? null,
+        };
+      }
+      return { unitIndex: i, linked: false, source: null as string | null };
     });
     const allLinked = units.every((u) => u.linked);
+    const lineOk = allLinked || ok;
 
     return {
       ...line,
       procurement: {
-        ok: ok || allLinked,
-        source,
+        ok: lineOk,
+        source: allLinked ? (units[0]?.source ?? source) : source,
         stockxOrderNumber,
         stockxOrderId,
         awb,

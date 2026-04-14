@@ -424,15 +424,22 @@ export default function WarehouseBulkPage() {
                   <div className="max-h-[520px] overflow-auto space-y-2">
                     {(detail?.lines ?? []).map((line: any) => {
                       const proc = line.procurement;
-                      const linked = Boolean(proc?.ok);
+                      const unitsList: any[] = proc?.units ?? [];
+                      const allUnitsLinked = unitsList.length > 0 && unitsList.every((u: any) => u.linked);
+                      const linked = allUnitsLinked || Boolean(proc?.ok);
                       const shippedAt = line.warehouseMarkedShippedAt;
                       const isShipped = Boolean(shippedAt);
                       const shipBusy = busy === `ship-${line.id}`;
                       const revenueChf = galaxusLineNetRevenueChf(line);
+                      const totalUnitCost = unitsList
+                        .filter((u: any) => u.linked && u.stockxAmount != null)
+                        .reduce((sum: number, u: any) => sum + Number(u.stockxAmount), 0);
                       const costChf =
-                        proc?.stockxCostChf != null && Number.isFinite(Number(proc.stockxCostChf))
-                          ? Number(proc.stockxCostChf)
-                          : null;
+                        totalUnitCost > 0
+                          ? totalUnitCost
+                          : proc?.stockxCostChf != null && Number.isFinite(Number(proc.stockxCostChf))
+                            ? Number(proc.stockxCostChf)
+                            : null;
                       const costCur =
                         proc?.stockxCostCurrency != null
                           ? String(proc.stockxCostCurrency).trim()
