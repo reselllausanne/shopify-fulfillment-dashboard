@@ -92,6 +92,56 @@ export function resolvePricingOverrides(overrides?: PricingOverrides | null) {
   };
 }
 
+const GALAXUS_NER_SUPPLIER_KEY = "ner";
+
+/**
+ * Galaxus retail feed: `ner` = sell ex VAT equals partner buy (no uplift).
+ * Other partner keys = +25% on buy ex VAT.
+ * Everything else (e.g. StockX) uses env net-margin rules.
+ */
+export function resolveGalaxusSellExVatForChannel(
+  buyPriceExVatCHF: number,
+  supplierKey: string | null,
+  partnerKeysLower: Set<string>
+): number {
+  const defaults = getDefaultPricing();
+  const roundTo = defaults.roundTo;
+  const k = supplierKey?.toLowerCase() ?? "";
+
+  if (k === GALAXUS_NER_SUPPLIER_KEY) {
+    return roundUpToIncrement(buyPriceExVatCHF, roundTo);
+  }
+  if (partnerKeysLower.has(k)) {
+    return roundUpToIncrement(buyPriceExVatCHF * 1.25, roundTo);
+  }
+
+  return computeGalaxusSellPriceExVat({
+    buyPriceExVatCHF,
+    shippingPerPairCHF: defaults.shippingPerPair,
+    targetNetMargin: defaults.targetMargin,
+    bufferPerPairCHF: defaults.bufferPerPair,
+    roundTo: defaults.roundTo,
+    vatRate: defaults.vatRate,
+  }).sellPriceExVatCHF;
+}
+
+/**
+ * @deprecated Prefer {@link resolveGalaxusSellExVatForChannel}. Legacy net-margin path from resolved overrides only.
+ */
+export function resolveSellPriceExVatCHF(
+  buyPriceExVatCHF: number,
+  overrides: ReturnType<typeof resolvePricingOverrides>
+): number {
+  return computeGalaxusSellPriceExVat({
+    buyPriceExVatCHF,
+    shippingPerPairCHF: overrides.shippingPerPair,
+    targetNetMargin: overrides.targetMargin,
+    bufferPerPairCHF: overrides.bufferPerPair,
+    roundTo: overrides.roundTo,
+    vatRate: overrides.vatRate,
+  }).sellPriceExVatCHF;
+}
+
 export function computeGalaxusSellPriceExVat(input: PricingInput) {
   const shipping = input.shippingPerPairCHF ?? DEFAULT_SHIPPING;
   const target = input.targetNetMargin ?? DEFAULT_TARGET_MARGIN;

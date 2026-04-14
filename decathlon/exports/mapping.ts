@@ -268,6 +268,39 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
     }
   }
 
-  const filtered = candidates.filter((candidate) => !ambiguousKeys.has(candidate.providerKey));
+  const afterAmbiguous = candidates.filter((candidate) => !ambiguousKeys.has(candidate.providerKey));
+
+  const byGtin = new Map<string, DecathlonExportCandidate[]>();
+  for (const candidate of afterAmbiguous) {
+    const bucket = byGtin.get(candidate.gtin) ?? [];
+    bucket.push(candidate);
+    byGtin.set(candidate.gtin, bucket);
+  }
+  const filtered: DecathlonExportCandidate[] = [];
+  for (const [gtin, bucket] of byGtin) {
+    if (bucket.length === 1) {
+      filtered.push(bucket[0]);
+      continue;
+    }
+    bucket.sort((a, b) => {
+      const pa = Number(a.variant?.price ?? Infinity);
+      const pb = Number(b.variant?.price ?? Infinity);
+      if (pa !== pb) return pa - pb;
+      const sa = Number(a.variant?.stock ?? 0);
+      const sb = Number(b.variant?.stock ?? 0);
+      return sb - sa;
+    });
+    filtered.push(bucket[0]);
+    for (let i = 1; i < bucket.length; i++) {
+      recordDecathlonExclusion(summary, {
+        reason: "DUPLICATE_GTIN" as DecathlonExclusionReason,
+        message: `Duplicate GTIN ${gtin}: kept ${bucket[0].providerKey} (cheaper)`,
+        providerKey: bucket[i].providerKey,
+        supplierVariantId: bucket[i]?.variant?.supplierVariantId ?? null,
+        gtin,
+      });
+    }
+  }
+
   return { candidates: filtered, scanned };
 }
