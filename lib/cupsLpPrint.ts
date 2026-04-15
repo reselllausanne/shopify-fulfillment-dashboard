@@ -68,14 +68,23 @@ export async function submitLpJob(options: {
       try {
         return await run("/usr/bin/lp");
       } catch (e2: any) {
-        return { ok: false, error: e2?.message ?? String(e2) };
+        const m2 = e2?.message ?? String(e2);
+        const c2 = e2?.code ?? "";
+        if (c2 === "ENOENT" || /ENOENT/i.test(m2)) {
+          return {
+            ok: true,
+            skipped: true,
+            message: `No lp on this host (normal on a VPS). Set DECATHLON_PACKING_SLIP_AUTO_PRINT=0 or install cups-client for network print.`,
+          };
+        }
+        return { ok: false, error: m2 };
       }
     }
     if (code === "ENOENT" || /ENOENT/i.test(message)) {
       return {
-        ok: false,
+        ok: true,
         skipped: true,
-        message: `Print command not found (${printCommand}). Install CUPS or set SWISS_POST_PRINT_COMMAND.`,
+        message: `No ${printCommand} on this host (normal on a VPS). PDF is still saved — print from your Mac or set DECATHLON_PACKING_SLIP_AUTO_PRINT=0 here. To print on Linux: apt install cups-client and configure a network printer, or set SWISS_POST_PRINT_COMMAND.`,
       };
     }
     return { ok: false, error: message };

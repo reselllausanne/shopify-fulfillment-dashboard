@@ -93,9 +93,9 @@ async function submitPrintJob(filePath: string): Promise<PrintJobResult> {
     const code = error?.code || "";
     if (code === "ENOENT" || /ENOENT/i.test(message)) {
       return {
-        ok: false,
+        ok: true,
         skipped: true,
-        message: `Print command not found (${PRINT_COMMAND}). Install CUPS/lp or set SWISS_POST_PRINT_COMMAND.`,
+        message: `No ${PRINT_COMMAND} on this host (typical on a VPS). Set SWISS_POST_AUTO_PRINT=0 or install cups-client for network print.`,
       };
     }
     console.error("[SWISS POST] Print job failed:", message);
