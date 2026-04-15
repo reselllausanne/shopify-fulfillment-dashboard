@@ -114,6 +114,9 @@ model OrderMatch {
   lastMilestoneKey          String?
   lastMilestoneAt           DateTime?
 
+  /// Opaque token for public customer tracking (/track/[token]); no expiry.
+  customerTrackingToken   String?  @unique
+
   stockxStatusEvents        StockXStatusEvent[]
   
   // Shopify metafields sync status

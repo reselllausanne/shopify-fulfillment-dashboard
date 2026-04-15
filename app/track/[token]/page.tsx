@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { verifyTrackingToken } from "@/app/lib/trackingToken";
+import { resolveOrderMatchIdFromTrackingToken } from "@/app/lib/resolveTrackingMatchId";
 import { detectMilestone } from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
 
@@ -113,8 +113,8 @@ const normalizeMilestoneIndex = (milestoneKey: string | null, isExpress: boolean
 };
 
 export default async function TrackingPage({ params }: Params) {
-  const tokenPayload = verifyTrackingToken(params.token);
-  if (!tokenPayload) {
+  const orderMatchId = await resolveOrderMatchIdFromTrackingToken(params.token);
+  if (!orderMatchId) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p className="text-gray-700">Lien invalide ou expiré.</p>
@@ -123,7 +123,7 @@ export default async function TrackingPage({ params }: Params) {
   }
 
   const match = await prisma.orderMatch.findUnique({
-    where: { id: tokenPayload.orderMatchId },
+    where: { id: orderMatchId },
   });
 
   if (!match) {

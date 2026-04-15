@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { prisma } from "@/app/lib/prisma";
 import { formatInTimeZone } from "date-fns-tz";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
@@ -545,6 +546,7 @@ export async function POST(req: Request) {
         manualCostOverride: manualCostOverride || null,
         shopifyMetafieldsSynced: shopifyMetafieldsSynced || false,
         shopifyMetafieldsSetAt: shopifyMetafieldsSynced ? new Date() : null,
+        customerTrackingToken: crypto.randomUUID(),
       },
     });
 
