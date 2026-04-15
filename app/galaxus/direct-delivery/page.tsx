@@ -36,8 +36,9 @@ export default function GalaxusDirectDeliveryPage() {
     mode: "create" | "edit";
     line: any | null;
     orderId: string | null;
+    unitIndex: number;
     initialData: any;
-  }>({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+  }>({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
 
   const loadOrders = async () => {
     setLoadingOrders(true);
@@ -132,7 +133,7 @@ export default function GalaxusDirectDeliveryPage() {
   useEffect(() => {
     // Prevent saving a modal that was opened for another order.
     if (manualEntryModal.isOpen && manualEntryModal.orderId && selectedOrderId && manualEntryModal.orderId !== selectedOrderId) {
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
     }
   }, [selectedOrderId, manualEntryModal.isOpen, manualEntryModal.orderId]);
 
@@ -300,6 +301,7 @@ export default function GalaxusDirectDeliveryPage() {
       mode: match ? "edit" : "create",
       line,
       orderId: selectedOrderId ?? null,
+      unitIndex: 0,
       initialData,
     });
   };
@@ -330,6 +332,7 @@ export default function GalaxusDirectDeliveryPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           lineId: manualEntryModal.line.id,
+          unitIndex: manualEntryModal.unitIndex,
           data,
         }),
       });
@@ -341,7 +344,7 @@ export default function GalaxusDirectDeliveryPage() {
         );
       }
       setOpsLog(JSON.stringify(json, null, 2));
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
       await loadOrderDetail(orderId);
     } catch (err: any) {
       setError(err.message);
@@ -602,7 +605,9 @@ export default function GalaxusDirectDeliveryPage() {
           createdAt: manualEntryModal.initialData?.shopifyCreatedAt ?? null,
         }}
         onSave={(data) => saveManualEntry(data)}
-        onClose={() => setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} })}
+        onClose={() =>
+          setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} })
+        }
       />
     </div>
   );

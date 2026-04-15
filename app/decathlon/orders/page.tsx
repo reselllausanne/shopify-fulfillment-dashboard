@@ -42,8 +42,9 @@ export default function DecathlonOrdersPage() {
     mode: "create" | "edit";
     line: any | null;
     orderId: string | null;
+    unitIndex: number;
     initialData: any;
-  }>({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+  }>({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
   const [partners, setPartners] = useState<Array<{ id: string; key: string; name: string }>>([]);
   const [assigningPartner, setAssigningPartner] = useState(false);
   const [selectedPartnerKey, setSelectedPartnerKey] = useState("");
@@ -410,6 +411,7 @@ export default function DecathlonOrdersPage() {
       mode: match ? "edit" : "create",
       line,
       orderId: selectedOrderId ?? null,
+      unitIndex: 0,
       initialData,
     });
   };
@@ -431,7 +433,7 @@ export default function DecathlonOrdersPage() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
       setOpsLog(JSON.stringify(json, null, 2));
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
       await Promise.all([loadOrderDetail(orderId), loadOrders()]);
     } catch (err: any) {
       setError(err.message);
@@ -1121,7 +1123,9 @@ export default function DecathlonOrdersPage() {
           createdAt: manualEntryModal.initialData?.shopifyCreatedAt ?? null,
         }}
         onSave={(data) => saveManualEntry(data)}
-        onClose={() => setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} })}
+        onClose={() =>
+          setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} })
+        }
       />
     </div>
   );
