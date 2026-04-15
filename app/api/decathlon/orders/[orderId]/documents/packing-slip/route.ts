@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
@@ -5,6 +8,7 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
+import { resolvePrintEnvFlag, submitLpJob } from "@/lib/cupsLpPrint";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -371,6 +375,43 @@ async function handlePackingSlipRequest(
 
   const filename = attachmentFilename(order.orderId, scopeRes.dbShipmentId);
   const bytes = new Uint8Array(fetched.buffer);
+
+  const skipAutoPrint = String(searchParams.get("noAutoPrint") ?? "").trim() === "1";
+  if (
+    !skipAutoPrint &&
+    resolvePrintEnvFlag(process.env.DECATHLON_PACKING_SLIP_AUTO_PRINT) &&
+    String(process.env.NODE_ENV ?? "").toLowerCase() !== "test"
+  ) {
+    const hpQueue = String(process.env.DECATHLON_PACKING_SLIP_PRINTER_NAME ?? "").trim();
+    if (hpQueue) {
+      const tmpPath = path.join(
+        os.tmpdir(),
+        `decathlon-packing-${order.id.replace(/[^a-zA-Z0-9-_]/g, "_")}-${Date.now()}.pdf`
+      );
+      try {
+        await fs.writeFile(tmpPath, fetched.buffer);
+        const media = String(process.env.DECATHLON_PACKING_SLIP_PRINTER_MEDIA || "A4").trim();
+        const scaleRaw = Number(process.env.DECATHLON_PACKING_SLIP_PRINT_SCALE || 100);
+        const scale = Number.isFinite(scaleRaw) ? scaleRaw : 100;
+        const printResult = await submitLpJob({
+          filePath: tmpPath,
+          printerName: hpQueue,
+          media,
+          scale,
+          offsetX: Number(process.env.DECATHLON_PACKING_SLIP_PRINT_OFFSET_X || 0),
+          offsetY: Number(process.env.DECATHLON_PACKING_SLIP_PRINT_OFFSET_Y || 0),
+        });
+        if (!printResult.ok) {
+          console.warn("[DECATHLON][PACKING-SLIP] HP auto-print:", printResult.error ?? printResult.message);
+        }
+      } catch (printErr: any) {
+        console.warn("[DECATHLON][PACKING-SLIP] HP auto-print failed:", printErr?.message ?? printErr);
+      } finally {
+        await fs.unlink(tmpPath).catch(() => {});
+      }
+    }
+  }
+
   return new NextResponse(bytes, {
     status: 200,
     headers: {
