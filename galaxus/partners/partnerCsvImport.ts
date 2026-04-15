@@ -12,6 +12,7 @@ import {
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { enqueueJob } from "@/galaxus/jobs/queue";
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
 
@@ -549,11 +550,25 @@ export async function runPartnerCsvImport(
     });
   }
 
-  // Do not enqueue kickdb-enrich-missing here: it scans the whole partner prefix and
-  // autoDrain would keep retrying NOT_FOUND / weak-mapping rows. Use "Enrich new products"
-  // (partner-upload-enrich) to process PENDING_ENRICH inbox lines, or the Galaxus admin API.
+  // Do not enqueue kickdb-enrich-missing here: it scans the whole partner prefix.
 
   rowOutcomes.sort((a, b) => a.row - b.row);
+
+  if (!dryRun && importedRows > 0 && partnerKey && ctx.origin) {
+    const pendingEnrichInFile = rowOutcomes.filter((r) => r.status === "PENDING_ENRICH").length;
+    if (pendingEnrichInFile > 0) {
+      const batchLimit = 2000;
+      const jobCount = Math.ceil(pendingEnrichInFile / batchLimit);
+      for (let j = 0; j < jobCount; j++) {
+        const job = await enqueueJob(
+          "partner-upload-enrich",
+          { partnerKey, limit: batchLimit, force: false, origin: ctx.origin },
+          { priority: 0, groupKey: partnerKey }
+        );
+        if (j === 0) enrichJobId = job.id;
+      }
+    }
+  }
 
   return {
     uploadId: upload?.id ?? null,

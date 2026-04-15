@@ -1,5 +1,5 @@
 import os from "os";
-import { claimJob, completeJob, enqueueJob, failJob, touchJob } from "@/galaxus/jobs/queue";
+import { claimJob, completeJob, failJob, touchJob } from "@/galaxus/jobs/queue";
 import { runPartnerUploadEnrich } from "@/galaxus/partners/enrichUploadJob";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -8,7 +8,6 @@ type PartnerEnrichJobPayload = {
   partnerKey: string;
   limit?: number;
   force?: boolean;
-  autoDrain?: boolean;
   origin?: string | null;
 };
 
@@ -54,17 +53,6 @@ async function run() {
       });
       await completeJob(job.id, { ...payload, result });
       console.info("[worker] job completed", { jobId: job.id, processed: result.processed });
-
-      // Opt-in only (dashboard passes autoDrain=1 → payload.autoDrain true).
-      const autoDrain = payload.autoDrain === true;
-      const limit = Math.max(Number(payload.limit ?? 0), 0);
-      if (autoDrain && limit > 0 && result.candidates >= limit && result.processed > 0) {
-        await enqueueJob(
-          jobType,
-          { ...payload },
-          { priority: 0, groupKey: job.groupKey ?? payload.partnerKey ?? null }
-        );
-      }
     } catch (error: any) {
       const message = error?.message ?? "Job failed";
       const retry = job.attempts < job.maxAttempts;

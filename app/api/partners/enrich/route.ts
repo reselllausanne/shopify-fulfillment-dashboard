@@ -18,7 +18,11 @@ export async function POST(request: NextRequest) {
     const mode = (searchParams.get("mode") ?? "new").toLowerCase();
     const debug = searchParams.get("debug") === "1";
     const force = searchParams.get("force") === "1";
-    const autoDrain = searchParams.get("autoDrain") === "1";
+    /** Background: one queued job, one batch (no re-queue / autoDrain). */
+    const queue =
+      searchParams.get("queue") === "1" ||
+      // Legacy clients used autoDrain=1 only to mean "enqueue"; payload never chained jobs.
+      searchParams.get("autoDrain") === "1";
     const limit = Math.min(Number(searchParams.get("limit") ?? "500"), 2000);
 
     const partnerKey = normalizeProviderKey(session.partnerKey);
@@ -26,11 +30,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
     }
 
-    if (autoDrain) {
+    if (queue) {
       const origin = new URL(request.url).origin;
       const job = await enqueueJob(
         "partner-upload-enrich",
-        { partnerKey, limit, force, autoDrain: true, origin },
+        { partnerKey, limit, force, origin },
         { priority: 0, groupKey: partnerKey }
       );
       return NextResponse.json({

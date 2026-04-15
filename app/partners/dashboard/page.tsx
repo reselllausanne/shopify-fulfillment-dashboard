@@ -209,7 +209,7 @@ export default function PartnerDashboardPage() {
     setEnrichLog(null);
     try {
       const res = await fetch(
-        `/api/partners/enrich?mode=new&autoDrain=1&limit=500&force=${force ? 1 : 0}`,
+        `/api/partners/enrich?mode=new&queue=1&limit=2000&force=${force ? 1 : 0}`,
         {
           method: "POST",
         }
@@ -375,8 +375,8 @@ export default function PartnerDashboardPage() {
           <div>
             <div className="text-sm font-semibold text-slate-900">Enrichment</div>
             <div className="text-xs text-slate-500">
-              Enrichment runs automatically on upload. Use force re-enrich only after you change SKU/size values in the
-              catalog and want to refresh KickDB matches.
+              After upload, enrichment runs once in the background (up to 2000 rows per queued job). Use force re-enrich
+              only after you change SKU/size values in the catalog and want to refresh KickDB matches.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
