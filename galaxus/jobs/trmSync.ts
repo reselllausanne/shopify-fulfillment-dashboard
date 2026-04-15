@@ -115,7 +115,7 @@ const EMPTY_TRM_RESULT: TrmSyncResult = {
   updatedMappings: 0, durationMs: 0,
 };
 
-export async function runTrmSync(_options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
+export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
   // TRM supplier is permanently disabled — products must not be re-imported.
   console.info("[galaxus][sync:trm] TRM supplier sync is blocked — skipping");
   return EMPTY_TRM_RESULT;
@@ -142,9 +142,10 @@ export async function runTrmSync(_options: TrmSyncOptions = {}): Promise<TrmSync
   );
 
   const offset = Math.max(options.offset ?? 0, 0);
-  const limit = options.limit ? Math.max(options.limit, 0) : flattened.length;
+  const limit = options.limit != null ? Math.max(Number(options.limit), 0) : flattened.length;
   const rows = flattened.slice(offset, offset + limit);
-  const isFullRun = offset === 0 && (options.limit == null || options.limit >= flattened.length);
+  const isFullRun =
+    offset === 0 && (options.limit == null || Number(options.limit) >= flattened.length);
 
   let created = 0;
   let updated = 0;
@@ -297,7 +298,7 @@ export async function runTrmSync(_options: TrmSyncOptions = {}): Promise<TrmSync
   };
 }
 
-export async function runTrmStockSync(_options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
+export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
   // TRM supplier is permanently disabled — products must not be re-imported.
   console.info("[galaxus][sync:trm-stock] TRM supplier sync is blocked — skipping");
   return EMPTY_TRM_RESULT;
@@ -333,9 +334,10 @@ export async function runTrmStockSync(_options: TrmSyncOptions = {}): Promise<Tr
   );
 
   const offset = Math.max(options.offset ?? 0, 0);
-  const limit = options.limit ? Math.max(options.limit, 0) : flattened.length;
+  const limit = options.limit != null ? Math.max(Number(options.limit), 0) : flattened.length;
   const rows = flattened.slice(offset, offset + limit);
-  const isFullRun = offset === 0 && (options.limit == null || options.limit >= flattened.length);
+  const isFullRun =
+    offset === 0 && (options.limit == null || Number(options.limit) >= flattened.length);
 
   const now = new Date();
   let created = 0;

@@ -23,7 +23,7 @@ type CatalogSyncOptions = {
   offset?: number;
 };
 
-export async function runCatalogSync(_options: CatalogSyncOptions = {}): Promise<CatalogSyncResult> {
+export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<CatalogSyncResult> {
   // GLD (Golden) supplier is permanently disabled — products must not be re-imported.
   console.info("[galaxus][sync:catalog] GLD supplier sync is blocked — skipping");
   return { processed: 0, created: 0, updated: 0, mappingInserted: 0, mappingUpdated: 0, durationMs: 0 };
@@ -31,7 +31,7 @@ export async function runCatalogSync(_options: CatalogSyncOptions = {}): Promise
   const startedAt = Date.now();
   const items = await client.fetchCatalog();
   const offset = Math.max(options.offset ?? 0, 0);
-  const limit = options.limit ? Math.max(options.limit, 0) : items.length;
+  const limit = options.limit != null ? Math.max(Number(options.limit), 0) : items.length;
   const slicedItems = items.slice(offset, offset + limit);
 
   const now = new Date();
