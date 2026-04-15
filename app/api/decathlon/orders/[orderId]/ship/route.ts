@@ -265,7 +265,17 @@ function extractOrderDetails(payload: any) {
 function normalizeMiraklOrderStateFromPayload(order: Record<string, unknown> | null | undefined): string {
   if (!order || typeof order !== "object") return "";
   const o = order as Record<string, unknown>;
-  const raw = String(o.order_state ?? o.state ?? o.status ?? "").trim();
+  const statusObj = o.status && typeof o.status === "object" ? (o.status as Record<string, unknown>) : null;
+  const raw = String(
+    o.order_state ??
+      o.order_state_code ??
+      o.orderState ??
+      o.state ??
+      statusObj?.state ??
+      statusObj?.order_state ??
+      o.status ??
+      ""
+  ).trim();
   return raw.toUpperCase();
 }
 
@@ -275,11 +285,7 @@ function normalizeMiraklOrderStateFromPayload(order: Record<string, unknown> | n
  */
 function isMiraklAlreadyShippedTransitionError(message: string): boolean {
   const m = String(message ?? "");
-  return (
-    /current status is\s*['"]?SHIPPED['"]?/i.test(m) &&
-    /SHIPPING/i.test(m) &&
-    /expected is one of/i.test(m)
-  );
+  return /current status is\s*['"]?SHIPPED['"]?/i.test(m) && /SHIPPING/i.test(m);
 }
 
 type MiraklOrdersClient = ReturnType<typeof buildDecathlonOrdersClient>;
@@ -303,12 +309,21 @@ async function tryResolveMiraklShipmentMeta(
   }
 }
 
-/** True if we already persisted any shipment activity (lines or legacy shippedAt). */
-function orderHasLocalShipmentEvidence(order: { shipments?: unknown[] }): boolean {
+/** Units already recorded on local DecathlonShipmentLines for the given order lines (by internal line id). */
+function localShippedUnitsForLines(
+  order: { shipments?: unknown[] },
+  internalLineIds: Set<string>
+): number {
   const shipments = Array.isArray(order.shipments) ? order.shipments : [];
-  const hasLines = shipments.some((s) => Array.isArray((s as { lines?: unknown[] })?.lines) && (s as { lines: unknown[] }).lines.length > 0);
-  const legacyShipped = shipments.some((s) => Boolean((s as { shippedAt?: unknown })?.shippedAt));
-  return hasLines || legacyShipped;
+  const shipmentLines = shipments.flatMap((s: any) => (Array.isArray(s?.lines) ? s.lines : []));
+  let sum = 0;
+  for (const sl of shipmentLines) {
+    const id = String((sl as { orderLineId?: unknown }).orderLineId ?? "").trim();
+    if (!id || !internalLineIds.has(id)) continue;
+    const q = Number((sl as { quantity?: unknown }).quantity ?? 0);
+    if (Number.isFinite(q) && q > 0) sum += q;
+  }
+  return sum;
 }
 
 function isRecipientComplete(recipient: SwissPostRecipient | null | undefined) {
@@ -607,50 +622,72 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "No remaining quantity to ship" }, { status: 400 });
     }
 
-    // Mirakl is already SHIPPED but we never persisted shipment rows (e.g. shipOrder succeeded then DB write failed).
+    // Mirakl is already SHIPPED but local DB still shows remaining units (partial/stale rows, or persist failed after Mirakl ship).
     if (!itemsProvided) {
       try {
         const peekClient = buildDecathlonOrdersClient();
         const livePayload = await peekClient.getOrder(order.orderId);
         const liveOrder = extractOrderDetails(livePayload) as Record<string, unknown> | null | undefined;
         const liveState = normalizeMiraklOrderStateFromPayload(liveOrder ?? null);
-        if (liveState === "SHIPPED" && !orderHasLocalShipmentEvidence(order)) {
-          const meta = await tryResolveMiraklShipmentMeta(peekClient, order.orderId);
-          const tracking =
-            meta.trackingNumber ||
-            String(body?.trackingNumber ?? "").trim() ||
-            String(order.orderId ?? "").trim();
-          const shipment = await (prisma as any).decathlonShipment.create({
-            data: {
-              orderId: order.id,
-              miraklShipmentId: meta.miraklShipmentId,
-              carrierFinal: "swisspost",
-              carrierRaw: "swisspost",
-              trackingNumber: tracking,
-              shippedAt: new Date(),
-              labelGeneratedAt: null,
-            },
-          });
-          await (prisma as any).decathlonShipmentLine.createMany({
-            data: itemsToShip.map(({ line, quantity }) => ({
+        if (liveState === "SHIPPED") {
+          const internalIds = new Set(
+            itemsToShip.map(({ line }) => String(line?.id ?? "").trim()).filter(Boolean)
+          );
+          const targetUnits = itemsToShip.reduce((s, { quantity }) => s + quantity, 0);
+          const shippedLocal = localShippedUnitsForLines(order, internalIds);
+
+          if (targetUnits > 0 && shippedLocal >= targetUnits) {
+            await (prisma as any).decathlonOrder.update({
+              where: { id: order.id },
+              data: { orderState: "SHIPPED" },
+            });
+            return NextResponse.json({
+              ok: true,
+              reconciled: true,
+              alreadyInSync: true,
+              message:
+                "Mirakl is already SHIPPED and local shipment lines already cover these units — refreshed order state only (no Swiss Post label).",
+            });
+          }
+
+          if (targetUnits > 0 && shippedLocal < targetUnits) {
+            const meta = await tryResolveMiraklShipmentMeta(peekClient, order.orderId);
+            const tracking =
+              meta.trackingNumber ||
+              String(body?.trackingNumber ?? "").trim() ||
+              String(order.orderId ?? "").trim();
+            const shipment = await (prisma as any).decathlonShipment.create({
+              data: {
+                orderId: order.id,
+                miraklShipmentId: meta.miraklShipmentId,
+                carrierFinal: "swisspost",
+                carrierRaw: "swisspost",
+                trackingNumber: tracking,
+                shippedAt: new Date(),
+                labelGeneratedAt: null,
+              },
+            });
+            await (prisma as any).decathlonShipmentLine.createMany({
+              data: itemsToShip.map(({ line, quantity }) => ({
+                shipmentId: shipment.id,
+                orderLineId: line.id,
+                quantity,
+              })),
+            });
+            await (prisma as any).decathlonOrder.update({
+              where: { id: order.id },
+              data: { orderState: "SHIPPED" },
+            });
+            return NextResponse.json({
+              ok: true,
+              reconciled: true,
               shipmentId: shipment.id,
-              orderLineId: line.id,
-              quantity,
-            })),
-          });
-          await (prisma as any).decathlonOrder.update({
-            where: { id: order.id },
-            data: { orderState: "SHIPPED" },
-          });
-          return NextResponse.json({
-            ok: true,
-            reconciled: true,
-            shipmentId: shipment.id,
-            trackingNumber: tracking,
-            miraklShipmentId: meta.miraklShipmentId,
-            message:
-              "Mirakl order was already SHIPPED; local DB had no shipment rows — synced without creating a new Swiss Post label.",
-          });
+              trackingNumber: tracking,
+              miraklShipmentId: meta.miraklShipmentId,
+              message:
+                "Mirakl order was already SHIPPED; local DB was behind — synced remaining lines without calling Mirakl ship or Swiss Post.",
+            });
+          }
         }
       } catch (reconcileProbeErr) {
         console.warn("[DECATHLON][SHIP] Mirakl SHIPPED preflight skipped:", reconcileProbeErr);
