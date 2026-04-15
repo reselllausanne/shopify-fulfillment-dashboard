@@ -182,7 +182,13 @@ export default function ScanPage() {
         `/api/decathlon/orders/${orderRef}/documents/packing-slip`,
         `decathlon-delivery_${orderRef}.pdf`
       );
-      window.alert(`Decathlon order ${orderRef} shipped + packing slip downloaded.`);
+      if (shipData.reconciled) {
+        window.alert(
+          `Decathlon order ${orderRef}: Mirakl was already shipped; your dashboard DB is now synced. Packing slip downloaded.`
+        );
+      } else {
+        window.alert(`Decathlon order ${orderRef} shipped + packing slip downloaded.`);
+      }
     } catch (error: any) {
       window.alert(
         `Decathlon auto-fulfill failed for AWB ${awb}: ${error?.message ?? "Unknown error"}`
