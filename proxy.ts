@@ -9,6 +9,7 @@ const PUBLIC_PATHS = [
   "/api/galaxus/ops",
   "/api/galaxus/feeds",
   "/api/galaxus/export",
+  "/api/tracking/token",
   "/_next",
   "/static",
   "/favicon.ico",
