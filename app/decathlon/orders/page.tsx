@@ -53,6 +53,42 @@ export default function DecathlonOrdersPage() {
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [splitQuantities, setSplitQuantities] = useState<Record<string, number>>({});
   const [splitSubmitting, setSplitSubmitting] = useState(false);
+  const [partnerFeeStats, setPartnerFeeStats] = useState<{
+    spreadChf: number;
+    decathlonShippedChf: number;
+    partnerCatalogChf: number;
+    shippedLineCount: number;
+    currency: string;
+  } | null>(null);
+  const [partnerFeeStatsErr, setPartnerFeeStatsErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/decathlon/partner-shipped-fees", { cache: "no-store" });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load partner fee stats");
+        setPartnerFeeStats({
+          spreadChf: Number(data.spreadChf ?? 0),
+          decathlonShippedChf: Number(data.decathlonShippedChf ?? 0),
+          partnerCatalogChf: Number(data.partnerCatalogChf ?? 0),
+          shippedLineCount: Number(data.shippedLineCount ?? 0),
+          currency: String(data.currency ?? "CHF"),
+        });
+        setPartnerFeeStatsErr(null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setPartnerFeeStats(null);
+          setPartnerFeeStatsErr(e?.message ?? "Failed to load");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setProductSearch(productSearchInput.trim()), 400);
@@ -543,6 +579,34 @@ export default function DecathlonOrdersPage() {
           <a href="/decathlon" className="px-3 py-2 rounded bg-gray-100 text-sm">
             Decathlon Ops
           </a>
+          {partnerFeeStats ? (
+            <div
+              className="max-w-md rounded border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-left text-xs text-emerald-950"
+              title="Decathlon Mirakl line price × shipped qty minus partner catalog feed price × qty. NER excluded."
+            >
+              <div className="font-semibold text-emerald-900">Partner fees (reference)</div>
+              <div>
+                Spread {partnerFeeStats.currency} {partnerFeeStats.spreadChf.toFixed(2)} · Decathlon{" "}
+                {partnerFeeStats.decathlonShippedChf.toFixed(2)} vs catalog {partnerFeeStats.partnerCatalogChf.toFixed(
+                  2
+                )}{" "}
+                · {partnerFeeStats.shippedLineCount} lines
+              </div>
+              <div className="mt-0.5 text-[10px] text-emerald-800/85">
+                If catalog ≈ 90% of Decathlon sell, implied fee band ≈{" "}
+                {(partnerFeeStats.decathlonShippedChf * 0.1).toFixed(2)} {partnerFeeStats.currency} on shipped
+                revenue.
+              </div>
+            </div>
+          ) : partnerFeeStatsErr ? (
+            <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Fee stats: {partnerFeeStatsErr}
+            </div>
+          ) : (
+            <div className="rounded border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
+              Loading partner fee stats…
+            </div>
+          )}
           <button
             onClick={() => void ingestNewOrders()}
             disabled={loadingOrders || polling}

@@ -5,6 +5,7 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
+import { filterDecathlonLinesForPartner } from "@/decathlon/orders/partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,12 +48,13 @@ export async function GET(
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
-    const hasPartnerLine = partnerKey
-      ? (order.lines ?? []).some((line: any) =>
-          String(line.offerSku ?? "").toUpperCase().startsWith(`${partnerKey}_`)
-        )
-      : false;
-    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey && !hasPartnerLine) {
+    const partnerAccess =
+      !partnerKey ||
+      normalizeProviderKey(order.partnerKey) === partnerKey ||
+      (order.lines ?? []).some((line: any) =>
+        String(line.offerSku ?? "").toUpperCase().startsWith(`${partnerKey}_`)
+      );
+    if (scope === "partner" && partnerKey && !partnerAccess) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
@@ -62,12 +64,10 @@ export async function GET(
     });
     const orderWithMatches = { ...order, stockxMatches };
 
-    let lines: any[] = orderWithMatches.lines ?? [];
-    if (scope === "partner" && partnerKey) {
-      lines = lines.filter((line: any) =>
-        String(line.offerSku ?? "").toUpperCase().startsWith(`${partnerKey}_`)
-      );
-    }
+    const lines: any[] =
+      scope === "partner" && partnerKey
+        ? filterDecathlonLinesForPartner(orderWithMatches.lines ?? [], orderWithMatches, partnerKey)
+        : orderWithMatches.lines ?? [];
     const [kickdbByLineId, catalogByLineId] = await Promise.all([
       enrichDecathlonOrderLinesWithKickdb(lines),
       enrichDecathlonOrderLinesWithSupplierCatalog(lines),

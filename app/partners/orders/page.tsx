@@ -103,6 +103,41 @@ export default function PartnerOrdersPage() {
   const displayLineTitle = (line: any) =>
     line.kickdb?.variantName || line.kickdb?.productTitle || miraklLineLabel(line);
 
+  const shippedPartnerBreakdown = useMemo(() => {
+    if (!selectedOrder?.shipments?.length) return [];
+    const partnerLines: any[] = Array.isArray(selectedOrder.lines) ? selectedOrder.lines : [];
+    const lineIds = new Set(partnerLines.map((l) => l.id));
+    const linesById = new Map(partnerLines.map((l) => [l.id, l]));
+    const rows: Array<{
+      key: string;
+      title: string;
+      qty: number;
+      tracking: string;
+      shippedAt: string | null;
+    }> = [];
+    for (const s of selectedOrder.shipments) {
+      if (!s.shippedAt) continue;
+      const tracking = String(s.trackingNumber ?? s.trackingUrl ?? "").trim();
+      const shippedAt = s.shippedAt ? String(s.shippedAt) : null;
+      const shipId = String(s.id ?? "");
+      for (const sl of s.lines ?? []) {
+        if (!lineIds.has(sl.orderLineId)) continue;
+        const line = linesById.get(sl.orderLineId);
+        if (!line) continue;
+        const qty = Number(sl.quantity ?? 0);
+        if (!Number.isFinite(qty) || qty <= 0) continue;
+        rows.push({
+          key: `${shipId}-${sl.orderLineId}-${sl.quantity}`,
+          title: line.kickdb?.variantName || line.kickdb?.productTitle || miraklLineLabel(line),
+          qty,
+          tracking,
+          shippedAt,
+        });
+      }
+    }
+    return rows;
+  }, [selectedOrder]);
+
   const downloadPdf = async (url: string, fallbackName: string) => {
     const res = await fetch(url, { method: "GET", cache: "no-store" });
     if (!res.ok) {
@@ -269,6 +304,35 @@ export default function PartnerOrdersPage() {
                   {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
                 </div>
               </div>
+              {shippedPartnerBreakdown.length > 0 ? (
+                <div className="rounded border border-emerald-200 bg-emerald-50/50 p-3 text-xs space-y-2">
+                  <div className="font-semibold text-emerald-900">Shipped (your lines)</div>
+                  <ul className="space-y-1.5">
+                    {shippedPartnerBreakdown.map((row) => (
+                      <li key={row.key} className="flex flex-col gap-0.5 text-emerald-950 border-b border-emerald-100/80 pb-1.5 last:border-0 last:pb-0">
+                        <div className="flex flex-wrap justify-between gap-2">
+                          <span className="min-w-0 flex-1">
+                            <span className="font-medium">{row.title}</span>
+                            <span className="text-emerald-800/80"> × {row.qty}</span>
+                          </span>
+                          <span className="shrink-0 text-[11px] text-emerald-800/90">
+                            {row.tracking ? `Tracking: ${row.tracking}` : "Tracking: —"}
+                          </span>
+                        </div>
+                        {row.shippedAt ? (
+                          <div className="text-[10px] text-emerald-800/75">
+                            Shipped{" "}
+                            {new Date(row.shippedAt).toLocaleString("fr-CH", {
+                              dateStyle: "short",
+                              timeStyle: "short",
+                            })}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 {(selectedOrder.lines || []).map((line: any) => {
                   const cat = line.catalog ?? null;

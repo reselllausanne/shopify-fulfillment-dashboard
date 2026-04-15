@@ -53,6 +53,9 @@ export default function PartnerDashboardPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
+  const [shippedSalesChf, setShippedSalesChf] = useState<number | null>(null);
+  const [shippedSalesLines, setShippedSalesLines] = useState<number | null>(null);
+  const [shippedSalesExcluded, setShippedSalesExcluded] = useState(false);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -74,6 +77,25 @@ export default function PartnerDashboardPage() {
 
   const normalizeState = (state?: string | null) => String(state ?? "").trim().toUpperCase();
   const canceledStates = new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]);
+
+  const loadShippedSales = async () => {
+    try {
+      const res = await fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) return;
+      if (data.excluded) {
+        setShippedSalesExcluded(true);
+        setShippedSalesChf(0);
+        setShippedSalesLines(0);
+        return;
+      }
+      setShippedSalesExcluded(false);
+      setShippedSalesChf(Number(data.partnerCatalogShippedChf ?? 0));
+      setShippedSalesLines(Number(data.shippedLineCount ?? 0));
+    } catch {
+      // silent
+    }
+  };
 
   const loadOrdersSummary = async () => {
     try {
@@ -137,6 +159,7 @@ export default function PartnerDashboardPage() {
         setPartner(data.partner);
         loadHistory();
         loadOrdersSummary();
+        loadShippedSales();
       }
     };
     load();
@@ -285,6 +308,24 @@ export default function PartnerDashboardPage() {
               : `${ordersToProcessCount} order${ordersToProcessCount === 1 ? "" : "s"} to process`}
           </div>
         </button>
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
+          <div className="text-xs uppercase tracking-wide text-slate-400">Shipped sales (catalog)</div>
+          {shippedSalesExcluded ? (
+            <div className="mt-2 text-xs text-slate-500">Not shown for this partner.</div>
+          ) : shippedSalesChf == null ? (
+            <div className="mt-2 text-xs text-slate-500">Loading…</div>
+          ) : (
+            <>
+              <div className="mt-2 text-2xl font-semibold text-slate-900">
+                CHF {shippedSalesChf.toFixed(2)}
+              </div>
+              <div className="text-xs text-slate-500">
+                Your feed price × shipped units ({shippedSalesLines ?? 0} shipment line
+                {(shippedSalesLines ?? 0) === 1 ? "" : "s"}). Excludes NER.
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
