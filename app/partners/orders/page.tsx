@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { decathlonMiraklSellTotal, decathlonPayoutLineAmount } from "@/decathlon/orders/margin";
+import { decathlonLinePayoutPreferMirakl, decathlonMiraklSellTotal } from "@/decathlon/orders/margin";
 import { decathlonMiraklSellerPayoutLineTotal } from "@/decathlon/orders/miraklLinePayout";
 
 type OrderListItem = {
@@ -35,7 +35,6 @@ export default function PartnerOrdersPage() {
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
-  const [partnerKeyUi, setPartnerKeyUi] = useState<string | null>(null);
 
   const loadOrders = async () => {
     setLoadingOrders(true);
@@ -76,22 +75,6 @@ export default function PartnerOrdersPage() {
   useEffect(() => {
     loadOrders();
   }, [leftTab]);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        const me = await fetch("/api/partners/me", { cache: "no-store" });
-        if (!me.ok) return;
-        const meJson = await me.json();
-        const k = String(meJson.partner?.key ?? "")
-          .trim()
-          .toUpperCase();
-        setPartnerKeyUi(k || null);
-      } catch {
-        // silent
-      }
-    })();
-  }, []);
 
   useEffect(() => {
     if (selectedOrderId) {
@@ -326,6 +309,39 @@ export default function PartnerOrdersPage() {
               <div className="text-sm text-slate-600">
                 {selectedOrder.orderId} · {selectedOrder.orderNumber ?? "—"}
               </div>
+              {Array.isArray(selectedOrder.lines) && selectedOrder.lines.length > 0 ? (
+                <div className="rounded border border-slate-200 bg-slate-50/90 p-3 text-xs space-y-2">
+                  <div className="font-semibold text-slate-900">Products sold</div>
+                  <ul className="space-y-1.5">
+                    {selectedOrder.lines.map((line: any) => {
+                      const sell = decathlonMiraklSellTotal(line);
+                      const pay = decathlonLinePayoutPreferMirakl(line);
+                      const mir = decathlonMiraklSellerPayoutLineTotal(line.rawJson);
+                      return (
+                        <li
+                          key={line.id}
+                          className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-slate-700 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0"
+                        >
+                          <span className="min-w-0 flex-1 font-medium text-slate-900">{displayLineTitle(line)}</span>
+                          <span className="font-mono text-[10px] text-slate-500 shrink-0">
+                            {line.offerSku ?? "—"}
+                          </span>
+                          <span className="text-slate-500 shrink-0">×{line.quantity ?? "—"}</span>
+                          <span className="w-full text-right sm:w-auto sm:ml-auto shrink-0 text-[10px] text-slate-600">
+                            {sell != null ? <>Sell CHF {sell.toFixed(2)}</> : null}
+                            {sell != null && pay != null ? <span className="text-slate-400"> · </span> : null}
+                            {pay != null ? (
+                              <span className="font-semibold text-slate-900">
+                                {mir != null ? "Payout Mirakl" : "Payout (est.)"} CHF {pay.toFixed(2)}
+                              </span>
+                            ) : null}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
               <div className="text-xs text-slate-500 border-b border-slate-100 pb-2 space-y-0.5">
                 <div className="font-medium text-slate-700">{selectedOrder.recipientName ?? "—"}</div>
                 <div>
@@ -371,8 +387,7 @@ export default function PartnerOrdersPage() {
                   const sellBrut = decathlonMiraklSellTotal(line);
                   const miraklRaw = line.rawJson ?? line;
                   const payoutMiraklLine = decathlonMiraklSellerPayoutLineTotal(miraklRaw);
-                  const payoutLineEstimate = decathlonPayoutLineAmount(line);
-                  const isNer = partnerKeyUi === "NER";
+                  const payoutPreferred = decathlonLinePayoutPreferMirakl(line);
                   const sizeDisplay =
                     cat?.sizeRaw ??
                     line.kickdb?.sizeRaw ??
@@ -426,21 +441,13 @@ export default function PartnerOrdersPage() {
                           </div>
                         </div>
                         <div className="text-right shrink-0 space-y-0.5">
-                          {!isNer && sellBrut != null ? (
-                            <div className="text-slate-800 font-medium">Sell Mirakl (ligne): CHF {sellBrut.toFixed(2)}</div>
-                          ) : null}
-                          {isNer && sellBrut != null ? (
+                          {sellBrut != null ? (
                             <div className="text-slate-400 text-[10px]">Sell Mirakl (ligne): CHF {sellBrut.toFixed(2)}</div>
                           ) : null}
-                          {isNer && payoutMiraklLine != null ? (
+                          {payoutPreferred != null ? (
                             <div className="text-slate-800 font-medium">
-                              Payout (Mirakl order line): CHF {payoutMiraklLine.toFixed(2)}
-                            </div>
-                          ) : null}
-                          {isNer && payoutMiraklLine == null && payoutLineEstimate != null ? (
-                            <div className="text-amber-800 text-[11px]">
-                              Mirakl payout totals missing in stored line — internal estimate: CHF{" "}
-                              {payoutLineEstimate.toFixed(2)}
+                              {payoutMiraklLine != null ? "Payout (Mirakl order line)" : "Payout (est.)"}: CHF{" "}
+                              {payoutPreferred.toFixed(2)}
                             </div>
                           ) : null}
                         </div>

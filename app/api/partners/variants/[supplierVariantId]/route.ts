@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
-import { assertMappingIntegrity } from "@/galaxus/supplier/providerKey";
+import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,14 +86,20 @@ export async function DELETE(
   }
 
   await prismaAny.variantMapping.deleteMany({ where: { supplierVariantId: decodedSupplierVariantId } });
-  await prismaAny.partnerUploadRow?.deleteMany({
-    where: {
-      providerKey: session.partnerKey?.toUpperCase() ?? "",
-      sku: variant.supplierSku ?? "",
-      sizeNormalized: variant.sizeNormalized ?? "",
-    },
-  });
+  const pk = normalizeProviderKey(session.partnerKey);
+  if (pk) {
+    await prismaAny.partnerUploadRow?.deleteMany({
+      where: {
+        providerKey: pk,
+        sku: variant.supplierSku ?? "",
+        sizeNormalized: variant.sizeNormalized ?? "",
+      },
+    });
+  }
   await prismaAny.supplierVariant.delete({ where: { supplierVariantId: decodedSupplierVariantId } });
+
+  const origin = new URL(req.url).origin;
+  await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
 
   return NextResponse.json({ ok: true });
 }

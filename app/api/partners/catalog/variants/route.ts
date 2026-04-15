@@ -4,6 +4,7 @@ import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeSize, normalizeSku } from "@/app/lib/normalize";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { enrichSupplierVariantsForListing } from "@/galaxus/supplier/supplierVariantListExtras";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
@@ -87,22 +88,35 @@ export async function GET(req: NextRequest) {
     skip: offset,
   });
 
-  const mapped = items.map((item) => {
+  const enriched = await enrichSupplierVariantsForListing(prisma, items);
+
+  const mapped = enriched.map((item) => {
+    const extras = {
+      displayProductName: item.displayProductName,
+      partnerKeyResolved: item.partnerKeyResolved,
+      partnerDisplayName: item.partnerDisplayName,
+      kickdbProductName: item.kickdbProductName,
+    };
     const owned = isNer ? true : ownsVariant(item.supplierVariantId, session.partnerKey);
     if (!owned) {
       return {
+        ...extras,
         owned,
         supplierVariantId: item.supplierVariantId,
         providerKey: item.providerKey ?? null,
         gtin: item.gtin ?? null,
         supplierSku: item.supplierSku ?? null,
+        supplierBrand: item.supplierBrand ?? null,
         supplierProductName: item.supplierProductName ?? null,
         sizeRaw: item.sizeRaw ?? null,
+        sizeNormalized: item.sizeNormalized ?? null,
         price: item.price ?? null,
+        stock: item.stock ?? null,
         updatedAt: item.updatedAt ?? null,
       };
     }
     return {
+      ...extras,
       owned,
       supplierVariantId: item.supplierVariantId,
       providerKey: item.providerKey ?? null,

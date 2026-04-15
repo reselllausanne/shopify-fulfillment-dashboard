@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
+import { enrichSupplierVariantsForListing } from "@/galaxus/supplier/supplierVariantListExtras";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,8 +30,9 @@ export async function GET(request: Request) {
     skip: offset,
   });
 
+  const enriched = await enrichSupplierVariantsForListing(prisma, items);
   const nextOffset = items.length === limit ? offset + limit : null;
-  return NextResponse.json({ ok: true, items, nextOffset });
+  return NextResponse.json({ ok: true, items: enriched, nextOffset });
 }
 
 type UpdatePayload = {

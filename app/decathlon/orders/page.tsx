@@ -4,11 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import {
+  decathlonLinePayoutPreferMirakl,
   decathlonMarginFromGrossAndCost,
   decathlonMiraklSellTotal,
   decathlonOrderMarginRollup,
-  decathlonPayoutLineAmount,
 } from "@/decathlon/orders/margin";
+import { decathlonMiraklSellerPayoutLineTotal } from "@/decathlon/orders/miraklLinePayout";
 
 type OrderListItem = {
   id: string;
@@ -394,7 +395,7 @@ export default function DecathlonOrdersPage() {
       return;
     }
     const match = matchesByLine.get(line.id) ?? null;
-    const payoutLine = decathlonPayoutLineAmount(line);
+    const payoutLine = decathlonLinePayoutPreferMirakl(line);
     const savedCost = match?.stockxAmount != null ? Number(match.stockxAmount) : null;
     const resolvedCost = Number.isFinite(savedCost as number) ? (savedCost as number) : null;
     const marginBreakdown =
@@ -884,6 +885,39 @@ export default function DecathlonOrdersPage() {
                     ))}
                 </div>
               ) : null}
+              {Array.isArray(selectedOrder.lines) && selectedOrder.lines.length > 0 ? (
+                <div className="text-xs border border-gray-200 rounded p-2 space-y-1.5 bg-gray-50/80">
+                  <div className="font-medium text-gray-800">Products sold</div>
+                  <ul className="space-y-1.5">
+                    {selectedOrder.lines.map((line: any) => {
+                      const sell = decathlonMiraklSellTotal(line);
+                      const pay = decathlonLinePayoutPreferMirakl(line);
+                      const mir = decathlonMiraklSellerPayoutLineTotal(line.rawJson);
+                      return (
+                        <li
+                          key={line.id}
+                          className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-gray-700 border-b border-gray-100/80 pb-1.5 last:border-0 last:pb-0"
+                        >
+                          <span className="min-w-0 flex-1 font-medium text-gray-900">{buildLineTitle(line)}</span>
+                          <span className="font-mono text-[10px] text-gray-500 shrink-0">
+                            {line.offerSku ?? "—"}
+                          </span>
+                          <span className="text-gray-500 shrink-0">×{line.quantity ?? "—"}</span>
+                          <span className="w-full text-right text-[10px] text-gray-600 sm:w-auto sm:ml-auto">
+                            {sell != null ? <>Sell CHF {sell.toFixed(2)}</> : null}
+                            {sell != null && pay != null ? <span className="text-gray-400"> · </span> : null}
+                            {pay != null ? (
+                              <span className="font-medium text-gray-900">
+                                {mir != null ? "Payout Mirakl" : "Payout (est.)"} CHF {pay.toFixed(2)}
+                              </span>
+                            ) : null}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
               <div className="text-xs text-gray-500 border-b border-gray-100 pb-2 space-y-0.5">
                 <div className="font-medium text-gray-700">{selectedOrder.recipientName ?? "—"}</div>
                 <div>
@@ -897,7 +931,7 @@ export default function DecathlonOrdersPage() {
               {orderMarginRollup && orderMarginRollup.linesNetAfterDecathlon > 0 ? (
                 <div className="text-xs text-gray-600 space-y-0.5 border-t border-gray-100 pt-2">
                   <div>
-                    <span className="text-gray-500">Payout Decathlon (est.)</span>{" "}
+                    <span className="text-gray-500">Payout total (lignes, Mirakl si dispo)</span>{" "}
                     <span className="font-semibold text-gray-900">
                       CHF {orderMarginRollup.linesNetAfterDecathlon.toFixed(2)}
                     </span>
@@ -919,7 +953,8 @@ export default function DecathlonOrdersPage() {
                   const cat = line.catalog ?? null;
                   const lineOk = isStockxMatchLinked(match);
                   const sellBrut = decathlonMiraklSellTotal(line);
-                  const payoutLine = decathlonPayoutLineAmount(line);
+                  const payoutMiraklOnly = decathlonMiraklSellerPayoutLineTotal(line.rawJson);
+                  const payoutLine = decathlonLinePayoutPreferMirakl(line);
                   const cost = Number(match?.stockxAmount ?? NaN);
                   const lineMargin =
                     lineOk && payoutLine != null && Number.isFinite(cost)
@@ -1050,7 +1085,8 @@ export default function DecathlonOrdersPage() {
                           ) : null}
                           {payoutLine != null ? (
                             <div className="text-gray-800 font-medium">
-                              Payout Decathlon: CHF {payoutLine.toFixed(2)}
+                              {payoutMiraklOnly != null ? "Payout (Mirakl)" : "Payout (est.)"}: CHF{" "}
+                              {payoutLine.toFixed(2)}
                             </div>
                           ) : null}
                           {lineOk && lineMargin ? (

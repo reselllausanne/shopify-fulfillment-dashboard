@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation";
 type CatalogItem = {
   supplierVariantId: string;
   owned: boolean;
+  displayProductName?: string | null;
+  partnerKeyResolved?: string | null;
+  partnerDisplayName?: string | null;
+  kickdbProductName?: string | null;
   providerKey?: string | null;
   gtin?: string | null;
   supplierSku?: string | null;
@@ -292,7 +296,6 @@ export default function PartnerCatalogPage() {
   };
 
   const deleteRow = async (row: CatalogItem) => {
-    if (!isNer) return;
     if (!row.owned) return;
     if (!confirm(`Remove ${row.supplierSku ?? row.supplierVariantId}?`)) return;
     setBusyId(row.supplierVariantId);
@@ -375,6 +378,8 @@ export default function PartnerCatalogPage() {
           <thead className="bg-slate-50">
             <tr>
               <th className="px-2 py-2 text-left">Variant ID</th>
+              <th className="px-2 py-2 text-left">Partner</th>
+              <th className="px-2 py-2 text-left">Product</th>
               <th className="px-2 py-2 text-left">SKU</th>
               <th className="px-2 py-2 text-left">GTIN</th>
               <th className="px-2 py-2 text-left">Size</th>
@@ -388,6 +393,14 @@ export default function PartnerCatalogPage() {
             {items.map((row) => (
               <tr key={row.supplierVariantId} className="border-t">
                 <td className="px-2 py-2 font-mono">{row.supplierVariantId}</td>
+                <td className="px-2 py-2 text-slate-700">
+                  {row.partnerDisplayName ?? row.partnerKeyResolved ?? row.providerKey ?? "—"}
+                </td>
+                <td className="px-2 py-2 min-w-[10rem] max-w-[18rem]">
+                  <span className="line-clamp-2" title={row.displayProductName ?? row.supplierProductName ?? ""}>
+                    {row.displayProductName ?? row.supplierProductName ?? "—"}
+                  </span>
+                </td>
                 <td className="px-2 py-2">{row.supplierSku ?? "-"}</td>
                 <td className="px-2 py-2 font-mono">{row.gtin ?? "-"}</td>
                 <td className="px-2 py-2">{row.sizeRaw ?? "-"}</td>
@@ -435,22 +448,20 @@ export default function PartnerCatalogPage() {
                         {busyId === row.supplierVariantId ? "Saving…" : "Save"}
                       </button>
                       {isNer ? (
-                        <>
-                          <button
-                            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700"
-                            onClick={() => openFullEdit(row)}
-                          >
-                            Full edit
-                          </button>
-                          <button
-                            className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-600"
-                            onClick={() => deleteRow(row)}
-                            disabled={busyId === row.supplierVariantId}
-                          >
-                            Remove
-                          </button>
-                        </>
+                        <button
+                          className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700"
+                          onClick={() => openFullEdit(row)}
+                        >
+                          Full edit
+                        </button>
                       ) : null}
+                      <button
+                        className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-600"
+                        onClick={() => deleteRow(row)}
+                        disabled={busyId === row.supplierVariantId}
+                      >
+                        Remove
+                      </button>
                     </div>
                   ) : (
                     <span className="text-slate-400">Read only</span>
@@ -460,7 +471,7 @@ export default function PartnerCatalogPage() {
             ))}
             {items.length === 0 && (
               <tr>
-                <td className="px-2 py-4 text-center text-slate-500" colSpan={8}>
+                <td className="px-2 py-4 text-center text-slate-500" colSpan={10}>
                   No catalog rows found.
                 </td>
               </tr>

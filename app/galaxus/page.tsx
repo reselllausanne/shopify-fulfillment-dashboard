@@ -24,12 +24,18 @@ type SupplierVariant = {
   supplierSku: string;
   providerKey?: string | null;
   gtin?: string | null;
+  supplierBrand?: string | null;
+  supplierProductName?: string | null;
   price: string;
   stock: number;
   sizeRaw: string | null;
   images: unknown;
   leadTimeDays: number | null;
   updatedAt: string;
+  displayProductName?: string;
+  partnerKeyResolved?: string | null;
+  partnerDisplayName?: string | null;
+  kickdbProductName?: string | null;
 };
 
 type MappingRow = {
@@ -2233,6 +2239,8 @@ export function GalaxusWarehouseDashboard() {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-2 py-1 text-left">Variant ID</th>
+                <th className="px-2 py-1 text-left">Partner</th>
+                <th className="px-2 py-1 text-left">Product</th>
                 <th className="px-2 py-1 text-left">SKU</th>
                 <th className="px-2 py-1 text-left">ProviderKey</th>
                 <th className="px-2 py-1 text-left">Size</th>
@@ -2245,17 +2253,37 @@ export function GalaxusWarehouseDashboard() {
               {dbItems.map((item) => (
                 <tr key={item.supplierVariantId} className="border-t">
                   <td className="px-2 py-1">{item.supplierVariantId}</td>
+                  <td className="px-2 py-1 text-gray-800">
+                    {item.partnerDisplayName ?? item.partnerKeyResolved ?? item.providerKey ?? ""}
+                  </td>
+                  <td className="px-2 py-1 max-w-[14rem] truncate" title={item.displayProductName ?? item.supplierProductName ?? ""}>
+                    {item.displayProductName ?? item.supplierProductName ?? "—"}
+                  </td>
                   <td className="px-2 py-1">{item.supplierSku}</td>
                   <td className="px-2 py-1">{item.providerKey ?? ""}</td>
                   <td className="px-2 py-1">{item.sizeRaw ?? ""}</td>
                   <td className="px-2 py-1 text-right">{item.price}</td>
-                  <td className="px-2 py-1 text-right">{item.stock}</td>
+                  <td className="px-2 py-1 text-right">
+                    {Number(item.stock) > 0 ? (
+                      <span className="inline-flex flex-col items-end leading-tight">
+                        <span className="text-emerald-800 font-medium">In stock</span>
+                        {(item.partnerDisplayName ?? item.partnerKeyResolved) ? (
+                          <span className="text-[10px] font-normal text-gray-600">
+                            ({item.partnerDisplayName ?? item.partnerKeyResolved})
+                          </span>
+                        ) : null}
+                        <span className="text-[10px] text-gray-500">{item.stock} u.</span>
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">0</span>
+                    )}
+                  </td>
                   <td className="px-2 py-1">{new Date(item.updatedAt).toLocaleString()}</td>
                 </tr>
               ))}
               {dbItems.length === 0 && (
                 <tr>
-                  <td className="px-2 py-3 text-gray-500" colSpan={7}>
+                  <td className="px-2 py-3 text-gray-500" colSpan={9}>
                     No DB data loaded.
                   </td>
                 </tr>

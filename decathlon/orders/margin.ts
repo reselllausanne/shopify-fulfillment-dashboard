@@ -1,3 +1,5 @@
+import { decathlonMiraklSellerPayoutLineTotal } from "./miraklLinePayout";
+
 /**
  * Decathlon payout (ligne) ≈ même logique que le récap Mirakl :
  * total ligne − commission (~17 % du total) − taxes (~8 % du total).
@@ -48,6 +50,21 @@ export function decathlonPayoutLineAmount(line: {
 /** @deprecated Utiliser `decathlonPayoutLineAmount` */
 export const decathlonGrossLineAmount = decathlonPayoutLineAmount;
 
+/**
+ * Payout ligne pour affichage / marge : montant Mirakl (`total_price − total_commission` sur `rawJson`) si présent,
+ * sinon estimation `decathlonPayoutLineAmount`.
+ */
+export function decathlonLinePayoutPreferMirakl(line: {
+  rawJson?: unknown;
+  lineTotal?: unknown;
+  unitPrice?: unknown;
+  quantity?: unknown;
+}): number | null {
+  const m = decathlonMiraklSellerPayoutLineTotal(line.rawJson);
+  if (m != null) return m;
+  return decathlonPayoutLineAmount(line);
+}
+
 /** Marge vs coût StockX ; premier arg = payout ligne Decathlon. */
 export function decathlonMarginFromGrossAndCost(
   lineAfterDecathlon: number,
@@ -65,7 +82,7 @@ export function decathlonMarginFromGrossAndCost(
 }
 
 export type DecathlonOrderMarginRollup = {
-  /** Somme des payouts ligne (après commission + TVA). */
+  /** Somme des payouts ligne (Mirakl si dispo, sinon estimation 17 % / 8 %). */
   linesNetAfterDecathlon: number;
   costLinkedLines: number;
   linesWithCost: number;
@@ -77,7 +94,13 @@ export type DecathlonOrderMarginRollup = {
 };
 
 export function decathlonOrderMarginRollup(
-  lines: Array<{ id: string; lineTotal?: unknown; unitPrice?: unknown; quantity?: unknown }>,
+  lines: Array<{
+    id: string;
+    rawJson?: unknown;
+    lineTotal?: unknown;
+    unitPrice?: unknown;
+    quantity?: unknown;
+  }>,
   stockxLineCost: (lineId: string) => number | null
 ): DecathlonOrderMarginRollup {
   let linesNetAfterDecathlon = 0;
@@ -85,7 +108,7 @@ export function decathlonOrderMarginRollup(
   let linesWithCost = 0;
   const lineCount = lines.length;
   for (const line of lines) {
-    const g = decathlonPayoutLineAmount(line);
+    const g = decathlonLinePayoutPreferMirakl(line);
     if (g != null) linesNetAfterDecathlon += g;
     const cost = stockxLineCost(String(line.id));
     if (cost != null) {

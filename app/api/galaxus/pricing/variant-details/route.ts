@@ -78,7 +78,13 @@ export async function GET(request: Request) {
   });
 
   if (!mapping) {
-    return NextResponse.json({ ok: false, error: "Mapping not found" }, { status: 404 });
+    return NextResponse.json({
+      ok: true,
+      mapping: null,
+      kickdbVariant: null,
+      kickdbProduct: null,
+      mappingMissing: true,
+    });
   }
 
   return NextResponse.json({
@@ -102,13 +108,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Missing supplierVariantId" }, { status: 400 });
     }
 
-    const mapping = await prisma.variantMapping.findUnique({
+    let mapping = await prisma.variantMapping.findUnique({
       where: { supplierVariantId },
       include: { kickdbVariant: { include: { product: true } } },
     });
-    if (!mapping) {
-      return NextResponse.json({ ok: false, error: "Mapping not found" }, { status: 404 });
-    }
 
     const mappingUpdate = pickFields<Record<string, unknown>>(body.mapping, MAPPING_FIELDS);
     if ("confidenceScore" in mappingUpdate) {
@@ -182,8 +185,52 @@ export async function POST(request: Request) {
       }
     }
 
+    let appliedMappingCreate = false;
+    if (!mapping) {
+      const wantsKickdb =
+        Object.keys(kickdbVariantUpdate).length > 0 || Object.keys(kickdbProductUpdate).length > 0;
+      if (wantsKickdb) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "No VariantMapping for this variant yet. Add a mapping (e.g. Galaxus supplier mappings) before saving KickDB JSON, or save only supplier/pricing fields.",
+          },
+          { status: 409 }
+        );
+      }
+      if (Object.keys(mappingUpdate).length === 0) {
+        return NextResponse.json({
+          ok: true,
+          skipped: true,
+          mapping: null,
+          kickdbVariant: null,
+          kickdbProduct: null,
+          mappingMissing: true,
+        });
+      }
+      const statusForCreate =
+        mappingUpdate.status != null && String(mappingUpdate.status).trim()
+          ? String(mappingUpdate.status).trim()
+          : "PENDING_GTIN";
+      mapping = await prisma.variantMapping.create({
+        data: {
+          supplierVariantId,
+          status: statusForCreate,
+          gtin: (mappingUpdate.gtin as string | null | undefined) ?? null,
+          providerKey: (mappingUpdate.providerKey as string | null | undefined) ?? null,
+          confidenceScore:
+            "confidenceScore" in mappingUpdate
+              ? (mappingUpdate.confidenceScore as Prisma.Decimal | null)
+              : null,
+        },
+        include: { kickdbVariant: { include: { product: true } } },
+      });
+      appliedMappingCreate = true;
+    }
+
     const updates = [];
-    if (Object.keys(mappingUpdate).length > 0) {
+    if (!appliedMappingCreate && Object.keys(mappingUpdate).length > 0) {
       updates.push(
         prisma.variantMapping.update({
           where: { supplierVariantId },
@@ -212,6 +259,14 @@ export async function POST(request: Request) {
     }
 
     if (updates.length === 0) {
+      if (appliedMappingCreate && mapping) {
+        return NextResponse.json({
+          ok: true,
+          mapping,
+          kickdbVariant: mapping.kickdbVariant ?? null,
+          kickdbProduct: mapping.kickdbVariant?.product ?? null,
+        });
+      }
       return NextResponse.json({ ok: true, skipped: true });
     }
 
