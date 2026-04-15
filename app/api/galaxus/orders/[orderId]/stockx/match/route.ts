@@ -7,6 +7,10 @@ import {
   type ShopifyLineItem,
 } from "@/app/utils/matching";
 import { extractAwbFromTrackingUrl } from "@/app/utils/format";
+import {
+  galaxusLineWarehouseStockHint,
+  isGalaxusStxSupplierLine,
+} from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -268,6 +272,18 @@ export async function POST(
 
     for (const line of order.lines) {
       const qty = Math.max(Number(line.quantity ?? 1), 1);
+      const whSkip = galaxusLineWarehouseStockHint(line);
+      if (whSkip && isGalaxusStxSupplierLine(line)) {
+        for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
+          results.push({
+            lineId: line.id,
+            unitIndex,
+            status: "skipped",
+            reason: whSkip === "MAISON" ? "supplier_sku_THE_" : "supplier_sku_NER_",
+          });
+        }
+        continue;
+      }
       for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
         const supplierVariantId = String(line?.supplierVariantId ?? "").trim();
         const variantId = supplierVariantId.startsWith("stx_")

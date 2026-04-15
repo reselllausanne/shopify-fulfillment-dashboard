@@ -510,7 +510,7 @@ export default function GalaxusDirectDeliveryPage() {
                             {selectedOrder.recipientPostalCode ?? ""} {selectedOrder.recipientCity ?? ""}{" "}
                             {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
                           </div>
-                          <div className="text-gray-600 font-medium flex items-center gap-1.5">
+                          <div className="text-gray-600 font-medium flex items-center gap-1.5 flex-wrap">
                             {procOk ? (
                               <span className="text-green-600" title="Procurement linked">
                                 ✓
@@ -519,6 +519,15 @@ export default function GalaxusDirectDeliveryPage() {
                               <span className="text-gray-300">○</span>
                             )}
                             {buildLineTitle(line)}
+                            {proc?.warehouseStockHint === "MAISON" ? (
+                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-violet-100 text-violet-900">
+                                THE_ · your stock
+                              </span>
+                            ) : proc?.warehouseStockHint === "NER_STOCK" ? (
+                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950">
+                                NER_ · partner stock
+                              </span>
+                            ) : null}
                           </div>
                           <div className="text-gray-500">
                             Supplier PID: {line.supplierPid ?? "—"}
@@ -541,11 +550,15 @@ export default function GalaxusDirectDeliveryPage() {
                               <>
                           <div className={`font-medium ${procOk ? "text-green-700" : "text-red-600"}`}>
                             {procOk
-                              ? proc?.source === "stx_sync"
-                                ? `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`
-                                : match
-                                  ? `Linked ${match.stockxOrderNumber}`
-                                  : "Linked"
+                              ? proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK"
+                                ? proc?.warehouseStockHint === "MAISON"
+                                  ? "THE_ your stock (no StockX)"
+                                  : "NER_ partner stock (no StockX)"
+                                : proc?.source === "stx_sync"
+                                  ? `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`
+                                  : match
+                                    ? `Linked ${match.stockxOrderNumber}`
+                                    : "Linked"
                               : "Not linked"}
                           </div>
                           <div className="text-gray-500">

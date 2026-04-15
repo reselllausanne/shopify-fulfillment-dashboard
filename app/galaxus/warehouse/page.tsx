@@ -464,6 +464,15 @@ export default function WarehouseBulkPage() {
                                   <span className="text-gray-300 shrink-0">○</span>
                                 )}
                                 <span className="truncate">{buildLineTitle(line)}</span>
+                                {proc?.warehouseStockHint === "MAISON" ? (
+                                  <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-violet-100 text-violet-900 shrink-0">
+                                    THE_ · your stock
+                                  </span>
+                                ) : proc?.warehouseStockHint === "NER_STOCK" ? (
+                                  <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 shrink-0">
+                                    NER_ · partner stock
+                                  </span>
+                                ) : null}
                                 {isShipped ? (
                                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-slate-200 text-slate-800 shrink-0">
                                     Shipped
@@ -555,7 +564,13 @@ export default function WarehouseBulkPage() {
                                 </div>
                               ) : !linked ? (
                                 <div className="text-amber-800 text-[11px]">
-                                  Sync or manual supplier entry to link, then you can mark shipped.
+                                  {proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK" ? (
+                                    <span>
+                                      Supplier SKU starts with THE_ or NER_ — no StockX link. Mark shipped when ready.
+                                    </span>
+                                  ) : (
+                                    <span>Sync or manual supplier entry to link, then you can mark shipped.</span>
+                                  )}
                                 </div>
                               ) : null}
                             </div>

@@ -22,6 +22,10 @@ import {
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
+import {
+  galaxusLineWarehouseStockHint,
+  isGalaxusStxSupplierLine,
+} from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -272,6 +276,11 @@ export async function POST(
 
         const line = (galaxusOrderRow.lines ?? []).find((l: any) => l.id === match.galaxusOrderLineId);
         if (!line) {
+          savedMatchSkipped += 1;
+          continue;
+        }
+        const whSkip = galaxusLineWarehouseStockHint(line);
+        if (whSkip && isGalaxusStxSupplierLine(line)) {
           savedMatchSkipped += 1;
           continue;
         }

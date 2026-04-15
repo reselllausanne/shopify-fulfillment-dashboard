@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
+import {
+  galaxusLineWarehouseStockHint,
+  isGalaxusStxSupplierLine,
+} from "@/galaxus/warehouse/lineInventorySource";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
 
 export const runtime = "nodejs";
@@ -69,16 +73,6 @@ async function repairOrderAddressesFromLatestOrdp(order: any) {
     updated,
     repairedFrom: { ediFileId: edi.id, filename: edi.filename, createdAt: edi.createdAt },
   };
-}
-
-function isStxSupplierLine(line: any): boolean {
-  const supplierPid = String(line?.supplierPid ?? "").trim().toUpperCase();
-  if (supplierPid.startsWith("STX_")) return true;
-  const supplierVariantId = String(line?.supplierVariantId ?? "").trim().toLowerCase();
-  if (supplierVariantId.startsWith("stx_")) return true;
-  const providerKeyRaw = String(line?.providerKey ?? "").trim().toUpperCase();
-  if (providerKeyRaw === "STX" || providerKeyRaw.startsWith("STX_")) return true;
-  return false;
 }
 
 function digitsOnlyGtin(s: string): string {
@@ -152,7 +146,13 @@ function enrichGalaxusOrderLine(
     null;
 
   const size = (sizeFromGtin && String(sizeFromGtin).trim()) || line.size || null;
-  const supplierSku = (skuFromGtin && String(skuFromGtin).trim()) || line.supplierSku || null;
+  const rawLineSku = String(line?.supplierSku ?? "").trim();
+  const skuFromCat = skuFromGtin && String(skuFromGtin).trim();
+  /** Galaxus THE_/NER_ prefixes mark warehouse stock; never replace with catalog StockX SKU. */
+  const supplierSku =
+    rawLineSku.startsWith("THE_") || rawLineSku.startsWith("NER_")
+      ? rawLineSku
+      : skuFromCat || rawLineSku || null;
   const sizeRaw =
     (sizeRawFromMap && String(sizeRawFromMap).trim()) || (line.size ? String(line.size).trim() : null) || null;
 
@@ -186,6 +186,35 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
   }
 
   return lines.map((line) => {
+    const qty = Math.max(Number(line.quantity ?? 1), 1);
+    const whHint = galaxusLineWarehouseStockHint(line);
+    if (whHint && isGalaxusStxSupplierLine(line)) {
+      const units = Array.from({ length: qty }, (_, i) => ({
+        unitIndex: i,
+        linked: true,
+        source: whHint === "MAISON" ? ("maison_stock" as const) : ("ner_stock" as const),
+        stockxOrderNumber: null as string | null,
+        stockxOrderId: null as string | null,
+        stockxAmount: null as number | null,
+        stockxCurrencyCode: null as string | null,
+        awb: null as string | null,
+      }));
+      return {
+        ...line,
+        procurement: {
+          ok: true,
+          source: units[0]?.source ?? null,
+          stockxOrderNumber: null,
+          stockxOrderId: null,
+          awb: null,
+          stockxCostChf: null,
+          stockxCostCurrency: null,
+          units,
+          warehouseStockHint: whHint,
+        },
+      };
+    }
+
     const gtin = String(line?.gtin ?? "").trim();
     const lineMatches = matchesByLineId.get(String(line?.id ?? "")) ?? [];
     const match = lineMatches[0] ?? null;
@@ -223,7 +252,7 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
           }
         }
       }
-    } else if (gtin && stx?.buckets?.length && isStxSupplierLine(line)) {
+    } else if (gtin && stx?.buckets?.length && isGalaxusStxSupplierLine(line)) {
       const sv = String(line?.supplierVariantId ?? "").trim();
       const bucket =
         stx.buckets.find((b: any) => String(b?.gtin ?? "") === gtin && String(b?.supplierVariantId ?? "") === sv) ??
@@ -254,8 +283,6 @@ function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], 
           stockxOrderId;
       }
     }
-
-    const qty = Math.max(Number(line.quantity ?? 1), 1);
 
     const relevantStxUnits = gtin
       ? stxUnits.filter((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId && !u?.cancelledAt)

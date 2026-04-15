@@ -1,4 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
+import {
+  galaxusLineWarehouseStockHint,
+  isGalaxusStxSupplierLine,
+} from "@/galaxus/warehouse/lineInventorySource";
 
 export type StxNeed = {
   gtin: string;
@@ -134,20 +138,13 @@ function isUnknownCancelledAtArg(error: any): boolean {
 
 async function resolveStxNeedsForOrder(order: Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>>) {
   if (!order) return [] as StxNeed[];
-  const isStxLine = (line: any): boolean => {
-    const supplierPid = String(line?.supplierPid ?? "").trim().toUpperCase();
-    if (supplierPid.startsWith("STX_")) return true;
-    const supplierVariantId = String(line?.supplierVariantId ?? "").trim().toLowerCase();
-    if (supplierVariantId.startsWith("stx_")) return true;
-    const providerKeyRaw = String(line?.providerKey ?? "").trim().toUpperCase();
-    if (providerKeyRaw === "STX" || providerKeyRaw.startsWith("STX_")) return true;
-    return false;
-  };
   const gtinQty = new Map<string, number>();
   for (const line of order.lines) {
     // Only STX-designated lines should be handled by the StockX linking flow.
     // TRM/GLD lines can share GTINs with StockX catalog, but they must not create STX purchase unit needs.
-    if (!isStxLine(line)) continue;
+    if (!isGalaxusStxSupplierLine(line)) continue;
+    // Maison / NER in-title markers: never reserve or auto-link StockX buys for these units.
+    if (galaxusLineWarehouseStockHint(line)) continue;
     const norm = normalizeGtinKey(typeof line.gtin === "string" ? line.gtin : "");
     const qty = Number(line.quantity ?? 0);
     if (!norm || qty <= 0) continue;
@@ -299,7 +296,28 @@ export async function reserveStxPurchaseUnitsForOrder(orderIdOrRef: string) {
   const order = await resolveGalaxusOrderByIdOrRef(orderIdOrRef);
   if (!order) throw new Error("Order not found");
   const needs = await resolveStxNeedsForOrder(order);
+  const prismaAny = prisma as any;
+
   if (needs.length === 0) {
+    try {
+      await prismaAny.stxPurchaseUnit.deleteMany({
+        where: {
+          galaxusOrderId: order.galaxusOrderId,
+          supplierVariantId: { startsWith: "stx_" },
+          stockxOrderId: null,
+          cancelledAt: null,
+        },
+      });
+    } catch (error: any) {
+      if (!isUnknownCancelledAtArg(error)) throw error;
+      await prismaAny.stxPurchaseUnit.deleteMany({
+        where: {
+          galaxusOrderId: order.galaxusOrderId,
+          supplierVariantId: { startsWith: "stx_" },
+          stockxOrderId: null,
+        },
+      });
+    }
     return {
       galaxusOrderId: order.galaxusOrderId,
       created: 0,
@@ -308,30 +326,73 @@ export async function reserveStxPurchaseUnitsForOrder(orderIdOrRef: string) {
   }
 
   const gtins = Array.from(new Set(needs.map((need) => need.gtin)));
+  const gtinExpanded = Array.from(new Set(needs.flatMap((n) => expandGtinsForDbLookup([n.gtin]))));
   let existing: Array<{ gtin: string; supplierVariantId: string }> = [];
   try {
-    existing = await (prisma as any).stxPurchaseUnit.findMany({
+    existing = await prismaAny.stxPurchaseUnit.findMany({
       where: {
         galaxusOrderId: order.galaxusOrderId,
-        gtin: { in: gtins },
+        gtin: { in: gtinExpanded.length ? gtinExpanded : gtins },
         cancelledAt: null,
       },
       select: { gtin: true, supplierVariantId: true },
     });
   } catch (error: any) {
     if (!isUnknownCancelledAtArg(error)) throw error;
-    existing = await (prisma as any).stxPurchaseUnit.findMany({
+    existing = await prismaAny.stxPurchaseUnit.findMany({
       where: {
         galaxusOrderId: order.galaxusOrderId,
-        gtin: { in: gtins },
+        gtin: { in: gtinExpanded.length ? gtinExpanded : gtins },
       },
       select: { gtin: true, supplierVariantId: true },
     });
   }
   const counts = new Map<string, number>();
   for (const row of existing) {
-    const key = makeNeedKey(String(row.gtin), String(row.supplierVariantId));
+    const key = makeNeedKey(normalizeGtinKey(String(row.gtin)), String(row.supplierVariantId));
     counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  /** Remove extra *unlinked* rows when titles change (e.g. maison) so they cannot steal StockX links. */
+  for (const need of needs) {
+    const key = makeNeedKey(need.gtin, need.supplierVariantId);
+    const existingCount = counts.get(key) ?? 0;
+    const excess = Math.max(0, existingCount - need.needed);
+    if (excess <= 0) continue;
+    const gtinOr = expandGtinsForDbLookup([need.gtin]);
+    let extras: Array<{ id: string }> = [];
+    try {
+      extras = await prismaAny.stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: order.galaxusOrderId,
+          supplierVariantId: need.supplierVariantId,
+          stockxOrderId: null,
+          cancelledAt: null,
+          gtin: { in: gtinOr },
+        },
+        orderBy: { createdAt: "desc" },
+        take: excess,
+        select: { id: true },
+      });
+    } catch (error: any) {
+      if (!isUnknownCancelledAtArg(error)) throw error;
+      extras = await prismaAny.stxPurchaseUnit.findMany({
+        where: {
+          galaxusOrderId: order.galaxusOrderId,
+          supplierVariantId: need.supplierVariantId,
+          stockxOrderId: null,
+          gtin: { in: gtinOr },
+        },
+        orderBy: { createdAt: "desc" },
+        take: excess,
+        select: { id: true },
+      });
+    }
+    const ids = extras.map((e: { id: string }) => e.id).filter(Boolean);
+    if (ids.length) {
+      await prismaAny.stxPurchaseUnit.deleteMany({ where: { id: { in: ids } } });
+      counts.set(key, Math.max(0, existingCount - ids.length));
+    }
   }
 
   const createRows: Array<{ galaxusOrderId: string; gtin: string; supplierVariantId: string }> = [];
