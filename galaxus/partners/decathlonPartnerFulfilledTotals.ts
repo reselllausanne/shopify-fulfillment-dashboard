@@ -62,14 +62,15 @@ function shippedQtyByLineId(order: any, metricsLines: any[]): Map<string, number
   if (hasLegacyShipment) {
     for (const ml of metricsLines) {
       const qty = Number(ml.quantity ?? 0);
-      if (Number.isFinite(qty) && qty > 0) map.set(ml.id, qty);
+      if (Number.isFinite(qty) && qty > 0) map.set(String(ml.id), qty);
     }
     return map;
   }
   for (const sl of scopedShipmentLines) {
     const q = Number(sl.quantity ?? 0);
     if (!Number.isFinite(q) || q <= 0) continue;
-    map.set(sl.orderLineId, (map.get(sl.orderLineId) ?? 0) + q);
+    const lid = String(sl.orderLineId ?? "");
+    map.set(lid, (map.get(lid) ?? 0) + q);
   }
   return map;
 }
@@ -112,7 +113,7 @@ export type DecathlonPartnerFulfilledTotals = {
   totalChf: number;
   /** NER only: scoped lines missing Mirakl totals on fulfilled orders */
   miraklPayoutLineMisses: number;
-  /** Feed/catalog buy price × shipped units on fulfilled orders (non-NER); NER uses Mirakl payout card instead. */
+  /** Feed/catalog buy price × shipped units on fulfilled orders (all partners). */
   partnerCatalogShippedChf: number;
   /** Shipment line rows tied to partner lines (or line count for legacy shipments). */
   shippedLineCount: number;
@@ -182,7 +183,7 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
 
   let partnerCatalogShippedChf = 0;
   let shippedLineCount = 0;
-  if (pk !== "NER" && fulfilledMetricLines.length > 0) {
+  if (fulfilledMetricLines.length > 0) {
     const catalogByLineId = await enrichDecathlonOrderLinesWithSupplierCatalog(fulfilledMetricLines);
     for (const order of orders) {
       const metricsLines = metricsLinesForPartnerSession(order, pk);
@@ -191,7 +192,7 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
       shippedLineCount += catalogShippedShipmentLineRowCount(order, metricsLines);
       const shippedByLine = shippedQtyByLineId(order, metricsLines);
       for (const line of metricsLines) {
-        const shipQty = shippedByLine.get(line.id) ?? 0;
+        const shipQty = shippedByLine.get(String(line.id)) ?? 0;
         if (!Number.isFinite(shipQty) || shipQty <= 0) continue;
         const cat = catalogByLineId.get(line.id);
         const price = cat?.catalogPrice;

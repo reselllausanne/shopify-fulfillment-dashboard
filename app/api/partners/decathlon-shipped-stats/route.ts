@@ -15,33 +15,14 @@ export async function GET(req: NextRequest) {
 
     const data = await computeDecathlonPartnerFulfilledOrderStats(key);
 
-    if (key === "NER") {
-      return NextResponse.json({
-        ok: true,
-        variant: "ner_mirakl",
-        excluded: false,
-        currency: data.currency,
-        fulfilledOrderCount: data.fulfilledOrderCount,
-        fulfilledPartnerLineUnits: data.fulfilledPartnerLineUnits,
-        miraklPayoutChf: data.totalChf,
-        miraklPayoutLineMisses: data.miraklPayoutLineMisses,
-        catalogShippedExcluded: true,
-        partnerCatalogShippedChf: 0,
-        shippedLineCount: 0,
-      });
-    }
-
     return NextResponse.json({
       ok: true,
-      variant: "partner_sell_fulfilled",
-      excluded: false,
+      variant: key === "NER" ? "ner" : "partner",
       currency: data.currency,
+      totalSaleFeedChf: data.partnerCatalogShippedChf,
+      shippedLineCount: data.shippedLineCount,
       fulfilledOrderCount: data.fulfilledOrderCount,
       fulfilledPartnerLineUnits: data.fulfilledPartnerLineUnits,
-      sellTotalChf: data.totalChf,
-      catalogShippedExcluded: false,
-      partnerCatalogShippedChf: data.partnerCatalogShippedChf,
-      shippedLineCount: data.shippedLineCount,
     });
   } catch (error: any) {
     return NextResponse.json(

@@ -78,9 +78,25 @@ export async function GET(
       catalog: catalogByLineId.get(line.id) ?? null,
     }));
 
+    const byStockxLineId = new Map(stockxMatches.map((m) => [String(m.decathlonOrderLineId), m]));
+    const byStockxLineNumber = new Map<number, (typeof stockxMatches)[0]>();
+    for (const m of stockxMatches) {
+      const n = m.decathlonLineNumber;
+      if (n == null || Number.isNaN(Number(n))) continue;
+      const num = Number(n);
+      if (!byStockxLineNumber.has(num)) byStockxLineNumber.set(num, m);
+    }
+    const linesWithStockx = linesEnriched.map((line: any) => {
+      let sm = byStockxLineId.get(String(line.id)) ?? null;
+      if (!sm && line.lineNumber != null) {
+        sm = byStockxLineNumber.get(Number(line.lineNumber)) ?? null;
+      }
+      return { ...line, stockxMatch: sm };
+    });
+
     return NextResponse.json({
       ok: true,
-      order: { ...orderWithMatches, lines: linesEnriched },
+      order: { ...orderWithMatches, lines: linesWithStockx },
     });
   } catch (error: any) {
     return NextResponse.json(

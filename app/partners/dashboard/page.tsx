@@ -53,24 +53,7 @@ export default function PartnerDashboardPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
-  type ShippedSalesBlock =
-    | {
-        kind: "ner_mirakl";
-        fulfilledOrderCount: number;
-        fulfilledPartnerLineUnits: number;
-        miraklPayoutChf: number;
-        miraklPayoutLineMisses: number;
-      }
-    | {
-        kind: "partner_sell";
-        fulfilledOrderCount: number;
-        fulfilledPartnerLineUnits: number;
-        sellTotalChf: number;
-      };
-  const [shippedSalesBlock, setShippedSalesBlock] = useState<ShippedSalesBlock | null>(null);
-  const [catalogShippedChf, setCatalogShippedChf] = useState<number | null>(null);
-  const [catalogShippedLines, setCatalogShippedLines] = useState<number | null>(null);
-  const [catalogShippedExcluded, setCatalogShippedExcluded] = useState(false);
+  const [totalSaleFeedChf, setTotalSaleFeedChf] = useState<number | null>(null);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -98,29 +81,8 @@ export default function PartnerDashboardPage() {
       const res = await fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) return;
-      setCatalogShippedExcluded(Boolean(data.catalogShippedExcluded));
-      setCatalogShippedChf(
-        data.catalogShippedExcluded ? 0 : Number(data.partnerCatalogShippedChf ?? 0)
-      );
-      setCatalogShippedLines(
-        data.catalogShippedExcluded ? 0 : Number(data.shippedLineCount ?? 0)
-      );
-      if (data.variant === "ner_mirakl") {
-        setShippedSalesBlock({
-          kind: "ner_mirakl",
-          fulfilledOrderCount: Number(data.fulfilledOrderCount ?? 0),
-          fulfilledPartnerLineUnits: Number(data.fulfilledPartnerLineUnits ?? 0),
-          miraklPayoutChf: Number(data.miraklPayoutChf ?? 0),
-          miraklPayoutLineMisses: Number(data.miraklPayoutLineMisses ?? 0),
-        });
-        return;
-      }
-      setShippedSalesBlock({
-        kind: "partner_sell",
-        fulfilledOrderCount: Number(data.fulfilledOrderCount ?? 0),
-        fulfilledPartnerLineUnits: Number(data.fulfilledPartnerLineUnits ?? 0),
-        sellTotalChf: Number(data.sellTotalChf ?? 0),
-      });
+      const raw = Number(data.totalSaleFeedChf ?? 0);
+      setTotalSaleFeedChf(Number.isFinite(raw) ? raw : 0);
     } catch {
       // silent
     }
@@ -313,90 +275,29 @@ export default function PartnerDashboardPage() {
           className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/catalog")}
         >
-          <div className="text-xs uppercase tracking-wide text-slate-400">Catalog</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{catalogCount}</div>
-          <div className="text-xs text-slate-500">Open catalog to manage prices and stock.</div>
+          <div className="text-sm font-medium text-slate-500">Catalog</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">{catalogCount}</div>
         </button>
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-400">Enrichment Queue</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{pendingEnrichCount}</div>
-          <div className="text-xs text-slate-500">New products waiting to enrich</div>
+          <div className="text-sm font-medium text-slate-500">Enrichment queue</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">{pendingEnrichCount}</div>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2">
         <button
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
+          className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/orders")}
         >
-          <div className="text-xs uppercase tracking-wide text-slate-400">Orders</div>
-          <div className="mt-2 text-lg font-semibold text-slate-900">To process</div>
-          <div className="text-xs text-slate-500">
-            {ordersToProcessCount == null
-              ? "Loading orders…"
-              : `${ordersToProcessCount} order${ordersToProcessCount === 1 ? "" : "s"} to process`}
+          <div className="text-sm font-medium text-slate-500">Orders to process</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900 tabular-nums">
+            {ordersToProcessCount == null ? "—" : ordersToProcessCount}
           </div>
         </button>
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
-          <div className="text-xs uppercase tracking-wide text-slate-400">
-            {shippedSalesBlock?.kind === "ner_mirakl" ? "Fulfilled — Mirakl payout" : "Fulfilled — sell (Mirakl ligne)"}
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center">
+          <div className="text-3xl font-semibold text-slate-900 tabular-nums tracking-tight">
+            {totalSaleFeedChf == null ? "—" : `CHF ${totalSaleFeedChf.toFixed(2)}`}
           </div>
-          {shippedSalesBlock == null ? (
-            <div className="mt-2 text-xs text-slate-500">Loading…</div>
-          ) : shippedSalesBlock.kind === "ner_mirakl" ? (
-            <div className="mt-2 space-y-2 text-xs text-slate-600">
-              <div className="text-2xl font-semibold text-slate-900">
-                CHF {shippedSalesBlock.miraklPayoutChf.toFixed(2)}
-                <span className="ml-2 text-xs font-normal text-slate-500">total Mirakl payout</span>
-              </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                <div>
-                  <span className="text-slate-400">Fulfilled orders</span>{" "}
-                  <span className="font-medium text-slate-800">{shippedSalesBlock.fulfilledOrderCount}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400">Your line units</span>{" "}
-                  <span className="font-medium text-slate-800">{shippedSalesBlock.fulfilledPartnerLineUnits}</span>
-                </div>
-              </div>
-              <div className="text-[11px] text-slate-500 leading-snug">
-                Same orders as <strong>Fulfilled</strong> under Decathlon orders (including manual / legacy shipments).
-                Each line: Mirakl <code className="text-[10px]">total_price − total_commission</code>.
-                {shippedSalesBlock.miraklPayoutLineMisses > 0
-                  ? ` ${shippedSalesBlock.miraklPayoutLineMisses} line(s) missing Mirakl totals in stored JSON — run order sync if needed.`
-                  : null}
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">
-                CHF {shippedSalesBlock.sellTotalChf.toFixed(2)}
-              </div>
-              <div className="text-xs text-slate-500">
-                Sum of Mirakl sell totals on your lines for fulfilled orders (
-                {shippedSalesBlock.fulfilledPartnerLineUnits} unit
-                {shippedSalesBlock.fulfilledPartnerLineUnits === 1 ? "" : "s"},{" "}
-                {shippedSalesBlock.fulfilledOrderCount} order
-                {shippedSalesBlock.fulfilledOrderCount === 1 ? "" : "s"}). Margin is not computed.
-              </div>
-            </>
-          )}
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
-          <div className="text-xs uppercase tracking-wide text-slate-400">Shipped sales (catalog)</div>
-          {catalogShippedExcluded ? (
-            <div className="mt-2 text-xs text-slate-500">Not shown for NER (use Mirakl payout card).</div>
-          ) : catalogShippedChf == null ? (
-            <div className="mt-2 text-xs text-slate-500">Loading…</div>
-          ) : (
-            <>
-              <div className="mt-2 text-2xl font-semibold text-slate-900">CHF {catalogShippedChf.toFixed(2)}</div>
-              <div className="text-xs text-slate-500">
-                Your feed price × shipped units ({catalogShippedLines ?? 0} shipment line
-                {(catalogShippedLines ?? 0) === 1 ? "" : "s"}).
-              </div>
-            </>
-          )}
         </div>
       </div>
 
