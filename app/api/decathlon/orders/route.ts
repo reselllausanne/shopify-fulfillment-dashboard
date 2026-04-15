@@ -17,6 +17,7 @@ export async function GET(request: NextRequest) {
     const productSearch = String(searchParams.get("product") ?? "").trim();
     let where: Prisma.DecathlonOrderWhereInput = {};
     let sessionPartnerKey: string | null = null;
+    let partnerOfferPrefix: string | null = null;
     if (scope === "partner") {
       const partnerSession = await getPartnerSession(request);
       if (!partnerSession) {
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
       }
       const keyPrefix = `${sessionPartnerKey}_`;
+      partnerOfferPrefix = keyPrefix;
       where.OR = [
         { partnerKey: sessionPartnerKey },
         { lines: { some: { offerSku: { startsWith: keyPrefix } } } },
@@ -68,7 +70,7 @@ export async function GET(request: NextRequest) {
       skip: offset,
       include: {
         _count: { select: { lines: true, shipments: true } },
-        lines: { select: { id: true, quantity: true } },
+        lines: { select: { id: true, quantity: true, offerSku: true } },
         shipments: { select: { shippedAt: true, lines: { select: { orderLineId: true, quantity: true } } } },
       },
     });
@@ -90,13 +92,22 @@ export async function GET(request: NextRequest) {
     }
     const items = orders.map((order: any) => {
       const lines = Array.isArray(order.lines) ? order.lines : [];
-      const totalUnits = lines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
+      const scopedLines = partnerOfferPrefix
+        ? lines.filter((line: any) =>
+            String(line.offerSku ?? "").toUpperCase().startsWith(partnerOfferPrefix ?? "")
+          )
+        : lines;
+      const totalUnits = scopedLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
       const shipmentLines = (order.shipments ?? []).flatMap((shipment: any) => shipment.lines ?? []);
-      const hasLegacyShipment = shipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
+      const scopedLineIds = new Set(scopedLines.map((line: any) => line.id));
+      const scopedShipmentLines = shipmentLines.filter((line: any) => scopedLineIds.has(line.orderLineId));
+      const hasLegacyShipment =
+        scopedShipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
       const shippedUnits = hasLegacyShipment
         ? totalUnits
-        : shipmentLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
+        : scopedShipmentLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
       const remainingUnits = Math.max(totalUnits - shippedUnits, 0);
+      const lineCount = partnerOfferPrefix ? scopedLines.length : order._count?.lines ?? 0;
       return {
         id: order.id,
         orderId: order.orderId,
@@ -109,7 +120,7 @@ export async function GET(request: NextRequest) {
         totalUnits,
         remainingUnits,
         linkedCount: linkedByOrder.get(order.id) ?? 0,
-        _count: order._count ?? { lines: 0, shipments: 0 },
+        _count: { lines: lineCount, shipments: order._count?.shipments ?? 0 },
       };
     });
     return NextResponse.json({ ok: true, items });

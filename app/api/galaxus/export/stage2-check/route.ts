@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -194,26 +195,8 @@ export async function GET(request: Request) {
   let lastBatch = 0;
   const bestByGtin = new Map<string, any>();
   const prismaAny = prisma as any;
-  const partners = await prismaAny.partner.findMany();
-  const partnerByKey = new Map<string, any>(
-    partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
-  );
-  const toNumber = (value: any) => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const resolvePartnerOverrides = (key: string | null) => {
-    if (!key) return null;
-    const partner = partnerByKey.get(key.toLowerCase());
-    if (!partner) return null;
-    return {
-      targetMargin: toNumber(partner.targetMargin),
-      shippingPerPair: toNumber(partner.shippingPerPair),
-      bufferPerPair: toNumber(partner.bufferPerPair),
-      roundTo: toNumber(partner.roundTo),
-      vatRate: toNumber(partner.vatRate),
-    };
-  };
+  const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
+  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
 
   do {
     const mappings = await prismaAny.variantMapping.findMany({
@@ -233,10 +216,11 @@ export async function GET(request: Request) {
     lastBatch = mappings.length;
     total += mappings.length;
 
-    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+    accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
       requireImage: false,
+      galaxusPartnerKeysLower,
     });
 
     currentOffset += pageSize;

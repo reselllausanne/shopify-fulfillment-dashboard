@@ -23,7 +23,7 @@ describe("mirakl deltas", () => {
   it("resolves manual stock and price overrides", () => {
     const candidate = makeCandidate();
     expect(resolveEffectiveStock(candidate)).toBe(5);
-    expect(resolveEffectivePrice(candidate)).toBe("120.00");
+    expect(resolveEffectivePrice(candidate)).toBe("145.00");
   });
 
   it("does not emit updates when values are unchanged", () => {
@@ -34,7 +34,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 5,
-          lastPrice: "120.00",
+          lastPrice: "145.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -53,7 +53,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 2,
-          lastPrice: "120.00",
+          lastPrice: "145.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -63,7 +63,7 @@ describe("mirakl deltas", () => {
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
   });
 
-  it("applies same list rule for THE_* as other suppliers (buy × 1.5 + 13)", () => {
+  it("applies Decathlon margin list rule for non-partner THE_* (no partner-key multiplier)", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -75,7 +75,22 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate)).toBe("162.25");
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("156.60");
+  });
+
+  it("applies ×1.35 on list TTC when supplier key is in partner set", () => {
+    const candidate = makeCandidate({
+      providerKey: "THE_1234567890123",
+      variant: {
+        supplierVariantId: "the_warehouse-1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 99.5,
+      },
+    });
+    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("211.41");
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {
@@ -86,7 +101,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 5,
-          lastPrice: "120.00",
+          lastPrice: "145.00",
           offerCreatedAt: null,
         },
       ],

@@ -26,11 +26,14 @@ async function run() {
 
   const prismaAny = prisma as any;
 
+  console.info("[worker] entering poll loop");
   // eslint-disable-next-line no-constant-condition
   while (true) {
     let job: Awaited<ReturnType<typeof claimJob>> = null;
     try {
+      console.info("[worker] calling claimJob...");
       job = await claimJob(jobType, workerId, { groupLimit });
+      console.info("[worker] claimJob returned:", job ? job.id : "null");
     } catch (err: any) {
       console.error("[worker] claimJob error:", err?.message ?? err);
       await sleep(pollMs);

@@ -15,7 +15,8 @@ export async function POST(request: Request) {
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const supplierVariantIdPrefix = searchParams.get("supplierVariantIdPrefix")?.trim() || null;
     const asyncMode = !["0", "false", "no"].includes((searchParams.get("async") ?? "").toLowerCase());
-    const autoDrain = !["0", "false", "no"].includes((searchParams.get("autoDrain") ?? "").toLowerCase());
+    // Default off: one queued job runs one batch unless autoDrain=1 (avoids endless NOT_FOUND loops).
+    const autoDrain = ["1", "true", "yes"].includes((searchParams.get("autoDrain") ?? "").toLowerCase());
 
     if (asyncMode) {
       const job = await enqueueJob(

@@ -62,7 +62,7 @@ export default function GalaxusManualEntryModal({
           {/* Read-only */}
           <div className="bg-blue-50 p-4 rounded-lg">
             <h3 className="font-semibold text-blue-900 mb-2">
-              {isGalaxus ? "📦 Galaxus (read-only)" : "📦 Shopify (read-only)"}
+              {isGalaxus ? "📦 Galaxus (read-only)" : isDecathlon ? "📦 Decathlon (read-only)" : "📦 Shopify (read-only)"}
             </h3>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div>
@@ -70,7 +70,9 @@ export default function GalaxusManualEntryModal({
                 {localData.shopifyOrderName || shopifyItem?.orderName || "N/A"}
               </div>
               <div>
-                <span className="font-medium">{isGalaxus || isDecathlon ? "Sell price:" : "Revenue:"}</span>{" "}
+                <span className="font-medium">
+                  {isGalaxus ? "Sell price:" : isDecathlon ? "Payout Decathlon (est.):" : "Revenue:"}
+                </span>{" "}
                 {localData.shopifyTotalPrice != null
                   ? `CHF ${Number(localData.shopifyTotalPrice).toFixed(2)}`
                   : "N/A"}

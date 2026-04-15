@@ -14,6 +14,7 @@ import {
   totalTrmFeedExclusions,
   trmFeedExclusionsHeaderValue,
 } from "@/galaxus/exports/trmExport";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,50 +101,9 @@ export async function GET(request: Request) {
   let cursorId: string | null = null;
   const prismaAny = prisma as any;
   const partners = prismaAny.partner?.findMany
-    ? await prismaAny.partner.findMany({
-        select: {
-          key: true,
-          targetMargin: true,
-          shippingPerPair: true,
-          bufferPerPair: true,
-          roundTo: true,
-          vatRate: true,
-        },
-      })
+    ? await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT })
     : [];
-  const partnerByKey = new Map<string, any>(
-    partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
-  );
-  const toNumber = (value: any) => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const parseNumber = (value: unknown): number | null => {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string") {
-      const parsed = Number.parseFloat(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    if (value && typeof value === "object") {
-      if ("toString" in value) {
-        const parsed = Number.parseFloat(String(value));
-        return Number.isFinite(parsed) ? parsed : null;
-      }
-    }
-    return null;
-  };
-  const resolvePartnerOverrides = (key: string | null) => {
-    if (!key) return null;
-    const partner = partnerByKey.get(key.toLowerCase());
-    if (!partner) return null;
-    return {
-      targetMargin: toNumber(partner.targetMargin),
-      shippingPerPair: toNumber(partner.shippingPerPair),
-      bufferPerPair: toNumber(partner.bufferPerPair),
-      roundTo: toNumber(partner.roundTo),
-      vatRate: toNumber(partner.vatRate),
-    };
-  };
+  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
 
   do {
     const whereClause: Record<string, unknown> = all
@@ -194,11 +154,12 @@ export async function GET(request: Request) {
       cursorUpdatedAt = last.updatedAt ?? null;
       cursorId = last.id ?? null;
     }
-    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+    accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
       // Stock feed should not depend on hosted images.
       requireImage: false,
+      galaxusPartnerKeysLower,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);

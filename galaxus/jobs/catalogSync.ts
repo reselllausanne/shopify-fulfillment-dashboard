@@ -23,7 +23,10 @@ type CatalogSyncOptions = {
   offset?: number;
 };
 
-export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<CatalogSyncResult> {
+export async function runCatalogSync(_options: CatalogSyncOptions = {}): Promise<CatalogSyncResult> {
+  // GLD (Golden) supplier is permanently disabled — products must not be re-imported.
+  console.info("[galaxus][sync:catalog] GLD supplier sync is blocked — skipping");
+  return { processed: 0, created: 0, updated: 0, mappingInserted: 0, mappingUpdated: 0, durationMs: 0 };
   const client = createGoldenSupplierClient();
   const startedAt = Date.now();
   const items = await client.fetchCatalog();

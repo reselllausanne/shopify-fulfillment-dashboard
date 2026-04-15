@@ -10,6 +10,7 @@ import {
   filterAlternativeProducts,
   loadAlternativeProductsForExport,
 } from "@/galaxus/exports/alternative";
+import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
 
 export type DecathlonExportRunResult = {
   ok: boolean;
@@ -51,8 +52,9 @@ export async function generateDecathlonExport(params?: {
     const { candidates, scanned } = await loadDecathlonCandidates(summary);
     const slicedCandidates =
       limit && Number.isFinite(limit) && limit > 0 ? candidates.slice(0, limit) : candidates;
+    const decathlonPartnerKeysLower = await loadPartnerKeysLowerFromDb();
     const productFile = buildProductCsv(slicedCandidates, summary);
-    const offerFile = buildOfferCsv(slicedCandidates, summary);
+    const offerFile = buildOfferCsv(slicedCandidates, summary, decathlonPartnerKeysLower);
     const normalProductRows = productFile.rows;
     const normalOfferRows = offerFile.rows;
 

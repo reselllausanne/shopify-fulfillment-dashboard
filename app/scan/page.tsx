@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -10,6 +11,19 @@ type ScanResult = {
   status: ScanStatus;
   awb: string;
   match: any | null;
+  decathlon?: {
+    matchId?: string | null;
+    orderId: string | null;
+    orderDbId: string | null;
+    orderNumber?: string | null;
+    orderState?: string | null;
+  } | null;
+  galaxus?: {
+    matchId?: string | null;
+    orderId: string | null;
+    orderDbId: string | null;
+    orderNumber?: string | null;
+  } | null;
   error?: { message?: string; code?: string };
 };
 
@@ -61,6 +75,10 @@ export default function ScanPage() {
   const [goatLoading, setGoatLoading] = useState(false);
   const [goatError, setGoatError] = useState<string | null>(null);
   const [goatTracking, setGoatTracking] = useState<{ count: number; items: GoatTrackingItem[] } | null>(null);
+  const canceledStates = useMemo(
+    () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
+    []
+  );
 
   useEffect(() => {
     focusInput();
@@ -105,6 +123,81 @@ export default function ScanPage() {
     loadGoatTracking();
   }, []);
 
+  const downloadPdf = async (url: string, fallbackName: string) => {
+    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    const ct = res.headers.get("content-type") ?? "";
+    if (!res.ok) {
+      const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+      throw new Error((data as any).error ?? `Download failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const dispo = res.headers.get("Content-Disposition") ?? "";
+    const match = /filename\*?=(?:UTF-8''|)([^";\n]+)|filename="([^"]+)"/i.exec(dispo);
+    const rawName = (match?.[1] || match?.[2] || "").trim();
+    const filename = rawName.replace(/^["']|["']$/g, "") || fallbackName;
+    const urlObj = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = urlObj;
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(urlObj);
+    return filename;
+  };
+
+  const buildChannelAlert = (scan: ScanResult) => {
+    const parts: string[] = [];
+    if (scan.decathlon) {
+      const ref = scan.decathlon.orderNumber || scan.decathlon.orderId || scan.decathlon.orderDbId || "—";
+      parts.push(`Decathlon ${ref}`);
+    }
+    if (scan.galaxus) {
+      const ref = scan.galaxus.orderNumber || scan.galaxus.orderId || scan.galaxus.orderDbId || "—";
+      parts.push(`Galaxus ${ref}`);
+    }
+    if (parts.length === 0) return null;
+    return `AWB ${scan.awb} → ${parts.join(" | ")}`;
+  };
+
+  const resolveDecathlonOrderRef = (match: ScanResult["decathlon"]) =>
+    match?.orderId || match?.orderDbId || "";
+
+  const autoHandleDecathlon = async (match: ScanResult["decathlon"], awb: string) => {
+    const orderRef = resolveDecathlonOrderRef(match);
+    if (!orderRef) return;
+    const state = String(match?.orderState ?? "").trim().toUpperCase();
+    if (state && canceledStates.has(state)) {
+      window.alert(`Decathlon order ${orderRef} is canceled; skipping fulfillment.`);
+      return;
+    }
+    try {
+      const shipRes = await fetch(`/api/decathlon/orders/${orderRef}/ship`, { method: "POST" });
+      const shipData = await shipRes.json().catch(() => ({}));
+      if (!shipRes.ok || !shipData.ok) {
+        throw new Error(shipData.error ?? "Decathlon ship failed");
+      }
+      await downloadPdf(
+        `/api/decathlon/orders/${orderRef}/documents/packing-slip`,
+        `decathlon-delivery_${orderRef}.pdf`
+      );
+      window.alert(`Decathlon order ${orderRef} shipped + packing slip downloaded.`);
+    } catch (error: any) {
+      window.alert(
+        `Decathlon auto-fulfill failed for AWB ${awb}: ${error?.message ?? "Unknown error"}`
+      );
+    }
+  };
+
+  const handleChannelActions = async (scan: ScanResult) => {
+    const alertText = buildChannelAlert(scan);
+    if (alertText) window.alert(alertText);
+    if (scan.decathlon) {
+      await autoHandleDecathlon(scan.decathlon, scan.awb);
+    }
+  };
+
   const focusInput = () => {
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -145,6 +238,8 @@ export default function ScanPage() {
         };
         return [entry, ...prev].slice(0, 20);
       });
+
+      await handleChannelActions(data);
 
       if (ENABLE_FULFILLMENT && data.ok && data.match) {
         await runFulfillFromScan(data);
@@ -317,7 +412,7 @@ export default function ScanPage() {
               <div className="text-lg font-semibold">Status: {result.status}</div>
               <div className="text-sm text-gray-600">AWB: {result.awb || "—"}</div>
             </div>
-            {!result.match && result.status !== "ERROR" && (
+            {!result.match && !result.decathlon && !result.galaxus && result.status !== "ERROR" && (
               <p className="text-sm mt-2">No match found. Ensure the AWB exists in OrderMatch.stockxAwb.</p>
             )}
             {result.error && (

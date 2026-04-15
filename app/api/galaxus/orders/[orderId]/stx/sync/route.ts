@@ -21,12 +21,20 @@ import {
   GALAXUS_STOCKX_TOKEN_FILE,
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
+import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function isUnknownCancelledAtArg(error: any): boolean {
   return String(error?.message ?? "").includes("Unknown argument `cancelledAt`");
+}
+
+function resolveAwbFromDetails(details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null) {
+  const direct = String(details?.awb ?? "").trim();
+  if (direct) return direct;
+  const trackingUrl = details?.order?.shipping?.shipment?.trackingUrl ?? null;
+  return extractAwbFromTrackingUrl(trackingUrl);
 }
 
 export async function POST(
@@ -68,6 +76,11 @@ export async function POST(
         .filter((bucket) => bucket.linkedWithEta < bucket.needed)
         .map((bucket) => bucket.supplierVariantId)
     );
+    const awbBackfillSupplierVariantIds = new Set(
+      initialStatus.buckets
+        .filter((bucket) => bucket.linkedWithAwb < bucket.needed)
+        .map((bucket) => bucket.supplierVariantId)
+    );
 
     const prismaAny = prisma as any;
     const unitsNeedingSettled: Array<{ supplierVariantId: string; stockxOrderId: string }> =
@@ -102,6 +115,7 @@ export async function POST(
     const needsAnySyncWork =
       pendingSupplierVariantIds.size > 0 ||
       etaBackfillSupplierVariantIds.size > 0 ||
+      awbBackfillSupplierVariantIds.size > 0 ||
       settledBackfillKeys.size > 0 ||
       unlinkedPurchaseUnits > 0;
 
@@ -221,6 +235,7 @@ export async function POST(
     let noPendingUnit = 0;
     let missingEta = 0;
     let etaBackfilled = 0;
+    let awbBackfilled = 0;
     let settledBackfilled = 0;
     let skippedNoVariant = 0;
     let skippedNotPendingVariant = 0;
@@ -279,6 +294,7 @@ export async function POST(
         }
 
         const variantFromBuy = extractStockxVariantId(null, details.order);
+        const resolvedAwb = resolveAwbFromDetails(details);
         const svFromMatch = String(match.stockxVariantId ?? "").trim();
         let supplierVariantId = svFromMatch.startsWith("stx_")
           ? svFromMatch
@@ -342,11 +358,41 @@ export async function POST(
         const stockxOrderNumberResolved =
           orderNumRaw || String(details.order?.orderNumber ?? "").trim() || null;
 
+        let awbUpdateCount = 0;
+        if (resolvedAwb) {
+          try {
+            const updated = await prismaAny.stxPurchaseUnit.updateMany({
+              where: {
+                galaxusOrderId: reservation.galaxusOrderId,
+                supplierVariantId,
+                stockxOrderId: buyOrderId,
+                awb: null,
+                cancelledAt: null,
+              },
+              data: { awb: resolvedAwb },
+            });
+            awbUpdateCount = updated?.count ?? 0;
+          } catch (error: any) {
+            if (!isUnknownCancelledAtArg(error)) throw error;
+            const updated = await prismaAny.stxPurchaseUnit.updateMany({
+              where: {
+                galaxusOrderId: reservation.galaxusOrderId,
+                supplierVariantId,
+                stockxOrderId: buyOrderId,
+                awb: null,
+              },
+              data: { awb: resolvedAwb },
+            });
+            awbUpdateCount = updated?.count ?? 0;
+          }
+          if (awbUpdateCount > 0) awbBackfilled += awbUpdateCount;
+        }
+
         const linkResult = await linkOldestPendingStxUnit({
           galaxusOrderId: reservation.galaxusOrderId,
           supplierVariantId,
           stockxOrderId: buyOrderId,
-          awb: details.awb ?? null,
+          awb: resolvedAwb ?? null,
           etaMin: normalizedEtaMin,
           etaMax: normalizedEtaMax,
           checkoutType: typeof details.order?.checkoutType === "string" ? details.order.checkoutType : null,
@@ -366,6 +412,8 @@ export async function POST(
           buyOrderId,
           supplierVariantId,
           result: linkResult.status,
+          awb: resolvedAwb ?? null,
+          awbBackfilled: awbUpdateCount,
         });
       }
     }
@@ -390,6 +438,7 @@ export async function POST(
           }
           try {
             const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId: stockxOrderId });
+            const resolvedAwb = resolveAwbFromDetails(details);
             return {
               orderId: stockxOrderId,
               chainId,
@@ -397,7 +446,7 @@ export async function POST(
               purchaseDate: (listNode as any)?.purchaseDate ?? null,
               localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
               details: {
-                awb: details.awb ?? null,
+                awb: resolvedAwb ?? null,
                 etaMin: details.etaMin ? details.etaMin.toISOString() : null,
                 etaMax: details.etaMax ? details.etaMax.toISOString() : null,
                 order: leanBuyOrder(details.order),
@@ -440,10 +489,11 @@ export async function POST(
           const supplierVariantId = `stx_${fastVariant}`;
           const isPendingVariant = pendingSupplierVariantIds.has(supplierVariantId);
           const needsEtaBackfill = etaBackfillSupplierVariantIds.has(supplierVariantId);
+          const needsAwbBackfill = awbBackfillSupplierVariantIds.has(supplierVariantId);
           const orderMayNeedSettledBackfill = [...settledBackfillKeys].some((k) =>
             k.startsWith(`${stockxOrderId}::`)
           );
-          if (!isPendingVariant && !needsEtaBackfill && !orderMayNeedSettledBackfill) {
+          if (!isPendingVariant && !needsEtaBackfill && !needsAwbBackfill && !orderMayNeedSettledBackfill) {
             skippedNotPendingVariant += 1;
             console.info("[GALAXUS][STX][SYNC][SKIP] Not pending variant", {
               chainId,
@@ -484,8 +534,10 @@ export async function POST(
           const resolvedSupplierVariantId = `stx_${variantId}`;
           const isPendingResolved = pendingSupplierVariantIds.has(resolvedSupplierVariantId);
           const needsEtaResolved = etaBackfillSupplierVariantIds.has(resolvedSupplierVariantId);
+          const needsAwbResolved = awbBackfillSupplierVariantIds.has(resolvedSupplierVariantId);
           const normalizedEtaMin = details.etaMin ?? details.etaMax ?? null;
           const normalizedEtaMax = details.etaMax ?? details.etaMin ?? null;
+          const resolvedAwb = resolveAwbFromDetails(details);
           const checkoutType =
             typeof details.order?.checkoutType === "string" ? details.order.checkoutType : null;
           const settledRaw = details?.order?.payment?.settledAmount;
@@ -505,6 +557,7 @@ export async function POST(
           let linkResult:
             | Awaited<ReturnType<typeof linkOldestPendingStxUnit>>
             | { status: "eta_backfilled" | "eta_not_available" | "eta_no_matching_unit" }
+            | { status: "awb_backfilled" | "awb_not_available" | "awb_no_matching_unit" }
             | { status: "settled_backfilled" | "settled_no_row" | "settled_no_amount" };
 
           if (isPendingResolved) {
@@ -512,7 +565,7 @@ export async function POST(
               galaxusOrderId: reservation.galaxusOrderId,
               supplierVariantId: resolvedSupplierVariantId,
               stockxOrderId,
-              awb: details.awb ?? null,
+              awb: resolvedAwb ?? null,
               etaMin: normalizedEtaMin,
               etaMax: normalizedEtaMax,
               checkoutType,
@@ -521,13 +574,13 @@ export async function POST(
               stockxSettledCurrency,
             });
           } else if (needsEtaResolved) {
-            if (!normalizedEtaMin && !normalizedEtaMax && !details.awb && !checkoutType) {
+            if (!normalizedEtaMin && !normalizedEtaMax && !resolvedAwb && !checkoutType) {
               linkResult = { status: "eta_not_available" };
             } else {
               const updateData: any = {};
               if (normalizedEtaMin) updateData.etaMin = normalizedEtaMin;
               if (normalizedEtaMax) updateData.etaMax = normalizedEtaMax;
-              if (details.awb) updateData.awb = details.awb;
+              if (resolvedAwb) updateData.awb = resolvedAwb;
               if (checkoutType) updateData.checkoutType = checkoutType;
               if (stockxOrderNumberFromList) updateData.stockxOrderNumber = stockxOrderNumberFromList;
               if (stockxSettledAmount != null && stockxSettledAmount > 0) {
@@ -563,6 +616,43 @@ export async function POST(
                 linkResult = { status: "eta_backfilled" };
               } else {
                 linkResult = { status: "eta_no_matching_unit" };
+              }
+            }
+          } else if (needsAwbResolved) {
+            if (!resolvedAwb) {
+              linkResult = { status: "awb_not_available" };
+            } else {
+              const updateData: any = { awb: resolvedAwb };
+              if (stockxOrderNumberFromList) updateData.stockxOrderNumber = stockxOrderNumberFromList;
+              let updated: { count: number };
+              try {
+                updated = await (prisma as any).stxPurchaseUnit.updateMany({
+                  where: {
+                    galaxusOrderId: reservation.galaxusOrderId,
+                    supplierVariantId: resolvedSupplierVariantId,
+                    stockxOrderId,
+                    awb: null,
+                    cancelledAt: null,
+                  },
+                  data: updateData,
+                });
+              } catch (error: any) {
+                if (!isUnknownCancelledAtArg(error)) throw error;
+                updated = await (prisma as any).stxPurchaseUnit.updateMany({
+                  where: {
+                    galaxusOrderId: reservation.galaxusOrderId,
+                    supplierVariantId: resolvedSupplierVariantId,
+                    stockxOrderId,
+                    awb: null,
+                  },
+                  data: updateData,
+                });
+              }
+              if ((updated?.count ?? 0) > 0) {
+                awbBackfilled += updated.count;
+                linkResult = { status: "awb_backfilled" };
+              } else {
+                linkResult = { status: "awb_no_matching_unit" };
               }
             }
           } else if (needsSettledBackfill) {
@@ -616,7 +706,7 @@ export async function POST(
             orderId: stockxOrderId,
             orderNumber: (listNode as any)?.orderNumber ?? null,
             supplierVariantId: resolvedSupplierVariantId,
-            awb: details.awb ?? null,
+            awb: resolvedAwb ?? null,
             etaMin: normalizedEtaMin ? normalizedEtaMin.toISOString() : null,
             etaMax: normalizedEtaMax ? normalizedEtaMax.toISOString() : null,
             checkoutType,
@@ -655,6 +745,7 @@ export async function POST(
         linkedFromSavedMatches,
         savedMatchAttempts,
         savedMatchSkipped,
+        awbBackfilled,
       },
       status,
     });

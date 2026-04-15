@@ -203,6 +203,9 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
     [address?.firstName, address?.lastName].filter(Boolean).join(" ").trim() ||
     null;
 
+  const phone =
+    [address?.phone, orderInfo?.phone].map((p) => String(p || "").trim()).find(Boolean) || null;
+
   return {
     name1: fullName,
     firstName: address?.firstName || null,
@@ -211,25 +214,40 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
     zip: address?.zip || null,
     city: address?.city || null,
     country: address?.countryCodeV2 || address?.country || null,
-    phone: null,
+    phone,
     email: orderInfo?.email || null,
   };
+}
+
+/** Swiss Post DCAPI Language enum: DE | FR | IT | EN */
+function swissPostLanguageFromOrderLocale(
+  customerLocale: string | null | undefined
+): "DE" | "FR" | "IT" | "EN" {
+  const raw = String(customerLocale || "").trim().toLowerCase();
+  if (!raw) return "EN";
+  const primary = raw.split(/[-_]/)[0] || raw;
+  if (primary.startsWith("de")) return "DE";
+  if (primary.startsWith("fr")) return "FR";
+  if (primary.startsWith("it")) return "IT";
+  if (primary.startsWith("en")) return "EN";
+  return "EN";
 }
 
 function buildSwissPostPayload(
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>,
   awb: string
 ) {
-  const language = process.env.SWISS_POST_LANGUAGE || "DE";
+  const language = swissPostLanguageFromOrderLocale(orderInfo?.customerLocale);
   const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
   const imageResolution = Number(process.env.SWISS_POST_IMAGE_RESOLUTION || 300);
-  const notificationServiceCode = Number(process.env.SWISS_POST_NOTIFICATION_SERVICE || 0);
-  const allowedNotifications = [1, 2, 4, 32, 64, 128, 256];
-  const notificationService =
-    allowedNotifications.includes(notificationServiceCode) && notificationServiceCode > 0
-      ? String(notificationServiceCode)
-      : null;
+  /**
+   * Swiss Post restricts notification codes by product (przl). Codes 2 and 4 need additional
+   * service AZS (and specific base services); sending 1+2+4 with plain ECO/SI yields "notification: Invalid".
+   * Service 1 (proof of posting) is valid for PostPac Economy / typical domestic labels.
+   * @see https://developer.post.ch/en/digital-commerce-api (notification services)
+   */
+  const defaultEmailNotificationService = "1";
 
   const sender = {
     name1: process.env.SWISS_POST_CUSTOMER_NAME1 || "",
@@ -287,23 +305,18 @@ function buildSwissPostPayload(
       attributes: {
         przl: przlValues,
       },
-      notification:
-        notificationService &&
-        (recipient.email || recipient.phone)
-          ? [
-              {
-                communication: {
-                  email: recipient.email || "",
-                  mobile: null,
-                },
-                service: notificationService,
-                freeText1: null,
-                freeText2: null,
-                language,
-                type: "EMAIL",
+      notification: recipient.email
+        ? [
+            {
+              communication: {
+                email: String(recipient.email).trim(),
               },
-            ]
-          : [],
+              service: defaultEmailNotificationService,
+              language,
+              type: "EMAIL" as const,
+            },
+          ]
+        : [],
     },
   };
 }

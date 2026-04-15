@@ -454,7 +454,8 @@ export async function bulkUpdateSupplierVariants(
           )
           THEN ${now}
           ELSE t."lastSyncAt"
-        END
+        END,
+        "updatedAt" = ${now}
       FROM vals
       WHERE t."supplierVariantId" = vals."supplierVariantId"
         AND (t."manualLock" IS DISTINCT FROM TRUE)

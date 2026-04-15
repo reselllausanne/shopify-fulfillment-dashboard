@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { ALTERNATIVE_PARTNER_KEY, isAlternativeProductsPartnerKey } from "@/app/lib/alternativeProducts";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 
 type ExportRow = Record<string, string>;
 
@@ -167,35 +168,8 @@ export async function loadNormalExportCandidatePrices(params?: {
   }
 
   const prismaAny = prisma as any;
-  const partners = await prismaAny.partner.findMany({
-    select: {
-      key: true,
-      targetMargin: true,
-      shippingPerPair: true,
-      bufferPerPair: true,
-      roundTo: true,
-      vatRate: true,
-    },
-  });
-  const partnerByKey = new Map<string, any>(
-    partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
-  );
-  const toNumber = (value: any) => {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const resolvePartnerOverrides = (key: string | null) => {
-    if (!key) return null;
-    const partner = partnerByKey.get(key.toLowerCase());
-    if (!partner) return null;
-    return {
-      targetMargin: toNumber(partner.targetMargin),
-      shippingPerPair: toNumber(partner.shippingPerPair),
-      bufferPerPair: toNumber(partner.bufferPerPair),
-      roundTo: toNumber(partner.roundTo),
-      vatRate: toNumber(partner.vatRate),
-    };
-  };
+  const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
+  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
 
   const mappings = await prismaAny.variantMapping.findMany({
     where: {
@@ -211,10 +185,11 @@ export async function loadNormalExportCandidatePrices(params?: {
   });
 
   const bestByGtin = new Map<string, any>();
-  accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+  accumulateBestCandidates(mappings, bestByGtin, {
     keyBy: "gtin",
     requireProductName: false,
     requireImage: false,
+    galaxusPartnerKeysLower,
   });
 
   const byGtin = new Map<string, number>();

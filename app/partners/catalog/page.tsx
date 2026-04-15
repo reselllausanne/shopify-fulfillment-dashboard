@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type CatalogItem = {
   supplierVariantId: string;
@@ -73,6 +74,7 @@ function parseIntOrNull(value: string): number | null {
 }
 
 export default function PartnerCatalogPage() {
+  const router = useRouter();
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +89,26 @@ export default function PartnerCatalogPage() {
   const [modalRow, setModalRow] = useState<CatalogItem | null>(null);
   const [modalEdit, setModalEdit] = useState<Record<string, string>>({});
   const [modalError, setModalError] = useState<string | null>(null);
+  const [isNer, setIsNer] = useState(false);
+
+  useEffect(() => {
+    const loadPartner = async () => {
+      try {
+        const res = await fetch("/api/partners/me", { cache: "no-store" });
+        if (res.status === 401) {
+          router.push("/partners/login");
+          return;
+        }
+        const data = await res.json();
+        if (data.ok && data.partner?.key) {
+          setIsNer(String(data.partner.key).toLowerCase() === "ner");
+        }
+      } catch {
+        // ignore
+      }
+    };
+    loadPartner();
+  }, [router]);
 
   const loadItems = async (next = 0, mode: "replace" | "append" = "replace") => {
     setLoading(true);
@@ -94,7 +116,8 @@ export default function PartnerCatalogPage() {
     try {
       const params = new URLSearchParams();
       if (query.trim()) params.set("q", query.trim());
-      if (mineOnly) params.set("mine", "1");
+      const appliedMineOnly = !isNer || mineOnly;
+      if (appliedMineOnly) params.set("mine", "1");
       params.set("limit", String(limit));
       params.set("offset", String(next));
       const res = await fetch(`/api/partners/catalog/variants?${params.toString()}`, { cache: "no-store" });
@@ -125,11 +148,12 @@ export default function PartnerCatalogPage() {
 
   useEffect(() => {
     loadItems();
-  }, []);
+  }, [isNer]);
 
   const applySearch = () => loadItems(0, "replace");
 
   const openFullEdit = (row: CatalogItem) => {
+    if (!isNer) return;
     setModalRow(row);
     setModalError(null);
     const next: Record<string, string> = {
@@ -210,7 +234,7 @@ export default function PartnerCatalogPage() {
   };
 
   const saveFullEdit = async () => {
-    if (!modalRow) return;
+    if (!modalRow || !isNer) return;
     setBusyId("modal");
     setModalError(null);
     try {
@@ -268,6 +292,7 @@ export default function PartnerCatalogPage() {
   };
 
   const deleteRow = async (row: CatalogItem) => {
+    if (!isNer) return;
     if (!row.owned) return;
     if (!confirm(`Remove ${row.supplierSku ?? row.supplierVariantId}?`)) return;
     setBusyId(row.supplierVariantId);
@@ -294,10 +319,14 @@ export default function PartnerCatalogPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Catalog & Pricing</h1>
           <p className="text-sm text-slate-500">
-            Full catalog view with read-only access to all products and full control over your own.
+            {isNer
+              ? "Full catalog view with full edit access."
+              : "You can view and edit only your own products (price + stock)."}
           </p>
         </div>
-        <div className="text-xs text-slate-500">Owned: {ownedCount} · Loaded: {items.length}</div>
+        <div className="text-xs text-slate-500">
+          {isNer ? `Owned: ${ownedCount} · Loaded: ${items.length}` : `Loaded: ${items.length}`}
+        </div>
       </div>
 
       {error && (
@@ -312,14 +341,16 @@ export default function PartnerCatalogPage() {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search by SKU, GTIN, variant id..."
           />
-          <label className="flex items-center gap-2 text-xs text-slate-600">
-            <input
-              type="checkbox"
-              checked={mineOnly}
-              onChange={(event) => setMineOnly(event.target.checked)}
-            />
-            Only my products
-          </label>
+          {isNer ? (
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={mineOnly}
+                onChange={(event) => setMineOnly(event.target.checked)}
+              />
+              Only my products
+            </label>
+          ) : null}
           <select
             className="rounded border border-slate-200 px-2 py-2 text-xs text-slate-600"
             value={limit}
@@ -403,19 +434,23 @@ export default function PartnerCatalogPage() {
                       >
                         {busyId === row.supplierVariantId ? "Saving…" : "Save"}
                       </button>
-                      <button
-                        className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700"
-                        onClick={() => openFullEdit(row)}
-                      >
-                        Full edit
-                      </button>
-                      <button
-                        className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-600"
-                        onClick={() => deleteRow(row)}
-                        disabled={busyId === row.supplierVariantId}
-                      >
-                        Remove
-                      </button>
+                      {isNer ? (
+                        <>
+                          <button
+                            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700"
+                            onClick={() => openFullEdit(row)}
+                          >
+                            Full edit
+                          </button>
+                          <button
+                            className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-600"
+                            onClick={() => deleteRow(row)}
+                            disabled={busyId === row.supplierVariantId}
+                          >
+                            Remove
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   ) : (
                     <span className="text-slate-400">Read only</span>
@@ -444,7 +479,7 @@ export default function PartnerCatalogPage() {
         </button>
       )}
 
-      {modalRow && (
+      {modalRow && isNer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4">
           <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between">

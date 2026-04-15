@@ -8,6 +8,7 @@ import {
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { selectStxActiveOffer, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 
 type ImportPreviewVariant = {
@@ -309,7 +310,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
 
     const stxBasePrice = Number(selected.price);
     const shippingCHF = resolveStxShippingCHF(product);
-    const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
+    const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
 
     parsedRows.push({
       supplierVariantId,

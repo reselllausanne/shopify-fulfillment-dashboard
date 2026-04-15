@@ -698,6 +698,7 @@ export async function createCompositeWarehouseShipment(
   const existingItems = await prismaAny.shipmentItem.findMany({
     where: { orderId: { in: sourceOrderIds } },
     select: {
+      orderId: true,
       supplierPid: true,
       gtin14: true,
       quantity: true,
@@ -708,11 +709,13 @@ export async function createCompositeWarehouseShipment(
   for (const o of orderMap.values()) {
     for (const line of o.lines ?? []) {
       const lineId = String(line.id);
+      const orderId = String(o.id);
       const supplierPid = String(line?.supplierPid ?? "").trim();
       const gtin = String(line?.gtin ?? "").trim();
       const reserved = existingItems
         .filter((item: any) => {
           const sameLine =
+            String(item?.orderId ?? "") === orderId &&
             String(item?.supplierPid ?? "").trim() === supplierPid &&
             String(item?.gtin14 ?? "").trim() === gtin;
           if (!sameLine) return false;
@@ -728,6 +731,7 @@ export async function createCompositeWarehouseShipment(
       const qty = existingItems
         .filter((item: any) => {
           const sameLine =
+            String(item?.orderId ?? "") === orderId &&
             String(item?.supplierPid ?? "").trim() === supplierPid &&
             String(item?.gtin14 ?? "").trim() === gtin;
           if (!sameLine) return false;
@@ -757,16 +761,40 @@ export async function createCompositeWarehouseShipment(
     totalsByLine.set(lineId, nextTotal);
   }
 
-  const purgeCandidates = existingShipments.filter((shipment) => {
-    const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
-    const status = String(shipment?.status ?? "").toUpperCase();
-    if (status === "MANUAL") return false;
+  // When confirmReplace is set, also purge MANUAL-pending (not yet DELR-sent/uploaded) drafts across
+  // ALL source orders so items reserved in old single-order drafts can be moved into this composite.
+  const allSourceOrderIds = Array.from(orderMap.keys());
+  const allSourceShipments =
+    options.confirmReplace && allSourceOrderIds.length > 1
+      ? await prismaAny.shipment.findMany({
+          where: {
+            orderId: { in: allSourceOrderIds.filter((id) => id !== anchor.id) },
+          },
+        })
+      : [];
+
+  const isPurgeable = (shipment: any) => {
     if (shipment?.delrSentAt) return false;
+    const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
     if (delrStatus === "UPLOADED") return false;
     return true;
-  });
+  };
+
+  const purgeCandidates = [
+    // Anchor order: purge non-MANUAL pending drafts (unchanged behaviour without confirmReplace).
+    // With confirmReplace also purge MANUAL-pending ones.
+    ...existingShipments.filter((shipment) => {
+      if (!isPurgeable(shipment)) return false;
+      const status = String(shipment?.status ?? "").toUpperCase();
+      if (status === "MANUAL" && !options.confirmReplace) return false;
+      return true;
+    }),
+    // Other source orders: purge their pending (including MANUAL) drafts only when confirmReplace.
+    ...(options.confirmReplace ? allSourceShipments.filter(isPurgeable) : []),
+  ];
+
   if (purgeCandidates.length > 0) {
-    const purgeIds = purgeCandidates.map((shipment) => shipment.id);
+    const purgeIds = purgeCandidates.map((shipment: any) => shipment.id);
     await prismaAny.$transaction(async (tx: any) => {
       await tx.shipmentItem.deleteMany({ where: { shipmentId: { in: purgeIds } } });
       await tx.document.deleteMany({ where: { shipmentId: { in: purgeIds } } });

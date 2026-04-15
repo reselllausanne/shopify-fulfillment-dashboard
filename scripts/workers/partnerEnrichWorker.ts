@@ -55,7 +55,8 @@ async function run() {
       await completeJob(job.id, { ...payload, result });
       console.info("[worker] job completed", { jobId: job.id, processed: result.processed });
 
-      const autoDrain = payload.autoDrain !== false;
+      // Opt-in only (dashboard passes autoDrain=1 → payload.autoDrain true).
+      const autoDrain = payload.autoDrain === true;
       const limit = Math.max(Number(payload.limit ?? 0), 0);
       if (autoDrain && limit > 0 && result.candidates >= limit && result.processed > 0) {
         await enqueueJob(

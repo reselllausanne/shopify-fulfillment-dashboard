@@ -1530,6 +1530,7 @@ model DecathlonOrderLine {
 
   order           DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   stockxMatch     DecathlonStockxMatch?
+  shipmentLines   DecathlonShipmentLine[]
 
   @@index([orderId])
   @@index([offerSku])
@@ -1590,6 +1591,8 @@ model DecathlonStockxMatch {
 model DecathlonShipment {
   id             String   @id @default(uuid())
   orderId        String
+  /// Mirakl MMP shipment id returned by ST01 (POST /api/shipments); used to pick the right OR72/OR73 packing slip.
+  miraklShipmentId String?
   carrierRaw     String?
   carrierFinal   String?
   trackingNumber String?
@@ -1600,8 +1603,26 @@ model DecathlonShipment {
 
   order          DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   documents      DecathlonOrderDocument[]
+  lines          DecathlonShipmentLine[]
 
   @@index([orderId])
+  @@index([miraklShipmentId])
+  @@schema("public")
+}
+
+model DecathlonShipmentLine {
+  id          String   @id @default(uuid())
+  shipmentId  String
+  orderLineId String
+  quantity    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shipment    DecathlonShipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderLine   DecathlonOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
+  @@index([orderLineId])
   @@schema("public")
 }
 

@@ -36,17 +36,6 @@ type UploadLog = {
   createdAt: string | null;
 };
 
-type PendingRow = {
-  id: string;
-  sku: string;
-  sizeRaw: string;
-  rawStock: number;
-  price: string;
-  status: string;
-  gtinResolved: string;
-  updatedAt: string | null;
-};
-
 const TEMPLATE_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
 
 export default function PartnerDashboardPage() {
@@ -60,12 +49,10 @@ export default function PartnerDashboardPage() {
   const [importPollUploadId, setImportPollUploadId] = useState<string | null>(null);
   const [catalogCount, setCatalogCount] = useState<number>(0);
   const [uploadHistory, setUploadHistory] = useState<UploadLog[]>([]);
-  const [pendingRows, setPendingRows] = useState<PendingRow[]>([]);
   const [pendingEnrichCount, setPendingEnrichCount] = useState<number>(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
-  const [defaultLeadDraft, setDefaultLeadDraft] = useState("");
-  const [leadSaveBusy, setLeadSaveBusy] = useState(false);
+  const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -78,9 +65,37 @@ export default function PartnerDashboardPage() {
       if (!data.ok) return;
       setCatalogCount(data.catalogCount ?? 0);
       setUploadHistory(data.uploads ?? []);
-      setPendingRows(data.pendingRows ?? []);
       setPendingEnrichCount(data.pendingEnrichCount ?? 0);
       setHistoryLoaded(true);
+    } catch {
+      // silent
+    }
+  };
+
+  const normalizeState = (state?: string | null) => String(state ?? "").trim().toUpperCase();
+  const canceledStates = new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]);
+
+  const loadOrdersSummary = async () => {
+    try {
+      const res = await fetch("/api/decathlon/orders?limit=200&scope=partner", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.ok) return;
+      const items: Array<{
+        orderState?: string | null;
+        totalUnits?: number;
+        shippedUnits?: number;
+        remainingUnits?: number;
+      }> = Array.isArray(data.items) ? data.items : [];
+      const toProcess = items.filter((order) => {
+        const state = normalizeState(order.orderState);
+        const totalUnits = order.totalUnits ?? 0;
+        const shippedUnits = order.shippedUnits ?? 0;
+        const remainingUnits = order.remainingUnits ?? Math.max(totalUnits - shippedUnits, 0);
+        const isShipped = totalUnits > 0 ? remainingUnits <= 0 : state === "SHIPPED";
+        return !isShipped && !canceledStates.has(state);
+      }).length;
+      setOrdersToProcessCount(toProcess);
     } catch {
       // silent
     }
@@ -117,51 +132,12 @@ export default function PartnerDashboardPage() {
       const data = await res.json();
       if (data.ok) {
         setPartner(data.partner);
-        const d = data.partner?.defaultLeadTimeDays;
-        setDefaultLeadDraft(d != null ? String(d) : "");
         loadHistory();
+        loadOrdersSummary();
       }
     };
     load();
   }, [router]);
-
-  const saveDefaultLeadTime = async (override?: { defaultLeadTimeDays: number | null }) => {
-    setLeadSaveBusy(true);
-    setError(null);
-    try {
-      let body: { defaultLeadTimeDays: number | null };
-      if (override) {
-        body = { defaultLeadTimeDays: override.defaultLeadTimeDays };
-      } else {
-        const trimmed = defaultLeadDraft.trim();
-        if (trimmed === "") {
-          body = { defaultLeadTimeDays: null };
-        } else {
-          const n = Number.parseInt(trimmed, 10);
-          if (!Number.isFinite(n) || n < 0 || n > 365) {
-            throw new Error("Lead time must be a whole number from 0 to 365 days.");
-          }
-          body = { defaultLeadTimeDays: n };
-        }
-      }
-      const res = await fetch("/api/partners/me", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Save failed");
-      setPartner(data.partner);
-      const d = data.partner?.defaultLeadTimeDays;
-      setDefaultLeadDraft(d != null ? String(d) : "");
-    } catch (err: any) {
-      setError(err.message ?? "Save failed");
-    } finally {
-      setLeadSaveBusy(false);
-    }
-  };
-
-  const clearDefaultLeadTime = () => saveDefaultLeadTime({ defaultLeadTimeDays: null });
 
   const downloadTemplate = () => {
     const content = `${TEMPLATE_HEADERS.join(",")}\n`;
@@ -276,90 +252,35 @@ export default function PartnerDashboardPage() {
 
       {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5">
-        <div className="text-sm font-semibold text-slate-900">Galaxus lead time (account default)</div>
-        <p className="mt-1 text-xs text-slate-500">
-          Used for supplier orders (including direct delivery) when a product has no per-variant lead time. Leave empty
-          to use the system default configured on the server.
-        </p>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="text-xs text-slate-600">
-            Default days to ship
-            <input
-              type="number"
-              min={0}
-              max={365}
-              className="mt-1 block w-32 rounded border border-slate-200 px-2 py-2 text-sm"
-              placeholder="e.g. 5"
-              value={defaultLeadDraft}
-              onChange={(e) => setDefaultLeadDraft(e.target.value)}
-              disabled={leadSaveBusy}
-            />
-          </label>
-          <button
-            type="button"
-            className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
-            onClick={() => saveDefaultLeadTime()}
-            disabled={leadSaveBusy}
-          >
-            {leadSaveBusy ? "Saving…" : "Save default"}
-          </button>
-          <button
-            type="button"
-            className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-600"
-            onClick={() => clearDefaultLeadTime()}
-            disabled={leadSaveBusy}
-          >
-            Clear (use system default)
-          </button>
-        </div>
-        <p className="mt-2 text-[11px] text-slate-400">
-          Override per SKU in Catalog → Full edit → &quot;Lead time to ship (days)&quot;.
-        </p>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <button
+          type="button"
+          className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-[#55b3f3]"
+          onClick={() => router.push("/partners/catalog")}
+        >
           <div className="text-xs uppercase tracking-wide text-slate-400">Catalog</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{catalogCount}</div>
-          <div className="text-xs text-slate-500">Total products in DB</div>
-        </div>
+          <div className="text-xs text-slate-500">Open catalog to manage prices and stock.</div>
+        </button>
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="text-xs uppercase tracking-wide text-slate-400">Enrichment Queue</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{pendingEnrichCount}</div>
           <div className="text-xs text-slate-500">New products waiting to enrich</div>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-400">GTIN Inbox</div>
-          <div className="mt-2 text-2xl font-semibold text-slate-900">{pendingRows.length}</div>
-          <div className="text-xs text-slate-500">Rows needing GTIN resolution</div>
-        </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <button
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
-          onClick={() => router.push("/partners/catalog")}
-        >
-          <div className="text-xs uppercase tracking-wide text-slate-400">Catalog Management</div>
-          <div className="mt-2 text-lg font-semibold text-slate-900">Open Catalog</div>
-          <div className="text-xs text-slate-500">Edit prices, stock, and full product data.</div>
-        </button>
-        <button
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
-          onClick={() => router.push("/partners/gtin-inbox")}
-        >
-          <div className="text-xs uppercase tracking-wide text-slate-400">GTIN Inbox</div>
-          <div className="mt-2 text-lg font-semibold text-slate-900">Resolve GTINs</div>
-          <div className="text-xs text-slate-500">Handle missing and ambiguous GTINs.</div>
-        </button>
+      <div className="grid gap-4 md:grid-cols-2">
         <button
           className="rounded-2xl border border-slate-200 bg-white px-4 py-5 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/orders")}
         >
           <div className="text-xs uppercase tracking-wide text-slate-400">Orders</div>
-          <div className="mt-2 text-lg font-semibold text-slate-900">Fulfillment</div>
-          <div className="text-xs text-slate-500">Confirm tracking and ship items.</div>
+          <div className="mt-2 text-lg font-semibold text-slate-900">To process</div>
+          <div className="text-xs text-slate-500">
+            {ordersToProcessCount == null
+              ? "Loading orders…"
+              : `${ordersToProcessCount} order${ordersToProcessCount === 1 ? "" : "s"} to process`}
+          </div>
         </button>
       </div>
 
@@ -437,18 +358,11 @@ export default function PartnerDashboardPage() {
           <div>
             <div className="text-sm font-semibold text-slate-900">Enrichment</div>
             <div className="text-xs text-slate-500">
-              Run after upload for new rows in the enrichment queue. Use force re-enrich to run KickDB again—including
-              for lines still in the GTIN inbox—after you change a SKU or size in Catalog.
+              Enrichment runs automatically on upload. Use force re-enrich only after you change SKU/size values in the
+              catalog and want to refresh KickDB matches.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button
-              className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
-              onClick={() => enrichPending(false)}
-              disabled={busy}
-            >
-              Enrich new products
-            </button>
             <button
               className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
               onClick={() => enrichPending(true)}
@@ -539,52 +453,6 @@ export default function PartnerDashboardPage() {
         )}
       </div>
 
-      {pendingRows.length > 0 && (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
-          <div className="text-sm font-semibold text-slate-900">
-            Pending GTIN Resolution ({pendingRows.length})
-          </div>
-          <div className="text-xs text-slate-500">
-            These rows need GTIN resolution before they appear in exports. Go to{" "}
-            <button className="text-[#55b3f3] underline" onClick={() => router.push("/partners/gtin-inbox")}>
-              GTIN Inbox
-            </button>{" "}
-            to resolve them.
-          </div>
-          <div className="overflow-auto rounded border border-slate-200">
-            <table className="min-w-full text-xs">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-2 py-1 text-left">SKU</th>
-                  <th className="px-2 py-1 text-left">Size</th>
-                  <th className="px-2 py-1 text-right">Stock</th>
-                  <th className="px-2 py-1 text-right">Price</th>
-                  <th className="px-2 py-1 text-left">Status</th>
-                  <th className="px-2 py-1 text-left">Updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pendingRows.map((r) => (
-                  <tr key={r.id} className="border-t">
-                    <td className="px-2 py-1 font-mono">{r.sku}</td>
-                    <td className="px-2 py-1">{r.sizeRaw}</td>
-                    <td className="px-2 py-1 text-right">{r.rawStock}</td>
-                    <td className="px-2 py-1 text-right">{r.price}</td>
-                    <td className="px-2 py-1">
-                      <span className={r.status === "PENDING_GTIN" ? "text-amber-700" : "text-orange-600"}>
-                        {r.status}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1">
-                      {r.updatedAt ? new Date(r.updatedAt).toLocaleString() : ""}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

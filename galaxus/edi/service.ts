@@ -331,6 +331,37 @@ export async function sendOutgoingEdi(options: {
             });
             continue;
           }
+          if (type === "INVO" && !force) {
+            const hasDelr = await (prisma as any).galaxusEdiFile.findFirst({
+              where: {
+                direction: "OUT",
+                docType: "DELR",
+                orderId: order.id,
+                status: "uploaded",
+              },
+              select: { id: true },
+            });
+            const hasShipmentDelr = shipment
+              ? await (prisma as any).galaxusEdiFile.findFirst({
+                  where: {
+                    direction: "OUT",
+                    docType: "DELR",
+                    shipmentId: shipment.id,
+                    status: "uploaded",
+                  },
+                  select: { id: true },
+                })
+              : null;
+            if (!hasDelr && !hasShipmentDelr) {
+              results.push({
+                docType: type,
+                filename: "",
+                status: "skipped",
+                message: "INVO blocked: no DELR has been uploaded for this order yet. Ship first.",
+              });
+              continue;
+            }
+          }
           if (type === "INVO") {
             try {
               const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
@@ -579,7 +610,14 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
     const hasOutOfStock = order.statusEvents.some((event) => event.type === "OUT_OF_STOCK");
     const types: EdiDocType[] = ["ORDR"];
     if (order.shipments.length > 0) {
-      types.push("DELR", "INVO");
+      types.push("DELR");
+    }
+    const hasUploadedDelr = await (prisma as any).galaxusEdiFile.findFirst({
+      where: { direction: "OUT", docType: "DELR", orderId: order.id, status: "uploaded" },
+      select: { id: true },
+    });
+    if (hasUploadedDelr) {
+      types.push("INVO");
     }
     if (hasCancel) types.push("CANR");
     if (hasOutOfStock) types.push("EOLN");

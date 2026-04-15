@@ -81,6 +81,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const rawCode = body?.code;
     const awb = normalizeCode(rawCode);
+    const rawClean = String(rawCode ?? "").trim();
+    const normalizedSearch = rawClean.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    const awbCandidates = Array.from(new Set([awb, normalizedSearch].filter(Boolean)));
+    const trackingUrlFilters = awbCandidates
+      .filter((candidate) => candidate.length >= 6)
+      .map((candidate) => ({ stockxTrackingUrl: { contains: candidate } }));
 
     if (!awb) {
       return NextResponse.json(
@@ -90,28 +96,66 @@ export async function POST(req: NextRequest) {
     }
 
     // Look for a match by AWB; fallbacks could be trackingUrl but keep strict for V1
-    const match = await prisma.orderMatch.findFirst({
-      where: { stockxAwb: awb },
-      select: {
-        shopifyOrderId: true,
-        shopifyOrderName: true,
-        shopifyLineItemId: true,
-        matchConfidence: true,
-        matchScore: true,
-        stockxAwb: true,
-        stockxTrackingUrl: true,
-        shopifyProductTitle: true,
-        shopifySizeEU: true,
-        shopifySku: true,
-        shopifyTotalPrice: true,
-        // No customer fields in current schema; returned as nulls
-      },
-    });
+    const [match, decathlonMatch, galaxusMatch] = await Promise.all([
+      prisma.orderMatch.findFirst({
+        where: {
+          OR: [{ stockxAwb: { in: awbCandidates } }, ...trackingUrlFilters],
+        },
+        select: {
+          shopifyOrderId: true,
+          shopifyOrderName: true,
+          shopifyLineItemId: true,
+          matchConfidence: true,
+          matchScore: true,
+          stockxAwb: true,
+          stockxTrackingUrl: true,
+          shopifyProductTitle: true,
+          shopifySizeEU: true,
+          shopifySku: true,
+          shopifyTotalPrice: true,
+          // No customer fields in current schema; returned as nulls
+        },
+      }),
+      prisma.decathlonStockxMatch.findFirst({
+        where: {
+          OR: [{ stockxAwb: { in: awbCandidates } }, ...trackingUrlFilters],
+        },
+        select: {
+          id: true,
+          decathlonOrderId: true,
+          order: {
+            select: {
+              id: true,
+              orderId: true,
+              orderNumber: true,
+              orderState: true,
+            },
+          },
+        },
+      }),
+      prisma.galaxusStockxMatch.findFirst({
+        where: {
+          OR: [{ stockxAwb: { in: awbCandidates } }, ...trackingUrlFilters],
+        },
+        select: {
+          id: true,
+          galaxusOrderId: true,
+          order: {
+            select: {
+              id: true,
+              galaxusOrderId: true,
+              orderNumber: true,
+            },
+          },
+        },
+      }),
+    ]);
 
-    const status: ScanStatus = match ? "FOUND" : "NOT_FOUND";
+    const hasAnyMatch = Boolean(match || decathlonMatch || galaxusMatch);
+    const status: ScanStatus = hasAnyMatch ? "FOUND" : "NOT_FOUND";
 
     const response = {
-      ok: !!match,
+      ok: hasAnyMatch,
       status,
       awb,
       match: match
@@ -141,6 +185,23 @@ export async function POST(req: NextRequest) {
               quantity: 1,
             },
             trackingUrl: match.stockxTrackingUrl || null,
+          }
+        : null,
+      decathlon: decathlonMatch
+        ? {
+            matchId: decathlonMatch.id,
+            orderId: decathlonMatch.order?.orderId ?? null,
+            orderDbId: decathlonMatch.order?.id ?? decathlonMatch.decathlonOrderId ?? null,
+            orderNumber: decathlonMatch.order?.orderNumber ?? null,
+            orderState: decathlonMatch.order?.orderState ?? null,
+          }
+        : null,
+      galaxus: galaxusMatch
+        ? {
+            matchId: galaxusMatch.id,
+            orderId: galaxusMatch.order?.galaxusOrderId ?? null,
+            orderDbId: galaxusMatch.order?.id ?? galaxusMatch.galaxusOrderId ?? null,
+            orderNumber: galaxusMatch.order?.orderNumber ?? null,
           }
         : null,
     };

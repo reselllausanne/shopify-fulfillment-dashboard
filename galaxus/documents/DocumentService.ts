@@ -21,7 +21,7 @@ import { renderDeliveryNoteHtml } from "./templates/deliveryNote";
 import { renderInvoiceHtml } from "./templates/invoice";
 import { renderLabelHtml } from "./templates/label";
 import { renderPdfFromHtml } from "./renderers/playwrightRenderer";
-import type { Company, DeliveryNoteData, InvoiceData, LabelData, OrderLine, VatSummaryLine } from "./types";
+import type { Address, Company, DeliveryNoteData, DeliveryNoteOrderGroup, InvoiceData, LabelData, OrderLine, VatSummaryLine } from "./types";
 import { buildProviderKey } from "../supplier/providerKey";
 import crypto from "crypto";
 
@@ -111,6 +111,7 @@ export class DocumentService {
   }
 
   async generateForShipment(options: { shipmentId: string; types?: DocumentType[] }) {
+    const prismaAny = prisma as any;
     const shipment = await prisma.shipment.findUnique({
       where: { id: options.shipmentId },
       include: {
@@ -130,7 +131,32 @@ export class DocumentService {
     const results = [];
     const allDocuments = [...order.documents, ...shipment.documents];
     const shipmentState = await ensureShipmentDocFields({ ...shipment, order });
-    const deliveryLines = buildShipmentOrderLines(order.lines, shipment.items);
+
+    // For composite shipments, items may come from multiple source orders.
+    // Load all unique source orders so each item is matched against its own order's lines.
+    const sourceOrderIds = Array.from(
+      new Set(
+        (shipment.items as Array<{ orderId?: string | null }>)
+          .map((i) => i.orderId)
+          .filter((id): id is string => !!id && id !== order.id)
+      )
+    );
+    const extraOrders: Array<GalaxusOrder & { lines: GalaxusOrderLine[] }> =
+      sourceOrderIds.length > 0
+        ? await prismaAny.galaxusOrder.findMany({
+            where: { id: { in: sourceOrderIds } },
+            include: { lines: true },
+          })
+        : [];
+    const orderById = new Map<string, GalaxusOrder & { lines: GalaxusOrderLine[] }>([
+      [order.id, order as GalaxusOrder & { lines: GalaxusOrderLine[] }],
+      ...extraOrders.map((o): [string, GalaxusOrder & { lines: GalaxusOrderLine[] }] => [o.id, o]),
+    ]);
+
+    const isComposite = sourceOrderIds.length > 0;
+    const deliveryLines = isComposite
+      ? []
+      : buildShipmentOrderLines(order.lines, shipment.items);
 
     for (const type of types) {
       let html = "";
@@ -138,7 +164,17 @@ export class DocumentService {
       let showPageNumbers = false;
 
       if (type === DocumentType.DELIVERY_NOTE) {
-        const data = buildDeliveryNoteDataFromLines(order, deliveryLines, shipmentState);
+        let data: DeliveryNoteData;
+        if (isComposite) {
+          data = buildCompositeDeliveryNoteDataFromItems(
+            order as GalaxusOrder,
+            shipment.items as Array<{ orderId?: string | null; supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>,
+            orderById,
+            shipmentState
+          );
+        } else {
+          data = buildDeliveryNoteDataFromLines(order, deliveryLines, shipmentState);
+        }
         html = renderDeliveryNoteHtml(data);
         showPageNumbers = true;
       } else if (type === DocumentType.LABEL) {
@@ -532,6 +568,47 @@ function buildDeliveryNoteDataFromLines(
   };
 }
 
+function buildCompositeDeliveryNoteDataFromItems(
+  anchor: GalaxusOrder,
+  items: Array<{ orderId?: string | null; supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>,
+  orderById: Map<string, GalaxusOrder & { lines: GalaxusOrderLine[] }>,
+  shipmentState: { shipmentId: string; dispatchNotificationId: string; dispatchNotificationCreatedAt: Date; incoterms: string | null }
+): DeliveryNoteData {
+  const itemsByOrder = new Map<string, typeof items>();
+  for (const item of items) {
+    const ordId = item.orderId ?? anchor.id;
+    const cur = itemsByOrder.get(ordId) ?? [];
+    cur.push(item);
+    itemsByOrder.set(ordId, cur);
+  }
+
+  const groups: DeliveryNoteOrderGroup[] = [];
+  for (const [ordId, orderItems] of itemsByOrder) {
+    const sourceOrder = orderById.get(ordId) ?? (orderById.get(anchor.id)!);
+    const lines = buildShipmentOrderLines(sourceOrder.lines, orderItems);
+    groups.push({
+      orderNumber: sourceOrder.orderNumber ?? sourceOrder.galaxusOrderId,
+      deliveryDate: sourceOrder.deliveryDate,
+      lines,
+    });
+  }
+
+  return {
+    shipmentId: shipmentState.shipmentId,
+    createdAt: shipmentState.dispatchNotificationCreatedAt,
+    deliveryNoteNumber: shipmentState.dispatchNotificationId,
+    incoterms: shipmentState.incoterms,
+    buyer: buildRecipient(anchor),
+    supplier: buildSupplier(),
+    orderReference: anchor.orderNumber ?? anchor.galaxusOrderId,
+    referencePerson: anchor.referencePerson ?? null,
+    yourReference: anchor.yourReference ?? null,
+    buyerPhone: anchor.deliveryType === "direct_delivery" ? null : anchor.recipientPhone ?? null,
+    afterSalesHandling: anchor.afterSalesHandling ?? false,
+    legalNotice: null,
+    groups,
+  };
+}
 
 async function buildLabelData(
   order: GalaxusOrder,

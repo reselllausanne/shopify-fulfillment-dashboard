@@ -109,7 +109,16 @@ async function enrichPendingInStock(supplierVariantIds: string[]) {
   );
 }
 
-export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
+const EMPTY_TRM_RESULT: TrmSyncResult = {
+  processed: 0, created: 0, updated: 0, supplierGtinRows: 0, missingGtinRows: 0,
+  invalidGtinRows: 0, enrichedRows: 0, enrichErrors: 0, insertedMappings: 0,
+  updatedMappings: 0, durationMs: 0,
+};
+
+export async function runTrmSync(_options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
+  // TRM supplier is permanently disabled — products must not be re-imported.
+  console.info("[galaxus][sync:trm] TRM supplier sync is blocked — skipping");
+  return EMPTY_TRM_RESULT;
   const client = createTrmSupplierClient();
   const startedAt = Date.now();
   const products = await client.fetchProductsFullList();
@@ -288,7 +297,10 @@ export async function runTrmSync(options: TrmSyncOptions = {}): Promise<TrmSyncR
   };
 }
 
-export async function runTrmStockSync(options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
+export async function runTrmStockSync(_options: TrmSyncOptions = {}): Promise<TrmSyncResult> {
+  // TRM supplier is permanently disabled — products must not be re-imported.
+  console.info("[galaxus][sync:trm-stock] TRM supplier sync is blocked — skipping");
+  return EMPTY_TRM_RESULT;
   const client = createTrmSupplierClient();
   const startedAt = Date.now();
   const products = await client.fetchProductsFullList();

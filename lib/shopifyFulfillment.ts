@@ -49,6 +49,8 @@ type OrderShippingInfo = {
   name: string;
   email?: string | null;
   phone?: string | null;
+  /** Shopify order locale, e.g. fr-CH, de */
+  customerLocale?: string | null;
   paymentGatewayNames?: string[];
   shippingAddress?: {
     firstName?: string | null;
@@ -183,6 +185,7 @@ query OrderShippingInfo($orderId: ID!) {
     name
     email
     phone
+    customerLocale
     paymentGatewayNames
     shippingAddress {
       firstName

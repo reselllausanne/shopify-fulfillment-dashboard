@@ -1,11 +1,7 @@
 import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier/providerKey";
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { validateGtin } from "@/app/lib/normalize";
-import {
-  computeGalaxusSellPriceExVat,
-  resolvePricingOverrides,
-  type PricingOverrides,
-} from "@/galaxus/exports/pricing";
+import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
 
 type VariantCandidate = {
   mapping: any;
@@ -45,8 +41,6 @@ function hasPrimaryImage(hostedImageUrl?: string | null): boolean {
   return typeof hostedImageUrl === "string" && hostedImageUrl.length > 0 && isAbsoluteUrl(hostedImageUrl);
 }
 
-type ResolveOverrides = (supplierKey: string | null) => PricingOverrides | null;
-
 type CandidateExcludeReason =
   | "MISSING_GTIN"
   | "INVALID_GTIN"
@@ -56,12 +50,15 @@ type CandidateExcludeReason =
   | "MISSING_IMAGE"
   | "INVALID_PRICE"
   | "INVALID_PROVIDER_KEY"
+  | "SUPPLIER_BLOCKED"
   ;
 
 type AccumulateOptions = {
   keyBy?: "gtin" | "providerKey";
   requireProductName?: boolean;
   requireImage?: boolean;
+  /** Supplier prefixes that exist in `Partner` (lowercase), excluding logic handled inside pricing (e.g. `ner`). */
+  galaxusPartnerKeysLower?: Set<string>;
   onExclude?: (payload: {
     reason: CandidateExcludeReason;
     supplierKey: string | null;
@@ -84,18 +81,24 @@ function extractSupplierKey(supplierVariantId?: string | null): string | null {
 export function accumulateBestCandidates(
   mappings: any[],
   bestByGtin: Map<string, VariantCandidate>,
-  resolveOverrides?: ResolveOverrides,
   options?: AccumulateOptions
 ) {
   const isMerchant = GALAXUS_PRICE_MODEL === "merchant";
   const keyBy = options?.keyBy ?? "gtin";
   const requireProductName = options?.requireProductName !== false;
   const requireImage = options?.requireImage !== false;
+  const partnerKeysLower = options?.galaxusPartnerKeysLower ?? new Set<string>();
 
   for (const mapping of mappings) {
     const variant = mapping.supplierVariant ?? null;
     if (!variant) continue;
     const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
+
+    // GLD (Golden) and TRM are permanently blocked from all marketplace exports.
+    if (supplierKey === "golden" || supplierKey === "gld" || supplierKey === "trm") {
+      options?.onExclude?.({ reason: "SUPPLIER_BLOCKED", supplierKey, mapping, variant });
+      continue;
+    }
 
     const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();
     if (!gtin) {
@@ -146,16 +149,7 @@ export function accumulateBestCandidates(
 
     let sellPriceExVat = buyPrice;
     if (!isMerchant) {
-      const overrides = resolvePricingOverrides(resolveOverrides?.(supplierKey) ?? null);
-
-      sellPriceExVat = computeGalaxusSellPriceExVat({
-        buyPriceExVatCHF: buyPrice,
-        shippingPerPairCHF: overrides.shippingPerPair,
-        targetNetMargin: overrides.targetMargin,
-        bufferPerPairCHF: overrides.bufferPerPair,
-        roundTo: overrides.roundTo,
-        vatRate: overrides.vatRate,
-      }).sellPriceExVatCHF;
+      sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower);
     }
 
     const stock = Number.parseInt(String(variant?.stock ?? 0), 10);

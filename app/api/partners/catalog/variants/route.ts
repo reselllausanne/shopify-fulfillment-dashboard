@@ -57,11 +57,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const isNer = session.partnerKey?.toLowerCase() === "ner";
   const { searchParams } = new URL(req.url);
   const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "200"), 1), 500);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const q = (searchParams.get("q") ?? "").trim();
-  const mineOnly = ["1", "true", "yes"].includes((searchParams.get("mine") ?? "").toLowerCase());
+  const mineOnly =
+    !isNer || ["1", "true", "yes"].includes((searchParams.get("mine") ?? "").toLowerCase());
   const prefix = `${session.partnerKey.toLowerCase()}:`;
 
   const where: Record<string, unknown> = {};
@@ -86,7 +88,7 @@ export async function GET(req: NextRequest) {
   });
 
   const mapped = items.map((item) => {
-    const owned = ownsVariant(item.supplierVariantId, session.partnerKey);
+    const owned = isNer ? true : ownsVariant(item.supplierVariantId, session.partnerKey);
     if (!owned) {
       return {
         owned,
@@ -137,11 +139,25 @@ export async function POST(req: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const isNer = session.partnerKey?.toLowerCase() === "ner";
 
     const body = (await req.json().catch(() => ({}))) as { updates?: UpdatePayload[] };
     const updates = Array.isArray(body.updates) ? body.updates : [];
     if (updates.length === 0) {
       return NextResponse.json({ ok: false, error: "No updates provided" }, { status: 400 });
+    }
+
+    if (!isNer) {
+      const allowedKeys = new Set(["supplierVariantId", "price", "stock"]);
+      const invalid = updates.find((entry) =>
+        Object.keys(entry).some((key) => !allowedKeys.has(key))
+      );
+      if (invalid) {
+        return NextResponse.json(
+          { ok: false, error: "Only price and stock updates are allowed." },
+          { status: 403 }
+        );
+      }
     }
 
     const now = new Date();
@@ -154,7 +170,7 @@ export async function POST(req: NextRequest) {
             output.push({ ok: false, error: "Missing supplierVariantId" });
             continue;
           }
-          if (!ownsVariant(supplierVariantId, session.partnerKey)) {
+          if (!isNer && !ownsVariant(supplierVariantId, session.partnerKey)) {
             output.push({ ok: false, error: "Forbidden", supplierVariantId });
             continue;
           }

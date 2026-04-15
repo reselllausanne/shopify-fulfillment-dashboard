@@ -2,17 +2,13 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import { buildFeedMappingsWhere, createTrmFeedExclusionStats, recordTrmFeedExclusion } from "@/galaxus/exports/trmExport";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DIAGNOSTICS_CACHE_TTL_MS = 60 * 60 * 1000;
 const diagnosticsCache = new Map<string, { createdAt: number; payload: any }>();
-
-function toNumber(value: any) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
 
 export async function GET(request: Request) {
   try {
@@ -29,31 +25,8 @@ export async function GET(request: Request) {
     const mappingsWhere = buildFeedMappingsWhere(supplier, true);
     const trmExclusionStats = createTrmFeedExclusionStats();
 
-    const partners = await prismaAny.partner.findMany({
-      select: {
-        key: true,
-        targetMargin: true,
-        shippingPerPair: true,
-        bufferPerPair: true,
-        roundTo: true,
-        vatRate: true,
-      },
-    });
-    const partnerByKey = new Map<string, any>(
-      partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
-    );
-    const resolvePartnerOverrides = (key: string | null) => {
-      if (!key) return null;
-      const partner = partnerByKey.get(key.toLowerCase());
-      if (!partner) return null;
-      return {
-        targetMargin: toNumber(partner.targetMargin),
-        shippingPerPair: toNumber(partner.shippingPerPair),
-        bufferPerPair: toNumber(partner.bufferPerPair),
-        roundTo: toNumber(partner.roundTo),
-        vatRate: toNumber(partner.vatRate),
-      };
-    };
+    const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
+    const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
 
     // Build the same candidate set exports use: best-by-gtin, then providerKey dedupe.
     const bestByGtin = new Map<string, any>();
@@ -99,10 +72,11 @@ export async function GET(request: Request) {
         cursorUpdatedAt = last.updatedAt ?? null;
         cursorId = last.id ?? null;
       }
-      accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+      accumulateBestCandidates(mappings, bestByGtin, {
         keyBy: "gtin",
         requireProductName: false,
         requireImage: false,
+        galaxusPartnerKeysLower,
         onExclude: (payload) => {
           if (payload.supplierKey === "trm") recordTrmFeedExclusion(trmExclusionStats, payload.reason);
         },

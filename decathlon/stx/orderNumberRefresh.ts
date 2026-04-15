@@ -11,6 +11,7 @@ export type DecathlonOrderNumberRefreshStats = {
   eligible: number;
   attempted: number;
   refreshed: number;
+  awbBackfilled: number;
   failed: number;
   skipped: number;
   failures: Array<{ matchId: string; lineId: string; reason: string }>;
@@ -34,7 +35,7 @@ export function decathlonMatchEligibleForOrderNumberRefresh(m: DecathlonStockxMa
 async function refreshOneMatch(
   token: string,
   match: DecathlonStockxMatch
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<{ ok: true; awbBackfilled: boolean } | { ok: false; reason: string }> {
   let listNode: Parameters<typeof applyStockxDetailsToDecathlonMatchFields>[0] = null;
   let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null = null;
 
@@ -64,6 +65,9 @@ async function refreshOneMatch(
   const stockxPatch = applyStockxDetailsToDecathlonMatchFields(listNode, details, {
     matchReasons: ["DECATHLON_STOCKX_ORDER_NUMBER_SYNC"],
   });
+  const hadAwb = trimStr(match.stockxAwb);
+  const nextAwb = trimStr(stockxPatch.stockxAwb);
+  const awbBackfilled = !hadAwb && !!nextAwb;
   const safePatch = {
     ...stockxPatch,
     stockxOrderNumber: stockxPatch.stockxOrderNumber ?? match.stockxOrderNumber,
@@ -73,7 +77,7 @@ async function refreshOneMatch(
     where: { id: match.id },
     data: { ...safePatch, updatedAt: new Date() },
   });
-  return { ok: true };
+  return { ok: true, awbBackfilled };
 }
 
 /**
@@ -94,6 +98,7 @@ export async function refreshDecathlonStockxMatchesBySavedOrderNumber(
     eligible: eligibleList.length,
     attempted: 0,
     refreshed: 0,
+    awbBackfilled: 0,
     failed: 0,
     skipped,
     failures: [],
@@ -109,6 +114,7 @@ export async function refreshDecathlonStockxMatchesBySavedOrderNumber(
         const result = await refreshOneMatch(token, match);
         if (result.ok) {
           stats.refreshed += 1;
+          if (result.awbBackfilled) stats.awbBackfilled += 1;
         } else {
           stats.failed += 1;
           if (stats.failures.length < 20) {

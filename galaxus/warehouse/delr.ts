@@ -16,7 +16,7 @@ import {
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { GALAXUS_SHIPMENT_CARRIER_ALLOWLIST } from "@/galaxus/config";
 import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
-import { sendOutgoingEdi } from "@/galaxus/edi/service";
+
 
 type UploadResult = {
   shipmentId: string;
@@ -415,12 +415,7 @@ export async function uploadDelrForShipment(
       payloadJson: { shipmentId: shipment.id },
     });
 
-    if (shipment.orderId) {
-      // Keep direct delivery aligned with warehouse flow: send INVO right after DELR.
-      await sendOutgoingEdi({ orderId: shipment.orderId, types: ["INVO"], force: true }).catch(
-        () => undefined
-      );
-    }
+    // Auto-invoicing removed — invoices are sent manually from the dedicated invoice page.
 
     return {
       shipmentId,
@@ -537,6 +532,92 @@ export async function buildDelrXmlForShipment(
   );
 
   return { shipmentId: shipment.id, filename: dispatch.filename, content: dispatch.content };
+}
+
+/**
+ * Roll back a FULFILLED/UPLOADED shipment whose DELR was deleted from the SFTP
+ * before Galaxus could ingest it.  Resets all DELR & fulfillment flags so the
+ * shipment can be deleted and re-created with the correct items.
+ */
+export async function resetDelrForShipment(
+  shipmentId: string
+): Promise<UploadResult & { linesReset?: number }> {
+  const prismaAny = prisma as any;
+
+  const shipment = await prismaAny.shipment.findUnique({
+    where: { id: shipmentId },
+    include: { items: true },
+  });
+
+  if (!shipment) {
+    return { shipmentId, status: "error", httpStatus: 404, message: "Shipment not found" };
+  }
+
+  const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
+  const status = String(shipment.status ?? "").toUpperCase();
+
+  // Only allow reset when the shipment was FULFILLED/UPLOADED (but not yet confirmed ingested).
+  // If it was never sent at all there's nothing to reset.
+  if (!shipment.delrSentAt && delrStatus !== "UPLOADED" && status !== "FULFILLED") {
+    return {
+      shipmentId,
+      status: "error",
+      httpStatus: 409,
+      message: "Shipment is not in a FULFILLED/UPLOADED state — nothing to reset",
+    };
+  }
+
+  // 1. Clear shipment DELR & fulfillment fields.
+  await prismaAny.shipment.update({
+    where: { id: shipment.id },
+    data: {
+      status: "MANUAL",
+      delrSentAt: null,
+      delrFileName: null,
+      delrStatus: "PENDING",
+      delrError: null,
+      galaxusShippedAt: null,
+    },
+  });
+
+  // 2. Un-mark order lines that were stamped by this DELR upload.
+  //    We clear warehouseMarkedShippedAt for every (order, supplierPid, gtin) combo
+  //    covered by this shipment's items.
+  const uniqueItemKeys = new Set<string>();
+  let linesReset = 0;
+  for (const item of (shipment.items ?? []) as any[]) {
+    const orderId = item?.orderId ? String(item.orderId) : shipment.orderId ? String(shipment.orderId) : "";
+    const supplierPid = String(item?.supplierPid ?? "").trim();
+    const gtin = String(item?.gtin14 ?? "").trim();
+    if (!orderId || !supplierPid || !gtin) continue;
+    const key = `${orderId}|${supplierPid}|${gtin}`;
+    if (uniqueItemKeys.has(key)) continue;
+    uniqueItemKeys.add(key);
+    const updated = await prismaAny.galaxusOrderLine.updateMany({
+      where: { orderId, supplierPid, gtin, warehouseMarkedShippedAt: { not: null } },
+      data: { warehouseMarkedShippedAt: null },
+    });
+    linesReset += updated?.count ?? 0;
+  }
+
+  // 3. Soft-remove the outgoing EDI file record if present.
+  if (shipment.delrFileName) {
+    await prismaAny.galaxusEdiFile
+      .updateMany({
+        where: { shipmentId: shipment.id, direction: "OUT", docType: "DELR" },
+        data: { status: "voided" },
+      })
+      .catch(() => undefined);
+  }
+
+  console.info("[galaxus][reset-delr] done", { shipmentId, linesReset });
+
+  return {
+    shipmentId,
+    status: "uploaded", // re-using "uploaded" as generic "ok" from the UploadResult type
+    message: `Reset OK — ${linesReset} order line(s) un-marked. Shipment is now MANUAL/PENDING and can be deleted.`,
+    linesReset,
+  };
 }
 
 export async function uploadDelrForOrder(

@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
-import {
-  computeGalaxusSellPriceExVat,
-  resolvePricingOverrides,
-  type PricingOverrides,
-} from "@/galaxus/exports/pricing";
+import { getDefaultPricing, resolveGalaxusSellExVatForChannel, resolvePricingOverrides } from "@/galaxus/exports/pricing";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 
 export const runtime = "nodejs";
@@ -111,31 +108,8 @@ export async function GET(request: Request) {
     take: limit,
     skip: offset,
   });
-  const partners = await (prisma as any).partner.findMany({
-    select: {
-      key: true,
-      targetMargin: true,
-      shippingPerPair: true,
-      bufferPerPair: true,
-      roundTo: true,
-      vatRate: true,
-    },
-  });
-  const partnerByKey = new Map<string, any>(
-    (partners ?? []).map((row: any) => [String(row.key ?? "").toLowerCase(), row])
-  );
-  const resolveOverrides = (supplierKey: string | null): PricingOverrides | null => {
-    if (!supplierKey) return null;
-    const partner = partnerByKey.get(supplierKey.toLowerCase());
-    if (!partner) return null;
-    return {
-      targetMargin: parseNumber(partner.targetMargin),
-      shippingPerPair: parseNumber(partner.shippingPerPair),
-      bufferPerPair: parseNumber(partner.bufferPerPair),
-      roundTo: parseNumber(partner.roundTo),
-      vatRate: parseNumber(partner.vatRate),
-    };
-  };
+  const partners = await (prisma as any).partner.findMany({ select: PARTNER_KEY_SELECT });
+  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners ?? []);
 
   const enriched = items.map((item: any) => {
     const buyPrice = parseNumber(item?.price);
@@ -146,27 +120,18 @@ export async function GET(request: Request) {
     let galaxusPriceIncVat: number | null = null;
     if (manualLock && manualPrice && manualPrice > 0) {
       galaxusPriceIncVat = manualPrice;
-      const overrides = resolvePricingOverrides(resolveOverrides(supplierKey));
-      const vatRate = parseNumber(overrides.vatRate) ?? 0;
+      const defaults = getDefaultPricing();
+      const vatRate = defaults.vatRate;
       galaxusPriceExVat = manualPrice / (1 + vatRate);
     } else if (buyPrice && buyPrice > 0) {
       if (isMerchant) {
         galaxusPriceExVat = buyPrice;
       } else {
-        const overrides = resolvePricingOverrides(resolveOverrides(supplierKey));
-        galaxusPriceExVat = computeGalaxusSellPriceExVat({
-          buyPriceExVatCHF: buyPrice,
-          shippingPerPairCHF: overrides.shippingPerPair,
-          targetNetMargin: overrides.targetMargin,
-          bufferPerPairCHF: overrides.bufferPerPair,
-          roundTo: overrides.roundTo,
-          vatRate: overrides.vatRate,
-        }).sellPriceExVatCHF;
+        galaxusPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, galaxusPartnerKeysLower);
       }
     }
     if (galaxusPriceExVat !== null && galaxusPriceIncVat === null) {
-      const overrides = resolvePricingOverrides(resolveOverrides(supplierKey));
-      const vatRate = parseNumber(overrides.vatRate) ?? 0;
+      const vatRate = resolvePricingOverrides(null).vatRate;
       galaxusPriceIncVat = galaxusPriceExVat * (1 + vatRate);
     }
     return {

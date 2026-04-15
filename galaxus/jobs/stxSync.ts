@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/kickdb/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { selectStxActiveOffer, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import {
   bulkInsertSupplierVariants,
@@ -20,6 +21,8 @@ type StxSyncResult = {
   mappingInserted: number;
   mappingUpdated: number;
   removedMissingOrIneligible: number;
+  /** STX variants set to stock 0 because they no longer appear in the eligible refresh batch (price refresh only). */
+  stockZeroed?: number;
   durationMs: number;
 };
 
@@ -84,6 +87,16 @@ function pickString(...values: unknown[]): string | null {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
+}
+
+/**
+ * KickDB `GET /stockx/products/:id` accepts UUID or slug. Prefer `urlKey` (slug) when present — in practice
+ * the slug path can return fresher CHF asks than the UUID for the same product.
+ */
+export function kickdbStockxFetchId(row: { kickdbProductId: string; urlKey?: string | null }): string {
+  const slug = String(row?.urlKey ?? "").trim();
+  if (slug.length > 0) return slug;
+  return String(row?.kickdbProductId ?? "").trim();
 }
 
 function pickSizeRawEuFirst(variant: any): string | null {
@@ -160,7 +173,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
 
     const stxBasePrice = Number(selected.price);
     const shippingCHF = resolveStxShippingCHF(payload);
-    const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
+    const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
     rows.push({
       supplierVariantId,
       supplierSku: supplierSkuFallback,
@@ -177,6 +190,48 @@ function extractRowsFromPayload(payload: any, productId: string) {
     });
   }
   return rows;
+}
+
+/**
+ * Supplier STX rows linked to this KickDB product (via VariantMapping → KickDBVariant).
+ */
+async function listStxSupplierVariantIdsForKickdbProductId(kickdbProductId: string): Promise<string[]> {
+  const id = String(kickdbProductId ?? "").trim();
+  if (!id) return [];
+  const rows = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>`
+    SELECT sv."supplierVariantId"
+    FROM "public"."SupplierVariant" sv
+    INNER JOIN "public"."VariantMapping" vm ON vm."supplierVariantId" = sv."supplierVariantId"
+    INNER JOIN "public"."KickDBVariant" kv ON kv.id = vm."kickdbVariantId"
+    INNER JOIN "public"."KickDBProduct" kp ON kp.id = kv."productId"
+    WHERE kp."kickdbProductId" = ${id}
+      AND sv."supplierVariantId" LIKE ${STX_PREFIX + "%"}
+  `;
+  return rows.map((r) => r.supplierVariantId).filter(Boolean);
+}
+
+/**
+ * Price refresh only: variants that stay in DB but are no longer returned as eligible (no express offer, bad GTIN,
+ * size removed from StockX payload, etc.) get stock 0 instead of keeping a stale ask count / price-looking state.
+ * Does not touch manualLock rows (bulkUpdateSupplierVariants skips them).
+ */
+async function zeroStockForStxVariantsNotInEligibleBatch(
+  kickdbProductId: string,
+  eligibleSupplierVariantIds: Set<string>,
+  now: Date
+): Promise<number> {
+  const dbIds = await listStxSupplierVariantIdsForKickdbProductId(kickdbProductId);
+  const toZero = dbIds.filter((sid) => !eligibleSupplierVariantIds.has(sid));
+  if (toZero.length === 0) return 0;
+  let n = 0;
+  for (const batch of chunkArray(toZero, 500)) {
+    n += await bulkUpdateSupplierVariants(
+      batch.map((supplierVariantId) => ({ supplierVariantId, stock: 0 })),
+      now,
+      { updateGtinWhenProvided: false }
+    );
+  }
+  return n;
 }
 
 async function removeMissingOrIneligibleStxVariants(activeSupplierVariantIds: string[]) {
@@ -217,7 +272,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
   const now = new Date();
 
   const products = await (prisma as any).kickDBProduct.findMany({
-    select: { kickdbProductId: true },
+    select: { kickdbProductId: true, urlKey: true },
     where: { notFound: false },
     orderBy: { updatedAt: "desc" },
     ...(limitProducts ? { take: limitProducts } : {}),
@@ -231,11 +286,12 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
   await Promise.all(
     products.map((row: any) =>
       limit(async () => {
-        const productId = String(row?.kickdbProductId ?? "").trim();
-        if (!productId) return;
+        const dbProductId = String(row?.kickdbProductId ?? "").trim();
+        const fetchId = kickdbStockxFetchId(row);
+        if (!dbProductId || !fetchId) return;
         let payload: any;
         try {
-          const res = await fetchStockxProductByIdOrSlugRaw(productId);
+          const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
           payload = res.product;
         } catch {
           return;
@@ -246,7 +302,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
         const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
         const images = pickImages(payload);
         const supplierSkuFallback =
-          pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
+          pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${dbProductId}`;
 
         for (const variant of variants) {
           processedVariants += 1;
@@ -266,7 +322,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
 
           const stxBasePrice = Number(selected.price);
           const shippingCHF = resolveStxShippingCHF(payload);
-          const stxSellPrice = Math.round((stxBasePrice * 1.08 + shippingCHF) * 100) / 100;
+          const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
           parsedRows.push({
             supplierVariantId,
             supplierSku: supplierSkuFallback,
@@ -366,36 +422,63 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   const now = new Date();
 
   const products = await (prisma as any).kickDBProduct.findMany({
-    select: { kickdbProductId: true },
+    select: { kickdbProductId: true, urlKey: true },
     where: { notFound: false },
     orderBy: { updatedAt: "desc" },
     ...(limitProducts ? { take: limitProducts } : {}),
   });
 
   const limit = createLimiter(concurrency);
-  let processedProducts = 0;
-  let processedVariants = 0;
   const parsedRows: ParsedStxRow[] = [];
 
-  await Promise.all(
+  const chunks = await Promise.all(
     products.map((row: any) =>
-      limit(async () => {
-        const productId = String(row?.kickdbProductId ?? "").trim();
-        if (!productId) return;
+      limit(async (): Promise<{
+        processedProducts: number;
+        processedVariants: number;
+        rows: ParsedStxRow[];
+        stockZeroed: number;
+        remapped: number;
+      }> => {
+        const dbProductId = String(row?.kickdbProductId ?? "").trim();
+        const fetchId = kickdbStockxFetchId(row);
+        if (!dbProductId || !fetchId) {
+          return { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, remapped: 0 };
+        }
         let payload: any;
         try {
-          const res = await fetchStockxProductByIdOrSlugRaw(productId);
+          const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
           payload = res.product;
         } catch {
-          return;
+          return { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, remapped: 0 };
         }
-        processedProducts += 1;
-        const rows = extractRowsFromPayload(payload, productId);
-        processedVariants += rows.length;
-        parsedRows.push(...rows);
+        const extracted = extractRowsFromPayload(payload, dbProductId);
+        const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
+        const rows = remappedResult.rows;
+        const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
+        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now);
+        return {
+          processedProducts: 1,
+          processedVariants: rows.length,
+          rows,
+          stockZeroed,
+          remapped: remappedResult.remapped,
+        };
       })
     )
   );
+
+  let processedProducts = 0;
+  let processedVariants = 0;
+  let stockZeroed = 0;
+  let remappedToCanonical = 0;
+  for (const c of chunks) {
+    processedProducts += c.processedProducts;
+    processedVariants += c.processedVariants;
+    stockZeroed += c.stockZeroed;
+    remappedToCanonical += c.remapped;
+    parsedRows.push(...c.rows);
+  }
 
   const dedupBySupplierVariantId = new Map<string, ParsedStxRow>();
   for (const row of parsedRows) {
@@ -429,6 +512,8 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     mappingInserted: 0,
     mappingUpdated: 0,
     removedMissingOrIneligible: 0,
+    stockZeroed,
+    remappedToCanonical,
     durationMs,
   });
 
@@ -440,6 +525,105 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
     mappingInserted: 0,
     mappingUpdated: 0,
     removedMissingOrIneligible: 0,
+    stockZeroed,
+    durationMs,
+  };
+}
+
+/**
+ * Same as one product in `runStxPriceStockRefresh`, but keyed by StockX slug / `urlKey`.
+ * Resolves `KickDBProduct` in DB so `zeroStockForStxVariantsNotInEligibleBatch` uses the real `kickdbProductId`
+ * while `fetchStockxProductByIdOrSlugRaw` still prefers `urlKey` when stored (slug vs UUID freshness).
+ */
+export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSyncResult> {
+  const slug = String(urlKey ?? "").trim();
+  if (!slug) {
+    throw new Error("refreshStxProductByUrlKey: empty urlKey");
+  }
+  const startedAt = Date.now();
+  const now = new Date();
+
+  const row = await prisma.kickDBProduct.findFirst({
+    where: {
+      OR: [{ urlKey: slug }, { kickdbProductId: slug }],
+      notFound: false,
+    },
+    select: { kickdbProductId: true, urlKey: true },
+  });
+
+  const dbProductId = row ? String(row.kickdbProductId ?? "").trim() : "";
+  const fetchId = row ? kickdbStockxFetchId(row) : slug;
+
+  console.info("[galaxus][sync:stx-urlkey] start", {
+    urlKey: slug,
+    dbMatched: Boolean(row),
+    kickdbProductId: row?.kickdbProductId ?? null,
+    fetchId,
+  });
+
+  let payload: any;
+  try {
+    const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
+    payload = res.product;
+  } catch (err) {
+    console.warn("[galaxus][sync:stx-urlkey] fetch failed", { fetchId, err });
+    return {
+      processedProducts: 0,
+      processedVariants: 0,
+      created: 0,
+      updated: 0,
+      mappingInserted: 0,
+      mappingUpdated: 0,
+      removedMissingOrIneligible: 0,
+      stockZeroed: 0,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  const extracted = extractRowsFromPayload(payload, dbProductId || slug);
+  const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
+  const rows = remappedResult.rows;
+  const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
+  const stockZeroed =
+    dbProductId.length > 0
+      ? await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now)
+      : 0;
+
+  let updated = 0;
+  for (const batch of chunkArray(rows, 500)) {
+    updated += await bulkUpdateSupplierVariants(
+      batch.map((r) => ({
+        supplierVariantId: r.supplierVariantId,
+        price: r.price,
+        stock: r.stock,
+        deliveryType: r.deliveryType,
+      })),
+      now,
+      { updateGtinWhenProvided: false }
+    );
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:stx-urlkey] done", {
+    urlKey: slug,
+    processedProducts: 1,
+    processedVariants: rows.length,
+    eligibleRows: rows.length,
+    updated,
+    stockZeroed,
+    remappedToCanonical: remappedResult.remapped,
+    durationMs,
+  });
+
+  return {
+    processedProducts: 1,
+    processedVariants: rows.length,
+    created: 0,
+    updated,
+    mappingInserted: 0,
+    mappingUpdated: 0,
+    removedMissingOrIneligible: 0,
+    stockZeroed,
     durationMs,
   };
 }
@@ -452,30 +636,72 @@ export async function refreshStxProductsByKickdbProductIds(
   const concurrency = Math.max(1, options.concurrency ?? 2);
   const now = new Date();
 
+  const cleanIds = Array.from(
+    new Set(productIds.map((id) => String(id ?? "").trim()).filter((id) => id.length > 0))
+  );
+  const kickRows =
+    cleanIds.length === 0
+      ? []
+      : await prisma.kickDBProduct.findMany({
+          where: { kickdbProductId: { in: cleanIds } },
+          select: { kickdbProductId: true, urlKey: true },
+        });
+  const kickRowByExternalId = new Map(
+    kickRows.map((p) => [String(p.kickdbProductId ?? "").trim(), p])
+  );
+
   const limit = createLimiter(concurrency);
-  let processedProducts = 0;
-  let processedVariants = 0;
   const parsedRows: ParsedStxRow[] = [];
 
-  await Promise.all(
+  const chunks = await Promise.all(
     productIds.map((productId) =>
-      limit(async () => {
+      limit(async (): Promise<{
+        processedProducts: number;
+        processedVariants: number;
+        rows: ParsedStxRow[];
+        stockZeroed: number;
+        remapped: number;
+      }> => {
         const cleanId = String(productId ?? "").trim();
-        if (!cleanId) return;
+        if (!cleanId) {
+          return { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, remapped: 0 };
+        }
+        const kickRow = kickRowByExternalId.get(cleanId);
+        const fetchId = kickRow ? kickdbStockxFetchId(kickRow) : cleanId;
         let payload: any;
         try {
-          const res = await fetchStockxProductByIdOrSlugRaw(cleanId);
+          const res = await fetchStockxProductByIdOrSlugRaw(fetchId);
           payload = res.product;
         } catch {
-          return;
+          return { processedProducts: 0, processedVariants: 0, rows: [], stockZeroed: 0, remapped: 0 };
         }
-        processedProducts += 1;
-        const rows = extractRowsFromPayload(payload, cleanId);
-        processedVariants += rows.length;
-        parsedRows.push(...rows);
+        const extracted = extractRowsFromPayload(payload, cleanId);
+        const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
+        const rows = remappedResult.rows;
+        const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
+        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(cleanId, eligibleIds, now);
+        return {
+          processedProducts: 1,
+          processedVariants: rows.length,
+          rows,
+          stockZeroed,
+          remapped: remappedResult.remapped,
+        };
       })
     )
   );
+
+  let processedProducts = 0;
+  let processedVariants = 0;
+  let stockZeroed = 0;
+  let remappedToCanonical = 0;
+  for (const c of chunks) {
+    processedProducts += c.processedProducts;
+    processedVariants += c.processedVariants;
+    stockZeroed += c.stockZeroed;
+    remappedToCanonical += c.remapped ?? 0;
+    parsedRows.push(...c.rows);
+  }
 
   const dedupBySupplierVariantId = new Map<string, ParsedStxRow>();
   for (const row of parsedRows) {
@@ -504,6 +730,8 @@ export async function refreshStxProductsByKickdbProductIds(
     processedVariants,
     eligibleRows: rows.length,
     updated,
+    stockZeroed,
+    remappedToCanonical,
     durationMs,
   });
 
@@ -515,6 +743,7 @@ export async function refreshStxProductsByKickdbProductIds(
     mappingInserted: 0,
     mappingUpdated: 0,
     removedMissingOrIneligible: 0,
+    stockZeroed,
     durationMs,
   };
 }

@@ -18,10 +18,11 @@ export async function PATCH(
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const isNer = session.partnerKey?.toLowerCase() === "ner";
 
   const { supplierVariantId } = await params;
   const decodedSupplierVariantId = decodeURIComponent(supplierVariantId ?? "");
-  if (!decodedSupplierVariantId || !ownsVariant(decodedSupplierVariantId, session.partnerKey)) {
+  if (!decodedSupplierVariantId || (!isNer && !ownsVariant(decodedSupplierVariantId, session.partnerKey))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -66,10 +67,11 @@ export async function DELETE(
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const isNer = session.partnerKey?.toLowerCase() === "ner";
 
   const { supplierVariantId } = await params;
   const decodedSupplierVariantId = decodeURIComponent(supplierVariantId ?? "");
-  if (!decodedSupplierVariantId || !ownsVariant(decodedSupplierVariantId, session.partnerKey)) {
+  if (!decodedSupplierVariantId || (!isNer && !ownsVariant(decodedSupplierVariantId, session.partnerKey))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

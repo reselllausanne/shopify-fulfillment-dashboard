@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { toCsv } from "@/galaxus/exports/csv";
-import { computeGalaxusSellPriceExVat, getDefaultPricing, resolvePricingOverrides } from "@/galaxus/exports/pricing";
+import { getDefaultPricing } from "@/galaxus/exports/pricing";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { accumulateBestCandidates, filterExportCandidates } from "@/galaxus/exports/gtinSelection";
 import {
   buildGalaxusAlternativeOfferRows,
@@ -94,31 +95,8 @@ export async function GET(request: Request) {
         "VatRatePercentage",
       ];
 
-  const partners = await prismaAny.partner.findMany({
-    select: {
-      key: true,
-      targetMargin: true,
-      shippingPerPair: true,
-      bufferPerPair: true,
-      roundTo: true,
-      vatRate: true,
-    },
-  });
-  const partnerByKey = new Map<string, any>(
-    partners.map((p: any) => [String(p.key ?? "").toLowerCase(), p])
-  );
-  const resolvePartnerOverrides = (key: string | null) => {
-    if (!key) return null;
-    const partner = partnerByKey.get(key.toLowerCase());
-    if (!partner) return null;
-    return {
-      targetMargin: parseNumber(partner.targetMargin),
-      shippingPerPair: parseNumber(partner.shippingPerPair),
-      bufferPerPair: parseNumber(partner.bufferPerPair),
-      roundTo: parseNumber(partner.roundTo),
-      vatRate: parseNumber(partner.vatRate),
-    };
-  };
+  const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
+  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
 
   do {
     const whereClause: Record<string, unknown> = all
@@ -177,11 +155,12 @@ export async function GET(request: Request) {
       cursorUpdatedAt = last.updatedAt ?? null;
       cursorId = last.id ?? null;
     }
-    accumulateBestCandidates(mappings, bestByGtin, resolvePartnerOverrides, {
+    accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
       // Price feed should not depend on hosted images.
       requireImage: false,
+      galaxusPartnerKeysLower,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);

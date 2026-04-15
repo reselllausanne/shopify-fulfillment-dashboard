@@ -20,6 +20,19 @@ function extractOrders(payload: any): any[] {
   return payload?.orders ?? payload?.order_list ?? payload?.orderList ?? payload?.data ?? [];
 }
 
+function extractTotal(payload: any): number | null {
+  const raw =
+    payload?.total_count ??
+    payload?.totalCount ??
+    payload?.total ??
+    payload?.order_count ??
+    payload?.orderCount ??
+    null;
+  if (raw === null || raw === undefined) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function pickString(...values: unknown[]): string | null {
   for (const value of values) {
     if (value === null || value === undefined) continue;
@@ -125,8 +138,8 @@ async function listOrdersPaged(
 ) {
   const perPageRaw = Number(params.max ?? 50);
   const perPage = Number.isFinite(perPageRaw) ? Math.min(Math.max(perPageRaw, 1), 200) : 50;
-  const maxPages = Math.min(Math.max(Number(options?.maxPages ?? 5), 1), 50);
-  const maxTotal = Math.min(Math.max(Number(options?.maxTotal ?? perPage * maxPages), 1), 5000);
+  const maxPages = Math.min(Math.max(Number(options?.maxPages ?? 1000), 1), 2000);
+  const maxTotal = Math.min(Math.max(Number(options?.maxTotal ?? 200000), 1), 200000);
   const useSafe = options?.safe ?? false;
   const orders: any[] = [];
   let offset = Number(params.offset ?? 0);
@@ -136,6 +149,8 @@ async function listOrdersPaged(
     const batch = extractOrders(payload);
     if (!Array.isArray(batch) || batch.length === 0) break;
     orders.push(...batch);
+    const total = extractTotal(payload);
+    if (total !== null && orders.length >= total) break;
     if (batch.length < perPage) break;
     if (orders.length >= maxTotal) break;
     offset += perPage;
@@ -298,7 +313,8 @@ export async function POST(request: Request) {
     const { searchParams } = new URL(request.url);
     const state = String(searchParams.get("state") ?? "").trim();
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
-    const maxPages = Math.min(Math.max(Number(searchParams.get("pages") ?? "5"), 1), 50);
+    const pageParam = searchParams.get("pages") ?? searchParams.get("maxPages") ?? "1000";
+    const maxPages = Math.min(Math.max(Number(pageParam), 1), 2000);
     const client = buildDecathlonOrdersClient();
     const params: Record<string, string | number> = { max: limit };
     if (state) params.order_state_codes = state;

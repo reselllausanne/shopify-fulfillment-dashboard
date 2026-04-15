@@ -1,7 +1,7 @@
 /**
- * Decathlon payout logic:
- * - 17% marketplace commission on the sell price
- * - 8% VAT portion withheld (not paid out later)
+ * Decathlon payout (ligne) ≈ même logique que le récap Mirakl :
+ * total ligne − commission (~17 % du total) − taxes (~8 % du total).
+ * Modèle simplifié : `sellBrut × (1 − 0,17 − 0,08)`.
  */
 export const DECATHLON_MARKETPLACE_COMMISSION_RATE = 0.17;
 export const DECATHLON_VAT_RATE = 0.08;
@@ -9,10 +9,11 @@ const DECATHLON_PAYOUT_RATE =
   1 - DECATHLON_MARKETPLACE_COMMISSION_RATE - DECATHLON_VAT_RATE;
 
 export type DecathlonMarginBreakdown = {
-  /** Mirakl line sell after Decathlon commission + VAT (same as `decathlonGrossLineAmount`). */
+  /** Payout Decathlon estimé pour la ligne (après commission + TVA). */
   lineAfterDecathlon: number;
   supplierCost: number;
   margin: number;
+  /** Marge / payout ligne × 100 */
   marginPercentOfLineAfter: number | null;
 };
 
@@ -32,9 +33,9 @@ export function decathlonMiraklSellTotal(line: {
 }
 
 /**
- * “Gross (line)” for economics: Decathlon sell minus 17% commission and 8% VAT.
+ * Payout Decathlon estimé pour une ligne (après −17 % et −8 % sur le brut Mirakl).
  */
-export function decathlonGrossLineAmount(line: {
+export function decathlonPayoutLineAmount(line: {
   lineTotal?: unknown;
   unitPrice?: unknown;
   quantity?: unknown;
@@ -44,7 +45,10 @@ export function decathlonGrossLineAmount(line: {
   return sell * DECATHLON_PAYOUT_RATE;
 }
 
-/** Margin vs StockX cost; first arg is already sell after Decathlon deductions. */
+/** @deprecated Utiliser `decathlonPayoutLineAmount` */
+export const decathlonGrossLineAmount = decathlonPayoutLineAmount;
+
+/** Marge vs coût StockX ; premier arg = payout ligne Decathlon. */
 export function decathlonMarginFromGrossAndCost(
   lineAfterDecathlon: number,
   supplierCost: number
@@ -61,12 +65,13 @@ export function decathlonMarginFromGrossAndCost(
 }
 
 export type DecathlonOrderMarginRollup = {
-  /** Sum of per-line sell after Decathlon commission + VAT. */
+  /** Somme des payouts ligne (après commission + TVA). */
   linesNetAfterDecathlon: number;
   costLinkedLines: number;
   linesWithCost: number;
   lineCount: number;
   marginAfterFeeAndKnownCosts: number;
+  /** Marge totale / payout total × 100 */
   marginPercentOfNetOrder: number | null;
   allLinesHaveCost: boolean;
 };
@@ -80,7 +85,7 @@ export function decathlonOrderMarginRollup(
   let linesWithCost = 0;
   const lineCount = lines.length;
   for (const line of lines) {
-    const g = decathlonGrossLineAmount(line);
+    const g = decathlonPayoutLineAmount(line);
     if (g != null) linesNetAfterDecathlon += g;
     const cost = stockxLineCost(String(line.id));
     if (cost != null) {
