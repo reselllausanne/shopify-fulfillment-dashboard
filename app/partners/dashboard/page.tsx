@@ -83,17 +83,20 @@ export default function PartnerDashboardPage() {
       if (!data.ok) return;
       const items: Array<{
         orderState?: string | null;
+        shippedCount?: number;
         totalUnits?: number;
         shippedUnits?: number;
         remainingUnits?: number;
+        _count?: { shipments?: number };
       }> = Array.isArray(data.items) ? data.items : [];
       const toProcess = items.filter((order) => {
         const state = normalizeState(order.orderState);
         const totalUnits = order.totalUnits ?? 0;
         const shippedUnits = order.shippedUnits ?? 0;
         const remainingUnits = order.remainingUnits ?? Math.max(totalUnits - shippedUnits, 0);
-        const isShipped = totalUnits > 0 ? remainingUnits <= 0 : state === "SHIPPED";
-        return !isShipped && !canceledStates.has(state);
+        const shippedCount = order.shippedCount ?? order._count?.shipments ?? 0;
+        const isFulfilled = totalUnits > 0 ? remainingUnits <= 0 : shippedCount > 0;
+        return !isFulfilled && !canceledStates.has(state);
       }).length;
       setOrdersToProcessCount(toProcess);
     } catch {
