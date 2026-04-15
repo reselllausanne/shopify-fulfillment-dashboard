@@ -865,6 +865,11 @@ export default function DecathlonOrdersPage() {
                       ? cost - catalogPrice
                       : null;
                   const matchType = String(match?.matchType ?? "").toUpperCase();
+                  const orderedQty = Number(line.quantity ?? 0);
+                  const shippedQty = selectedShipmentSummary.lineTotals.get(line.id) ?? 0;
+                  const remainingQty = Math.max(orderedQty - shippedQty, 0);
+                  const lineFullyMiraklShipped =
+                    Number.isFinite(orderedQty) && orderedQty > 0 && shippedQty >= orderedQty;
                   const lineShipTracking = miraklTrackingByLineId.get(line.id) ?? null;
                   const stockxAwb = match?.stockxAwb ? String(match.stockxAwb).trim() : "";
                   const stxAwbExtra =
@@ -886,11 +891,6 @@ export default function DecathlonOrdersPage() {
                     line.kickdb?.sizeUs ??
                     line.size ??
                     "—";
-                  const orderedQty = Number(line.quantity ?? 0);
-                  const shippedQty = selectedShipmentSummary.lineTotals.get(line.id) ?? 0;
-                  const remainingQty = Math.max(orderedQty - shippedQty, 0);
-                  const lineFullyMiraklShipped =
-                    Number.isFinite(orderedQty) && orderedQty > 0 && shippedQty >= orderedQty;
                   const catalogPriceText =
                     catalogPrice != null ? `CHF ${Number(catalogPrice).toFixed(2)}` : "—";
                   const catalogSyncHint = cat?.lastSyncAt

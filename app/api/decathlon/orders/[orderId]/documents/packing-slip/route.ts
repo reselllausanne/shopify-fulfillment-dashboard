@@ -250,10 +250,14 @@ function attachmentFilename(miraklOrderId: string, dbShipmentId?: string | null)
   return `decathlon-delivery_${safe}${suf}.pdf`;
 }
 
+type PackingSlipScopeResult =
+  | { ok: true; dbShipmentId: string | null; miraklShipmentId: string | null; trackingNumber: string | null }
+  | { ok: false; status: number; body: Record<string, unknown> };
+
 async function resolvePackingSlipScope(
   order: { id: string; orderId: string; shipments: any[] },
   searchParams: URLSearchParams
-) {
+): Promise<PackingSlipScopeResult> {
   const shipmentIdParam = String(searchParams.get("shipmentId") ?? "").trim();
   const rows = Array.isArray(order.shipments) ? order.shipments : [];
   const withMirakl = rows.filter((s: any) => String(s?.miraklShipmentId ?? "").trim());
@@ -266,7 +270,9 @@ async function resolvePackingSlipScope(
     const row = rows.find((s: any) => String(s?.id ?? "") === shipmentIdParam);
     if (!row) {
       return {
-        error: { status: 404 as const, body: { ok: false, error: "Shipment not found for this order" } },
+        ok: false,
+        status: 404,
+        body: { ok: false, error: "Shipment not found for this order" },
       };
     }
     dbShipmentId = String(row.id);
@@ -274,13 +280,12 @@ async function resolvePackingSlipScope(
     trackingNumber = String(row.trackingNumber ?? "").trim() || null;
     if (!miraklShipmentId) {
       return {
-        error: {
-          status: 400 as const,
-          body: {
-            ok: false,
-            error:
-              "This shipment has no Mirakl shipment id (created before tracking was added). Use the generic packing slip or re-ship from an updated build.",
-          },
+        ok: false,
+        status: 400,
+        body: {
+          ok: false,
+          error:
+            "This shipment has no Mirakl shipment id (created before tracking was added). Use the generic packing slip or re-ship from an updated build.",
         },
       };
     }
@@ -291,24 +296,23 @@ async function resolvePackingSlipScope(
     trackingNumber = String(row.trackingNumber ?? "").trim() || null;
   } else if (withMirakl.length > 1) {
     return {
-      error: {
-        status: 400 as const,
-        body: {
-          ok: false,
-          error:
-            "This order has multiple Mirakl shipments. Pass ?shipmentId=<DecathlonShipment.id> to download the packing slip for a specific parcel.",
-          shipments: withMirakl.map((s: any) => ({
-            id: s.id,
-            miraklShipmentId: s.miraklShipmentId ?? null,
-            trackingNumber: s.trackingNumber ?? null,
-            shippedAt: s.shippedAt ?? null,
-          })),
-        },
+      ok: false,
+      status: 400,
+      body: {
+        ok: false,
+        error:
+          "This order has multiple Mirakl shipments. Pass ?shipmentId=<DecathlonShipment.id> to download the packing slip for a specific parcel.",
+        shipments: withMirakl.map((s: any) => ({
+          id: s.id,
+          miraklShipmentId: s.miraklShipmentId ?? null,
+          trackingNumber: s.trackingNumber ?? null,
+          shippedAt: s.shippedAt ?? null,
+        })),
       },
     };
   }
 
-  return { dbShipmentId, miraklShipmentId, trackingNumber };
+  return { ok: true, dbShipmentId, miraklShipmentId, trackingNumber };
 }
 
 async function handlePackingSlipRequest(
@@ -336,8 +340,8 @@ async function handlePackingSlipRequest(
   }
 
   const scopeRes = await resolvePackingSlipScope(order as any, searchParams);
-  if ("error" in scopeRes) {
-    return NextResponse.json(scopeRes.error.body, { status: scopeRes.error.status });
+  if (!scopeRes.ok) {
+    return NextResponse.json(scopeRes.body, { status: scopeRes.status });
   }
 
   const fetched = await fetchPackingSlipPdfFromMirakl(order, {
