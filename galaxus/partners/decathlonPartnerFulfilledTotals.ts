@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { decathlonMiraklSellTotal } from "@/decathlon/orders/margin";
 import { decathlonMiraklSellerPayoutLineTotal } from "@/decathlon/orders/miraklLinePayout";
+import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 /**
@@ -50,6 +51,50 @@ function isPartnerPortalFulfilled(rollup: ReturnType<typeof partnerShipmentRollu
   return rollup.shippedCount > 0;
 }
 
+/** Shipped quantity per Decathlon order line id (legacy shipment = full line qty). */
+function shippedQtyByLineId(order: any, metricsLines: any[]): Map<string, number> {
+  const shipmentLines = (order.shipments ?? []).flatMap((shipment: any) => shipment.lines ?? []);
+  const scopedLineIds = new Set(metricsLines.map((line: any) => line.id));
+  const scopedShipmentLines = shipmentLines.filter((line: any) => scopedLineIds.has(line.orderLineId));
+  const hasLegacyShipment =
+    scopedShipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
+  const map = new Map<string, number>();
+  if (hasLegacyShipment) {
+    for (const ml of metricsLines) {
+      const qty = Number(ml.quantity ?? 0);
+      if (Number.isFinite(qty) && qty > 0) map.set(ml.id, qty);
+    }
+    return map;
+  }
+  for (const sl of scopedShipmentLines) {
+    const q = Number(sl.quantity ?? 0);
+    if (!Number.isFinite(q) || q <= 0) continue;
+    map.set(sl.orderLineId, (map.get(sl.orderLineId) ?? 0) + q);
+  }
+  return map;
+}
+
+function catalogShippedShipmentLineRowCount(order: any, metricsLines: any[]): number {
+  const scopedLineIds = new Set(metricsLines.map((line: any) => line.id));
+  const shipmentLines = (order.shipments ?? []).flatMap((shipment: any) => shipment.lines ?? []);
+  const scopedShipmentLines = shipmentLines.filter((line: any) => scopedLineIds.has(line.orderLineId));
+  const hasLegacyShipment =
+    scopedShipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
+  if (hasLegacyShipment) {
+    return metricsLines.filter((ml) => Number(ml.quantity ?? 0) > 0).length;
+  }
+  let n = 0;
+  for (const ship of order.shipments ?? []) {
+    if (!ship.shippedAt) continue;
+    for (const sl of ship.lines ?? []) {
+      if (!scopedLineIds.has(sl.orderLineId)) continue;
+      const q = Number(sl.quantity ?? 0);
+      if (q > 0) n += 1;
+    }
+  }
+  return n;
+}
+
 function partnerOrderWhere(sessionPk: string): Prisma.DecathlonOrderWhereInput {
   const keyPrefix = `${sessionPk}_`;
   return {
@@ -67,6 +112,10 @@ export type DecathlonPartnerFulfilledTotals = {
   totalChf: number;
   /** NER only: scoped lines missing Mirakl totals on fulfilled orders */
   miraklPayoutLineMisses: number;
+  /** Feed/catalog buy price × shipped units on fulfilled orders (non-NER); NER uses Mirakl payout card instead. */
+  partnerCatalogShippedChf: number;
+  /** Shipment line rows tied to partner lines (or line count for legacy shipments). */
+  shippedLineCount: number;
 };
 
 const DEFAULT_MAX_ORDERS = 15_000;
@@ -101,6 +150,8 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
   let totalChf = 0;
   let miraklPayoutLineMisses = 0;
 
+  const fulfilledMetricLines: any[] = [];
+
   for (const order of orders) {
     currency = String(order.currencyCode ?? currency) || currency;
     const metricsLines = metricsLinesForPartnerSession(order, pk);
@@ -109,6 +160,7 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
 
     fulfilledOrderCount += 1;
     for (const line of metricsLines) {
+      fulfilledMetricLines.push(line);
       const qty = Number(line.quantity ?? 0);
       if (!Number.isFinite(qty) || qty <= 0) continue;
       fulfilledPartnerLineUnits += qty;
@@ -128,11 +180,35 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
     }
   }
 
+  let partnerCatalogShippedChf = 0;
+  let shippedLineCount = 0;
+  if (pk !== "NER" && fulfilledMetricLines.length > 0) {
+    const catalogByLineId = await enrichDecathlonOrderLinesWithSupplierCatalog(fulfilledMetricLines);
+    for (const order of orders) {
+      const metricsLines = metricsLinesForPartnerSession(order, pk);
+      const rollup = partnerShipmentRollup(order, metricsLines);
+      if (!isPartnerPortalFulfilled(rollup)) continue;
+      shippedLineCount += catalogShippedShipmentLineRowCount(order, metricsLines);
+      const shippedByLine = shippedQtyByLineId(order, metricsLines);
+      for (const line of metricsLines) {
+        const shipQty = shippedByLine.get(line.id) ?? 0;
+        if (!Number.isFinite(shipQty) || shipQty <= 0) continue;
+        const cat = catalogByLineId.get(line.id);
+        const price = cat?.catalogPrice;
+        if (price != null && Number.isFinite(price)) {
+          partnerCatalogShippedChf += price * shipQty;
+        }
+      }
+    }
+  }
+
   return {
     currency,
     fulfilledOrderCount,
     fulfilledPartnerLineUnits,
     totalChf,
     miraklPayoutLineMisses: pk === "NER" ? miraklPayoutLineMisses : 0,
+    partnerCatalogShippedChf,
+    shippedLineCount,
   };
 }

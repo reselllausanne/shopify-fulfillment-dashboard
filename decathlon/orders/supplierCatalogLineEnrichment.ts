@@ -54,6 +54,17 @@ function collectSkuCandidates(line: any): string[] {
       out.push(c);
     }
   }
+  const offer = String(line?.offerSku ?? "").trim();
+  if (offer) {
+    const idx = offer.indexOf("_");
+    if (idx > 0 && idx < offer.length - 1) {
+      const tail = offer.slice(idx + 1).trim();
+      if (tail && !seen.has(tail)) {
+        seen.add(tail);
+        out.push(tail);
+      }
+    }
+  }
   return out;
 }
 

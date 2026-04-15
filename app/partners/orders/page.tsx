@@ -100,9 +100,19 @@ export default function PartnerOrdersPage() {
 
   const miraklLineLabel = (line: any) => line.productTitle || line.description || line.offerSku || "—";
 
-  /** Prefer KickDB (from SKU/GTIN mapping) so the title matches the internal catalog / style. */
+  /** Prefer KickDB, then supplier feed name, then Mirakl line fields. */
   const displayLineTitle = (line: any) =>
-    line.kickdb?.variantName || line.kickdb?.productTitle || miraklLineLabel(line);
+    line.kickdb?.variantName ||
+    line.kickdb?.productTitle ||
+    [line.catalog?.supplierBrand, line.catalog?.supplierProductName].filter(Boolean).join(" ").trim() ||
+    line.catalog?.supplierProductName ||
+    miraklLineLabel(line);
+
+  const partnerStockxMatches = useMemo(() => {
+    if (!selectedOrder?.stockxMatches || !Array.isArray(selectedOrder.lines)) return [];
+    const lineIds = new Set((selectedOrder.lines as any[]).map((l) => l.id));
+    return (selectedOrder.stockxMatches as any[]).filter((m) => m?.decathlonOrderLineId && lineIds.has(m.decathlonOrderLineId));
+  }, [selectedOrder]);
 
   const shippedPartnerBreakdown = useMemo(() => {
     if (!selectedOrder?.shipments?.length) return [];
@@ -309,6 +319,48 @@ export default function PartnerOrdersPage() {
               <div className="text-sm text-slate-600">
                 {selectedOrder.orderId} · {selectedOrder.orderNumber ?? "—"}
               </div>
+              {partnerStockxMatches.length > 0 ? (
+                <div className="rounded border border-indigo-200 bg-indigo-50/60 p-3 text-xs space-y-2">
+                  <div className="font-semibold text-indigo-950">StockX link (your lines)</div>
+                  <ul className="space-y-2">
+                    {partnerStockxMatches.map((m: any) => {
+                      const productLabel =
+                        m.stockxProductName ||
+                        m.decathlonProductName ||
+                        m.decathlonDescription ||
+                        "Linked line";
+                      return (
+                        <li key={m.id} className="border-b border-indigo-100/80 pb-2 last:border-0 last:pb-0 space-y-0.5">
+                          <div className="font-medium text-indigo-950">{productLabel}</div>
+                          <div className="text-[11px] text-indigo-900/80 flex flex-wrap gap-x-3 gap-y-0.5">
+                            <span>
+                              StockX order:{" "}
+                              <span className="font-mono">{m.stockxOrderNumber ?? "—"}</span>
+                            </span>
+                            {m.stockxChainId ? (
+                              <span>
+                                Chain: <span className="font-mono text-[10px]">{m.stockxChainId}</span>
+                              </span>
+                            ) : null}
+                            {m.stockxStatus ? <span>Status: {m.stockxStatus}</span> : null}
+                          </div>
+                          {(m.stockxAwb || m.stockxTrackingUrl) && (
+                            <div className="text-[10px] text-indigo-800/90">
+                              {m.stockxAwb ? <>AWB: {m.stockxAwb}</> : null}
+                              {m.stockxAwb && m.stockxTrackingUrl ? " · " : null}
+                              {m.stockxTrackingUrl ? (
+                                <a className="underline" href={m.stockxTrackingUrl} target="_blank" rel="noreferrer">
+                                  Tracking
+                                </a>
+                              ) : null}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
               {Array.isArray(selectedOrder.lines) && selectedOrder.lines.length > 0 ? (
                 <div className="rounded border border-slate-200 bg-slate-50/90 p-3 text-xs space-y-2">
                   <div className="font-semibold text-slate-900">Products sold</div>

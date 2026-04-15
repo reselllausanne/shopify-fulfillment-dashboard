@@ -20,41 +20,12 @@ type CatalogItem = {
   price?: string | number | null;
   stock?: number | null;
   updatedAt?: string | null;
-  weightGrams?: number | null;
-  images?: unknown | null;
-  sourceImageUrl?: string | null;
-  hostedImageUrl?: string | null;
-  imageSyncStatus?: string | null;
-  imageVersion?: number | null;
-  imageLastSyncedAt?: string | null;
-  imageSyncError?: string | null;
-  deliveryType?: string | null;
-  lastSyncAt?: string | null;
-  leadTimeDays?: number | null;
 };
 
 type UpdatePayload = {
   supplierVariantId: string;
-  providerKey?: string | null;
-  gtin?: string | null;
-  supplierSku?: string;
-  supplierBrand?: string | null;
-  supplierProductName?: string | null;
-  sizeRaw?: string | null;
-  sizeNormalized?: string | null;
   price?: number | null;
   stock?: number | null;
-  weightGrams?: number | null;
-  images?: unknown | null;
-  sourceImageUrl?: string | null;
-  hostedImageUrl?: string | null;
-  imageSyncStatus?: string | null;
-  imageVersion?: number | null;
-  imageLastSyncedAt?: string | null;
-  imageSyncError?: string | null;
-  deliveryType?: string | null;
-  lastSyncAt?: string | null;
-  leadTimeDays?: number | null;
 };
 
 function normalizeNumber(value: any): string {
@@ -90,9 +61,6 @@ export default function PartnerCatalogPage() {
   const [editPrice, setEditPrice] = useState<Record<string, string>>({});
   const [editStock, setEditStock] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [modalRow, setModalRow] = useState<CatalogItem | null>(null);
-  const [modalEdit, setModalEdit] = useState<Record<string, string>>({});
-  const [modalError, setModalError] = useState<string | null>(null);
   const [isNer, setIsNer] = useState(false);
 
   useEffect(() => {
@@ -156,41 +124,6 @@ export default function PartnerCatalogPage() {
 
   const applySearch = () => loadItems(0, "replace");
 
-  const openFullEdit = (row: CatalogItem) => {
-    if (!isNer) return;
-    setModalRow(row);
-    setModalError(null);
-    const next: Record<string, string> = {
-      providerKey: row.providerKey ?? "",
-      gtin: row.gtin ?? "",
-      supplierSku: row.supplierSku ?? "",
-      supplierBrand: row.supplierBrand ?? "",
-      supplierProductName: row.supplierProductName ?? "",
-      sizeRaw: row.sizeRaw ?? "",
-      sizeNormalized: row.sizeNormalized ?? "",
-      price: normalizeNumber(row.price ?? ""),
-      stock: normalizeNumber(row.stock ?? ""),
-      weightGrams: normalizeNumber(row.weightGrams ?? ""),
-      images: row.images ? JSON.stringify(row.images) : "",
-      sourceImageUrl: row.sourceImageUrl ?? "",
-      hostedImageUrl: row.hostedImageUrl ?? "",
-      imageSyncStatus: row.imageSyncStatus ?? "",
-      imageVersion: normalizeNumber(row.imageVersion ?? ""),
-      imageLastSyncedAt: row.imageLastSyncedAt ?? "",
-      imageSyncError: row.imageSyncError ?? "",
-      deliveryType: row.deliveryType ?? "",
-      lastSyncAt: row.lastSyncAt ?? "",
-      leadTimeDays: normalizeNumber(row.leadTimeDays ?? ""),
-    };
-    setModalEdit(next);
-  };
-
-  const closeFullEdit = () => {
-    setModalRow(null);
-    setModalEdit({});
-    setModalError(null);
-  };
-
   const applyUpdates = async (updates: UpdatePayload[]) => {
     if (updates.length === 0) return;
     const res = await fetch("/api/partners/catalog/variants", {
@@ -237,64 +170,6 @@ export default function PartnerCatalogPage() {
     }
   };
 
-  const saveFullEdit = async () => {
-    if (!modalRow || !isNer) return;
-    setBusyId("modal");
-    setModalError(null);
-    try {
-      const price = parseNumberOrNull(modalEdit.price ?? "");
-      const stock = parseIntOrNull(modalEdit.stock ?? "");
-      if (price === null) throw new Error("Price is required and must be a number.");
-      if (stock === null) throw new Error("Stock is required and must be a number.");
-      let images: any = undefined;
-      if ((modalEdit.images ?? "").trim()) {
-        try {
-          images = JSON.parse(modalEdit.images ?? "");
-        } catch {
-          throw new Error("Images must be valid JSON.");
-        }
-      } else {
-        images = null;
-      }
-      const payload: UpdatePayload = {
-        supplierVariantId: modalRow.supplierVariantId,
-        providerKey: modalEdit.providerKey?.trim() || null,
-        gtin: modalEdit.gtin?.trim() || null,
-        supplierSku: modalEdit.supplierSku?.trim() || "",
-        supplierBrand: modalEdit.supplierBrand?.trim() || null,
-        supplierProductName: modalEdit.supplierProductName?.trim() || null,
-        sizeRaw: modalEdit.sizeRaw?.trim() || null,
-        sizeNormalized: modalEdit.sizeNormalized?.trim() || null,
-        price,
-        stock,
-        weightGrams: parseIntOrNull(modalEdit.weightGrams ?? ""),
-        images,
-        sourceImageUrl: modalEdit.sourceImageUrl?.trim() || null,
-        hostedImageUrl: modalEdit.hostedImageUrl?.trim() || null,
-        imageSyncStatus: modalEdit.imageSyncStatus?.trim() || null,
-        imageVersion: parseIntOrNull(modalEdit.imageVersion ?? ""),
-        imageLastSyncedAt: modalEdit.imageLastSyncedAt?.trim() || null,
-        imageSyncError: modalEdit.imageSyncError?.trim() || null,
-        deliveryType: modalEdit.deliveryType?.trim() || null,
-        lastSyncAt: modalEdit.lastSyncAt?.trim() || null,
-        ...(() => {
-          const leadRaw = (modalEdit.leadTimeDays ?? "").trim();
-          if (leadRaw === "") return { leadTimeDays: null as number | null };
-          const parsed = parseIntOrNull(leadRaw);
-          if (parsed === null) throw new Error("Lead time must be a whole number of days.");
-          if (parsed < 0 || parsed > 365) throw new Error("Lead time must be between 0 and 365 days.");
-          return { leadTimeDays: parsed };
-        })(),
-      };
-      await applyUpdates([payload]);
-      closeFullEdit();
-    } catch (err: any) {
-      setModalError(err.message ?? "Update failed");
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   const deleteRow = async (row: CatalogItem) => {
     if (!row.owned) return;
     if (!confirm(`Remove ${row.supplierSku ?? row.supplierVariantId}?`)) return;
@@ -323,7 +198,7 @@ export default function PartnerCatalogPage() {
           <h1 className="text-2xl font-semibold text-slate-900">Catalog & Pricing</h1>
           <p className="text-sm text-slate-500">
             {isNer
-              ? "Full catalog view with full edit access."
+              ? "Full catalog view (price + stock per row; use Galaxus admin for deep edits)."
               : "You can view and edit only your own products (price + stock)."}
           </p>
         </div>
@@ -408,7 +283,7 @@ export default function PartnerCatalogPage() {
                   {row.owned ? (
                     <input
                       className="w-20 rounded border border-slate-200 px-1 py-0.5 text-right"
-                      value={editPrice[row.supplierVariantId] ?? String(row.price ?? "")}
+                      value={editPrice[row.supplierVariantId] ?? normalizeNumber(row.price ?? "")}
                       onChange={(event) =>
                         setEditPrice((prev) => ({
                           ...prev,
@@ -424,7 +299,7 @@ export default function PartnerCatalogPage() {
                   {row.owned ? (
                     <input
                       className="w-16 rounded border border-slate-200 px-1 py-0.5 text-right"
-                      value={editStock[row.supplierVariantId] ?? String(row.stock ?? 0)}
+                      value={editStock[row.supplierVariantId] ?? normalizeNumber(row.stock ?? 0)}
                       onChange={(event) =>
                         setEditStock((prev) => ({
                           ...prev,
@@ -447,14 +322,6 @@ export default function PartnerCatalogPage() {
                       >
                         {busyId === row.supplierVariantId ? "Saving…" : "Save"}
                       </button>
-                      {isNer ? (
-                        <button
-                          className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-700"
-                          onClick={() => openFullEdit(row)}
-                        >
-                          Full edit
-                        </button>
-                      ) : null}
                       <button
                         className="rounded-full border border-red-200 px-3 py-1 text-xs text-red-600"
                         onClick={() => deleteRow(row)}
@@ -488,98 +355,6 @@ export default function PartnerCatalogPage() {
         >
           Load more
         </button>
-      )}
-
-      {modalRow && isNer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-xs uppercase tracking-wide text-slate-400">Full edit</div>
-                <div className="text-lg font-semibold text-slate-900">{modalRow.supplierVariantId}</div>
-              </div>
-              <button className="text-sm text-slate-500" onClick={closeFullEdit}>
-                Close
-              </button>
-            </div>
-            {modalError && (
-              <div className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {modalError}
-              </div>
-            )}
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {[
-                ["providerKey", "Provider key"],
-                ["gtin", "GTIN"],
-                ["supplierSku", "SKU"],
-                ["supplierBrand", "Brand"],
-                ["supplierProductName", "Product name"],
-                ["sizeRaw", "Size (raw)"],
-                ["sizeNormalized", "Size (normalized)"],
-                ["price", "Price"],
-                ["stock", "Stock"],
-                ["weightGrams", "Weight (grams)"],
-                ["sourceImageUrl", "Source image URL"],
-                ["hostedImageUrl", "Hosted image URL"],
-                ["imageSyncStatus", "Image sync status"],
-                ["imageVersion", "Image version"],
-                ["imageLastSyncedAt", "Image last synced"],
-                ["imageSyncError", "Image sync error"],
-                ["deliveryType", "Delivery type"],
-                ["leadTimeDays", "Lead time to ship (days)"],
-                ["lastSyncAt", "Last sync"],
-              ].map(([key, label]) => (
-                <label key={key} className="text-xs text-slate-600">
-                  {label}
-                  <input
-                    className="mt-1 w-full rounded border border-slate-200 px-2 py-2 text-sm text-slate-900"
-                    value={modalEdit[key] ?? ""}
-                    onChange={(event) =>
-                      setModalEdit((prev) => ({
-                        ...prev,
-                        [key]: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-              ))}
-              <label className="text-xs text-slate-600 md:col-span-2">
-                Images (JSON)
-                <textarea
-                  className="mt-1 w-full rounded border border-slate-200 px-2 py-2 text-sm text-slate-900"
-                  rows={4}
-                  value={modalEdit.images ?? ""}
-                  onChange={(event) =>
-                    setModalEdit((prev) => ({
-                      ...prev,
-                      images: event.target.value,
-                    }))
-                  }
-                />
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Image hosting reads the first absolute URL from this JSON array (or from Source image URL). After
-                  saving, run the image sync job (ops / Galaxus admin) or wait for the scheduled sync to upload to
-                  Supabase storage.
-                </p>
-              </label>
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950 disabled:opacity-50"
-                onClick={saveFullEdit}
-                disabled={busyId === "modal"}
-              >
-                {busyId === "modal" ? "Saving…" : "Save changes"}
-              </button>
-              <button
-                className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700"
-                onClick={closeFullEdit}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
