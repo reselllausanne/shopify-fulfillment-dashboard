@@ -8,11 +8,30 @@ import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { requestSwissPostLabel } from "@/lib/swissPost";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
-import { DocumentType } from "@prisma/client";
+import { DocumentType, Prisma } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Prisma `create` must not pass `miraklShipmentId` when the local generated client predates that field
+ * (otherwise: Unknown argument `miraklShipmentId`). If the DB column exists (after migrate), set it via raw SQL.
+ */
+async function tryPersistMiraklShipmentId(shipmentId: string, miraklShipmentId: string | null) {
+  const mid = String(miraklShipmentId ?? "").trim();
+  if (!mid) return;
+  try {
+    await prisma.$executeRaw(
+      Prisma.sql`UPDATE "public"."DecathlonShipment" SET "miraklShipmentId" = ${mid} WHERE "id" = ${shipmentId}`
+    );
+  } catch (e: any) {
+    console.warn(
+      "[DECATHLON][SHIP] miraklShipmentId column update skipped (optional — run `npx prisma migrate deploy` && `npx prisma generate`):",
+      e?.message ?? e
+    );
+  }
+}
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -659,7 +678,6 @@ export async function POST(
             const shipment = await (prisma as any).decathlonShipment.create({
               data: {
                 orderId: order.id,
-                miraklShipmentId: meta.miraklShipmentId,
                 carrierFinal: "swisspost",
                 carrierRaw: "swisspost",
                 trackingNumber: tracking,
@@ -667,6 +685,7 @@ export async function POST(
                 labelGeneratedAt: null,
               },
             });
+            await tryPersistMiraklShipmentId(shipment.id, meta.miraklShipmentId);
             await (prisma as any).decathlonShipmentLine.createMany({
               data: itemsToShip.map(({ line, quantity }) => ({
                 shipmentId: shipment.id,
@@ -814,7 +833,6 @@ export async function POST(
     const shipment = await (prisma as any).decathlonShipment.create({
       data: {
         orderId: order.id,
-        miraklShipmentId,
         carrierFinal: "swisspost",
         carrierRaw: "swisspost",
         trackingNumber: swissPostLabelId,
@@ -822,6 +840,7 @@ export async function POST(
         labelGeneratedAt: new Date(),
       },
     });
+    await tryPersistMiraklShipmentId(shipment.id, miraklShipmentId);
 
     await (prisma as any).decathlonShipmentLine.createMany({
       data: itemsToShip.map(({ line, quantity }) => ({
