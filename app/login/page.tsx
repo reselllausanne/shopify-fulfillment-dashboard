@@ -1,7 +1,47 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, Suspense, useLayoutEffect } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+
+/**
+ * Reverse-proxy / staff gate often sends unauthenticated users to `/login?callbackUrl=…`.
+ * Partner routes must never sit behind the admin password screen: send them to `/partners/login`.
+ */
+function resolvePartnerLoginRedirect(callbackUrlRaw: string | null): string | null {
+  if (!callbackUrlRaw) return null;
+  let path: string;
+  try {
+    path = decodeURIComponent(callbackUrlRaw);
+  } catch {
+    path = callbackUrlRaw;
+  }
+  if (!path.startsWith("/") || path.startsWith("//")) return null;
+  if (!path.startsWith("/partners")) return null;
+  if (path === "/partners/login") return "/partners/login";
+  return `/partners/login?callbackUrl=${encodeURIComponent(path)}`;
+}
+
+function StaffOrPartnerLogin() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const partnerRedirect = resolvePartnerLoginRedirect(searchParams.get("callbackUrl"));
+
+  useLayoutEffect(() => {
+    if (partnerRedirect) router.replace(partnerRedirect);
+  }, [partnerRedirect, router]);
+
+  if (partnerRedirect) {
+    return (
+      <div className="min-h-[40vh] flex flex-col items-center justify-center text-gray-500 text-sm">
+        <p>Opening partner login…</p>
+        <p className="mt-2 text-xs text-gray-400">You are being redirected to the supplier portal.</p>
+      </div>
+    );
+  }
+
+  return <LoginForm />;
+}
 
 function LoginForm() {
   const [password, setPassword] = useState("");
@@ -85,7 +125,18 @@ function LoginForm() {
   );
 }
 
-export default function LoginPage() {
+function LoginPageShell() {
+  const searchParams = useSearchParams();
+  const partnerRedirect = resolvePartnerLoginRedirect(searchParams.get("callbackUrl"));
+
+  if (partnerRedirect) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <StaffOrPartnerLogin />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg border border-gray-100">
@@ -99,16 +150,33 @@ export default function LoginPage() {
           <p className="mt-2 text-center text-sm text-gray-600">
             Please enter your password to continue
           </p>
+          <p className="mt-3 text-center text-sm text-gray-600">
+            <Link href="/partners/login" className="font-medium text-blue-600 hover:text-blue-500">
+              Partner portal (suppliers) →
+            </Link>
+          </p>
         </div>
-        
+
         <Suspense fallback={
           <div className="flex justify-center p-8">
             <div className="animate-pulse text-gray-400">Loading auth...</div>
           </div>
         }>
-          <LoginForm />
+          <StaffOrPartnerLogin />
         </Suspense>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="animate-pulse text-gray-400">Loading…</div>
+      </div>
+    }>
+      <LoginPageShell />
+    </Suspense>
   );
 }

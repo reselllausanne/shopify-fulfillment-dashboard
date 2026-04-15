@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, Suspense } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
 function PartnerLoginForm() {
@@ -47,7 +48,10 @@ function PartnerLoginForm() {
       const res = await fetch("/api/partners/auth/quick", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ partnerKey, accessCode }),
+        body: JSON.stringify({
+          partnerKey,
+          accessCode: accessCode.trim() ? accessCode : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -65,10 +69,12 @@ function PartnerLoginForm() {
 
   return (
     <div className="mt-8 space-y-6">
-      <details className="rounded border border-slate-800 bg-slate-950/60 p-3">
-        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Email login (optional)
-        </summary>
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Partner login</div>
+        <p className="mt-1 text-xs text-slate-500">
+          Use the email and password provided for your account. No access code is required unless your administrator
+          configured one.
+        </p>
         <form className="mt-3 space-y-4" onSubmit={handleSubmit}>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
@@ -106,17 +112,18 @@ function PartnerLoginForm() {
             disabled={loading}
             className="group relative flex w-full justify-center rounded-md border border-transparent bg-[#55b3f3] px-4 py-2 text-sm font-semibold text-slate-950 transition-colors hover:bg-[#6cc1f5] disabled:cursor-not-allowed disabled:bg-slate-600"
           >
-            {loading ? "Signing in…" : "Sign In"}
+            {loading ? "Signing in…" : "Sign in to partner dashboard"}
           </button>
         </form>
-      </details>
+      </div>
 
-      <div className="border-t pt-4">
-        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-          Quick access (recommended)
-        </div>
-        <p className="text-xs text-slate-500">
-          Use your partner key and access code. Keys are short (e.g. 3 letters).
+      <details className="rounded border border-slate-800 bg-slate-950/60 p-3">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Quick access (partner key only, optional access code)
+        </summary>
+        <p className="mt-2 text-xs text-slate-500">
+          If your administrator set a global or per-partner access code, enter it below. Otherwise leave the code
+          empty.
         </p>
         <form className="mt-3 space-y-3" onSubmit={handleQuickAccess}>
           <input
@@ -128,20 +135,21 @@ function PartnerLoginForm() {
           />
           <input
             className="w-full rounded border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-[#55b3f3] focus:outline-none focus:ring-1 focus:ring-[#55b3f3]"
-            placeholder="Access code"
+            placeholder="Access code (only if configured)"
             type="password"
             value={accessCode}
             onChange={(e) => setAccessCode(e.target.value)}
+            autoComplete="off"
           />
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded bg-white px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+            className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
           >
-            {loading ? "Starting…" : "Enter partner dashboard"}
+            {loading ? "Starting…" : "Enter with partner key"}
           </button>
         </form>
-      </div>
+      </details>
 
       {error && (
         <div className="rounded bg-red-500/20 py-2 text-center text-sm font-medium text-red-200">
@@ -169,6 +177,13 @@ export default function PartnerLoginPage() {
         <Suspense fallback={<div className="text-center text-slate-500">Loading…</div>}>
           <PartnerLoginForm />
         </Suspense>
+
+        <p className="text-center text-xs text-slate-500">
+          Staff (admin / logistics)?{" "}
+          <Link href="/login" className="text-[#55b3f3] underline hover:text-[#7ac6f6]">
+            Use the main login
+          </Link>
+        </p>
       </div>
     </div>
   );

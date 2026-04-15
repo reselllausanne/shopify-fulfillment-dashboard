@@ -25,7 +25,9 @@ function isAllowed(accessCode: string | null | undefined, partnerKey: string) {
   if (resolved.expected) {
     return accessCode === resolved.expected;
   }
-  return process.env.NODE_ENV !== "production";
+  // No per-partner or global access code configured: allow partner key only ("no extra code").
+  // Set PARTNER_ACCESS_CODE or PARTNER_ACCESS_<KEY> when you want to require a secret again.
+  return true;
 }
 
 export async function POST(request: Request) {
@@ -44,11 +46,7 @@ export async function POST(request: Request) {
 
     const resolved = resolveAccessCode(partnerKey);
     if (!isAllowed(accessCode, partnerKey)) {
-      const message =
-        resolved.source === "none"
-          ? "Access code not configured for this partner"
-          : "Access code is invalid";
-      return NextResponse.json({ ok: false, error: message }, { status: 403 });
+      return NextResponse.json({ ok: false, error: "Access code is invalid" }, { status: 403 });
     }
 
     const prismaAny = prisma as any;
@@ -62,18 +60,46 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
-    const partner = await prismaAny.partner.upsert({
-      where: { key: partnerKey },
-      create: {
-        key: partnerKey,
-        name: partnerName ?? resolved.name ?? partnerKey,
-        active: true,
-      },
-      update: {
-        name: partnerName ?? resolved.name ?? undefined,
-        active: true,
-      },
-    });
+
+    const allowQuickUpsert =
+      resolved.expected != null || process.env.PARTNER_QUICK_UPSERT === "1";
+
+    let partner: { id: string; key: string };
+    if (allowQuickUpsert) {
+      partner = await prismaAny.partner.upsert({
+        where: { key: partnerKey },
+        create: {
+          key: partnerKey,
+          name: partnerName ?? resolved.name ?? partnerKey,
+          active: true,
+        },
+        update: {
+          name: partnerName ?? resolved.name ?? undefined,
+          active: true,
+        },
+      });
+    } else {
+      const existing = await prismaAny.partner.findUnique({
+        where: { key: partnerKey },
+      });
+      if (!existing?.active) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Partner key not found or inactive. Use email and password above, or ask your administrator to create your partner account.",
+          },
+          { status: 403 }
+        );
+      }
+      partner = existing;
+      if (partnerName ?? resolved.name) {
+        await prismaAny.partner.update({
+          where: { id: existing.id },
+          data: { name: partnerName ?? resolved.name ?? undefined },
+        });
+      }
+    }
 
     const token = await createPartnerToken({
       partnerId: partner.id,
