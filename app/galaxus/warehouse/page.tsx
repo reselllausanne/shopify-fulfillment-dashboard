@@ -275,7 +275,7 @@ export default function WarehouseBulkPage() {
           `StockX lookup: ${json.stockxEnrich.reason ?? "failed"} (saved your form values). Check order # and .data/stockx-token-galaxus.json.`
         );
       }
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
       await loadDetail(orderId);
       await loadOrders();
     } catch (err: any) {
@@ -304,7 +304,7 @@ export default function WarehouseBulkPage() {
       selectedOrderId &&
       manualEntryModal.orderId !== selectedOrderId
     ) {
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} });
+      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
     }
   }, [selectedOrderId, manualEntryModal.isOpen, manualEntryModal.orderId]);
 
@@ -606,7 +606,7 @@ export default function WarehouseBulkPage() {
         }}
         onSave={(data) => saveManualEntry(data)}
         onClose={() =>
-          setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, initialData: {} })
+          setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} })
         }
       />
     </main>
