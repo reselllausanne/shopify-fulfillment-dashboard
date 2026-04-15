@@ -21,12 +21,21 @@ function createPrismaClient() {
 /**
  * After `prisma generate`, Next.js dev / HMR can keep a PrismaClient from an older bundle
  * that does not expose newer models — then `prisma.decathlonOrder` is undefined and
- * `.upsert` throws. Drop that cached instance in non-production and create a fresh client.
+ * `.upsert` throws. Same for Decathlon shipment tables added later.
+ * Drop that cached instance in non-production and create a fresh client.
  */
+function prismaClientLooksCurrent(client: PrismaClient): boolean {
+  const c = client as unknown as {
+    decathlonOrder?: unknown;
+    decathlonShipment?: unknown;
+    decathlonShipmentLine?: unknown;
+  };
+  return Boolean(c.decathlonOrder && c.decathlonShipment && c.decathlonShipmentLine);
+}
+
 function resolvePrismaClient(): PrismaClient {
   if (process.env.NODE_ENV !== "production" && globalForPrisma.prisma) {
-    const cached = globalForPrisma.prisma as { decathlonOrder?: unknown };
-    if (!cached.decathlonOrder) {
+    if (!prismaClientLooksCurrent(globalForPrisma.prisma)) {
       void globalForPrisma.prisma.$disconnect().catch(() => {});
       globalForPrisma.prisma = undefined;
     }

@@ -53,9 +53,21 @@ export default function PartnerDashboardPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
-  const [shippedSalesChf, setShippedSalesChf] = useState<number | null>(null);
-  const [shippedSalesLines, setShippedSalesLines] = useState<number | null>(null);
-  const [shippedSalesExcluded, setShippedSalesExcluded] = useState(false);
+  type ShippedSalesBlock =
+    | {
+        kind: "ner_mirakl";
+        fulfilledOrderCount: number;
+        fulfilledPartnerLineUnits: number;
+        miraklPayoutChf: number;
+        miraklPayoutLineMisses: number;
+      }
+    | {
+        kind: "partner_sell";
+        fulfilledOrderCount: number;
+        fulfilledPartnerLineUnits: number;
+        sellTotalChf: number;
+      };
+  const [shippedSalesBlock, setShippedSalesBlock] = useState<ShippedSalesBlock | null>(null);
   const router = useRouter();
 
   const loadHistory = async (offset = 0) => {
@@ -83,15 +95,22 @@ export default function PartnerDashboardPage() {
       const res = await fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) return;
-      if (data.excluded) {
-        setShippedSalesExcluded(true);
-        setShippedSalesChf(0);
-        setShippedSalesLines(0);
+      if (data.variant === "ner_mirakl") {
+        setShippedSalesBlock({
+          kind: "ner_mirakl",
+          fulfilledOrderCount: Number(data.fulfilledOrderCount ?? 0),
+          fulfilledPartnerLineUnits: Number(data.fulfilledPartnerLineUnits ?? 0),
+          miraklPayoutChf: Number(data.miraklPayoutChf ?? 0),
+          miraklPayoutLineMisses: Number(data.miraklPayoutLineMisses ?? 0),
+        });
         return;
       }
-      setShippedSalesExcluded(false);
-      setShippedSalesChf(Number(data.partnerCatalogShippedChf ?? 0));
-      setShippedSalesLines(Number(data.shippedLineCount ?? 0));
+      setShippedSalesBlock({
+        kind: "partner_sell",
+        fulfilledOrderCount: Number(data.fulfilledOrderCount ?? 0),
+        fulfilledPartnerLineUnits: Number(data.fulfilledPartnerLineUnits ?? 0),
+        sellTotalChf: Number(data.sellTotalChf ?? 0),
+      });
     } catch {
       // silent
     }
@@ -309,19 +328,46 @@ export default function PartnerDashboardPage() {
           </div>
         </button>
         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-5">
-          <div className="text-xs uppercase tracking-wide text-slate-400">Shipped sales (catalog)</div>
-          {shippedSalesExcluded ? (
-            <div className="mt-2 text-xs text-slate-500">Not shown for this partner.</div>
-          ) : shippedSalesChf == null ? (
+          <div className="text-xs uppercase tracking-wide text-slate-400">
+            {shippedSalesBlock?.kind === "ner_mirakl" ? "Fulfilled — Mirakl payout" : "Fulfilled — sell (Mirakl ligne)"}
+          </div>
+          {shippedSalesBlock == null ? (
             <div className="mt-2 text-xs text-slate-500">Loading…</div>
+          ) : shippedSalesBlock.kind === "ner_mirakl" ? (
+            <div className="mt-2 space-y-2 text-xs text-slate-600">
+              <div className="text-2xl font-semibold text-slate-900">
+                CHF {shippedSalesBlock.miraklPayoutChf.toFixed(2)}
+                <span className="ml-2 text-xs font-normal text-slate-500">total Mirakl payout</span>
+              </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                <div>
+                  <span className="text-slate-400">Fulfilled orders</span>{" "}
+                  <span className="font-medium text-slate-800">{shippedSalesBlock.fulfilledOrderCount}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400">Your line units</span>{" "}
+                  <span className="font-medium text-slate-800">{shippedSalesBlock.fulfilledPartnerLineUnits}</span>
+                </div>
+              </div>
+              <div className="text-[11px] text-slate-500 leading-snug">
+                Same orders as <strong>Fulfilled</strong> under Decathlon orders (including manual / legacy shipments).
+                Each line: Mirakl <code className="text-[10px]">total_price − total_commission</code>.
+                {shippedSalesBlock.miraklPayoutLineMisses > 0
+                  ? ` ${shippedSalesBlock.miraklPayoutLineMisses} line(s) missing Mirakl totals in stored JSON — run order sync if needed.`
+                  : null}
+              </div>
+            </div>
           ) : (
             <>
               <div className="mt-2 text-2xl font-semibold text-slate-900">
-                CHF {shippedSalesChf.toFixed(2)}
+                CHF {shippedSalesBlock.sellTotalChf.toFixed(2)}
               </div>
               <div className="text-xs text-slate-500">
-                Your feed price × shipped units ({shippedSalesLines ?? 0} shipment line
-                {(shippedSalesLines ?? 0) === 1 ? "" : "s"}). Excludes NER.
+                Sum of Mirakl sell totals on your lines for fulfilled orders (
+                {shippedSalesBlock.fulfilledPartnerLineUnits} unit
+                {shippedSalesBlock.fulfilledPartnerLineUnits === 1 ? "" : "s"},{" "}
+                {shippedSalesBlock.fulfilledOrderCount} order
+                {shippedSalesBlock.fulfilledOrderCount === 1 ? "" : "s"}). Margin is not computed.
               </div>
             </>
           )}
