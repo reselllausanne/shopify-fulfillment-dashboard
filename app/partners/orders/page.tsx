@@ -9,11 +9,22 @@ type OrderListItem = {
   orderNumber?: string | null;
   orderDate: string;
   orderState?: string | null;
+  shippedCount?: number;
   shippedUnits?: number;
   totalUnits?: number;
   remainingUnits?: number;
   _count?: { lines: number; shipments: number };
 };
+
+/** Same fulfillment rule as admin `app/decathlon/orders/page.tsx` (avoid relying on Mirakl SHIPPED when units are 0). */
+function isPartnerOrderFulfilled(order: OrderListItem): boolean {
+  const totalUnits = order.totalUnits ?? 0;
+  const shippedUnits = order.shippedUnits ?? 0;
+  const remainingUnits = order.remainingUnits ?? Math.max(totalUnits - shippedUnits, 0);
+  const shippedCount = order.shippedCount ?? order._count?.shipments ?? 0;
+  if (totalUnits > 0) return remainingUnits <= 0;
+  return shippedCount > 0;
+}
 
 export default function PartnerOrdersPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
@@ -80,10 +91,7 @@ export default function PartnerOrdersPage() {
   const ordersByTab = useMemo(() => {
     return orders.filter((order) => {
       const state = normalizeState(order.orderState);
-      const totalUnits = order.totalUnits ?? 0;
-      const shippedUnits = order.shippedUnits ?? 0;
-      const remainingUnits = order.remainingUnits ?? Math.max(totalUnits - shippedUnits, 0);
-      const isShipped = totalUnits > 0 ? remainingUnits <= 0 : state === "SHIPPED";
+      const isShipped = isPartnerOrderFulfilled(order);
       if (leftTab === "fulfilled") return isShipped;
       return !isShipped && !canceledStates.has(state);
     });
@@ -200,11 +208,9 @@ export default function PartnerOrdersPage() {
           </div>
           <div className="space-y-2 max-h-[500px] overflow-auto">
             {ordersByTab.map((order) => {
-              const state = normalizeState(order.orderState);
               const totalUnits = order.totalUnits ?? 0;
               const shippedUnits = order.shippedUnits ?? 0;
-              const remainingUnits = order.remainingUnits ?? Math.max(totalUnits - shippedUnits, 0);
-              const isShipped = totalUnits > 0 ? remainingUnits <= 0 : state === "SHIPPED";
+              const isShipped = isPartnerOrderFulfilled(order);
               const listTone = isShipped ? "border-emerald-200 bg-emerald-50/50" : "border-amber-200 bg-amber-50/40";
               return (
                 <button

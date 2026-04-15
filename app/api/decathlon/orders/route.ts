@@ -92,14 +92,23 @@ export async function GET(request: NextRequest) {
     }
     const items = orders.map((order: any) => {
       const lines = Array.isArray(order.lines) ? order.lines : [];
-      const scopedLines = partnerOfferPrefix
-        ? lines.filter((line: any) =>
-            String(line.offerSku ?? "").toUpperCase().startsWith(partnerOfferPrefix ?? "")
-          )
+      const prefix = (partnerOfferPrefix ?? "").toUpperCase();
+      let metricsLines = partnerOfferPrefix
+        ? lines.filter((line: any) => String(line.offerSku ?? "").toUpperCase().startsWith(prefix))
         : lines;
-      const totalUnits = scopedLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
+      // Whole-order assignment: partner key matches but line SKUs may not use the partner_ prefix yet.
+      if (
+        partnerOfferPrefix &&
+        metricsLines.length === 0 &&
+        sessionPartnerKey &&
+        order.partnerKey &&
+        normalizeProviderKey(order.partnerKey) === sessionPartnerKey
+      ) {
+        metricsLines = lines;
+      }
+      const totalUnits = metricsLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
       const shipmentLines = (order.shipments ?? []).flatMap((shipment: any) => shipment.lines ?? []);
-      const scopedLineIds = new Set(scopedLines.map((line: any) => line.id));
+      const scopedLineIds = new Set(metricsLines.map((line: any) => line.id));
       const scopedShipmentLines = shipmentLines.filter((line: any) => scopedLineIds.has(line.orderLineId));
       const hasLegacyShipment =
         scopedShipmentLines.length === 0 && (order.shipments ?? []).some((s: any) => s.shippedAt);
@@ -107,7 +116,7 @@ export async function GET(request: NextRequest) {
         ? totalUnits
         : scopedShipmentLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
       const remainingUnits = Math.max(totalUnits - shippedUnits, 0);
-      const lineCount = partnerOfferPrefix ? scopedLines.length : order._count?.lines ?? 0;
+      const lineCount = partnerOfferPrefix ? metricsLines.length : order._count?.lines ?? 0;
       return {
         id: order.id,
         orderId: order.orderId,
