@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { decathlonMiraklSellTotal, decathlonPayoutLineAmount } from "@/decathlon/orders/margin";
+import { decathlonMiraklSellerPayoutLineTotal } from "@/decathlon/orders/miraklLinePayout";
 
 type OrderListItem = {
   id: string;
@@ -34,6 +35,7 @@ export default function PartnerOrdersPage() {
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
+  const [partnerKeyUi, setPartnerKeyUi] = useState<string | null>(null);
 
   const loadOrders = async () => {
     setLoadingOrders(true);
@@ -74,6 +76,22 @@ export default function PartnerOrdersPage() {
   useEffect(() => {
     loadOrders();
   }, [leftTab]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const me = await fetch("/api/partners/me", { cache: "no-store" });
+        if (!me.ok) return;
+        const meJson = await me.json();
+        const k = String(meJson.partner?.key ?? "")
+          .trim()
+          .toUpperCase();
+        setPartnerKeyUi(k || null);
+      } catch {
+        // silent
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (selectedOrderId) {
@@ -183,7 +201,21 @@ export default function PartnerOrdersPage() {
       const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/ship?scope=partner`, { method: "POST" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Ship failed");
-      await downloadLabel();
+      // DB-only Mirakl reconcile has no PDF row; normal ship has documentId + label in storage.
+      if (data.documentId) {
+        try {
+          await downloadLabel();
+        } catch (labelErr: any) {
+          const msg = String(labelErr?.message ?? labelErr);
+          setError(
+            msg.toLowerCase().includes("failed to fetch")
+              ? "Label download failed (network). Check that the app is reachable and try “Refresh orders”, or open the label from Mirakl."
+              : `Ship saved but label download failed: ${msg}`
+          );
+        }
+      } else if (data.reconciled) {
+        setError(null);
+      }
       await loadOrderDetail(selectedOrderId);
       await loadOrders();
     } catch (err: any) {
@@ -337,7 +369,10 @@ export default function PartnerOrdersPage() {
                 {(selectedOrder.lines || []).map((line: any) => {
                   const cat = line.catalog ?? null;
                   const sellBrut = decathlonMiraklSellTotal(line);
-                  const payoutLine = decathlonPayoutLineAmount(line);
+                  const miraklRaw = line.rawJson ?? line;
+                  const payoutMiraklLine = decathlonMiraklSellerPayoutLineTotal(miraklRaw);
+                  const payoutLineEstimate = decathlonPayoutLineAmount(line);
+                  const isNer = partnerKeyUi === "NER";
                   const sizeDisplay =
                     cat?.sizeRaw ??
                     line.kickdb?.sizeRaw ??
@@ -391,14 +426,21 @@ export default function PartnerOrdersPage() {
                           </div>
                         </div>
                         <div className="text-right shrink-0 space-y-0.5">
-                          {sellBrut != null ? (
-                            <div className="text-slate-400 text-[10px]">
-                              Sell Mirakl (ligne): CHF {sellBrut.toFixed(2)}
+                          {!isNer && sellBrut != null ? (
+                            <div className="text-slate-800 font-medium">Sell Mirakl (ligne): CHF {sellBrut.toFixed(2)}</div>
+                          ) : null}
+                          {isNer && sellBrut != null ? (
+                            <div className="text-slate-400 text-[10px]">Sell Mirakl (ligne): CHF {sellBrut.toFixed(2)}</div>
+                          ) : null}
+                          {isNer && payoutMiraklLine != null ? (
+                            <div className="text-slate-800 font-medium">
+                              Payout (Mirakl order line): CHF {payoutMiraklLine.toFixed(2)}
                             </div>
                           ) : null}
-                          {payoutLine != null ? (
-                            <div className="text-slate-800 font-medium">
-                              Payout Decathlon: CHF {payoutLine.toFixed(2)}
+                          {isNer && payoutMiraklLine == null && payoutLineEstimate != null ? (
+                            <div className="text-amber-800 text-[11px]">
+                              Mirakl payout totals missing in stored line — internal estimate: CHF{" "}
+                              {payoutLineEstimate.toFixed(2)}
                             </div>
                           ) : null}
                         </div>

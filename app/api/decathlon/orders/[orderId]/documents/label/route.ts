@@ -121,25 +121,49 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
-  const { orderId } = await params;
-  const order = await resolveDecathlonOrder(orderId);
-  if (!order) {
-    return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+  try {
+    const { orderId } = await params;
+    const order = await resolveDecathlonOrder(orderId);
+    if (!order) {
+      return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+    }
+    const document = await fetchLatestLabelDocument(order);
+    if (!document) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "No label PDF on file for this order. If the order was synced from Mirakl without a local label step, generate a new label from Mirakl/Swiss Post or ship again from a machine that stores labels.",
+        },
+        { status: 404 }
+      );
+    }
+    const storage = getStorageAdapterForUrl(document.storageUrl);
+    const file = await storage.getPdf(document.storageUrl);
+    const filename = `decathlon-label_${order.orderId || order.id}_v${document.version}.pdf`;
+    return new Response(file.content as unknown as BodyInit, {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="${filename}"`,
+        "content-length": String(file.content.length ?? 0),
+      },
+    });
+  } catch (error: any) {
+    console.error("[DECATHLON][LABEL][GET]", error);
+    const message = error?.message ?? String(error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          message.includes("ENOENT") || message.includes("no such file")
+            ? `Label file missing on this server (${message}). Old orders may point at another host’s disk or a deleted Supabase object.`
+            : message.includes("Supabase download")
+              ? message
+              : `Could not read label file: ${message}`,
+      },
+      { status: 502 }
+    );
   }
-  const document = await fetchLatestLabelDocument(order);
-  if (!document) {
-    return NextResponse.json({ ok: false, error: "No label document found" }, { status: 404 });
-  }
-  const storage = getStorageAdapterForUrl(document.storageUrl);
-  const file = await storage.getPdf(document.storageUrl);
-  const filename = `decathlon-label_${order.orderId || order.id}_v${document.version}.pdf`;
-  return new Response(file.content as unknown as BodyInit, {
-    headers: {
-      "content-type": "application/pdf",
-      "content-disposition": `attachment; filename="${filename}"`,
-      "content-length": String(file.content.length ?? 0),
-    },
-  });
 }
 
 export async function POST(
