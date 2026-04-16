@@ -19,6 +19,7 @@ import {
   assertSftpConfig,
 } from "@/galaxus/edi/config";
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
+import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -155,10 +156,10 @@ export async function POST(request: Request) {
     }))?.id ?? null;
 
     const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
-      needsMaster ? fetch(masterUrl, { cache: "no-store" }) : Promise.resolve(null),
-      needsStock ? fetch(stockUrl, { cache: "no-store" }) : Promise.resolve(null),
-      needsOffer ? fetch(offerUrl, { cache: "no-store" }) : Promise.resolve(null),
-      needsSpecs ? fetch(specsUrl, { cache: "no-store" }) : Promise.resolve(null),
+      needsMaster ? runGalaxusExportGET(masterUrl) : Promise.resolve(null),
+      needsStock ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
+      needsOffer ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
+      needsSpecs ? runGalaxusExportGET(specsUrl) : Promise.resolve(null),
     ]);
 
     if (masterRes && !masterRes.ok) {
@@ -191,12 +192,8 @@ export async function POST(request: Request) {
     const specsCount = specsRes ? countCsvRows(specsCsv) : null;
 
     const shouldRunValidation = needsMaster || needsStock || needsSpecs;
-    const validationRes = shouldRunValidation
-      ? await fetch(
-          `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`,
-          { cache: "no-store" }
-        ).catch(() => null)
-      : null;
+    const validationUrl = `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
+    const validationRes = shouldRunValidation ? await runGalaxusExportGET(validationUrl).catch(() => null) : null;
     const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
     const report = validationData?.report ?? null;
     const totalIssues =
