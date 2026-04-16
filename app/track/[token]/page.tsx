@@ -4,7 +4,7 @@ import { detectMilestone } from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
 
 type Params = {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 };
 
 export const dynamic = "force-dynamic";
@@ -113,7 +113,8 @@ const normalizeMilestoneIndex = (milestoneKey: string | null, isExpress: boolean
 };
 
 export default async function TrackingPage({ params }: Params) {
-  const orderMatchId = await resolveOrderMatchIdFromTrackingToken(params.token);
+  const { token } = await params;
+  const orderMatchId = await resolveOrderMatchIdFromTrackingToken(token);
   if (!orderMatchId) {
     return (
       <div className="min-h-screen flex items-center justify-center">
