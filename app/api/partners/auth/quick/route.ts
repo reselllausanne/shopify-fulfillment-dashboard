@@ -121,8 +121,23 @@ export async function POST(request: Request) {
       maxAge: 60 * 60 * 24 * 30,
     });
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[PARTNER][AUTH][QUICK] Failed:", error);
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: string }).code)
+        : "";
+    if (code === "PARTNER_SIGNING_NOT_CONFIGURED") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Server setup is incomplete. Ask your administrator to add the same secret used for the main staff login page (environment), then restart the app.",
+        },
+        { status: 500 }
+      );
+    }
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
