@@ -22,6 +22,9 @@ type CatalogItem = {
   stock?: number | null;
   updatedAt?: string | null;
   leadTimeDays?: number | null;
+  /** Lowest `SupplierVariant.price` in DB for this GTIN, excluding this partner’s own ids. */
+  referenceMinPriceChf?: number | null;
+  referenceOfferCount?: number | null;
 };
 
 type UpdatePayload = {
@@ -65,6 +68,7 @@ export default function PartnerCatalogPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isNer, setIsNer] = useState(false);
   const [detailVariantId, setDetailVariantId] = useState<string | null>(null);
+  const [galaxusFeedExcluded, setGalaxusFeedExcluded] = useState(false);
 
   useEffect(() => {
     const loadPartner = async () => {
@@ -98,6 +102,7 @@ export default function PartnerCatalogPage() {
       const res = await fetch(`/api/partners/catalog/variants?${params.toString()}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load catalog");
+      setGalaxusFeedExcluded(Boolean(data.galaxusFeedExcludedForPartner));
       const incoming = Array.isArray(data.items) ? data.items : [];
       setItems((prev) => {
         if (mode === "replace") return incoming;
@@ -138,17 +143,7 @@ export default function PartnerCatalogPage() {
     if (!res.ok || !data.ok) {
       throw new Error((data as { error?: string }).error ?? "Update failed");
     }
-    const updatedItems = (data.results ?? [])
-      .filter((r: { ok?: boolean; item?: CatalogItem }) => r?.ok && r?.item)
-      .map((r: { item: CatalogItem }) => r.item);
-    if (updatedItems.length > 0) {
-      setItems((prev) =>
-        prev.map(
-          (item) =>
-            updatedItems.find((u: CatalogItem) => u.supplierVariantId === item.supplierVariantId) ?? item
-        )
-      );
-    }
+    await loadItems(offset, "replace");
   };
 
   const saveInline = async (row: CatalogItem) => {
@@ -202,6 +197,13 @@ export default function PartnerCatalogPage() {
               ? "Browse the full catalog. Open Product data for GTIN, images, and Galaxus fields; use Save on the row for quick price/stock only."
               : "You can view and edit only your own products (price + stock)."}
           </p>
+          {galaxusFeedExcluded ? (
+            <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+              Galaxus supplier feeds exclude this partner key (server{" "}
+              <code className="rounded bg-amber-100 px-1">GALAXUS_FEED_SUPPLIER_BLOCKLIST</code>
+              ). Decathlon export still includes your rows when GTIN, brand, price, and stock rules pass.
+            </p>
+          ) : null}
         </div>
         <div className="text-xs text-slate-500">
           {isNer ? `Owned: ${ownedCount} · Loaded: ${items.length}` : `Loaded: ${items.length}`}
@@ -260,6 +262,9 @@ export default function PartnerCatalogPage() {
               <th className="px-2 py-2 text-left">GTIN</th>
               <th className="px-2 py-2 text-left">Size</th>
               <th className="px-2 py-2 text-right">Price</th>
+              <th className="px-2 py-2 text-right" title="Min catalog price (CHF) for same GTIN from other suppliers">
+                Others min
+              </th>
               <th className="px-2 py-2 text-right">Stock</th>
               <th className="px-2 py-2 text-left">Updated</th>
               <th className="px-2 py-2 text-left">Actions</th>
@@ -294,6 +299,16 @@ export default function PartnerCatalogPage() {
                     />
                   ) : (
                     <span className="text-slate-500">{row.price ?? "-"}</span>
+                  )}
+                </td>
+                <td className="px-2 py-2 text-right text-slate-600">
+                  {row.referenceMinPriceChf != null && Number.isFinite(row.referenceMinPriceChf) ? (
+                    <span title={`${row.referenceOfferCount ?? 0} other listing(s) with this GTIN`}>
+                      {Number(row.referenceMinPriceChf).toFixed(2)}
+                      <span className="text-slate-400"> ({row.referenceOfferCount ?? 0})</span>
+                    </span>
+                  ) : (
+                    "—"
                   )}
                 </td>
                 <td className="px-2 py-2 text-right">

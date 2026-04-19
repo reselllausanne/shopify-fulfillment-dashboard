@@ -496,11 +496,19 @@ export async function bulkUpsertVariantMappings(
 ): Promise<{ inserted: number; updated: number }> {
   if (rows.length === 0) return { inserted: 0, updated: 0 };
 
+  // Postgres rejects duplicate keys in a single INSERT … VALUES even with ON CONFLICT;
+  // dedupe so the same supplierVariantId appears at most once (last row wins).
+  const byVariant = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    byVariant.set(r.supplierVariantId, r);
+  }
+  const rowsDeduped = Array.from(byVariant.values());
+
   const doNotDowngrade = options?.doNotDowngradeFromMatched !== false;
   const onlySetPendingIfMissing = options?.onlySetPendingIfMissing === true;
 
   // Insert missing mappings.
-  const insertValues = rows.map(
+  const insertValues = rowsDeduped.map(
     (r) =>
       Prisma.sql`(
         ${Prisma.sql`gen_random_uuid()`},
@@ -535,7 +543,7 @@ export async function bulkUpsertVariantMappings(
   const inserted = insRes?.[0]?.count ?? 0;
 
   // Update existing mappings only when changed. Avoid downgrades from MATCHED/AMBIGUOUS/SUPPLIER_GTIN/PARTNER_GTIN.
-  const updateValues = rows.map((r) =>
+  const updateValues = rowsDeduped.map((r) =>
     Prisma.sql`(${r.supplierVariantId}, ${r.gtin}, ${r.providerKey}, ${r.status}, ${r.kickdbVariantId ?? null})`
   );
   const updateQuery = Prisma.sql`

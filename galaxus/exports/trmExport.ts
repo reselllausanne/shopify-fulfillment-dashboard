@@ -1,4 +1,4 @@
-import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
+import { GALAXUS_FEED_SUPPLIER_ALLOWLIST, GALAXUS_FEED_SUPPLIER_BLOCKLIST } from "@/galaxus/config";
 
 const FEED_ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
 
@@ -24,6 +24,17 @@ function buildSupplierIdFilter(keys: string[]) {
   return or.length > 0 ? { OR: or } : null;
 }
 
+/** Excludes supplier id prefixes from Galaxus feed scope (NOT … OR …). */
+function buildSupplierBlocklistFilter(keys: string[]) {
+  const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
+  if (normalized.length === 0) return null;
+  const or = normalized.flatMap((key) => [
+    { supplierVariant: { supplierVariantId: { startsWith: `${key}:`, mode: "insensitive" } } },
+    { supplierVariant: { supplierVariantId: { startsWith: `${key}_`, mode: "insensitive" } } },
+  ]);
+  return or.length > 0 ? { NOT: { OR: or } } : null;
+}
+
 export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagnostics = true) {
   const normalizedSupplier = supplier ? normalizeSupplierKey(supplier) : "";
   const allowlistKeys = GALAXUS_FEED_SUPPLIER_ALLOWLIST.split(",")
@@ -35,6 +46,17 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
     allowlistFilter && supplierFilter
       ? { AND: [allowlistFilter, supplierFilter] }
       : allowlistFilter || supplierFilter;
+
+  const blocklistKeys = GALAXUS_FEED_SUPPLIER_BLOCKLIST.split(",")
+    .map(normalizeSupplierKey)
+    .filter(Boolean);
+  const blocklistFilter = buildSupplierBlocklistFilter(blocklistKeys);
+  const supplierScope =
+    combinedSupplierFilter && blocklistFilter
+      ? { AND: [combinedSupplierFilter, blocklistFilter] }
+      : combinedSupplierFilter
+        ? combinedSupplierFilter
+        : blocklistFilter;
 
   const eligibleWhere = {
     status: { in: FEED_ELIGIBLE_MAPPING_STATUSES as unknown as string[] },
@@ -49,8 +71,8 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
       }
     : eligibleWhere;
 
-  if (combinedSupplierFilter) {
-    return { AND: [combinedSupplierFilter, statusFilter] };
+  if (supplierScope) {
+    return { AND: [supplierScope, statusFilter] };
   }
   return statusFilter;
 }

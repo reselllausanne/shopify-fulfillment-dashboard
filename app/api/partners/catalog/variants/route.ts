@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
-import { normalizeSize, normalizeSku } from "@/app/lib/normalize";
+import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
+import { GALAXUS_FEED_SUPPLIER_BLOCKLIST } from "@/galaxus/config";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { enrichSupplierVariantsForListing } from "@/galaxus/supplier/supplierVariantListExtras";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
@@ -147,8 +148,58 @@ export async function GET(req: NextRequest) {
     };
   });
 
+  const partnerKeyLower = session.partnerKey.toLowerCase();
+  const galaxusFeedExcludedForPartner = GALAXUS_FEED_SUPPLIER_BLOCKLIST.split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(partnerKeyLower);
+
+  const gtins = [
+    ...new Set(
+      mapped
+        .map((item) => (item.gtin ? String(item.gtin).trim() : ""))
+        .filter((g) => validateGtin(g))
+    ),
+  ];
+
+  const refByGtin = new Map<string, { min: number; count: number }>();
+  if (gtins.length > 0) {
+    const idPrefixPattern = `${partnerKeyLower}:%`;
+    const rows = await prisma.$queryRaw<Array<{ gtin: string; min_price: unknown; cnt: bigint }>>(
+      Prisma.sql`
+        SELECT sv."gtin", MIN(sv."price") AS min_price, COUNT(*)::bigint AS cnt
+        FROM "public"."SupplierVariant" sv
+        WHERE sv."gtin" IN (${Prisma.join(gtins)})
+          AND NOT (sv."supplierVariantId" ILIKE ${idPrefixPattern})
+        GROUP BY sv."gtin"
+      `
+    );
+    for (const r of rows) {
+      const g = String(r.gtin ?? "").trim();
+      const v = Number(r.min_price);
+      if (validateGtin(g) && Number.isFinite(v)) {
+        refByGtin.set(g, { min: v, count: Number(r.cnt) });
+      }
+    }
+  }
+
+  const mappedWithRef = mapped.map((item) => {
+    const g = item.gtin ? String(item.gtin).trim() : "";
+    const ref = validateGtin(g) ? refByGtin.get(g) : undefined;
+    return {
+      ...item,
+      referenceMinPriceChf: ref != null ? ref.min : null,
+      referenceOfferCount: ref != null ? ref.count : null,
+    };
+  });
+
   const nextOffset = items.length === limit ? offset + limit : null;
-  return NextResponse.json({ ok: true, items: mapped, nextOffset });
+  return NextResponse.json({
+    ok: true,
+    items: mappedWithRef,
+    nextOffset,
+    galaxusFeedExcludedForPartner,
+  });
 }
 
 export async function POST(req: NextRequest) {

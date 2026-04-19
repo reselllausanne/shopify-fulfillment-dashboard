@@ -65,6 +65,9 @@ export const GALAXUS_SSCC_SENDER_ADDRESS_LINES =
     .filter(Boolean);
 export const GALAXUS_FEED_SUPPLIER_ALLOWLIST =
   process.env.GALAXUS_FEED_SUPPLIER_ALLOWLIST ?? "";
+/** Comma-separated supplier id prefixes (e.g. `get`) excluded from Galaxus TRM feeds only. Decathlon export is unchanged. */
+export const GALAXUS_FEED_SUPPLIER_BLOCKLIST =
+  process.env.GALAXUS_FEED_SUPPLIER_BLOCKLIST ?? "";
 const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";
 export const GALAXUS_FEED_UPLOADS_DISABLED = !["0", "false", "no"].includes(
   uploadsDisabledRaw.toLowerCase()
