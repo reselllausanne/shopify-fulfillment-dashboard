@@ -8,14 +8,17 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
+    const all = Boolean(body?.all);
     const limitRaw = Number(body?.limit ?? 50);
-    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 50, 1), 1000);
+    const limit = all
+      ? 0
+      : Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 50, 1), 1000);
     const prismaAny = prisma as any;
 
     const pending = await prismaAny.stxImportSlug.findMany({
       where: { status: "PENDING" },
       orderBy: { createdAt: "asc" },
-      take: limit,
+      ...(all ? {} : { take: limit }),
     });
 
     let imported = 0;
