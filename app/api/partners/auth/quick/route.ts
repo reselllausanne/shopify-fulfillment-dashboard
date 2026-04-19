@@ -11,11 +11,12 @@ function normalizeKey(value: string) {
 
 function resolveAccessCode(partnerKey: string) {
   const normalized = normalizeKey(partnerKey);
-  const perPartner = process.env[`PARTNER_ACCESS_${normalized}`];
-  const global = process.env.PARTNER_ACCESS_CODE;
+  const perPartner = process.env[`PARTNER_ACCESS_${normalized}`]?.trim();
+  const global = process.env.PARTNER_ACCESS_CODE?.trim();
+  const name = process.env[`PARTNER_NAME_${normalized}`]?.trim();
   return {
-    expected: perPartner ?? global ?? null,
-    name: process.env[`PARTNER_NAME_${normalized}`] ?? null,
+    expected: perPartner || global || null,
+    name: name || null,
     source: perPartner ? "partner" : global ? "global" : "none",
   };
 }
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     }
 
     const allowQuickUpsert =
-      resolved.expected != null || process.env.PARTNER_QUICK_UPSERT === "1";
+      resolved.expected != null || process.env.PARTNER_QUICK_UPSERT?.trim() === "1";
 
     let partner: { id: string; key: string };
     if (allowQuickUpsert) {
@@ -87,7 +88,9 @@ export async function POST(request: Request) {
           {
             ok: false,
             error:
-              "Partner key not found or inactive. Use email and password above, or ask your administrator to create your partner account.",
+              "This partner key is not in the database yet, and this server is not configured to create it automatically (missing PARTNER_ACCESS_" +
+              normalizeKey(partnerKey) +
+              " or PARTNER_ACCESS_CODE in the server environment). Add the same lines as on your local .env, restart the app, then try again. Or sign in with email if an account was created for you.",
           },
           { status: 403 }
         );
