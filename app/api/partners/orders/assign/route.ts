@@ -85,9 +85,13 @@ export async function POST(request: Request) {
     await (prisma as any).partnerOrderLine.createMany({
       data: order.lines.map((line) => {
         const matched = line.gtin ? supplierVariantByGtin.get(String(line.gtin)) : null;
+        const supplierVariantId = matched?.supplierVariantId
+          ? String(matched.supplierVariantId).trim() || null
+          : null;
         return {
           partnerOrderId: partnerOrder.id,
           partnerVariantId: null,
+          supplierVariantId,
           gtin: line.gtin ?? null,
           quantity: line.quantity ?? 1,
         };

@@ -8,6 +8,7 @@ export type FeedTriggerSource =
   | "manual"
   | "manual-pricing"
   | "partner-admin"
+  | "partner-order-fulfilled"
   | "order-ingest"
   | "image-sync"
   | "admin"

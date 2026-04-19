@@ -1283,6 +1283,8 @@ model PartnerOrderLine {
   id              String   @id @default(uuid())
   partnerOrderId  String
   partnerVariantId String?
+  /// Matched catalog row when the order was assigned (used to decrement stock on fulfill).
+  supplierVariantId String?
   gtin            String?
   quantity        Int      @default(1)
   createdAt       DateTime @default(now())
@@ -1292,6 +1294,7 @@ model PartnerOrderLine {
   partnerVariant  PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: SetNull)
 
   @@index([partnerOrderId])
+  @@index([supplierVariantId])
   @@schema("public")
 }
 

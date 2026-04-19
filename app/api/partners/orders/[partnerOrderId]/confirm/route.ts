@@ -3,6 +3,9 @@ import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { createShipmentsForOrder } from "@/galaxus/warehouse/shipments";
 import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
+import { deductStockForPartnerOrderFulfillment } from "@/galaxus/partners/partnerOrderStock";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +36,8 @@ export async function POST(
     if (!partnerOrder) {
       return NextResponse.json({ ok: false, error: "Partner order not found" }, { status: 404 });
     }
+
+    const previousStatus = partnerOrder.status;
 
     const galaxusOrder = await prisma.galaxusOrder.findFirst({
       where: { galaxusOrderId: partnerOrder.galaxusOrderId },
@@ -65,11 +70,29 @@ export async function POST(
       delrResults.push(await uploadDelrForShipment(shipment.id, { force: Boolean(body?.forceDelr) }));
     }
 
+    const partnerKeyLower = String(session.partnerKey ?? "").toLowerCase();
+    const stockResult = await deductStockForPartnerOrderFulfillment({
+      partnerOrderId: partnerOrder.id,
+      partnerKeyLower,
+      previousStatus,
+    });
+    if (stockResult.adjusted > 0) {
+      const origin = resolveAppOriginForPartnerJobs(new URL(request.url).origin);
+      if (origin) {
+        await requestFeedPush({ origin, scope: "full", triggerSource: "partner-order-fulfilled", runNow: true });
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       partnerOrderId: partnerOrder.id,
       shipments: shipmentsResult,
       delrResults,
+      stock: {
+        adjustedRows: stockResult.adjusted,
+        skipped: stockResult.skipped,
+        details: stockResult.details,
+      },
     });
   } catch (error: any) {
     console.error("[PARTNER][ORDER][CONFIRM] Failed:", error);
