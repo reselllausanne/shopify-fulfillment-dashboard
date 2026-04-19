@@ -32,6 +32,10 @@ type UpdatePayload = {
   deliveryType?: string | null;
   lastSyncAt?: string | null;
   leadTimeDays?: number | null;
+  manualPrice?: number | null;
+  manualStock?: number | null;
+  manualLock?: boolean;
+  manualNote?: string | null;
 };
 
 function ownsVariant(supplierVariantId: string, partnerKey: string) {
@@ -262,6 +266,28 @@ export async function POST(req: NextRequest) {
               }
               data.leadTimeDays = n;
             }
+          }
+          if ("manualPrice" in entry) {
+            const mp = entry.manualPrice;
+            if (mp === null || mp === undefined || !Number.isFinite(Number(mp))) {
+              data.manualPrice = null;
+            } else {
+              data.manualPrice = toDecimalOrNull(mp);
+            }
+          }
+          if ("manualStock" in entry) {
+            const ms = entry.manualStock;
+            if (ms === null || ms === undefined || !Number.isFinite(Number(ms))) {
+              data.manualStock = null;
+            } else {
+              data.manualStock = Math.round(Number(ms));
+            }
+          }
+          if ("manualLock" in entry) {
+            data.manualLock = Boolean(entry.manualLock);
+          }
+          if ("manualNote" in entry) {
+            data.manualNote = entry.manualNote ? String(entry.manualNote) : null;
           }
 
           const keysTouched = Object.keys(data);
