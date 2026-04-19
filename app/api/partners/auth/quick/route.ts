@@ -24,7 +24,8 @@ function resolveAccessCode(partnerKey: string) {
 function isAllowed(accessCode: string | null | undefined, partnerKey: string) {
   const resolved = resolveAccessCode(partnerKey);
   if (resolved.expected) {
-    return accessCode === resolved.expected;
+    const got = accessCode != null ? String(accessCode).trim() : "";
+    return got === resolved.expected;
   }
   // No per-partner or global access code configured: allow partner key only ("no extra code").
   // Set PARTNER_ACCESS_CODE or PARTNER_ACCESS_<KEY> when you want to require a secret again.
@@ -36,7 +37,10 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const partnerKey = String(body?.partnerKey ?? "").trim();
     const partnerName = String(body?.partnerName ?? "").trim() || null;
-    const accessCode = body?.accessCode ? String(body.accessCode) : null;
+    const accessCode =
+      body?.accessCode != null && String(body.accessCode).trim() !== ""
+        ? String(body.accessCode).trim()
+        : null;
 
     if (!partnerKey) {
       return NextResponse.json({ ok: false, error: "partnerKey is required" }, { status: 400 });
@@ -80,6 +84,13 @@ export async function POST(request: Request) {
         },
       });
     } else {
+      const accessEnvKey = `PARTNER_ACCESS_${normalizeKey(partnerKey)}`;
+      console.warn("[PARTNER][QUICK] auto-create disabled", {
+        partnerKey,
+        accessEnvKey,
+        hasAccessVar: Boolean(process.env[accessEnvKey]?.trim()),
+        hasGlobalAccessCode: Boolean(process.env.PARTNER_ACCESS_CODE?.trim()),
+      });
       const existing = await prismaAny.partner.findUnique({
         where: { key: partnerKey },
       });
@@ -88,9 +99,11 @@ export async function POST(request: Request) {
           {
             ok: false,
             error:
-              "This partner key is not in the database yet, and this server is not configured to create it automatically (missing PARTNER_ACCESS_" +
-              normalizeKey(partnerKey) +
-              " or PARTNER_ACCESS_CODE in the server environment). Add the same lines as on your local .env, restart the app, then try again. Or sign in with email if an account was created for you.",
+              "This partner key is not in the database yet, and the app still does not see " +
+              accessEnvKey +
+              " (or PARTNER_ACCESS_CODE) in its environment — so it cannot create the partner automatically. On the server: (1) add those lines to the `.env` next to `docker-compose.yml`, (2) run `docker compose up -d --force-recreate web`. Verify inside the container: `docker compose exec web node -e \"console.log(process.env['" +
+              accessEnvKey +
+              "']||'(missing)')\"`. Or use email login if an account exists.",
           },
           { status: 403 }
         );

@@ -12,6 +12,8 @@ services:
       - "6080:6080"
     volumes:
       - ./.data:/app/.data
+      # Host `.env` on disk (same as `env_file`) so `next start` always sees PARTNER_* etc.
+      - ./.env:/app/.env:ro
     restart: unless-stopped
 
   worker-partner-enrich:
