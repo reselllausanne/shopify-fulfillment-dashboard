@@ -29,8 +29,16 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
     decathlonOrder?: unknown;
     decathlonShipment?: unknown;
     decathlonShipmentLine?: unknown;
+    decathlonReturn?: unknown;
+    decathlonReturnLine?: unknown;
   };
-  return Boolean(c.decathlonOrder && c.decathlonShipment && c.decathlonShipmentLine);
+  return Boolean(
+    c.decathlonOrder &&
+      c.decathlonShipment &&
+      c.decathlonShipmentLine &&
+      c.decathlonReturn &&
+      c.decathlonReturnLine
+  );
 }
 
 function resolvePrismaClient(): PrismaClient {

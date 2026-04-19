@@ -75,10 +75,10 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set())).toBe("156.60");
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("159.50");
   });
 
-  it("applies ×1.35 on list TTC when supplier key is in partner set", () => {
+  it("applies partner gross-up (/0.75) on margin-based list when supplier key is in partner set", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -90,7 +90,7 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("211.41");
+    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("210.56");
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {

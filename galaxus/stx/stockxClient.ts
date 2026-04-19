@@ -39,6 +39,73 @@ type StockxBuyOrder = {
 };
 
 const STOCKX_PRO_URL = "https://pro.stockx.com/api/graphql";
+const STOCKX_RATE_LIMIT_GAP_MS = Number(process.env.STOCKX_RATE_LIMIT_GAP_MS ?? "0");
+const STOCKX_PAGE_GAP_MS = Number(process.env.STOCKX_PAGE_GAP_MS ?? "0");
+const STOCKX_RETRY_429 = ["1", "true", "yes"].includes(
+  String(process.env.STOCKX_RETRY_429 ?? "").trim().toLowerCase()
+);
+let stockxQueue = Promise.resolve();
+let stockxLastCallAt = 0;
+
+function stockxNonJsonErrorDetail(res: Response, raw: string, operationName: string): string {
+  const ct = (res.headers.get("content-type") ?? "").trim() || "none";
+  const trimmed = raw.trim();
+  const oneLine = trimmed.replace(/\s+/g, " ");
+  const snippet = oneLine.length > 220 ? `${oneLine.slice(0, 220)}…` : oneLine;
+  const authHint =
+    res.status === 401 || res.status === 403
+      ? " Token may be expired — run StockX login / save token for Galaxus."
+      : "";
+  const rateHint =
+    res.status === 429 || res.status === 503
+      ? " (StockX rate limit — client retries with backoff; not a CORS issue.)"
+      : "";
+  if (!trimmed) {
+    return `empty body; content-type=${ct}; op=${operationName}.${authHint}${rateHint}`;
+  }
+  if (/^<!doctype html|^<html/i.test(trimmed)) {
+    return `HTML response (login/WAF/captcha), not GraphQL JSON; content-type=${ct}; op=${operationName}.${authHint}${rateHint}`;
+  }
+  return `content-type=${ct}; op=${operationName}; body≈ ${snippet || "(whitespace only)"}${authHint}${rateHint}`;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withStockxRateLimit<T>(fn: () => Promise<T>): Promise<T> {
+  if (!Number.isFinite(STOCKX_RATE_LIMIT_GAP_MS) || STOCKX_RATE_LIMIT_GAP_MS <= 0) {
+    return fn();
+  }
+  const run = stockxQueue.then(async () => {
+    const now = Date.now();
+    const gap = STOCKX_RATE_LIMIT_GAP_MS - (now - stockxLastCallAt);
+    if (gap > 0) {
+      await sleepMs(gap);
+    }
+    stockxLastCallAt = Date.now();
+    return fn();
+  });
+  stockxQueue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+function retryAfterMsFromResponse(res: Response): number | null {
+  const raw = res.headers.get("retry-after");
+  if (!raw) return null;
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.min(n * 1000, 120_000);
+}
+
+function isTransientStockxStatus(status: number): boolean {
+  if (status === 502 || status === 503) return true;
+  if (status === 429) return STOCKX_RETRY_429;
+  return false;
+}
 
 // Full detail query used for “A+B” enrichment exports and debugging.
 const GET_BUY_ORDER_FULL_QUERY = `
@@ -312,36 +379,79 @@ async function callStockx<T>(
   query: string,
   variables: Record<string, unknown>
 ): Promise<T> {
-  const res = await fetch(STOCKX_PRO_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      origin: "https://pro.stockx.com",
-      referer: "https://pro.stockx.com/purchasing/orders",
-      "apollographql-client-name": "Iron",
-      "apollographql-client-version": "2026.01.11.01",
-      "app-platform": "Iron",
-      "app-version": "2026.01.11.01",
-      "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0)",
-    },
-    body: JSON.stringify({ operationName, query, variables }),
-  });
-  const raw = await res.text();
-  let data: any;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    throw new Error(`StockX non-JSON response (HTTP ${res.status})`);
+  const maxAttempts = 6;
+  const body = JSON.stringify({ operationName, query, variables });
+  const headers = {
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`,
+    origin: "https://pro.stockx.com",
+    referer: "https://pro.stockx.com/purchasing/orders",
+    "apollographql-client-name": "Iron",
+    "apollographql-client-version": "2026.01.11.01",
+    "app-platform": "Iron",
+    "app-version": "2026.01.11.01",
+    "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0)",
+  };
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const res = await withStockxRateLimit(() =>
+      fetch(STOCKX_PRO_URL, {
+      method: "POST",
+      headers,
+      body,
+      })
+    );
+    const raw = await res.text();
+    const transient = isTransientStockxStatus(res.status);
+
+    let data: any;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      if (transient && attempt < maxAttempts) {
+        const wait =
+          retryAfterMsFromResponse(res) ?? Math.min(1_500 * 2 ** (attempt - 1), 25_000) + Math.floor(Math.random() * 600);
+        await sleepMs(wait);
+        continue;
+      }
+      throw new Error(
+        `StockX non-JSON response (HTTP ${res.status}): ${stockxNonJsonErrorDetail(res, raw, operationName)}`
+      );
+    }
+
+    if (!res.ok) {
+      if (transient && attempt < maxAttempts) {
+        const wait =
+          retryAfterMsFromResponse(res) ?? Math.min(1_500 * 2 ** (attempt - 1), 25_000) + Math.floor(Math.random() * 600);
+        await sleepMs(wait);
+        continue;
+      }
+      const message =
+        (Array.isArray(data?.errors) && data.errors[0]?.message) ||
+        data?.error ||
+        `StockX request failed (HTTP ${res.status})`;
+      throw new Error(String(message));
+    }
+
+    const gqlMsgs = Array.isArray(data?.errors) ? data.errors.map((e: any) => String(e?.message ?? "")) : [];
+    const gqlRateLimited = gqlMsgs.some((m: string) => {
+      const s = m.toLowerCase();
+      return s.includes("rate") || s.includes("throttl") || s.includes("too many") || /\b429\b/.test(s);
+    });
+    if (gqlRateLimited) {
+      if (STOCKX_RETRY_429 && attempt < maxAttempts) {
+        const wait = Math.min(2_000 * 2 ** (attempt - 1), 25_000) + Math.floor(Math.random() * 600);
+        await sleepMs(wait);
+        continue;
+      }
+      throw new Error(
+        `StockX ${operationName}: rate limited after ${attempt} attempts — ${gqlMsgs.filter(Boolean).join("; ") || "GraphQL errors"}`
+      );
+    }
+
+    return data as T;
   }
-  if (!res.ok) {
-    const message =
-      (Array.isArray(data?.errors) && data.errors[0]?.message) ||
-      data?.error ||
-      `StockX request failed (HTTP ${res.status})`;
-    throw new Error(String(message));
-  }
-  return data as T;
+  throw new Error(`StockX ${operationName}: retry loop exhausted (please report)`);
 }
 
 function normalizeOrderNumberKey(raw: string): string {
@@ -371,6 +481,9 @@ export async function fetchRecentStockxBuyingOrders(
   const stateForQuery = options?.state === undefined ? "PENDING" : options.state;
 
   for (let page = 0; page < maxPages; page += 1) {
+    if (page > 0 && Number.isFinite(STOCKX_PAGE_GAP_MS) && STOCKX_PAGE_GAP_MS > 0) {
+      await sleepMs(STOCKX_PAGE_GAP_MS);
+    }
     const response = await callStockx<any>(token, "Buying", DEFAULT_QUERY, {
       first,
       after,

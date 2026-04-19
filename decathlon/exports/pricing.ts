@@ -4,6 +4,37 @@ export const DECATHLON_VAT_RATE = 0.08;
 export const DECATHLON_FIXED_COST_CHF = 7;
 export const DECATHLON_PRICE_ROUND_TO = 0.01;
 
+/**
+ * One global bump on **margin rules** (not a CHF surcharge on list price).
+ * Adds this many **percentage points** to:
+ * - margin-on-buy fraction (default pricing path), and
+ * - tiered `targetNetMargin` when `DECATHLON_PRICING_MODE=tiered`.
+ * Example: `0.01` → a 12% margin-on-buy becomes 13%. Set to `0` to disable.
+ * Optional override: `DECATHLON_MARGIN_RULE_ADD_PP` (e.g. `0` or `0.015`).
+ */
+export const DECATHLON_MARGIN_RULE_ADD_PP = 0.01;
+
+const MARGIN_RULE_ADD_PP_ENV_KEYS = ["DECATHLON_MARGIN_RULE_ADD_PP"];
+
+function readMarginRuleAddPp(): number {
+  for (const key of MARGIN_RULE_ADD_PP_ENV_KEYS) {
+    const raw = process.env[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = Number.parseFloat(String(raw));
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 0.5) continue;
+    return parsed;
+  }
+  return DECATHLON_MARGIN_RULE_ADD_PP;
+}
+
+/** Apply global margin-rule bump; keeps fractions in a sane band for the list formula. */
+function bumpMarginFraction(fraction: number): number {
+  if (!Number.isFinite(fraction)) return fraction;
+  const add = readMarginRuleAddPp();
+  if (add === 0) return fraction;
+  return Math.min(0.99, Math.max(0, fraction + add));
+}
+
 const _DECATHLON_RETAINED_FOR_CALIBRATION =
   1 -
   DECATHLON_COMMISSION_RATE -
@@ -39,7 +70,8 @@ export type DecathlonSalePriceOverrides = {
 /**
  * Tiered target **net margin on list** (legacy). Use only when `DECATHLON_PRICING_MODE=tiered`.
  */
-export function computeDecathlonTargetMargin(buyPrice: number): number | null {
+/** Tier table only (no global {@link DECATHLON_MARGIN_RULE_ADD_PP}). */
+export function computeDecathlonTargetMarginTierRaw(buyPrice: number): number | null {
   if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
   if (buyPrice < 100) return 0.18;
   if (buyPrice < 120) return 0.16;
@@ -50,6 +82,13 @@ export function computeDecathlonTargetMargin(buyPrice: number): number | null {
   if (buyPrice < 700) return 0.11;
   if (buyPrice < 1000) return 0.11;
   return 0.1;
+}
+
+/** Tier target net-on-list + global margin-rule bump (see {@link DECATHLON_MARGIN_RULE_ADD_PP}). */
+export function computeDecathlonTargetMargin(buyPrice: number): number | null {
+  const raw = computeDecathlonTargetMarginTierRaw(buyPrice);
+  if (raw == null) return null;
+  return bumpMarginFraction(raw);
 }
 
 export function computeDecathlonRetainedRate({
@@ -117,13 +156,16 @@ export function computeDecathlonOfferListPriceFromMarginOnBuy(
       : readDecathlonMarginOnBuyFraction();
   if (!Number.isFinite(marginOnBuy) || marginOnBuy < 0 || marginOnBuy > 1) return null;
 
+  const marginOnBuyBumped = bumpMarginFraction(marginOnBuy);
+  if (!Number.isFinite(marginOnBuyBumped) || marginOnBuyBumped < 0 || marginOnBuyBumped > 1) return null;
+
   const retainedRate = computeDecathlonRetainedRate({
     commissionRate: overrides?.commissionRate ?? DECATHLON_COMMISSION_RATE,
     vatRate: overrides?.vatRate ?? DECATHLON_VAT_RATE,
   });
   if (!Number.isFinite(retainedRate) || retainedRate <= 0) return null;
 
-  const profitOnBuy = buyNow * marginOnBuy;
+  const profitOnBuy = buyNow * marginOnBuyBumped;
   const numerator = buyNow + fixedCost + profitOnBuy;
   const raw = numerator / retainedRate;
   if (!Number.isFinite(raw) || raw <= 0) return null;
@@ -134,8 +176,10 @@ function computeDecathlonOfferListPriceTiered(
   buyNow: number,
   overrides?: DecathlonSalePriceOverrides
 ): number | null {
-  const targetNetMargin =
-    overrides?.targetNetMargin ?? computeDecathlonTargetMargin(buyNow);
+  const rawTarget =
+    overrides?.targetNetMargin ?? computeDecathlonTargetMarginTierRaw(buyNow);
+  if (rawTarget == null) return null;
+  const targetNetMargin = bumpMarginFraction(rawTarget);
   if (targetNetMargin == null) return null;
   const raw = computeDecathlonSalePriceTTC({
     buyPrice: buyNow,

@@ -80,6 +80,7 @@ type RecentShipment = {
   galaxusOrderId: string | null;
   ssccLabelUrl: string | null;
   deliveryNoteUrl: string | null;
+  shippingLabelUrl: string | null;
 };
 
 type SelectedLine = {
@@ -536,9 +537,22 @@ export default function GalaxusWarehouseShipmentsPage() {
     }
   };
 
-  const openAndPrint = (url: string) => {
-    const win = window.open(url, "_blank", "noopener,noreferrer");
+  const openAndPrint = (url: string, existing?: Window | null, shouldPrint = true) => {
+    const win = existing ?? window.open(url, "_blank", "noopener,noreferrer");
     if (!win) return;
+    if (existing) {
+      try {
+        win.location.href = url;
+      } catch {
+        // ignore
+      }
+    }
+    try {
+      win.opener = null;
+    } catch {
+      // ignore
+    }
+    if (!shouldPrint) return;
     const start = Date.now();
     const timer = window.setInterval(() => {
       if (Date.now() - start > 12000) {
@@ -566,6 +580,14 @@ export default function GalaxusWarehouseShipmentsPage() {
     setBusy("post-label");
     setError(null);
     setLabelResult("");
+    const preOpen = window.open("about:blank", "_blank", "noopener,noreferrer");
+    if (preOpen) {
+      try {
+        preOpen.opener = null;
+      } catch {
+        // ignore
+      }
+    }
     try {
       const trackingNumber =
         options?.trackingOverride != null ? options.trackingOverride : trackingHint.trim() || undefined;
@@ -578,8 +600,16 @@ export default function GalaxusWarehouseShipmentsPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Swiss Post label failed");
-      if (data?.url && options?.autoPrint) {
-        openAndPrint(String(data.url));
+      if (data?.url) {
+        if (preOpen) {
+          openAndPrint(String(data.url), preOpen, Boolean(options?.autoPrint));
+        } else if (options?.autoPrint) {
+          openAndPrint(String(data.url));
+        } else {
+          window.open(String(data.url), "_blank", "noopener,noreferrer");
+        }
+      } else if (preOpen) {
+        preOpen.close();
       }
       setLabelResult(
         `Swiss Post label generated - tracking ${data?.trackingNumber ?? "unknown"} - DELR ${data?.delr?.status ?? "ok"}`
@@ -589,6 +619,7 @@ export default function GalaxusWarehouseShipmentsPage() {
       await loadDraftShipments();
       await loadRecentShipments();
     } catch (err: any) {
+      if (preOpen) preOpen.close();
       setError(err?.message ?? "Swiss Post label failed");
     } finally {
       setBusy(null);
@@ -846,7 +877,7 @@ export default function GalaxusWarehouseShipmentsPage() {
           {recentShipments.length > 0 ? (
             <details className="border rounded bg-white text-xs group">
               <summary className="cursor-pointer list-none px-3 py-2 font-medium text-gray-900 flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
-                <span>Recent shipments - SSCC and delivery note ({recentShipments.length})</span>
+                <span>Recent shipments - SSCC, delivery note, Swiss Post label ({recentShipments.length})</span>
                 <span className="text-gray-500 font-normal group-open:hidden">Expand</span>
                 <span className="text-gray-500 font-normal hidden group-open:inline">Collapse</span>
               </summary>
@@ -896,6 +927,20 @@ export default function GalaxusWarehouseShipmentsPage() {
                         disabled={busy !== null}
                       >
                         Delivery note
+                      </button>
+                      <button
+                        type="button"
+                        className="px-2 py-1 rounded bg-gray-100 text-xs disabled:opacity-50"
+                        onClick={() => {
+                          if (shipment.shippingLabelUrl) {
+                            window.open(shipment.shippingLabelUrl, "_blank", "noopener,noreferrer");
+                          } else {
+                            setError("Swiss Post label not found for this shipment.");
+                          }
+                        }}
+                        disabled={busy !== null}
+                      >
+                        Swiss Post label
                       </button>
                       {(shipment.delrStatus === "UPLOADED" || shipment.delrStatus === "SENT") ? (
                         <button

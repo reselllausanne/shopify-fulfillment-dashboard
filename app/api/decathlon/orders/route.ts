@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { partnerKeyMatchingLineOffer } from "@/decathlon/orders/partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,26 +71,49 @@ export async function GET(request: NextRequest) {
       skip: offset,
       include: {
         _count: { select: { lines: true, shipments: true } },
-        lines: { select: { id: true, quantity: true, offerSku: true } },
+        lines: { select: { id: true, quantity: true, offerSku: true, providerKey: true } },
         shipments: { select: { shippedAt: true, lines: { select: { orderLineId: true, quantity: true } } } },
       },
     });
-    const matchRows = await prisma.decathlonStockxMatch.findMany({
-      select: {
-        decathlonOrderId: true,
-        stockxOrderNumber: true,
-        stockxOrderId: true,
-        stockxChainId: true,
-      },
-    });
-    const linkedByOrder = new Map<string, number>();
+    const [matchRows, partnerRows] = await Promise.all([
+      prisma.decathlonStockxMatch.findMany({
+        select: {
+          decathlonOrderLineId: true,
+          stockxOrderNumber: true,
+          stockxOrderId: true,
+          stockxChainId: true,
+        },
+      }),
+      prisma.partner.findMany({
+        where: { active: true },
+        select: { key: true },
+      }),
+    ]);
+    const partnerKeysForMatch = partnerRows.map((p) => String(p.key ?? "").trim()).filter(Boolean);
+
+    const stockxLinkedLineIds = new Set<string>();
     for (const row of matchRows) {
       const onum = String(row.stockxOrderNumber ?? "").trim();
       const oid = String(row.stockxOrderId ?? "").trim();
       const chain = String(row.stockxChainId ?? "").trim();
       if (!onum && !oid && !chain) continue;
-      linkedByOrder.set(row.decathlonOrderId, (linkedByOrder.get(row.decathlonOrderId) ?? 0) + 1);
+      stockxLinkedLineIds.add(row.decathlonOrderLineId);
     }
+
+    const lineCountsAsLinkedForList = (line: {
+      id: string;
+      offerSku?: string | null;
+      providerKey?: string | null;
+    }) => {
+      if (stockxLinkedLineIds.has(line.id)) return true;
+      return (
+        partnerKeysForMatch.length > 0 &&
+        partnerKeyMatchingLineOffer(
+          { offerSku: line.offerSku, catalog: { providerKey: line.providerKey ?? null } },
+          partnerKeysForMatch
+        ) != null
+      );
+    };
     const items = orders.map((order: any) => {
       const lines = Array.isArray(order.lines) ? order.lines : [];
       const prefix = (partnerOfferPrefix ?? "").toUpperCase();
@@ -117,6 +141,7 @@ export async function GET(request: NextRequest) {
         : scopedShipmentLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
       const remainingUnits = Math.max(totalUnits - shippedUnits, 0);
       const lineCount = partnerOfferPrefix ? metricsLines.length : order._count?.lines ?? 0;
+      const linkedCount = metricsLines.filter((line: any) => lineCountsAsLinkedForList(line)).length;
       return {
         id: order.id,
         orderId: order.orderId,
@@ -128,7 +153,7 @@ export async function GET(request: NextRequest) {
         shippedUnits,
         totalUnits,
         remainingUnits,
-        linkedCount: linkedByOrder.get(order.id) ?? 0,
+        linkedCount,
         _count: { lines: lineCount, shipments: order._count?.shipments ?? 0 },
       };
     });

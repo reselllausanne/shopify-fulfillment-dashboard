@@ -32,6 +32,15 @@ export function decathlonMatchEligibleForOrderNumberRefresh(m: DecathlonStockxMa
   return true;
 }
 
+function matchNeedsStockxRefresh(m: DecathlonStockxMatch): boolean {
+  const hasChain = trimStr(m.stockxChainId);
+  const hasOrder = trimStr(m.stockxOrderId);
+  const hasAwb = trimStr(m.stockxAwb);
+  const hasTracking = trimStr(m.stockxTrackingUrl);
+  const hasEta = Boolean(m.stockxEstimatedDelivery || m.stockxLatestEstimatedDelivery);
+  return !(hasChain && hasOrder && hasAwb && hasTracking && hasEta);
+}
+
 async function refreshOneMatch(
   token: string,
   match: DecathlonStockxMatch
@@ -91,7 +100,9 @@ export async function refreshDecathlonStockxMatchesBySavedOrderNumber(
   const matches = await prisma.decathlonStockxMatch.findMany({
     where: { decathlonOrderId: orderDbId },
   });
-  const eligibleList = matches.filter(decathlonMatchEligibleForOrderNumberRefresh);
+  const eligibleList = matches.filter(
+    (m) => decathlonMatchEligibleForOrderNumberRefresh(m) && matchNeedsStockxRefresh(m)
+  );
   const skipped = matches.length - eligibleList.length;
 
   const stats: DecathlonOrderNumberRefreshStats = {
@@ -106,7 +117,7 @@ export async function refreshDecathlonStockxMatchesBySavedOrderNumber(
 
   if (eligibleList.length === 0) return stats;
 
-  const limiter = createLimiter(4);
+  const limiter = createLimiter(12);
   await Promise.all(
     eligibleList.map((match) =>
       limiter(async () => {

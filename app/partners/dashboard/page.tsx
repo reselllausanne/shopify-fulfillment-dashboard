@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type PartnerInfo = {
@@ -55,6 +55,7 @@ export default function PartnerDashboardPage() {
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
   const [totalSaleFeedChf, setTotalSaleFeedChf] = useState<number | null>(null);
   const router = useRouter();
+  const lastEnrichEnsureMs = useRef(0);
 
   const loadHistory = async (offset = 0) => {
     try {
@@ -68,6 +69,14 @@ export default function PartnerDashboardPage() {
       setUploadHistory(data.uploads ?? []);
       setPendingEnrichCount(data.pendingEnrichCount ?? 0);
       setHistoryLoaded(true);
+      const pending = Number(data.pendingEnrichCount ?? 0);
+      if (pending > 0 && offset === 0) {
+        const now = Date.now();
+        if (now - lastEnrichEnsureMs.current > 45_000) {
+          lastEnrichEnsureMs.current = now;
+          void fetch("/api/partners/enrich/ensure-queue", { method: "POST" }).catch(() => {});
+        }
+      }
     } catch {
       // silent
     }

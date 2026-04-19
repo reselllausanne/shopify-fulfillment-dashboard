@@ -3,6 +3,8 @@ import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
 import { decathlonGrossLineAmount } from "@/decathlon/orders/margin";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
+import { isStockxMatchLinked } from "@/galaxus/stx/allocateGalaxusStxCost";
+import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { toZonedTime } from "date-fns-tz";
 
 export const runtime = "nodejs";
@@ -20,6 +22,8 @@ type MarketplaceTotals = {
 type DailyEntry = {
   decathlonMarginChf: number;
   galaxusMarginChf: number;
+  decathlonRevenueChf: number;
+  galaxusRevenueChf: number;
   decathlonLineCount: number;
   galaxusLineCount: number;
   decathlonOrderCount: number;
@@ -35,18 +39,6 @@ const emptyTotals = (): MarketplaceTotals => ({
 });
 
 const round2 = (value: number) => Number(value.toFixed(2));
-
-const isStockxMatchLinked = (match: {
-  stockxOrderNumber?: string | null;
-  stockxOrderId?: string | null;
-  stockxChainId?: string | null;
-}) => {
-  if (!match) return false;
-  const onum = String(match.stockxOrderNumber ?? "").trim();
-  const oid = String(match.stockxOrderId ?? "").trim();
-  const chain = String(match.stockxChainId ?? "").trim();
-  return onum.length > 0 || oid.length > 0 || chain.length > 0;
-};
 
 export async function GET(request: NextRequest) {
   try {
@@ -126,7 +118,9 @@ export async function GET(request: NextRequest) {
           quantity: true,
           lineNetAmount: true,
           priceLineAmount: true,
-          order: { select: { orderDate: true } },
+          gtin: true,
+          supplierVariantId: true,
+          order: { select: { orderDate: true, galaxusOrderId: true } },
           stockxMatches: {
             orderBy: { updatedAt: "desc" },
             select: {
@@ -139,6 +133,8 @@ export async function GET(request: NextRequest) {
         },
       }),
     ]);
+
+    const galaxusLineCostById = await galaxusLineStockxCostChfByLineId(galaxusLines);
 
     const totals = {
       decathlon: emptyTotals(),
@@ -155,6 +151,8 @@ export async function GET(request: NextRequest) {
         dailyMap.set(key, {
           decathlonMarginChf: 0,
           galaxusMarginChf: 0,
+          decathlonRevenueChf: 0,
+          galaxusRevenueChf: 0,
           decathlonLineCount: 0,
           galaxusLineCount: 0,
           decathlonOrderCount: 0,
@@ -190,6 +188,7 @@ export async function GET(request: NextRequest) {
       const dateKey = orderDate.toISOString().split("T")[0];
       const day = ensureDay(dateKey);
       day.decathlonMarginChf += margin;
+      day.decathlonRevenueChf += revenue;
       day.decathlonLineCount += 1;
       day.decathlonOrderCount = bumpOrderCount(decathlonOrdersByDay, dateKey, line.orderId);
 
@@ -201,11 +200,8 @@ export async function GET(request: NextRequest) {
     }
 
     for (const line of galaxusLines) {
-      const match = (line.stockxMatches || []).find(
-        (m) => isStockxMatchLinked(m) && toNumberSafe(m.stockxAmount, 0) > 0
-      );
-      if (!match) continue;
-      const cost = toNumberSafe(match.stockxAmount, 0);
+      const cost = galaxusLineCostById.get(line.id) ?? 0;
+      if (cost <= 0) continue;
       const revenue = galaxusLineNetRevenueChf({
         lineNetAmount: line.lineNetAmount,
         priceLineAmount: line.priceLineAmount,
@@ -218,6 +214,7 @@ export async function GET(request: NextRequest) {
       const dateKey = orderDate.toISOString().split("T")[0];
       const day = ensureDay(dateKey);
       day.galaxusMarginChf += margin;
+      day.galaxusRevenueChf += revenue;
       day.galaxusLineCount += 1;
       day.galaxusOrderCount = bumpOrderCount(galaxusOrdersByDay, dateKey, line.orderId);
 
@@ -236,6 +233,8 @@ export async function GET(request: NextRequest) {
         date,
         decathlonMarginChf: round2(day.decathlonMarginChf),
         galaxusMarginChf: round2(day.galaxusMarginChf),
+        decathlonRevenueChf: round2(day.decathlonRevenueChf),
+        galaxusRevenueChf: round2(day.galaxusRevenueChf),
         totalMarginChf: round2(day.decathlonMarginChf + day.galaxusMarginChf),
         decathlonLineCount: day.decathlonLineCount,
         galaxusLineCount: day.galaxusLineCount,

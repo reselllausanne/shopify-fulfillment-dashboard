@@ -504,7 +504,7 @@ export default function WarehouseBulkPage() {
                                   </span>
                                 ) : null}
                               </div>
-                              {linked && proc && !isShipped ? (
+                              {linked && proc ? (
                                 <div className="text-green-800 text-[11px] space-y-0.5">
                                   <div>
                                     {proc.source === "galaxus_match" ? "Saved match" : "StockX sync"} · AWB:{" "}

@@ -1495,12 +1495,14 @@ model DecathlonOrder {
   recipientCity       String?
   recipientCountry    String?
   recipientCountryCode String?
+  recipientAddressLocked Boolean @default(false)
   rawJson             Json?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   lines               DecathlonOrderLine[]
   documents           DecathlonOrderDocument[]
+  returns             DecathlonReturn[]
   shipments           DecathlonShipment[]
   stockxMatches       DecathlonStockxMatch[]
 
@@ -1533,6 +1535,7 @@ model DecathlonOrderLine {
 
   order           DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   stockxMatch     DecathlonStockxMatch?
+  returnLines     DecathlonReturnLine[]
   shipmentLines   DecathlonShipmentLine[]
 
   @@index([orderId])
@@ -1645,6 +1648,48 @@ model DecathlonOrderDocument {
 
   @@index([orderId])
   @@index([shipmentId])
+  @@schema("public")
+}
+
+model DecathlonReturn {
+  id          String   @id @default(uuid())
+  returnId    String   @unique
+  orderId     String?
+  status      String?
+  rawJson     Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  order       DecathlonOrder? @relation(fields: [orderId], references: [orderId], onDelete: SetNull)
+  lines       DecathlonReturnLine[]
+
+  @@index([orderId])
+  @@index([status])
+  @@schema("public")
+}
+
+model DecathlonReturnLine {
+  id            String   @id @default(uuid())
+  returnId      String
+  orderLineId   String?
+  offerSku      String?
+  productId     String?
+  quantity      Int
+  unitPrice     Decimal? @db.Decimal(10, 2)
+  returnPrice   Decimal? @db.Decimal(10, 2)
+  currencyCode  String? @default("CHF")
+  restockAppliedAt DateTime?
+  restockSupplierVariantId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  decathlonReturn DecathlonReturn @relation(fields: [returnId], references: [returnId], onDelete: Cascade)
+  orderLine       DecathlonOrderLine? @relation(fields: [orderLineId], references: [orderLineId], onDelete: SetNull)
+
+  @@unique([returnId, orderLineId, productId])
+  @@index([returnId])
+  @@index([orderLineId])
+  @@index([offerSku])
   @@schema("public")
 }
 

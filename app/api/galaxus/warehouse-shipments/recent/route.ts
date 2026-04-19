@@ -15,6 +15,7 @@ type RecentShipment = {
   galaxusOrderId: string | null;
   ssccLabelUrl: string | null;
   deliveryNoteUrl: string | null;
+  shippingLabelUrl: string | null;
 };
 
 function pickLatest(docs: Array<{ id: string; version: number | null; createdAt: Date }>) {
@@ -53,12 +54,16 @@ export async function GET(request: Request) {
       const ssccLabelDoc = pickLatest(
         labelDocs.filter((doc) => typeof doc.storageUrl === "string" && !doc.storageUrl.includes("shipping-labels"))
       );
+      const shippingLabelDoc = pickLatest(
+        labelDocs.filter((doc) => typeof doc.storageUrl === "string" && doc.storageUrl.includes("shipping-labels"))
+      );
       const deliveryNoteUrl = deliveryNote ? `/api/galaxus/documents/${deliveryNote.id}` : null;
       const ssccLabelUrl = ssccLabelDoc
         ? `/api/galaxus/documents/${ssccLabelDoc.id}`
         : shipment.labelPdfUrl
           ? `/api/galaxus/shipments/${shipment.id}/label`
           : null;
+      const shippingLabelUrl = shippingLabelDoc ? `/api/galaxus/documents/${shippingLabelDoc.id}` : null;
       return {
         id: shipment.id,
         shipmentId: shipment.shipmentId,
@@ -69,6 +74,7 @@ export async function GET(request: Request) {
         galaxusOrderId: shipment.order?.galaxusOrderId ?? null,
         ssccLabelUrl,
         deliveryNoteUrl,
+        shippingLabelUrl,
       };
     });
 

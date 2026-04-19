@@ -147,6 +147,39 @@ export default function ScanPage() {
     return filename;
   };
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const isPackingSlipPendingError = (error: any) => {
+    const message = String(error?.message ?? error ?? "").toLowerCase();
+    return (
+      message.includes("packing slip") ||
+      message.includes("delivery bill") ||
+      message.includes("delivery slip") ||
+      message.includes("or72") ||
+      message.includes("no packing slip")
+    );
+  };
+
+  const downloadPackingSlipWithRetry = async (url: string, fallbackName: string) => {
+    let lastError: any = null;
+    const maxAttempts = 8;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        return await downloadPdf(url, fallbackName);
+      } catch (err: any) {
+        lastError = err;
+        if (!isPackingSlipPendingError(err)) {
+          break;
+        }
+        if (attempt < maxAttempts - 1) {
+          const delay = Math.min(2000 * 1.6 ** attempt, 25000);
+          await sleep(delay);
+        }
+      }
+    }
+    throw lastError;
+  };
+
   const buildChannelAlert = (scan: ScanResult) => {
     const parts: string[] = [];
     if (scan.decathlon) {
@@ -178,16 +211,26 @@ export default function ScanPage() {
       if (!shipRes.ok || !shipData.ok) {
         throw new Error(shipData.error ?? "Decathlon ship failed");
       }
-      await downloadPdf(
-        `/api/decathlon/orders/${orderRef}/documents/packing-slip`,
-        `decathlon-delivery_${orderRef}.pdf`
-      );
+      const shipmentId = String(shipData?.shipmentId ?? "").trim();
+      const slipUrl = shipmentId
+        ? `/api/decathlon/orders/${orderRef}/documents/packing-slip?shipmentId=${encodeURIComponent(shipmentId)}`
+        : `/api/decathlon/orders/${orderRef}/documents/packing-slip`;
+      const slipName = shipmentId
+        ? `decathlon-delivery_${orderRef}_${shipmentId}.pdf`
+        : `decathlon-delivery_${orderRef}.pdf`;
+      let slipNote = "Packing slip not ready yet (OR72). Try again later.";
+      try {
+        const fn = await downloadPackingSlipWithRetry(slipUrl, slipName);
+        slipNote = `Packing slip downloaded (${fn}).`;
+      } catch {
+        // Non-blocking: shipping can be ok while OR72 is still generating.
+      }
       if (shipData.reconciled) {
         window.alert(
-          `Decathlon order ${orderRef}: Mirakl was already shipped; your dashboard DB is now synced. Packing slip downloaded.`
+          `Decathlon order ${orderRef}: Mirakl was already shipped; your dashboard DB is now synced. ${slipNote}`
         );
       } else {
-        window.alert(`Decathlon order ${orderRef} shipped + packing slip downloaded.`);
+        window.alert(`Decathlon order ${orderRef} shipped. ${slipNote}`);
       }
     } catch (error: any) {
       window.alert(

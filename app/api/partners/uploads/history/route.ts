@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { inboxRowSupplierVariantId } from "@/app/lib/partnerImport";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +25,10 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(Number(searchParams.get("limit") ?? "200"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
 
-  const providerKey = session.partnerKey.toUpperCase().slice(0, 3);
+  const providerKey = normalizeProviderKey(session.partnerKey);
+  if (!providerKey) {
+    return NextResponse.json({ error: "Invalid partner key" }, { status: 400 });
+  }
 
   // 1) SupplierVariant rows belonging to this partner (supplierVariantId starts with "xxx:")
   const variants = await prismaAny.supplierVariant.findMany({

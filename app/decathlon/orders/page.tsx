@@ -10,6 +10,11 @@ import {
   decathlonOrderMarginRollup,
 } from "@/decathlon/orders/margin";
 import { decathlonMiraklSellerPayoutLineTotal } from "@/decathlon/orders/miraklLinePayout";
+import {
+  isDecathlonPartnerFulfillmentLine,
+  partnerKeyMatchingLineOffer,
+} from "@/decathlon/orders/partnerLineScope";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 type OrderListItem = {
   id: string;
@@ -26,6 +31,21 @@ type OrderListItem = {
   _count?: { lines: number; shipments: number };
 };
 
+type ReturnLineItem = {
+  id: string;
+  returnId: string | null;
+  orderId: string | null;
+  status: string | null;
+  offerSku: string | null;
+  productTitle: string | null;
+  size: string | null;
+  quantity: number;
+  unitPrice: number | null;
+  returnPrice: number | null;
+  currencyCode: string | null;
+  restockAppliedAt: string | null;
+};
+
 export default function DecathlonOrdersPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -37,7 +57,7 @@ export default function DecathlonOrdersPage() {
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
   const [polling, setPolling] = useState(false);
-  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "canceled">("to_process");
+  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "canceled" | "returns">("to_process");
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
     mode: "create" | "edit";
@@ -54,6 +74,21 @@ export default function DecathlonOrdersPage() {
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [splitQuantities, setSplitQuantities] = useState<Record<string, number>>({});
   const [splitSubmitting, setSplitSubmitting] = useState(false);
+  const [returnLines, setReturnLines] = useState<ReturnLineItem[]>([]);
+  const [loadingReturns, setLoadingReturns] = useState(false);
+  const [editingAddress, setEditingAddress] = useState(false);
+  const [savingAddress, setSavingAddress] = useState(false);
+  const [addressDraft, setAddressDraft] = useState({
+    recipientName: "",
+    recipientAddress1: "",
+    recipientAddress2: "",
+    recipientPostalCode: "",
+    recipientCity: "",
+    recipientCountry: "",
+    recipientCountryCode: "",
+    recipientEmail: "",
+    recipientPhone: "",
+  });
   const [partnerFeeStats, setPartnerFeeStats] = useState<{
     spreadChf: number;
     decathlonShippedChf: number;
@@ -151,6 +186,21 @@ export default function DecathlonOrdersPage() {
     }
   }, [leftTab, productSearch]);
 
+  const loadReturns = useCallback(async () => {
+    setLoadingReturns(true);
+    try {
+      const res = await fetch("/api/decathlon/returns?limit=200", { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load returns");
+      const items: ReturnLineItem[] = Array.isArray(data.items) ? data.items : [];
+      setReturnLines(items);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingReturns(false);
+    }
+  }, []);
+
   const loadPartners = async () => {
     try {
       const res = await fetch("/api/partners/list", { cache: "no-store" });
@@ -171,7 +221,7 @@ export default function DecathlonOrdersPage() {
     } catch (err: any) {
       setError(err?.message ?? "Ingest failed");
     } finally {
-      await loadOrders();
+      await Promise.all([loadOrders(), loadReturns()]);
       setPolling(false);
     }
   };
@@ -214,6 +264,45 @@ export default function DecathlonOrdersPage() {
     }
   };
 
+  const hydrateAddressDraft = (order: any | null) => ({
+    recipientName: order?.recipientName ?? "",
+    recipientAddress1: order?.recipientAddress1 ?? "",
+    recipientAddress2: order?.recipientAddress2 ?? "",
+    recipientPostalCode: order?.recipientPostalCode ?? "",
+    recipientCity: order?.recipientCity ?? "",
+    recipientCountry: order?.recipientCountry ?? "",
+    recipientCountryCode: order?.recipientCountryCode ?? "",
+    recipientEmail: order?.recipientEmail ?? "",
+    recipientPhone: order?.recipientPhone ?? "",
+  });
+
+  const startEditAddress = () => {
+    setAddressDraft(hydrateAddressDraft(selectedOrder));
+    setEditingAddress(true);
+  };
+
+  const saveAddress = async () => {
+    if (!selectedOrderId) return;
+    setSavingAddress(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/address`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(addressDraft),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Address update failed");
+      setSelectedOrder(data.order ?? null);
+      setEditingAddress(false);
+      await loadOrderDetail(selectedOrderId);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
   const assignPartner = async () => {
     if (!selectedOrderId || !selectedPartnerKey) return;
     setAssigningPartner(true);
@@ -243,6 +332,17 @@ export default function DecathlonOrdersPage() {
   }, []);
 
   useEffect(() => {
+    if (selectedOrder) {
+      setAddressDraft(hydrateAddressDraft(selectedOrder));
+      setEditingAddress(false);
+    }
+  }, [selectedOrder?.id]);
+
+  useEffect(() => {
+    void loadReturns();
+  }, [loadReturns]);
+
+  useEffect(() => {
     if (selectedOrderId) {
       setSelectedOrder(null);
       loadOrderDetail(selectedOrderId);
@@ -266,6 +366,10 @@ export default function DecathlonOrdersPage() {
   const canceledStates = useMemo(
     () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
     []
+  );
+  const partnerKeysForOfferMatch = useMemo(
+    () => partners.map((p) => String(p.key ?? "").trim()).filter(Boolean),
+    [partners]
   );
   const buildShipmentSummary = (order: any) => {
     const lines = Array.isArray(order?.lines) ? order.lines : [];
@@ -333,11 +437,30 @@ export default function DecathlonOrdersPage() {
       const isShipped = totalUnits > 0 ? remainingUnits <= 0 : shippedCount > 0;
       const isCanceled = canceledStates.has(state);
       const isOpen = !state || (!isShipped && !isCanceled);
+      if (leftTab === "returns") return false;
       if (leftTab === "fulfilled") return isShipped;
       if (leftTab === "canceled") return isCanceled;
       return isOpen;
     });
   }, [orderedList, leftTab, canceledStates]);
+
+  const returnLinesByTab = useMemo(() => {
+    if (leftTab !== "returns") return [];
+    const needle = productSearch.trim().toLowerCase();
+    if (!needle) return returnLines;
+    return returnLines.filter((item) => {
+      const hay = [
+        item.offerSku,
+        item.productTitle,
+        item.orderId,
+        item.returnId,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [leftTab, productSearch, returnLines]);
 
   const needsLinking = (order: OrderListItem) => {
     if (order.partnerKey) return false;
@@ -622,9 +745,9 @@ export default function DecathlonOrdersPage() {
       {polling ? <div className="text-xs text-gray-500">Polling Mirakl...</div> : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="border rounded p-3">
+        <div className="border rounded p-3 min-w-0">
           <div className="font-semibold mb-2">Orders</div>
-          <div className="mb-2 grid grid-cols-3 gap-1 text-xs">
+          <div className="mb-2 grid grid-cols-4 gap-1 text-xs">
             <button
               className={`rounded border px-2 py-1 ${leftTab === "to_process" ? "bg-black text-white border-black" : "bg-white border-gray-300"}`}
               onClick={() => setLeftTab("to_process")}
@@ -643,6 +766,12 @@ export default function DecathlonOrdersPage() {
             >
               Canceled
             </button>
+            <button
+              className={`rounded border px-2 py-1 ${leftTab === "returns" ? "bg-black text-white border-black" : "bg-white border-gray-300"}`}
+              onClick={() => setLeftTab("returns")}
+            >
+              Returns
+            </button>
           </div>
           <label className="block mt-2">
             <span className="sr-only">Search by product name</span>
@@ -657,68 +786,134 @@ export default function DecathlonOrdersPage() {
           </label>
           {productSearch ? (
             <div className="text-[11px] text-gray-500 mt-1">
-              Filter: “{productSearch}” · {loadingOrders ? "…" : `${ordersByTab.length} order(s)`}
+              Filter: “{productSearch}” ·{" "}
+              {leftTab === "returns"
+                ? loadingReturns
+                  ? "…"
+                  : `${returnLinesByTab.length} return(s)`
+                : loadingOrders
+                  ? "…"
+                  : `${ordersByTab.length} order(s)`}
             </div>
           ) : null}
           <div className="space-y-2 max-h-[500px] overflow-auto mt-2">
-            {ordersByTab.map((order) => {
-              const lineCount = order._count?.lines ?? 0;
-              const linked = order.linkedCount ?? 0;
-              const totalUnits = order.totalUnits ?? 0;
-              const shippedUnits = order.shippedUnits ?? 0;
-              const unitTotal = totalUnits > 0 ? totalUnits : lineCount;
-              const unitShipped = totalUnits > 0 ? shippedUnits : Math.min(shippedUnits, unitTotal);
-              const shipmentProgress = unitTotal > 0 ? `${unitShipped}/${unitTotal} shipped` : null;
-              const allLinesLinked = lineCount > 0 && linked >= lineCount;
-              const isPartnerOrder = Boolean(order.partnerKey);
-              const state = normalizeState(order.orderState);
-              const isCanceled = canceledStates.has(state);
-              const partnerTone =
-                state === "SHIPPED"
-                  ? "border-emerald-500 bg-emerald-50"
-                  : isCanceled
-                    ? "border-amber-500 bg-amber-50"
-                    : "border-blue-500 bg-blue-50";
-              const baseTone = isPartnerOrder
-                ? partnerTone
-                : isCanceled
-                  ? "border-amber-500 bg-amber-50"
-                  : needsLinking(order)
-                    ? "border-red-500 bg-red-50"
-                    : allLinesLinked
-                      ? "border-green-500 bg-green-50"
-                      : newOrderIds.has(order.id)
-                        ? "border-emerald-500 bg-emerald-50"
-                        : "border-gray-200";
-              return (
-              <button
-                key={order.id}
-                onClick={() => setSelectedOrderId(order.id)}
-                className={`w-full text-left border rounded p-2 text-sm ${
-                  selectedOrderId === order.id ? "border-black" : baseTone
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-medium">{order.orderNumber ?? order.orderId}</div>
-                  {order.partnerKey ? (
-                    <span
-                      className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                        order.orderState === "SHIPPED" ? "bg-emerald-600 text-white" : "bg-blue-600 text-white"
+            {leftTab === "returns"
+              ? returnLinesByTab.map((item) => {
+                  const price = item.returnPrice ?? item.unitPrice ?? null;
+                  const status = (item.status ?? "").toUpperCase();
+                  const restocked = Boolean(item.restockAppliedAt);
+                  const statusLabel = status || "PENDING";
+                  const statusTone =
+                    status === "CLOSED"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : status === "RECEIVED"
+                        ? "bg-blue-100 text-blue-800"
+                        : status === "CANCELED" || status === "CANCELLED"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-amber-100 text-amber-800";
+                  return (
+                    <div key={item.id} className="border rounded p-2 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-medium">{item.offerSku ?? "—"}</div>
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusTone}`}
+                          >
+                            {statusLabel}
+                          </span>
+                          {restocked ? (
+                            <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-600 text-white">
+                              RESTOCKED
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="text-gray-500 mt-1 space-y-0.5">
+                        <div>
+                          Order: <span className="text-gray-800">{item.orderId ?? "—"}</span>
+                        </div>
+                        <div>
+                          Qty {item.quantity} · {status || "—"}
+                        </div>
+                        {item.productTitle ? (
+                          <div className="truncate">
+                            {item.productTitle}
+                            {item.size ? ` · ${item.size}` : ""}
+                          </div>
+                        ) : null}
+                        {price != null ? (
+                          <div>
+                            Return price: {item.currencyCode ?? "CHF"} {Number(price).toFixed(2)}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })
+              : ordersByTab.map((order) => {
+                  const lineCount = order._count?.lines ?? 0;
+                  const linked = order.linkedCount ?? 0;
+                  const totalUnits = order.totalUnits ?? 0;
+                  const shippedUnits = order.shippedUnits ?? 0;
+                  const unitTotal = totalUnits > 0 ? totalUnits : lineCount;
+                  const unitShipped = totalUnits > 0 ? shippedUnits : Math.min(shippedUnits, unitTotal);
+                  const shipmentProgress = unitTotal > 0 ? `${unitShipped}/${unitTotal} shipped` : null;
+                  const allLinesLinked = lineCount > 0 && linked >= lineCount;
+                  const isPartnerOrder = Boolean(order.partnerKey);
+                  const state = normalizeState(order.orderState);
+                  const isCanceled = canceledStates.has(state);
+                  const partnerTone =
+                    state === "SHIPPED"
+                      ? "border-emerald-500 bg-emerald-50"
+                      : isCanceled
+                        ? "border-amber-500 bg-amber-50"
+                        : "border-blue-500 bg-blue-50";
+                  const baseTone = isPartnerOrder
+                    ? partnerTone
+                    : isCanceled
+                      ? "border-amber-500 bg-amber-50"
+                      : needsLinking(order)
+                        ? "border-red-500 bg-red-50"
+                        : allLinesLinked
+                          ? "border-green-500 bg-green-50"
+                          : newOrderIds.has(order.id)
+                            ? "border-emerald-500 bg-emerald-50"
+                            : "border-gray-200";
+                  return (
+                    <button
+                      key={order.id}
+                      onClick={() => setSelectedOrderId(order.id)}
+                      className={`w-full text-left border rounded p-2 text-sm ${
+                        selectedOrderId === order.id ? "border-black" : baseTone
                       }`}
                     >
-                      Partner {order.partnerKey}
-                    </span>
-                  ) : null}
-                </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-medium">{order.orderNumber ?? order.orderId}</div>
+                        {order.partnerKey ? (
+                          <span
+                            className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                              order.orderState === "SHIPPED" ? "bg-emerald-600 text-white" : "bg-blue-600 text-white"
+                            }`}
+                          >
+                            Partner {order.partnerKey}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(order.orderDate).toLocaleDateString("fr-CH")} •{" "}
+                        {order.partnerKey ? `${lineCount} lines` : `${linked}/${lineCount} linked`}
+                        {shipmentProgress ? ` • ${shipmentProgress}` : ""}
+                      </div>
+                    </button>
+                  );
+                })}
+            {leftTab === "returns" ? (
+              returnLinesByTab.length === 0 ? (
                 <div className="text-xs text-gray-500">
-                  {new Date(order.orderDate).toLocaleDateString("fr-CH")} •{" "}
-                  {order.partnerKey ? `${lineCount} lines` : `${linked}/${lineCount} linked`}
-                  {shipmentProgress ? ` • ${shipmentProgress}` : ""}
+                  {productSearch ? "No returns match this search." : "No returns yet."}
                 </div>
-              </button>
-            );
-            })}
-            {ordersByTab.length === 0 ? (
+              ) : null
+            ) : ordersByTab.length === 0 ? (
               <div className="text-xs text-gray-500">
                 {productSearch ? "No orders match this product name." : "No orders in this tab."}
               </div>
@@ -726,7 +921,7 @@ export default function DecathlonOrdersPage() {
           </div>
         </div>
 
-        <div className="md:col-span-2 border rounded p-3 space-y-3">
+        <div className="md:col-span-2 lg:col-span-2 border rounded p-3 space-y-3 min-w-0">
           <div className="font-semibold">Order detail</div>
           <StockxOrderTools
             orderId={selectedOrderId}
@@ -885,48 +1080,128 @@ export default function DecathlonOrdersPage() {
                     ))}
                 </div>
               ) : null}
-              {Array.isArray(selectedOrder.lines) && selectedOrder.lines.length > 0 ? (
-                <div className="text-xs border border-gray-200 rounded p-2 space-y-1.5 bg-gray-50/80">
-                  <div className="font-medium text-gray-800">Products sold</div>
-                  <ul className="space-y-1.5">
-                    {selectedOrder.lines.map((line: any) => {
-                      const sell = decathlonMiraklSellTotal(line);
-                      const pay = decathlonLinePayoutPreferMirakl(line);
-                      const mir = decathlonMiraklSellerPayoutLineTotal(line.rawJson);
-                      return (
-                        <li
-                          key={line.id}
-                          className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-gray-700 border-b border-gray-100/80 pb-1.5 last:border-0 last:pb-0"
-                        >
-                          <span className="min-w-0 flex-1 font-medium text-gray-900">{buildLineTitle(line)}</span>
-                          <span className="font-mono text-[10px] text-gray-500 shrink-0">
-                            {line.offerSku ?? "—"}
-                          </span>
-                          <span className="text-gray-500 shrink-0">×{line.quantity ?? "—"}</span>
-                          <span className="w-full text-right text-[10px] text-gray-600 sm:w-auto sm:ml-auto">
-                            {sell != null ? <>Sell CHF {sell.toFixed(2)}</> : null}
-                            {sell != null && pay != null ? <span className="text-gray-400"> · </span> : null}
-                            {pay != null ? (
-                              <span className="font-medium text-gray-900">
-                                {mir != null ? "Payout Mirakl" : "Payout (est.)"} CHF {pay.toFixed(2)}
-                              </span>
-                            ) : null}
-                          </span>
-                        </li>
-                      );
-                    })}
-                  </ul>
+              <div className="text-xs text-gray-500 border-b border-gray-100 pb-2 space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-gray-700">{selectedOrder.recipientName ?? "—"}</div>
+                  <button
+                    type="button"
+                    onClick={startEditAddress}
+                    disabled={!selectedOrderId || savingAddress}
+                    className="px-2 py-0.5 border border-gray-300 rounded text-[10px] text-gray-700"
+                  >
+                    Edit address
+                  </button>
                 </div>
-              ) : null}
-              <div className="text-xs text-gray-500 border-b border-gray-100 pb-2 space-y-0.5">
-                <div className="font-medium text-gray-700">{selectedOrder.recipientName ?? "—"}</div>
-                <div>
-                  {selectedOrder.recipientAddress1 ?? ""} {selectedOrder.recipientAddress2 ?? ""}
-                </div>
-                <div>
-                  {selectedOrder.recipientPostalCode ?? ""} {selectedOrder.recipientCity ?? ""}{" "}
-                  {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
-                </div>
+                {selectedOrder.recipientAddressLocked ? (
+                  <div className="text-[10px] text-amber-600">Address locked for labels</div>
+                ) : null}
+                {editingAddress ? (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Recipient name"
+                        value={addressDraft.recipientName}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientName: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Recipient email"
+                        value={addressDraft.recipientEmail}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientEmail: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Address line 1"
+                        value={addressDraft.recipientAddress1}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientAddress1: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Address line 2"
+                        value={addressDraft.recipientAddress2}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientAddress2: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Postal code"
+                        value={addressDraft.recipientPostalCode}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientPostalCode: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="City"
+                        value={addressDraft.recipientCity}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientCity: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Country code (CH)"
+                        value={addressDraft.recipientCountryCode}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientCountryCode: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Country"
+                        value={addressDraft.recipientCountry}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientCountry: e.target.value }))
+                        }
+                      />
+                      <input
+                        className="border rounded px-2 py-1 text-xs"
+                        placeholder="Phone"
+                        value={addressDraft.recipientPhone}
+                        onChange={(e) =>
+                          setAddressDraft((prev) => ({ ...prev, recipientPhone: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={saveAddress}
+                        disabled={savingAddress}
+                        className="px-2 py-1 bg-gray-900 text-white rounded text-xs"
+                      >
+                        {savingAddress ? "Saving..." : "Save address"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingAddress(false)}
+                        className="px-2 py-1 border border-gray-300 rounded text-xs"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      {selectedOrder.recipientAddress1 ?? ""} {selectedOrder.recipientAddress2 ?? ""}
+                    </div>
+                    <div>
+                      {selectedOrder.recipientPostalCode ?? ""} {selectedOrder.recipientCity ?? ""}{" "}
+                      {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
+                    </div>
+                    {selectedOrder.recipientEmail ? <div>{selectedOrder.recipientEmail}</div> : null}
+                    {selectedOrder.recipientPhone ? <div>{selectedOrder.recipientPhone}</div> : null}
+                  </>
+                )}
               </div>
               {orderMarginRollup && orderMarginRollup.linesNetAfterDecathlon > 0 ? (
                 <div className="text-xs text-gray-600 space-y-0.5 border-t border-gray-100 pt-2">
@@ -985,6 +1260,31 @@ export default function DecathlonOrdersPage() {
                           ? `Linked ${match.stockxOrderNumber}`
                           : "Linked"
                       : "Not linked";
+                  const partnerLineFromOrder = selectedOrder
+                    ? isDecathlonPartnerFulfillmentLine(selectedOrder, line)
+                    : false;
+                  const matchedPartnerFromCatalog = partnerKeyMatchingLineOffer(
+                    line,
+                    partnerKeysForOfferMatch
+                  );
+                  const partnerLine = partnerLineFromOrder || matchedPartnerFromCatalog != null;
+                  const displayPartnerKey = (
+                    matchedPartnerFromCatalog ??
+                    (partnerLineFromOrder ? normalizeProviderKey(selectedOrder?.partnerKey ?? null) : null) ??
+                    ""
+                  ).trim();
+                  const pk = displayPartnerKey;
+                  const partnerBadgeText =
+                    pk.length <= 5 ? pk.toUpperCase() || "P" : `${pk.toUpperCase().slice(0, 4)}…`;
+                  const partnerLinkedLabel =
+                    pk.length > 0 ? `Bought · partner catalog (${pk.toUpperCase()})` : "Bought · partner catalog";
+                  const linkedLabelShown = partnerLine && !lineOk ? partnerLinkedLabel : linkedLabel;
+                  const linkedToneClass =
+                    partnerLine && !lineOk
+                      ? "text-green-700"
+                      : lineOk
+                        ? "text-green-700"
+                        : "text-red-600";
                   const sizeDisplay =
                     cat?.sizeRaw ??
                     line.kickdb?.sizeRaw ??
@@ -1003,9 +1303,11 @@ export default function DecathlonOrdersPage() {
                       className={`border rounded p-3 text-xs ${
                         lineFullyMiraklShipped
                           ? "border-emerald-600 bg-emerald-50/90 ring-1 ring-emerald-200"
-                          : lineOk
-                            ? "border-green-400 bg-green-50/40"
-                            : ""
+                          : partnerLine
+                            ? "border-blue-500 bg-blue-50/70 ring-1 ring-blue-200"
+                            : lineOk
+                              ? "border-green-400 bg-green-50/40"
+                              : "border-gray-200"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -1017,6 +1319,13 @@ export default function DecathlonOrdersPage() {
                                 title="StockX linked"
                               >
                                 STX
+                              </span>
+                            ) : partnerLine ? (
+                              <span
+                                className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-green-600 text-white shrink-0"
+                                title="Partner catalog — treat as bought; do not purchase on StockX"
+                              >
+                                {partnerBadgeText}
                               </span>
                             ) : (
                               <span className="text-gray-300">○</span>
@@ -1065,8 +1374,8 @@ export default function DecathlonOrdersPage() {
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <div className={`font-medium ${lineOk ? "text-green-700" : "text-red-600"}`}>
-                            {linkedLabel}
+                          <div className={`font-medium ${linkedToneClass}`}>
+                            {linkedLabelShown}
                           </div>
                           <div className="text-gray-500">
                             ETA:{" "}
@@ -1126,6 +1435,7 @@ export default function DecathlonOrdersPage() {
             <div className="text-sm text-gray-500">Select an order to view details.</div>
           )}
         </div>
+
       </div>
 
       {splitModalOpen ? (

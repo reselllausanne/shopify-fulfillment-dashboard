@@ -27,7 +27,12 @@ function docTypeUpper(doc: any): string {
 }
 
 function docId(doc: any): string | null {
-  const id = doc?.id ?? doc?.document_id;
+  const id =
+    doc?.id ??
+    doc?.document_id ??
+    doc?.order_document_id ??
+    doc?.documentId ??
+    doc?.orderDocumentId;
   if (id === null || id === undefined || id === "") return null;
   const idStr = String(id).trim();
   return idStr || null;
@@ -36,6 +41,7 @@ function docId(doc: any): string | null {
 /** Lower score = higher priority for packing / delivery documents (OR72). */
 function packingSlipTypeRank(doc: any): number {
   const type = docTypeUpper(doc);
+  if (type === "SHIPMENT_DELIVERY_SLIP") return 0;
   if (type === "SYSTEM_SHIPMENT_DELIVERY_BILL") return 0;
   if (type.includes("SHIPMENT") && type.includes("DELIVERY")) return 1;
   if (type === "PACKING_SLIP" || type.includes("PACKING")) return 2;
@@ -48,6 +54,21 @@ function isPackingSlipCandidate(doc: any): boolean {
   return packingSlipTypeRank(doc) < 50 && docId(doc) != null;
 }
 
+function listPackingSlipCandidates(documents: any[]): any[] {
+  return documents.filter(isPackingSlipCandidate).sort((a, b) => {
+    const ra = packingSlipTypeRank(a);
+    const rb = packingSlipTypeRank(b);
+    if (ra !== rb) return ra - rb;
+    const da = String(a?.date_uploaded ?? a?.uploaded_date ?? "").localeCompare(
+      String(b?.date_uploaded ?? b?.uploaded_date ?? "")
+    );
+    return -da;
+  });
+}
+
+const SHIPMENT_REF_KEY_HINTS =
+  /shipment|parcel|consignment|logistic|fulfil|fulfill|expedition|delivery[_-]?package/i;
+
 /** True if a key/value pair ties this OR72 row to a Mirakl shipment id (field names vary by front). */
 function documentReferencesMiraklShipment(doc: any, miraklShipmentId: string): boolean {
   const needle = String(miraklShipmentId ?? "").trim();
@@ -59,7 +80,7 @@ function documentReferencesMiraklShipment(doc: any, miraklShipmentId: string): b
         const v = String(node).trim();
         if (v === needle) {
           const low = keyPath.toLowerCase();
-          if (low.includes("shipment")) return true;
+          if (low.includes("shipment") || SHIPMENT_REF_KEY_HINTS.test(keyPath)) return true;
         }
       }
       return false;
@@ -70,7 +91,10 @@ function documentReferencesMiraklShipment(doc: any, miraklShipmentId: string): b
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
       const next = keyPath ? `${keyPath}.${k}` : k;
       const low = k.toLowerCase();
-      if (low.includes("shipment") && (typeof v === "string" || typeof v === "number")) {
+      if (
+        (low.includes("shipment") || SHIPMENT_REF_KEY_HINTS.test(k)) &&
+        (typeof v === "string" || typeof v === "number")
+      ) {
         if (String(v).trim() === needle) return true;
       }
       if (visit(v, next)) return true;
@@ -101,17 +125,14 @@ function documentReferencesTracking(doc: any, trackingNumber: string): boolean {
 
 function pickPackingSlipDocument(
   documents: any[],
-  opts?: { miraklShipmentId?: string | null; trackingNumber?: string | null }
+  opts?: {
+    miraklShipmentId?: string | null;
+    trackingNumber?: string | null;
+    /** When the DB order has only one Mirakl shipment, Mirakl may omit shipment id on OR72 rows — use best-ranked doc. */
+    singleMiraklShipmentOnOrder?: boolean;
+  }
 ): any | null {
-  const candidates = documents.filter(isPackingSlipCandidate).sort((a, b) => {
-    const ra = packingSlipTypeRank(a);
-    const rb = packingSlipTypeRank(b);
-    if (ra !== rb) return ra - rb;
-    const da = String(a?.date_uploaded ?? a?.uploaded_date ?? "").localeCompare(
-      String(b?.date_uploaded ?? b?.uploaded_date ?? "")
-    );
-    return -da;
-  });
+  const candidates = listPackingSlipCandidates(documents);
   if (!candidates.length) return null;
 
   const mid = String(opts?.miraklShipmentId ?? "").trim();
@@ -137,7 +158,12 @@ function pickPackingSlipDocument(
     if (byTrack.length) return byTrack[0];
   }
 
-  if (mid || trk) return null;
+  if (mid || trk) {
+    if (opts?.singleMiraklShipmentOnOrder && candidates.length) {
+      return candidates[0] ?? null;
+    }
+    return null;
+  }
   return candidates[0] ?? null;
 }
 
@@ -151,6 +177,25 @@ async function resolveMiraklTrackingForShipment(
     const row = (res?.data ?? []).find((s) => String(s?.id ?? "").trim() === miraklShipmentId);
     const tn = String(row?.tracking?.tracking_number ?? "").trim();
     return tn || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveMiraklShipmentIdByTracking(
+  miraklOrderId: string,
+  trackingNumber: string
+): Promise<string | null> {
+  try {
+    const client = buildDecathlonOrdersClient();
+    const res = await client.listShipments(miraklOrderId);
+    const needle = String(trackingNumber ?? "").trim();
+    if (!needle) return null;
+    const row = (res?.data ?? []).find(
+      (s) => String(s?.tracking?.tracking_number ?? "").trim() === needle
+    );
+    const id = String(row?.id ?? "").trim();
+    return id || null;
   } catch {
     return null;
   }
@@ -172,6 +217,7 @@ async function resolveDecathlonOrder(orderId: string) {
 type FetchPackingOpts = {
   miraklShipmentId?: string | null;
   trackingNumber?: string | null;
+  singleMiraklShipmentOnOrder?: boolean;
 };
 
 async function fetchPackingSlipPdfFromMirakl(
@@ -186,12 +232,51 @@ async function fetchPackingSlipPdfFromMirakl(
     trackingHint = await resolveMiraklTrackingForShipment(order.orderId, miraklShipmentId);
   }
 
-  const docsPayload: any = await client.listDocuments({ order_ids: order.orderId });
-  const documents = normalizeOrderDocuments(docsPayload);
-  const picked = pickPackingSlipDocument(documents, {
+  let documents: any[] = [];
+  let docsPayload: any = null;
+  try {
+    const v2Params: Record<string, string | number | boolean> = {
+      types: "SHIPMENT_DELIVERY_SLIP",
+    };
+    if (miraklShipmentId) {
+      v2Params.shipment_id = miraklShipmentId;
+    }
+    docsPayload = await client.listOrderDocumentsV2(order.orderId, v2Params);
+    documents = normalizeOrderDocuments(docsPayload);
+  } catch (error) {
+    console.warn("[DECATHLON][DOCS] v2 documents failed, fallback to legacy:", error);
+  }
+
+  if (!documents.length) {
+    docsPayload = await client.listDocuments({ order_ids: order.orderId });
+    documents = normalizeOrderDocuments(docsPayload);
+  }
+  let picked = pickPackingSlipDocument(documents, {
     miraklShipmentId,
     trackingNumber: trackingHint,
+    singleMiraklShipmentOnOrder: opts?.singleMiraklShipmentOnOrder,
   });
+  if (!picked && miraklShipmentId) {
+    const candidates = listPackingSlipCandidates(documents);
+    if (candidates.length) {
+      const existing = await prisma.decathlonOrderDocument.findMany({
+        where: { orderId: order.id, type: DocumentType.DELIVERY_NOTE },
+        select: { miraklDocumentId: true },
+      });
+      const usedIds = new Set(
+        existing
+          .map((row) => String(row.miraklDocumentId ?? "").trim())
+          .filter((id) => id.length > 0)
+      );
+      const unused = candidates.filter((doc) => {
+        const id = docId(doc);
+        return id && !usedIds.has(id);
+      });
+      if (unused.length) {
+        picked = unused[0];
+      }
+    }
+  }
   const documentId = picked ? docId(picked) : null;
 
   if (!documentId) {
@@ -255,7 +340,13 @@ function attachmentFilename(miraklOrderId: string, dbShipmentId?: string | null)
 }
 
 type PackingSlipScopeResult =
-  | { ok: true; dbShipmentId: string | null; miraklShipmentId: string | null; trackingNumber: string | null }
+  | {
+      ok: true;
+      dbShipmentId: string | null;
+      miraklShipmentId: string | null;
+      trackingNumber: string | null;
+      singleMiraklShipmentOnOrder: boolean;
+    }
   | { ok: false; status: number; body: Record<string, unknown> };
 
 async function resolvePackingSlipScope(
@@ -265,6 +356,7 @@ async function resolvePackingSlipScope(
   const shipmentIdParam = String(searchParams.get("shipmentId") ?? "").trim();
   const rows = Array.isArray(order.shipments) ? order.shipments : [];
   const withMirakl = rows.filter((s: any) => String(s?.miraklShipmentId ?? "").trim());
+  const singleMiraklShipmentOnOrder = withMirakl.length === 1;
 
   let dbShipmentId: string | null = null;
   let miraklShipmentId: string | null = null;
@@ -282,14 +374,26 @@ async function resolvePackingSlipScope(
     dbShipmentId = String(row.id);
     miraklShipmentId = String(row.miraklShipmentId ?? "").trim() || null;
     trackingNumber = String(row.trackingNumber ?? "").trim() || null;
-    if (!miraklShipmentId) {
+    if (!miraklShipmentId && trackingNumber) {
+      const resolved = await resolveMiraklShipmentIdByTracking(order.orderId, trackingNumber);
+      if (resolved) {
+        miraklShipmentId = resolved;
+        await prisma.decathlonShipment
+          .update({
+            where: { id: row.id },
+            data: { miraklShipmentId: resolved },
+          })
+          .catch(() => null);
+      }
+    }
+    if (!miraklShipmentId && !trackingNumber) {
       return {
         ok: false,
         status: 400,
         body: {
           ok: false,
           error:
-            "This shipment has no Mirakl shipment id (created before tracking was added). Use the generic packing slip or re-ship from an updated build.",
+            "This shipment has no Mirakl shipment id or tracking number yet. Try again after Mirakl generates OR72.",
         },
       };
     }
@@ -316,7 +420,7 @@ async function resolvePackingSlipScope(
     };
   }
 
-  return { ok: true, dbShipmentId, miraklShipmentId, trackingNumber };
+  return { ok: true, dbShipmentId, miraklShipmentId, trackingNumber, singleMiraklShipmentOnOrder };
 }
 
 async function handlePackingSlipRequest(
@@ -351,6 +455,7 @@ async function handlePackingSlipRequest(
   const fetched = await fetchPackingSlipPdfFromMirakl(order, {
     miraklShipmentId: scopeRes.miraklShipmentId,
     trackingNumber: scopeRes.trackingNumber,
+    singleMiraklShipmentOnOrder: scopeRes.singleMiraklShipmentOnOrder,
   });
   if (!fetched.ok) {
     return NextResponse.json(fetched.body, { status: fetched.status });

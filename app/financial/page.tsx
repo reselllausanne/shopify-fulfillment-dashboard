@@ -85,6 +85,8 @@ type MarketplaceDailyRow = {
   date: string;
   decathlonMarginChf: number;
   galaxusMarginChf: number;
+  decathlonRevenueChf?: number;
+  galaxusRevenueChf?: number;
   totalMarginChf: number;
   decathlonLineCount: number;
   galaxusLineCount: number;
@@ -598,12 +600,12 @@ export default function FinancialOverviewPage() {
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-6 mb-8">
           <div className="bg-white p-6 rounded-lg shadow">
-            <div className="text-sm font-medium text-gray-500">Total Sales</div>
+            <div className="text-sm font-medium text-gray-500">Total sales volume</div>
             <div className="text-2xl font-bold text-blue-600">
               CHF {totalSalesWithMarketplace.toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">
-              Shopify: CHF {totalSales.toFixed(2)} • Marketplace: CHF {marketplaceRevenueTotal.toFixed(2)}
+              Shopify + marketplace (same window)
             </div>
           </div>
           
@@ -839,7 +841,7 @@ export default function FinancialOverviewPage() {
                   CHF {marketplaceTotals.decathlon.marginChf.toFixed(2)}
                 </div>
                 <div className="text-xs text-gray-500 mt-1">
-                  Payout: CHF {marketplaceTotals.decathlon.revenueChf.toFixed(2)} • Orders: {marketplaceTotals.decathlon.orderCount} • Lines:{" "}
+                  Volume: CHF {marketplaceTotals.decathlon.revenueChf.toFixed(2)} • Orders: {marketplaceTotals.decathlon.orderCount} • Lines:{" "}
                   {marketplaceTotals.decathlon.lineCount} • Units: {marketplaceTotals.decathlon.unitCount}
                 </div>
               </div>
@@ -849,7 +851,7 @@ export default function FinancialOverviewPage() {
                   CHF {marketplaceTotals.galaxus.marginChf.toFixed(2)}
                 </div>
                 <div className="text-xs text-gray-500 mt-1">
-                  Revenue: CHF {marketplaceTotals.galaxus.revenueChf.toFixed(2)} • Orders: {marketplaceTotals.galaxus.orderCount} • Lines:{" "}
+                  Volume: CHF {marketplaceTotals.galaxus.revenueChf.toFixed(2)} • Orders: {marketplaceTotals.galaxus.orderCount} • Lines:{" "}
                   {marketplaceTotals.galaxus.lineCount} • Units: {marketplaceTotals.galaxus.unitCount}
                 </div>
               </div>
@@ -859,7 +861,7 @@ export default function FinancialOverviewPage() {
                   CHF {marketplaceTotals.combined.marginChf.toFixed(2)}
                 </div>
                 <div className="text-xs text-gray-500 mt-1">
-                  Revenue: CHF {marketplaceTotals.combined.revenueChf.toFixed(2)} • Orders: {marketplaceTotals.combined.orderCount} • Lines:{" "}
+                  Volume: CHF {marketplaceTotals.combined.revenueChf.toFixed(2)} • Orders: {marketplaceTotals.combined.orderCount} • Lines:{" "}
                   {marketplaceTotals.combined.lineCount} • Units: {marketplaceTotals.combined.unitCount}
                 </div>
               </div>
@@ -868,26 +870,46 @@ export default function FinancialOverviewPage() {
             <div className="bg-white p-6 rounded-lg shadow">
               <h2 className="text-xl font-bold text-gray-900 mb-2">📦 Daily Marketplace Margin</h2>
               <p className="text-sm text-gray-600 mb-4">
-                Margin uses matched lines with StockX cost for Decathlon & Galaxus orders.
+                Galaxus COGS: match amount if set, else settled StockX buy split by line (same logic as daily totals).
               </p>
               {marketplaceDaily.length === 0 ? (
                 <div className="text-sm text-gray-500">No marketplace margin data for this period.</div>
               ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <ComposedChart data={marketplaceDaily}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} />
-                    <Tooltip
-                      formatter={(value: any) => `CHF ${Number(value).toFixed(2)}`}
-                      contentStyle={{ backgroundColor: "rgba(255, 255, 255, 0.95)" }}
-                    />
-                    <Legend />
-                    <Bar dataKey="decathlonMarginChf" name="Decathlon margin" fill="#3b82f6" />
-                    <Bar dataKey="galaxusMarginChf" name="Galaxus margin" fill="#f97316" />
-                    <Line type="monotone" dataKey="totalMarginChf" name="Total margin" stroke="#10b981" strokeWidth={3} />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                <>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <ComposedChart data={marketplaceDaily}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip
+                        formatter={(value: any) => `CHF ${Number(value).toFixed(2)}`}
+                        contentStyle={{ backgroundColor: "rgba(255, 255, 255, 0.95)" }}
+                      />
+                      <Legend />
+                      <Bar dataKey="decathlonMarginChf" name="Decathlon margin" fill="#3b82f6" />
+                      <Bar dataKey="galaxusMarginChf" name="Galaxus margin" fill="#f97316" />
+                      <Line type="monotone" dataKey="totalMarginChf" name="Total margin" stroke="#10b981" strokeWidth={3} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                  <h3 className="text-sm font-semibold text-gray-800 mt-6 mb-2">Daily sales volume (CHF)</h3>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <ComposedChart
+                      data={marketplaceDaily.map((r) => ({
+                        ...r,
+                        decathlonRevenueChf: toNumberSafe(r.decathlonRevenueChf, 0),
+                        galaxusRevenueChf: toNumberSafe(r.galaxusRevenueChf, 0),
+                      }))}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip formatter={(value: any) => `CHF ${Number(value).toFixed(2)}`} />
+                      <Legend />
+                      <Bar dataKey="decathlonRevenueChf" name="Decathlon volume" fill="#93c5fd" />
+                      <Bar dataKey="galaxusRevenueChf" name="Galaxus volume" fill="#fdba74" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </>
               )}
             </div>
           </div>

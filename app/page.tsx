@@ -88,13 +88,7 @@ export default function Home() {
   const [orderTestLoading, setOrderTestLoading] = useState(false);
   const [trackingAlert, setTrackingAlert] = useState<{
     count: number;
-    goatCount: number;
-    criticalCount: number;
-    warningCount: number;
     items: any[];
-    goatItems: any[];
-    criticalItems: any[];
-    warningItems: any[];
   } | null>(null);
   const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
   const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
@@ -129,13 +123,7 @@ export default function Home() {
       if (res.ok && data?.ok) {
         setTrackingAlert({
           count: data.count || 0,
-          goatCount: data.goatCount || 0,
-          criticalCount: data.criticalCount || 0,
-          warningCount: data.warningCount || 0,
           items: data.items || [],
-          goatItems: data.goatItems || [],
-          criticalItems: data.criticalItems || [],
-          warningItems: data.warningItems || [],
         });
       } else {
         setTrackingAlertError(data?.error || "Failed to load tracking alerts");
@@ -295,6 +283,14 @@ export default function Home() {
       return "—";
     }
   };
+
+  const over9TrackingItems = React.useMemo(() => {
+    if (!trackingAlert?.items) return [];
+    return trackingAlert.items.filter((item: any) => {
+      const ageDays = typeof item.ageDays === "number" ? item.ageDays : null;
+      return ageDays != null && ageDays > 9;
+    });
+  }, [trackingAlert?.items]);
 
   const handleFetchFirstPage = async () => {
     await fetchPage({
@@ -908,41 +904,13 @@ export default function Home() {
           </nav>
         </div>
 
-        {(trackingAlert?.goatCount || trackingAlert?.criticalCount || trackingAlertError) && (
+        {(over9TrackingItems.length > 0 || trackingAlertError) && (
           <div className="mb-6 space-y-3">
-            {(trackingAlert?.goatCount || 0) > 0 && (
-              <div className="border rounded-lg p-4 bg-amber-50 border-amber-200">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-amber-800">
-                    🐐 GOAT orders missing tracking: {trackingAlert?.goatCount || 0}
-                  </div>
-                  <button
-                    onClick={loadTrackingAlert}
-                    disabled={trackingAlertLoading}
-                    className="text-xs px-2 py-1 bg-amber-200 text-amber-900 rounded hover:bg-amber-300 disabled:opacity-60"
-                  >
-                    {trackingAlertLoading ? "Refreshing..." : "Refresh"}
-                  </button>
-                </div>
-                <div className="mt-2 space-y-1 text-xs text-amber-900">
-                  {trackingAlert?.goatItems?.map((item: any) => (
-                    <div key={item.id} className="flex flex-wrap gap-2">
-                      <span className="font-semibold">{item.shopifyOrderName}</span>
-                      <span>Ref: {item.stockxOrderNumber}</span>
-                      <span>Age: {item.ageDays ?? "—"}d</span>
-                      <span>ETA: {formatDate(item.deliveryDate)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(trackingAlert?.warningCount || 0) > 0 && (
+            {over9TrackingItems.length > 0 && (
               <div className="border rounded-lg p-4 bg-yellow-50 border-yellow-200">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-yellow-800">
-                    ⚠️ Orders missing tracking more than 9 days old (warning):{" "}
-                    {trackingAlert?.warningCount || 0}
+                    ⚠️ Orders missing tracking more than 9 days old: {over9TrackingItems.length}
                   </div>
                   <button
                     onClick={loadTrackingAlert}
@@ -953,43 +921,12 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="mt-2 space-y-1 text-xs text-yellow-900">
-                  {trackingAlert?.warningItems?.map((item: any) => (
+                  {over9TrackingItems.map((item: any) => (
                     <div key={item.id} className="flex flex-wrap gap-2">
                       <span className="font-semibold">{item.shopifyOrderName}</span>
                       <span>Ref: {item.stockxOrderNumber}</span>
                       <span>Age: {item.ageDays ?? "—"}d</span>
                       <span>ETA: {formatDate(item.deliveryDate)}</span>
-                      <span className="font-semibold">WARNING (&gt;9d)</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(trackingAlert?.criticalCount || 0) > 0 && (
-              <div className="border rounded-lg p-4 bg-red-50 border-red-200">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-red-800">
-                    ⚠️ Orders missing tracking near/past delivery or older than 9 days:{" "}
-                    {trackingAlert?.criticalCount || 0}
-                  </div>
-                  <button
-                    onClick={loadTrackingAlert}
-                    disabled={trackingAlertLoading}
-                    className="text-xs px-2 py-1 bg-red-200 text-red-900 rounded hover:bg-red-300 disabled:opacity-60"
-                  >
-                    {trackingAlertLoading ? "Refreshing..." : "Refresh"}
-                  </button>
-                </div>
-                <div className="mt-2 space-y-1 text-xs text-red-900">
-                  {trackingAlert?.criticalItems?.map((item: any) => (
-                    <div key={item.id} className="flex flex-wrap gap-2">
-                      <span className="font-semibold">{item.shopifyOrderName}</span>
-                      <span>Ref: {item.stockxOrderNumber}</span>
-                      <span>Age: {item.ageDays ?? "—"}d</span>
-                      <span>ETA: {formatDate(item.deliveryDate)}</span>
-                      {item.isOverdue && <span className="font-semibold">OVERDUE</span>}
-                      {!item.isOverdue && item.isDueSoon && <span className="font-semibold">DUE SOON</span>}
                     </div>
                   ))}
                 </div>

@@ -93,11 +93,6 @@ export function resolveEffectivePrice(
   });
   if (!buyNow || buyNow <= 0) return null;
   const sk = extractDecathlonSupplierKey(candidate);
-  const isPartner = sk && (sk === "ner" || partnerKeysLower.has(sk));
-  if (isPartner) {
-    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
-    return listTtc.toFixed(2);
-  }
   const base = computeDecathlonOfferListPriceFromBuyNow(buyNow);
   if (!base || base <= 0) return null;
   const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);

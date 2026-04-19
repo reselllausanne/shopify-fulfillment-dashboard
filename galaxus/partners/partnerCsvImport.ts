@@ -12,6 +12,7 @@ import {
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { enqueueJob } from "@/galaxus/jobs/queue";
 
 const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
@@ -554,15 +555,21 @@ export async function runPartnerCsvImport(
 
   rowOutcomes.sort((a, b) => a.row - b.row);
 
-  if (!dryRun && importedRows > 0 && partnerKey && ctx.origin) {
-    const pendingEnrichInFile = rowOutcomes.filter((r) => r.status === "PENDING_ENRICH").length;
-    if (pendingEnrichInFile > 0) {
+  // Queue one-shot enrich jobs from DB total (includes backlog from earlier uploads), not only
+  // rows marked PENDING_ENRICH in this file — otherwise old pending lines never get a job until
+  // someone clicks Force re-enrich.
+  if (!dryRun && importedRows > 0 && partnerKey) {
+    const pendingEnrichTotal = await prismaAny.partnerUploadRow.count({
+      where: { providerKey: partnerKey, status: "PENDING_ENRICH" },
+    });
+    if (pendingEnrichTotal > 0) {
       const batchLimit = 2000;
-      const jobCount = Math.ceil(pendingEnrichInFile / batchLimit);
+      const jobCount = Math.ceil(pendingEnrichTotal / batchLimit);
+      const jobOrigin = resolveAppOriginForPartnerJobs(ctx.origin ?? null);
       for (let j = 0; j < jobCount; j++) {
         const job = await enqueueJob(
           "partner-upload-enrich",
-          { partnerKey, limit: batchLimit, force: false, origin: ctx.origin },
+          { partnerKey, limit: batchLimit, force: false, origin: jobOrigin },
           { priority: 0, groupKey: partnerKey }
         );
         if (j === 0) enrichJobId = job.id;

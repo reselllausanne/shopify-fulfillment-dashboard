@@ -485,32 +485,26 @@ export async function POST(
           const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
           if (!stockxOrderId || !chainId) return;
 
+          // Buying list often omits productVariant.id; full variant id is on order details after GET_BUY_ORDER.
           const fastVariant = extractStockxVariantId(listNode, null);
-          if (!fastVariant) {
-            skippedNoVariant += 1;
-            console.info("[GALAXUS][STX][SYNC][SKIP] No variant id", {
-              chainId,
-              orderId: stockxOrderId,
-              orderNumber: (listNode as any)?.orderNumber ?? null,
-            });
-            return;
-          }
-          const supplierVariantId = `stx_${fastVariant}`;
-          const isPendingVariant = pendingSupplierVariantIds.has(supplierVariantId);
-          const needsEtaBackfill = etaBackfillSupplierVariantIds.has(supplierVariantId);
-          const needsAwbBackfill = awbBackfillSupplierVariantIds.has(supplierVariantId);
-          const orderMayNeedSettledBackfill = [...settledBackfillKeys].some((k) =>
-            k.startsWith(`${stockxOrderId}::`)
-          );
-          if (!isPendingVariant && !needsEtaBackfill && !needsAwbBackfill && !orderMayNeedSettledBackfill) {
-            skippedNotPendingVariant += 1;
-            console.info("[GALAXUS][STX][SYNC][SKIP] Not pending variant", {
-              chainId,
-              orderId: stockxOrderId,
-              orderNumber: (listNode as any)?.orderNumber ?? null,
-              supplierVariantId,
-            });
-            return;
+          if (fastVariant) {
+            const supplierVariantId = `stx_${fastVariant}`;
+            const isPendingVariant = pendingSupplierVariantIds.has(supplierVariantId);
+            const needsEtaBackfill = etaBackfillSupplierVariantIds.has(supplierVariantId);
+            const needsAwbBackfill = awbBackfillSupplierVariantIds.has(supplierVariantId);
+            const orderMayNeedSettledBackfill = [...settledBackfillKeys].some((k) =>
+              k.startsWith(`${stockxOrderId}::`)
+            );
+            if (!isPendingVariant && !needsEtaBackfill && !needsAwbBackfill && !orderMayNeedSettledBackfill) {
+              skippedNotPendingVariant += 1;
+              console.info("[GALAXUS][STX][SYNC][SKIP] Not pending variant", {
+                chainId,
+                orderId: stockxOrderId,
+                orderNumber: (listNode as any)?.orderNumber ?? null,
+                supplierVariantId,
+              });
+              return;
+            }
           }
 
           inspectedOrders += 1;

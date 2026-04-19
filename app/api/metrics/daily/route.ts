@@ -3,6 +3,8 @@ import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
 import { decathlonGrossLineAmount } from "@/decathlon/orders/margin";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
+import { isStockxMatchLinked } from "@/galaxus/stx/allocateGalaxusStxCost";
+import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { toZonedTime } from "date-fns-tz";
 
 export const runtime = "nodejs";
@@ -27,18 +29,6 @@ type DailyRow = {
   lineItemsCount: number;
   missingCostCount: number;
   missingSellDateCount: number;
-};
-
-const isStockxMatchLinked = (match: {
-  stockxOrderNumber?: string | null;
-  stockxOrderId?: string | null;
-  stockxChainId?: string | null;
-}) => {
-  if (!match) return false;
-  const onum = String(match.stockxOrderNumber ?? "").trim();
-  const oid = String(match.stockxOrderId ?? "").trim();
-  const chain = String(match.stockxChainId ?? "").trim();
-  return onum.length > 0 || oid.length > 0 || chain.length > 0;
 };
 
 export async function GET(req: NextRequest) {
@@ -136,7 +126,9 @@ export async function GET(req: NextRequest) {
           quantity: true,
           lineNetAmount: true,
           priceLineAmount: true,
-          order: { select: { orderDate: true } },
+          gtin: true,
+          supplierVariantId: true,
+          order: { select: { orderDate: true, galaxusOrderId: true } },
           stockxMatches: {
             orderBy: { updatedAt: "desc" },
             select: {
@@ -149,6 +141,8 @@ export async function GET(req: NextRequest) {
         },
       }),
     ]);
+
+    const galaxusLineCostById = await galaxusLineStockxCostChfByLineId(galaxusLines);
 
     const dailyMap = new Map<string, DailyRow>();
     const orderIdsByDay = new Map<string, Set<string>>();
@@ -244,10 +238,8 @@ export async function GET(req: NextRequest) {
     }
 
     for (const line of galaxusLines) {
-      const match = (line.stockxMatches || []).find(
-        (m) => isStockxMatchLinked(m) && toNumberSafe(m.stockxAmount, 0) > 0
-      );
-      if (!match) continue;
+      const cost = galaxusLineCostById.get(line.id) ?? 0;
+      if (cost <= 0) continue;
       const revenue = galaxusLineNetRevenueChf({
         lineNetAmount: line.lineNetAmount,
         priceLineAmount: line.priceLineAmount,
@@ -256,7 +248,7 @@ export async function GET(req: NextRequest) {
       const orderDate = line.order?.orderDate;
       if (!orderDate) continue;
       const dateKey = orderDate.toISOString().split("T")[0];
-      const margin = revenue - toNumberSafe(match.stockxAmount, 0);
+      const margin = revenue - cost;
       ensureDay(dateKey).marketplaceMarginChf += margin;
     }
 

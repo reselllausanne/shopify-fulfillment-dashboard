@@ -2,10 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
-import {
-  galaxusLineWarehouseStockHint,
-  isGalaxusStxSupplierLine,
-} from "@/galaxus/warehouse/lineInventorySource";
+import { digitsOnlyGtin, sameGtinKey } from "@/galaxus/orders/gtinKey";
+import { attachProcurementToLines } from "@/galaxus/orders/lineProcurement";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
 
 export const runtime = "nodejs";
@@ -75,21 +73,6 @@ async function repairOrderAddressesFromLatestOrdp(order: any) {
   };
 }
 
-function digitsOnlyGtin(s: string): string {
-  return String(s ?? "").replace(/\D/g, "");
-}
-
-/** True when two GTIN strings refer to the same article (EAN-13 vs GTIN-14 / leading zeros). */
-function sameGtinKey(a: string, b: string): boolean {
-  const da = digitsOnlyGtin(a);
-  const db = digitsOnlyGtin(b);
-  if (!da || !db) return false;
-  if (da === db) return true;
-  const na = da.padStart(14, "0").slice(-14);
-  const nb = db.padStart(14, "0").slice(-14);
-  return na === nb;
-}
-
 /** Map a mapping row's gtin to the exact gtin string stored on the order line (for record keys). */
 function resolveCanonicalLineGtin(mappingGtin: string, lineGtins: string[]): string | null {
   const m = String(mappingGtin ?? "").trim();
@@ -157,183 +140,6 @@ function enrichGalaxusOrderLine(
     (sizeRawFromMap && String(sizeRawFromMap).trim()) || (line.size ? String(line.size).trim() : null) || null;
 
   return { ...line, productName, size, supplierSku, sizeRaw, catalogPrice };
-}
-
-function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
-  const gtin = String(line?.gtin ?? "").trim();
-  const sv = String(line?.supplierVariantId ?? "").trim();
-  if (!gtin) return null;
-  return (
-    stxUnits.find(
-      (u: any) =>
-        String(u?.gtin ?? "") === gtin &&
-        String(u?.supplierVariantId ?? "") === sv &&
-        u?.stockxOrderId
-    ) ?? stxUnits.find((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId) ??
-    null
-  );
-}
-
-/** Per-line procurement: DB match rows (one per unit) and/or STX purchase units (sync + AWB). */
-function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], stxUnits: any[]) {
-  const matchesByLineId = new Map<string, any[]>();
-  for (const m of stockxMatches ?? []) {
-    const lid = String(m?.galaxusOrderLineId ?? "").trim();
-    if (!lid) continue;
-    const arr = matchesByLineId.get(lid) ?? [];
-    arr.push(m);
-    matchesByLineId.set(lid, arr);
-  }
-
-  return lines.map((line) => {
-    const qty = Math.max(Number(line.quantity ?? 1), 1);
-    const whHint = galaxusLineWarehouseStockHint(line);
-    if (whHint && isGalaxusStxSupplierLine(line)) {
-      const units = Array.from({ length: qty }, (_, i) => ({
-        unitIndex: i,
-        linked: true,
-        source: whHint === "MAISON" ? ("maison_stock" as const) : ("ner_stock" as const),
-        stockxOrderNumber: null as string | null,
-        stockxOrderId: null as string | null,
-        stockxAmount: null as number | null,
-        stockxCurrencyCode: null as string | null,
-        awb: null as string | null,
-      }));
-      return {
-        ...line,
-        procurement: {
-          ok: true,
-          source: units[0]?.source ?? null,
-          stockxOrderNumber: null,
-          stockxOrderId: null,
-          awb: null,
-          stockxCostChf: null,
-          stockxCostCurrency: null,
-          units,
-          warehouseStockHint: whHint,
-        },
-      };
-    }
-
-    const gtin = String(line?.gtin ?? "").trim();
-    const lineMatches = matchesByLineId.get(String(line?.id ?? "")) ?? [];
-    const match = lineMatches[0] ?? null;
-    const orderNum = match ? String(match.stockxOrderNumber ?? "").trim() : "";
-
-    let ok = false;
-    let source: "galaxus_match" | "stx_sync" | null = null;
-    let stockxOrderNumber: string | null = orderNum || null;
-    let stockxOrderId: string | null = null;
-    let awb: string | null = null;
-    let stockxCostChf: number | null = null;
-    let stockxCostCurrency: string | null = null;
-
-    if (orderNum) {
-      ok = true;
-      source = "galaxus_match";
-      awb = match?.stockxAwb != null ? String(match.stockxAwb) : null;
-      stockxOrderId = match?.stockxOrderId != null ? String(match.stockxOrderId).trim() || null : null;
-      const amt = match?.stockxAmount != null ? Number(match.stockxAmount) : null;
-      if (amt != null && Number.isFinite(amt)) {
-        stockxCostChf = amt;
-        stockxCostCurrency =
-          match?.stockxCurrencyCode != null ? String(match.stockxCurrencyCode).trim() : null;
-      }
-      const unit = pickStxPurchaseUnitForLine(line, stxUnits);
-      if (unit) {
-        if (!awb && unit.awb != null) awb = String(unit.awb);
-        if (!stockxOrderId && unit.stockxOrderId != null) stockxOrderId = String(unit.stockxOrderId);
-        if (stockxCostChf == null && unit.stockxSettledAmount != null) {
-          const n = Number(unit.stockxSettledAmount);
-          if (Number.isFinite(n)) {
-            stockxCostChf = n;
-            stockxCostCurrency =
-              unit.stockxSettledCurrency != null ? String(unit.stockxSettledCurrency).trim() : null;
-          }
-        }
-      }
-    } else if (gtin && stx?.buckets?.length && isGalaxusStxSupplierLine(line)) {
-      const sv = String(line?.supplierVariantId ?? "").trim();
-      const bucket =
-        stx.buckets.find((b: any) => String(b?.gtin ?? "") === gtin && String(b?.supplierVariantId ?? "") === sv) ??
-        stx.buckets.find((b: any) => String(b?.gtin ?? "") === gtin);
-      if (bucket && Number(bucket.needed) > 0 && Number(bucket.linked) >= Number(bucket.needed)) {
-        ok = true;
-        source = "stx_sync";
-        const bu = stxUnits.find(
-          (u: any) =>
-            String(u?.gtin ?? "") === gtin &&
-            String(u?.supplierVariantId ?? "") === String(bucket.supplierVariantId ?? "") &&
-            u?.stockxOrderId
-        );
-        const buLoose = bu ?? stxUnits.find((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId);
-        stockxOrderId = buLoose?.stockxOrderId != null ? String(buLoose.stockxOrderId) : null;
-        awb = buLoose?.awb != null ? String(buLoose.awb) : null;
-        const numFromUnit =
-          buLoose?.stockxSettledAmount != null ? Number(buLoose.stockxSettledAmount) : null;
-        if (numFromUnit != null && Number.isFinite(numFromUnit)) {
-          stockxCostChf = numFromUnit;
-          stockxCostCurrency =
-            buLoose?.stockxSettledCurrency != null
-              ? String(buLoose.stockxSettledCurrency).trim()
-              : null;
-        }
-        stockxOrderNumber =
-          (buLoose?.stockxOrderNumber != null && String(buLoose.stockxOrderNumber).trim()) ||
-          stockxOrderId;
-      }
-    }
-
-    const relevantStxUnits = gtin
-      ? stxUnits.filter((u: any) => String(u?.gtin ?? "") === gtin && u?.stockxOrderId && !u?.cancelledAt)
-      : [];
-
-    const units = Array.from({ length: qty }, (_, i) => {
-      const unitMatch = lineMatches.find((m: any) => Number(m?.unitIndex ?? 0) === i) ?? null;
-      if (unitMatch) {
-        return {
-          unitIndex: i,
-          linked: true,
-          source: "galaxus_match" as const,
-          stockxOrderNumber: unitMatch.stockxOrderNumber ?? null,
-          stockxOrderId: unitMatch.stockxOrderId ?? null,
-          stockxAmount: unitMatch.stockxAmount != null ? Number(unitMatch.stockxAmount) : null,
-          stockxCurrencyCode: unitMatch.stockxCurrencyCode ?? null,
-          awb: unitMatch.stockxAwb ?? null,
-        };
-      }
-      const stxUnit = relevantStxUnits[i] ?? null;
-      if (stxUnit) {
-        return {
-          unitIndex: i,
-          linked: true,
-          source: "stx_sync" as const,
-          stockxOrderNumber: stxUnit.stockxOrderNumber ?? stxUnit.stockxOrderId ?? null,
-          stockxOrderId: stxUnit.stockxOrderId ?? null,
-          stockxAmount: stxUnit.stockxSettledAmount != null ? Number(stxUnit.stockxSettledAmount) : null,
-          stockxCurrencyCode: stxUnit.stockxSettledCurrency ?? null,
-          awb: stxUnit.awb ?? null,
-        };
-      }
-      return { unitIndex: i, linked: false, source: null as string | null };
-    });
-    const allLinked = units.every((u) => u.linked);
-    const lineOk = allLinked || ok;
-
-    return {
-      ...line,
-      procurement: {
-        ok: lineOk,
-        source: allLinked ? (units[0]?.source ?? source) : source,
-        stockxOrderNumber,
-        stockxOrderId,
-        awb,
-        stockxCostChf,
-        stockxCostCurrency,
-        units,
-      },
-    };
-  });
 }
 
 export async function GET(

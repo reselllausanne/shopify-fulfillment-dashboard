@@ -162,6 +162,29 @@ const getActiveShippingLine = (
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null
 ) => orderInfo?.shippingLines?.find((line) => !line.isRemoved) || null;
 
+function normalizeAddressLine(value: unknown, ignore: Set<string>) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (ignore.has(text.toLowerCase())) return null;
+  return text;
+}
+
+function buildStreetLine(address: any, ignore: Set<string>) {
+  const line1 = normalizeAddressLine(address?.address1, ignore);
+  const line2 = normalizeAddressLine(address?.address2, ignore);
+  if (line1 && line2) {
+    const lower1 = line1.toLowerCase();
+    const lower2 = line2.toLowerCase();
+    if (lower1.includes(lower2)) return line1;
+    if (lower2.includes(lower1)) return line2;
+    if (line1.length <= 4 && line2.length >= 6) {
+      return `${line1} ${line2}`.trim();
+    }
+    return `${line1}, ${line2}`.trim();
+  }
+  return line1 ?? line2 ?? null;
+}
+
 function isPowerpayBilling(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null) {
   const gateways = orderInfo?.paymentGatewayNames ?? [];
   return gateways.some((gateway) =>
@@ -197,12 +220,19 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
     address?.name ||
     [address?.firstName, address?.lastName].filter(Boolean).join(" ").trim() ||
     null;
+  const company = String(address?.company ?? "").trim() || null;
+  const ignore = new Set(
+    [address?.firstName, address?.lastName, fullName, company]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const street = buildStreetLine(address, ignore);
 
   return {
-    name1: fullName,
-    firstName: address?.firstName || null,
-    name2: address?.lastName || null,
-    street: address?.address1 || null,
+    name1: company || fullName,
+    firstName: null,
+    name2: company ? fullName : null,
+    street,
     zip: address?.zip || null,
     city: address?.city || null,
     country: address?.countryCodeV2 || address?.country || null,

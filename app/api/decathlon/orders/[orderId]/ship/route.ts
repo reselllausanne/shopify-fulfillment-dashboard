@@ -66,6 +66,11 @@ function resolveAutoPrintEnabled() {
   return value === "1" || value === "true" || value === "yes";
 }
 
+function isMiraklMultiShipmentTrackingError(message: string): boolean {
+  const msg = message.toLowerCase();
+  return msg.includes("several shipments") || msg.includes("multiple shipments");
+}
+
 function resolvePrinterName() {
   return String(process.env.SWISS_POST_PRINTER_NAME || "").trim();
 }
@@ -203,6 +208,48 @@ function buildFullName(first: unknown, last: unknown): string | null {
   return parts.length ? parts.join(" ") : null;
 }
 
+function normalizeAddressLines(
+  source: any,
+  names?: { firstName?: string | null; lastName?: string | null; fullName?: string | null }
+) {
+  const ignore = new Set(
+    [names?.firstName, names?.lastName, names?.fullName]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const normalize = (value: unknown) => {
+    const text = String(value ?? "").trim();
+    if (!text) return null;
+    if (ignore.has(text.toLowerCase())) return null;
+    return text;
+  };
+  const pickFirst = (values: unknown[]) => {
+    for (const value of values) {
+      const candidate = normalize(value);
+      if (candidate) return candidate;
+    }
+    return null;
+  };
+  const line1 = pickFirst([
+    source?.street_1,
+    source?.street1,
+    source?.address1,
+    source?.address_1,
+    source?.street,
+  ]);
+  const line2 = pickFirst([source?.street_2, source?.street2, source?.address2, source?.address_2]);
+  if (line1 && line2) {
+    const lower1 = line1.toLowerCase();
+    const lower2 = line2.toLowerCase();
+    if (lower1.includes(lower2)) return { address1: line1, address2: null };
+    if (lower2.includes(lower1)) return { address1: line2, address2: null };
+    if (line1.length <= 4 && line2.length >= 6) {
+      return { address1: `${line1} ${line2}`.trim(), address2: null };
+    }
+  }
+  return { address1: line1 ?? null, address2: line2 ?? null };
+}
+
 function resolveRawRecipient(order: any) {
   const raw = order?.rawJson;
   if (!raw || typeof raw !== "object") return null;
@@ -225,26 +272,14 @@ function resolveRawRecipient(order: any) {
   const firstName = pickString(source.firstname, source.first_name, source.firstName);
   const lastName = pickString(source.lastname, source.last_name, source.lastName);
   const fullName = buildFullName(firstName, lastName);
-  const name = pickString(
-    source.name,
-    source.name1,
-    source.full_name,
-    fullName,
-    source.company,
-    source.company_2
-  );
+  const name = pickString(fullName, source.name, source.name1, source.full_name, source.company, source.company_2);
+  const { address1, address2 } = normalizeAddressLines(source, { firstName, lastName, fullName });
   return {
     name,
     email: pickString(source.email),
     phone: pickString(source.phone, source.phone_number, source.mobile, source.mobile_phone),
-    address1: pickString(
-      source.address1,
-      source.street1,
-      source.street_1,
-      source.address_1,
-      source.street
-    ),
-    address2: pickString(source.address2, source.street2, source.street_2, source.address_2),
+    address1,
+    address2,
     postalCode: pickString(source.zip_code, source.zipCode, source.zip, source.postal_code, source.postcode),
     city: pickString(source.city, source.town),
     country: pickString(source.country, source.country_code, source.countryCode, source.country_iso_code),
@@ -305,6 +340,21 @@ function normalizeMiraklOrderStateFromPayload(order: Record<string, unknown> | n
 function isMiraklAlreadyShippedTransitionError(message: string): boolean {
   const m = String(message ?? "");
   return /current status is\s*['"]?SHIPPED['"]?/i.test(m) && /SHIPPING/i.test(m);
+}
+
+function isMiraklShippingRequiredError(message: string): boolean {
+  const m = String(message ?? "");
+  return /status must be ['"]?SHIPPING['"]?/i.test(m) && /RECEIVED/i.test(m);
+}
+
+function buildMiraklAcceptPayload(lines: any[]) {
+  const orderLines = (lines ?? [])
+    .map((line) => ({
+      order_line_id: String(line?.orderLineId ?? "").trim(),
+      accepted: true,
+    }))
+    .filter((line) => line.order_line_id);
+  return { order_lines: orderLines };
 }
 
 type MiraklOrdersClient = ReturnType<typeof buildDecathlonOrdersClient>;
@@ -392,15 +442,15 @@ function fitAddress(address1: string, address2: string): {
 
 function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: string | null } {
   const rawRecipient = resolveRawRecipient(order);
-  const recipientName = pickString(order.recipientName, rawRecipient?.name);
-  const recipientAddress1 = pickString(order.recipientAddress1, rawRecipient?.address1);
-  const recipientAddress2 = pickString(order.recipientAddress2, rawRecipient?.address2);
-  const recipientPostalCode = pickString(order.recipientPostalCode, rawRecipient?.postalCode);
-  const recipientCity = pickString(order.recipientCity, rawRecipient?.city);
-  const recipientCountry = pickString(order.recipientCountry, rawRecipient?.country);
-  const recipientCountryCode = pickString(order.recipientCountryCode, rawRecipient?.countryCode);
-  const recipientPhone = pickString(order.recipientPhone, rawRecipient?.phone);
-  const recipientEmail = pickString(order.recipientEmail, rawRecipient?.email, order.customerEmail);
+  const recipientName = pickString(rawRecipient?.name, order.recipientName);
+  const recipientAddress1 = pickString(rawRecipient?.address1, order.recipientAddress1);
+  const recipientAddress2 = pickString(rawRecipient?.address2, order.recipientAddress2);
+  const recipientPostalCode = pickString(rawRecipient?.postalCode, order.recipientPostalCode);
+  const recipientCity = pickString(rawRecipient?.city, order.recipientCity);
+  const recipientCountry = pickString(rawRecipient?.country, order.recipientCountry);
+  const recipientCountryCode = pickString(rawRecipient?.countryCode, order.recipientCountryCode);
+  const recipientPhone = pickString(rawRecipient?.phone, order.recipientPhone);
+  const recipientEmail = pickString(rawRecipient?.email, order.recipientEmail, order.customerEmail);
   const hasRecipient = Boolean(
     recipientName ||
       recipientAddress1 ||
@@ -714,7 +764,18 @@ export async function POST(
     }
 
     let recipient = buildRecipient(order);
-    if (!isRecipientComplete(recipient)) {
+    const recipientLocked = Boolean((order as any).recipientAddressLocked);
+    if (recipientLocked && !isRecipientComplete(recipient)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Recipient address is locked but incomplete. Update the address before generating the label.",
+        },
+        { status: 400 }
+      );
+    }
+    if (!recipientLocked && !isRecipientComplete(recipient)) {
       try {
         const client = buildDecathlonOrdersClient();
         const detailsPayload = await client.getOrder(order.orderId);
@@ -782,7 +843,11 @@ export async function POST(
     const stored = await storage.uploadPdf(key, buffer);
     const client = buildDecathlonOrdersClient();
     let miraklShipmentId: string | null = null;
-    if (itemsProvided) {
+    const hasPriorShipments = (order.shipments ?? []).some(
+      (s: any) => Boolean(s?.shippedAt || s?.trackingNumber || s?.miraklShipmentId)
+    );
+    const shouldCreateShipment = itemsProvided || hasPriorShipments;
+    const createShipment = async () => {
       try {
         const st01 = await client.createShipments({
           shipments: [
@@ -804,6 +869,38 @@ export async function POST(
         miraklShipmentId = String(st01?.shipment_success?.[0]?.id ?? "").trim() || null;
       } catch (stErr: any) {
         const msg = String(stErr?.message ?? stErr);
+        if (isMiraklShippingRequiredError(msg)) {
+          const payload = buildMiraklAcceptPayload(orderLines);
+          if (payload.order_lines.length) {
+            try {
+              await client.acceptOrder(order.orderId, payload);
+            } catch (acceptErr: any) {
+              console.warn(
+                "[DECATHLON][SHIP] acceptOrder failed before retrying createShipments:",
+                acceptErr?.message ?? acceptErr
+              );
+            }
+            const retry = await client.createShipments({
+              shipments: [
+                {
+                  order_id: order.orderId,
+                  shipment_lines: itemsToShip.map(({ line, quantity }) => ({
+                    order_line_id: String(line.orderLineId ?? "").trim(),
+                    quantity,
+                  })),
+                  tracking: {
+                    carrier_code: "SWISSPOST",
+                    carrier_name: "Swiss Post",
+                    tracking_number: swissPostLabelId,
+                  },
+                  shipped: true,
+                },
+              ],
+            });
+            miraklShipmentId = String(retry?.shipment_success?.[0]?.id ?? "").trim() || null;
+            return;
+          }
+        }
         if (!isMiraklAlreadyShippedTransitionError(msg)) throw stErr;
         const meta = await tryResolveMiraklShipmentMeta(client, order.orderId);
         miraklShipmentId = meta.miraklShipmentId;
@@ -811,22 +908,32 @@ export async function POST(
           orderId: order.orderId,
         });
       }
+    };
+
+    if (shouldCreateShipment) {
+      await createShipment();
     } else {
-      await client.setTracking(order.orderId, {
-        carrier_code: "SWISSPOST",
-        carrier_name: "Swiss Post",
-        tracking_number: swissPostLabelId,
-      });
       try {
-        await client.shipOrder(order.orderId, {});
-      } catch (shipErr: any) {
-        const msg = String(shipErr?.message ?? shipErr);
-        if (!isMiraklAlreadyShippedTransitionError(msg)) throw shipErr;
-        const meta = await tryResolveMiraklShipmentMeta(client, order.orderId);
-        miraklShipmentId = meta.miraklShipmentId;
-        console.warn("[DECATHLON][SHIP] shipOrder skipped (already SHIPPED on Mirakl); persisting local shipment.", {
-          orderId: order.orderId,
+        await client.setTracking(order.orderId, {
+          carrier_code: "SWISSPOST",
+          carrier_name: "Swiss Post",
+          tracking_number: swissPostLabelId,
         });
+        try {
+          await client.shipOrder(order.orderId, {});
+        } catch (shipErr: any) {
+          const msg = String(shipErr?.message ?? shipErr);
+          if (!isMiraklAlreadyShippedTransitionError(msg)) throw shipErr;
+          const meta = await tryResolveMiraklShipmentMeta(client, order.orderId);
+          miraklShipmentId = meta.miraklShipmentId;
+          console.warn("[DECATHLON][SHIP] shipOrder skipped (already SHIPPED on Mirakl); persisting local shipment.", {
+            orderId: order.orderId,
+          });
+        }
+      } catch (trackErr: any) {
+        const msg = String(trackErr?.message ?? trackErr);
+        if (!isMiraklMultiShipmentTrackingError(msg)) throw trackErr;
+        await createShipment();
       }
     }
 

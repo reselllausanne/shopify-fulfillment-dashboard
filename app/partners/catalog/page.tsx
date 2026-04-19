@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { normalizeSize, normalizeSku } from "@/app/lib/normalize";
 
 type CatalogItem = {
   supplierVariantId: string;
@@ -20,12 +21,20 @@ type CatalogItem = {
   price?: string | number | null;
   stock?: number | null;
   updatedAt?: string | null;
+  leadTimeDays?: number | null;
 };
 
 type UpdatePayload = {
   supplierVariantId: string;
   price?: number | null;
   stock?: number | null;
+  supplierSku?: string;
+  gtin?: string | null;
+  supplierBrand?: string | null;
+  supplierProductName?: string | null;
+  sizeRaw?: string | null;
+  sizeNormalized?: string | null;
+  leadTimeDays?: number | null;
 };
 
 function normalizeNumber(value: any): string {
@@ -60,6 +69,12 @@ export default function PartnerCatalogPage() {
   const [limit, setLimit] = useState(200);
   const [editPrice, setEditPrice] = useState<Record<string, string>>({});
   const [editStock, setEditStock] = useState<Record<string, string>>({});
+  const [editSku, setEditSku] = useState<Record<string, string>>({});
+  const [editGtin, setEditGtin] = useState<Record<string, string>>({});
+  const [editBrand, setEditBrand] = useState<Record<string, string>>({});
+  const [editProductName, setEditProductName] = useState<Record<string, string>>({});
+  const [editSizeRaw, setEditSizeRaw] = useState<Record<string, string>>({});
+  const [editLeadTime, setEditLeadTime] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isNer, setIsNer] = useState(false);
 
@@ -110,6 +125,12 @@ export default function PartnerCatalogPage() {
       if (mode === "replace") {
         setEditPrice({});
         setEditStock({});
+        setEditSku({});
+        setEditGtin({});
+        setEditBrand({});
+        setEditProductName({});
+        setEditSizeRaw({});
+        setEditLeadTime({});
       }
     } catch (err: any) {
       setError(err.message ?? "Failed to load catalog");
@@ -150,19 +171,36 @@ export default function PartnerCatalogPage() {
     setBusyId(row.supplierVariantId);
     setError(null);
     try {
-      const priceValue = editPrice[row.supplierVariantId] ?? String(row.price ?? "");
-      const stockValue = editStock[row.supplierVariantId] ?? String(row.stock ?? "");
+      const id = row.supplierVariantId;
+      const priceValue = editPrice[id] ?? String(row.price ?? "");
+      const stockValue = editStock[id] ?? String(row.stock ?? "");
       const price = parseNumberOrNull(priceValue);
       const stock = parseIntOrNull(stockValue);
       if (price === null) throw new Error("Price must be a number");
       if (stock === null) throw new Error("Stock must be a number");
-      await applyUpdates([
-        {
-          supplierVariantId: row.supplierVariantId,
-          price,
-          stock,
-        },
-      ]);
+      const payload: UpdatePayload = { supplierVariantId: id, price, stock };
+      if (isNer) {
+        const skuRaw = (editSku[id] ?? row.supplierSku ?? "").trim();
+        const skuNorm = normalizeSku(skuRaw) ?? skuRaw;
+        const sizeRaw = (editSizeRaw[id] ?? row.sizeRaw ?? "").trim();
+        const normalizedSize = normalizeSize(sizeRaw);
+        const sizeNormFallback = (row.sizeNormalized ?? "").trim() || sizeRaw || null;
+        const sizeNorm = normalizedSize ?? sizeNormFallback;
+        const gtinRaw = (editGtin[id] ?? row.gtin ?? "").trim();
+        const brand = (editBrand[id] ?? row.supplierBrand ?? "").trim();
+        const productName = (editProductName[id] ?? row.supplierProductName ?? "").trim();
+        const leadRaw = (editLeadTime[id] ?? (row.leadTimeDays != null ? String(row.leadTimeDays) : "")).trim();
+        const leadParsed = leadRaw === "" ? null : parseIntOrNull(leadRaw);
+        if (leadRaw !== "" && leadParsed === null) throw new Error("Lead time must be an integer or empty");
+        payload.supplierSku = skuNorm;
+        payload.gtin = gtinRaw ? gtinRaw : null;
+        payload.supplierBrand = brand ? brand : null;
+        payload.supplierProductName = productName ? productName : null;
+        payload.sizeRaw = sizeRaw ? sizeRaw : null;
+        payload.sizeNormalized = sizeNorm ? String(sizeNorm) : null;
+        payload.leadTimeDays = leadParsed;
+      }
+      await applyUpdates([payload]);
     } catch (err: any) {
       setError(err.message ?? "Update failed");
     } finally {
@@ -198,7 +236,7 @@ export default function PartnerCatalogPage() {
           <h1 className="text-2xl font-semibold text-slate-900">Catalog & Pricing</h1>
           <p className="text-sm text-slate-500">
             {isNer
-              ? "Full catalog view (price + stock per row; use Galaxus admin for deep edits)."
+              ? "Full catalog: edit product fields, price, stock, and lead time per row (same API as Galaxus admin bulk)."
               : "You can view and edit only your own products (price + stock)."}
           </p>
         </div>
@@ -258,6 +296,12 @@ export default function PartnerCatalogPage() {
               <th className="px-2 py-2 text-left">SKU</th>
               <th className="px-2 py-2 text-left">GTIN</th>
               <th className="px-2 py-2 text-left">Size</th>
+              {isNer ? (
+                <>
+                  <th className="px-2 py-2 text-left">Brand</th>
+                  <th className="px-2 py-2 text-right">Lead (d)</th>
+                </>
+              ) : null}
               <th className="px-2 py-2 text-right">Price</th>
               <th className="px-2 py-2 text-right">Stock</th>
               <th className="px-2 py-2 text-left">Updated</th>
@@ -272,13 +316,97 @@ export default function PartnerCatalogPage() {
                   {row.partnerDisplayName ?? row.partnerKeyResolved ?? row.providerKey ?? "—"}
                 </td>
                 <td className="px-2 py-2 min-w-[10rem] max-w-[18rem]">
-                  <span className="line-clamp-2" title={row.displayProductName ?? row.supplierProductName ?? ""}>
-                    {row.displayProductName ?? row.supplierProductName ?? "—"}
-                  </span>
+                  {isNer && row.owned ? (
+                    <textarea
+                      className="w-full min-h-[2.5rem] rounded border border-slate-200 px-1 py-0.5 text-xs"
+                      rows={2}
+                      value={
+                        editProductName[row.supplierVariantId] ??
+                        (row.supplierProductName ?? row.displayProductName ?? "")
+                      }
+                      onChange={(event) =>
+                        setEditProductName((prev) => ({
+                          ...prev,
+                          [row.supplierVariantId]: event.target.value,
+                        }))
+                      }
+                    />
+                  ) : (
+                    <span className="line-clamp-2" title={row.displayProductName ?? row.supplierProductName ?? ""}>
+                      {row.displayProductName ?? row.supplierProductName ?? "—"}
+                    </span>
+                  )}
                 </td>
-                <td className="px-2 py-2">{row.supplierSku ?? "-"}</td>
-                <td className="px-2 py-2 font-mono">{row.gtin ?? "-"}</td>
-                <td className="px-2 py-2">{row.sizeRaw ?? "-"}</td>
+                <td className="px-2 py-2">
+                  {isNer && row.owned ? (
+                    <input
+                      className="w-full min-w-[5rem] rounded border border-slate-200 px-1 py-0.5 font-mono text-[11px]"
+                      value={editSku[row.supplierVariantId] ?? (row.supplierSku ?? "")}
+                      onChange={(event) =>
+                        setEditSku((prev) => ({ ...prev, [row.supplierVariantId]: event.target.value }))
+                      }
+                    />
+                  ) : (
+                    row.supplierSku ?? "—"
+                  )}
+                </td>
+                <td className="px-2 py-2 font-mono">
+                  {isNer && row.owned ? (
+                    <input
+                      className="w-full min-w-[6rem] rounded border border-slate-200 px-1 py-0.5 text-[11px]"
+                      value={editGtin[row.supplierVariantId] ?? (row.gtin ?? "")}
+                      onChange={(event) =>
+                        setEditGtin((prev) => ({ ...prev, [row.supplierVariantId]: event.target.value }))
+                      }
+                    />
+                  ) : (
+                    row.gtin ?? "—"
+                  )}
+                </td>
+                <td className="px-2 py-2">
+                  {isNer && row.owned ? (
+                    <input
+                      className="w-20 rounded border border-slate-200 px-1 py-0.5"
+                      value={editSizeRaw[row.supplierVariantId] ?? (row.sizeRaw ?? "")}
+                      onChange={(event) =>
+                        setEditSizeRaw((prev) => ({ ...prev, [row.supplierVariantId]: event.target.value }))
+                      }
+                    />
+                  ) : (
+                    row.sizeRaw ?? "—"
+                  )}
+                </td>
+                {isNer && row.owned ? (
+                  <>
+                    <td className="px-2 py-2">
+                      <input
+                        className="w-full min-w-[5rem] rounded border border-slate-200 px-1 py-0.5"
+                        value={editBrand[row.supplierVariantId] ?? (row.supplierBrand ?? "")}
+                        onChange={(event) =>
+                          setEditBrand((prev) => ({ ...prev, [row.supplierVariantId]: event.target.value }))
+                        }
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      <input
+                        className="w-14 rounded border border-slate-200 px-1 py-0.5 text-right"
+                        value={
+                          editLeadTime[row.supplierVariantId] ??
+                          (row.leadTimeDays != null ? String(row.leadTimeDays) : "")
+                        }
+                        onChange={(event) =>
+                          setEditLeadTime((prev) => ({ ...prev, [row.supplierVariantId]: event.target.value }))
+                        }
+                        placeholder="—"
+                      />
+                    </td>
+                  </>
+                ) : isNer ? (
+                  <>
+                    <td className="px-2 py-2 text-slate-400">—</td>
+                    <td className="px-2 py-2 text-slate-400">—</td>
+                  </>
+                ) : null}
                 <td className="px-2 py-2 text-right">
                   {row.owned ? (
                     <input
@@ -338,7 +466,7 @@ export default function PartnerCatalogPage() {
             ))}
             {items.length === 0 && (
               <tr>
-                <td className="px-2 py-4 text-center text-slate-500" colSpan={10}>
+                <td className="px-2 py-4 text-center text-slate-500" colSpan={isNer ? 12 : 10}>
                   No catalog rows found.
                 </td>
               </tr>

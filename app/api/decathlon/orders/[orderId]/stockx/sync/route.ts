@@ -117,11 +117,55 @@ export async function POST(
       });
     }
 
-    const orders = await fetchRecentStockxBuyingOrders(token, { first: 50, maxPages: 8, state: "PENDING" });
+    const pendingCount = pendingSupplierVariantIds.size;
+    const desiredCount = Math.min(30, Math.max(8, pendingCount * 2));
+    const pageSize = Math.min(40, Math.max(10, pendingCount * 2));
+    const maxPages = Math.min(2, Math.max(1, Math.ceil(desiredCount / pageSize)));
+    const orders = await fetchRecentStockxBuyingOrders(token, {
+      first: pageSize,
+      maxPages,
+      state: "PENDING",
+    });
+    const ordersToInspect = orders.slice(0, desiredCount);
 
-    const enrichLimiter = createLimiter(4);
+    const prefetchLimiter = createLimiter(6);
+    await Promise.all(
+      ordersToInspect.map((listNode) =>
+        prefetchLimiter(async () => {
+          const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
+          const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
+          if (!stockxOrderId || !chainId) return;
+          try {
+            await fetchDetailsCached(chainId, stockxOrderId);
+          } catch {
+            // ignore fast mode
+          }
+        })
+      )
+    );
+    const detailsCache = new Map<string, Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null>();
+    const fetchDetailsCached = async (
+      chainId: string,
+      orderId: string
+    ): Promise<Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null> => {
+      const key = `${chainId}::${orderId}`;
+      if (detailsCache.has(key)) {
+        return detailsCache.get(key) ?? null;
+      }
+      try {
+        const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+        detailsCache.set(key, details);
+        return details;
+      } catch (error) {
+        detailsCache.set(key, null);
+        throw error;
+      }
+    };
+
+    const enrichLimiter = createLimiter(3);
+    const enrichSource = (ordersToInspect as any[]).slice(0, 15);
     const stockxBuyingOrdersEnriched = await Promise.all(
-      (orders as any[]).map((listNode) =>
+      enrichSource.map((listNode) =>
         enrichLimiter(async () => {
           const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
           const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
@@ -137,7 +181,18 @@ export async function POST(
             };
           }
           try {
-            const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId: stockxOrderId });
+            const details = await fetchDetailsCached(chainId, stockxOrderId);
+            if (!details) {
+              return {
+                orderId: stockxOrderId,
+                chainId,
+                orderNumber: (listNode as any)?.orderNumber ?? null,
+                purchaseDate: (listNode as any)?.purchaseDate ?? null,
+                localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
+                details: null,
+                enrichmentError: "details_failed",
+              };
+            }
             return {
               orderId: stockxOrderId,
               chainId,
@@ -186,28 +241,26 @@ export async function POST(
     let errors = 0;
 
     await Promise.all(
-      orders.map((listNode: any) =>
+      ordersToInspect.map((listNode: any) =>
         limiter(async () => {
           const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
           const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
           if (!stockxOrderId || !chainId) return;
 
+          // Buying list often omits productVariant.id; variant exists on order details (same as enrich path).
           const fastVariant = extractStockxVariantId(listNode, null);
-          if (!fastVariant) {
-            skippedNoVariant += 1;
-            return;
-          }
-          const supplierVariantId = `stx_${fastVariant}`;
-          if (!pendingSupplierVariantIds.has(supplierVariantId)) {
-            skippedNotPendingVariant += 1;
-            return;
+          if (fastVariant) {
+            const sid = `stx_${fastVariant}`;
+            if (!pendingSupplierVariantIds.has(sid)) {
+              skippedNotPendingVariant += 1;
+              return;
+            }
           }
 
           inspectedOrders += 1;
-          let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>;
-          try {
-            details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId: stockxOrderId });
-          } catch {
+          const key = `${chainId}::${stockxOrderId}`;
+          const details = detailsCache.get(key) ?? null;
+          if (!details) {
             errors += 1;
             return;
           }
@@ -305,10 +358,10 @@ export async function POST(
       ok: true,
       orderId: order.orderId,
       decathlonOrderDbId: order.id,
-      stockxBuyingOrders: orders,
+      stockxBuyingOrders: ordersToInspect,
       stockxBuyingOrdersEnriched,
       sync: {
-        fetchedOrders: orders.length,
+        fetchedOrders: ordersToInspect.length,
         inspectedOrders,
         linked,
         alreadyLinked,

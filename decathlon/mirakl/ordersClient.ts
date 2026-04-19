@@ -97,6 +97,12 @@ export function buildDecathlonOrdersClient() {
   return {
     listOrders: (params?: Record<string, string | number | boolean>) =>
       fetchJson(buildUrl(auth.baseUrl, "/api/orders", params), auth),
+    /** Mirakl Connect v2 returns API. */
+    listReturns: (params?: Record<string, string | number | boolean>) =>
+      fetchJson(buildUrl(auth.baseUrl, "/v2/orders/returns", params), auth),
+    /** Mirakl RT11 returns API (seller). */
+    listReturnsRt11: (params?: Record<string, string | number | boolean>) =>
+      fetchJson(buildUrl(auth.baseUrl, "/api/returns", params), auth),
     getOrder: (orderId: string) => fetchJson(buildUrl(auth.baseUrl, `/api/orders/${orderId}`), auth),
     listCarriers: () => fetchJson(buildUrl(auth.baseUrl, "/api/shipping/carriers"), auth),
     acceptOrder: (orderId: string, payload: unknown) =>
@@ -149,6 +155,10 @@ export function buildDecathlonOrdersClient() {
         }>;
       }>(url.toString(), auth);
     },
+    listOrderDocumentsV2: (
+      orderId: string,
+      params?: Record<string, string | number | boolean>
+    ) => fetchJson(buildUrl(auth.baseUrl, `/v2/orders/${orderId}/documents`, params), auth),
     listDocuments: (params?: Record<string, string | number | boolean>) =>
       fetchJson(buildUrl(auth.baseUrl, "/api/orders/documents", params), auth),
     downloadDocuments: (params?: Record<string, string | number | boolean>) =>
