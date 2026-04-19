@@ -3,6 +3,58 @@ services:
     build: .
     env_file:
       - .env
+    environment:
+      - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
+      - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
+      - VNC_PASSWORD=${VNC_PASSWORD:-change-me-now}
     ports:
       - "3000:3000"
+      - "6080:6080"
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
+  worker-partner-enrich:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - WORKER_JOB_TYPE=partner-upload-enrich
+      - WORKER_POLL_MS=${WORKER_POLL_MS:-2000}
+      - WORKER_GROUP_LIMIT=${WORKER_GROUP_LIMIT:-1}
+      - WORKER_STALE_MS=${WORKER_STALE_MS:-900000}
+      - WORKER_HEARTBEAT_MS=${WORKER_HEARTBEAT_MS:-60000}
+    command: ["npx", "tsx", "scripts/workers/partnerEnrichWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
+  worker-partner-csv-import:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - WORKER_JOB_TYPE=partner-csv-import
+      - WORKER_POLL_MS=${WORKER_POLL_MS:-2000}
+      - WORKER_GROUP_LIMIT=${WORKER_GROUP_LIMIT:-1}
+      - WORKER_STALE_MS=${WORKER_STALE_MS:-900000}
+      - WORKER_HEARTBEAT_MS=${WORKER_HEARTBEAT_MS:-60000}
+    command: ["npx", "tsx", "scripts/workers/partnerCsvImportWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
+  worker-kickdb-enrich:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - WORKER_JOB_TYPE=kickdb-enrich-missing
+      - WORKER_POLL_MS=${WORKER_POLL_MS:-2000}
+      - WORKER_GROUP_LIMIT=${WORKER_GROUP_LIMIT:-1}
+      - WORKER_STALE_MS=${WORKER_STALE_MS:-900000}
+      - WORKER_HEARTBEAT_MS=${WORKER_HEARTBEAT_MS:-60000}
+    command: ["npx", "tsx", "scripts/workers/kickdbEnrichWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
     restart: unless-stopped

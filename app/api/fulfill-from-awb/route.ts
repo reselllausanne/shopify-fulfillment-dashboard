@@ -7,6 +7,7 @@ import { prisma } from "@/app/lib/prisma";
 import {
   buildLineItemsByFulfillmentOrder,
   createFulfillment,
+  createFulfillmentEvent,
   fetchOrderFulfillmentMap,
   fetchOrderIdByName,
   fetchOrderShippingInfo,
@@ -96,11 +97,33 @@ async function submitPrintJob(filePath: string): Promise<PrintJobResult> {
       args.push("-o", `page-top=${offsetY}`);
     }
     args.push(filePath);
-    const { stdout, stderr } = await execFile(PRINT_COMMAND, args);
-    return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() };
+    const run = async (command: string) => {
+      const { stdout, stderr } = await execFile(command, args);
+      return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() } as PrintJobResult;
+    };
+    try {
+      return await run(PRINT_COMMAND);
+    } catch (error: any) {
+      const message = error?.message || String(error);
+      const code = error?.code || "";
+      if ((code === "ENOENT" || /ENOENT/i.test(message)) && PRINT_COMMAND === "lp") {
+        // Common on daemons/PM2 where PATH does not include /usr/bin.
+        return await run("/usr/bin/lp");
+      }
+      throw error;
+    }
   } catch (error: any) {
-    console.error("[SWISS POST] Print job failed:", error?.message || error);
-    return { ok: false, error: error?.message || String(error) };
+    const message = error?.message || String(error);
+    const code = error?.code || "";
+    if (code === "ENOENT" || /ENOENT/i.test(message)) {
+      return {
+        ok: false,
+        skipped: true,
+        message: `Print command not found (${PRINT_COMMAND}). Install CUPS/lp or set SWISS_POST_PRINT_COMMAND.`,
+      };
+    }
+    console.error("[SWISS POST] Print job failed:", message);
+    return { ok: false, error: message };
   }
 }
 
@@ -166,40 +189,95 @@ const getActiveShippingLine = (
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null
 ) => orderInfo?.shippingLines?.find((line) => !line.isRemoved) || null;
 
+function normalizeAddressLine(value: unknown, ignore: Set<string>) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  if (ignore.has(text.toLowerCase())) return null;
+  return text;
+}
+
+function buildStreetLine(address: any, ignore: Set<string>) {
+  const line1 = normalizeAddressLine(address?.address1, ignore);
+  const line2 = normalizeAddressLine(address?.address2, ignore);
+  if (line1 && line2) {
+    const lower1 = line1.toLowerCase();
+    const lower2 = line2.toLowerCase();
+    if (lower1.includes(lower2)) return line1;
+    if (lower2.includes(lower1)) return line2;
+    if (line1.length <= 4 && line2.length >= 6) {
+      return `${line1} ${line2}`.trim();
+    }
+    return `${line1}, ${line2}`.trim();
+  }
+  return line1 ?? line2 ?? null;
+}
+
+function isPowerpayBilling(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null) {
+  const gateways = orderInfo?.paymentGatewayNames ?? [];
+  return gateways.some((gateway) =>
+    gateway.toLowerCase().includes("pay by invoice / pay later (with powerpay)".toLowerCase())
+  );
+}
+
 function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>): SwissPostRecipient {
   const address = orderInfo?.shippingAddress;
   const fullName =
     address?.name ||
     [address?.firstName, address?.lastName].filter(Boolean).join(" ").trim() ||
     null;
+  const company = String(address?.company ?? "").trim() || null;
+  const ignore = new Set(
+    [address?.firstName, address?.lastName, fullName, company]
+      .map((value) => String(value ?? "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const street = buildStreetLine(address, ignore);
+
+  const phone =
+    [address?.phone, orderInfo?.phone].map((p) => String(p || "").trim()).find(Boolean) || null;
 
   return {
-    name1: fullName,
-    firstName: address?.firstName || null,
-    name2: address?.lastName || null,
-    street: address?.address1 || null,
+    name1: company || fullName,
+    firstName: null,
+    name2: company ? fullName : null,
+    street,
     zip: address?.zip || null,
     city: address?.city || null,
     country: address?.countryCodeV2 || address?.country || null,
-    phone: null,
+    phone,
     email: orderInfo?.email || null,
   };
+}
+
+/** Swiss Post DCAPI Language enum: DE | FR | IT | EN */
+function swissPostLanguageFromOrderLocale(
+  customerLocale: string | null | undefined
+): "DE" | "FR" | "IT" | "EN" {
+  const raw = String(customerLocale || "").trim().toLowerCase();
+  if (!raw) return "EN";
+  const primary = raw.split(/[-_]/)[0] || raw;
+  if (primary.startsWith("de")) return "DE";
+  if (primary.startsWith("fr")) return "FR";
+  if (primary.startsWith("it")) return "IT";
+  if (primary.startsWith("en")) return "EN";
+  return "EN";
 }
 
 function buildSwissPostPayload(
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>,
   awb: string
 ) {
-  const language = process.env.SWISS_POST_LANGUAGE || "DE";
+  const language = swissPostLanguageFromOrderLocale(orderInfo?.customerLocale);
   const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
   const imageResolution = Number(process.env.SWISS_POST_IMAGE_RESOLUTION || 300);
-  const notificationServiceCode = Number(process.env.SWISS_POST_NOTIFICATION_SERVICE || 0);
-  const allowedNotifications = [1, 2, 4, 32, 64, 128, 256];
-  const notificationService =
-    allowedNotifications.includes(notificationServiceCode) && notificationServiceCode > 0
-      ? String(notificationServiceCode)
-      : null;
+  /**
+   * Swiss Post restricts notification codes by product (przl). Codes 2 and 4 need additional
+   * service AZS (and specific base services); sending 1+2+4 with plain ECO/SI yields "notification: Invalid".
+   * Service 1 (proof of posting) is valid for PostPac Economy / typical domestic labels.
+   * @see https://developer.post.ch/en/digital-commerce-api (notification services)
+   */
+  const defaultEmailNotificationService = "1";
 
   const sender = {
     name1: process.env.SWISS_POST_CUSTOMER_NAME1 || "",
@@ -223,6 +301,7 @@ function buildSwissPostPayload(
   const shippingOption = activeShippingLine
     ? SHIPPING_LINE_TO_SWISSPOST_MAP[activeShippingLine.title]
     : null;
+  const forceSignature = isPowerpayBilling(orderInfo);
   const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
     .split(",")
     .map((value: string) => value.trim())
@@ -232,6 +311,9 @@ function buildSwissPostPayload(
     : basePrzlValues.length
     ? basePrzlValues
     : ["ECO"];
+  if (forceSignature && !przlValues.includes("SI")) {
+    przlValues.unshift("SI");
+  }
 
   return {
     language,
@@ -253,23 +335,18 @@ function buildSwissPostPayload(
       attributes: {
         przl: przlValues,
       },
-      notification:
-        notificationService &&
-        (recipient.email || recipient.phone)
-          ? [
-              {
-                communication: {
-                  email: recipient.email || "",
-                  mobile: null,
-                },
-                service: notificationService,
-                freeText1: null,
-                freeText2: null,
-                language,
-                type: "EMAIL",
+      notification: recipient.email
+        ? [
+            {
+              communication: {
+                email: String(recipient.email).trim(),
               },
-            ]
-          : [],
+              service: defaultEmailNotificationService,
+              language,
+              type: "EMAIL" as const,
+            },
+          ]
+        : [],
     },
   };
 }
@@ -613,6 +690,19 @@ export async function POST(req: NextRequest) {
         { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, awb, error: "Missing fulfillment" },
         { status: 500 }
       );
+    }
+
+    if (shouldCallSwissPost && swissPostLabelId) {
+      try {
+        await createFulfillmentEvent({
+          fulfillmentId: fulfillment.id,
+          status: "LABEL_PRINTED",
+          message: "Etiquette Swiss Post créée",
+          happenedAt: new Date().toISOString(),
+        });
+      } catch (eventError: any) {
+        console.error("[FULFILL-FROM-AWB] Swiss Post event failed:", eventError?.message || eventError);
+      }
     }
 
     const record = await prisma.shopifyFulfillmentRecord.create({

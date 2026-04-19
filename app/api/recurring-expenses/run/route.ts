@@ -31,43 +31,95 @@ export async function POST(req: NextRequest) {
     }
 
     let created = 0;
+    const today = toUtcDateOnly(new Date());
+
     for (const item of items) {
-      const runDate = item.nextRunDate;
+      let runDate = toUtcDateOnly(item.nextRunDate);
+      let ranAny = false;
+      let guard = 0;
       const marker = `[RECURRING:${item.id}]`;
 
-      const existing = await prisma.personalExpense.findFirst({
-        where: {
-          date: runDate,
-          note: { contains: marker },
-        },
-      });
+      while (runDate <= today) {
+        guard += 1;
+        if (guard > 240) break;
+        if (item.endDate && runDate > item.endDate) break;
 
-      if (!existing) {
-        await prisma.personalExpense.create({
-          data: {
+        const existing = await prisma.personalExpense.findFirst({
+          where: {
             date: runDate,
-            amount: new Prisma.Decimal(toNumberSafe(item.amount, 0)),
-            currencyCode: item.currencyCode,
-            categoryId: item.categoryId,
-            accountId: item.accountId,
-            note: `${marker} ${item.name}`.trim(),
-            isBusiness: item.isBusiness,
+            note: { contains: marker },
           },
         });
-        created += 1;
+
+        if (!existing) {
+          await prisma.personalExpense.create({
+            data: {
+              date: runDate,
+              amount: new Prisma.Decimal(toNumberSafe(item.amount, 0)),
+              currencyCode: item.currencyCode,
+              categoryId: item.categoryId,
+              accountId: item.accountId,
+              note: `${marker} ${item.name}`.trim(),
+              isBusiness: item.isBusiness,
+            },
+          });
+          created += 1;
+        }
+
+        await prisma.manualFinanceEvent.upsert({
+          where: {
+            sourceType_sourceId_eventDate: {
+              sourceType: "RECURRING",
+              sourceId: item.id,
+              eventDate: runDate,
+            },
+          },
+          update: {
+            amount: new Prisma.Decimal(toNumberSafe(item.amount, 0)),
+            currencyCode: item.currencyCode,
+            direction: "OUT",
+            category: "OTHER",
+            expenseCategoryId: item.categoryId,
+            description: item.name,
+          },
+          create: {
+            eventDate: runDate,
+            amount: new Prisma.Decimal(toNumberSafe(item.amount, 0)),
+            currencyCode: item.currencyCode,
+            direction: "OUT",
+            category: "OTHER",
+            expenseCategoryId: item.categoryId,
+            sourceType: "RECURRING",
+            sourceId: item.id,
+            description: item.name,
+          },
+        });
+
+        ranAny = true;
+
+        const nextMonthIndex = runDate.getUTCMonth() + item.intervalMonths;
+        const nextYear = runDate.getUTCFullYear() + Math.floor(nextMonthIndex / 12);
+        const nextMonth = nextMonthIndex % 12;
+        runDate = getRunDateForMonth(nextYear, nextMonth, item.dayOfMonth);
       }
 
-      // Compute next run date based on interval
-      const nextMonthIndex = item.nextRunDate.getUTCMonth() + item.intervalMonths;
-      const nextYear = item.nextRunDate.getUTCFullYear() + Math.floor(nextMonthIndex / 12);
-      const nextMonth = nextMonthIndex % 12;
-      const nextRunDate = getRunDateForMonth(nextYear, nextMonth, item.dayOfMonth);
+      if (item.endDate && runDate > item.endDate) {
+        await prisma.recurringExpense.update({
+          where: { id: item.id },
+          data: {
+            lastRunAt: ranAny ? new Date() : item.lastRunAt,
+            nextRunDate: runDate,
+            active: false,
+          },
+        });
+        continue;
+      }
 
       await prisma.recurringExpense.update({
         where: { id: item.id },
         data: {
-          lastRunAt: new Date(),
-          nextRunDate,
+          lastRunAt: ranAny ? new Date() : item.lastRunAt,
+          nextRunDate: runDate,
         },
       });
     }

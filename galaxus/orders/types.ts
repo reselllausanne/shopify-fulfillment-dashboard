@@ -1,5 +1,8 @@
 export type GalaxusOrderLineInput = {
   lineNumber: number;
+  supplierPid?: string;
+  buyerPid?: string;
+  orderUnit?: string;
   supplierSku?: string;
   supplierVariantId?: string;
   productName: string;
@@ -8,21 +11,45 @@ export type GalaxusOrderLineInput = {
   gtin?: string;
   providerKey?: string;
   quantity: number;
+  qtyConfirmed?: number;
   vatRate: string;
+  taxAmountPerUnit?: string;
   unitNetPrice: string;
   lineNetAmount: string;
+  priceLineAmount?: string;
+  arrivalDateStart?: string;
+  arrivalDateEnd?: string;
   currencyCode?: string;
 };
 
 export type GalaxusShipmentInput = {
   shipmentId: string;
-  deliveryNoteNumber?: string;
-  deliveryNoteCreatedAt?: string;
+  dispatchNotificationId?: string;
+  dispatchNotificationCreatedAt?: string;
   incoterms?: string;
-  sscc?: string;
-  carrier?: string;
+  packageId?: string;
+  deliveryType?: string;
+  carrierRaw?: string;
+  carrierFinal?: string;
   trackingNumber?: string;
+  packageType?: "PARCEL" | "PALLET";
   shippedAt?: string;
+  galaxusShippedAt?: string;
+  delrFileName?: string;
+  delrSentAt?: string;
+  delrStatus?: "PENDING" | "UPLOADED" | "ERROR";
+  delrError?: string;
+  labelZpl?: string;
+  labelPdfUrl?: string;
+  labelGeneratedAt?: string;
+  items?: GalaxusShipmentItemInput[];
+};
+
+type GalaxusShipmentItemInput = {
+  supplierPid: string;
+  gtin14: string;
+  buyerPid?: string;
+  quantity: number;
 };
 
 export type GalaxusOrderStatusEventInput = {
@@ -35,7 +62,10 @@ export type GalaxusOrderStatusEventInput = {
 export type GalaxusOrderInput = {
   galaxusOrderId: string;
   orderNumber?: string;
+  supplierOrderId?: string;
   orderDate: string;
+  generationDate?: string;
+  language?: string;
   deliveryDate?: string;
   currencyCode?: string;
   customerName: string;
@@ -44,6 +74,8 @@ export type GalaxusOrderInput = {
   customerPostalCode: string;
   customerCity: string;
   customerCountry: string;
+  customerCountryCode?: string;
+  customerEmail?: string;
   customerVatId?: string;
   recipientName?: string;
   recipientAddress1?: string;
@@ -51,10 +83,27 @@ export type GalaxusOrderInput = {
   recipientPostalCode?: string;
   recipientCity?: string;
   recipientCountry?: string;
+  recipientCountryCode?: string;
+  recipientEmail?: string;
   recipientPhone?: string;
   referencePerson?: string;
   yourReference?: string;
   afterSalesHandling?: boolean;
+  customerType?: string;
+  deliveryType?: string;
+  isCollectiveOrder?: boolean;
+  physicalDeliveryNoteRequired?: boolean;
+  saturdayDeliveryAllowed?: boolean;
+  endCustomerOrderReference?: string;
+  buyerIdRef?: string;
+  supplierIdRef?: string;
+  ordrSentAt?: string;
+  ordrMode?: string;
+  buyerPartyId?: string;
+  buyerPartyGln?: string;
+  supplierPartyId?: string;
+  deliveryPartyId?: string;
+  marketplacePartyId?: string;
   lines: GalaxusOrderLineInput[];
   shipments?: GalaxusShipmentInput[];
   statusEvents?: GalaxusOrderStatusEventInput[];

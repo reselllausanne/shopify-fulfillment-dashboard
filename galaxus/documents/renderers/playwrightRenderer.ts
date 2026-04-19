@@ -3,7 +3,13 @@ import { chromium } from "playwright";
 type RenderOptions = {
   html: string;
   format?: "A4" | "A6";
+  width?: string;
+  height?: string;
   showPageNumbers?: boolean;
+  marginTop?: string;
+  marginRight?: string;
+  marginBottom?: string;
+  marginLeft?: string;
 };
 
 export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer> {
@@ -25,16 +31,18 @@ export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer>
       : "<div></div>";
 
     const pdfBuffer = await page.pdf({
-      format: options.format ?? "A4",
+      format: options.width || options.height ? undefined : options.format ?? "A4",
+      width: options.width,
+      height: options.height,
       printBackground: true,
       displayHeaderFooter: options.showPageNumbers ?? false,
       headerTemplate: "<div></div>",
       footerTemplate,
       margin: {
-        top: "14mm",
-        bottom: options.showPageNumbers ? "16mm" : "14mm",
-        left: "12mm",
-        right: "12mm",
+        top: options.marginTop ?? "14mm",
+        bottom: options.marginBottom ?? (options.showPageNumbers ? "16mm" : "14mm"),
+        left: options.marginLeft ?? "12mm",
+        right: options.marginRight ?? "12mm",
       },
     });
 

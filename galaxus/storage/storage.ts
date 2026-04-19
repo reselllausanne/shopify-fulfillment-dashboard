@@ -14,6 +14,17 @@ export function getStorageAdapter(): StorageAdapter {
   return createLocalStorage();
 }
 
+export function getStorageAdapterForBucket(bucket: string): StorageAdapter {
+  const normalized = String(bucket ?? "").trim();
+  if (SUPABASE_URL.includes("/storage/v1/s3") && SUPABASE_SERVICE_ROLE_KEY && SUPABASE_SERVICE_ROLE_KEY_SECRET) {
+    return createS3Storage(normalized || undefined);
+  }
+  if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    return createSupabaseStorage(normalized || undefined);
+  }
+  return createLocalStorage();
+}
+
 export function getStorageAdapterForUrl(storageUrl: string): StorageAdapter {
   if (isS3Url(storageUrl)) {
     return createS3Storage();

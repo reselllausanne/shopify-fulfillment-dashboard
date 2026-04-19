@@ -36,11 +36,12 @@
       .hero-h { height:290px !important; }
       .hide-m { display:none !important; }
     }
-    .step-dot { width:10px; height:10px; border-radius:999px; margin-top:6px; }
+    .step-dot { width:10px; height:10px; border-radius:999px; margin-top:4px; }
     .step-dot-active { border:2px solid #55b3f3; background:#55b3f3; }
     .step-dot-inactive { border:2px solid rgba(255,255,255,.35); background:transparent; }
     .step-text-active { color:#ffffff; font-weight:600; }
     .step-text-inactive { color:rgba(255,255,255,.55); font-weight:400; }
+    .step-text { word-break: break-word; font-size:20px; line-height:24px; }
   </style>
 </head>
 
@@ -135,7 +136,7 @@
 
                           <!-- RIGHT (steps) -->
                           <td class="stack steps-col" width="48%" style="width:48%; vertical-align:top;">
-                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#ffffff; opacity:.9; font-weight:800; padding-bottom:12px;">
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#ffffff; opacity:.9; font-weight:800; padding-bottom:6px;">
                               Statut
                             </div>
 
@@ -143,14 +144,14 @@
 
                               <!-- Step 1 -->
                               <tr>
-                                <td style="padding:6px 0;">
+                                <td style="padding:2px 0;">
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
                                         <div class="step-dot {{#step1_active}}step-dot-active{{/step1_active}}{{^step1_active}}step-dot-inactive{{/step1_active}}"></div>
                                       </td>
-                                      <td class="{{#step1_active}}step-text-active{{/step1_active}}{{^step1_active}}step-text-inactive{{/step1_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:26px; line-height:30px;">
+                                      <td class="step-text {{#step1_active}}step-text-active{{/step1_active}}{{^step1_active}}step-text-inactive{{/step1_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif;">
                                         {{step_1}}
                                       </td>
                                     </tr>
@@ -160,14 +161,14 @@
 
                               <!-- Step 2 -->
                               <tr>
-                                <td style="padding:6px 0;">
+                                <td style="padding:2px 0;">
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
                                         <div class="step-dot {{#step2_active}}step-dot-active{{/step2_active}}{{^step2_active}}step-dot-inactive{{/step2_active}}"></div>
                                       </td>
-                                      <td class="{{#step2_active}}step-text-active{{/step2_active}}{{^step2_active}}step-text-inactive{{/step2_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:26px; line-height:30px;">
+                                      <td class="step-text {{#step2_active}}step-text-active{{/step2_active}}{{^step2_active}}step-text-inactive{{/step2_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif;">
                                         {{step_2}}
                                       </td>
                                     </tr>
@@ -177,14 +178,14 @@
 
                               <!-- Step 3 -->
                               <tr>
-                                <td style="padding:6px 0;">
+                                <td style="padding:2px 0;">
                                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                     <tr>
                                       <td width="18" style="width:18px; vertical-align:top;">
                                         <div class="step-dot {{#step3_active}}step-dot-active{{/step3_active}}{{^step3_active}}step-dot-inactive{{/step3_active}}"></div>
                                       </td>
-                                      <td class="{{#step3_active}}step-text-active{{/step3_active}}{{^step3_active}}step-text-inactive{{/step3_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:26px; line-height:30px;">
+                                      <td class="step-text {{#step3_active}}step-text-active{{/step3_active}}{{^step3_active}}step-text-inactive{{/step3_active}}"
+                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif;">
                                         {{step_3}}
                                       </td>
                                     </tr>

@@ -1,0 +1,462 @@
+import { NextResponse } from "next/server";
+import { randomUUID, createHash } from "crypto";
+import { prisma } from "@/app/lib/prisma";
+import {
+  GALAXUS_FEED_UPLOADS_DISABLED,
+  GALAXUS_FEED_UPLOADS_MANUAL_ONLY,
+} from "@/galaxus/config";
+import {
+  GALAXUS_SFTP_HOST,
+  GALAXUS_PROVIDER_NAME,
+  GALAXUS_ASSORTMENT_FILE,
+  GALAXUS_SFTP_FEEDS_DIR,
+  GALAXUS_SFTP_IN_DIR,
+  GALAXUS_SFTP_OUT_DIR,
+  GALAXUS_SFTP_PASSWORD,
+  GALAXUS_SFTP_PORT,
+  GALAXUS_SFTP_USER,
+  GALAXUS_SUPPLIER_ID,
+  assertSftpConfig,
+} from "@/galaxus/edi/config";
+import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
+import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type UploadedFile = {
+  name: string;
+  path: string;
+  size: number;
+};
+
+function countCsvRows(csv: string): number {
+  if (!csv) return 0;
+  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return 0;
+  return Math.max(0, lines.length - 1); // exclude header
+}
+
+function normalizeProviderName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase() || "digitecgalaxus";
+}
+
+function hashContent(value: string | Buffer): string {
+  const hash = createHash("sha256");
+  hash.update(value);
+  return hash.digest("hex");
+}
+
+function extractSupplierKeysFromCsv(csv: string): string[] {
+  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length <= 1) return [];
+  const suppliers = new Set<string>();
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+    const first = line.split(",")[0] ?? "";
+    const providerKey = first.replace(/^"|"$/g, "").trim();
+    const supplierKey = providerKey.split("_")[0]?.trim();
+    if (supplierKey) suppliers.add(supplierKey);
+  }
+  return Array.from(suppliers.values()).sort();
+}
+
+function buildFeedFilename(
+  type: "product" | "price" | "stock" | "specifications",
+  providerName: string,
+  assortmentFile: string
+): string {
+  const safeProvider = normalizeProviderName(providerName);
+  const isAssortment = assortmentFile.toLowerCase() === type;
+  const suffix = isAssortment ? "_assortment" : "";
+  if (type === "price") return `PriceData_${safeProvider}${suffix}.csv`;
+  if (type === "stock") return `StockData_${safeProvider}${suffix}.csv`;
+  if (type === "specifications") return `SpecificationData_${safeProvider}${suffix}.csv`;
+  return `ProductData_${safeProvider}${suffix}.csv`;
+}
+
+function countCriticalGtinIssues(report: any): number {
+  const grouped = [
+    ...(report?.grouped?.master ?? []),
+    ...(report?.grouped?.stock ?? []),
+    ...(report?.grouped?.specs ?? []),
+  ];
+  return grouped.reduce((sum: number, issue: any) => {
+    const message = String(issue?.message ?? "").toLowerCase();
+    const isCritical =
+      message.includes("gtin is empty") ||
+      message.includes("gtin is invalid") ||
+      message.includes("wrong check digit");
+    return isCritical ? sum + Number(issue?.count ?? 0) : sum;
+  }, 0);
+}
+
+export async function POST(request: Request) {
+  const runId = randomUUID();
+  const startedAt = new Date();
+  let auditId: string | null = null;
+  try {
+    if (GALAXUS_FEED_UPLOADS_DISABLED) {
+      return NextResponse.json(
+        { ok: false, error: "Feed uploads are disabled" },
+        { status: 403 }
+      );
+    }
+    const { searchParams } = new URL(request.url);
+    const manual = ["1", "true", "yes"].includes((searchParams.get("manual") ?? "").toLowerCase());
+    if (GALAXUS_FEED_UPLOADS_MANUAL_ONLY && !manual) {
+      return NextResponse.json(
+        { ok: false, error: "Feed uploads are manual-only" },
+        { status: 403 }
+      );
+    }
+    assertSftpConfig();
+    const supplier = searchParams.get("supplier");
+    const rawType = (searchParams.get("type") ?? "all").toLowerCase();
+    const type = rawType === "price" ? "offer" : rawType;
+    // Keep backward-compat alias for combined runs, but allow stock-only and offer-only.
+    const effectiveType = type === "stock-price" || type === "offer-stock" ? "offer-stock" : type;
+    const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
+    const limitRaw = searchParams.get("limit");
+    const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
+    const origin = new URL(request.url).origin;
+    const supplierParam = supplier?.trim() ? `&supplier=${encodeURIComponent(supplier.trim())}` : "";
+    const providerKeysRaw = searchParams.get("providerKeys")?.trim() ?? "";
+    const providerKeysParam = providerKeysRaw
+      ? `&providerKeys=${encodeURIComponent(providerKeysRaw)}`
+      : "";
+    const limitParam = limit ? `&limit=${limit}` : "";
+    const providerParam = searchParams.get("provider")?.trim();
+    const providerName = providerParam || GALAXUS_PROVIDER_NAME || "digitecgalaxus";
+    const assortmentFile = searchParams.get("assortment")?.trim() || GALAXUS_ASSORTMENT_FILE || "price";
+
+    const masterUrl = `${origin}/api/galaxus/export/master?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+    const stockUrl = `${origin}/api/galaxus/export/stock?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+    const offerUrl = `${origin}/api/galaxus/export/offer?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+    const specsUrl = `${origin}/api/galaxus/export/specifications?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}${providerKeysParam}`;
+
+    const needsMaster =
+      effectiveType === "all" || effectiveType === "master" || effectiveType === "master-specs";
+    const needsStock = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "stock";
+    const needsOffer = effectiveType === "all" || effectiveType === "offer-stock" || effectiveType === "offer";
+    const needsSpecs =
+      effectiveType === "all" ||
+      effectiveType === "specs" ||
+      effectiveType === "specifications" ||
+      effectiveType === "master-specs";
+    auditId = (await (prisma as any).galaxusJobRun.create({
+      data: {
+        jobName: "feeds-upload",
+        runId,
+        supplierKey: supplier?.trim() || null,
+        startedAt,
+        finishedAt: startedAt,
+        success: false,
+      },
+    }))?.id ?? null;
+
+    const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
+      needsMaster ? runGalaxusExportGET(masterUrl) : Promise.resolve(null),
+      needsStock ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
+      needsOffer ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
+      needsSpecs ? runGalaxusExportGET(specsUrl) : Promise.resolve(null),
+    ]);
+
+    if (masterRes && !masterRes.ok) {
+      const body = await masterRes.text().catch(() => "");
+      throw new Error(`Master export failed: ${masterRes.status} ${masterRes.statusText} ${body}`);
+    }
+    if (stockRes && !stockRes.ok) {
+      const body = await stockRes.text().catch(() => "");
+      throw new Error(`Stock export failed: ${stockRes.status} ${stockRes.statusText} ${body}`);
+    }
+    if (offerRes && !offerRes.ok) {
+      const body = await offerRes.text().catch(() => "");
+      throw new Error(`Offer export failed: ${offerRes.status} ${offerRes.statusText} ${body}`);
+    }
+    if (specsRes && !specsRes.ok) {
+      const body = await specsRes.text().catch(() => "");
+      throw new Error(`Specifications export failed: ${specsRes.status} ${specsRes.statusText} ${body}`);
+    }
+
+    const [masterCsv, stockCsv, offerCsv, specsCsv] = await Promise.all([
+      masterRes ? masterRes.text() : Promise.resolve(""),
+      stockRes ? stockRes.text() : Promise.resolve(""),
+      offerRes ? offerRes.text() : Promise.resolve(""),
+      specsRes ? specsRes.text() : Promise.resolve(""),
+    ]);
+
+    const masterCount = masterRes ? countCsvRows(masterCsv) : null;
+    const stockCount = stockRes ? countCsvRows(stockCsv) : null;
+    const offerCount = offerRes ? countCsvRows(offerCsv) : null;
+    const specsCount = specsRes ? countCsvRows(specsCsv) : null;
+
+    const shouldRunValidation = needsMaster || needsStock || needsSpecs;
+    const validationUrl = `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
+    const validationRes = shouldRunValidation ? await runGalaxusExportGET(validationUrl).catch(() => null) : null;
+    const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
+    const report = validationData?.report ?? null;
+    const totalIssues =
+      (report?.summary?.master?.totalIssues ?? 0) +
+      (report?.summary?.stock?.totalIssues ?? 0) +
+      (report?.summary?.specs?.totalIssues ?? 0);
+    const criticalGtinIssues = shouldRunValidation ? countCriticalGtinIssues(report) : 0;
+    const mustBlockForCriticalGtin = shouldRunValidation && criticalGtinIssues > 0;
+    if (mustBlockForCriticalGtin || (shouldRunValidation && !force && totalIssues > 0)) {
+      const blockedManifests = [];
+      if (needsMaster && masterCsv) {
+        blockedManifests.push({
+          exportType: "master",
+          csv: masterCsv,
+          count: masterCount ?? 0,
+        });
+      }
+      if (needsStock && stockCsv) {
+        blockedManifests.push({
+          exportType: "stock",
+          csv: stockCsv,
+          count: stockCount ?? 0,
+        });
+      }
+      if (needsOffer && offerCsv) {
+        blockedManifests.push({
+          exportType: "offer",
+          csv: offerCsv,
+          count: offerCount ?? 0,
+        });
+      }
+    if (needsSpecs && specsCsv) {
+      blockedManifests.push({
+        exportType: "specs",
+        csv: specsCsv,
+        count: specsCount ?? 0,
+      });
+    }
+      for (const entry of blockedManifests) {
+        await (prisma as any).galaxusExportManifest.create({
+          data: {
+            runId,
+            exportType: entry.exportType,
+            supplierKeys: extractSupplierKeysFromCsv(entry.csv),
+            productCount: entry.count ?? 0,
+            checksum: hashContent(entry.csv),
+            storagePointer: null,
+            destination: null,
+            uploadStatus: "blocked",
+            responseJson: {
+              error: mustBlockForCriticalGtin ? "critical_gtin_validation_failed" : "validation_failed",
+              criticalGtinIssues,
+            },
+            validationIssuesJson: report ?? undefined,
+          },
+        });
+      }
+      if (auditId) {
+        await (prisma as any).galaxusJobRun.update({
+          where: { id: auditId },
+          data: {
+            finishedAt: new Date(),
+            success: false,
+            errorMessage: mustBlockForCriticalGtin
+              ? "Critical GTIN validation failed"
+              : "Validation failed",
+            resultJson: { validation: report, criticalGtinIssues },
+          },
+        });
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error: mustBlockForCriticalGtin
+            ? "Critical GTIN validation failed. Missing/invalid GTIN rows can never be sent."
+            : "Validation failed. Fix issues or pass force=1.",
+          report,
+          criticalGtinIssues,
+        },
+        { status: 409 }
+      );
+    }
+    if (needsStock && needsOffer && stockCount !== offerCount) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Stock and price feeds must have the same number of rows.",
+          counts: { stock: stockCount, offer: offerCount },
+        },
+        { status: 409 }
+      );
+    }
+    // Keep only stock<->price strict parity.
+    // Master/specs are catalog-oriented and can have more rows.
+
+    const masterName = buildFeedFilename("product", providerName, assortmentFile);
+    const stockName = buildFeedFilename("stock", providerName, assortmentFile);
+    const offerName = buildFeedFilename("price", providerName, assortmentFile);
+    const specsName = buildFeedFilename("specifications", providerName, assortmentFile);
+
+    const uploads: UploadedFile[] = [];
+    const manifestEntries: Array<{
+      exportType: string;
+      csv: string;
+      count: number | null;
+      name: string;
+      path: string;
+      size: number;
+    }> = [];
+
+    await withSftp(
+      {
+        host: GALAXUS_SFTP_HOST,
+        port: GALAXUS_SFTP_PORT,
+        username: GALAXUS_SFTP_USER,
+        password: GALAXUS_SFTP_PASSWORD,
+      },
+      async (client) => {
+        if (needsMaster) {
+          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, masterName, masterCsv);
+          uploads.push({
+            name: masterName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
+            size: Buffer.byteLength(masterCsv),
+          });
+          manifestEntries.push({
+            exportType: "master",
+            csv: masterCsv,
+            count: masterCount ?? null,
+            name: masterName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
+            size: Buffer.byteLength(masterCsv),
+          });
+        }
+
+        if (needsStock) {
+          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, stockName, stockCsv);
+          uploads.push({
+            name: stockName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${stockName}`,
+            size: Buffer.byteLength(stockCsv),
+          });
+          manifestEntries.push({
+            exportType: "stock",
+            csv: stockCsv,
+            count: stockCount ?? null,
+            name: stockName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${stockName}`,
+            size: Buffer.byteLength(stockCsv),
+          });
+        }
+        if (needsOffer) {
+          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, offerName, offerCsv);
+          uploads.push({
+            name: offerName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${offerName}`,
+            size: Buffer.byteLength(offerCsv),
+          });
+          manifestEntries.push({
+            exportType: "offer",
+            csv: offerCsv,
+            count: offerCount ?? null,
+            name: offerName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${offerName}`,
+            size: Buffer.byteLength(offerCsv),
+          });
+        }
+        if (needsSpecs) {
+          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, specsName, specsCsv);
+          uploads.push({
+            name: specsName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
+            size: Buffer.byteLength(specsCsv),
+          });
+          manifestEntries.push({
+            exportType: "specs",
+            csv: specsCsv,
+            count: specsCount ?? null,
+            name: specsName,
+            path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
+            size: Buffer.byteLength(specsCsv),
+          });
+        }
+      }
+    );
+
+    const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_FEEDS_DIR}`;
+    for (const entry of manifestEntries) {
+      await (prisma as any).galaxusExportManifest.create({
+        data: {
+          runId,
+          exportType: entry.exportType,
+          supplierKeys: extractSupplierKeysFromCsv(entry.csv),
+          productCount: entry.count ?? 0,
+          checksum: hashContent(entry.csv),
+          storagePointer: entry.path,
+          destination,
+          uploadStatus: "uploaded",
+          responseJson: { filename: entry.name, size: entry.size },
+          validationIssuesJson: report ?? undefined,
+        },
+      });
+    }
+
+    const isLocal =
+      !GALAXUS_SFTP_HOST ||
+      GALAXUS_SFTP_HOST === "localhost" ||
+      GALAXUS_SFTP_HOST === "127.0.0.1" ||
+      GALAXUS_SFTP_HOST.startsWith("192.168.");
+    const payload = {
+      ok: true,
+      type,
+      limit,
+      runId,
+      sftpHost: GALAXUS_SFTP_HOST,
+      sftpPort: GALAXUS_SFTP_PORT,
+      supplierId: GALAXUS_SUPPLIER_ID,
+      inDir: GALAXUS_SFTP_IN_DIR,
+      outDir: GALAXUS_SFTP_OUT_DIR,
+      feedsDir: GALAXUS_SFTP_FEEDS_DIR,
+      uploaded: uploads,
+      isRealGalaxus: GALAXUS_SFTP_HOST === "ftp.digitecgalaxus.ch",
+      warning: isLocal
+        ? "Uploaded to LOCAL SFTP. Galaxus staff cannot see these files."
+        : null,
+      counts: {
+        master: masterCount,
+        stock: stockCount,
+        offer: offerCount,
+        specs: specsCount,
+      },
+      validation: report ?? null,
+    };
+    if (auditId) {
+      await (prisma as any).galaxusJobRun.update({
+        where: { id: auditId },
+        data: {
+          finishedAt: new Date(),
+          success: true,
+          resultJson: payload,
+        },
+      });
+    }
+    return NextResponse.json(payload);
+  } catch (error: any) {
+    console.error("[GALAXUS][FEEDS][UPLOAD] Failed:", error);
+    if (auditId) {
+      await (prisma as any).galaxusJobRun.update({
+        where: { id: auditId },
+        data: {
+          finishedAt: new Date(),
+          success: false,
+          errorMessage: error?.message ?? "Upload failed.",
+        },
+      });
+    }
+    return NextResponse.json(
+      { ok: false, error: error?.message ?? "Upload failed." },
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET(request: Request) {
+  return POST(request);
+}

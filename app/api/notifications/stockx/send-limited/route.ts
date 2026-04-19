@@ -10,11 +10,16 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const limit = Math.min(Math.max(Number(body?.limit) || 2, 1), 10);
+    const limit = Math.min(Math.max(Number(body?.limit) || 2, 1), 200);
+    const scanLimit = Math.min(Math.max(Number(body?.scanLimit) || 500, 50), 2000);
     const force = Boolean(body?.force);
     const skipIfFulfilled = body?.skipIfFulfilled !== false;
     const skipIfEtaPassed = body?.skipIfEtaPassed !== false;
     const onlyToday = Boolean(body?.onlyToday);
+    const sinceDateRaw = typeof body?.sinceDate === "string" ? body.sinceDate : null;
+    const sinceDateParsed = sinceDateRaw ? new Date(sinceDateRaw) : null;
+    const sinceDate =
+      sinceDateParsed && !isNaN(sinceDateParsed.getTime()) ? sinceDateParsed : null;
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
@@ -22,6 +27,7 @@ export async function POST(req: NextRequest) {
       where: {
         stockxStates: { not: Prisma.DbNull },
         ...(onlyToday ? { stockxPurchaseDate: { gte: startOfToday } } : {}),
+        ...(sinceDate ? { stockxPurchaseDate: { gte: sinceDate } } : {}),
       },
       select: {
         id: true,
@@ -31,13 +37,17 @@ export async function POST(req: NextRequest) {
         stockxOrderNumber: true,
       },
       orderBy: { stockxPurchaseDate: "desc" },
-      take: 200,
+      take: scanLimit,
     });
 
     const candidates: string[] = [];
     for (const m of matches) {
       const states = (m.stockxStates as StockXState[]) || null;
-      const milestone = detectMilestone(m.stockxCheckoutType || null, states);
+      const milestone = detectMilestone(
+        m.stockxCheckoutType || null,
+        states,
+        m.stockxOrderNumber || null
+      );
       const milestoneKey = milestone?.key || null;
       if (!milestoneKey) continue;
       if (!force && milestoneKey === m.lastMilestoneKey) continue;
@@ -59,6 +69,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       limit,
+      scanLimit,
       attempted: candidates.length,
       sent: results.filter((r: any) => r.sent).length,
       skipped: results.filter((r: any) => r.skipped).length,

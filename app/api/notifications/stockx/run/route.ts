@@ -27,7 +27,11 @@ export async function POST(_req: NextRequest) {
     let processed = 0;
     for (const match of matches) {
       const states = (match.stockxStates as StockXState[]) || null;
-      const milestone = detectMilestone(match.stockxCheckoutType || null, states);
+      const milestone = detectMilestone(
+        match.stockxCheckoutType || null,
+        states,
+        match.stockxOrderNumber || null
+      );
       const milestoneKey = milestone?.key || null;
       if (!milestoneKey || milestoneKey === match.lastMilestoneKey) {
         continue;
@@ -48,13 +52,8 @@ export async function POST(_req: NextRequest) {
         }
       }
 
-      await prisma.orderMatch.update({
-        where: { id: match.id },
-        data: {
-          lastMilestoneKey: milestoneKey,
-          lastMilestoneAt: new Date(),
-        },
-      });
+      // IMPORTANT: Do not update lastMilestoneKey here.
+      // This route is a notifier/event recorder; sending is handled separately.
 
       processed += 1;
     }

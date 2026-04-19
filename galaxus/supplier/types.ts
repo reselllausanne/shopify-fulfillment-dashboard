@@ -36,4 +36,55 @@ export type SupplierClient = {
   supplierKey: string;
   fetchCatalog(): Promise<SupplierCatalogItem[]>;
   fetchStockAndPrice(): Promise<SupplierCatalogItem[]>;
+  createDropshipOrder?: (
+    request: SupplierDropshipOrderRequest
+  ) => Promise<SupplierDropshipOrderResponse>;
+  getDropshipOrderDetails?: (orderId: string) => Promise<SupplierDropshipOrderDetails>;
+};
+
+export type SupplierDropshipOrderAddress = {
+  name: string;
+  city: string;
+  zipCode: string;
+  street: string;
+  countryCode: string;
+  phone: string;
+  email: string;
+};
+
+export type SupplierDropshipOrderItem = {
+  sizeId?: number;
+  sku?: string;
+  sizeUs?: string;
+  quantity: number;
+};
+
+export type SupplierDropshipOrderRequest = {
+  deliveryAddress: SupplierDropshipOrderAddress;
+  clientProvidesShippingLabel?: boolean;
+  items: SupplierDropshipOrderItem[];
+};
+
+export type SupplierDropshipOrderResponse = {
+  orderId: string;
+  totalPrice?: number | null;
+  dropshipPackageId?: string | null;
+  raw?: unknown;
+};
+
+export type SupplierDropshipOrderDetails = {
+  orderId: string;
+  status:
+    | "UNCONFIRMED"
+    | "TO_SHIP"
+    | "ENDED"
+    | "CANCELED"
+    | "WAITING_FOR_INVOICE"
+    | string;
+  totalAmount?: number | null;
+  currency?: string | null;
+  createdAt?: string | null;
+  dropshipPackageId?: string | null;
+  trackingNumbers?: string[];
+  raw?: unknown;
 };

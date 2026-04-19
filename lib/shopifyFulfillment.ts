@@ -1,6 +1,6 @@
 import { extractEUSize, shopifyGraphQL } from "@/lib/shopifyAdmin";
 
-export type DbFulfillmentItem = {
+type DbFulfillmentItem = {
   sku?: string | null;
   variantId?: string | null;
   title?: string | null;
@@ -9,7 +9,7 @@ export type DbFulfillmentItem = {
   sourceId?: string | null;
 };
 
-export type FulfillmentOrderLineItemNode = {
+type FulfillmentOrderLineItemNode = {
   id: string;
   totalQuantity: number;
   remainingQuantity: number;
@@ -17,7 +17,7 @@ export type FulfillmentOrderLineItemNode = {
   variant?: { id?: string | null; sku?: string | null } | null;
 };
 
-export type FulfillmentOrderNode = {
+type FulfillmentOrderNode = {
   id: string;
   status: string;
   requestStatus: string;
@@ -25,7 +25,7 @@ export type FulfillmentOrderNode = {
   lineItems: { nodes: FulfillmentOrderLineItemNode[] };
 };
 
-export type OrderLineItemSummary = {
+type OrderLineItemSummary = {
   id: string;
   title: string;
   name?: string | null;
@@ -36,7 +36,7 @@ export type OrderLineItemSummary = {
   variantSku?: string | null;
 };
 
-export type ShippingLineInfo = {
+type ShippingLineInfo = {
   id: string;
   title: string;
   amount: string;
@@ -44,11 +44,14 @@ export type ShippingLineInfo = {
   isRemoved: boolean;
 };
 
-export type OrderShippingInfo = {
+type OrderShippingInfo = {
   id: string;
   name: string;
   email?: string | null;
   phone?: string | null;
+  /** Shopify order locale, e.g. fr-CH, de */
+  customerLocale?: string | null;
+  paymentGatewayNames?: string[];
   shippingAddress?: {
     firstName?: string | null;
     lastName?: string | null;
@@ -67,7 +70,7 @@ export type OrderShippingInfo = {
   shippingLines?: ShippingLineInfo[];
 };
 
-export type OrderFulfillmentMap = {
+type OrderFulfillmentMap = {
   order: {
     id: string;
     name: string;
@@ -75,23 +78,23 @@ export type OrderFulfillmentMap = {
   } | null;
 };
 
-export type FulfillmentOrderLineItemInput = {
+type FulfillmentOrderLineItemInput = {
   id: string;
   quantity: number;
 };
 
-export type FulfillmentOrderLineItemsInput = {
+type FulfillmentOrderLineItemsInput = {
   fulfillmentOrderId: string;
   fulfillmentOrderLineItems: FulfillmentOrderLineItemInput[];
 };
 
-export type FulfillmentTrackingInput = {
+type FulfillmentTrackingInput = {
   number?: string | null;
   url?: string | null;
   company?: string | null;
 };
 
-export type FulfillmentInput = {
+type FulfillmentInput = {
   notifyCustomer?: boolean;
   trackingInfo?: FulfillmentTrackingInput;
   lineItemsByFulfillmentOrder: FulfillmentOrderLineItemsInput[];
@@ -150,7 +153,9 @@ const ORDER_FULFILLMENTS_TRACKING_QUERY = /* GraphQL */ `
 query OrderFulfillmentsTracking($orderId: ID!) {
   order(id: $orderId) {
     fulfillments(first: 50) {
-      trackingInfo(first: 50) {
+      id
+      status
+      trackingInfo {
         company
         number
         url
@@ -180,6 +185,8 @@ query OrderShippingInfo($orderId: ID!) {
     name
     email
     phone
+    customerLocale
+    paymentGatewayNames
     shippingAddress {
       firstName
       lastName
@@ -260,7 +267,7 @@ export async function fetchOrderFulfillmentMap(orderId: string) {
 export async function orderHasTrackingNumber(orderId: string, trackingNumber: string) {
   const { data, errors } = await shopifyGraphQL<{
     order: {
-      fulfillments: { trackingInfo: { number?: string | null }[] }[];
+      fulfillments: { id: string; status: string; trackingInfo: { number?: string | null }[] }[];
     } | null;
   }>(ORDER_FULFILLMENTS_TRACKING_QUERY, { orderId });
 
@@ -278,6 +285,85 @@ export async function orderHasTrackingNumber(orderId: string, trackingNumber: st
   }
 
   return false;
+}
+
+type FulfillmentEventCreateResponse = {
+  fulfillmentEventCreate: {
+    fulfillmentEvent: { id: string; status: string; message?: string | null } | null;
+    userErrors: { field?: string[] | null; message: string }[];
+  };
+};
+
+const FULFILLMENT_EVENT_CREATE_MUTATION = /* GraphQL */ `
+mutation FulfillmentEventCreate($fulfillmentEvent: FulfillmentEventInput!) {
+  fulfillmentEventCreate(fulfillmentEvent: $fulfillmentEvent) {
+    fulfillmentEvent {
+      id
+      status
+      message
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
+export async function findFulfillmentIdByTrackingNumber(orderId: string, trackingNumber: string) {
+  const trimmed = trackingNumber.trim();
+  if (!trimmed) return null;
+  const { data, errors } = await shopifyGraphQL<{
+    order: {
+      fulfillments: {
+        id: string;
+        status: string;
+        trackingInfo: { number?: string | null; url?: string | null; company?: string | null }[];
+      }[];
+    } | null;
+  }>(ORDER_FULFILLMENTS_TRACKING_QUERY, { orderId });
+
+  if (errors?.length) {
+    throw new Error(`Shopify errors: ${JSON.stringify(errors)}`);
+  }
+
+  const fulfillments = data?.order?.fulfillments ?? [];
+  for (const fulfillment of fulfillments) {
+    for (const info of fulfillment.trackingInfo || []) {
+      if ((info?.number || "").trim() === trimmed) {
+        return fulfillment.id;
+      }
+    }
+  }
+
+  return null;
+}
+
+export async function createFulfillmentEvent(input: {
+  fulfillmentId: string;
+  status: string;
+  message?: string | null;
+  happenedAt?: string | null;
+  estimatedDeliveryAt?: string | null;
+}) {
+  const fulfillmentEvent: Record<string, any> = {
+    fulfillmentId: input.fulfillmentId,
+    status: input.status,
+  };
+  if (input.message) fulfillmentEvent.message = input.message;
+  if (input.happenedAt) fulfillmentEvent.happenedAt = input.happenedAt;
+  if (input.estimatedDeliveryAt) fulfillmentEvent.estimatedDeliveryAt = input.estimatedDeliveryAt;
+
+  const { data, errors } = await shopifyGraphQL<FulfillmentEventCreateResponse>(
+    FULFILLMENT_EVENT_CREATE_MUTATION,
+    { fulfillmentEvent }
+  );
+
+  if (errors?.length) {
+    throw new Error(`Shopify errors: ${JSON.stringify(errors)}`);
+  }
+
+  return data.fulfillmentEventCreate;
 }
 
 export function buildLineItemsByFulfillmentOrder(
@@ -509,6 +595,7 @@ export async function createFulfillment(fulfillment: FulfillmentInput) {
 type OrderShippingGraphQLResponse = {
   order:
     | (OrderShippingInfo & {
+        paymentGatewayNames?: string[];
         shippingLines?: {
           edges?: Array<{
             node?: {

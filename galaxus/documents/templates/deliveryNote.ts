@@ -23,7 +23,7 @@ function renderLine(line: OrderLine): string {
 
 function renderGroup(group: DeliveryNoteOrderGroup, isFirst: boolean): string {
   return `
-    <div style="${isFirst ? "" : "page-break-before: always;"}">
+    <div style="${isFirst ? "" : "margin-top: 14px; border-top: 1px solid #d1d5db; padding-top: 10px;"}">
       <div class="row mb8">
         <div class="col">
           <div class="box small"><strong>Order number</strong><br>${escapeHtml(group.orderNumber)}</div>

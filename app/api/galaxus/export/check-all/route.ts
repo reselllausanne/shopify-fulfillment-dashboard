@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
+import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
+import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import { toCsv } from "@/galaxus/exports/csv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +16,8 @@ type Issue = {
   column?: string;
   message: string;
   value?: string;
+  providerKey?: string;
+  gtin?: string;
 };
 
 type KickDbPayload = {
@@ -85,6 +90,21 @@ function stripToken(name: string, token: string): string {
 function truncate(value: string, max: number): string {
   if (value.length <= max) return value;
   return value.slice(0, max).trim();
+}
+
+function buildManufacturerKey(base: string, gtin: string | null, fallbackKey?: string | null): string {
+  const cleanedBase = sanitizeText(base);
+  const cleanedGtin = sanitizeText(gtin ?? "");
+  const cleanedFallback = sanitizeText(fallbackKey ?? "");
+  const suffix = cleanedGtin || cleanedFallback;
+  if (!suffix) {
+    return truncate(cleanedBase, 50);
+  }
+  const maxBaseLen = Math.max(0, 50 - suffix.length - 1);
+  if (!cleanedBase || maxBaseLen <= 0) {
+    return suffix;
+  }
+  return `${cleanedBase.slice(0, maxBaseLen)}-${suffix}`;
 }
 
 function stripParenthetical(text: string): string {
@@ -160,27 +180,11 @@ function cleanDescription(value?: string | null): string {
   return truncate(text, 4000);
 }
 
-function extractProductImages(
-  payload: KickDbPayload | null,
-  supplierImages: unknown,
-  fallback?: string | null
-): string[] {
-  const list: string[] = [];
-  if (payload?.image) list.push(payload.image);
-  if (Array.isArray(payload?.gallery)) {
-    for (const item of payload.gallery) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
+function extractProductImages(hostedImageUrl?: string | null): string[] {
+  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
+    return [hostedImageUrl.trim()];
   }
-  if (fallback) list.push(fallback);
-  if (Array.isArray(supplierImages)) {
-    for (const item of supplierImages) {
-      if (typeof item === "string" && item.length) list.push(item);
-    }
-  }
-  return Array.from(new Set(list))
-    .filter(Boolean)
-    .filter((value) => isAbsoluteUrl(value));
+  return [];
 }
 
 function decimalToString(value: unknown): string {
@@ -222,33 +226,52 @@ function isValidGtin(value: string): boolean {
   return calculated === checkDigit;
 }
 
-function buildMasterRows(mappings: any[]): ExportRow[] {
-  const rows: ExportRow[] = mappings.map((mapping) => {
-    const supplierVariant = mapping.supplierVariant;
-    const product = mapping.kickdbVariant?.product;
+function dedupeCandidatesByProviderKey(candidates: any[]) {
+  const seen = new Set<string>();
+  const unique: any[] = [];
+  for (const candidate of candidates) {
+    const key = String(candidate?.providerKey ?? "");
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+  return unique;
+}
+
+function buildMasterRows(candidates: any[]): ExportRow[] {
+  return candidates.flatMap((candidate): ExportRow[] => {
+    const mapping = candidate.mapping;
+    const supplierVariant = candidate.variant;
+    const product = candidate.product ?? mapping.kickdbVariant?.product;
     const payload = product?.name || product?.brand
       ? ({
           title: product?.name ?? undefined,
           brand: product?.brand ?? undefined,
-          sku: product?.styleId ?? supplierVariant?.supplierSku ?? undefined,
+          sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
         } as KickDbPayload)
       : null;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-    const images = extractProductImages(payload, supplierVariant?.images, product?.imageUrl ?? null);
-    const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? null);
-    const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? null);
+    const providerKey = candidate.providerKey ?? "";
+    const images = extractProductImages(supplierVariant?.hostedImageUrl ?? null);
+    if (images.length === 0) {
+      return [];
+    }
+    const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
+    const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
 
-    const manufacturerBase = sanitizeText(payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? "");
-    const manufacturerKey = truncate(
-      manufacturerBase ? `${manufacturerBase}-${mapping.gtin ?? ""}` : mapping.gtin ?? "",
-      50
+    const manufacturerBase =
+      payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
+    const manufacturerKey = buildManufacturerKey(
+      manufacturerBase,
+      mapping.gtin ?? null,
+      mapping.providerKey ?? null
     );
 
-    return {
+    const row: ExportRow = {
       ProviderKey: providerKey,
       Gtin: mapping.gtin ?? "",
       ManufacturerKey: manufacturerKey,
-      BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? ""),
+      BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? ""),
       ProductCategory: buildProductCategory(payload) || "Sneakers",
       ProductTitle_de: title,
       VariantName: variantName,
@@ -263,28 +286,15 @@ function buildMasterRows(mappings: any[]): ExportRow[] {
       ImageUrl_7: images[7] ?? "",
       ImageUrl_8: images[8] ?? "",
     };
+    return providerKey ? [row] : [];
   });
-
-  const uniqueRows: ExportRow[] = [];
-  const seenProviderKeys = new Set<string>();
-  const seenGtins = new Set<string>();
-  for (const row of rows) {
-    const providerKey = row.ProviderKey;
-    const gtin = row.Gtin;
-    if (providerKey && seenProviderKeys.has(providerKey)) continue;
-    if (gtin && seenGtins.has(gtin)) continue;
-    if (providerKey) seenProviderKeys.add(providerKey);
-    if (gtin) seenGtins.add(gtin);
-    uniqueRows.push(row);
-  }
-
-  return uniqueRows;
 }
 
-function buildStockRows(mappings: any[]): ExportRow[] {
-  return mappings.map((mapping) => {
-    const supplierVariant = mapping.supplierVariant;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
+function buildStockRows(candidates: any[]): ExportRow[] {
+  return candidates.map((candidate) => {
+    const mapping = candidate.mapping;
+    const supplierVariant = candidate.variant;
+    const providerKey = candidate.providerKey ?? "";
     const price = decimalToString(supplierVariant?.price ?? "");
     const stock = supplierVariant?.stock ?? 0;
 
@@ -297,12 +307,13 @@ function buildStockRows(mappings: any[]): ExportRow[] {
   });
 }
 
-function buildSpecsRows(mappings: any[]): ExportRow[] {
+function buildSpecsRows(candidates: any[]): ExportRow[] {
   const rows: ExportRow[] = [];
-  for (const mapping of mappings) {
-    const supplierVariant = mapping.supplierVariant;
-    const product = mapping.kickdbVariant?.product;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId);
+  for (const candidate of candidates) {
+    const mapping = candidate.mapping;
+    const supplierVariant = candidate.variant;
+    const product = candidate.product ?? mapping.kickdbVariant?.product;
+    const providerKey = candidate.providerKey;
     if (!providerKey) continue;
 
     if (supplierVariant?.sizeRaw) {
@@ -312,11 +323,12 @@ function buildSpecsRows(mappings: any[]): ExportRow[] {
         SpecificationValue: supplierVariant.sizeRaw,
       });
     }
-    if (product?.brand) {
+    const brand = supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand;
+    if (brand) {
       rows.push({
         ProviderKey: providerKey,
         SpecificationKey: "Brand",
-        SpecificationValue: product.brand,
+        SpecificationValue: brand,
       });
     }
   }
@@ -634,36 +646,113 @@ function validateSpecs(rows: ExportRow[]): Issue[] {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
+    const summaryOnly = ["1", "true", "yes"].includes((searchParams.get("summary") ?? "").toLowerCase());
     const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
 
-    const whereSupplier = supplier
-      ? { supplierVariant: { supplierVariantId: { startsWith: `${supplier}:` } } }
-      : {};
+    const mappingsWhere = buildFeedMappingsWhere(supplier, all);
 
-    const mappings = await prisma.variantMapping.findMany({
-      where: {
-        status: "MATCHED",
-        gtin: { not: null },
-        ...whereSupplier,
-      },
-      include: {
-        supplierVariant: true,
+    const masterRows: ExportRow[] = [];
+    const stockRows: ExportRow[] = [];
+    const specsRows: ExportRow[] = [];
+    const pageSize = all ? 500 : limit;
+    let currentOffset = all ? 0 : offset;
+    let lastBatch = 0;
+    const bestByGtin = new Map<string, any>();
+    const prismaAny = prisma as any;
+    const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
+    const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
+
+    do {
+      const mappings = await prismaAny.variantMapping.findMany({
+        where: {
+          ...mappingsWhere,
+        },
+        include: {
+          supplierVariant: true,
         kickdbVariant: { include: { product: true } },
-      },
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-      skip: offset,
-    });
+        },
+        orderBy: { updatedAt: "desc" },
+        take: pageSize,
+        skip: currentOffset,
+      });
+      lastBatch = mappings.length;
 
-    const masterRows = buildMasterRows(mappings);
-    const stockRows = buildStockRows(mappings);
-    const specsRows = buildSpecsRows(mappings);
+      accumulateBestCandidates(mappings, bestByGtin, {
+        keyBy: "gtin",
+        requireProductName: false,
+        requireImage: false,
+        galaxusPartnerKeysLower,
+      });
+
+      currentOffset += pageSize;
+    } while (all && lastBatch === pageSize);
+
+    const candidates = dedupeCandidatesByProviderKey(Array.from(bestByGtin.values()));
+    masterRows.push(...buildMasterRows(candidates));
+    stockRows.push(...buildStockRows(candidates));
+    specsRows.push(...buildSpecsRows(candidates));
 
     const masterIssues = validateMaster(masterRows);
     const stockIssues = validateStock(stockRows);
     const specsIssues = validateSpecs(specsRows);
+
+    const attachIssueContext = (issues: Issue[], rows: ExportRow[]) =>
+      issues.map((issue) => {
+        const rowIndex = Math.max(0, issue.row - 2);
+        const row = rows[rowIndex] ?? {};
+        const providerKey = String(row.ProviderKey ?? "").trim();
+        const gtin = String(row.Gtin ?? "").trim();
+        return { ...issue, providerKey: providerKey || undefined, gtin: gtin || undefined };
+      });
+
+    const masterIssuesWithContext = attachIssueContext(masterIssues, masterRows);
+    const stockIssuesWithContext = attachIssueContext(stockIssues, stockRows);
+    const specsIssuesWithContext = attachIssueContext(specsIssues, specsRows);
+
+    const groupIssues = (issues: Issue[]) => {
+      const map = new Map<string, { count: number; samples: string[] }>();
+      for (const issue of issues) {
+        const key = issue.message;
+        const entry = map.get(key) ?? { count: 0, samples: [] };
+        entry.count += 1;
+        const sample = issue.providerKey || issue.gtin || issue.value || "";
+        if (sample && entry.samples.length < 10) {
+          entry.samples.push(sample);
+        }
+        map.set(key, entry);
+      }
+      return Array.from(map.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .map(([message, data]) => ({ message, count: data.count, samples: data.samples }));
+    };
+
+    const download = ["1", "true", "yes"].includes((searchParams.get("download") ?? "").toLowerCase());
+    if (download) {
+      const allIssues = [
+        ...masterIssuesWithContext,
+        ...stockIssuesWithContext,
+        ...specsIssuesWithContext,
+      ];
+      const rows = allIssues.map((issue) => ({
+        Feed: issue.feed,
+        Row: issue.row,
+        Column: issue.column ?? "",
+        Message: issue.message,
+        Value: issue.value ?? "",
+        ProviderKey: issue.providerKey ?? "",
+        Gtin: issue.gtin ?? "",
+      }));
+      const csv = toCsv(["Feed", "Row", "Column", "Message", "Value", "ProviderKey", "Gtin"], rows);
+      return new NextResponse(csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename=\"galaxus-feed-issues-${Date.now()}.csv\"`,
+        },
+      });
+    }
 
     return NextResponse.json({
       ok: true,
@@ -673,11 +762,22 @@ export async function GET(request: Request) {
           stock: { totalRows: stockRows.length, totalIssues: stockIssues.length },
           specs: { totalRows: specsRows.length, totalIssues: specsIssues.length },
         },
-        issues: {
-          master: masterIssues,
-          stock: stockIssues,
-          specs: specsIssues,
+        grouped: {
+          master: groupIssues(masterIssuesWithContext),
+          stock: groupIssues(stockIssuesWithContext),
+          specs: groupIssues(specsIssuesWithContext),
         },
+        issues: summaryOnly
+          ? {
+              master: masterIssuesWithContext.slice(0, 200),
+              stock: stockIssuesWithContext.slice(0, 200),
+              specs: specsIssuesWithContext.slice(0, 200),
+            }
+          : {
+              master: masterIssuesWithContext,
+              stock: stockIssuesWithContext,
+              specs: specsIssuesWithContext,
+            },
       },
     });
   } catch (error: any) {

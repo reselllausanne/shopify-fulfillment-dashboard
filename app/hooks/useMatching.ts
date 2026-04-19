@@ -9,6 +9,7 @@ import {
 import type { PricingResult } from "@/app/types";
 import { postJson, getJson } from "@/app/lib/api";
 import { toNumber } from "@/app/utils/format";
+import { extractAwbFromTrackingUrl } from "@/app/utils/format";
 
 type SetMetafieldsArgs = {
   token: string;
@@ -31,6 +32,40 @@ type UseMatchingArgs = {
   pricingByOrder: Record<string, PricingResult | null>;
   reloadDb?: () => Promise<void>;
 };
+
+const GET_BUY_ORDER_TRACKING_QUERY = `
+  query GET_BUY_ORDER(
+    $chainId: String
+    $orderId: String
+  ) {
+    viewer {
+      order(chainId: $chainId, orderId: $orderId) {
+        ... on BuyOrder {
+          status
+          currentStatus { key }
+          checkoutType
+          states {
+            title
+            subtitle
+            status
+            progress
+            meta
+            sourceType
+          }
+          estimatedDeliveryDateRange {
+            estimatedDeliveryDate
+            latestEstimatedDeliveryDate
+          }
+          shipping {
+            shipment {
+              trackingUrl
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }: UseMatchingArgs) {
   const [shopifyItems, setShopifyItems] = useState<ShopifyLineItem[]>([]);
@@ -137,7 +172,25 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       console.warn("Error fetching DB matches, proceeding without filtering", err);
     }
 
-    const results = items.map((item: ShopifyLineItem) => matchShopifyToSupplier(item, availableSupplier));
+    // Enforce 1:1 matching across Shopify items (FIFO by order time)
+    const usedSupplierNumbers = new Set<string>();
+    const sortedItems = [...items].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+    const resultsById = new Map<string, MatchResult>();
+
+    for (const item of sortedItems) {
+      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+      const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
+      if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+      resultsById.set(item.lineItemId, result);
+    }
+
+    const results = items.map((item) => resultsById.get(item.lineItemId) || {
+      shopifyItem: item,
+      bestMatch: null,
+      allCandidates: [],
+    });
 
     setMatchResults(results);
     console.log(`Matched ${results.length} Shopify items`);
@@ -205,7 +258,18 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       console.warn("Error fetching DB matches, proceeding without filtering", err);
     }
 
-    const newMatchResults = fetchedLineItems.map((item) => matchShopifyToSupplier(item, availableSupplier));
+    const usedSupplierNumbers = new Set<string>();
+    for (const result of matchResults) {
+      const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
+      if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+    }
+
+    const newMatchResults = fetchedLineItems.map((item) => {
+      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+      const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
+      if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+      return result;
+    });
 
     setShopifyItems((prev) => {
       const existingIds = new Set(prev.map((p) => p.lineItemId));
@@ -249,34 +313,101 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
    * This is critical because the matching flow filters out already-matched supplier orders,
    * so pressing "match all" alone may not update old DB rows.
    */
-  const refreshDbMatchesTracking = async () => {
+  const refreshDbMatchesTracking = async (
+    token?: string,
+    options?: { onlyMissingTracking?: boolean; limit?: number }
+  ) => {
     try {
       const dbRes = await getJson<any>("/api/db/matches");
       if (!dbRes.ok) {
         throw new Error(`Failed to load DB matches: ${dbRes.status}`);
       }
 
-      const matches: any[] = dbRes.data?.matches || [];
+      const matchesRaw: any[] = dbRes.data?.matches || [];
       const sourceOrders = (enrichedOrders || orders) as any[];
+      const onlyMissingTracking = options?.onlyMissingTracking ?? true;
+      const limit = Math.max(1, Math.min(2000, Number(options?.limit || 800)));
+
+      const stockxMatches = matchesRaw.filter((m) => (m.supplierSource || "STOCKX") === "STOCKX");
+      const filteredMatches = stockxMatches
+        .filter((m) => {
+          if (!onlyMissingTracking) return true;
+          const tracking = (m.stockxTrackingUrl || "").trim();
+          const awb = (m.stockxAwb || "").trim();
+          return !tracking || !awb;
+        })
+        .slice(0, limit);
 
       let updated = 0;
       let skipped = 0;
+      let fetchedFromApi = 0;
+      let missingIdentifiers = 0;
+      let apiErrors = 0;
 
-      for (const m of matches) {
-        // Only refresh StockX-backed matches
-        const supplierSource = (m.supplierSource || "STOCKX").toString();
-        if (supplierSource !== "STOCKX") {
-          skipped += 1;
-          continue;
-        }
-
+      for (const m of filteredMatches) {
         const supplierOrderNumber = m.stockxOrderNumber;
         if (!supplierOrderNumber) {
           skipped += 1;
           continue;
         }
 
-        const raw = sourceOrders.find((o: any) => o.orderNumber === supplierOrderNumber);
+        let raw = sourceOrders.find((o: any) => o.orderNumber === supplierOrderNumber);
+
+        // Fallback for old orders not present in currently loaded supplier list:
+        // pull fresh status/tracking from StockX using persisted chainId/orderId.
+        if (!raw && token?.trim()) {
+          const chainId = m.stockxChainId;
+          const orderId = m.stockxOrderId;
+          if (!chainId || !orderId) {
+            missingIdentifiers += 1;
+            skipped += 1;
+            continue;
+          }
+
+          try {
+            const detailRes = await postJson<any>("/api/stockx", {
+              token: token.trim(),
+              operationName: "GET_BUY_ORDER",
+              query: GET_BUY_ORDER_TRACKING_QUERY,
+              variables: {
+                chainId,
+                orderId,
+              },
+            });
+            const buyOrder = detailRes.data?.data?.viewer?.order;
+            // StockX can return partial GraphQL errors while still providing a valid order payload.
+            // Accept partial responses when viewer.order exists so tracking/AWB backfill can proceed.
+            if (!detailRes.ok && !buyOrder) {
+              apiErrors += 1;
+              skipped += 1;
+              continue;
+            }
+            if (!buyOrder) {
+              skipped += 1;
+              continue;
+            }
+
+            const trackingUrl = buyOrder?.shipping?.shipment?.trackingUrl || null;
+            raw = {
+              orderNumber: supplierOrderNumber,
+              statusKey: buyOrder?.currentStatus?.key || null,
+              statusKeyB: buyOrder?.currentStatus?.key || null,
+              statusB: buyOrder?.status || null,
+              awb: extractAwbFromTrackingUrl(trackingUrl),
+              trackingUrl,
+              stockxCheckoutType: buyOrder?.checkoutType || null,
+              stockxStates: buyOrder?.states || null,
+              estimatedDeliveryB: buyOrder?.estimatedDeliveryDateRange?.estimatedDeliveryDate || null,
+              latestEstimatedDeliveryB: buyOrder?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate || null,
+            };
+            fetchedFromApi += 1;
+          } catch {
+            apiErrors += 1;
+            skipped += 1;
+            continue;
+          }
+        }
+
         if (!raw) {
           skipped += 1;
           continue;
@@ -325,8 +456,11 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       alert(
         `✅ Refresh existing DB matches done.\n\n` +
           `Updated: ${updated}\n` +
-          `Skipped: ${skipped}\n\n` +
-          `This repopulates ETA start/end + tracking/states for old orders when data is available in the currently loaded StockX list.`
+          `Skipped: ${skipped}\n` +
+          `Fetched via StockX API: ${fetchedFromApi}\n` +
+          `Missing chain/order IDs: ${missingIdentifiers}\n` +
+          `StockX API errors: ${apiErrors}\n\n` +
+          `This repopulates ETA/tracking/states for old orders, including orders not currently loaded in the table.`
       );
     } catch (err: any) {
       console.error("[DB_REFRESH] Failed:", err);

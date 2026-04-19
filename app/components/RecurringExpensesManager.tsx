@@ -18,6 +18,7 @@ type RecurringExpense = {
   dayOfMonth: number;
   intervalMonths: number;
   startDate: string;
+  endDate?: string | null;
   nextRunDate: string;
   lastRunAt?: string | null;
   active: boolean;
@@ -41,8 +42,25 @@ export default function RecurringExpensesManager() {
     dayOfMonth: "1",
     intervalMonths: "1",
     startDate: new Date().toISOString().split("T")[0],
+    endDate: "",
     note: "",
   });
+
+  const defaultBackfillFrom = () => {
+    const d = new Date();
+    d.setUTCMonth(d.getUTCMonth() - 3);
+    return d.toISOString().split("T")[0];
+  };
+
+  const [bfFrom, setBfFrom] = useState(defaultBackfillFrom);
+  const [bfTo, setBfTo] = useState(() => new Date().toISOString().split("T")[0]);
+  const [bfTemplateId, setBfTemplateId] = useState("");
+  const [bfBusy, setBfBusy] = useState(false);
+
+  const [purgeTemplateId, setPurgeTemplateId] = useState("");
+  const [purgeFrom, setPurgeFrom] = useState("");
+  const [purgeTo, setPurgeTo] = useState("");
+  const [purgeBusy, setPurgeBusy] = useState(false);
 
   const resetForm = () => {
     setForm({
@@ -54,6 +72,7 @@ export default function RecurringExpensesManager() {
       dayOfMonth: "1",
       intervalMonths: "1",
       startDate: new Date().toISOString().split("T")[0],
+      endDate: "",
       note: "",
     });
     setEditingId(null);
@@ -78,15 +97,21 @@ export default function RecurringExpensesManager() {
 
   const handleSave = async () => {
     if (!form.name || !form.amount || !form.categoryId || !form.accountId) {
-      alert("Missing required fields: name, amount, category, account");
+      alert("Missing required fields: name, amount, category, payment source");
       return;
     }
     setSaving(true);
     const payload = {
-      ...form,
+      name: form.name,
       amount: Number(form.amount),
+      categoryId: form.categoryId,
+      accountId: form.accountId,
+      isBusiness: form.isBusiness,
       dayOfMonth: Number(form.dayOfMonth),
       intervalMonths: Number(form.intervalMonths),
+      startDate: form.startDate,
+      endDate: form.endDate.trim() === "" ? null : form.endDate,
+      note: form.note.trim() === "" ? null : form.note,
     };
 
     const res = editingId
@@ -103,7 +128,7 @@ export default function RecurringExpensesManager() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this recurring expense?")) return;
+    if (!confirm("Delete this recurring expense template? (Generated expense rows are not removed.)")) return;
     const res = await delJson<{ error?: string }>(`/api/recurring-expenses?id=${id}`);
     if (res.ok) loadData();
   };
@@ -119,6 +144,7 @@ export default function RecurringExpensesManager() {
       dayOfMonth: String(item.dayOfMonth),
       intervalMonths: String(item.intervalMonths),
       startDate: item.startDate ? new Date(item.startDate).toISOString().split("T")[0] : "",
+      endDate: item.endDate ? new Date(item.endDate).toISOString().split("T")[0] : "",
       note: item.note || "",
     });
   };
@@ -144,7 +170,63 @@ export default function RecurringExpensesManager() {
     }
   };
 
-  const dayOptions = useMemo(() => Array.from({ length: 28 }, (_, i) => String(i + 1)), []);
+  const runBackfill = async () => {
+    if (!bfFrom || !bfTo) {
+      alert("Choose from and to dates.");
+      return;
+    }
+    setBfBusy(true);
+    const res = await postJson<{
+      error?: string;
+      createdExpenses?: number;
+      upsertedManualEvents?: number;
+    }>("/api/recurring-expenses/backfill", {
+      from: bfFrom,
+      to: bfTo,
+      ...(bfTemplateId ? { id: bfTemplateId } : {}),
+    });
+    setBfBusy(false);
+    if (!res.ok) {
+      alert(res.data?.error || "Backfill failed");
+      return;
+    }
+    alert(
+      `Backfill done: ${res.data?.createdExpenses ?? 0} new expense row(s), ${res.data?.upsertedManualEvents ?? 0} manual finance sync row(s).`
+    );
+    await loadData();
+  };
+
+  const runPurgeGenerated = async () => {
+    if (!purgeTemplateId) {
+      alert("Select a recurring template to purge generated rows for.");
+      return;
+    }
+    if (
+      !confirm(
+        "Delete all PersonalExpense rows (and linked manual finance rows) created from this recurring template? You can backfill again afterwards."
+      )
+    ) {
+      return;
+    }
+    const q = new URLSearchParams({ recurringId: purgeTemplateId });
+    if (purgeFrom.trim()) q.set("from", purgeFrom.trim());
+    if (purgeTo.trim()) q.set("to", purgeTo.trim());
+    setPurgeBusy(true);
+    const res = await delJson<{ error?: string; deletedPersonalExpenses?: number }>(
+      `/api/recurring-expenses/generated?${q.toString()}`
+    );
+    setPurgeBusy(false);
+    if (!res.ok) {
+      alert(res.data?.error || "Purge failed");
+      return;
+    }
+    alert(
+      `Removed ${res.data?.deletedPersonalExpenses ?? 0} expense row(s). Refresh the financial overview if it is open.`
+    );
+    await loadData();
+  };
+
+  const dayOptions = useMemo(() => Array.from({ length: 31 }, (_, i) => String(i + 1)), []);
 
   if (loading) {
     return <div className="text-gray-600">Loading recurring expenses...</div>;
@@ -154,12 +236,18 @@ export default function RecurringExpensesManager() {
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">🔁 Recurring Subscriptions</h2>
+          <div>
+            <h2 className="text-lg font-semibold">🔁 Recurring expenses</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Label, category, amount, cadence, start/end, payment source (card or bank account), business vs personal,
+              notes. Use Backfill / Remove generated rows to clean history.
+            </p>
+          </div>
           <button
             onClick={() => runNow()}
-            className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm"
+            className="px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 text-sm shrink-0"
           >
-            Run Due Now
+            Run due now
           </button>
         </div>
 
@@ -167,7 +255,7 @@ export default function RecurringExpensesManager() {
           <input
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="Name (e.g., Shopify, GSuite)"
+            placeholder="Label (e.g. Shopify, insurance)"
             className="px-3 py-2 border rounded"
           />
           <input
@@ -193,7 +281,7 @@ export default function RecurringExpensesManager() {
             onChange={(e) => setForm({ ...form, accountId: e.target.value })}
             className="px-3 py-2 border rounded"
           >
-            <option value="">Account</option>
+            <option value="">Payment source (card / bank)</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -207,7 +295,7 @@ export default function RecurringExpensesManager() {
           >
             {dayOptions.map((d) => (
               <option key={d} value={d}>
-                Day {d}
+                Day of month {d}
               </option>
             ))}
           </select>
@@ -225,19 +313,27 @@ export default function RecurringExpensesManager() {
             value={form.startDate}
             onChange={(e) => setForm({ ...form, startDate: e.target.value })}
             className="px-3 py-2 border rounded"
+            title="Start date"
           />
-          <label className="flex items-center gap-2 text-sm">
+          <input
+            type="date"
+            value={form.endDate}
+            onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+            className="px-3 py-2 border rounded"
+            title="Optional end date"
+          />
+          <label className="flex items-center gap-2 text-sm md:col-span-1">
             <input
               type="checkbox"
               checked={form.isBusiness}
               onChange={(e) => setForm({ ...form, isBusiness: e.target.checked })}
             />
-            Business expense
+            Business (unchecked = personal)
           </label>
           <input
             value={form.note}
             onChange={(e) => setForm({ ...form, note: e.target.value })}
-            placeholder="Note (optional)"
+            placeholder="Notes (optional)"
             className="px-3 py-2 border rounded md:col-span-2"
           />
         </div>
@@ -251,10 +347,7 @@ export default function RecurringExpensesManager() {
             {editingId ? "Update" : "Create"}
           </button>
           {editingId && (
-            <button
-              onClick={resetForm}
-              className="px-4 py-2 bg-gray-100 text-gray-800 rounded-md"
-            >
+            <button onClick={resetForm} className="px-4 py-2 bg-gray-100 text-gray-800 rounded-md">
               Cancel
             </button>
           )}
@@ -262,7 +355,7 @@ export default function RecurringExpensesManager() {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h3 className="text-sm font-semibold text-gray-800 mb-3">Active recurring expenses</h3>
+        <h3 className="text-sm font-semibold text-gray-800 mb-3">Templates</h3>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
@@ -270,10 +363,12 @@ export default function RecurringExpensesManager() {
                 <th className="px-3 py-2 text-left">Name</th>
                 <th className="px-3 py-2 text-right">Amount</th>
                 <th className="px-3 py-2 text-left">Category</th>
-                <th className="px-3 py-2 text-left">Account</th>
-                <th className="px-3 py-2 text-left">Next Run</th>
+                <th className="px-3 py-2 text-left">Payment source</th>
+                <th className="px-3 py-2 text-left">Next run</th>
+                <th className="px-3 py-2 text-left">Ends</th>
                 <th className="px-3 py-2 text-left">Interval</th>
                 <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Type</th>
                 <th className="px-3 py-2 text-left">Actions</th>
               </tr>
             </thead>
@@ -287,31 +382,23 @@ export default function RecurringExpensesManager() {
                   <td className="px-3 py-2">
                     {i.nextRunDate ? new Date(i.nextRunDate).toLocaleDateString("de-CH") : "—"}
                   </td>
+                  <td className="px-3 py-2">
+                    {i.endDate ? new Date(i.endDate).toLocaleDateString("de-CH") : "—"}
+                  </td>
                   <td className="px-3 py-2">{i.intervalMonths} mo</td>
                   <td className="px-3 py-2">{i.active ? "Active" : "Paused"}</td>
-                  <td className="px-3 py-2 flex gap-2">
-                    <button
-                      onClick={() => handleEdit(i)}
-                      className="text-blue-600 hover:underline"
-                    >
+                  <td className="px-3 py-2">{i.isBusiness ? "Business" : "Personal"}</td>
+                  <td className="px-3 py-2 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => handleEdit(i)} className="text-blue-600 hover:underline">
                       Edit
                     </button>
-                    <button
-                      onClick={() => toggleActive(i)}
-                      className="text-purple-600 hover:underline"
-                    >
+                    <button type="button" onClick={() => toggleActive(i)} className="text-purple-600 hover:underline">
                       {i.active ? "Pause" : "Activate"}
                     </button>
-                    <button
-                      onClick={() => runNow(i.id)}
-                      className="text-green-600 hover:underline"
-                    >
+                    <button type="button" onClick={() => runNow(i.id)} className="text-green-600 hover:underline">
                       Run
                     </button>
-                    <button
-                      onClick={() => handleDelete(i.id)}
-                      className="text-red-600 hover:underline"
-                    >
+                    <button type="button" onClick={() => handleDelete(i.id)} className="text-red-600 hover:underline">
                       Delete
                     </button>
                   </td>
@@ -319,7 +406,7 @@ export default function RecurringExpensesManager() {
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td className="px-3 py-4 text-gray-500" colSpan={8}>
+                  <td className="px-3 py-4 text-gray-500" colSpan={10}>
                     No recurring expenses yet.
                   </td>
                 </tr>
@@ -328,7 +415,109 @@ export default function RecurringExpensesManager() {
           </table>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-sm font-semibold text-gray-800 mb-2">Backfill past periods</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Create missing <code className="bg-gray-100 px-1 rounded">PersonalExpense</code> rows (with{" "}
+            <code className="bg-gray-100 px-1 rounded">[RECURRING:id]</code>) for each due date in the range. Does not
+            change the template&apos;s next run date.
+          </p>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2 items-center">
+              <label className="text-sm text-gray-700">
+                From
+                <input
+                  type="date"
+                  className="ml-2 border rounded px-2 py-1"
+                  value={bfFrom}
+                  onChange={(e) => setBfFrom(e.target.value)}
+                />
+              </label>
+              <label className="text-sm text-gray-700">
+                To
+                <input
+                  type="date"
+                  className="ml-2 border rounded px-2 py-1"
+                  value={bfTo}
+                  onChange={(e) => setBfTo(e.target.value)}
+                />
+              </label>
+            </div>
+            <select
+              className="border rounded px-2 py-2 text-sm max-w-md"
+              value={bfTemplateId}
+              onChange={(e) => setBfTemplateId(e.target.value)}
+            >
+              <option value="">All templates</option>
+              {items.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={bfBusy}
+              onClick={runBackfill}
+              className="w-fit px-4 py-2 bg-indigo-600 text-white rounded-md text-sm disabled:opacity-50"
+            >
+              {bfBusy ? "Running…" : "Run backfill"}
+            </button>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-amber-200 p-6">
+          <h3 className="text-sm font-semibold text-gray-800 mb-2">Remove generated rows</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Deletes posted expenses that came from a template (matched by note marker) and matching manual finance
+            rows. Use when you want to wipe history and re-backfill.
+          </p>
+          <div className="flex flex-col gap-3">
+            <select
+              className="border rounded px-2 py-2 text-sm max-w-md"
+              value={purgeTemplateId}
+              onChange={(e) => setPurgeTemplateId(e.target.value)}
+            >
+              <option value="">Select template…</option>
+              {items.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </select>
+            <div className="flex flex-wrap gap-2 items-center">
+              <label className="text-sm text-gray-700">
+                From (optional)
+                <input
+                  type="date"
+                  className="ml-2 border rounded px-2 py-1"
+                  value={purgeFrom}
+                  onChange={(e) => setPurgeFrom(e.target.value)}
+                />
+              </label>
+              <label className="text-sm text-gray-700">
+                To (optional)
+                <input
+                  type="date"
+                  className="ml-2 border rounded px-2 py-1"
+                  value={purgeTo}
+                  onChange={(e) => setPurgeTo(e.target.value)}
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              disabled={purgeBusy}
+              onClick={runPurgeGenerated}
+              className="w-fit px-4 py-2 bg-red-600 text-white rounded-md text-sm disabled:opacity-50"
+            >
+              {purgeBusy ? "Removing…" : "Remove generated rows"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
-

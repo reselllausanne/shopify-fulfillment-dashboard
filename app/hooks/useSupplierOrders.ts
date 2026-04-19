@@ -314,6 +314,8 @@ type FetchAllArgs = {
   query: string;
   variablesJSON: string;
   stateFilter: string;
+  goatCookie?: string;
+  goatCsrfToken?: string;
 };
 
 export function useSupplierOrders() {
@@ -328,6 +330,7 @@ export function useSupplierOrders() {
   const [isFetchingAll, setIsFetchingAll] = useState(false);
   const [pricingByOrder, setPricingByOrder] = useState<Record<string, PricingResult | null>>({});
   const [pricingLoading, setPricingLoading] = useState<Record<string, boolean>>({});
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const fetchPage = async ({
     token,
@@ -373,7 +376,10 @@ export function useSupplierOrders() {
       const data = await response.json();
       if (data.errors) {
         setLastErrors(data.errors);
-        return null;
+        // Allow partial data when buying payload exists
+        if (!data.data?.viewer?.buying) {
+          return null;
+        }
       }
 
       setLastErrors([]);
@@ -535,7 +541,59 @@ export function useSupplierOrders() {
     }
   };
 
-  const handleFetchAllPages = async ({ token, query, variablesJSON, stateFilter }: FetchAllArgs) => {
+  const fetchAllGoatOrders = async (goatCookie: string, goatCsrfToken: string) => {
+    const token = goatCookie.trim();
+    if (!token) return [];
+
+    const allOrders: any[] = [];
+    let page = 1;
+    while (true) {
+      const res = await fetch("/api/goat/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cookie: token, csrfToken: goatCsrfToken, page }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setLastErrors((prev) => [
+          ...prev,
+          { message: `[GOAT] Orders: ${json?.error || `HTTP ${res.status}`}` },
+        ]);
+        break;
+      }
+      const orders = Array.isArray(json?.orders) ? json.orders : [];
+      if (orders.length === 0) break;
+      allOrders.push(...orders);
+      page += 1;
+    }
+
+    return allOrders.map((o: any) => ({
+      ...o,
+      productTitleB: o.productTitle || o.displayName || null,
+      brandB: null,
+      sizeB: o.size || null,
+      thumbUrlB: o.thumbUrl || null,
+      imageUrlB: o.thumbUrl || null,
+      statusB: o.statusTitle || o.statusKey || null,
+      statusKeyB: o.statusKey || null,
+      estimatedDeliveryB: o.estimatedDeliveryDate || null,
+      latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+      styleId: o.skuKey || o.styleId || null,
+    }));
+  };
+
+  const handleFetchAllPages = async ({
+    token,
+    query,
+    variablesJSON,
+    stateFilter,
+    goatCookie = "",
+    goatCsrfToken = "",
+  }: FetchAllArgs) => {
+    const existingGoatRows = ((enrichedOrders || orders) as any[]).filter(
+      (row) => String(row?.provider || "").toUpperCase() === "GOAT"
+    );
+
     setIsFetchingAll(true);
     setIsEnriching(false);
     setOrders([]);
@@ -543,37 +601,47 @@ export function useSupplierOrders() {
     setEnrichedOrders(null);
     setDetailsProgress({ done: 0, total: 0 });
 
-    const allLoadedOrders: OrderNode[] = [];
-    let currentResult = await fetchPage({ token, query, variablesJSON, stateFilter, cursor: null, append: false });
-    if (currentResult) {
-      allLoadedOrders.push(...currentResult.orders);
-    }
-    while (currentResult?.pageInfo?.hasNextPage && currentResult?.pageInfo?.endCursor) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      currentResult = await fetchPage({
+    const allLoadedStockXOrders: OrderNode[] = [];
+    if (token.trim()) {
+      let currentResult = await fetchPage({
         token,
         query,
         variablesJSON,
         stateFilter,
-        cursor: currentResult.pageInfo.endCursor,
-        append: true,
+        cursor: null,
+        append: false,
       });
-      if (currentResult) {
-        allLoadedOrders.push(...currentResult.orders);
+      if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
+      while (currentResult?.pageInfo?.hasNextPage && currentResult?.pageInfo?.endCursor) {
+        await sleep(250);
+        currentResult = await fetchPage({
+          token,
+          query,
+          variablesJSON,
+          stateFilter,
+          cursor: currentResult.pageInfo.endCursor,
+          append: true,
+        });
+        if (currentResult) allLoadedStockXOrders.push(...currentResult.orders);
       }
     }
 
-    setIsFetchingAll(false);
+    // Dedicated GOAT endpoint (only when a token is provided).
+    const goatOrders =
+      goatCookie && goatCookie.trim() ? await fetchAllGoatOrders(goatCookie, goatCsrfToken) : [];
+    const goatRowsForMerge = goatOrders.length > 0 ? goatOrders : existingGoatRows;
 
-    if (allLoadedOrders.length === 0) {
-      console.error("[ENRICH] ❌ No orders found! Check if fetchPage is working correctly.");
-      alert("❌ No orders to enrich. Please try fetching again.");
+    if (allLoadedStockXOrders.length === 0 && goatRowsForMerge.length === 0) {
+      setIsFetchingAll(false);
+      console.error("[FETCH] ❌ No StockX or GOAT orders found.");
+      alert("❌ No orders found from StockX/GOAT. Check credentials and retry.");
       return;
     }
 
+    setIsFetchingAll(false);
     setIsEnriching(true);
-    const total = allLoadedOrders.length;
-    const enriched: any[] = [];
+    const total = allLoadedStockXOrders.length;
+    const enrichedStockX: any[] = [];
     let done = 0;
 
     const fetchOrderDetails = async (node: OrderNode): Promise<any> => {
@@ -682,34 +750,33 @@ export function useSupplierOrders() {
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
       const batchStart = batchIndex * BATCH_SIZE;
       const batchEnd = Math.min(batchStart + BATCH_SIZE, total);
-      const batch = allLoadedOrders.slice(batchStart, batchEnd);
+      const batch = allLoadedStockXOrders.slice(batchStart, batchEnd);
 
       const batchResults = await Promise.all(batch.map((node) => fetchOrderDetails(node)));
 
       for (const result of batchResults) {
-        enriched.push(result.enriched);
+        enrichedStockX.push(result.enriched);
         done++;
         setDetailsProgress({ done, total });
       }
 
       if (batchIndex + 1 < totalBatches) {
-        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+        await sleep(BATCH_DELAY_MS);
       }
     }
 
-    const enrichedIds = enriched.map((o) => o.orderId);
-    const uniqueIds = new Set(enrichedIds);
-    if (uniqueIds.size !== enriched.length) {
-      const seen = new Set<string>();
-      const deduplicated = enriched.filter((o: any) => {
-        if (seen.has(o.orderId)) return false;
-        seen.add(o.orderId);
-        return true;
-      });
-      setEnrichedOrders(deduplicated);
-    } else {
-      setEnrichedOrders(enriched);
-    }
+    const combinedOrders = [...allLoadedStockXOrders, ...(goatRowsForMerge as OrderNode[])];
+    setOrders(combinedOrders);
+
+    const combinedEnriched = [...enrichedStockX, ...goatRowsForMerge];
+    const seen = new Set<string>();
+    const deduplicated = combinedEnriched.filter((o: any) => {
+      const key = `${o?.provider || "STOCKX"}:${o?.orderId || ""}:${o?.orderNumber || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    setEnrichedOrders(deduplicated);
 
     setIsEnriching(false);
   };

@@ -55,6 +55,7 @@ export async function GET() {
       dayOfMonth: i.dayOfMonth,
       intervalMonths: i.intervalMonths,
       startDate: i.startDate,
+      endDate: i.endDate,
       nextRunDate: i.nextRunDate,
       lastRunAt: i.lastRunAt,
       active: i.active,
@@ -86,6 +87,7 @@ export async function POST(req: NextRequest) {
       dayOfMonth,
       intervalMonths,
       startDate,
+      endDate,
       note,
     } = body;
 
@@ -109,6 +111,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid startDate" }, { status: 400 });
     }
 
+    let end: Date | null = null;
+    if (endDate) {
+      end = new Date(endDate);
+      if (isNaN(end.getTime())) {
+        return NextResponse.json({ error: "Invalid endDate" }, { status: 400 });
+      }
+    }
+
     const dom = Number(dayOfMonth) || 1;
     const interval = Number(intervalMonths) || 1;
     const nextRunDate = computeNextRunDate(toUtcDateOnly(start), dom, interval);
@@ -124,6 +134,7 @@ export async function POST(req: NextRequest) {
         dayOfMonth: dom,
         intervalMonths: interval,
         startDate: toUtcDateOnly(start),
+        endDate: end ? toUtcDateOnly(end) : null,
         nextRunDate,
         note: note || null,
       },
@@ -171,6 +182,17 @@ export async function PUT(req: NextRequest) {
         return NextResponse.json({ error: "Invalid startDate" }, { status: 400 });
       }
       update.startDate = toUtcDateOnly(start);
+    }
+    if (body.endDate !== undefined) {
+      if (body.endDate === null || body.endDate === "") {
+        update.endDate = null;
+      } else {
+        const end = new Date(body.endDate);
+        if (isNaN(end.getTime())) {
+          return NextResponse.json({ error: "Invalid endDate" }, { status: 400 });
+        }
+        update.endDate = toUtcDateOnly(end);
+      }
     }
     if (body.note !== undefined) update.note = body.note || null;
     if (body.active !== undefined) update.active = !!body.active;

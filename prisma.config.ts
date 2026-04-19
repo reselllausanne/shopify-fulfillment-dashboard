@@ -8,7 +8,9 @@ export default defineConfig({
   migrations: {
     path: "prisma/migrations",
   },
+  // Targets whatever DB `DATABASE_URL` points to (local, staging, or production).
+  // Use `prisma migrate deploy` — not `migrate dev` — to apply migrations to your working DB.
   datasource: {
-    url: process.env["DATABASE_URL"] || "file:./prisma/dev.db",
+    url: process.env["DATABASE_URL"] ?? "",
   },
 });

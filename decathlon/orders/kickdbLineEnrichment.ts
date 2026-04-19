@@ -1,0 +1,235 @@
+import { prisma } from "@/app/lib/prisma";
+import { expandGtinsForDbLookup, normalizeGtinKey } from "@/galaxus/stx/purchaseUnits";
+import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
+
+/** Minimal KickDB fields for Decathlon line UI (size + variant name + style id). */
+export type DecathlonLineKickdb = {
+  /** `KickDBProduct.name` (product title from style record — canonical name / “real” catalog title). */
+  productTitle: string | null;
+  /** Brand + product title (no size — size is separate). */
+  variantName: string | null;
+  /** EU / US combined for display (from `KickDBVariant.sizeEu` / `sizeUs`). */
+  sizeRaw: string | null;
+  /** Stored KickDB EU size (see `KickDBVariant.sizeEu`). */
+  sizeEu: string | null;
+  /** Stored KickDB US size (see `KickDBVariant.sizeUs`). */
+  sizeUs: string | null;
+  /** KickDB product `styleId` (StockX-style product SKU). */
+  styleId: string | null;
+};
+
+function buildKickdbSizeRaw(variant: { sizeEu?: string | null; sizeUs?: string | null }): string | null {
+  const eu = String(variant.sizeEu ?? "").trim();
+  const us = String(variant.sizeUs ?? "").trim();
+  if (eu && us) return `${us} US / ${eu} EU`;
+  if (eu) return eu;
+  if (us) return `${us} US`;
+  return null;
+}
+
+type KickdbVariantLike = {
+  sizeEu?: string | null;
+  sizeUs?: string | null;
+  product?: {
+    brand?: string | null;
+    name?: string | null;
+    styleId?: string | null;
+  } | null;
+};
+
+function mappingToKickdb(m: any, supplierSizeRaw?: string | null): DecathlonLineKickdb | null {
+  const kv = m.kickdbVariant;
+  if (!kv) return null;
+  return kickdbVariantToPayload(kv, supplierSizeRaw);
+}
+
+function kickdbVariantToPayload(
+  kv: KickdbVariantLike,
+  supplierSizeRaw?: string | null
+): DecathlonLineKickdb | null {
+  if (!kv?.product) return null;
+  const p = kv.product;
+  const sizeEu = kv.sizeEu != null ? String(kv.sizeEu).trim() || null : null;
+  const sizeUs = kv.sizeUs != null ? String(kv.sizeUs).trim() || null : null;
+  const sizeRaw =
+    buildKickdbSizeRaw({ sizeEu, sizeUs }) ?? (supplierSizeRaw?.trim() ? supplierSizeRaw.trim() : null);
+  const brand = p?.brand?.trim() || null;
+  const name = p?.name?.trim() || null;
+  const productTitle = name || null;
+  const variantName = [brand, name].filter(Boolean).join(" ").trim() || null;
+  const styleId = p?.styleId != null ? String(p.styleId).trim() || null : null;
+
+  return {
+    productTitle,
+    variantName,
+    sizeRaw,
+    sizeEu,
+    sizeUs,
+    styleId,
+  };
+}
+
+/** Resolve KickDB product/variant per line: prefer `SupplierVariant` → `VariantMapping` (per-size), then GTIN / providerKey. */
+export async function enrichDecathlonOrderLinesWithKickdb(lines: any[]): Promise<Map<string, DecathlonLineKickdb>> {
+  const out = new Map<string, DecathlonLineKickdb>();
+  if (!Array.isArray(lines) || lines.length === 0) return out;
+
+  const gtinNorms = new Set<string>();
+  const skuCand = new Set<string>();
+  for (const line of lines) {
+    const g = normalizeGtinKey(pickMiraklLineGtin(line) ?? line?.gtin);
+    if (g) gtinNorms.add(g);
+    for (const c of pickMiraklLineSkuCandidates(line)) skuCand.add(c);
+  }
+
+  const expandedGtins = expandGtinsForDbLookup(gtinNorms);
+  const skuList = Array.from(skuCand);
+  const orClause: Array<{ gtin?: { in: string[] }; providerKey?: { in: string[] } }> = [];
+  if (expandedGtins.length > 0) orClause.push({ gtin: { in: expandedGtins } });
+  if (skuList.length > 0) orClause.push({ providerKey: { in: skuList } });
+
+  const supplierVariants =
+    skuList.length > 0
+      ? await prisma.supplierVariant.findMany({
+          where: {
+            OR: [{ supplierSku: { in: skuList } }, { supplierVariantId: { in: skuList } }],
+          },
+          select: {
+            supplierVariantId: true,
+            supplierSku: true,
+            sizeRaw: true,
+          },
+        })
+      : [];
+
+  const skuToSupplierVariantId = new Map<string, string>();
+  const supplierSizeRawByVariantId = new Map<string, string | null>();
+  for (const sv of supplierVariants) {
+    supplierSizeRawByVariantId.set(sv.supplierVariantId, sv.sizeRaw ?? null);
+    skuToSupplierVariantId.set(sv.supplierSku, sv.supplierVariantId);
+    skuToSupplierVariantId.set(sv.supplierVariantId, sv.supplierVariantId);
+  }
+
+  const supplierIds = [...new Set(supplierVariants.map((s) => s.supplierVariantId))];
+  const mappingsBySupplierId =
+    supplierIds.length > 0
+      ? await prisma.variantMapping.findMany({
+          where: {
+            supplierVariantId: { in: supplierIds },
+            kickdbVariantId: { not: null },
+          },
+          include: {
+            kickdbVariant: { include: { product: true } },
+          },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+
+  const bySupplierVariantId = new Map<string, (typeof mappingsBySupplierId)[0]>();
+  for (const m of mappingsBySupplierId) {
+    const sid = m.supplierVariantId;
+    if (sid && !bySupplierVariantId.has(sid)) bySupplierVariantId.set(sid, m);
+  }
+
+  const mappings =
+    orClause.length > 0
+      ? await prisma.variantMapping.findMany({
+          where: {
+            kickdbVariantId: { not: null },
+            OR: orClause,
+          },
+          include: {
+            kickdbVariant: { include: { product: true } },
+          },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+
+  const fallbackVariants =
+    expandedGtins.length > 0 || skuList.length > 0
+      ? await prisma.kickDBVariant.findMany({
+          where: {
+            OR: [
+              ...(expandedGtins.length > 0
+                ? [{ gtin: { in: expandedGtins } }, { ean: { in: expandedGtins } }]
+                : []),
+              ...(skuList.length > 0 ? [{ providerKey: { in: skuList } }] : []),
+            ],
+          },
+          include: { product: true },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+
+  const byNormGtin = new Map<string, (typeof mappings)[0]>();
+  const byProviderKey = new Map<string, (typeof mappings)[0]>();
+  for (const m of mappings) {
+    const n = normalizeGtinKey(m.gtin);
+    if (n && !byNormGtin.has(n)) byNormGtin.set(n, m);
+    const pk = String(m.providerKey ?? "").trim();
+    if (pk && !byProviderKey.has(pk)) byProviderKey.set(pk, m);
+  }
+
+  const fallbackByNormGtin = new Map<string, (typeof fallbackVariants)[0]>();
+  const fallbackByProviderKey = new Map<string, (typeof fallbackVariants)[0]>();
+  for (const v of fallbackVariants) {
+    const g = normalizeGtinKey(v.gtin);
+    if (g && !fallbackByNormGtin.has(g)) fallbackByNormGtin.set(g, v);
+    const e = normalizeGtinKey(v.ean);
+    if (e && !fallbackByNormGtin.has(e)) fallbackByNormGtin.set(e, v);
+    const pk = String(v.providerKey ?? "").trim();
+    if (pk && !fallbackByProviderKey.has(pk)) fallbackByProviderKey.set(pk, v);
+  }
+
+  for (const line of lines) {
+    const lineId = String(line?.id ?? "").trim();
+    if (!lineId) continue;
+
+    let m: (typeof mappings)[0] | undefined;
+    let supplierSizeRaw: string | null | undefined;
+
+    for (const c of pickMiraklLineSkuCandidates(line)) {
+      const svId = skuToSupplierVariantId.get(c);
+      if (svId) {
+        if (supplierSizeRaw == null) {
+          supplierSizeRaw = supplierSizeRawByVariantId.get(svId) ?? null;
+        }
+        m = bySupplierVariantId.get(svId);
+        if (m) {
+          break;
+        }
+      }
+    }
+
+    if (!m) {
+      for (const c of pickMiraklLineSkuCandidates(line)) {
+        m = byProviderKey.get(c);
+        if (m) break;
+      }
+    }
+    if (!m) {
+      const g = normalizeGtinKey(pickMiraklLineGtin(line) ?? line?.gtin);
+      if (g) m = byNormGtin.get(g);
+    }
+    if (!m) {
+      let fallback: (typeof fallbackVariants)[0] | undefined;
+      for (const c of pickMiraklLineSkuCandidates(line)) {
+        fallback = fallbackByProviderKey.get(c);
+        if (fallback) break;
+      }
+      if (!fallback) {
+        const g = normalizeGtinKey(pickMiraklLineGtin(line) ?? line?.gtin);
+        if (g) fallback = fallbackByNormGtin.get(g);
+      }
+      if (fallback) {
+        const payload = kickdbVariantToPayload(fallback, supplierSizeRaw ?? null);
+        if (payload) out.set(lineId, payload);
+      }
+      continue;
+    }
+    const payload = mappingToKickdb(m, supplierSizeRaw ?? null);
+    if (payload) out.set(lineId, payload);
+  }
+
+  return out;
+}

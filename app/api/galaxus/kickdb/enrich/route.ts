@@ -3,10 +3,12 @@ import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
 
 export async function POST(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const limit = Number(searchParams.get("limit") ?? "50");
     const offset = Number(searchParams.get("offset") ?? "0");
     const debug = searchParams.get("debug") === "1";
@@ -14,6 +16,27 @@ export async function POST(request: Request) {
     const raw = searchParams.get("raw") === "1";
     const supplierVariantId = searchParams.get("supplierVariantId")?.trim() || null;
     const supplierSku = searchParams.get("supplierSku")?.trim() || null;
+    const supplierVariantIdPrefix = searchParams.get("supplierVariantIdPrefix")?.trim() || null;
+    const includeNotFound = ["1", "true", "yes"].includes(
+      (searchParams.get("includeNotFound") ?? "").toLowerCase()
+    );
+
+    if (all && !supplierVariantId && !supplierSku) {
+      const { results } = await runKickdbEnrich({
+        limit: null as unknown as number,
+        debug,
+        force,
+        raw,
+        supplierVariantIdPrefix,
+        includeNotFound,
+      });
+      return NextResponse.json({
+        ok: true,
+        mode: "all",
+        processed: results.length,
+        results: debug ? results : [],
+      });
+    }
 
     const { results } = await runKickdbEnrich({
       limit,
@@ -23,6 +46,8 @@ export async function POST(request: Request) {
       raw,
       supplierVariantId,
       supplierSku,
+      supplierVariantIdPrefix,
+      includeNotFound,
     });
 
     return NextResponse.json({ ok: true, limit, offset, results });

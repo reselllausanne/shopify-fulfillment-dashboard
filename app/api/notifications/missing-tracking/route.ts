@@ -19,6 +19,7 @@ type TrackingItem = {
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const CUTOFF_DATE = new Date("2026-02-01T00:00:00.000Z");
+const CRITICAL_AGE_DAYS = 9;
 
 const isExcludedNoTracking = (sku: string | null, title: string) => {
   if (sku && EXCLUDED_SKUS.includes(sku)) return true;
@@ -68,7 +69,8 @@ export async function GET() {
 
       const isOverdue = daysToDelivery != null && daysToDelivery < 0;
       const isDueSoon = daysToDelivery != null && daysToDelivery <= 2 && daysToDelivery >= 0;
-      const isOlderThan14 = ageDays != null && ageDays >= 14;
+      const isOlderThan9 = ageDays != null && ageDays >= CRITICAL_AGE_DAYS;
+      const isOver9Days = ageDays != null && ageDays > CRITICAL_AGE_DAYS;
       const isGoat = item.stockxOrderNumber?.toUpperCase().includes("GOAT") ?? false;
 
       return {
@@ -78,22 +80,32 @@ export async function GET() {
         daysToDelivery,
         isOverdue,
         isDueSoon,
-        isOlderThan14,
+        isOlderThan9,
+        isOver9Days,
         isGoat,
       };
     });
 
     const goatItems = normalized.filter((i) => i.isGoat);
-    const criticalItems = normalized.filter((i) => i.isOverdue || i.isDueSoon || i.isOlderThan14);
+    const warningItems = normalized.filter((i) => i.isOver9Days && !i.isOverdue && !i.isDueSoon);
+    // Avoid duplicate rows: "warning" is the >9d age-only bucket; critical keeps overdue/due-soon and 9d edge case.
+    const criticalItems = normalized.filter((i) => {
+      const inWarningOnlyBucket =
+        i.isOver9Days && !i.isOverdue && !i.isDueSoon;
+      if (inWarningOnlyBucket) return false;
+      return i.isOverdue || i.isDueSoon || i.isOlderThan9;
+    });
 
     return NextResponse.json({
       ok: true,
       count: normalized.length,
       goatCount: goatItems.length,
       criticalCount: criticalItems.length,
+      warningCount: warningItems.length,
       items: normalized,
       goatItems,
       criticalItems,
+      warningItems,
     });
   } catch (error: any) {
     console.error("[MISSING_TRACKING] Failed:", error);

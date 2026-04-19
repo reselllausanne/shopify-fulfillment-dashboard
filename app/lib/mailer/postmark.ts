@@ -30,25 +30,40 @@ function addBusinessDays(date: Date | null, days: number): Date | null {
   return result;
 }
 
+const isExpressFlow = (
+  checkoutType: string | null,
+  orderNumber: string | null,
+  states: StockXState[] | null
+): boolean => {
+  const normalizedStates = states || [];
+  const hasDfs = normalizedStates.some((s) => s?.sourceType === "DFS");
+  const shortFlow = normalizedStates.length > 0 && normalizedStates.length <= 4;
+  if (hasDfs && shortFlow) return true;
+  if (orderNumber?.startsWith("01-")) return true;
+  if (orderNumber?.startsWith("03-")) return false;
+  return !!checkoutType && checkoutType.startsWith("EXPRESS");
+};
+
 function buildTemplateModel(input: StockXMilestoneEmailInput) {
   const checkoutType = input.match.stockxCheckoutType || null;
-  const isExpress = !!checkoutType && checkoutType.startsWith("EXPRESS");
+  const orderNumber = input.match.stockxOrderNumber || null;
+  const states = (input.stockxStates as StockXState[] | null) || null;
+  const isExpress = isExpressFlow(checkoutType, orderNumber, states);
 
   // Customer-facing steps (French). Express uses 3 steps only.
   const stepLabels = isExpress
-    ? ["Commande confirmée", "Préparation express", "Livraison en cours"]
+    ? ["Commande confirmée", "Expédition", "Transit vers la Suisse"]
     : [
         "Commande confirmée",
-        "Commande en cours chez notre partenaire",
-        "Contrôle & préparation",
-        "Expédition vers la Suisse",
+        "Commande expédiée vers notre centre",
+        "Contrôle d’authenticité en cours",
+        "Préparation & expédition vers la Suisse",
         "Livraison en cours",
       ];
   const maxSteps = stepLabels.length;
 
   // Determine active step index (1..5) from StockX states progression.
   // This is more reliable than milestoneKey alone, especially for EXPRESS where StockX has fewer distinct titles.
-  const states = (input.stockxStates as StockXState[] | null) || null;
   const completedCount = (() => {
     if (!states || states.length === 0) return 1;
     const done = states.filter((s) => {
@@ -113,6 +128,7 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
 
   const estimatedStart = input.match.stockxEstimatedDelivery;
   const estimatedEnd = input.match.stockxLatestEstimatedDelivery || input.match.stockxEstimatedDelivery;
+  const estimatedStartPlus2 = addBusinessDays(estimatedStart, 2);
   const estimatedEndPlus2 = addBusinessDays(estimatedEnd, 2);
   let trackingUrl = (input.match.stockxTrackingUrl || "").trim();
   if (trackingUrl) {
@@ -123,6 +139,8 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
   }
   const hasTracking = Boolean(trackingUrl);
 
+  const activeLabel = stepLabels[activeIndex - 1] || "";
+
   return {
     // Header
     brand_home_url: brandHomeUrl,
@@ -132,10 +150,10 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
 
     // Hero
     email_subject: emailSubject,
-    preheader_text: input.milestone.description || "",
-    headline: input.milestone.description || "",
-    hero_text: input.milestone.description || "",
-    estimated_arrival_start: toFrDate(estimatedStart),
+    preheader_text: activeLabel || input.milestone.description || "",
+    headline: activeLabel || input.milestone.description || "",
+    hero_text: activeLabel || input.milestone.description || "",
+    estimated_arrival_start: toFrDate(estimatedStartPlus2),
     estimated_arrival_end: toFrDate(estimatedEndPlus2),
     hero_image_url: input.match.shopifyLineItemImageUrl || brandHeroImageUrl,
     top_note: "",
@@ -145,7 +163,7 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
 
     // Status
     active_step_title: stepLabels[activeIndex - 1],
-    active_step_subtitle: input.milestone.description || "",
+    active_step_subtitle: activeLabel || input.milestone.description || "",
     step_1: stepLabels[0] || "",
     step_2: stepLabels[1] || "",
     step_3: stepLabels[2] || "",
@@ -190,7 +208,7 @@ export function createPostmarkMailer(): Mailer {
 
   return {
     async sendStockXMilestoneEmail(input: StockXMilestoneEmailInput): Promise<MailSendResult> {
-      const overrideTo = process.env.POSTMARK_OVERRIDE_TO || "theomanzi10@gmail.com";
+      const overrideTo = (process.env.POSTMARK_OVERRIDE_TO || "").trim();
       const to = overrideTo || input.to;
 
       if (!token || !from) {
@@ -205,10 +223,11 @@ export function createPostmarkMailer(): Mailer {
       }
 
       const checkoutType = input.match.stockxCheckoutType || null;
-      const templateAlias =
-        checkoutType && checkoutType.startsWith("EXPRESS")
-          ? templateAliasExpress
-          : templateAliasNormal;
+      const orderNumber = input.match.stockxOrderNumber || null;
+      const states = (input.stockxStates as StockXState[] | null) || null;
+      const templateAlias = isExpressFlow(checkoutType, orderNumber, states)
+        ? templateAliasExpress
+        : templateAliasNormal;
 
       const templateModel = buildTemplateModel(input);
 

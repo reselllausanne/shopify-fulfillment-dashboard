@@ -30,25 +30,3 @@ export async function getSupplierToken(): Promise<string | null> {
   }
 }
 
-/**
- * Check if token needs refresh (expires in < 2 hours).
- */
-export async function tokenNeedsRefresh(): Promise<boolean> {
-  try {
-    const tokenData = await prisma.stockXToken.findFirst({
-      orderBy: { createdAt: "desc" },
-      select: { expiresAt: true },
-    });
-
-    if (!tokenData) {
-      return true; // No token = needs refresh
-    }
-
-    const twoHoursFromNow = new Date(Date.now() + 2 * 60 * 60 * 1000);
-
-    return new Date(tokenData.expiresAt) < twoHoursFromNow;
-  } catch (error) {
-    return true; // Error = assume needs refresh
-  }
-}
-

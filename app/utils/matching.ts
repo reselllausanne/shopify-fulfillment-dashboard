@@ -1,3 +1,5 @@
+import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
+
 export interface NormalizedSupplierOrder {
   chainId: string; // StockX long chainId (e.g. "14826275139352606543")
   orderId: string; // StockX orderId (often = orderNumber)
@@ -83,6 +85,109 @@ const STOPWORDS = new Set([
   "online",    // Online exclusive
   "store",     // Store exclusive
 ]);
+
+type SizeMatchContext = {
+  brand?: string | null;
+  gender?: string | null;
+};
+
+function normalizeBrandForChart(value?: string | null): string | null {
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  if (lower.includes("yeezy") && lower.includes("slide")) return "yeezyslide";
+  if (lower.includes("yeezy") || lower.includes("yeez")) return "adidas";
+  if (lower.includes("jordan")) return "air jordan";
+  return lower;
+}
+
+function normalizeGenderForChart(value?: string | null, sizeRaw?: string | null): "men" | "women" | "youth" {
+  const lower = (value ?? "").toLowerCase();
+  if (/(women|womens|woman|female|\bw\b)/.test(lower)) return "women";
+  if (/(youth|kids|kid|gs|grade school|child|children)/.test(lower)) return "youth";
+  const size = (sizeRaw ?? "").toUpperCase();
+  if (/(^|\b)\d+(\.\d+)?\s*Y\b/.test(size)) return "youth";
+  if (/(^|\b)GS\b/.test(size)) return "youth";
+  return "men";
+}
+
+function getChart(brand?: string | null, gender?: string | null, sizeRaw?: string | null): SizeChartEntry | null {
+  const normalizedBrand = normalizeBrandForChart(brand);
+  if (!normalizedBrand) return null;
+  const normalizedGender = normalizeGenderForChart(gender, sizeRaw);
+  return (
+    FALLBACK_SIZE_CHARTS.find(
+      (entry) =>
+        entry.brand.toLowerCase() === normalizedBrand.toLowerCase() &&
+        entry.gender === normalizedGender
+    ) ?? null
+  );
+}
+
+function normalizeUsSize(value: string): string {
+  let cleaned = value.trim();
+  cleaned = cleaned.replace(/^US\s*M\s*/i, "");
+  cleaned = cleaned.replace(/^US\s*W\s*/i, "");
+  cleaned = cleaned.replace(/^US\s*/i, "");
+  cleaned = cleaned.replace(/\s*(Y|GS)\b/i, "");
+  return cleaned.trim();
+}
+
+function normalizeEuSize(value: string): string {
+  return value.replace(/^EU\s*/i, "").trim();
+}
+
+function inferSizeSystem(value: string): "EU" | "US" | null {
+  const upper = value.toUpperCase();
+  if (/(^|[^A-Z])(\d+(\.\d+)?)(Y|GS)\b/.test(upper)) return "US";
+  if (upper.includes("EU")) return "EU";
+  if (upper.includes("US")) return "US";
+  return null;
+}
+
+function convertUsToEu(usValue: string, context?: SizeMatchContext): string | null {
+  const chart = getChart(context?.brand ?? null, context?.gender ?? null, usValue);
+  if (!chart) return null;
+  const normalized = normalizeUsSize(usValue).replace(/\s+/g, "");
+  if (!normalized) return null;
+  const index = chart.sizes.US.findIndex(
+    (entry) => entry.replace(/\s+/g, "") === normalized
+  );
+  if (index < 0 || index >= chart.sizes.EU.length) return null;
+  return chart.sizes.EU[index] ?? null;
+}
+
+function inferBrandFromTitle(...titles: Array<string | null | undefined>): string | null {
+  const brandList = Array.from(
+    new Set(FALLBACK_SIZE_CHARTS.map((entry) => entry.brand.toLowerCase()))
+  );
+  for (const title of titles) {
+    if (!title) continue;
+    const lower = title.toLowerCase();
+    if (!lower) continue;
+    if (lower.includes("jordan")) return "air jordan";
+    if (lower.includes("yeezy")) return "adidas";
+    for (const brand of brandList) {
+      if (lower.includes(brand)) return brand;
+    }
+  }
+  return null;
+}
+
+function buildSizeMatchContext(
+  shopifyItem: ShopifyLineItem,
+  supplierOrder: NormalizedSupplierOrder,
+  shopifySize?: string | null,
+  supplierSize?: string | null
+): SizeMatchContext {
+  const brand = inferBrandFromTitle(
+    shopifyItem.title,
+    supplierOrder.productTitle,
+    supplierOrder.productName
+  );
+  const genderSource = `${shopifyItem.title ?? ""} ${supplierOrder.productTitle ?? ""}`;
+  const gender = normalizeGenderForChart(genderSource, shopifySize ?? supplierSize ?? null);
+  return { brand, gender };
+}
 
 function cleanShopifyTitleForMatch(title: string): string {
   return title
@@ -228,7 +333,7 @@ function productNameMatch(name1: string, name2: string): { matches: boolean; sim
   return { matches: similarity >= 0.95, similarity }; // 95% match required
 }
 
-function sizeMatch(size1: string | null, size2: string | null): boolean {
+function sizeMatch(size1: string | null, size2: string | null, context?: SizeMatchContext): boolean {
   // Normalize: convert empty/placeholder values to null
   const normalizeToNull = (size: string | null): string | null => {
     if (!size) return null;
@@ -263,12 +368,30 @@ function sizeMatch(size1: string | null, size2: string | null): boolean {
   
   // Both have sizes: normalize and compare
   const normalize = (size: string) => {
-    return size
-      .replace(/^(EU|US|UK|ASIA)\s*(M|W)?\s*/i, "") // Remove EU/US/UK/ASIA + optional M/W
-      .replace(/\s/g, "") // Remove spaces
-      .replace(/ONE\s*SIZE/i, "OS") // Normalize "One Size" to "OS"
-      .replace(/O\/S/i, "OS") // Normalize "O/S" to "OS"
-      .toUpperCase();
+    let normalized = size.trim().toUpperCase();
+
+    // Normalize "One Size" variants early
+    normalized = normalized.replace(/ONE\s*SIZE/g, "OS").replace(/O\/S/g, "OS");
+
+    // Collapse whitespace for predictable parsing
+    normalized = normalized.replace(/\s+/g, " ");
+
+    // Remove regional prefix only (keep size info that follows)
+    // Examples:
+    // - "US M" -> "M"
+    // - "EU 42" -> "42"
+    normalized = normalized.replace(/^(EU|US|UK|ASIA)\s+/i, "");
+
+    // If gender marker precedes numeric size, drop it: "M 9" -> "9", "W10" -> "10"
+    normalized = normalized.replace(/^(M|W)\s*(?=\d)/i, "");
+
+    // Drop youth suffix: "5.5Y" -> "5.5", "6GS" -> "6"
+    normalized = normalized.replace(/(Y|GS)$/i, "");
+
+    // Remove spaces for final comparison
+    normalized = normalized.replace(/\s/g, "");
+
+    return normalized;
   };
   
   const s1 = normalize(cleanSize1);
@@ -277,7 +400,38 @@ function sizeMatch(size1: string | null, size2: string | null): boolean {
   const matches = s1 === s2;
   console.log(`[SIZE_MATCH] Comparing: "${size1}" (normalized: "${s1}") vs "${size2}" (normalized: "${s2}") → ${matches ? "✅ MATCH" : "❌ NO MATCH"}`);
   
-  return matches;
+  if (matches) return true;
+
+  const system1 = inferSizeSystem(cleanSize1);
+  const system2 = inferSizeSystem(cleanSize2);
+  if (system1 === "US" && system2 === "EU") {
+    const converted = convertUsToEu(cleanSize1, context);
+    if (converted) {
+      const convertedNormalized = normalizeEuSize(converted);
+      const targetNormalized = normalizeEuSize(cleanSize2);
+      const convertedMatches = convertedNormalized === targetNormalized;
+      console.log(
+        `[SIZE_MATCH] US→EU conversion: "${cleanSize1}" → "${converted}" vs "${cleanSize2}" → ` +
+          `${convertedMatches ? "✅ MATCH" : "❌ NO MATCH"}`
+      );
+      return convertedMatches;
+    }
+  }
+  if (system1 === "EU" && system2 === "US") {
+    const converted = convertUsToEu(cleanSize2, context);
+    if (converted) {
+      const convertedNormalized = normalizeEuSize(converted);
+      const targetNormalized = normalizeEuSize(cleanSize1);
+      const convertedMatches = convertedNormalized === targetNormalized;
+      console.log(
+        `[SIZE_MATCH] US→EU conversion: "${cleanSize2}" → "${converted}" vs "${cleanSize1}" → ` +
+          `${convertedMatches ? "✅ MATCH" : "❌ NO MATCH"}`
+      );
+      return convertedMatches;
+    }
+  }
+
+  return false;
 }
 
 function stringSimilarity(str1: string, str2: string): number {
@@ -296,10 +450,18 @@ function stringSimilarity(str1: string, str2: string): number {
   return union.size > 0 ? intersection.size / union.size : 0;
 }
 
-function calculateTimeDiff(shopifyDate: string, supplierDate: string): number {
-  const d1 = new Date(shopifyDate).getTime();
-  const d2 = new Date(supplierDate).getTime();
-  return Math.abs(d1 - d2) / (1000 * 60 * 60); // hours
+function parseDateMs(value: string): number | null {
+  const time = new Date(value).getTime();
+  if (Number.isNaN(time)) return null;
+  return time;
+}
+
+// Signed diff: supplier - shopify (hours). Returns null if invalid.
+function calculateTimeDiff(shopifyDate: string, supplierDate: string): number | null {
+  const shopifyMs = parseDateMs(shopifyDate);
+  const supplierMs = parseDateMs(supplierDate);
+  if (shopifyMs == null || supplierMs == null) return null;
+  return (supplierMs - shopifyMs) / (1000 * 60 * 60);
 }
 
 function scoreTimeProximity(hours: number): number {
@@ -328,10 +490,18 @@ function isValidCausalOrder(
   supplierDate: string,
   toleranceMinutes: number = 5
 ): boolean {
-  const shopifyTime = new Date(shopifyDate).getTime();
-  const supplierTime = new Date(supplierDate).getTime();
+  const shopifyTime = parseDateMs(shopifyDate);
+  const supplierTime = parseDateMs(supplierDate);
   const toleranceMs = toleranceMinutes * 60 * 1000;
   
+  if (shopifyTime == null || supplierTime == null) {
+    console.log(
+      `[CAUSAL] ❌ REJECTED: Invalid date(s) ` +
+      `(shopify: "${shopifyDate}", supplier: "${supplierDate}")`
+    );
+    return false;
+  }
+
   // Supplier must be created AFTER Shopify (with tolerance for clock skew)
   // If Supplier is more than 5 minutes BEFORE Shopify → INVALID
   const isValid = supplierTime >= (shopifyTime - toleranceMs);
@@ -476,11 +646,17 @@ export function matchShopifyToSupplier(
       // Non-LEGO products: Strict size validation (now handles all cases intelligently)
       const shopifySize = shopifyItem.sizeEU || shopifyItem.variantTitle;
       const supplierSize = supplierOrder.sizeEU;
+      const sizeContext = buildSizeMatchContext(
+        shopifyItem,
+        supplierOrder,
+        shopifySize,
+        supplierSize
+      );
       
       console.log(`[MATCH] Size comparison: Shopify "${shopifySize}" (sizeEU: "${shopifyItem.sizeEU}", variantTitle: "${shopifyItem.variantTitle}") vs Supplier "${supplierSize}"`);
       
       // ✅ sizeMatch() now handles all cases: null, "—", "One Size", "ASIA L", etc.
-      const sizeMatches = sizeMatch(shopifySize, supplierSize);
+      const sizeMatches = sizeMatch(shopifySize, supplierSize, sizeContext);
       
       if (!sizeMatches) {
         console.log(`[MATCH] ❌ Size mismatch: Shopify "${shopifySize}" vs Supplier "${supplierSize}" - SKIPPING`);
@@ -517,10 +693,18 @@ export function matchShopifyToSupplier(
     // 2. Time diff <= 96 hours (checked below)
     // 3. SKU match is STRONG (exact or 90%+ conservative match)
     
-    const timeDiffHours = calculateTimeDiff(
+    const timeDiffSigned = calculateTimeDiff(
       shopifyItem.createdAt,
       supplierOrder.purchaseDate
     );
+    if (timeDiffSigned == null) {
+      console.log(
+        `[MATCH] ❌ Invalid time diff for ${supplierOrder.supplierOrderNumber} ` +
+        `(shopify: "${shopifyItem.createdAt}", supplier: "${supplierOrder.purchaseDate}") - SKIPPING`
+      );
+      continue;
+    }
+    const timeDiffHours = Math.abs(timeDiffSigned);
     
     // Check if SKU override is possible
     let allowSkuOverride = false;

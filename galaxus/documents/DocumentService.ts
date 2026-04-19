@@ -15,13 +15,14 @@ import {
   GALAXUS_SUPPLIER_VAT_ID,
   GALAXUS_SUPPLIER_WEBSITE,
 } from "../config";
-import { createSsccBarcodeDataUrl } from "../barcodes/barcode";
+import { createSsccBarcodeDataUrl, normalizeSscc } from "../barcodes/barcode";
 import { getStorageAdapter } from "../storage/storage";
 import { renderDeliveryNoteHtml } from "./templates/deliveryNote";
 import { renderInvoiceHtml } from "./templates/invoice";
 import { renderLabelHtml } from "./templates/label";
 import { renderPdfFromHtml } from "./renderers/playwrightRenderer";
-import type { Company, DeliveryNoteData, InvoiceData, LabelData, OrderLine, VatSummaryLine } from "./types";
+import type { Address, Company, DeliveryNoteData, DeliveryNoteOrderGroup, InvoiceData, LabelData, OrderLine, VatSummaryLine } from "./types";
+import { buildProviderKey } from "../supplier/providerKey";
 import crypto from "crypto";
 
 type GenerateOptions = {
@@ -77,6 +78,17 @@ export class DocumentService {
       const pdfBuffer = await renderPdfFromHtml({ html, format: pdfFormat, showPageNumbers });
       const checksum = crypto.createHash("sha256").update(pdfBuffer).digest("hex");
 
+      const existing = findLatestDocument(order.documents, type, type === DocumentType.LABEL ? shipment?.id ?? null : null);
+      if (existing && existing.checksum && existing.checksum === checksum) {
+        console.info("[galaxus][docs] reuse", {
+          orderId: order.galaxusOrderId,
+          type,
+          shipmentId: existing.shipmentId ?? null,
+        });
+        results.push(existing);
+        continue;
+      }
+
       const version = getNextVersion(order.documents, type);
       const key = `galaxus/${order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
       const stored = await storage.uploadPdf(key, pdfBuffer);
@@ -96,6 +108,253 @@ export class DocumentService {
     }
 
     return results;
+  }
+
+  async generateForShipment(options: { shipmentId: string; types?: DocumentType[] }) {
+    const prismaAny = prisma as any;
+    const shipment = await prisma.shipment.findUnique({
+      where: { id: options.shipmentId },
+      include: {
+        order: { include: { lines: true, documents: true } },
+        items: true,
+        documents: true,
+      },
+    });
+
+    if (!shipment || !shipment.order) {
+      throw new Error(`Shipment not found: ${options.shipmentId}`);
+    }
+    const order = shipment.order;
+
+    const types = options.types ?? [DocumentType.DELIVERY_NOTE, DocumentType.LABEL];
+    const storage = getStorageAdapter();
+    const results = [];
+    const allDocuments = [...order.documents, ...shipment.documents];
+    const shipmentState = await ensureShipmentDocFields({ ...shipment, order });
+
+    // For composite shipments, items may come from multiple source orders.
+    // Load all unique source orders so each item is matched against its own order's lines.
+    const sourceOrderIds = Array.from(
+      new Set(
+        (shipment.items as Array<{ orderId?: string | null }>)
+          .map((i) => i.orderId)
+          .filter((id): id is string => !!id && id !== order.id)
+      )
+    );
+    const extraOrders: Array<GalaxusOrder & { lines: GalaxusOrderLine[] }> =
+      sourceOrderIds.length > 0
+        ? await prismaAny.galaxusOrder.findMany({
+            where: { id: { in: sourceOrderIds } },
+            include: { lines: true },
+          })
+        : [];
+    const orderById = new Map<string, GalaxusOrder & { lines: GalaxusOrderLine[] }>([
+      [order.id, order as GalaxusOrder & { lines: GalaxusOrderLine[] }],
+      ...extraOrders.map((o): [string, GalaxusOrder & { lines: GalaxusOrderLine[] }] => [o.id, o]),
+    ]);
+
+    const isComposite = sourceOrderIds.length > 0;
+    const deliveryLines = isComposite
+      ? []
+      : buildShipmentOrderLines(order.lines, shipment.items);
+
+    for (const type of types) {
+      let html = "";
+      let pdfFormat: "A4" | "A6" = "A4";
+      let showPageNumbers = false;
+
+      if (type === DocumentType.DELIVERY_NOTE) {
+        let data: DeliveryNoteData;
+        if (isComposite) {
+          data = buildCompositeDeliveryNoteDataFromItems(
+            order as GalaxusOrder,
+            shipment.items as Array<{ orderId?: string | null; supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>,
+            orderById,
+            shipmentState
+          );
+        } else {
+          data = buildDeliveryNoteDataFromLines(order, deliveryLines, shipmentState);
+        }
+        html = renderDeliveryNoteHtml(data);
+        showPageNumbers = true;
+      } else if (type === DocumentType.LABEL) {
+        const data = await buildLabelData(order, shipmentState);
+        html = renderLabelHtml(data);
+        pdfFormat = "A6";
+      } else {
+        continue;
+      }
+
+      const pdfBuffer = await renderPdfFromHtml({ html, format: pdfFormat, showPageNumbers });
+      const checksum = crypto.createHash("sha256").update(pdfBuffer).digest("hex");
+      const existing = findLatestDocument(allDocuments, type, shipment.id);
+      if (existing && existing.checksum && existing.checksum === checksum) {
+        console.info("[galaxus][docs] reuse", {
+          orderId: order.galaxusOrderId,
+          type,
+          shipmentId: shipment.id,
+        });
+        results.push(existing);
+        continue;
+      }
+
+      const version = getNextVersion(allDocuments, type);
+      const key = `galaxus/${order.galaxusOrderId}/${type.toLowerCase()}/v${version}.pdf`;
+      const stored = await storage.uploadPdf(key, pdfBuffer);
+
+      const document = await prisma.document.create({
+        data: {
+          orderId: order.id,
+          shipmentId: shipment.id,
+          type,
+          version,
+          storageUrl: stored.storageUrl,
+          checksum,
+        },
+      });
+
+      results.push(document);
+    }
+
+    return results;
+  }
+
+  /** PDF preview for EDI invoice: same line selection (+ optional delivery charge) as INVO XML. */
+  async generateInvoicePdfForSelectedLines(options: {
+    orderId: string;
+    lineIds?: string[] | null;
+    deliveryCharge?: number | null;
+  }): Promise<Buffer> {
+    const order =
+      (await prisma.galaxusOrder.findUnique({
+        where: { id: options.orderId },
+        include: { lines: true },
+      })) ??
+      (await prisma.galaxusOrder.findUnique({
+        where: { galaxusOrderId: options.orderId },
+        include: { lines: true },
+      }));
+    if (!order) {
+      throw new Error(`Order not found: ${options.orderId}`);
+    }
+    let dbLines = [...order.lines];
+    if (options.lineIds && options.lineIds.length > 0) {
+      const set = new Set(options.lineIds.map(String));
+      dbLines = dbLines.filter((l) => set.has(l.id));
+    }
+    if (dbLines.length === 0) {
+      throw new Error("No order lines selected for invoice PDF");
+    }
+    let orderLines = buildOrderLines(dbLines);
+    const charge =
+      typeof options.deliveryCharge === "number" && Number.isFinite(options.deliveryCharge)
+        ? Math.max(0, options.deliveryCharge)
+        : 0;
+    if (charge > 0) {
+      const rate = orderLines[0]?.vatRate ?? 8.1;
+      const maxNo = Math.max(...orderLines.map((l) => l.lineNumber));
+      orderLines = [
+        ...orderLines,
+        {
+          lineNumber: maxNo + 1,
+          articleNumber: "",
+          description: "Handling / delivery (surcharge)",
+          size: null,
+          gtin: null,
+          providerKey: null,
+          sku: null,
+          quantity: 1,
+          vatRate: rate,
+          unitNetPrice: charge,
+          lineNetAmount: charge,
+        },
+      ];
+    }
+    const data = buildInvoiceDataFromOrderLines(order, orderLines);
+    const html = renderInvoiceHtml(data);
+    return renderPdfFromHtml({ html, format: "A4", showPageNumbers: false });
+  }
+
+  /** PDF for manually entered lines (warehouse collective invoice UI). */
+  async generateInvoicePdfFromCustomLines(options: {
+    baseOrderId: string;
+    lines: Array<{
+      description: string;
+      quantity: number;
+      unitNetPrice: number;
+      vatRate: number;
+      lineNetAmount?: number | null;
+      supplierPid?: string | null;
+      buyerPid?: string | null;
+      gtin?: string | null;
+    }>;
+    deliveryCharge?: number | null;
+  }): Promise<Buffer> {
+    const order =
+      (await prisma.galaxusOrder.findUnique({
+        where: { id: options.baseOrderId },
+        include: { lines: true },
+      })) ??
+      (await prisma.galaxusOrder.findUnique({
+        where: { galaxusOrderId: options.baseOrderId },
+        include: { lines: true },
+      }));
+    if (!order) {
+      throw new Error(`Order not found: ${options.baseOrderId}`);
+    }
+    if (String(order.deliveryType ?? "").toLowerCase() === "direct_delivery") {
+      throw new Error("Custom invoice PDF is only for warehouse delivery orders.");
+    }
+    if (!options.lines.length) {
+      throw new Error("At least one line is required");
+    }
+    const orderLines: OrderLine[] = options.lines.map((line, index) => {
+      const qty = Number(line.quantity) || 0;
+      const unit = Number(line.unitNetPrice) || 0;
+      const explicit = line.lineNetAmount != null ? Number(line.lineNetAmount) : NaN;
+      const net = Number.isFinite(explicit) ? explicit : qty * unit;
+      return {
+        lineNumber: index + 1,
+        articleNumber: line.supplierPid ?? line.buyerPid ?? line.gtin ?? "",
+        description: line.description || "Item",
+        size: null,
+        gtin: line.gtin ?? null,
+        providerKey: line.supplierPid ?? null,
+        sku: line.supplierPid ?? null,
+        quantity: qty,
+        vatRate: Number(line.vatRate) || 0,
+        unitNetPrice: unit,
+        lineNetAmount: net,
+      };
+    });
+    let finalLines = orderLines;
+    const charge =
+      typeof options.deliveryCharge === "number" && Number.isFinite(options.deliveryCharge)
+        ? Math.max(0, options.deliveryCharge)
+        : 0;
+    if (charge > 0 && finalLines.length > 0) {
+      const rate = finalLines[0]?.vatRate ?? 8.1;
+      const maxNo = Math.max(...finalLines.map((l) => l.lineNumber));
+      finalLines = [
+        ...finalLines,
+        {
+          lineNumber: maxNo + 1,
+          articleNumber: "",
+          description: "Handling / delivery (surcharge)",
+          size: null,
+          gtin: null,
+          providerKey: null,
+          sku: null,
+          quantity: 1,
+          vatRate: rate,
+          unitNetPrice: charge,
+          lineNetAmount: charge,
+        },
+      ];
+    }
+    const data = buildInvoiceDataFromOrderLines(order, finalLines);
+    const html = renderInvoiceHtml(data);
+    return renderPdfFromHtml({ html, format: "A4", showPageNumbers: false });
   }
 }
 
@@ -122,15 +381,13 @@ function buildBuyer() {
 }
 
 function buildSupplierAddress() {
-  const [line1, postalLine, countryLine] = GALAXUS_SUPPLIER_ADDRESS_LINES;
-  const { postalCode, city } = parsePostalLine(postalLine);
   return {
-    name: GALAXUS_SUPPLIER_NAME,
-    line1: line1 ?? "",
+    name: "",
+    line1: "",
     line2: null,
-    postalCode,
-    city,
-    country: countryLine ?? "",
+    postalCode: "",
+    city: "",
+    country: "",
   };
 }
 
@@ -142,30 +399,85 @@ function parsePostalLine(line?: string) {
 }
 
 function buildRecipient(order: GalaxusOrder) {
+  const hasRecipient =
+    Boolean(order.recipientName) ||
+    Boolean(order.recipientAddress1) ||
+    Boolean(order.recipientPostalCode) ||
+    Boolean(order.recipientCity) ||
+    Boolean(order.recipientCountry);
+  if (hasRecipient) {
+    return {
+      name: order.recipientName ?? GALAXUS_BUYER_NAME,
+      line1: order.recipientAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+      line2: order.recipientAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+      postalCode: order.recipientPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+      city: order.recipientCity ?? GALAXUS_BUYER_CITY,
+      country: order.recipientCountry ?? GALAXUS_BUYER_COUNTRY,
+    };
+  }
+  if (order.deliveryType === "warehouse_delivery") {
+    return {
+      name: order.customerName ?? GALAXUS_BUYER_NAME,
+      line1: order.customerAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+      line2: order.customerAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+      postalCode: order.customerPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+      city: order.customerCity ?? GALAXUS_BUYER_CITY,
+      country: order.customerCountry ?? GALAXUS_BUYER_COUNTRY,
+    };
+  }
   return {
-    name: order.recipientName ?? GALAXUS_BUYER_NAME,
-    line1: order.recipientAddress1 ?? GALAXUS_BUYER_ADDRESS1,
-    line2: order.recipientAddress2 ?? GALAXUS_BUYER_ADDRESS2,
-    postalCode: order.recipientPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
-    city: order.recipientCity ?? GALAXUS_BUYER_CITY,
-    country: order.recipientCountry ?? GALAXUS_BUYER_COUNTRY,
+    name: GALAXUS_BUYER_NAME,
+    line1: GALAXUS_BUYER_ADDRESS1,
+    line2: GALAXUS_BUYER_ADDRESS2,
+    postalCode: GALAXUS_BUYER_POSTAL_CODE,
+    city: GALAXUS_BUYER_CITY,
+    country: GALAXUS_BUYER_COUNTRY,
   };
 }
 
 function buildOrderLines(lines: GalaxusOrderLine[]): OrderLine[] {
-  return lines.map((line) => ({
-    lineNumber: line.lineNumber,
-    articleNumber: line.gtin ?? line.providerKey ?? "",
-    description: line.productName,
-    size: line.size,
-    gtin: line.gtin,
-    providerKey: line.providerKey,
-    sku: line.supplierSku ?? line.supplierVariantId ?? null,
-    quantity: line.quantity,
-    vatRate: Number(line.vatRate),
-    unitNetPrice: Number(line.unitNetPrice),
-    lineNetAmount: Number(line.lineNetAmount),
-  }));
+  return lines.map((line) => {
+    const unitNetPrice = Number(line.unitNetPrice);
+    const lineNetAmount = Number(line.lineNetAmount);
+    const rawVatRate = Number(line.vatRate);
+    const rawTaxPerUnit =
+      "taxAmountPerUnit" in line && line.taxAmountPerUnit != null
+        ? Number(line.taxAmountPerUnit)
+        : null;
+    const derivedVatRate =
+      rawTaxPerUnit != null &&
+      Number.isFinite(rawTaxPerUnit) &&
+      unitNetPrice > 0 &&
+      (!Number.isFinite(rawVatRate) || rawVatRate === 0)
+        ? (rawTaxPerUnit / unitNetPrice) * 100
+        : rawVatRate;
+
+    return {
+      lineNumber: line.lineNumber,
+      articleNumber:
+        (line as any).buyerPid ??
+        line.providerKey ??
+        buildProviderKey(line.gtin, line.supplierVariantId) ??
+        line.gtin ??
+        "",
+      description: line.productName,
+      size: line.size,
+      gtin: line.gtin,
+      providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
+      sku:
+        line.providerKey ??
+        line.supplierSku ??
+        line.supplierVariantId ??
+        buildProviderKey(line.gtin, line.supplierVariantId) ??
+        null,
+      quantity: line.quantity,
+      vatRate: derivedVatRate,
+      unitNetPrice,
+      lineNetAmount,
+      taxAmountPerUnit:
+        rawTaxPerUnit != null && Number.isFinite(rawTaxPerUnit) ? rawTaxPerUnit : null,
+    };
+  });
 }
 
 function buildInvoiceData(order: GalaxusOrder, lines: GalaxusOrderLine[]): InvoiceData {
@@ -174,8 +486,9 @@ function buildInvoiceData(order: GalaxusOrder, lines: GalaxusOrderLine[]): Invoi
 
   return {
     invoiceNumber: buildInvoiceNumber(order),
-    orderNumber: order.orderNumber ?? null,
+    orderNumber: order.orderNumber ?? order.galaxusOrderId ?? null,
     orderDate: order.orderDate,
+    invoiceDate: new Date(),
     deliveryDate: order.deliveryDate,
     currency: order.currencyCode,
     buyer: buildBuyer(),
@@ -191,41 +504,117 @@ function buildDeliveryNoteData(
   lines: GalaxusOrderLine[],
   shipment: {
     shipmentId: string;
-    deliveryNoteNumber: string;
-    deliveryNoteCreatedAt: Date;
+    dispatchNotificationId: string;
+    dispatchNotificationCreatedAt: Date;
     incoterms: string | null;
     createdAt: Date;
   } | null
 ): DeliveryNoteData {
+  const deliveryLines = buildOrderLines(lines);
   return {
     shipmentId: shipment?.shipmentId ?? "",
-    createdAt: shipment?.deliveryNoteCreatedAt ?? new Date(),
-    deliveryNoteNumber: shipment?.deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
+    createdAt: shipment?.dispatchNotificationCreatedAt ?? new Date(),
+    deliveryNoteNumber: shipment?.dispatchNotificationId ?? buildDeliveryNoteNumber(order),
     incoterms: shipment?.incoterms ?? null,
     buyer: buildRecipient(order),
     supplier: buildSupplier(),
     orderReference: order.orderNumber ?? order.galaxusOrderId,
     referencePerson: order.referencePerson ?? null,
     yourReference: order.yourReference ?? null,
-    buyerPhone: order.recipientPhone ?? null,
+    buyerPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
     afterSalesHandling: order.afterSalesHandling ?? false,
-    legalNotice:
-      "Payment has already been made directly to Galaxus. In the event of a return, please use the returns process in your customer account on digitec.ch or galaxus.ch. Orders placed via digitec.ch and galaxus.ch are subject to the General Terms and Conditions of Digitec Galaxus AG. For questions, visit https://www.galaxus.ch/help",
+    legalNotice: null,
     groups: [
       {
         orderNumber: order.orderNumber ?? order.galaxusOrderId,
         deliveryDate: order.deliveryDate,
-        lines: buildOrderLines(lines),
+        lines: deliveryLines,
       },
     ],
   };
 }
 
+function buildDeliveryNoteDataFromLines(
+  order: GalaxusOrder,
+  deliveryLines: OrderLine[],
+  shipment: {
+    shipmentId: string;
+    dispatchNotificationId: string;
+    dispatchNotificationCreatedAt: Date;
+    incoterms: string | null;
+    createdAt: Date;
+  } | null
+): DeliveryNoteData {
+  return {
+    shipmentId: shipment?.shipmentId ?? "",
+    createdAt: shipment?.dispatchNotificationCreatedAt ?? new Date(),
+    deliveryNoteNumber: shipment?.dispatchNotificationId ?? buildDeliveryNoteNumber(order),
+    incoterms: shipment?.incoterms ?? null,
+    buyer: buildRecipient(order),
+    supplier: buildSupplier(),
+    orderReference: order.orderNumber ?? order.galaxusOrderId,
+    referencePerson: order.referencePerson ?? null,
+    yourReference: order.yourReference ?? null,
+    buyerPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
+    afterSalesHandling: order.afterSalesHandling ?? false,
+    legalNotice: null,
+    groups: [
+      {
+        orderNumber: order.orderNumber ?? order.galaxusOrderId,
+        deliveryDate: order.deliveryDate,
+        lines: deliveryLines,
+      },
+    ],
+  };
+}
+
+function buildCompositeDeliveryNoteDataFromItems(
+  anchor: GalaxusOrder,
+  items: Array<{ orderId?: string | null; supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>,
+  orderById: Map<string, GalaxusOrder & { lines: GalaxusOrderLine[] }>,
+  shipmentState: { shipmentId: string; dispatchNotificationId: string; dispatchNotificationCreatedAt: Date; incoterms: string | null }
+): DeliveryNoteData {
+  const itemsByOrder = new Map<string, typeof items>();
+  for (const item of items) {
+    const ordId = item.orderId ?? anchor.id;
+    const cur = itemsByOrder.get(ordId) ?? [];
+    cur.push(item);
+    itemsByOrder.set(ordId, cur);
+  }
+
+  const groups: DeliveryNoteOrderGroup[] = [];
+  for (const [ordId, orderItems] of itemsByOrder) {
+    const sourceOrder = orderById.get(ordId) ?? (orderById.get(anchor.id)!);
+    const lines = buildShipmentOrderLines(sourceOrder.lines, orderItems);
+    groups.push({
+      orderNumber: sourceOrder.orderNumber ?? sourceOrder.galaxusOrderId,
+      deliveryDate: sourceOrder.deliveryDate,
+      lines,
+    });
+  }
+
+  return {
+    shipmentId: shipmentState.shipmentId,
+    createdAt: shipmentState.dispatchNotificationCreatedAt,
+    deliveryNoteNumber: shipmentState.dispatchNotificationId,
+    incoterms: shipmentState.incoterms,
+    buyer: buildRecipient(anchor),
+    supplier: buildSupplier(),
+    orderReference: anchor.orderNumber ?? anchor.galaxusOrderId,
+    referencePerson: anchor.referencePerson ?? null,
+    yourReference: anchor.yourReference ?? null,
+    buyerPhone: anchor.deliveryType === "direct_delivery" ? null : anchor.recipientPhone ?? null,
+    afterSalesHandling: anchor.afterSalesHandling ?? false,
+    legalNotice: null,
+    groups,
+  };
+}
+
 async function buildLabelData(
   order: GalaxusOrder,
-  shipment: { shipmentId: string; sscc: string | null } | null
+  shipment: { shipmentId: string; packageId: string | null } | null
 ): Promise<LabelData> {
-  const sscc = shipment?.sscc ?? buildSscc(order);
+  const sscc = normalizeSscc(shipment?.packageId ?? buildSscc(order));
   const barcodeDataUrl = await createSsccBarcodeDataUrl(sscc);
 
   return {
@@ -238,6 +627,59 @@ async function buildLabelData(
   };
 }
 
+function buildShipmentOrderLines(
+  orderLines: GalaxusOrderLine[],
+  items: Array<{ supplierPid: string; gtin14: string; buyerPid?: string | null; quantity: number }>
+): OrderLine[] {
+  const lines: OrderLine[] = [];
+  for (const item of items) {
+    const line =
+      orderLines.find(
+        (candidate) =>
+          (item.supplierPid && candidate.supplierPid === item.supplierPid) ||
+          (item.buyerPid && candidate.buyerPid === item.buyerPid)
+      ) ?? orderLines.find((candidate) => candidate.gtin === item.gtin14);
+    if (!line) {
+      throw new Error(`Missing order line for shipment item ${item.gtin14}`);
+    }
+    const unitNetPrice = Number(line.unitNetPrice);
+    const rawVat = Number(line.vatRate);
+    const taxPerUnit =
+      "taxAmountPerUnit" in line && line.taxAmountPerUnit != null
+        ? Number(line.taxAmountPerUnit)
+        : null;
+    const vatRate =
+      taxPerUnit != null &&
+      Number.isFinite(taxPerUnit) &&
+      unitNetPrice > 0 &&
+      (!Number.isFinite(rawVat) || rawVat === 0)
+        ? (taxPerUnit / unitNetPrice) * 100
+        : rawVat;
+    const qty = item.quantity;
+    const lineNet = unitNetPrice * qty;
+    lines.push({
+      lineNumber: line.lineNumber,
+      articleNumber:
+        line.providerKey ??
+        buildProviderKey(line.gtin, line.supplierVariantId) ??
+        line.gtin ??
+        "",
+      description: line.productName,
+      size: line.size,
+      gtin: line.gtin,
+      providerKey: line.providerKey ?? buildProviderKey(line.gtin, line.supplierVariantId),
+      sku: line.supplierSku ?? line.supplierVariantId ?? null,
+      quantity: qty,
+      vatRate,
+      unitNetPrice,
+      lineNetAmount: lineNet,
+      taxAmountPerUnit:
+        taxPerUnit != null && Number.isFinite(taxPerUnit) ? taxPerUnit : null,
+    });
+  }
+  return lines;
+}
+
 function calculateTotals(lines: OrderLine[]): { vatSummary: VatSummaryLine[]; totals: InvoiceData["totals"] } {
   const vatMap = new Map<number, VatSummaryLine>();
   let net = 0;
@@ -245,7 +687,11 @@ function calculateTotals(lines: OrderLine[]): { vatSummary: VatSummaryLine[]; to
 
   for (const line of lines) {
     const lineNet = line.lineNetAmount;
-    const lineVat = (lineNet * line.vatRate) / 100;
+    const explicitVat =
+      line.taxAmountPerUnit != null && Number.isFinite(line.taxAmountPerUnit)
+        ? line.taxAmountPerUnit * line.quantity
+        : null;
+    const lineVat = explicitVat != null ? explicitVat : (lineNet * line.vatRate) / 100;
     const lineGross = lineNet + lineVat;
     net += lineNet;
     vat += lineVat;
@@ -280,11 +726,45 @@ function getNextVersion(documents: { type: DocumentType; version: number }[], ty
   return versions.length === 0 ? 1 : Math.max(...versions) + 1;
 }
 
-function buildInvoiceNumber(order: GalaxusOrder): string {
+function findLatestDocument(
+  documents: Array<{
+    id: string;
+    type: DocumentType;
+    version: number;
+    shipmentId: string | null;
+    checksum: string | null;
+    storageUrl: string;
+  }>,
+  type: DocumentType,
+  shipmentId: string | null
+) {
+  const matches = documents.filter((doc) => doc.type === type && doc.shipmentId === shipmentId);
+  if (matches.length === 0) return null;
+  return matches.reduce((latest, doc) => (doc.version > latest.version ? doc : latest), matches[0]);
+}
+
+export function buildInvoiceNumber(order: GalaxusOrder): string {
   const stampSource = order.createdAt ?? order.orderDate;
   const stamp = formatInvoiceTimestamp(stampSource);
   const suffix = order.id.replace(/-/g, "").slice(0, 6).toUpperCase();
   return `GX-INV-${stamp}-${suffix}`;
+}
+
+function buildInvoiceDataFromOrderLines(order: GalaxusOrder, lines: OrderLine[]): InvoiceData {
+  const { vatSummary, totals } = calculateTotals(lines);
+  return {
+    invoiceNumber: buildInvoiceNumber(order),
+    orderNumber: order.orderNumber ?? order.galaxusOrderId ?? null,
+    orderDate: order.orderDate,
+    invoiceDate: new Date(),
+    deliveryDate: order.deliveryDate,
+    currency: order.currencyCode,
+    buyer: buildBuyer(),
+    supplier: buildSupplier(),
+    lines,
+    vatSummary,
+    totals,
+  };
 }
 
 function buildDeliveryNoteNumber(order: GalaxusOrder): string {
@@ -317,27 +797,28 @@ async function resolveShipment(
 ): Promise<{
   id: string;
   shipmentId: string;
-  deliveryNoteNumber: string;
-  deliveryNoteCreatedAt: Date;
+  dispatchNotificationId: string;
+  dispatchNotificationCreatedAt: Date;
   incoterms: string | null;
-  sscc: string | null;
+  packageId: string | null;
   createdAt: Date;
 }> {
+  const prismaAny = prisma as any;
   if (order.shipments && order.shipments.length > 0) {
     const existing = order.shipments[0];
-    const full = await prisma.shipment.findUnique({
+    const full = (await prismaAny.shipment.findUnique({
       where: { id: existing.id },
-    });
-    const deliveryNoteNumber = full?.deliveryNoteNumber ?? buildDeliveryNoteNumber(order);
-    const deliveryNoteCreatedAt = full?.deliveryNoteCreatedAt ?? existing.createdAt;
+    })) as any;
+    const dispatchNotificationId = full?.dispatchNotificationId ?? buildDeliveryNoteNumber(order);
+    const dispatchNotificationCreatedAt = full?.dispatchNotificationCreatedAt ?? existing.createdAt;
 
-    if (!full?.deliveryNoteNumber || !full?.deliveryNoteCreatedAt || !full?.sscc) {
-      await prisma.shipment.update({
+    if (!full?.dispatchNotificationId || !full?.dispatchNotificationCreatedAt || !full?.packageId) {
+      await prismaAny.shipment.update({
         where: { id: existing.id },
         data: {
-          deliveryNoteNumber,
-          deliveryNoteCreatedAt,
-          sscc: full?.sscc ?? buildSscc(order),
+          dispatchNotificationId,
+          dispatchNotificationCreatedAt,
+          packageId: full?.packageId ?? buildSscc(order),
         },
       });
     }
@@ -345,31 +826,60 @@ async function resolveShipment(
     return {
       id: existing.id,
       shipmentId: existing.shipmentId,
-      deliveryNoteNumber,
-      deliveryNoteCreatedAt,
+      dispatchNotificationId,
+      dispatchNotificationCreatedAt,
       incoterms: full?.incoterms ?? null,
-      sscc: full?.sscc ?? buildSscc(order),
+      packageId: full?.packageId ?? buildSscc(order),
       createdAt: existing.createdAt,
     };
   }
 
-  const shipment = await prisma.shipment.create({
+  const shipment = (await prismaAny.shipment.create({
     data: {
       orderId: order.id,
       shipmentId: `SHIP-${order.galaxusOrderId}-${Date.now()}`,
-      deliveryNoteNumber: buildDeliveryNoteNumber(order),
-      deliveryNoteCreatedAt: new Date(),
-      sscc: buildSscc(order),
+      dispatchNotificationId: buildDeliveryNoteNumber(order),
+      dispatchNotificationCreatedAt: new Date(),
+      packageId: buildSscc(order),
     },
-  });
+  })) as any;
 
   return {
     id: shipment.id,
     shipmentId: shipment.shipmentId,
-    deliveryNoteNumber: shipment.deliveryNoteNumber ?? buildDeliveryNoteNumber(order),
-    deliveryNoteCreatedAt: shipment.deliveryNoteCreatedAt ?? shipment.createdAt,
+    dispatchNotificationId: shipment.dispatchNotificationId ?? buildDeliveryNoteNumber(order),
+    dispatchNotificationCreatedAt: shipment.dispatchNotificationCreatedAt ?? shipment.createdAt,
     incoterms: shipment.incoterms ?? null,
-    sscc: shipment.sscc ?? null,
+    packageId: shipment.packageId ?? null,
+    createdAt: shipment.createdAt,
+  };
+}
+
+async function ensureShipmentDocFields(shipment: {
+  id: string;
+  shipmentId: string;
+  dispatchNotificationId?: string | null;
+  dispatchNotificationCreatedAt?: Date | null;
+  incoterms?: string | null;
+  packageId?: string | null;
+  createdAt: Date;
+  order: GalaxusOrder;
+}) {
+  const dispatchNotificationId = shipment.dispatchNotificationId ?? null;
+  const dispatchNotificationCreatedAt = shipment.dispatchNotificationCreatedAt ?? null;
+  const packageId = shipment.packageId ?? null;
+
+  if (!dispatchNotificationId || !dispatchNotificationCreatedAt || !packageId) {
+    throw new Error("Shipment is missing SSCC or delivery note fields");
+  }
+
+  return {
+    id: shipment.id,
+    shipmentId: shipment.shipmentId,
+    dispatchNotificationId,
+    dispatchNotificationCreatedAt,
+    incoterms: shipment.incoterms ?? null,
+    packageId,
     createdAt: shipment.createdAt,
   };
 }

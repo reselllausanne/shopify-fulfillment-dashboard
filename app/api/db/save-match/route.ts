@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { prisma } from "@/app/lib/prisma";
 import { formatInTimeZone } from "date-fns-tz";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
@@ -7,7 +8,7 @@ import { getMailer } from "@/app/lib/mailer";
 
 const TIMEZONE = "Europe/Zurich";
 // Auto-send is disabled by default; only manual send should deliver emails.
-const AUTO_SEND_EMAILS = false;
+const AUTO_SEND_EMAILS = true;
 // Date handling helpers live in this file
 export const runtime = "nodejs";
 
@@ -85,18 +86,12 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
   states: StockXState[] | null;
   statesHash: string | null;
 }) {
-  const milestone = detectMilestone(opts.checkoutType, opts.states);
+  const milestone = detectMilestone(opts.checkoutType, opts.states, opts.match.stockxOrderNumber || null);
   const milestoneKey = milestone?.key || null;
 
   if (!milestoneKey || milestoneKey === opts.previousLastMilestoneKey) {
     return;
   }
-
-  // Ensure match.lastMilestoneKey stays in sync
-  await prisma.orderMatch.update({
-    where: { id: opts.match.id },
-    data: { lastMilestoneKey: milestoneKey, lastMilestoneAt: new Date() },
-  });
 
   // Upsert event so we can retry sending if needed (no dupes)
   const event = await prisma.stockXStatusEvent.upsert({
@@ -126,7 +121,12 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
   }
 
   const mailer = getMailer();
-  const to = opts.match.shopifyCustomerEmail || "unknown@example.com";
+  const overrideTo = (process.env.POSTMARK_OVERRIDE_TO || "").trim();
+  const to = overrideTo || (opts.match.shopifyCustomerEmail || "").trim();
+  if (!to) {
+    console.log("[EMAIL] Missing customer email; skipping delivery");
+    return;
+  }
   const sendRes = await mailer.sendStockXMilestoneEmail({
     to,
     stockxStates: opts.states,
@@ -148,6 +148,10 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
         emailProviderId: sendRes.providerMessageId || null,
         emailError: null,
       },
+    });
+    await prisma.orderMatch.update({
+      where: { id: opts.match.id },
+      data: { lastMilestoneKey: milestoneKey, lastMilestoneAt: new Date() },
     });
     return;
   }
@@ -542,6 +546,7 @@ export async function POST(req: Request) {
         manualCostOverride: manualCostOverride || null,
         shopifyMetafieldsSynced: shopifyMetafieldsSynced || false,
         shopifyMetafieldsSetAt: shopifyMetafieldsSynced ? new Date() : null,
+        customerTrackingToken: crypto.randomUUID(),
       },
     });
 
