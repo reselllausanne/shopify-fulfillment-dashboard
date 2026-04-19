@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { PartnerProductDataModal } from "./PartnerProductDataModal";
 
@@ -51,6 +51,44 @@ function parseIntOrNull(value: string): number | null {
   if (!trimmed) return null;
   const parsed = Number.parseInt(trimmed, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Sub-line under Price: lowest DB price for same GTIN (other suppliers) + delta vs your price. */
+function PriceReferenceHint(props: { row: CatalogItem; priceFieldValue: string }) {
+  const { row, priceFieldValue } = props;
+  const ref = row.referenceMinPriceChf;
+  const count = row.referenceOfferCount ?? 0;
+  if (ref == null || !Number.isFinite(ref)) return null;
+
+  const your =
+    parseNumberOrNull(priceFieldValue) ??
+    parseNumberOrNull(String(row.price ?? ""));
+
+  let deltaEl: ReactNode = null;
+  if (your != null && Number.isFinite(your)) {
+    const d = your - ref;
+    if (Math.abs(d) < 0.01) {
+      deltaEl = <span className="text-slate-500">Same as lowest elsewhere</span>;
+    } else if (d > 0) {
+      deltaEl = <span className="text-amber-800">+{d.toFixed(2)} CHF above min</span>;
+    } else {
+      deltaEl = <span className="text-emerald-800">{d.toFixed(2)} CHF below min</span>;
+    }
+  }
+
+  return (
+    <div
+      className="mt-1 max-w-[9rem] space-y-0.5 text-left text-[10px] leading-tight text-slate-500"
+      title={`Lowest SupplierVariant.price among other suppliers for GTIN ${row.gtin ?? ""} (${count} listing(s))`}
+    >
+      <div>
+        Others min{" "}
+        <span className="tabular-nums font-medium text-slate-700">{ref.toFixed(2)}</span>
+        {count > 0 ? <span className="text-slate-400"> ({count})</span> : null}
+      </div>
+      {deltaEl}
+    </div>
+  );
 }
 
 export default function PartnerCatalogPage() {
@@ -261,9 +299,8 @@ export default function PartnerCatalogPage() {
               <th className="px-2 py-2 text-left">SKU</th>
               <th className="px-2 py-2 text-left">GTIN</th>
               <th className="px-2 py-2 text-left">Size</th>
-              <th className="px-2 py-2 text-right">Price</th>
-              <th className="px-2 py-2 text-right" title="Min catalog price (CHF) for same GTIN from other suppliers">
-                Others min
+              <th className="px-2 py-2 text-right" title="Your price; under it: lowest price elsewhere for same GTIN">
+                Price
               </th>
               <th className="px-2 py-2 text-right">Stock</th>
               <th className="px-2 py-2 text-left">Updated</th>
@@ -285,31 +322,27 @@ export default function PartnerCatalogPage() {
                 <td className="px-2 py-2">{row.supplierSku ?? "—"}</td>
                 <td className="px-2 py-2 font-mono">{row.gtin ?? "—"}</td>
                 <td className="px-2 py-2">{row.sizeRaw ?? "—"}</td>
-                <td className="px-2 py-2 text-right">
-                  {row.owned ? (
-                    <input
-                      className="w-20 rounded border border-slate-200 px-1 py-0.5 text-right"
-                      value={editPrice[row.supplierVariantId] ?? normalizeNumber(row.price ?? "")}
-                      onChange={(event) =>
-                        setEditPrice((prev) => ({
-                          ...prev,
-                          [row.supplierVariantId]: event.target.value,
-                        }))
-                      }
+                <td className="px-2 py-2 text-right align-top">
+                  <div className="inline-flex flex-col items-end">
+                    {row.owned ? (
+                      <input
+                        className="w-20 rounded border border-slate-200 px-1 py-0.5 text-right"
+                        value={editPrice[row.supplierVariantId] ?? normalizeNumber(row.price ?? "")}
+                        onChange={(event) =>
+                          setEditPrice((prev) => ({
+                            ...prev,
+                            [row.supplierVariantId]: event.target.value,
+                          }))
+                        }
+                      />
+                    ) : (
+                      <span className="text-slate-500">{row.price ?? "-"}</span>
+                    )}
+                    <PriceReferenceHint
+                      row={row}
+                      priceFieldValue={editPrice[row.supplierVariantId] ?? normalizeNumber(row.price ?? "")}
                     />
-                  ) : (
-                    <span className="text-slate-500">{row.price ?? "-"}</span>
-                  )}
-                </td>
-                <td className="px-2 py-2 text-right text-slate-600">
-                  {row.referenceMinPriceChf != null && Number.isFinite(row.referenceMinPriceChf) ? (
-                    <span title={`${row.referenceOfferCount ?? 0} other listing(s) with this GTIN`}>
-                      {Number(row.referenceMinPriceChf).toFixed(2)}
-                      <span className="text-slate-400"> ({row.referenceOfferCount ?? 0})</span>
-                    </span>
-                  ) : (
-                    "—"
-                  )}
+                  </div>
                 </td>
                 <td className="px-2 py-2 text-right">
                   {row.owned ? (
