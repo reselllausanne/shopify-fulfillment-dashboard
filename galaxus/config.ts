@@ -1,6 +1,7 @@
 import path from "path";
 
 export const SUPABASE_DOCS_BUCKET = process.env.SUPABASE_DOCS_BUCKET ?? "Galaxus-invoice";
+export const SUPABASE_IMAGES_BUCKET = process.env.SUPABASE_IMAGES_BUCKET ?? "";
 export const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 export const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
@@ -17,6 +18,30 @@ export const GOLDEN_SUPPLIER_API_KEY_HEADER =
 export const GOLDEN_SUPPLIER_API_KEY_PREFIX =
   process.env.GOLDEN_SUPPLIER_API_KEY_PREFIX ?? "Bearer ";
 
+export const SUPPLIER_TRM_BASE_URL =
+  process.env.SUPPLIER_TRM_BASE_URL ?? "https://api.b2b.turum.pl";
+export const SUPPLIER_TRM_USERNAME = process.env.SUPPLIER_TRM_USERNAME ?? "";
+export const SUPPLIER_TRM_PASSWORD = process.env.SUPPLIER_TRM_PASSWORD ?? "";
+const parsedTrmSyncMinIntervalSec = Number.parseInt(
+  process.env.SUPPLIER_TRM_SYNC_MIN_INTERVAL_SEC ?? "",
+  10
+);
+export const SUPPLIER_TRM_SYNC_MIN_INTERVAL_SEC = Number.isFinite(parsedTrmSyncMinIntervalSec)
+  ? Math.max(parsedTrmSyncMinIntervalSec, 60)
+  : 60;
+export const GALAXUS_SUPPLIER_AUTO_ORDER = process.env.GALAXUS_SUPPLIER_AUTO_ORDER === "true";
+export const GALAXUS_SUPPLIER_AUTO_SEND_ORDR = process.env.GALAXUS_SUPPLIER_AUTO_SEND_ORDR === "true";
+const DEFAULT_LEAD_DAYS = 7;
+const DEFAULT_ETA_WINDOW_DAYS = 0;
+const parsedLeadDays = Number.parseInt(process.env.GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS ?? "", 10);
+const parsedWindowDays = Number.parseInt(process.env.GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS ?? "", 10);
+export const GALAXUS_SUPPLIER_DEFAULT_LEAD_DAYS = Number.isFinite(parsedLeadDays)
+  ? parsedLeadDays
+  : DEFAULT_LEAD_DAYS;
+export const GALAXUS_SUPPLIER_DEFAULT_ETA_WINDOW_DAYS = Number.isFinite(parsedWindowDays)
+  ? parsedWindowDays
+  : DEFAULT_ETA_WINDOW_DAYS;
+
 export const KICKDB_API_BASE_URL = process.env.KICKDB_API_BASE_URL ?? "https://api.kicks.dev/v3";
 export const KICKDB_API_KEY = process.env.KICKDB_API_KEY ?? "";
 export const KICKDB_API_KEY_HEADER = process.env.KICKDB_API_KEY_HEADER ?? "Authorization";
@@ -32,6 +57,33 @@ export const GALAXUS_SUPPLIER_PHONE = process.env.GALAXUS_SUPPLIER_PHONE ?? "";
 export const GALAXUS_SUPPLIER_EMAIL = process.env.GALAXUS_SUPPLIER_EMAIL ?? "";
 export const GALAXUS_SUPPLIER_WEBSITE = process.env.GALAXUS_SUPPLIER_WEBSITE ?? "";
 export const GALAXUS_SUPPLIER_VAT_ID = process.env.GALAXUS_SUPPLIER_VAT_ID ?? "";
+export const GALAXUS_SSCC_SENDER_NAME = process.env.GALAXUS_SSCC_SENDER_NAME ?? "";
+export const GALAXUS_SSCC_SENDER_ADDRESS_LINES =
+  (process.env.GALAXUS_SSCC_SENDER_ADDRESS_LINES ?? "")
+    .split("|")
+    .map((line) => line.trim())
+    .filter(Boolean);
+export const GALAXUS_FEED_SUPPLIER_ALLOWLIST =
+  process.env.GALAXUS_FEED_SUPPLIER_ALLOWLIST ?? "";
+const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";
+export const GALAXUS_FEED_UPLOADS_DISABLED = !["0", "false", "no"].includes(
+  uploadsDisabledRaw.toLowerCase()
+);
+const uploadsManualOnlyRaw = process.env.GALAXUS_FEED_UPLOADS_MANUAL_ONLY ?? "true";
+export const GALAXUS_FEED_UPLOADS_MANUAL_ONLY = !["0", "false", "no"].includes(
+  uploadsManualOnlyRaw.toLowerCase()
+);
+
+export const GALAXUS_GS1_COMPANY_PREFIX =
+  process.env.GALAXUS_GS1_COMPANY_PREFIX ??
+  process.env.SUPPLIER_GS1_COMPANY_PREFIX ??
+  "";
+export const GALAXUS_GS1_EXTENSION_DIGIT =
+  process.env.GALAXUS_GS1_EXTENSION_DIGIT ??
+  process.env.SUPPLIER_GS1_EXTENSION_DIGIT ??
+  "0";
+export const GALAXUS_SHIPMENT_CARRIER_ALLOWLIST =
+  process.env.GALAXUS_SHIPMENT_CARRIER_ALLOWLIST ?? "";
 
 // Galaxus buyer address is fixed for PDF invoices.
 export const GALAXUS_BUYER_NAME = "Digitec Galaxus AG";
@@ -40,3 +92,17 @@ export const GALAXUS_BUYER_ADDRESS2 = null;
 export const GALAXUS_BUYER_POSTAL_CODE = "CH-8005";
 export const GALAXUS_BUYER_CITY = "Zürich";
 export const GALAXUS_BUYER_COUNTRY = "Switzerland";
+
+// Fixed receiver address required for SSCC labels.
+export const GALAXUS_SSCC_RECIPIENT_NAME =
+  process.env.GALAXUS_SSCC_RECIPIENT_NAME ?? "Digitec Galaxus AG";
+export const GALAXUS_SSCC_RECIPIENT_LINE2 =
+  process.env.GALAXUS_SSCC_RECIPIENT_LINE2 ?? "Receiving Wohlen";
+export const GALAXUS_SSCC_RECIPIENT_STREET =
+  process.env.GALAXUS_SSCC_RECIPIENT_STREET ?? "Ferroring 23";
+export const GALAXUS_SSCC_RECIPIENT_POSTAL_CODE =
+  process.env.GALAXUS_SSCC_RECIPIENT_POSTAL_CODE ?? "CH-5612";
+export const GALAXUS_SSCC_RECIPIENT_CITY =
+  process.env.GALAXUS_SSCC_RECIPIENT_CITY ?? "Villmergen";
+export const GALAXUS_SSCC_RECIPIENT_COUNTRY =
+  process.env.GALAXUS_SSCC_RECIPIENT_COUNTRY ?? "Schweiz";

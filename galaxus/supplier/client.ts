@@ -4,7 +4,15 @@ import {
   GOLDEN_SUPPLIER_API_KEY_HEADER,
   GOLDEN_SUPPLIER_API_KEY_PREFIX,
 } from "../config";
-import type { GoldenFlatSize, SupplierAuthConfig, SupplierCatalogItem, SupplierClient } from "./types";
+import type {
+  GoldenFlatSize,
+  SupplierAuthConfig,
+  SupplierCatalogItem,
+  SupplierClient,
+  SupplierDropshipOrderRequest,
+  SupplierDropshipOrderResponse,
+  SupplierDropshipOrderDetails,
+} from "./types";
 
 const GOLDEN_SUPPLIER_KEY = "golden";
 
@@ -32,6 +40,19 @@ async function fetchJson<T>(url: string, auth: SupplierAuthConfig): Promise<T> {
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Golden supplier request failed (${response.status}): ${body}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function postJson<T>(url: string, auth: SupplierAuthConfig, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: buildHeaders(auth),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Golden supplier request failed (${response.status}): ${text}`);
   }
   return response.json() as Promise<T>;
 }
@@ -70,6 +91,80 @@ async function fetchAssortmentFlat(auth: SupplierAuthConfig): Promise<GoldenFlat
   return fetchJson<GoldenFlatSize[]>(url, auth);
 }
 
+type GoldenDropshipCreateResponse = {
+  message?: string;
+  order_id: number;
+  total_price?: number | null;
+  dropship_package_id?: number | null;
+};
+
+type GoldenDropshipDetailsResponse = {
+  order_id: number;
+  status: string;
+  total_amount?: number | null;
+  currency?: string | null;
+  created_at?: string | null;
+  dropship_package_id?: number | null;
+  tracking_numbers?: string[];
+  items?: unknown[];
+};
+
+async function createDropshipOrder(
+  auth: SupplierAuthConfig,
+  request: SupplierDropshipOrderRequest
+): Promise<SupplierDropshipOrderResponse> {
+  const url = `${auth.baseUrl}/orders-dropship/create-order/`;
+  const payload = {
+    delivery_address: {
+      name: request.deliveryAddress.name,
+      city: request.deliveryAddress.city,
+      zip_code: request.deliveryAddress.zipCode,
+      street: request.deliveryAddress.street,
+      country_code: request.deliveryAddress.countryCode,
+      phone: request.deliveryAddress.phone,
+      email: request.deliveryAddress.email,
+    },
+    client_provides_shipping_label: request.clientProvidesShippingLabel ?? false,
+    items: request.items.map((item) => ({
+      size_id: item.sizeId,
+      sku: item.sku,
+      size_us: item.sizeUs,
+      quantity: item.quantity,
+    })),
+  };
+  const response = await postJson<GoldenDropshipCreateResponse>(url, auth, payload);
+  return {
+    orderId: String(response.order_id),
+    totalPrice: response.total_price ?? null,
+    dropshipPackageId:
+      response.dropship_package_id !== null && response.dropship_package_id !== undefined
+        ? String(response.dropship_package_id)
+        : null,
+    raw: response,
+  };
+}
+
+async function getDropshipOrderDetails(
+  auth: SupplierAuthConfig,
+  orderId: string
+): Promise<SupplierDropshipOrderDetails> {
+  const url = `${auth.baseUrl}/orders-dropship/order-details/${orderId}/`;
+  const response = await fetchJson<GoldenDropshipDetailsResponse>(url, auth);
+  return {
+    orderId: String(response.order_id),
+    status: response.status,
+    totalAmount: response.total_amount ?? null,
+    currency: response.currency ?? null,
+    createdAt: response.created_at ?? null,
+    dropshipPackageId:
+      response.dropship_package_id !== null && response.dropship_package_id !== undefined
+        ? String(response.dropship_package_id)
+        : null,
+    trackingNumbers: response.tracking_numbers ?? [],
+    raw: response,
+  };
+}
+
 export function createGoldenSupplierClient(): SupplierClient {
   const auth = buildAuthConfig();
   return {
@@ -81,6 +176,12 @@ export function createGoldenSupplierClient(): SupplierClient {
     async fetchStockAndPrice() {
       const items = await fetchAssortmentFlat(auth);
       return items.map(mapFlatSize);
+    },
+    async createDropshipOrder(request) {
+      return createDropshipOrder(auth, request);
+    },
+    async getDropshipOrderDetails(orderId: string) {
+      return getDropshipOrderDetails(auth, orderId);
     },
   };
 }

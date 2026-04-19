@@ -9,7 +9,14 @@ export function createLocalStorage(baseDir = GALAXUS_DOCS_LOCAL_DIR): StorageAda
       const filePath = path.join(baseDir, key);
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.writeFile(filePath, content);
-      return { storageUrl: `file://${filePath}` };
+      return { storageUrl: `file://${filePath}`, publicUrl: `file://${filePath}` };
+    },
+
+    async uploadBinary(key: string, content: Buffer): Promise<StoredFile> {
+      const filePath = path.join(baseDir, key);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content);
+      return { storageUrl: `file://${filePath}`, publicUrl: `file://${filePath}` };
     },
 
     async getPdf(storageUrl: string): Promise<StorageFileResult> {

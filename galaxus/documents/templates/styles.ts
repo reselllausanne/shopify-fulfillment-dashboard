@@ -37,14 +37,14 @@ export const baseStyles = `
 `;
 
 export const labelStyles = `
-  @page { size: A6; margin: 8mm; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; }
-  .label { border: 1px solid #000; padding: 10px; height: 100%; }
-  .title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
-  .section { margin-bottom: 8px; }
+  @page { size: 4in 6in; margin: 8mm; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111; }
+  .label { border: 2px solid #000; padding: 12px; height: 100%; }
+  .title { font-size: 20px; font-weight: 700; margin-bottom: 10px; }
+  .section { font-size: 14px; margin-bottom: 8px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .address { border: 1px solid #000; padding: 8px; min-height: 72px; }
-  .barcode { border: 1px solid #000; padding: 8px; text-align: center; margin-top: 10px; }
-  .barcode img { width: 100%; height: 50px; object-fit: contain; }
-  .barcode-text { font-size: 11px; margin-top: 6px; }
+  .address { border: 2px solid #000; padding: 8px; min-height: 80px; font-size: 13px; line-height: 1.2; }
+  .barcode { border: 2px solid #000; padding: 10px; text-align: center; margin-top: 12px; }
+  .barcode img { width: 100%; height: 70px; object-fit: contain; }
+  .barcode-text { font-size: 13px; margin-top: 6px; }
 `;

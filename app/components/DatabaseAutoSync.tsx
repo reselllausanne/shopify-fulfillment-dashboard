@@ -5,6 +5,7 @@ type MatchRow = any;
 
 type Props = {
   onLoadFromDatabase: () => Promise<void>;
+  onRefreshTrackingFromStockx: () => Promise<void>;
   dbLoading: boolean;
   token: string;
   dbMatches: MatchRow[];
@@ -21,6 +22,7 @@ type Props = {
 
 export default function DatabaseAutoSync({
   onLoadFromDatabase,
+  onRefreshTrackingFromStockx,
   dbLoading,
   token,
   dbMatches,
@@ -36,6 +38,7 @@ export default function DatabaseAutoSync({
 }: Props) {
   const [emailLoading, setEmailLoading] = React.useState<Record<string, boolean>>({});
   const [bulkLoading, setBulkLoading] = React.useState(false);
+  const [trackingRefreshLoading, setTrackingRefreshLoading] = React.useState(false);
 
   const sendMilestoneEmail = async (matchId: string, force: boolean) => {
     setEmailLoading((prev) => ({ ...prev, [matchId]: true }));
@@ -68,7 +71,13 @@ export default function DatabaseAutoSync({
     }
   };
 
-  const sendLimitedEmails = async (limit: number, onlyToday = false) => {
+  const sendLimitedEmails = async (
+    limit: number,
+    onlyToday = false,
+    sinceDate?: string,
+    force = false,
+    scanLimit?: number
+  ) => {
     setBulkLoading(true);
     try {
       const res = await fetch("/api/notifications/stockx/send-limited", {
@@ -76,10 +85,12 @@ export default function DatabaseAutoSync({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           limit,
-          force: false,
+          force,
           skipIfFulfilled: true,
           skipIfEtaPassed: true,
           onlyToday,
+          sinceDate,
+          scanLimit,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -118,6 +129,23 @@ export default function DatabaseAutoSync({
             {bulkLoading ? "Sending..." : "📧 Send today (2)"}
           </button>
           <button
+            onClick={() => sendLimitedEmails(200, false, "2026-02-01", false, 2000)}
+            disabled={bulkLoading}
+            className="px-3 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 disabled:bg-gray-100 text-xs font-semibold"
+          >
+            Send since Feb (200)
+          </button>
+          <button
+            onClick={() => {
+              if (!confirm("Force resend all milestones since Feb?")) return;
+              sendLimitedEmails(200, false, "2026-02-01", true, 2000);
+            }}
+            disabled={bulkLoading}
+            className="px-3 py-2 bg-amber-200 text-amber-900 rounded-md hover:bg-amber-300 disabled:bg-gray-100 text-xs font-semibold"
+          >
+            Force since Feb (200)
+          </button>
+          <button
             onClick={() => sendLimitedEmails(1)}
             disabled={bulkLoading}
             className="px-3 py-2 bg-indigo-100 text-indigo-900 rounded-md hover:bg-indigo-200 disabled:bg-gray-100 text-xs font-semibold"
@@ -129,7 +157,16 @@ export default function DatabaseAutoSync({
 
       <ActionBar
         onLoadFromDatabase={onLoadFromDatabase}
+        onRefreshTrackingFromStockx={async () => {
+          setTrackingRefreshLoading(true);
+          try {
+            await onRefreshTrackingFromStockx();
+          } finally {
+            setTrackingRefreshLoading(false);
+          }
+        }}
         dbLoading={dbLoading}
+        trackingRefreshLoading={trackingRefreshLoading}
         token={token}
       />
 

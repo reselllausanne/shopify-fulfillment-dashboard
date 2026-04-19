@@ -1,6 +1,6 @@
 import { extractEUSize, shopifyGraphQL } from "@/lib/shopifyAdmin";
 
-export type DbFulfillmentItem = {
+type DbFulfillmentItem = {
   sku?: string | null;
   variantId?: string | null;
   title?: string | null;
@@ -9,7 +9,7 @@ export type DbFulfillmentItem = {
   sourceId?: string | null;
 };
 
-export type FulfillmentOrderLineItemNode = {
+type FulfillmentOrderLineItemNode = {
   id: string;
   totalQuantity: number;
   remainingQuantity: number;
@@ -17,7 +17,7 @@ export type FulfillmentOrderLineItemNode = {
   variant?: { id?: string | null; sku?: string | null } | null;
 };
 
-export type FulfillmentOrderNode = {
+type FulfillmentOrderNode = {
   id: string;
   status: string;
   requestStatus: string;
@@ -25,7 +25,7 @@ export type FulfillmentOrderNode = {
   lineItems: { nodes: FulfillmentOrderLineItemNode[] };
 };
 
-export type OrderLineItemSummary = {
+type OrderLineItemSummary = {
   id: string;
   title: string;
   name?: string | null;
@@ -36,7 +36,7 @@ export type OrderLineItemSummary = {
   variantSku?: string | null;
 };
 
-export type ShippingLineInfo = {
+type ShippingLineInfo = {
   id: string;
   title: string;
   amount: string;
@@ -44,11 +44,14 @@ export type ShippingLineInfo = {
   isRemoved: boolean;
 };
 
-export type OrderShippingInfo = {
+type OrderShippingInfo = {
   id: string;
   name: string;
   email?: string | null;
   phone?: string | null;
+  /** Shopify order locale, e.g. fr-CH, de */
+  customerLocale?: string | null;
+  paymentGatewayNames?: string[];
   shippingAddress?: {
     firstName?: string | null;
     lastName?: string | null;
@@ -67,7 +70,7 @@ export type OrderShippingInfo = {
   shippingLines?: ShippingLineInfo[];
 };
 
-export type OrderFulfillmentMap = {
+type OrderFulfillmentMap = {
   order: {
     id: string;
     name: string;
@@ -75,23 +78,23 @@ export type OrderFulfillmentMap = {
   } | null;
 };
 
-export type FulfillmentOrderLineItemInput = {
+type FulfillmentOrderLineItemInput = {
   id: string;
   quantity: number;
 };
 
-export type FulfillmentOrderLineItemsInput = {
+type FulfillmentOrderLineItemsInput = {
   fulfillmentOrderId: string;
   fulfillmentOrderLineItems: FulfillmentOrderLineItemInput[];
 };
 
-export type FulfillmentTrackingInput = {
+type FulfillmentTrackingInput = {
   number?: string | null;
   url?: string | null;
   company?: string | null;
 };
 
-export type FulfillmentInput = {
+type FulfillmentInput = {
   notifyCustomer?: boolean;
   trackingInfo?: FulfillmentTrackingInput;
   lineItemsByFulfillmentOrder: FulfillmentOrderLineItemsInput[];
@@ -182,6 +185,8 @@ query OrderShippingInfo($orderId: ID!) {
     name
     email
     phone
+    customerLocale
+    paymentGatewayNames
     shippingAddress {
       firstName
       lastName
@@ -590,6 +595,7 @@ export async function createFulfillment(fulfillment: FulfillmentInput) {
 type OrderShippingGraphQLResponse = {
   order:
     | (OrderShippingInfo & {
+        paymentGatewayNames?: string[];
         shippingLines?: {
           edges?: Array<{
             node?: {

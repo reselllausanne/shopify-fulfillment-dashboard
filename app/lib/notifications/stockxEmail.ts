@@ -142,7 +142,18 @@ export async function sendMilestoneEmailForMatch({
   }
 
   const mailer = getMailer();
-  const to = match.shopifyCustomerEmail || "unknown@example.com";
+  const overrideTo = (process.env.POSTMARK_OVERRIDE_TO || "").trim();
+  const to = overrideTo || (match.shopifyCustomerEmail || "").trim();
+  if (!to) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "missing_customer_email",
+      eventId: event.id,
+      milestoneKey,
+      matchId,
+    };
+  }
   const sendRes = await mailer.sendStockXMilestoneEmail({
     to,
     stockxStates: states,

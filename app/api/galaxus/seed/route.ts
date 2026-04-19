@@ -8,7 +8,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const lineCount = Math.max(1, Math.min(Number(body?.lineCount) || 120, 200));
-    const order = await seedGalaxusOrder({ lineCount });
+    const order = await seedGalaxusOrder({ lineCount, useSupplierData: true });
     return NextResponse.json({ ok: true, orderId: order.id, galaxusOrderId: order.galaxusOrderId });
   } catch (error: any) {
     console.error("[GALAXUS][SEED] Failed:", error);

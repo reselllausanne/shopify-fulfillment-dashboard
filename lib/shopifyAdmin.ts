@@ -1,6 +1,6 @@
 // lib/shopifyAdmin.ts
 
-export type ShopifyGqlError = { message: string; extensions?: any };
+type ShopifyGqlError = { message: string; extensions?: any };
 
 export async function shopifyGraphQL<T>(
   query: string,

@@ -52,13 +52,8 @@ export async function POST(_req: NextRequest) {
         }
       }
 
-      await prisma.orderMatch.update({
-        where: { id: match.id },
-        data: {
-          lastMilestoneKey: milestoneKey,
-          lastMilestoneAt: new Date(),
-        },
-      });
+      // IMPORTANT: Do not update lastMilestoneKey here.
+      // This route is a notifier/event recorder; sending is handled separately.
 
       processed += 1;
     }

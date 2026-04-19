@@ -30,6 +30,7 @@ model ShopifyOrder {
   totalSalesChf       Decimal   @db.Decimal(10, 2)  // Gross sales
   currencyCode        String    @default("CHF")
   financialStatus     String?
+  paymentGatewayNames String[] @default([])
   cancelledAt         DateTime?
   refundedAmountChf   Decimal?  @db.Decimal(10, 2)
   netSalesChf         Decimal?  @db.Decimal(10, 2)  // totalSales - refunded
@@ -52,6 +53,14 @@ enum ReturnReason {
   STORE_CREDIT
   EXCHANGE
   DAMAGE
+
+  @@schema("public")
+}
+
+enum StxImportSlugStatus {
+  PENDING
+  IMPORTED
+  ERROR
 
   @@schema("public")
 }
@@ -105,6 +114,9 @@ model OrderMatch {
   lastMilestoneKey          String?
   lastMilestoneAt           DateTime?
 
+  /// Opaque token for public customer tracking (/track/[token]); no expiry.
+  customerTrackingToken   String?  @unique
+
   stockxStatusEvents        StockXStatusEvent[]
   
   // Shopify metafields sync status
@@ -137,6 +149,64 @@ model OrderMatch {
   @@index([stockxOrderNumber])
   @@index([shopifyMetafieldsSynced])
   @@index([stockxPurchaseDate])
+  @@schema("public")
+}
+
+model GalaxusStockxMatch {
+  id                 String   @id @default(uuid())
+
+  galaxusOrderId     String
+  galaxusOrderRef    String?
+  galaxusOrderDate   DateTime?
+  galaxusOrderLineId String
+  unitIndex          Int      @default(0)
+  galaxusLineNumber  Int?
+  galaxusProductName String
+  galaxusDescription String?
+  galaxusSize        String?
+  galaxusGtin        String?
+  galaxusProviderKey String?
+  galaxusSupplierSku String?
+  galaxusQuantity    Int
+  galaxusUnitNetPrice Decimal @db.Decimal(10, 2)
+  galaxusLineNetAmount Decimal @db.Decimal(10, 2)
+  galaxusVatRate     Decimal @db.Decimal(5, 2)
+  galaxusCurrencyCode String   @default("CHF")
+
+  stockxChainId      String?
+  stockxOrderId      String?
+  stockxOrderNumber  String
+  stockxVariantId    String?
+  stockxProductName  String?
+  stockxSkuKey       String?
+  stockxSizeEU       String?
+  stockxPurchaseDate DateTime?
+  stockxAmount       Decimal? @db.Decimal(10, 2)
+  stockxCurrencyCode String?
+  stockxStatus       String?
+  stockxEstimatedDelivery DateTime?
+  stockxLatestEstimatedDelivery DateTime?
+  stockxAwb          String?
+  stockxTrackingUrl  String?
+  stockxCheckoutType String?
+  stockxStates       Json?
+
+  matchConfidence    String?
+  matchScore         Decimal? @db.Decimal(5, 2)
+  matchType          String?
+  matchReasons       String?
+  timeDiffHours      Decimal? @db.Decimal(10, 2)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  order              GalaxusOrder     @relation(fields: [galaxusOrderId], references: [id], onDelete: Cascade)
+  orderLine          GalaxusOrderLine @relation(fields: [galaxusOrderLineId], references: [id], onDelete: Cascade)
+
+  @@unique([galaxusOrderLineId, unitIndex])
+  @@index([galaxusOrderId])
+  @@index([stockxOrderNumber])
+  @@index([stockxVariantId])
   @@schema("public")
 }
 
@@ -213,8 +283,9 @@ model ExpenseCategory {
   type      ExpenseType   @default(PERSONAL)
   createdAt DateTime      @default(now())
   
-  expenses  PersonalExpense[]
-  recurringExpenses RecurringExpense[]
+  expenses            PersonalExpense[]
+  recurringExpenses   RecurringExpense[]
+  manualFinanceEvents ManualFinanceEvent[]
 
   @@schema("public")
 }
@@ -291,6 +362,7 @@ model RecurringExpense {
   dayOfMonth   Int      @default(1)
   intervalMonths Int    @default(1) // 1=monthly, 3=quarterly, etc.
   startDate    DateTime @default(now())
+  endDate      DateTime?
   nextRunDate  DateTime
   lastRunAt    DateTime?
   active       Boolean  @default(true)
@@ -306,6 +378,572 @@ model RecurringExpense {
   @@schema("public")
 }
 
+enum MarketplaceChannel {
+  SHOPIFY
+  GALAXUS
+  DECATHLON
+
+  @@schema("public")
+}
+
+enum CashInDelayType {
+  BUSINESS_DAYS
+  CALENDAR_DAYS
+  NEXT_FRIDAY
+
+  @@schema("public")
+}
+
+enum CashOutCadence {
+  DAILY
+  WEEKLY
+  MONTHLY
+
+  @@schema("public")
+}
+
+enum CashOutCategory {
+  COGS
+  ADS
+  SHIPPING
+  SUBSCRIPTION
+  OWNER_DRAW
+  INSURANCE
+  FUEL
+  OTHER
+
+  @@schema("public")
+}
+
+enum ForecastMode {
+  AUTO
+  MANUAL
+  HYBRID
+
+  @@schema("public")
+}
+
+enum BankAccountType {
+  BANK
+  CARD
+
+  @@schema("public")
+}
+
+enum BankImportSource {
+  CAMT053
+  CSV
+
+  @@schema("public")
+}
+
+enum FinanceDirection {
+  IN
+  OUT
+
+  @@schema("public")
+}
+
+enum FinanceCategory {
+  SALES
+  REFUND
+  COGS
+  COMMISSION
+  SHIPPING
+  ADS
+  SUBSCRIPTION
+  OWNER_DRAW
+  INSURANCE
+  FUEL
+  TAX
+  OTHER
+
+  @@schema("public")
+}
+
+enum ManualEventSourceType {
+  MANUAL
+  RECURRING
+  IMPORT
+
+  @@schema("public")
+}
+
+enum OperatingEventType {
+  SALE
+  REFUND
+  COGS
+  AD_SPEND
+  SHIPPING_COST
+  SUBSCRIPTION_COST
+  MARKETPLACE_COMMISSION
+  OWNER_DRAW
+  INSURANCE
+  FUEL
+  TAX
+  VAT
+  BANK_FEE
+  MANUAL_ADJUSTMENT
+  OTHER_EXPENSE
+  OTHER_INCOME
+
+  @@schema("public")
+}
+
+enum OperatingEventCategory {
+  REVENUE
+  DIRECT_COST
+  MARKETING
+  LOGISTICS
+  SOFTWARE
+  MARKETPLACE
+  PERSONAL_DRAW
+  TAXES
+  FINANCE
+  MANUAL
+  OTHER
+
+  @@schema("public")
+}
+
+enum OperatingDirection {
+  IN
+  OUT
+  NEUTRAL
+
+  @@schema("public")
+}
+
+enum OperatingSourceType {
+  SHOPIFY_ORDER
+  GALAXUS_ORDER_LINE
+  DECATHLON_ORDER_LINE
+  ORDER_MATCH
+  GALAXUS_STOCKX_MATCH
+  DECATHLON_STOCKX_MATCH
+  DAILY_AD_SPEND
+  MONTHLY_VARIABLE_COST
+  RECURRING_EXPENSE
+  PERSONAL_EXPENSE
+  MANUAL_FINANCE_EVENT
+  SYSTEM_GENERATED
+
+  @@schema("public")
+}
+
+enum OperatingEventStatus {
+  ACTIVE
+  VOID
+  SUPERSEDED
+  PARTIAL
+  PENDING_REVIEW
+
+  @@schema("public")
+}
+
+enum ConfidenceLevel {
+  HIGH
+  MEDIUM
+  LOW
+
+  @@schema("public")
+}
+
+enum ExpectedCashSourceType {
+  OPERATING_EVENT
+  MANUAL_FINANCE_EVENT
+  RULE_GENERATED
+  SYSTEM_GENERATED
+
+  @@schema("public")
+}
+
+enum ExpectedCashDerivationMethod {
+  RULE_BASED
+  SAME_DAY
+  OFFSET_DAYS
+  MANUAL_OVERRIDE
+
+  @@schema("public")
+}
+
+enum ExpectedCashStatus {
+  PENDING
+  ACTUALIZED
+  VOID
+  SUPERSEDED
+
+  @@schema("public")
+}
+
+enum ReconciliationLinkedType {
+  MANUAL_EVENT
+  EXPECTED_CASH
+  OPERATING_EVENT
+  SHOPIFY_PAYOUT
+  MARKETPLACE_REMITTANCE
+  OTHER
+
+  @@schema("public")
+}
+
+enum ReconciliationStatus {
+  UNMATCHED
+  MATCHED
+  PARTIAL
+
+  @@schema("public")
+}
+
+model ShopifyPayout {
+  id               String   @id
+  issuedAt         DateTime
+  status           String
+  transactionType  String?
+  netAmount        Decimal  @db.Decimal(10, 2)
+  currencyCode     String   @default("CHF")
+  summaryJson      Json?
+  rawJson          Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([issuedAt])
+  @@schema("public")
+}
+
+model CashFlowConfig {
+  id               String   @id @default(uuid())
+  initialBalanceChf Decimal @db.Decimal(12, 2)
+  currencyCode     String   @default("CHF")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model CashInRule {
+  id             String           @id @default(uuid())
+  channel        MarketplaceChannel
+  paymentMethod  String?
+  delayType      CashInDelayType
+  delayValueDays Decimal?         @db.Decimal(5, 2)
+  priority       Int              @default(100)
+  active         Boolean          @default(true)
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([channel, paymentMethod])
+  @@index([active, priority])
+  @@schema("public")
+}
+
+model CashOutRule {
+  id          String        @id @default(uuid())
+  category    CashOutCategory
+  cadence     CashOutCadence
+  amountChf   Decimal?      @db.Decimal(10, 2)
+  dayOfWeek   Int?
+  dayOfMonth  Int?
+  offsetDays  Int?          // for shifting COGS outflow relative to order date
+  startDate   DateTime?
+  endDate     DateTime?
+  active      Boolean       @default(true)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([category, active])
+  @@schema("public")
+}
+
+model CashLedgerDaily {
+  id             String   @id @default(uuid())
+  date           DateTime
+  openingBalance Decimal  @db.Decimal(12, 2)
+  cashIn         Decimal  @db.Decimal(12, 2)
+  cashOut        Decimal  @db.Decimal(12, 2)
+  closingBalance Decimal  @db.Decimal(12, 2)
+  metadataJson   Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([date])
+  @@index([date])
+  @@schema("public")
+}
+
+model ForecastAssumption {
+  id                  String          @id @default(uuid())
+  channel             MarketplaceChannel
+  mode                ForecastMode    @default(HYBRID)
+  expectedDailySales  Decimal         @db.Decimal(12, 2) @default(0)
+  expectedDailyOrders Int?
+  growthRatePct       Decimal?        @db.Decimal(5, 2)
+  payoutDelayDays     Decimal?        @db.Decimal(5, 2)
+  commissionRatePct   Decimal?        @db.Decimal(5, 2)
+  refundRatePct       Decimal?        @db.Decimal(5, 2)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@unique([channel])
+  @@schema("public")
+}
+
+model BankAccount {
+  id           String          @id @default(uuid())
+  name         String
+  iban         String?         @unique
+  bankName     String?
+  currencyCode String          @default("CHF")
+  accountType  BankAccountType @default(BANK)
+  isPrimary    Boolean         @default(false)
+  notes        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  imports           BankStatementImport[]
+  transactions      BankTransaction[]
+  balanceSnapshots  BankBalanceSnapshot[]
+  manualEvents      ManualFinanceEvent[]
+
+  @@schema("public")
+}
+
+model BankStatementImport {
+  id             String           @id @default(uuid())
+  bankAccountId  String
+  sourceType     BankImportSource
+  sourceFileName String?
+  fileHash       String
+  statementFrom  DateTime?
+  statementTo    DateTime?
+  importedAt     DateTime         @default(now())
+  metadataJson   Json?
+
+  bankAccount    BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions   BankTransaction[]
+
+  @@unique([bankAccountId, fileHash])
+  @@index([bankAccountId, importedAt])
+  @@schema("public")
+}
+
+model BankTransaction {
+  id               String          @id @default(uuid())
+  bankAccountId    String
+  statementImportId String?
+  externalId       String?
+  bookingDate      DateTime
+  valueDate        DateTime?
+  amount           Decimal         @db.Decimal(12, 2)
+  currencyCode     String          @default("CHF")
+  direction        FinanceDirection
+  counterpartyName String?
+  counterpartyIban String?
+  reference        String?
+  remittanceInfo   String?
+  transactionType  String?
+  fingerprint      String
+  rawJson          Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  bankAccount      BankAccount     @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  statementImport  BankStatementImport? @relation(fields: [statementImportId], references: [id], onDelete: SetNull)
+  reconciliations  BankReconciliationLink[]
+  expectedCashEvents ExpectedCashEvent[] @relation("ExpectedCashActualized")
+
+  @@unique([bankAccountId, fingerprint])
+  @@index([bankAccountId, bookingDate])
+  @@index([bankAccountId, externalId])
+  @@schema("public")
+}
+
+model BankBalanceSnapshot {
+  id            String      @id @default(uuid())
+  bankAccountId String
+  snapshotDate  DateTime
+  balance       Decimal     @db.Decimal(12, 2)
+  currencyCode  String      @default("CHF")
+  note          String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([bankAccountId, snapshotDate])
+  @@index([bankAccountId, snapshotDate])
+  @@schema("public")
+}
+
+model ManualFinanceEvent {
+  id               String             @id @default(uuid())
+  eventDate        DateTime
+  amount           Decimal            @db.Decimal(12, 2)
+  currencyCode     String             @default("CHF")
+  direction        FinanceDirection
+  category         FinanceCategory    @default(OTHER)
+  description      String?
+  expenseCategoryId String?
+  bankAccountId    String?
+  sourceType       ManualEventSourceType @default(MANUAL)
+  sourceId         String?
+  metadataJson     Json?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  expenseCategory  ExpenseCategory?   @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  bankAccount      BankAccount?       @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  operatingEvents  OperatingEvent[]   @relation("ManualFinanceOperatingEvents")
+  expectedCashEvents ExpectedCashEvent[] @relation("ManualFinanceExpectedCashEvents")
+
+  @@unique([sourceType, sourceId, eventDate])
+  @@index([eventDate])
+  @@index([sourceType, sourceId])
+  @@schema("public")
+}
+
+model OperatingEvent {
+  id           String                @id @default(uuid())
+  eventKey     String                @unique
+  eventDate    DateTime
+  channel      MarketplaceChannel?
+  eventType    OperatingEventType
+  direction    OperatingDirection
+  category     OperatingEventCategory
+  subcategory  String?
+  amount       Decimal               @db.Decimal(12, 2)
+  currencyCode String                @default("CHF")
+  description  String?
+
+  sourceType    OperatingSourceType
+  sourceRecordId String?
+  sourceLineId  String?
+  sourceTable   String?
+  sourceReference String?
+  paymentMethod String?
+  materializedAt DateTime            @default(now())
+
+  orderId          String?
+  orderLineId      String?
+  externalOrderRef String?
+  sku              String?
+  providerKey      String?
+  counterparty     String?
+
+  status       OperatingEventStatus @default(ACTIVE)
+  confidence   ConfidenceLevel      @default(MEDIUM)
+  isManual     Boolean              @default(false)
+  isDerived    Boolean              @default(false)
+  isEstimated  Boolean              @default(false)
+  notes        String?
+  metadataJson Json?
+
+  manualFinanceEventId String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  manualFinanceEvent ManualFinanceEvent? @relation("ManualFinanceOperatingEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
+  expectedCashEvents ExpectedCashEvent[] @relation("OperatingExpectedCash")
+
+  @@index([eventDate])
+  @@index([channel])
+  @@index([sourceType])
+  @@index([sourceRecordId])
+  @@schema("public")
+}
+
+model ExpectedCashEvent {
+  id             String                @id @default(uuid())
+  expectedEventKey String              @unique
+  expectedDate   DateTime
+  amount         Decimal               @db.Decimal(12, 2)
+  currencyCode   String                @default("CHF")
+  direction      FinanceDirection
+  category       FinanceCategory       @default(OTHER)
+  subcategory    String?
+  description    String?
+  channel        MarketplaceChannel?
+  paymentMethod  String?
+
+  sourceType       ExpectedCashSourceType
+  sourceRuleId     String?
+  derivationMethod ExpectedCashDerivationMethod
+  derivationVersion String?
+
+  operatingEventId           String?
+  manualFinanceEventId       String?
+  isActualized               Boolean              @default(false)
+  actualizedByBankTransactionId String?
+  status                     ExpectedCashStatus   @default(PENDING)
+  confidence                 ConfidenceLevel      @default(MEDIUM)
+  notes                      String?
+  metadataJson               Json?
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+
+  operatingEvent        OperatingEvent?     @relation("OperatingExpectedCash", fields: [operatingEventId], references: [id], onDelete: SetNull)
+  manualFinanceEvent    ManualFinanceEvent? @relation("ManualFinanceExpectedCashEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
+  actualizedByBankTransaction BankTransaction? @relation("ExpectedCashActualized", fields: [actualizedByBankTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([expectedDate])
+  @@index([channel])
+  @@index([sourceType])
+  @@index([operatingEventId])
+  @@schema("public")
+}
+
+model BankReconciliationLink {
+  id               String                 @id @default(uuid())
+  bankTransactionId String
+  linkedType       ReconciliationLinkedType
+  linkedId         String
+  status           ReconciliationStatus   @default(MATCHED)
+  matchedAmount    Decimal?               @db.Decimal(12, 2)
+  confidence       Int?
+  notes            String?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  bankTransaction  BankTransaction        @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([linkedType, linkedId])
+  @@index([status])
+  @@schema("public")
+}
+
+model MarketplaceCashAssumption {
+  id           String             @id @default(uuid())
+  channel      MarketplaceChannel
+  lagDays      Int                @default(2)
+  feePercent   Decimal?           @db.Decimal(5, 2)
+  feeFlatChf   Decimal?           @db.Decimal(10, 2)
+  activeFrom   DateTime           @default(now())
+  activeTo     DateTime?
+  notes        String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([channel, activeFrom])
+  @@schema("public")
+}
+
+model MarketplaceRemittance {
+  id           String             @id @default(uuid())
+  channel      MarketplaceChannel
+  paidAt       DateTime
+  amountChf    Decimal            @db.Decimal(10, 2)
+  currencyCode String             @default("CHF")
+  reference    String?
+  sourceFile   String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([channel, paidAt])
+  @@schema("public")
+}
+
 enum DocumentType {
   INVOICE
   DELIVERY_NOTE
@@ -314,21 +952,57 @@ enum DocumentType {
   @@schema("public")
 }
 
+enum ShipmentPackageType {
+  PARCEL
+  PALLET
+
+  @@schema("public")
+}
+
+enum ShipmentDelrStatus {
+  PENDING
+  UPLOADED
+  ERROR
+
+  @@schema("public")
+}
+
 model SupplierVariant {
   id                String   @id @default(uuid())
   supplierVariantId String   @unique
   supplierSku       String
+  providerKey       String?
+  gtin              String?
   price             Decimal  @db.Decimal(10, 2)
   stock             Int
   sizeRaw           String?
+  sizeNormalized    String?
+  supplierBrand     String?
+  supplierProductName String?
+  weightGrams       Int?
   images            Json?
+  sourceImageUrl    String?
+  hostedImageUrl    String?
+  imageSyncStatus   String?
+  imageVersion      Int      @default(1)
+  imageLastSyncedAt DateTime?
+  imageSyncError    String?
+  manualPrice       Decimal? @db.Decimal(10, 2)
+  manualStock       Int?
+  manualLock        Boolean  @default(false)
+  manualNote        String?
+  manualUpdatedAt   DateTime?
   leadTimeDays      Int?
+  deliveryType      String?
   lastSyncAt        DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   mappings          VariantMapping[]
 
+  @@index([providerKey])
+  @@index([gtin])
+  @@unique([providerKey, gtin])
   @@index([supplierSku])
   @@schema("public")
 }
@@ -341,6 +1015,13 @@ model KickDBProduct {
   name            String?
   brand           String?
   imageUrl        String?
+  traitsJson      Json?
+  description     String?
+  gender          String?
+  colorway        String?
+  countryOfManufacture String?
+  releaseDate     DateTime?
+  retailPrice     Float?
   lastFetchedAt   DateTime?
   notFound        Boolean  @default(false)
   createdAt       DateTime @default(now())
@@ -374,7 +1055,8 @@ model KickDBVariant {
 
 model VariantMapping {
   id               String   @id @default(uuid())
-  supplierVariantId String  @unique
+  supplierVariantId String?  @unique
+  partnerVariantId String?  @unique
   kickdbVariantId  String?
   gtin             String?
   providerKey      String?
@@ -383,10 +1065,276 @@ model VariantMapping {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  supplierVariant  SupplierVariant @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  supplierVariant  SupplierVariant? @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  partnerVariant   PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: Cascade)
   kickdbVariant    KickDBVariant?  @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
 
   @@index([kickdbVariantId])
+  @@schema("public")
+}
+
+model Partner {
+  id               String   @id @default(uuid())
+  key              String   @unique
+  name             String
+  active           Boolean  @default(true)
+  contactEmail     String?
+  contactName      String?
+  priorityRank     Int?
+  /// Default lead time (days) for Galaxus supplier ORDR when variant `leadTimeDays` is null.
+  defaultLeadTimeDays Int?
+
+  // Pricing overrides (null = use defaults)
+  targetMargin     Decimal? @db.Decimal(5, 4)
+  shippingPerPair  Decimal? @db.Decimal(10, 2)
+  bufferPerPair    Decimal? @db.Decimal(10, 2)
+  roundTo          Decimal? @db.Decimal(10, 4)
+  vatRate          Decimal? @db.Decimal(5, 4)
+
+  users            PartnerUser[]
+  variants         PartnerVariant[]
+  uploads          PartnerUpload[]
+  uploadRows       PartnerUploadRow[]
+  alternativeProductUploads AlternativeProductUpload[]
+  alternativeProducts AlternativeProduct[]
+  orders           PartnerOrder[]
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model PartnerUser {
+  id           String   @id @default(uuid())
+  partnerId    String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("partner")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerUpload {
+  id           String   @id @default(uuid())
+  partnerId    String
+  filename     String
+  status       String
+  totalRows    Int      @default(0)
+  importedRows Int      @default(0)
+  errorRows    Int      @default(0)
+  errorsJson   Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  rows         PartnerUploadRow[]
+
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerUploadRow {
+  id                 String   @id @default(uuid())
+  uploadId           String?
+  partnerId          String?
+  /// Links inbox / upload staging rows to SupplierVariant (catalog); kept in sync on catalog edits.
+  supplierVariantId  String?
+  providerKey        String
+  sku                String
+  sizeRaw            String
+  sizeNormalized     String
+  rawStock           Int
+  price              Decimal  @db.Decimal(10, 2)
+  status             String
+  gtinResolved       String?
+  gtinCandidatesJson Json?
+  errorsJson         Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  upload             PartnerUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  partner            Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  @@index([uploadId])
+  @@index([partnerId])
+  @@index([providerKey])
+  @@index([status])
+  @@index([supplierVariantId])
+  @@index([providerKey, sku, sizeNormalized])
+  @@schema("public")
+}
+
+model AlternativeProductUpload {
+  id           String   @id @default(uuid())
+  partnerId    String
+  filename     String
+  status       String
+  totalRows    Int      @default(0)
+  importedRows Int      @default(0)
+  errorRows    Int      @default(0)
+  errorsJson   Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  products     AlternativeProduct[]
+
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model AlternativeProduct {
+  id                     String   @id @default(uuid())
+  partnerId              String
+  uploadId               String?
+  externalKey            String
+  gtin                   String
+  providerKey            String
+  brand                  String
+  title                  String
+  variantName            String?
+  description            String
+  category               String
+  size                   String
+  mainImageUrl           String
+  extraImageUrls         Json?
+  color                  String?
+  gender                 String?
+  material               String?
+  stock                  Int
+  priceExVat             Decimal  @db.Decimal(10, 2)
+  vatRate                Decimal  @db.Decimal(5, 4)
+  currency               String   @default("CHF")
+  leadTimeDays           Int?
+  specsJson              Json?
+  decathlonLogisticClass String?
+  decathlonLeadTimeToShip Int?
+  exportEnabled          Boolean  @default(true)
+  status                 String   @default("ACTIVE")
+  validationErrorsJson   Json?
+  archivedAt             DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  partner                Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  upload                 AlternativeProductUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+
+  @@index([partnerId])
+  @@index([uploadId])
+  @@index([gtin])
+  @@index([providerKey])
+  @@index([externalKey])
+  @@schema("public")
+}
+
+model PartnerVariant {
+  id               String   @id @default(uuid())
+  partnerId        String
+  partnerVariantId String
+  externalSku      String?
+  sizeRaw          String?
+  price            Decimal? @db.Decimal(10, 2)
+  stock            Int?
+  images           Json?
+  productName      String?
+  brand            String?
+  gtin             String?
+  lastSyncAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  partner          Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  mapping          VariantMapping?
+  partnerOrderLines PartnerOrderLine[]
+
+  @@unique([partnerId, partnerVariantId])
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerOrder {
+  id             String   @id @default(uuid())
+  partnerId      String
+  galaxusOrderId String
+  status         String   @default("PENDING")
+  sentAt         DateTime?
+  confirmedAt    DateTime?
+  trackingNumber String?
+  trackingUrl    String?
+  labelUrl       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  partner        Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  lines          PartnerOrderLine[]
+
+  @@unique([partnerId, galaxusOrderId])
+  @@index([partnerId])
+  @@schema("public")
+}
+
+model PartnerOrderLine {
+  id              String   @id @default(uuid())
+  partnerOrderId  String
+  partnerVariantId String?
+  gtin            String?
+  quantity        Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  partnerOrder    PartnerOrder @relation(fields: [partnerOrderId], references: [id], onDelete: Cascade)
+  partnerVariant  PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: SetNull)
+
+  @@index([partnerOrderId])
+  @@schema("public")
+}
+
+model StxPurchaseUnit {
+  id                String   @id @default(uuid())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  galaxusOrderId    String
+  gtin              String
+  supplierVariantId String
+  stockxOrderId     String?  @unique
+  stockxOrderNumber String?
+  /// StockX buy order payment settled amount (from API), for margin vs Galaxus line net.
+  stockxSettledAmount   Decimal? @db.Decimal(12, 2)
+  stockxSettledCurrency String?
+  awb               String?
+  etaMin            DateTime?
+  etaMax            DateTime?
+  checkoutType      String?
+  manualTrackingRaw String?
+  manualNote        String?
+  manualSetAt       DateTime?
+  cancelledAt       DateTime?
+  cancelledReason   String?
+
+  @@index([galaxusOrderId])
+  @@index([gtin])
+  @@index([supplierVariantId])
+  @@index([awb])
+  @@schema("public")
+}
+
+model StxImportSlug {
+  id         String              @id @default(uuid())
+  createdAt  DateTime            @default(now())
+  importedAt DateTime?
+  input      String
+  slug       String
+  status     StxImportSlugStatus @default(PENDING)
+  lastError  String?
+
+  @@unique([slug])
+  @@index([status, createdAt])
   @@schema("public")
 }
 
@@ -395,6 +1343,8 @@ model GalaxusOrder {
   galaxusOrderId      String   @unique
   orderNumber         String?
   orderDate           DateTime
+  generationDate      DateTime?
+  language            String?
   deliveryDate        DateTime?
   currencyCode        String   @default("CHF")
   customerName        String
@@ -403,6 +1353,8 @@ model GalaxusOrder {
   customerPostalCode  String
   customerCity        String
   customerCountry     String
+  customerCountryCode String?
+  customerEmail       String?
   customerVatId       String?
   recipientName       String?
   recipientAddress1   String?
@@ -410,20 +1362,72 @@ model GalaxusOrder {
   recipientPostalCode String?
   recipientCity       String?
   recipientCountry    String?
+  recipientCountryCode String?
+  recipientEmail      String?
   recipientPhone      String?
   referencePerson     String?
   yourReference       String?
   afterSalesHandling  Boolean  @default(false)
+  customerType        String?
+  deliveryType        String?
+  isCollectiveOrder   Boolean?
+  physicalDeliveryNoteRequired Boolean? @default(false)
+  saturdayDeliveryAllowed Boolean?
+  endCustomerOrderReference String?
+  buyerIdRef          String?
+  supplierIdRef       String?
+  supplierOrderId     String?
+  ordrSentAt          DateTime?
+  ordrMode            String?
+  ingestedAt          DateTime?
+  ordrStatus          String?
+  ordrLastAttemptAt   DateTime?
+  ordrLastError       String?
+  archivedAt          DateTime?
+  cancelledAt         DateTime?
+  cancelReason        String?
+  buyerPartyId        String?
+  buyerPartyGln       String?
+  supplierPartyId     String?
+  deliveryPartyId     String?
+  marketplacePartyId  String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
   lines               GalaxusOrderLine[]
   documents           Document[]
   shipments           Shipment[]
+  shipmentItems       ShipmentItem[]
   supplierOrders      SupplierOrder[]
   statusEvents        OrderStatusEvent[]
+  ediFiles            GalaxusEdiFile[]
+  routingIssues       OrderRoutingIssue[]
+  stockxMatches       GalaxusStockxMatch[]
 
   @@index([orderDate])
+  @@index([archivedAt])
+  @@index([cancelledAt])
+  @@schema("public")
+}
+
+model OrderRoutingIssue {
+  id            String   @id @default(uuid())
+  orderId       String?
+  orderLineId   String   @unique
+  galaxusOrderId String?
+  gtin          String?
+  providerKey   String?
+  status        String
+  rule          String?
+  payloadJson   Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  order         GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([status])
+  @@index([gtin])
   @@schema("public")
 }
 
@@ -431,6 +1435,9 @@ model GalaxusOrderLine {
   id              String   @id @default(uuid())
   orderId         String
   lineNumber      Int
+  supplierPid     String?
+  buyerPid        String?
+  orderUnit       String?
   supplierSku     String?
   supplierVariantId String?
   productName     String
@@ -439,16 +1446,250 @@ model GalaxusOrderLine {
   gtin            String?
   providerKey     String?
   quantity        Int
+  qtyConfirmed    Int?
   vatRate         Decimal  @db.Decimal(5, 2)
+  taxAmountPerUnit Decimal? @db.Decimal(10, 2)
   unitNetPrice    Decimal  @db.Decimal(10, 2)
   lineNetAmount   Decimal  @db.Decimal(10, 2)
+  priceLineAmount Decimal? @db.Decimal(10, 2)
+  arrivalDateStart DateTime?
+  arrivalDateEnd   DateTime?
   currencyCode    String   @default("CHF")
+  /// Operator marked this line shipped in warehouse UI (independent of Galaxus DELR).
+  warehouseMarkedShippedAt DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   order           GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockxMatches   GalaxusStockxMatch[]
 
   @@index([orderId])
+  @@schema("public")
+}
+
+model DecathlonOrder {
+  id                  String   @id @default(uuid())
+  orderId             String   @unique
+  orderNumber         String?
+  orderDate           DateTime
+  orderState          String?
+  partnerKey          String?
+  currencyCode        String   @default("CHF")
+  totalPrice          Decimal? @db.Decimal(10, 2)
+  shippingPrice       Decimal? @db.Decimal(10, 2)
+  customerName        String?
+  customerEmail       String?
+  customerPhone       String?
+  customerAddress1    String?
+  customerAddress2    String?
+  customerPostalCode  String?
+  customerCity        String?
+  customerCountry     String?
+  customerCountryCode String?
+  recipientName       String?
+  recipientEmail      String?
+  recipientPhone      String?
+  recipientAddress1   String?
+  recipientAddress2   String?
+  recipientPostalCode String?
+  recipientCity       String?
+  recipientCountry    String?
+  recipientCountryCode String?
+  recipientAddressLocked Boolean @default(false)
+  rawJson             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  lines               DecathlonOrderLine[]
+  documents           DecathlonOrderDocument[]
+  returns             DecathlonReturn[]
+  shipments           DecathlonShipment[]
+  stockxMatches       DecathlonStockxMatch[]
+
+  @@index([orderDate])
+  @@index([orderState])
+  @@index([partnerKey])
+  @@schema("public")
+}
+
+model DecathlonOrderLine {
+  id              String   @id @default(uuid())
+  orderId         String
+  orderLineId     String   @unique
+  lineNumber      Int?
+  offerSku        String?
+  productSku      String?
+  productTitle    String?
+  description     String?
+  size            String?
+  gtin            String?
+  providerKey     String?
+  supplierSku     String?
+  quantity        Int
+  unitPrice       Decimal? @db.Decimal(10, 2)
+  lineTotal       Decimal? @db.Decimal(10, 2)
+  currencyCode    String?  @default("CHF")
+  rawJson         Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  order           DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockxMatch     DecathlonStockxMatch?
+  returnLines     DecathlonReturnLine[]
+  shipmentLines   DecathlonShipmentLine[]
+
+  @@index([orderId])
+  @@index([offerSku])
+  @@schema("public")
+}
+
+model DecathlonStockxMatch {
+  id                 String   @id @default(uuid())
+  decathlonOrderId   String
+  decathlonOrderLineId String  @unique
+  decathlonOrderDate DateTime?
+  decathlonLineNumber Int?
+  decathlonProductName String?
+  decathlonDescription String?
+  decathlonSize       String?
+  decathlonGtin       String?
+  decathlonProviderKey String?
+  decathlonSupplierSku String?
+  decathlonQuantity   Int
+  decathlonUnitNetPrice Decimal? @db.Decimal(10, 2)
+  decathlonLineNetAmount Decimal? @db.Decimal(10, 2)
+  decathlonVatRate    Decimal? @db.Decimal(5, 2)
+  decathlonCurrencyCode String? @default("CHF")
+  stockxChainId      String?
+  stockxOrderId      String?
+  stockxOrderNumber  String
+  stockxVariantId    String?
+  stockxProductName  String?
+  stockxSkuKey       String?
+  stockxSizeEU       String?
+  stockxPurchaseDate DateTime?
+  stockxAmount       Decimal? @db.Decimal(10, 2)
+  stockxCurrencyCode String?
+  stockxStatus       String?
+  stockxEstimatedDelivery DateTime?
+  stockxLatestEstimatedDelivery DateTime?
+  stockxAwb          String?
+  stockxTrackingUrl  String?
+  stockxCheckoutType String?
+  stockxStates       Json?
+  matchConfidence    String?
+  matchScore         Decimal? @db.Decimal(5, 2)
+  matchType          String?
+  matchReasons       String?
+  timeDiffHours      Decimal? @db.Decimal(10, 2)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  order              DecathlonOrder     @relation(fields: [decathlonOrderId], references: [id], onDelete: Cascade)
+  line               DecathlonOrderLine @relation(fields: [decathlonOrderLineId], references: [id], onDelete: Cascade)
+
+  @@index([decathlonOrderId])
+  @@index([stockxOrderNumber])
+  @@index([stockxVariantId])
+  @@schema("public")
+}
+
+model DecathlonShipment {
+  id             String   @id @default(uuid())
+  orderId        String
+  /// Mirakl MMP shipment id returned by ST01 (POST /api/shipments); used to pick the right OR72/OR73 packing slip.
+  miraklShipmentId String?
+  carrierRaw     String?
+  carrierFinal   String?
+  trackingNumber String?
+  shippedAt      DateTime?
+  labelGeneratedAt DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order          DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  documents      DecathlonOrderDocument[]
+  lines          DecathlonShipmentLine[]
+
+  @@index([orderId])
+  @@index([miraklShipmentId])
+  @@schema("public")
+}
+
+model DecathlonShipmentLine {
+  id          String   @id @default(uuid())
+  shipmentId  String
+  orderLineId String
+  quantity    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shipment    DecathlonShipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderLine   DecathlonOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId])
+  @@index([orderLineId])
+  @@schema("public")
+}
+
+model DecathlonOrderDocument {
+  id               String   @id @default(uuid())
+  orderId          String?
+  shipmentId       String?
+  type             DocumentType
+  version          Int      @default(1)
+  storageUrl       String
+  checksum         String?
+  miraklDocumentId String?
+  createdAt        DateTime @default(now())
+
+  order            DecathlonOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment         DecathlonShipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([shipmentId])
+  @@schema("public")
+}
+
+model DecathlonReturn {
+  id          String   @id @default(uuid())
+  returnId    String   @unique
+  orderId     String?
+  status      String?
+  rawJson     Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  order       DecathlonOrder? @relation(fields: [orderId], references: [orderId], onDelete: SetNull)
+  lines       DecathlonReturnLine[]
+
+  @@index([orderId])
+  @@index([status])
+  @@schema("public")
+}
+
+model DecathlonReturnLine {
+  id            String   @id @default(uuid())
+  returnId      String
+  orderLineId   String?
+  offerSku      String?
+  productId     String?
+  quantity      Int
+  unitPrice     Decimal? @db.Decimal(10, 2)
+  returnPrice   Decimal? @db.Decimal(10, 2)
+  currencyCode  String? @default("CHF")
+  restockAppliedAt DateTime?
+  restockSupplierVariantId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  decathlonReturn DecathlonReturn @relation(fields: [returnId], references: [returnId], onDelete: Cascade)
+  orderLine       DecathlonOrderLine? @relation(fields: [orderLineId], references: [orderLineId], onDelete: SetNull)
+
+  @@unique([returnId, orderLineId, productId])
+  @@index([returnId])
+  @@index([orderLineId])
+  @@index([offerSku])
   @@schema("public")
 }
 
@@ -456,6 +1697,7 @@ model SupplierOrder {
   id                String   @id @default(uuid())
   supplierOrderRef  String   @unique
   orderId           String?
+  shipmentId        String?
   status            String
   payloadJson       Json?
   confirmedAt       DateTime?
@@ -463,29 +1705,81 @@ model SupplierOrder {
   updatedAt         DateTime @updatedAt
 
   order             GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment          Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
+  @@unique([shipmentId])
   @@schema("public")
 }
 
 model Shipment {
   id             String   @id @default(uuid())
   orderId        String?
+  providerKey    String?
+  supplierOrderRef String?
+  status         String?
   shipmentId     String   @unique
-  deliveryNoteNumber String? @unique
-  deliveryNoteCreatedAt DateTime?
+  dispatchNotificationId String? @unique @map("deliveryNoteNumber")
+  dispatchNotificationCreatedAt DateTime? @map("deliveryNoteCreatedAt")
   incoterms      String?
-  sscc           String?  @unique
-  carrier        String?
+  packageId      String?  @unique @map("sscc")
+  deliveryType   String?
+  carrierRaw     String?
+  carrierFinal   String?
   trackingNumber String?
+  manualOrderRef String?
+  manualEtaMin   DateTime?
+  manualEtaMax   DateTime?
+  manualNote     String?
+  packageType    ShipmentPackageType @default(PARCEL)
   shippedAt      DateTime?
+  galaxusShippedAt DateTime?
+  delrFileName   String?
+  delrSentAt     DateTime?
+  delrStatus     ShipmentDelrStatus?
+  delrError      String?
+  labelZpl       String?
+  labelPdfUrl    String?
+  labelGeneratedAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   order          GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
   documents      Document[]
+  items          ShipmentItem[]
+  supplierOrders SupplierOrder[]
+  ediFiles       GalaxusEdiFile[]
 
   @@index([orderId])
+  @@index([providerKey])
+  @@schema("public")
+}
+
+model ShipmentItem {
+  id          String   @id @default(uuid())
+  shipmentId  String
+  orderId     String?
+  supplierPid String
+  gtin14      String
+  buyerPid    String?
+  quantity    Int
+  manualBoughtQty Int @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shipment    Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  order       GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([shipmentId])
+  @@index([orderId])
+  @@schema("public")
+}
+
+model GalaxusSsccCounter {
+  id         String   @id
+  lastSerial Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
   @@schema("public")
 }
 
@@ -518,5 +1812,268 @@ model Document {
 
   @@index([orderId])
   @@index([shipmentId])
+  @@schema("public")
+}
+
+enum GalaxusEdiDirection {
+  IN
+  OUT
+
+  @@schema("public")
+}
+
+enum GalaxusEdiDocType {
+  ORDP
+  ORDR
+  DELR
+  EXPINV
+  INVO
+  EOLN
+  CANP
+  CANR
+
+  @@schema("public")
+}
+
+model GalaxusEdiFile {
+  id           String              @id @default(uuid())
+  direction    GalaxusEdiDirection
+  docType      GalaxusEdiDocType
+  orderId      String?
+  orderRef     String?
+  shipmentId   String?
+  filename     String              @unique
+  checksum     String?
+  status       String
+  errorMessage String?
+  payloadJson  Json?
+  processedAt  DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  order        GalaxusOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment     Shipment?           @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+
+  @@index([direction, docType])
+  @@index([orderRef])
+  @@index([shipmentId])
+  @@unique([shipmentId, direction, docType])
+  @@schema("public")
+}
+
+model GalaxusJobDefinition {
+  id         String   @id @default(uuid())
+  jobKey     String   @unique
+  intervalMs Int
+  enabled    Boolean  @default(true)
+  lastRunAt  DateTime?
+  nextRunAt  DateTime?
+  lastError  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model GalaxusFeedRun {
+  id              String   @id @default(uuid())
+  runId           String
+  scope           String
+  triggerSource   String?
+  startedAt       DateTime
+  finishedAt      DateTime?
+  success         Boolean  @default(false)
+  errorMessage    String?
+  countsJson      Json?
+  manifestIds     String[]
+  createdAt       DateTime @default(now())
+
+  @@index([runId])
+  @@index([scope, startedAt])
+  @@schema("public")
+}
+
+model GalaxusFeedTrigger {
+  id            String   @id @default(uuid())
+  scope         String
+  triggerSource String?
+  requestedAt   DateTime @default(now())
+  consumedAt    DateTime?
+  status        String   @default("PENDING")
+  createdAt     DateTime @default(now())
+
+  @@index([scope, requestedAt])
+  @@index([status])
+  @@schema("public")
+}
+
+model GalaxusJobRun {
+  id           String   @id @default(uuid())
+  jobName      String
+  runId        String?
+  supplierKey  String?
+  startedAt    DateTime
+  finishedAt   DateTime
+  success      Boolean
+  errorMessage String?
+  resultJson   Json?
+  createdAt    DateTime @default(now())
+
+  @@index([jobName, startedAt])
+  @@index([runId])
+  @@schema("public")
+}
+
+model GalaxusJobQueue {
+  id           String   @id @default(uuid())
+  jobType      String
+  status       String   @default("PENDING")
+  groupKey     String?
+  payloadJson  Json?
+  resultJson   Json?
+  priority     Int      @default(0)
+  attempts     Int      @default(0)
+  maxAttempts  Int      @default(5)
+  lockedAt     DateTime?
+  lockedBy     String?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([jobType, status, priority, createdAt])
+  @@index([status])
+  @@index([groupKey])
+  @@schema("public")
+}
+
+model GalaxusExportManifest {
+  id                    String   @id @default(uuid())
+  runId                 String
+  exportType            String
+  supplierKeys          String[]
+  productCount          Int
+  checksum              String?
+  storagePointer        String?
+  destination           String?
+  uploadStatus          String
+  responseJson          Json?
+  validationIssuesJson  Json?
+  createdAt             DateTime @default(now())
+
+  @@index([runId])
+  @@index([exportType])
+  @@schema("public")
+}
+
+model DecathlonExportRun {
+  id             String   @id @default(uuid())
+  runId          String   @unique
+  startedAt      DateTime
+  finishedAt     DateTime?
+  success        Boolean  @default(false)
+  errorMessage   String?
+  countsJson     Json?
+  exclusionsJson Json?
+  createdAt      DateTime @default(now())
+
+  files          DecathlonExportFile[]
+
+  @@index([startedAt])
+  @@schema("public")
+}
+
+model DecathlonExportFile {
+  id         String   @id @default(uuid())
+  runId      String
+  fileType   String
+  rowCount   Int      @default(0)
+  checksum   String?
+  storageUrl String?
+  publicUrl  String?
+  sizeBytes  Int?
+  createdAt  DateTime @default(now())
+
+  exportRun  DecathlonExportRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([fileType])
+  @@index([runId, fileType])
+  @@schema("public")
+}
+
+enum DecathlonImportFlow {
+  OF01
+  STO01
+  PRI01
+  P41
+
+  @@schema("public")
+}
+
+enum DecathlonImportMode {
+  NORMAL
+  REPLACE
+  TEST
+
+  @@schema("public")
+}
+
+enum DecathlonImportStatus {
+  CREATED
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+
+  @@schema("public")
+}
+
+model DecathlonOfferSync {
+  id                String   @id @default(uuid())
+  providerKey       String   @unique
+  supplierVariantId String?
+  gtin              String?
+  productStatus     String?
+  productStatusCheckedAt DateTime?
+  lastProductSyncAt DateTime?
+  lastStock         Int?
+  lastPrice         Decimal? @db.Decimal(10, 2)
+  lastStockSyncedAt DateTime?
+  lastPriceSyncedAt DateTime?
+  offerCreatedAt    DateTime?
+  lastOfferSyncAt   DateTime?
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([supplierVariantId])
+  @@schema("public")
+}
+
+model DecathlonImportRun {
+  id               String                @id @default(uuid())
+  runId            String                @unique
+  flow             DecathlonImportFlow
+  mode             DecathlonImportMode
+  status           DecathlonImportStatus @default(CREATED)
+  importId         String?
+  rowsSent         Int                   @default(0)
+  linesInError     Int?
+  startedAt        DateTime              @default(now())
+  finishedAt       DateTime?
+  summaryJson      Json?
+  errorSummaryJson Json?
+  errorStorageUrl  String?
+  errorPublicUrl   String?
+  errorChecksum    String?
+  errorSizeBytes   Int?
+  errorSampleJson  Json?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  @@index([flow, startedAt])
+  @@index([importId])
   @@schema("public")
 }

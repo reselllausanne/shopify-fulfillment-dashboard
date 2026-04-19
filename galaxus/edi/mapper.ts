@@ -1,0 +1,227 @@
+import type { GalaxusOrder, GalaxusOrderLine } from "@prisma/client";
+import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import {
+  GALAXUS_BUYER_ADDRESS1,
+  GALAXUS_BUYER_ADDRESS2,
+  GALAXUS_BUYER_CITY,
+  GALAXUS_BUYER_COUNTRY,
+  GALAXUS_BUYER_NAME,
+  GALAXUS_BUYER_POSTAL_CODE,
+  GALAXUS_SUPPLIER_ADDRESS_LINES,
+  GALAXUS_SUPPLIER_EMAIL,
+  GALAXUS_SUPPLIER_NAME,
+  GALAXUS_SUPPLIER_PHONE,
+  GALAXUS_SUPPLIER_VAT_ID,
+} from "@/galaxus/config";
+import type { EdiOrderLine, EdiParty, EdiTotals, EdiVatSummaryLine } from "./opentrans/types";
+
+export function buildBuyerParty(order: GalaxusOrder): EdiParty {
+  return {
+    id: order.buyerPartyId ?? GALAXUS_BUYER_NAME,
+    name: order.customerName ?? GALAXUS_BUYER_NAME,
+    street: order.customerAddress1 ?? GALAXUS_BUYER_ADDRESS1,
+    street2: order.customerAddress2 ?? GALAXUS_BUYER_ADDRESS2,
+    postalCode: order.customerPostalCode ?? GALAXUS_BUYER_POSTAL_CODE,
+    city: order.customerCity ?? GALAXUS_BUYER_CITY,
+    country: order.customerCountry ?? GALAXUS_BUYER_COUNTRY,
+    vatId: order.customerVatId ?? null,
+  };
+}
+
+export function buildDeliveryParty(order: GalaxusOrder): EdiParty {
+  const deliveryPartyId =
+    "deliveryPartyId" in order
+      ? (order as { deliveryPartyId?: string | null }).deliveryPartyId
+      : null;
+  const recipientEmail =
+    "recipientEmail" in order ? (order as { recipientEmail?: string | null }).recipientEmail : null;
+  const recipientPhone =
+    "recipientPhone" in order ? (order as { recipientPhone?: string | null }).recipientPhone : null;
+  const allowPhone = order.deliveryType !== "direct_delivery";
+  return {
+    id: deliveryPartyId ?? "delivery",
+    name: order.recipientName ?? "",
+    street: order.recipientAddress1 ?? "",
+    street2: order.recipientAddress2 ?? null,
+    postalCode: order.recipientPostalCode ?? "",
+    city: order.recipientCity ?? "",
+    country: order.recipientCountry ?? "",
+    vatId: null,
+    email: recipientEmail ?? null,
+    phone: allowPhone ? recipientPhone ?? null : null,
+  };
+}
+
+export function buildSupplierParty(): EdiParty {
+  const [line1, postalLine, countryLine] = GALAXUS_SUPPLIER_ADDRESS_LINES;
+  const { postalCode, city } = parsePostalLine(postalLine);
+  return {
+    id: GALAXUS_SUPPLIER_NAME,
+    name: GALAXUS_SUPPLIER_NAME,
+    street: line1 ?? "",
+    street2: null,
+    postalCode,
+    city,
+    country: countryLine ?? "",
+    vatId: GALAXUS_SUPPLIER_VAT_ID || null,
+    email: GALAXUS_SUPPLIER_EMAIL || null,
+    phone: GALAXUS_SUPPLIER_PHONE || null,
+  };
+}
+
+export function buildEdiLines(lines: GalaxusOrderLine[]): EdiOrderLine[] {
+  return lines.map((line) => {
+    const responseStatus =
+      "responseStatus" in line
+        ? (line as { responseStatus?: EdiOrderLine["responseStatus"] }).responseStatus
+        : undefined;
+    const responseReason =
+      "responseReason" in line ? (line as { responseReason?: string | null }).responseReason : null;
+
+    const unitNetPrice = Number(line.unitNetPrice);
+    const lineNetAmount = Number(line.lineNetAmount);
+    const rawVatRate = Number(line.vatRate);
+    const rawTaxPerUnit =
+      "taxAmountPerUnit" in line && line.taxAmountPerUnit != null
+        ? Number(line.taxAmountPerUnit)
+        : null;
+    const derivedVatRate =
+      rawTaxPerUnit != null &&
+      Number.isFinite(rawTaxPerUnit) &&
+      unitNetPrice > 0 &&
+      (!Number.isFinite(rawVatRate) || rawVatRate === 0)
+        ? (rawTaxPerUnit / unitNetPrice) * 100
+        : rawVatRate;
+
+    return {
+      lineNumber: line.lineNumber,
+      description: line.productName,
+      quantity: line.quantity,
+      unitNetPrice,
+      lineNetAmount,
+      vatRate: derivedVatRate,
+      taxAmountPerUnit:
+        rawTaxPerUnit != null && Number.isFinite(rawTaxPerUnit) ? rawTaxPerUnit : null,
+      supplierPid:
+        ("supplierPid" in line ? (line as { supplierPid?: string | null }).supplierPid : null) ??
+        null,
+      buyerPid: ("buyerPid" in line ? (line as { buyerPid?: string | null }).buyerPid : null) ?? null,
+      orderUnit:
+        ("orderUnit" in line ? (line as { orderUnit?: string | null }).orderUnit : null) ?? null,
+      providerKey: buildProviderKey(line.gtin, line.supplierVariantId),
+      gtin: line.gtin ?? null,
+      responseStatus: responseStatus ?? undefined,
+      responseReason: responseReason ?? null,
+      arrivalDateStart:
+        "arrivalDateStart" in line
+          ? ((line as { arrivalDateStart?: Date | null }).arrivalDateStart ?? null)
+          : null,
+      arrivalDateEnd:
+        "arrivalDateEnd" in line
+          ? ((line as { arrivalDateEnd?: Date | null }).arrivalDateEnd ?? null)
+          : null,
+    };
+  });
+}
+
+export function calculateTotals(lines: EdiOrderLine[]): { totals: EdiTotals; vatSummary: EdiVatSummaryLine[] } {
+  const vatMap = new Map<number, EdiVatSummaryLine>();
+  let net = 0;
+  let vat = 0;
+
+  for (const line of lines) {
+    const lineNet = line.lineNetAmount;
+    const explicitVat =
+      line.taxAmountPerUnit != null && Number.isFinite(line.taxAmountPerUnit)
+        ? line.taxAmountPerUnit * line.quantity
+        : null;
+    const lineVat = explicitVat != null ? explicitVat : (lineNet * line.vatRate) / 100;
+    const lineGross = lineNet + lineVat;
+    net += lineNet;
+    vat += lineVat;
+
+    const existing = vatMap.get(line.vatRate);
+    if (existing) {
+      existing.netAmount += lineNet;
+      existing.vatAmount += lineVat;
+      existing.grossAmount += lineGross;
+    } else {
+      vatMap.set(line.vatRate, {
+        vatRate: line.vatRate,
+        netAmount: lineNet,
+        vatAmount: lineVat,
+        grossAmount: lineGross,
+      });
+    }
+  }
+
+  return {
+    totals: { net, vat, gross: net + vat },
+    vatSummary: Array.from(vatMap.values()).sort((a, b) => a.vatRate - b.vatRate),
+  };
+}
+
+export type DispatchShipmentItemInput = {
+  supplierPid: string;
+  gtin14: string;
+  buyerPid?: string | null;
+  quantity: number;
+  /** Galaxus customer order id (shown in ORDER_REFERENCE / ORDER_ID per DELR line). */
+  orderReferenceId: string;
+};
+
+function dispatchMetaKey(orderRef: string, supplierPid: string, gtin14: string) {
+  return `${orderRef}|${String(supplierPid ?? "").trim()}|${String(gtin14 ?? "").trim()}`;
+}
+
+export function buildDispatchLines(
+  items: DispatchShipmentItemInput[],
+  fallbackOrderId: string,
+  packageId: string,
+  metaByKey: Record<string, { description: string; lineNumber: number }>,
+  metaBySupplierPid: Record<string, { description: string; lineNumber: number }>,
+  arrivalByGtin: Record<string, { start: Date; end: Date }> = {},
+  options: { includeLogisticsDetails?: boolean } = {}
+): EdiOrderLine[] {
+  const includeLogisticsDetails = options.includeLogisticsDetails ?? true;
+  return items.map((item, index) => {
+    const ref = String(item.orderReferenceId ?? fallbackOrderId).trim() || fallbackOrderId;
+    const k = dispatchMetaKey(ref, item.supplierPid, item.gtin14);
+    const meta = metaByKey[k] ?? metaBySupplierPid[item.supplierPid];
+    const arrival = arrivalByGtin[item.gtin14] ?? null;
+    const base: EdiOrderLine = {
+      lineNumber: meta?.lineNumber ?? index + 1,
+      description: meta?.description ?? "Item",
+    quantity: item.quantity,
+    unitNetPrice: 0,
+    lineNetAmount: 0,
+    vatRate: 0,
+    supplierPid: item.supplierPid,
+    buyerPid: item.buyerPid ?? null,
+    orderUnit: null,
+    providerKey: item.supplierPid ?? null,
+    gtin: item.gtin14,
+    orderReferenceId: ref,
+    arrivalDateStart: arrival?.start ?? null,
+    arrivalDateEnd: arrival?.end ?? null,
+    };
+
+    if (!includeLogisticsDetails) return base;
+    return {
+      ...base,
+      dispatchPackages: [
+        {
+          packageId,
+          quantity: item.quantity,
+        },
+      ],
+    };
+  });
+}
+
+function parsePostalLine(line?: string) {
+  if (!line) return { postalCode: "", city: "" };
+  const parts = line.split(" ");
+  const postalCode = parts.shift() ?? "";
+  return { postalCode, city: parts.join(" ") };
+}

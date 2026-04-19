@@ -2,17 +2,21 @@ import React from "react";
 
 type ActionBarProps = {
   onLoadFromDatabase: () => Promise<void>;
+  onRefreshTrackingFromStockx: () => Promise<void>;
   dbLoading: boolean;
+  trackingRefreshLoading: boolean;
   token: string;
 };
 
 export default function ActionBar({
   onLoadFromDatabase,
+  onRefreshTrackingFromStockx,
   dbLoading,
+  trackingRefreshLoading,
   token,
 }: ActionBarProps) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
       <button
         onClick={onLoadFromDatabase}
         disabled={dbLoading}
@@ -20,6 +24,23 @@ export default function ActionBar({
       >
         {dbLoading ? "Loading..." : "📂 Load from Database"}
       </button>
+
+      <button
+        onClick={onRefreshTrackingFromStockx}
+        disabled={trackingRefreshLoading || !token.trim()}
+        className="flex items-center justify-center gap-2 px-4 py-3 bg-sky-600 text-white rounded-lg hover:bg-sky-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium shadow"
+      >
+        {trackingRefreshLoading ? "Refreshing..." : "🔄 Backfill old AWB/tracking"}
+      </button>
+
+      <a
+        href="/api/db/matches/export"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium shadow"
+      >
+        ⬇️ Download Matches CSV
+      </a>
 
       <a
         href="/dashboard"

@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AuthenticationCard from "@/app/components/AuthenticationCard";
-import ActionBar from "@/app/components/ActionBar";
 import QueryControls from "@/app/components/QueryControls";
 import FetchActions from "@/app/components/FetchActions";
 import DebugPanel from "@/app/components/DebugPanel";
@@ -14,7 +13,7 @@ import DatabaseAutoSync from "@/app/components/DatabaseAutoSync";
 import OrderMatchingSection from "@/app/components/OrderMatchingSection";
 import { type ShopifyLineItem } from "./utils/matching";
 import { DEFAULT_QUERY, DEFAULT_VARIABLES } from "@/app/lib/constants";
-import type { PageInfo, PricingResult, OrderNode } from "@/app/types";
+import type { OrderNode } from "@/app/types";
 import { toNumber } from "@/app/utils/format";
 import { useSupplierOrders } from "@/app/hooks/useSupplierOrders";
 import { exportOrdersToCSV } from "@/app/utils/csv";
@@ -28,7 +27,32 @@ export default function Home() {
     router.push("/login");
   };
 
-  const [token, setToken] = useState("");
+  const [stockxToken, setStockxToken] = useState("");
+  const normalizeStockxTokenInput = (value: string) => {
+    if (!value) return "";
+    let token = String(value).trim();
+    try {
+      const parsed = JSON.parse(token) as Record<string, any>;
+      const extracted =
+        parsed?.value ||
+        parsed?.token ||
+        parsed?.accessToken ||
+        parsed?.access_token ||
+        parsed?.authToken;
+      if (typeof extracted === "string" && extracted.trim()) {
+        token = extracted.trim();
+      }
+    } catch {
+      // not JSON
+    }
+    token = token.replace(/^authorization:\s*/i, "");
+    token = token.replace(/^bearer\s+/i, "");
+    token = token.replace(/^"+|"+$/g, "");
+    return token.trim();
+  };
+
+  const [goatCookie, setGoatCookie] = useState("");
+  const [goatCsrfToken, setGoatCsrfToken] = useState("");
   const [saveToken, setSaveToken] = useState(false);
   const [query, setQuery] = useState(DEFAULT_QUERY);
   const [variables, setVariables] = useState(JSON.stringify(DEFAULT_VARIABLES, null, 2));
@@ -64,14 +88,13 @@ export default function Home() {
   const [orderTestLoading, setOrderTestLoading] = useState(false);
   const [trackingAlert, setTrackingAlert] = useState<{
     count: number;
-    goatCount: number;
-    criticalCount: number;
     items: any[];
-    goatItems: any[];
-    criticalItems: any[];
   } | null>(null);
   const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
   const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
+  const [goatDebugLoading, setGoatDebugLoading] = useState(false);
+  const [goatDebugResult, setGoatDebugResult] = useState<string | null>(null);
+  const [stockxLoginLoading, setStockxLoginLoading] = useState(false);
 
   const loadFromDB = async () => {
     setDbLoading(true);
@@ -100,11 +123,7 @@ export default function Home() {
       if (res.ok && data?.ok) {
         setTrackingAlert({
           count: data.count || 0,
-          goatCount: data.goatCount || 0,
-          criticalCount: data.criticalCount || 0,
           items: data.items || [],
-          goatItems: data.goatItems || [],
-          criticalItems: data.criticalItems || [],
         });
       } else {
         setTrackingAlertError(data?.error || "Failed to load tracking alerts");
@@ -192,7 +211,16 @@ export default function Home() {
   const autoSetAllHighMatchesAndRefresh = async () => {
     await autoSetAllHighMatches();
     // Important: update existing DB rows too (ETA range, tracking, states)
-    await refreshDbMatchesTracking();
+    await refreshDbMatchesTracking(stockxToken, { onlyMissingTracking: true, limit: 800 });
+    await loadFromDB();
+  };
+
+  const refreshTrackingFromStockx = async () => {
+    if (!stockxToken.trim()) {
+      alert("Please enter a StockX token first.");
+      return;
+    }
+    await refreshDbMatchesTracking(stockxToken, { onlyMissingTracking: true, limit: 800 });
     await loadFromDB();
   };
 
@@ -217,23 +245,31 @@ export default function Home() {
   const [exchangeOrderName, setExchangeOrderName] = useState("");
   const [exchangeOrderLoading, setExchangeOrderLoading] = useState(false);
 
-  // Load token from localStorage on mount
+  // Load credentials from localStorage on mount
   useEffect(() => {
-    const savedToken = localStorage.getItem("supplier_token");
-    if (savedToken) {
-      setToken(savedToken);
+    const savedStockx = localStorage.getItem("supplier_stockx_token");
+    const savedGoatCookie = localStorage.getItem("supplier_goat_cookie");
+    const savedGoatCsrf = localStorage.getItem("supplier_goat_csrf");
+    if (savedStockx || savedGoatCookie || savedGoatCsrf) {
+      setStockxToken(normalizeStockxTokenInput(savedStockx || ""));
+      setGoatCookie(savedGoatCookie || "");
+      setGoatCsrfToken(savedGoatCsrf || "");
       setSaveToken(true);
     }
   }, []);
 
-  // Save/remove token from localStorage
+  // Save/remove credentials from localStorage
   useEffect(() => {
-    if (saveToken && token) {
-      localStorage.setItem("supplier_token", token);
+    if (saveToken) {
+      localStorage.setItem("supplier_stockx_token", normalizeStockxTokenInput(stockxToken));
+      localStorage.setItem("supplier_goat_cookie", goatCookie);
+      localStorage.setItem("supplier_goat_csrf", goatCsrfToken);
     } else {
-      localStorage.removeItem("supplier_token");
+      localStorage.removeItem("supplier_stockx_token");
+      localStorage.removeItem("supplier_goat_cookie");
+      localStorage.removeItem("supplier_goat_csrf");
     }
-  }, [saveToken, token]);
+  }, [saveToken, stockxToken, goatCookie, goatCsrfToken]);
 
   useEffect(() => {
     loadTrackingAlert();
@@ -248,9 +284,17 @@ export default function Home() {
     }
   };
 
+  const over9TrackingItems = React.useMemo(() => {
+    if (!trackingAlert?.items) return [];
+    return trackingAlert.items.filter((item: any) => {
+      const ageDays = typeof item.ageDays === "number" ? item.ageDays : null;
+      return ageDays != null && ageDays > 9;
+    });
+  }, [trackingAlert?.items]);
+
   const handleFetchFirstPage = async () => {
     await fetchPage({
-      token,
+      token: stockxToken,
       query,
       variablesJSON: variables,
       stateFilter,
@@ -262,7 +306,7 @@ export default function Home() {
   const handleFetchNextPage = async () => {
     if (pageInfo?.endCursor && pageInfo.hasNextPage) {
       await fetchPage({
-        token,
+        token: stockxToken,
         query,
         variablesJSON: variables,
         stateFilter,
@@ -276,15 +320,17 @@ export default function Home() {
 
   const handleFetchAllPagesWrapper = async () => {
     await handleFetchAllPages({
-      token,
+      token: stockxToken,
       query,
       variablesJSON: variables,
       stateFilter,
+      goatCookie,
+      goatCsrfToken,
     });
   };
 
   const handleFetchAllPricingWrapper = async () => {
-    await fetchAllPricing(token);
+    await fetchAllPricing(stockxToken);
   };
   const handleClearResults = () => {
     setOrders([]);
@@ -293,12 +339,217 @@ export default function Home() {
     setLastErrors([]);
   };
 
+  const handleGoatLogin = async () => {
+    setGoatDebugLoading(true);
+    try {
+      const basePayload = {
+        headless: false,
+        includeRaw: false,
+        browser: "chromium",
+        persistent: true,
+      };
+      const res = await fetch("/api/goat/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(basePayload),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        const message = String(json?.error || `HTTP ${res.status}`);
+        // Retry once with a fresh session (clears stale cookies that can block login)
+        if (/login required|no goat orders detected/i.test(message)) {
+          const retryRes = await fetch("/api/goat/playwright", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ...basePayload, forceLogin: true }),
+          });
+          const retryJson = await retryRes.json().catch(() => ({}));
+          if (!retryRes.ok || retryJson?.ok === false) {
+            alert(`❌ GOAT login failed: ${retryJson?.error || `HTTP ${retryRes.status}`}`);
+            return;
+          }
+          alert(`✅ GOAT session ready. Orders: ${retryJson?.count || 0}. Added to results table.`);
+          const goatOrdersRaw = Array.isArray(retryJson?.orders) ? retryJson.orders : [];
+          const goatRows = goatOrdersRaw.map((o: any) => ({
+            ...o,
+            provider: "GOAT",
+            productTitleB: o.productTitle || o.displayName || null,
+            brandB: null,
+            sizeB: o.size || null,
+            thumbUrlB: o.thumbUrl || null,
+            imageUrlB: o.thumbUrl || null,
+            statusB: o.statusTitle || o.statusKey || null,
+            statusKeyB: o.statusKey || null,
+            estimatedDeliveryB: o.estimatedDeliveryDate || null,
+            latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+            styleId: o.skuKey || o.styleId || null,
+          }));
+          if (goatRows.length > 0) {
+            const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
+            const combinedRows = [...existingRows, ...goatRows];
+            const seen = new Set<string>();
+            const dedupedRows = combinedRows.filter((row: any) => {
+              const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            setOrders(dedupedRows as OrderNode[]);
+            setEnrichedOrders(dedupedRows);
+          }
+          setLastStatus(retryRes.status);
+          setLastErrors([]);
+          setPageInfo(null);
+          return;
+        }
+        alert(`❌ GOAT login failed: ${message}`);
+        return;
+      }
+      const goatOrdersRaw = Array.isArray(json?.orders) ? json.orders : [];
+      const goatRows = goatOrdersRaw.map((o: any) => ({
+        ...o,
+        provider: "GOAT",
+        productTitleB: o.productTitle || o.displayName || null,
+        brandB: null,
+        sizeB: o.size || null,
+        thumbUrlB: o.thumbUrl || null,
+        imageUrlB: o.thumbUrl || null,
+        statusB: o.statusTitle || o.statusKey || null,
+        statusKeyB: o.statusKey || null,
+        estimatedDeliveryB: o.estimatedDeliveryDate || null,
+        latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+        styleId: o.skuKey || o.styleId || null,
+      }));
+
+      if (goatRows.length > 0) {
+        const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
+        const combinedRows = [...existingRows, ...goatRows];
+        const seen = new Set<string>();
+        const dedupedRows = combinedRows.filter((row: any) => {
+          const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+        setOrders(dedupedRows as OrderNode[]);
+        setEnrichedOrders(dedupedRows);
+      }
+
+      setLastStatus(res.status);
+      setLastErrors([]);
+      setPageInfo(null);
+
+      alert(`✅ GOAT session ready. Orders: ${json?.count || 0}. Added to results table.`);
+    } catch (error: any) {
+      alert(`❌ GOAT login error: ${error?.message || "Unknown error"}`);
+    } finally {
+      setGoatDebugLoading(false);
+    }
+  };
+
+  const handleGoatDebug = async () => {
+    setGoatDebugLoading(true);
+    setGoatDebugResult(null);
+    try {
+      const res = await fetch("/api/goat/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ headless: false, includeRaw: true }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        setGoatDebugResult(JSON.stringify(json, null, 2));
+        return;
+      }
+      setGoatDebugResult(JSON.stringify(json?.rawOrders || json, null, 2));
+    } catch (error: any) {
+      setGoatDebugResult(JSON.stringify({ error: error?.message || "Unknown error" }, null, 2));
+    } finally {
+      setGoatDebugLoading(false);
+    }
+  };
+
+  const handleExportGoatSession = async () => {
+    try {
+      const res = await fetch("/api/goat/session", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok || !json?.session) {
+        alert(`❌ GOAT session export failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      const blob = new Blob([JSON.stringify(json.session, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "goat-session.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      alert("✅ GOAT session exported.");
+    } catch (error: any) {
+      alert(`❌ GOAT session export error: ${error?.message || "Unknown error"}`);
+    }
+  };
+
+  const handleImportGoatSession = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const session = JSON.parse(raw);
+      const res = await fetch("/api/goat/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.ok) {
+        alert(`❌ GOAT session import failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      alert("✅ GOAT session imported.");
+    } catch (error: any) {
+      alert(`❌ GOAT session import error: ${error?.message || "Invalid JSON file"}`);
+    }
+  };
+
+  const handleStockxLogin = async () => {
+    setStockxLoginLoading(true);
+    try {
+      const res = await fetch("/api/stockx/playwright", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          headless: false,
+          forceLogin: false,
+          browser: "chromium",
+          persistent: true,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false) {
+        alert(`❌ StockX login failed: ${json?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+      if (json?.token) {
+        setStockxToken(normalizeStockxTokenInput(json.token));
+        setSaveToken(true);
+        alert("✅ StockX token captured and saved");
+      } else {
+        alert("⚠️ StockX login succeeded but no token found");
+      }
+    } catch (error: any) {
+      alert(`❌ StockX login error: ${error?.message || "Unknown error"}`);
+    } finally {
+      setStockxLoginLoading(false);
+    }
+  };
+
   const handleExportCSV = () => {
     exportOrdersToCSV(orders, pricingByOrder);
   };
 
   const fetchPricingForOrderWrapper = async (order: OrderNode) => {
-    await fetchPricingForOrder(order, token);
+    await fetchPricingForOrder(order, stockxToken);
   };
 
   // Sync worker removed from UI (no-op placeholder)
@@ -653,59 +904,29 @@ export default function Home() {
           </nav>
         </div>
 
-        {(trackingAlert?.goatCount || trackingAlert?.criticalCount || trackingAlertError) && (
+        {(over9TrackingItems.length > 0 || trackingAlertError) && (
           <div className="mb-6 space-y-3">
-            {(trackingAlert?.goatCount || 0) > 0 && (
-              <div className="border rounded-lg p-4 bg-amber-50 border-amber-200">
+            {over9TrackingItems.length > 0 && (
+              <div className="border rounded-lg p-4 bg-yellow-50 border-yellow-200">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-amber-800">
-                    🐐 GOAT orders missing tracking: {trackingAlert?.goatCount || 0}
+                  <div className="text-sm font-semibold text-yellow-800">
+                    ⚠️ Orders missing tracking more than 9 days old: {over9TrackingItems.length}
                   </div>
                   <button
                     onClick={loadTrackingAlert}
                     disabled={trackingAlertLoading}
-                    className="text-xs px-2 py-1 bg-amber-200 text-amber-900 rounded hover:bg-amber-300 disabled:opacity-60"
+                    className="text-xs px-2 py-1 bg-yellow-200 text-yellow-900 rounded hover:bg-yellow-300 disabled:opacity-60"
                   >
                     {trackingAlertLoading ? "Refreshing..." : "Refresh"}
                   </button>
                 </div>
-                <div className="mt-2 space-y-1 text-xs text-amber-900">
-                  {trackingAlert?.goatItems?.map((item: any) => (
+                <div className="mt-2 space-y-1 text-xs text-yellow-900">
+                  {over9TrackingItems.map((item: any) => (
                     <div key={item.id} className="flex flex-wrap gap-2">
                       <span className="font-semibold">{item.shopifyOrderName}</span>
                       <span>Ref: {item.stockxOrderNumber}</span>
                       <span>Age: {item.ageDays ?? "—"}d</span>
                       <span>ETA: {formatDate(item.deliveryDate)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(trackingAlert?.criticalCount || 0) > 0 && (
-              <div className="border rounded-lg p-4 bg-red-50 border-red-200">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-red-800">
-                    ⚠️ Orders missing tracking near/past delivery or older than 14 days:{" "}
-                    {trackingAlert?.criticalCount || 0}
-                  </div>
-                  <button
-                    onClick={loadTrackingAlert}
-                    disabled={trackingAlertLoading}
-                    className="text-xs px-2 py-1 bg-red-200 text-red-900 rounded hover:bg-red-300 disabled:opacity-60"
-                  >
-                    {trackingAlertLoading ? "Refreshing..." : "Refresh"}
-                  </button>
-                </div>
-                <div className="mt-2 space-y-1 text-xs text-red-900">
-                  {trackingAlert?.criticalItems?.map((item: any) => (
-                    <div key={item.id} className="flex flex-wrap gap-2">
-                      <span className="font-semibold">{item.shopifyOrderName}</span>
-                      <span>Ref: {item.stockxOrderNumber}</span>
-                      <span>Age: {item.ageDays ?? "—"}d</span>
-                      <span>ETA: {formatDate(item.deliveryDate)}</span>
-                      {item.isOverdue && <span className="font-semibold">OVERDUE</span>}
-                      {!item.isOverdue && item.isDueSoon && <span className="font-semibold">DUE SOON</span>}
                     </div>
                   ))}
                 </div>
@@ -758,8 +979,12 @@ export default function Home() {
         </div>
 
         <AuthenticationCard
-          token={token}
-          onTokenChange={setToken}
+          stockxToken={stockxToken}
+          onStockxTokenChange={(value) => setStockxToken(normalizeStockxTokenInput(value))}
+          goatCookie={goatCookie}
+          onGoatCookieChange={setGoatCookie}
+          goatCsrfToken={goatCsrfToken}
+          onGoatCsrfTokenChange={setGoatCsrfToken}
           saveToken={saveToken}
           onSaveTokenToggle={setSaveToken}
         />
@@ -780,6 +1005,12 @@ export default function Home() {
         onFetchPricing={handleFetchAllPricingWrapper}
           onClear={handleClearResults}
           onExport={handleExportCSV}
+          onGoatLogin={handleGoatLogin}
+          onGoatDebug={handleGoatDebug}
+          onExportGoatSession={handleExportGoatSession}
+          onImportGoatSession={handleImportGoatSession}
+          onStockxLogin={handleStockxLogin}
+          stockxLoginLoading={stockxLoginLoading}
           loading={loading}
           isFetchingAll={isFetchingAll}
           isEnriching={isEnriching}
@@ -803,6 +1034,17 @@ export default function Home() {
         fetchPricingForOrder={fetchPricingForOrderWrapper}
         />
 
+        {goatDebugLoading && (
+          <div className="mt-4 bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+            Loading GOAT debug JSON...
+          </div>
+        )}
+        {goatDebugResult && (
+          <pre className="mt-4 max-h-[60vh] overflow-auto bg-gray-900 text-xs text-white p-3 rounded">
+            {goatDebugResult}
+          </pre>
+        )}
+
         <ManualMatchingOverride
           manualFetchOrder={manualFetchOrder}
           manualFetchLoading={manualFetchLoading}
@@ -812,8 +1054,9 @@ export default function Home() {
 
         <DatabaseAutoSync
           onLoadFromDatabase={loadFromDB}
+          onRefreshTrackingFromStockx={refreshTrackingFromStockx}
           dbLoading={dbLoading}
-          token={token}
+          token={stockxToken}
           dbMatches={dbMatches}
           manualOverrideExpanded={manualOverrideExpanded}
           setManualOverrideExpanded={setManualOverrideExpanded}

@@ -1,12 +1,21 @@
-import { Prisma } from "@prisma/client";
-import { prisma } from "@/app/lib/prisma";
+import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { createGoldenSupplierClient } from "../supplier/client";
-import type { SupplierCatalogItem } from "../supplier/types";
+import { normalizeSize, validateGtin } from "@/app/lib/normalize";
+import {
+  bulkInsertSupplierVariants,
+  bulkUpdateSupplierVariants,
+  bulkUpsertVariantMappings,
+  chunkArray,
+  remapRowsToExistingProviderKeyGtin,
+} from "./bulkSql";
 
 type CatalogSyncResult = {
   processed: number;
   created: number;
   updated: number;
+  mappingInserted: number;
+  mappingUpdated: number;
+  durationMs: number;
 };
 
 type CatalogSyncOptions = {
@@ -14,60 +23,91 @@ type CatalogSyncOptions = {
   offset?: number;
 };
 
-function buildCreateData(item: SupplierCatalogItem): Prisma.SupplierVariantCreateInput {
-  return {
-    supplierVariantId: item.supplierVariantId,
-    supplierSku: item.supplierSku,
-    price: item.price ?? 0,
-    stock: item.stock ?? 0,
-    sizeRaw: item.sizeRaw,
-    images: item.images.length ? item.images : undefined,
-    leadTimeDays: item.leadTimeDays,
-    lastSyncAt: new Date(),
-  };
-}
-
-function buildUpdateData(item: SupplierCatalogItem): Prisma.SupplierVariantUpdateInput {
-  const updateData: Prisma.SupplierVariantUpdateInput = {
-    supplierSku: item.supplierSku,
-    sizeRaw: item.sizeRaw,
-    leadTimeDays: item.leadTimeDays,
-    lastSyncAt: new Date(),
-  };
-  if (item.price !== null) updateData.price = item.price;
-  if (item.stock !== null) updateData.stock = item.stock;
-  if (item.images.length) updateData.images = item.images;
-  return updateData;
-}
-
 export async function runCatalogSync(options: CatalogSyncOptions = {}): Promise<CatalogSyncResult> {
+  // GLD (Golden) supplier is permanently disabled — products must not be re-imported.
+  console.info("[galaxus][sync:catalog] GLD supplier sync is blocked — skipping");
+  return { processed: 0, created: 0, updated: 0, mappingInserted: 0, mappingUpdated: 0, durationMs: 0 };
   const client = createGoldenSupplierClient();
+  const startedAt = Date.now();
   const items = await client.fetchCatalog();
   const offset = Math.max(options.offset ?? 0, 0);
-  const limit = options.limit ? Math.max(options.limit, 0) : items.length;
+  const limit = options.limit != null ? Math.max(Number(options.limit), 0) : items.length;
   const slicedItems = items.slice(offset, offset + limit);
+
+  const now = new Date();
+  const inputRows = slicedItems.map((item) => {
+    const sizeNormalized = normalizeSize(item.sizeRaw ?? null) ?? item.sizeRaw ?? null;
+    const supplierGtinRaw = item.sourcePayload?.barcode ?? null;
+    const supplierGtin = supplierGtinRaw && validateGtin(supplierGtinRaw) ? supplierGtinRaw : null;
+    const providerKey = supplierGtin ? buildProviderKey(supplierGtin, item.supplierVariantId) : null;
+    return {
+      supplierVariantId: item.supplierVariantId,
+      supplierSku: item.supplierSku,
+      providerKey,
+      gtin: supplierGtin,
+      price: item.price ?? 0,
+      stock: item.stock ?? 0,
+      sizeRaw: item.sizeRaw,
+      sizeNormalized,
+      supplierBrand: item.sourcePayload.brand_name ?? null,
+      supplierProductName: item.sourcePayload.product_name ?? null,
+      images: item.images.length ? item.images : null,
+      leadTimeDays: item.leadTimeDays,
+    };
+  });
+  const remappedRowsResult = await remapRowsToExistingProviderKeyGtin(inputRows);
+  const rows = remappedRowsResult.rows;
+
+  for (const row of rows) {
+    assertMappingIntegrity({
+      supplierVariantId: row.supplierVariantId,
+      gtin: row.gtin ?? null,
+      providerKey: row.providerKey ?? null,
+      status: row.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN",
+    });
+  }
 
   let created = 0;
   let updated = 0;
-
-  for (const item of slicedItems) {
-    const exists = await prisma.supplierVariant.findUnique({
-      where: { supplierVariantId: item.supplierVariantId },
-      select: { supplierVariantId: true },
-    });
-
-    await prisma.supplierVariant.upsert({
-      where: { supplierVariantId: item.supplierVariantId },
-      create: buildCreateData(item),
-      update: buildUpdateData(item),
-    });
-
-    if (exists) {
-      updated += 1;
-    } else {
-      created += 1;
-    }
+  for (const batch of chunkArray(rows, 500)) {
+    created += await bulkInsertSupplierVariants(batch, now);
+    updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: true });
   }
 
-  return { processed: slicedItems.length, created, updated };
+  const mappingRows = rows.map((r) => {
+    const status = r.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN";
+    const providerKey = r.gtin ? buildProviderKey(r.gtin, r.supplierVariantId) : null;
+    const payload = {
+      supplierVariantId: r.supplierVariantId,
+      gtin: r.gtin ?? null,
+      providerKey,
+      status,
+    };
+    assertMappingIntegrity(payload);
+    return payload;
+  });
+  let mappingInserted = 0;
+  let mappingUpdated = 0;
+  for (const batch of chunkArray(mappingRows, 500)) {
+    const res = await bulkUpsertVariantMappings(batch, now, {
+      doNotDowngradeFromMatched: true,
+      onlySetPendingIfMissing: true,
+    });
+    mappingInserted += res.inserted;
+    mappingUpdated += res.updated;
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.info("[galaxus][sync:catalog] done", {
+    fetchedCount: items.length,
+    processed: slicedItems.length,
+    insertedCount: created,
+    updatedCount: updated,
+    mappingInserted,
+    mappingUpdated,
+    remappedToExistingGtinRow: remappedRowsResult.remapped,
+    durationMs,
+  });
+
+  return { processed: slicedItems.length, created, updated, mappingInserted, mappingUpdated, durationMs };
 }

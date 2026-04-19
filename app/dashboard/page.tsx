@@ -26,6 +26,9 @@ interface DailyRow {
   returnedStockValueChf: number;
   adsSpendChf: number;
   netAfterAdsChf: number;
+  marketplaceMarginChf: number;
+  totalMarginChf: number;
+  totalNetAfterAdsChf: number;
   ordersCount: number;
   lineItemsCount: number;
   missingCostCount: number;
@@ -58,6 +61,9 @@ interface DailyMetrics {
     returnedStockValueChf: number;
     adsSpendChf: number;
     netAfterAdsChf: number;
+    marketplaceMarginChf: number;
+    totalMarginChf: number;
+    totalNetAfterAdsChf: number;
     ordersCount: number;
     lineItemsCount: number;
     missingCostCount: number;
@@ -236,10 +242,18 @@ export default function DashboardPage() {
         { title: "Sales (Sell Date)", value: totals.salesChf, detail: "Shopify sell date", color: "blue" },
         { title: "Cost (COGS)", value: totals.costChf, detail: "Supplier cost", color: "purple" },
         {
-          title: "Margin",
-          value: totals.marginChf,
-          detail: `${formatPercent(totals.marginPct)} real margin`,
+          title: "Total Margin",
+          value: totals.totalMarginChf,
+          detail: `Shopify ${formatMoneyCHF(totals.marginChf)} • Marketplace ${formatMoneyCHF(
+            totals.marketplaceMarginChf
+          )}`,
           color: "green",
+        },
+        {
+          title: "Marketplace Margin",
+          value: totals.marketplaceMarginChf,
+          detail: "Decathlon + Galaxus matched",
+          color: "teal",
         },
         {
           title: "Returned Stock",
@@ -254,7 +268,12 @@ export default function DashboardPage() {
           color: "red",
         },
         { title: "Ads Spend", value: totals.adsSpendChf, detail: "Marketing costs", color: "orange" },
-        { title: "Net After Ads", value: totals.netAfterAdsChf, detail: "Margin - ads", color: "teal" },
+        {
+          title: "Total Net After Ads",
+          value: totals.totalNetAfterAdsChf,
+          detail: `Shopify net ${formatMoneyCHF(totals.netAfterAdsChf)}`,
+          color: "teal",
+        },
       ]
     : [];
 
@@ -263,8 +282,10 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">📊 Margin Dashboard (Sell Date)</h1>
-          <p className="text-gray-600">Real COGS-based margin grouped by Shopify sell date (Europe/Zurich)</p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">📊 Margin Dashboard</h1>
+          <p className="text-gray-600">
+            Real COGS-based margin grouped by Shopify sell date, plus matched Decathlon & Galaxus marketplace payouts.
+          </p>
           
           {/* Navigation */}
           <nav className="flex flex-wrap gap-3 mt-4">
@@ -352,7 +373,7 @@ export default function DashboardPage() {
               </p>
             </div>
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <div className="text-sm text-gray-600 mb-1">Margin %</div>
+              <div className="text-sm text-gray-600 mb-1">Shopify Margin %</div>
               <div className="text-3xl font-bold text-gray-900">{formatPercent(totals.marginPct)}</div>
               <p className="text-xs text-gray-500 mt-1">Based on matches with known cost</p>
             </div>
@@ -377,7 +398,7 @@ export default function DashboardPage() {
         {/* Daily Chart */}
         {metrics && metrics.rows.length > 0 && (
           <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-8">
-            <h2 className="text-xl font-semibold mb-4">📈 Daily Margin (sell date)</h2>
+            <h2 className="text-xl font-semibold mb-4">📈 Daily Margin (Shopify + Marketplaces)</h2>
             <ResponsiveContainer width="100%" height={400}>
               <ComposedChart data={metrics.rows}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -399,9 +420,18 @@ export default function DashboardPage() {
                   }}
                 />
                 <Legend />
-                <Bar yAxisId="left" dataKey="marginChf" fill="#10b981" name="Margin CHF" />
+                <Bar yAxisId="left" dataKey="marginChf" fill="#10b981" name="Shopify Margin CHF" />
+                <Bar yAxisId="left" dataKey="marketplaceMarginChf" fill="#38bdf8" name="Marketplace Margin CHF" />
                 <Bar yAxisId="left" dataKey="adsSpendChf" fill="#f97316" name="Ads Spend CHF" />
-                <Line yAxisId="right" type="monotone" dataKey="marginPct" stroke="#3b82f6" strokeWidth={3} name="Margin %" />
+                <Line yAxisId="left" type="monotone" dataKey="totalMarginChf" stroke="#059669" strokeWidth={3} name="Total Margin CHF" />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="marginPct"
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  name="Shopify Margin %"
+                />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -411,7 +441,7 @@ export default function DashboardPage() {
         {metrics && metrics.rows.length > 0 && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
             <div className="p-6 border-b border-gray-200">
-              <h2 className="text-xl font-semibold">📅 Daily Margin (Sell Date)</h2>
+              <h2 className="text-xl font-semibold">📅 Daily Margin (Shopify + Marketplaces)</h2>
             </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
@@ -420,13 +450,16 @@ export default function DashboardPage() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Sales</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cost</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Margin</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Margin %</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Shopify Margin</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Marketplace Margin</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Margin</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Shopify Margin %</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ads</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Net</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Net</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Orders</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Items</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Missing Cost</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"></th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-gray-200">
@@ -449,6 +482,12 @@ export default function DashboardPage() {
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-green-600 font-bold">
                         CHF {row.marginChf.toFixed(2)}
                           </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-sky-600 font-semibold">
+                        CHF {row.marketplaceMarginChf.toFixed(2)}
+                          </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-emerald-600 font-bold">
+                        CHF {row.totalMarginChf.toFixed(2)}
+                          </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700">
                         {row.marginPct.toFixed(1)}%
                           </td>
@@ -456,9 +495,9 @@ export default function DashboardPage() {
                         CHF {row.adsSpendChf.toFixed(2)}
                           </td>
                       <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-bold ${
-                        row.netAfterAdsChf >= 0 ? 'text-emerald-600' : 'text-red-600'
+                        row.totalNetAfterAdsChf >= 0 ? 'text-emerald-600' : 'text-red-600'
                       }`}>
-                        CHF {row.netAfterAdsChf.toFixed(2)}
+                        CHF {row.totalNetAfterAdsChf.toFixed(2)}
                           </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700">
                         {row.ordersCount}
@@ -479,7 +518,7 @@ export default function DashboardPage() {
                     </tr>
                     {expandedDate === row.date && (
                       <tr>
-                        <td colSpan={10} className="bg-gray-50 px-4 py-4">
+                        <td colSpan={13} className="bg-gray-50 px-4 py-4">
                           {detailsLoading[row.date] ? (
                             <div className="text-sm text-gray-500">Loading details...</div>
                           ) : (detailsByDate[row.date] || []).length === 0 ? (

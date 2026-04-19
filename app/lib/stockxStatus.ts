@@ -150,7 +150,3 @@ export function detectMilestone(
   return null;
 }
 
-export function milestoneKeyExists(milestone: MilestoneDefinition | null): string | null {
-  return milestone?.key || null;
-}
-

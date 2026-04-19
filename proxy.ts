@@ -1,10 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
+function decodeCallbackPath(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function isPartnerPortalPath(pathname: string) {
+  return pathname === "/partners" || pathname.startsWith("/partners/");
+}
+
+function isPartnerApiPath(pathname: string) {
+  return pathname.startsWith("/api/partners/");
+}
+
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
   "/login",
   "/api/auth/login",
+  "/api/galaxus",
+  "/api/galaxus/ops",
+  "/api/galaxus/feeds",
+  "/api/galaxus/export",
+  "/api/tracking/token",
   "/_next",
   "/static",
   "/favicon.ico",
@@ -23,10 +45,26 @@ const LOGISTICS_ALLOWED_PATHS = [
 ];
 
 export async function proxy(req: NextRequest) {
-  const { pathname } = req.nextUrl;
+  const { pathname, searchParams } = req.nextUrl;
 
-  // 1. Allow public paths
-  if (PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
+  // Staff login URL with partner callback → partner login (no auth_token needed)
+  if (pathname === "/login" || pathname === "/login/") {
+    const cb = decodeCallbackPath(searchParams.get("callbackUrl"));
+    if (cb && cb.startsWith("/") && !cb.startsWith("//") && cb.startsWith("/partners")) {
+      const dest = new URL("/partners/login", req.url);
+      if (cb !== "/partners/login") {
+        dest.searchParams.set("callbackUrl", cb);
+      }
+      return NextResponse.redirect(dest, 302);
+    }
+  }
+
+  // 1. Allow public paths (includes full partner portal + partner APIs)
+  if (
+    isPartnerPortalPath(pathname) ||
+    isPartnerApiPath(pathname) ||
+    PUBLIC_PATHS.some((path) => pathname.startsWith(path))
+  ) {
     return NextResponse.next();
   }
 

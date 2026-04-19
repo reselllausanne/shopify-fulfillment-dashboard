@@ -1,6 +1,6 @@
 type CsvValue = string | number | boolean | null | undefined;
 
-export function escapeCsvValue(value: CsvValue): string {
+function escapeCsvValue(value: CsvValue): string {
   if (value === null || value === undefined) return "";
   const text = String(value);
   if (!/[",\n\r]/.test(text)) return text;

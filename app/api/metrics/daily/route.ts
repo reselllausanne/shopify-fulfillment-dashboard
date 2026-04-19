@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { decathlonGrossLineAmount } from "@/decathlon/orders/margin";
+import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
+import { isStockxMatchLinked } from "@/galaxus/stx/allocateGalaxusStxCost";
+import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { toZonedTime } from "date-fns-tz";
 
 export const runtime = "nodejs";
@@ -18,6 +22,9 @@ type DailyRow = {
   returnedStockValueChf: number;
   adsSpendChf: number;
   netAfterAdsChf: number;
+  marketplaceMarginChf: number;
+  totalMarginChf: number;
+  totalNetAfterAdsChf: number;
   ordersCount: number;
   lineItemsCount: number;
   missingCostCount: number;
@@ -51,34 +58,91 @@ export async function GET(req: NextRequest) {
     const yearStart = new Date(Date.UTC(nowZurich.getFullYear(), 0, 1, 0, 0, 0, 0));
     const effectiveStartDate = startDateLocal < yearStart ? yearStart : startDateLocal;
 
-    // Source of truth: OrderMatch (shopifyCreatedAt stored in match)
-    const matches = await prisma.orderMatch.findMany({
-      where: {
-        // Use Shopify sell date only (no fallback)
-        shopifyCreatedAt: {
-          gte: effectiveStartDate,
-          lte: endDateLocal,
+    const [matches, adsSpendRecords, decathlonLines, galaxusLines] = await Promise.all([
+      prisma.orderMatch.findMany({
+        where: {
+          // Use Shopify sell date only (no fallback)
+          shopifyCreatedAt: {
+            gte: effectiveStartDate,
+            lte: endDateLocal,
+          },
         },
-      },
-      select: {
-        shopifyOrderId: true,
-        shopifyOrderName: true,
-        shopifyTotalPrice: true,
-        manualRevenueAdjustment: true,
-        supplierCost: true,
-        manualCostOverride: true,
-        returnReason: true,
-        returnFeePercent: true,
-        returnFeeAmountChf: true,
-        returnedStockValueChf: true,
-        createdAt: true,
-        shopifyCreatedAt: true,
-      },
-    });
+        select: {
+          shopifyOrderId: true,
+          shopifyOrderName: true,
+          shopifyTotalPrice: true,
+          manualRevenueAdjustment: true,
+          supplierCost: true,
+          manualCostOverride: true,
+          returnReason: true,
+          returnFeePercent: true,
+          returnFeeAmountChf: true,
+          returnedStockValueChf: true,
+          createdAt: true,
+          shopifyCreatedAt: true,
+        },
+      }),
+      prisma.dailyAdSpend.findMany({
+        where: { date: { gte: startDateLocal, lte: endDateLocal } },
+      }),
+      prisma.decathlonOrderLine.findMany({
+        where: {
+          order: {
+            orderDate: {
+              gte: effectiveStartDate,
+              lte: endDateLocal,
+            },
+          },
+        },
+        select: {
+          id: true,
+          orderId: true,
+          quantity: true,
+          lineTotal: true,
+          unitPrice: true,
+          order: { select: { orderDate: true } },
+          stockxMatch: {
+            select: {
+              stockxAmount: true,
+              stockxOrderNumber: true,
+              stockxOrderId: true,
+              stockxChainId: true,
+            },
+          },
+        },
+      }),
+      prisma.galaxusOrderLine.findMany({
+        where: {
+          order: {
+            orderDate: {
+              gte: effectiveStartDate,
+              lte: endDateLocal,
+            },
+          },
+        },
+        select: {
+          id: true,
+          orderId: true,
+          quantity: true,
+          lineNetAmount: true,
+          priceLineAmount: true,
+          gtin: true,
+          supplierVariantId: true,
+          order: { select: { orderDate: true, galaxusOrderId: true } },
+          stockxMatches: {
+            orderBy: { updatedAt: "desc" },
+            select: {
+              stockxAmount: true,
+              stockxOrderNumber: true,
+              stockxOrderId: true,
+              stockxChainId: true,
+            },
+          },
+        },
+      }),
+    ]);
 
-    const adsSpendRecords = await prisma.dailyAdSpend.findMany({
-      where: { date: { gte: startDateLocal, lte: endDateLocal } },
-    });
+    const galaxusLineCostById = await galaxusLineStockxCostChfByLineId(galaxusLines);
 
     const dailyMap = new Map<string, DailyRow>();
     const orderIdsByDay = new Map<string, Set<string>>();
@@ -94,6 +158,9 @@ export async function GET(req: NextRequest) {
           returnedStockValueChf: 0,
           adsSpendChf: 0,
           netAfterAdsChf: 0,
+          marketplaceMarginChf: 0,
+          totalMarginChf: 0,
+          totalNetAfterAdsChf: 0,
           ordersCount: 0,
           lineItemsCount: 0,
           missingCostCount: 0,
@@ -153,11 +220,45 @@ export async function GET(req: NextRequest) {
       ensureDay(k).adsSpendChf = toNumberSafe(ads.amountChf, 0);
     }
 
+    for (const line of decathlonLines) {
+      const match = line.stockxMatch;
+      if (!match || !isStockxMatchLinked(match)) continue;
+      const cost = toNumberSafe(match.stockxAmount, 0);
+      if (cost <= 0) continue;
+      const payout = decathlonGrossLineAmount({
+        lineTotal: line.lineTotal,
+        unitPrice: line.unitPrice,
+        quantity: line.quantity,
+      });
+      if (payout == null) continue;
+      const orderDate = line.order?.orderDate;
+      if (!orderDate) continue;
+      const dateKey = orderDate.toISOString().split("T")[0];
+      ensureDay(dateKey).marketplaceMarginChf += payout - cost;
+    }
+
+    for (const line of galaxusLines) {
+      const cost = galaxusLineCostById.get(line.id) ?? 0;
+      if (cost <= 0) continue;
+      const revenue = galaxusLineNetRevenueChf({
+        lineNetAmount: line.lineNetAmount,
+        priceLineAmount: line.priceLineAmount,
+      });
+      if (revenue == null) continue;
+      const orderDate = line.order?.orderDate;
+      if (!orderDate) continue;
+      const dateKey = orderDate.toISOString().split("T")[0];
+      const margin = revenue - cost;
+      ensureDay(dateKey).marketplaceMarginChf += margin;
+    }
+
     const rows = Array.from(dailyMap.values())
       .filter((row) => row.date !== "missing_sell_date")
       .map((row: DailyRow) => {
         const marginPct = row.salesChf > 0 ? (row.marginChf / row.salesChf) * 100 : 0;
         const netAfterAds = row.marginChf - row.adsSpendChf;
+        const totalMargin = row.marginChf + row.marketplaceMarginChf;
+        const totalNetAfterAds = totalMargin - row.adsSpendChf;
         return {
           ...row,
           marginPct: Number(marginPct.toFixed(2)),
@@ -168,6 +269,9 @@ export async function GET(req: NextRequest) {
           returnedStockValueChf: Number(row.returnedStockValueChf.toFixed(2)),
           adsSpendChf: Number(row.adsSpendChf.toFixed(2)),
           netAfterAdsChf: Number(netAfterAds.toFixed(2)),
+          marketplaceMarginChf: Number(row.marketplaceMarginChf.toFixed(2)),
+          totalMarginChf: Number(totalMargin.toFixed(2)),
+          totalNetAfterAdsChf: Number(totalNetAfterAds.toFixed(2)),
         };
       })
       .sort((a, b) => a.date.localeCompare(b.date));
@@ -177,8 +281,11 @@ export async function GET(req: NextRequest) {
         acc.salesChf += r.salesChf;
         acc.costChf += r.costChf;
         acc.marginChf += r.marginChf;
+        acc.marketplaceMarginChf += r.marketplaceMarginChf;
+        acc.totalMarginChf += r.totalMarginChf;
         acc.adsSpendChf += r.adsSpendChf;
         acc.netAfterAdsChf += r.netAfterAdsChf;
+        acc.totalNetAfterAdsChf += r.totalNetAfterAdsChf;
         acc.returnMarginLostChf += r.returnMarginLostChf;
         acc.returnedStockValueChf += r.returnedStockValueChf;
         acc.ordersCount += r.ordersCount;
@@ -191,8 +298,11 @@ export async function GET(req: NextRequest) {
         salesChf: 0,
         costChf: 0,
         marginChf: 0,
+        marketplaceMarginChf: 0,
+        totalMarginChf: 0,
         adsSpendChf: 0,
         netAfterAdsChf: 0,
+        totalNetAfterAdsChf: 0,
         returnMarginLostChf: 0,
         returnedStockValueChf: 0,
         ordersCount: 0,

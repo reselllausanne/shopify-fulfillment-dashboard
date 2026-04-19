@@ -1,0 +1,1 @@
+ALTER TABLE "Partner" ADD COLUMN IF NOT EXISTS "galaxusFlatAddChf" DECIMAL(10,2);

@@ -4,7 +4,7 @@ const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SHOPIFY_SCOPES = process.env.SHOPIFY_SCOPES;
 const SHOPIFY_APP_URL = process.env.SHOPIFY_APP_URL;
 
-export type AuthRedirect = {
+type AuthRedirect = {
   state: string;
   url: string;
 };
