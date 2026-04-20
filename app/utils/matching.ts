@@ -47,6 +47,12 @@ export interface ShopifyLineItem {
   lineItemImageUrl: string | null;
 }
 
+/** True when Shopify financial status is refunded (e.g. REFUNDED, REFUNDEDUNFULFILLED, PARTIALLY_REFUNDED). */
+export function isShopifyFinancialRefunded(displayFinancialStatus: string | null | undefined): boolean {
+  if (!displayFinancialStatus) return false;
+  return displayFinancialStatus.toUpperCase().includes("REFUND");
+}
+
 export interface MatchCandidate {
   supplierOrder: NormalizedSupplierOrder;
   score: number;

@@ -11,7 +11,7 @@ import ResultsTable from "@/app/components/ResultsTable";
 import ManualMatchingOverride from "@/app/components/ManualMatchingOverride";
 import DatabaseAutoSync from "@/app/components/DatabaseAutoSync";
 import OrderMatchingSection from "@/app/components/OrderMatchingSection";
-import { type ShopifyLineItem } from "./utils/matching";
+import { type ShopifyLineItem, isShopifyFinancialRefunded } from "./utils/matching";
 import { DEFAULT_QUERY, DEFAULT_VARIABLES } from "@/app/lib/constants";
 import type { OrderNode } from "@/app/types";
 import { toNumber } from "@/app/utils/format";
@@ -556,6 +556,10 @@ export default function Home() {
 
   // ✅ NEW: Open full manual entry modal with ALL DB fields (CREATE mode)
   const openManualEntryModal = (shopifyItem: ShopifyLineItem) => {
+    if (isShopifyFinancialRefunded(shopifyItem.displayFinancialStatus)) {
+      alert("This Shopify line is refunded. Manual full entry is disabled.");
+      return;
+    }
     // Pre-fill with intelligent defaults
     const defaultData = {
       // Shopify data (pre-filled)

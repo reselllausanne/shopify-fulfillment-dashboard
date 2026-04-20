@@ -76,6 +76,7 @@ export default function DecathlonOrdersPage() {
   const [splitSubmitting, setSplitSubmitting] = useState(false);
   const [returnLines, setReturnLines] = useState<ReturnLineItem[]>([]);
   const [loadingReturns, setLoadingReturns] = useState(false);
+  const [restockingId, setRestockingId] = useState<string | null>(null);
   const [editingAddress, setEditingAddress] = useState(false);
   const [savingAddress, setSavingAddress] = useState(false);
   const [addressDraft, setAddressDraft] = useState({
@@ -201,6 +202,24 @@ export default function DecathlonOrdersPage() {
     }
   }, []);
 
+  const restockReturnLine = async (lineId: string) => {
+    setRestockingId(lineId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/decathlon/returns/${encodeURIComponent(lineId)}/restock`, {
+        method: "POST",
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error((data as any).error ?? `Restock failed (${res.status})`);
+      await loadReturns();
+    } catch (err: any) {
+      setError(err?.message ?? "Restock failed");
+    } finally {
+      setRestockingId(null);
+    }
+  };
+
   const loadPartners = async () => {
     try {
       const res = await fetch("/api/partners/list", { cache: "no-store" });
@@ -213,11 +232,19 @@ export default function DecathlonOrdersPage() {
     }
   };
 
+  const runDecathlonPoll = useCallback(async () => {
+    const res = await fetch("/api/decathlon/orders/poll", { method: "POST", cache: "no-store" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as any).error ?? `Poll failed (${res.status})`);
+    }
+  }, []);
+
   const ingestNewOrders = async () => {
     setPolling(true);
     setError(null);
     try {
-      await fetch("/api/decathlon/orders/poll", { method: "POST", cache: "no-store" });
+      await runDecathlonPoll();
     } catch (err: any) {
       setError(err?.message ?? "Ingest failed");
     } finally {
@@ -802,6 +829,12 @@ export default function DecathlonOrdersPage() {
                   const price = item.returnPrice ?? item.unitPrice ?? null;
                   const status = (item.status ?? "").toUpperCase();
                   const restocked = Boolean(item.restockAppliedAt);
+                  const skuLower = String(item.offerSku ?? "").toLowerCase();
+                  const isTheOrStx = skuLower.startsWith("the_") || skuLower.startsWith("stx_");
+                  const canRestockStatus = status === "CLOSED" || status === "RECEIVED";
+                  const restockBusy = restockingId === item.id;
+                  const restockEnabled =
+                    !restocked && canRestockStatus && isTheOrStx && !restockBusy && !loadingReturns;
                   const statusLabel = status || "PENDING";
                   const statusTone =
                     status === "CLOSED"
@@ -815,7 +848,7 @@ export default function DecathlonOrdersPage() {
                     <div key={item.id} className="border rounded p-2 text-xs">
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-medium">{item.offerSku ?? "—"}</div>
-                        <div className="flex items-center gap-1">
+                        <div className="flex flex-wrap items-center justify-end gap-1">
                           <span
                             className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusTone}`}
                           >
@@ -825,7 +858,23 @@ export default function DecathlonOrdersPage() {
                             <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-600 text-white">
                               RESTOCKED
                             </span>
-                          ) : null}
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!restockEnabled}
+                              title={
+                                !isTheOrStx
+                                  ? "THE_/STX_ offers only"
+                                  : !canRestockStatus
+                                    ? "CLOSED or RECEIVED required"
+                                    : "Add qty to THE stock"
+                              }
+                              onClick={() => void restockReturnLine(item.id)}
+                              className="rounded border border-gray-900 bg-gray-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {restockBusy ? "…" : "Restock"}
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="text-gray-500 mt-1 space-y-0.5">

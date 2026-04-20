@@ -3,9 +3,8 @@ import { prisma } from "@/app/lib/prisma";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
-import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
-import { buildSupplierVariantId } from "@/app/lib/partnerImport";
-import { buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { extractGtinFromOfferSku, roundToCents } from "@/decathlon/returns/theRestockFromReturnLine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,25 +54,12 @@ function normalizeReturnStatus(ret: any): string {
   return raw.toUpperCase();
 }
 
-function roundToCents(value: number | null): number | null {
-  if (!Number.isFinite(value as number)) return null;
-  return Math.round((value as number) * 100) / 100;
-}
-
 function resolveUpdatedFrom(latestReturnAt: Date | null, fallbackAt: Date | null): string {
   const now = Date.now();
   const fallbackWindow = new Date(now - 30 * 24 * 60 * 60 * 1000);
   const base = latestReturnAt ?? (fallbackAt && fallbackAt < fallbackWindow ? fallbackAt : fallbackWindow);
   const safe = new Date(base.getTime() - 5 * 60 * 1000);
   return safe.toISOString();
-}
-
-function extractGtinFromOfferSku(offerSku: string | null): string | null {
-  if (!offerSku) return null;
-  const parts = offerSku.split("_");
-  if (parts.length < 2) return null;
-  const candidate = parts.slice(1).join("_").trim();
-  return validateGtin(candidate) ? candidate : null;
 }
 
 function pickString(...values: unknown[]): string | null {
@@ -326,124 +312,6 @@ function normalizeOfferSku(value: unknown): string | null {
   return text.toUpperCase();
 }
 
-async function applyReturnRestock(params: {
-  returnLine: any;
-  orderLine: any | null;
-  offerSku: string | null;
-  basePrice: number | null;
-}): Promise<{ applied: boolean; supplierVariantId?: string | null }> {
-  const offerSku = params.offerSku;
-  if (!offerSku) return { applied: false };
-  const offerSkuLower = offerSku.toLowerCase();
-  const isStx = offerSkuLower.startsWith("stx_");
-  const isThe = offerSkuLower.startsWith("the_");
-  if (!isStx && !isThe) return { applied: false };
-
-  const quantity = Number(params.returnLine?.quantity ?? 0);
-  if (!Number.isFinite(quantity) || quantity <= 0) return { applied: false };
-
-  const orderLine = params.orderLine;
-  const lineSkuRaw =
-    orderLine?.supplierSku ?? orderLine?.productSku ?? orderLine?.offerSku ?? offerSku ?? "RETURN";
-  const normalizedSku = normalizeSku(String(lineSkuRaw));
-  const sku = normalizedSku ?? (String(lineSkuRaw).trim() || "RETURN");
-  const sizeRaw = normalizeSize(orderLine?.size ?? "") ?? "ONESIZE";
-  const gtin =
-    orderLine?.gtin ??
-    extractGtinFromOfferSku(offerSku) ??
-    extractGtinFromOfferSku(orderLine?.offerSku ?? null) ??
-    null;
-  const validGtin = gtin && validateGtin(gtin) ? gtin : null;
-
-  let supplierVariantId: string | null = null;
-  try {
-    supplierVariantId = buildSupplierVariantId("THE", sku, sizeRaw);
-  } catch {
-    supplierVariantId = null;
-  }
-
-  const providerKey = validGtin && supplierVariantId ? buildProviderKey(validGtin, supplierVariantId) : null;
-  const priceBase = params.basePrice;
-  const restockPrice =
-    priceBase != null && Number.isFinite(priceBase) && priceBase > 0
-      ? roundToCents(priceBase * (isStx ? 0.88 : 1))
-      : null;
-
-  const prismaAny = prisma as any;
-  let existing: any | null = null;
-  if (providerKey && validGtin) {
-    existing = await prismaAny.supplierVariant.findFirst({
-      where: { providerKey, gtin: validGtin },
-    });
-  }
-  if (!existing && supplierVariantId) {
-    existing = await prismaAny.supplierVariant.findUnique({
-      where: { supplierVariantId },
-    });
-  }
-
-  const applyPrice =
-    isStx &&
-    restockPrice != null &&
-    Number.isFinite(restockPrice) &&
-    restockPrice > 0 &&
-    (!existing || !existing.manualLock);
-
-  if (!existing) {
-    if (!supplierVariantId || !providerKey || !validGtin || restockPrice == null) {
-      return { applied: false };
-    }
-    const created = await prismaAny.supplierVariant.create({
-      data: {
-        supplierVariantId,
-        supplierSku: sku,
-        providerKey,
-        gtin: validGtin,
-        sizeRaw,
-        sizeNormalized: sizeRaw,
-        stock: quantity,
-        price: restockPrice,
-        lastSyncAt: new Date(),
-      },
-    });
-    await prismaAny.variantMapping.upsert({
-      where: { supplierVariantId: created.supplierVariantId },
-      create: {
-        supplierVariantId: created.supplierVariantId,
-        gtin: validGtin,
-        providerKey,
-        status: "MATCHED",
-      },
-      update: {
-        gtin: validGtin,
-        providerKey,
-        status: "MATCHED",
-      },
-    });
-    return { applied: true, supplierVariantId: created.supplierVariantId };
-  }
-
-  const useManual = Boolean(existing.manualLock) && existing.manualStock != null;
-  const currentStock = useManual ? Number(existing.manualStock ?? 0) : Number(existing.stock ?? 0);
-  const nextStock = Math.max(currentStock + quantity, 0);
-
-  const updateData: Record<string, unknown> = {
-    stock: useManual ? existing.stock : nextStock,
-    manualStock: useManual ? nextStock : existing.manualStock,
-    lastSyncAt: new Date(),
-    updatedAt: new Date(),
-  };
-  if (applyPrice && restockPrice != null) {
-    updateData.price = restockPrice;
-  }
-  await prismaAny.supplierVariant.update({
-    where: { supplierVariantId: existing.supplierVariantId },
-    data: updateData,
-  });
-
-  return { applied: true, supplierVariantId: existing.supplierVariantId };
-}
-
 async function upsertDecathlonOrder(payload: {
   order: any;
   orderId: string;
@@ -629,7 +497,6 @@ async function syncDecathlonReturns(options: {
     const returns = Array.from(returnsById.values());
     let upserted = 0;
     let lineUpserted = 0;
-    let restocked = 0;
     for (const ret of returns) {
       const returnId = pickString(ret?.id, ret?.return_id, ret?.returnId);
       if (!returnId) continue;
@@ -733,31 +600,10 @@ async function syncDecathlonReturns(options: {
           },
         });
         lineUpserted += 1;
-
-        const statusUpper = normalizeReturnStatus(ret);
-        const canRestock = statusUpper === "CLOSED" || statusUpper === "RECEIVED";
-        if (canRestock && !lineRow.restockAppliedAt) {
-          const restockResult = await applyReturnRestock({
-            returnLine: lineRow,
-            orderLine,
-            offerSku: offerSku ?? productIdRaw ?? null,
-            basePrice,
-          });
-          if (restockResult.applied) {
-            await prismaAny.decathlonReturnLine.update({
-              where: { id: lineRow.id },
-              data: {
-                restockAppliedAt: new Date(),
-                restockSupplierVariantId: restockResult.supplierVariantId ?? null,
-              },
-            });
-            restocked += 1;
-          }
-        }
       }
     }
 
-    return { fetched: returns.length, upserted, lines: lineUpserted, restocked };
+    return { fetched: returns.length, upserted, lines: lineUpserted, restocked: 0 };
   } catch (error: any) {
     console.error("[DECATHLON][RETURNS][SYNC] Failed:", error);
     return { fetched: 0, upserted: 0, lines: 0, restocked: 0, error: error?.message ?? "Return sync failed" };

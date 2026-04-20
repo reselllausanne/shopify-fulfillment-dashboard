@@ -5,6 +5,7 @@ import {
   type ShopifyLineItem,
   type MatchResult,
   EXCLUDED_SKUS,
+  isShopifyFinancialRefunded,
 } from "@/app/utils/matching";
 import type { PricingResult } from "@/app/types";
 import { postJson, getJson } from "@/app/lib/api";
@@ -525,6 +526,11 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         return;
       }
 
+      if (isShopifyFinancialRefunded(shopifyItem.displayFinancialStatus)) {
+        alert("This Shopify line is refunded. Manual supplier link is disabled.");
+        return;
+      }
+
       const supplierOrder = orders.find((o: any) => o.orderNumber === cleanSupplierNum);
       if (!supplierOrder) {
         const proceed = confirm(
@@ -607,6 +613,10 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
 
 
   const createManualCostEntry = async (shopifyItem: ShopifyLineItem) => {
+    if (isShopifyFinancialRefunded(shopifyItem.displayFinancialStatus)) {
+      alert("This Shopify line is refunded. Manual cost entry is disabled.");
+      return;
+    }
     const isLiquidation = /%/.test(shopifyItem.title);
     const isEssentialHoodie = shopifyItem.sku && EXCLUDED_SKUS.includes(shopifyItem.sku);
 
@@ -885,6 +895,10 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     handleFetchShopifyOrder,
     createManualCostEntry,
     handleSetMetafields: async (shopifyItem: ShopifyLineItem, supplierOrderNumber: string) => {
+      if (isShopifyFinancialRefunded(shopifyItem.displayFinancialStatus)) {
+        alert("This Shopify line is refunded. Metafield save and DB match are disabled.");
+        return;
+      }
       const lineItemId = shopifyItem.lineItemId;
       setMetafieldsLoading((prev) => ({ ...prev, [lineItemId]: true }));
 
@@ -1044,9 +1058,13 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       }
     },
     autoSetAllHighMatches: async () => {
-      const highMatches = matchResults.filter((r) => r.bestMatch?.confidence === "high");
+      const highMatches = matchResults.filter(
+        (r) =>
+          r.bestMatch?.confidence === "high" &&
+          !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
+      );
       if (highMatches.length === 0) {
-        alert("⚠️ No HIGH confidence matches to set");
+        alert("⚠️ No HIGH confidence matches to set (refunded lines excluded)");
         return;
       }
       if (

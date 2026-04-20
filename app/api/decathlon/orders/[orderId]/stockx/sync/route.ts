@@ -118,9 +118,9 @@ export async function POST(
     }
 
     const pendingCount = pendingSupplierVariantIds.size;
-    const desiredCount = Math.min(30, Math.max(8, pendingCount * 2));
-    const pageSize = Math.min(40, Math.max(10, pendingCount * 2));
-    const maxPages = Math.min(2, Math.max(1, Math.ceil(desiredCount / pageSize)));
+    const desiredCount = Math.min(60, Math.max(12, pendingCount * 4));
+    const pageSize = Math.min(50, Math.max(15, pendingCount * 3));
+    const maxPages = Math.min(6, Math.max(2, Math.ceil(desiredCount / pageSize)));
     const orders = await fetchRecentStockxBuyingOrders(token, {
       first: pageSize,
       maxPages,
@@ -128,21 +128,6 @@ export async function POST(
     });
     const ordersToInspect = orders.slice(0, desiredCount);
 
-    const prefetchLimiter = createLimiter(6);
-    await Promise.all(
-      ordersToInspect.map((listNode) =>
-        prefetchLimiter(async () => {
-          const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
-          const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
-          if (!stockxOrderId || !chainId) return;
-          try {
-            await fetchDetailsCached(chainId, stockxOrderId);
-          } catch {
-            // ignore fast mode
-          }
-        })
-      )
-    );
     const detailsCache = new Map<string, Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null>();
     const fetchDetailsCached = async (
       chainId: string,
@@ -162,8 +147,24 @@ export async function POST(
       }
     };
 
+    const prefetchLimiter = createLimiter(6);
+    await Promise.all(
+      ordersToInspect.map((listNode) =>
+        prefetchLimiter(async () => {
+          const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
+          const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
+          if (!stockxOrderId || !chainId) return;
+          try {
+            await fetchDetailsCached(chainId, stockxOrderId);
+          } catch {
+            // ignore fast mode
+          }
+        })
+      )
+    );
+
     const enrichLimiter = createLimiter(3);
-    const enrichSource = (ordersToInspect as any[]).slice(0, 15);
+    const enrichSource = (ordersToInspect as any[]).slice(0, Math.min(ordersToInspect.length, 40));
     const stockxBuyingOrdersEnriched = await Promise.all(
       enrichSource.map((listNode) =>
         enrichLimiter(async () => {

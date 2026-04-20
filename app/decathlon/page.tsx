@@ -301,16 +301,16 @@ export default function DecathlonDashboardPage() {
               <button
                 type="button"
                 className="max-w-sm px-3 py-2 rounded bg-indigo-600 text-white text-left text-sm leading-snug disabled:opacity-50"
-                onClick={() => runOpsAction("offer-sync")}
+                onClick={() => runOpsAction("product-sync")}
                 disabled={opsBusy !== null}
               >
-                {opsBusy === "offer-sync" ? (
+                {opsBusy === "product-sync" ? (
                   "Running…"
                 ) : (
                   <>
-                    <span className="block font-semibold">Sync products + send offers (P41 to OF01)</span>
+                    <span className="block font-semibold">Sync new products only (P41)</span>
                     <span className="block text-[11px] font-normal opacity-90 mt-0.5">
-                      One click: run product import first, then send only offers with successful product sync
+                      Upload product data only. Use “Send offers only” for OF01.
                     </span>
                   </>
                 )}

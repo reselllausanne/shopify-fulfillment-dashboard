@@ -1,5 +1,6 @@
 import React from "react";
 import type { MatchResult, ShopifyLineItem } from "@/app/utils/matching";
+import { isShopifyFinancialRefunded } from "@/app/utils/matching";
 import type { PricingResult, OrderNode } from "@/app/types";
 
 type Props = {
@@ -43,6 +44,10 @@ export default function OrderMatchingSection({
   handleSetMetafields,
   openManualEntryModal,
 }: Props) {
+  const highMatchableCount = matchResults.filter(
+    (r) => r.bestMatch?.confidence === "high" && !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
+  ).length;
+
   return (
     <div className="bg-white rounded-lg shadow p-6 mt-6">
       <div className="flex items-center justify-between mb-4">
@@ -79,16 +84,17 @@ export default function OrderMatchingSection({
             </div>
             <button
               onClick={autoSetAllHighMatches}
-              disabled={matchResults.filter((r: any) => r.bestMatch?.confidence === "high").length === 0}
+              disabled={highMatchableCount === 0}
               className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-semibold shadow"
             >
-              🚀 Auto-Set All HIGH Matches ({matchResults.filter((r: any) => r.bestMatch?.confidence === "high").length})
+              🚀 Auto-Set All HIGH Matches ({highMatchableCount})
             </button>
           </div>
 
           {matchResults.map((result: MatchResult, idx: number) => {
             const shopify = result.shopifyItem;
             const match = result.bestMatch;
+            const isRefunded = isShopifyFinancialRefunded(shopify.displayFinancialStatus);
             const isLiquidation = /%/.test(shopify.title);
             const isEssentialHoodie = false; // Already handled upstream; keep UI minimal here
 
@@ -96,7 +102,9 @@ export default function OrderMatchingSection({
               <div
                 key={`${shopify.lineItemId}-${idx}`}
                 className={`border rounded-lg p-4 ${
-                  isLiquidation
+                  isRefunded
+                    ? "border-red-400 bg-red-50 ring-1 ring-red-200"
+                    : isLiquidation
                     ? "border-purple-300 bg-purple-50"
                     : isEssentialHoodie
                     ? "border-indigo-300 bg-indigo-50"
@@ -112,6 +120,11 @@ export default function OrderMatchingSection({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <h3 className="font-semibold text-sm text-gray-700 mb-2">📦 Shopify Order: {shopify.orderName}</h3>
+                    {isRefunded && (
+                      <p className="text-xs font-semibold text-red-700 mb-2">
+                        Refunded — matching and metafield save are disabled for this line.
+                      </p>
+                    )}
                     <div className="text-xs space-y-1">
                       <p>
                         <span className="font-medium">Created:</span>{" "}
@@ -121,7 +134,9 @@ export default function OrderMatchingSection({
                         <span className="font-medium">Status:</span>{" "}
                         <span
                           className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
-                            shopify.displayFinancialStatus === "PAID"
+                            isRefunded
+                              ? "bg-red-200 text-red-900"
+                              : shopify.displayFinancialStatus === "PAID"
                               ? "bg-green-100 text-green-800"
                               : shopify.displayFinancialStatus === "PENDING"
                               ? "bg-yellow-100 text-yellow-800"
@@ -175,7 +190,11 @@ export default function OrderMatchingSection({
                                   [shopify.lineItemId]: e.target.value,
                                 })
                               }
-                              className="inline-block w-32 px-1 py-0.5 border rounded text-xs font-mono"
+                              disabled={isRefunded}
+                              readOnly={isRefunded}
+                              className={`inline-block w-32 px-1 py-0.5 border rounded text-xs font-mono ${
+                                isRefunded ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""
+                              }`}
                             />
                           </p>
                           <p>
@@ -261,7 +280,11 @@ export default function OrderMatchingSection({
                                         [shopify.lineItemId]: e.target.value,
                                       })
                                     }
-                                    className="px-2 py-0.5 border rounded text-xs w-20 font-mono"
+                                    disabled={isRefunded}
+                                    readOnly={isRefunded}
+                                    className={`px-2 py-0.5 border rounded text-xs w-20 font-mono ${
+                                      isRefunded ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""
+                                    }`}
                                     placeholder="Cost"
                                   />
                                   {!autoTTC && <span className="text-orange-600 text-xs">⚠️ No TTC</span>}
@@ -284,13 +307,23 @@ export default function OrderMatchingSection({
                                 confirmedMatches[shopify.lineItemId] || match.supplierOrder.supplierOrderNumber
                               )
                             }
-                            className="w-full px-3 py-2 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700"
+                            disabled={isRefunded}
+                            className={`w-full px-3 py-2 text-sm font-medium rounded ${
+                              isRefunded
+                                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                : "bg-purple-600 text-white hover:bg-purple-700"
+                            }`}
                           >
                             📝 Set Metafields on Shopify
                           </button>
                           <button
                             onClick={() => openManualEntryModal(shopify)}
-                            className="mt-2 w-full px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700"
+                            disabled={isRefunded}
+                            className={`mt-2 w-full px-3 py-2 text-sm font-medium rounded ${
+                              isRefunded
+                                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                : "bg-blue-600 text-white hover:bg-blue-700"
+                            }`}
                           >
                             ✏️ Manual Entry Anyway
                           </button>
@@ -302,7 +335,12 @@ export default function OrderMatchingSection({
                         <p className="text-xs mt-1">Manual selection required</p>
                         <button
                           onClick={() => openManualEntryModal(shopify)}
-                          className="mt-3 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700"
+                          disabled={isRefunded}
+                          className={`mt-3 px-4 py-2 text-sm font-medium rounded ${
+                            isRefunded
+                              ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                              : "bg-blue-600 text-white hover:bg-blue-700"
+                          }`}
                         >
                           📝 Create Manual Entry (Full)
                         </button>
