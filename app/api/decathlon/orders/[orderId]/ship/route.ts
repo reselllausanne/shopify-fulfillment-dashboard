@@ -10,6 +10,7 @@ import { requestSwissPostLabel } from "@/lib/swissPost";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType, Prisma } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
+import { canPartnerAccessDecathlonOrder } from "@/decathlon/orders/partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -599,7 +600,7 @@ export async function POST(
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
-    if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey) {
+    if (scope === "partner" && partnerKey && !canPartnerAccessDecathlonOrder(order, partnerKey)) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 

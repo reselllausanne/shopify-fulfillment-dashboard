@@ -6,6 +6,10 @@ import {
   applyStockxDetailsToDecathlonMatchFields,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
+import {
+  canPartnerAccessDecathlonOrder,
+  isDecathlonPartnerFulfillmentLine,
+} from "@/decathlon/orders/partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,14 +66,20 @@ export async function POST(
       if (!sessionPk) {
         return NextResponse.json({ ok: false, error: "Invalid partner session" }, { status: 403 });
       }
-      const orderPk = normalizeProviderKey(order.partnerKey ?? null);
-      // Only enforce tenant isolation when the order is assigned to a partner (non-null partnerKey).
-      if (orderPk != null && orderPk !== sessionPk) {
+      if (!canPartnerAccessDecathlonOrder(order, sessionPk)) {
         return NextResponse.json(
           {
             ok: false,
-            error:
-              "This Decathlon order is linked to another partner account. Use the admin Decathlon page without partner login, or fix order.partnerKey.",
+            error: "Order not visible for this partner account.",
+          },
+          { status: 403 }
+        );
+      }
+      if (!isDecathlonPartnerFulfillmentLine(order, line)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "You can only add StockX data for your own catalog lines on this order.",
           },
           { status: 403 }
         );

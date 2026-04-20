@@ -9,6 +9,7 @@ import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 import { resolvePrintEnvFlag, submitLpJob } from "@/lib/cupsLpPrint";
+import { canPartnerAccessDecathlonOrder } from "@/decathlon/orders/partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,11 +206,11 @@ async function resolveDecathlonOrder(orderId: string) {
   return (
     (await prisma.decathlonOrder.findUnique({
       where: { id: orderId },
-      include: { shipments: { orderBy: { shippedAt: "asc" } } },
+      include: { lines: true, shipments: { orderBy: { shippedAt: "asc" } } },
     })) ??
     (await prisma.decathlonOrder.findUnique({
       where: { orderId },
-      include: { shipments: { orderBy: { shippedAt: "asc" } } },
+      include: { lines: true, shipments: { orderBy: { shippedAt: "asc" } } },
     }))
   );
 }
@@ -443,7 +444,7 @@ async function handlePackingSlipRequest(
   if (scope === "partner" && !partnerKey) {
     return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
   }
-  if (scope === "partner" && partnerKey && order.partnerKey !== partnerKey) {
+  if (scope === "partner" && partnerKey && !canPartnerAccessDecathlonOrder(order as any, partnerKey)) {
     return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
   }
 

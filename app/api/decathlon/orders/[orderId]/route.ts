@@ -5,7 +5,10 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
-import { filterDecathlonLinesForPartner } from "@/decathlon/orders/partnerLineScope";
+import {
+  canPartnerAccessDecathlonOrder,
+  filterDecathlonLinesForPartner,
+} from "@/decathlon/orders/partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,12 +51,7 @@ export async function GET(
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
-    const partnerAccess =
-      !partnerKey ||
-      normalizeProviderKey(order.partnerKey) === partnerKey ||
-      (order.lines ?? []).some((line: any) =>
-        String(line.offerSku ?? "").toUpperCase().startsWith(`${partnerKey}_`)
-      );
+    const partnerAccess = !partnerKey || canPartnerAccessDecathlonOrder(order, partnerKey);
     if (scope === "partner" && partnerKey && !partnerAccess) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }

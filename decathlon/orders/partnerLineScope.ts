@@ -1,6 +1,22 @@
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 /**
+ * True if this partner may load/act on the Decathlon order (same rules as list + GET with scope=partner):
+ * order is assigned to them, or at least one line uses their Mirakl offer SKU prefix (mixed NER + partner on one order).
+ */
+export function canPartnerAccessDecathlonOrder(
+  order: { partnerKey?: string | null; lines?: Array<{ offerSku?: string | null }> | null },
+  partnerKey: string | null | undefined
+): boolean {
+  const pk = normalizeProviderKey(partnerKey);
+  if (!pk) return false;
+  if (normalizeProviderKey(order.partnerKey) === pk) return true;
+  return (order.lines ?? []).some((line) =>
+    String(line.offerSku ?? "").toUpperCase().startsWith(`${pk}_`)
+  );
+}
+
+/**
  * Lines visible to a partner session: prefixed offer SKUs, or whole order when assigned by partnerKey only.
  */
 export function filterDecathlonLinesForPartner<T extends { id: string; offerSku?: string | null }>(
