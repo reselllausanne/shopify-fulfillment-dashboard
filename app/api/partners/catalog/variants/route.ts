@@ -41,6 +41,8 @@ type UpdatePayload = {
   manualStock?: number | null;
   manualLock?: boolean;
   manualNote?: string | null;
+  supplierGender?: string | null;
+  supplierColorway?: string | null;
 };
 
 function parseDateOrNull(value: unknown): Date | null {
@@ -145,6 +147,8 @@ export async function GET(req: NextRequest) {
       deliveryType: item.deliveryType ?? null,
       lastSyncAt: item.lastSyncAt ?? null,
       leadTimeDays: item.leadTimeDays ?? null,
+      supplierGender: item.supplierGender ?? null,
+      supplierColorway: item.supplierColorway ?? null,
     };
   });
 
@@ -341,6 +345,12 @@ export async function POST(req: NextRequest) {
           }
           if ("manualNote" in entry) {
             data.manualNote = entry.manualNote ? String(entry.manualNote) : null;
+          }
+          if ("supplierGender" in entry) {
+            data.supplierGender = entry.supplierGender ? String(entry.supplierGender).trim() : null;
+          }
+          if ("supplierColorway" in entry) {
+            data.supplierColorway = entry.supplierColorway ? String(entry.supplierColorway).trim() : null;
           }
 
           const keysTouched = Object.keys(data);

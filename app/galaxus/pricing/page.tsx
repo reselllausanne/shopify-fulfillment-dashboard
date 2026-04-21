@@ -14,6 +14,8 @@ type PricingVariantRow = {
   supplierSku: string;
   supplierProductName: string | null;
   supplierBrand: string | null;
+  supplierGender?: string | null;
+  supplierColorway?: string | null;
   sizeRaw: string | null;
   sizeNormalized: string | null;
   price: any;
@@ -99,6 +101,7 @@ export default function GalaxusCatalogPage() {
   const [relatedMapping, setRelatedMapping] = useState<string>("");
   const [relatedKickdbVariant, setRelatedKickdbVariant] = useState<string>("");
   const [relatedKickdbProduct, setRelatedKickdbProduct] = useState<string>("");
+  const [relatedSupplierVariant, setRelatedSupplierVariant] = useState<string>("");
   const [limit, setLimit] = useState(200);
 
   const fullEditOpen = Boolean(advancedRow);
@@ -149,6 +152,8 @@ export default function GalaxusCatalogPage() {
       supplierSku: item.supplierSku ?? "",
       supplierBrand: item.supplierBrand ?? "",
       supplierProductName: item.supplierProductName ?? "",
+      supplierGender: item.supplierGender ?? "",
+      supplierColorway: item.supplierColorway ?? "",
       sizeRaw: item.sizeRaw ?? "",
       sizeNormalized: item.sizeNormalized ?? "",
       price: normalizeNumber(item.price ?? ""),
@@ -184,6 +189,7 @@ export default function GalaxusCatalogPage() {
       setRelatedMapping(JSON.stringify(data.mapping ?? {}, null, 2));
       setRelatedKickdbVariant(JSON.stringify(data.kickdbVariant ?? {}, null, 2));
       setRelatedKickdbProduct(JSON.stringify(data.kickdbProduct ?? {}, null, 2));
+      setRelatedSupplierVariant(JSON.stringify(data.supplierVariant ?? {}, null, 2));
     } catch (err: any) {
       setRelatedError(err.message ?? "Failed to load related data");
     } finally {
@@ -214,6 +220,7 @@ export default function GalaxusCatalogPage() {
       setRelatedMapping(JSON.stringify(data.mapping ?? {}, null, 2));
       setRelatedKickdbVariant(JSON.stringify(data.kickdbVariant ?? {}, null, 2));
       setRelatedKickdbProduct(JSON.stringify(data.kickdbProduct ?? {}, null, 2));
+      setRelatedSupplierVariant(JSON.stringify(data.supplierVariant ?? {}, null, 2));
       setLog("Related data updated.");
     } catch (err: any) {
       setRelatedError(err.message ?? "Failed to save related data");
@@ -235,6 +242,7 @@ export default function GalaxusCatalogPage() {
     setRelatedMapping("");
     setRelatedKickdbVariant("");
     setRelatedKickdbProduct("");
+    setRelatedSupplierVariant("");
     setRelatedError(null);
   };
 
@@ -275,6 +283,8 @@ export default function GalaxusCatalogPage() {
         supplierSku: advancedEdit.supplierSku?.trim(),
         supplierBrand: advancedEdit.supplierBrand?.trim() || null,
         supplierProductName: advancedEdit.supplierProductName?.trim() || null,
+        supplierGender: advancedEdit.supplierGender?.trim() || null,
+        supplierColorway: advancedEdit.supplierColorway?.trim() || null,
         sizeRaw: advancedEdit.sizeRaw?.trim() || null,
         sizeNormalized: advancedEdit.sizeNormalized?.trim() || null,
         price,
@@ -796,6 +806,24 @@ export default function GalaxusCatalogPage() {
                     onChange={(e) => setAdvancedEdit((prev) => ({ ...prev, supplierBrand: e.target.value }))}
                   />
                 </div>
+                <div className="space-y-1 md:col-span-2">
+                  <div className="text-xs text-gray-500">Gender (supplier — Decathlon / Galaxus specs, no KickDB)</div>
+                  <input
+                    className="w-full border rounded px-2 py-1 text-xs"
+                    placeholder="e.g. men, women, unisex"
+                    value={advancedEdit.supplierGender ?? ""}
+                    onChange={(e) => setAdvancedEdit((prev) => ({ ...prev, supplierGender: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <div className="text-xs text-gray-500">Colorway (supplier — Decathlon / Galaxus specs, no KickDB)</div>
+                  <input
+                    className="w-full border rounded px-2 py-1 text-xs"
+                    placeholder="e.g. Cement / Douglas Fir"
+                    value={advancedEdit.supplierColorway ?? ""}
+                    onChange={(e) => setAdvancedEdit((prev) => ({ ...prev, supplierColorway: e.target.value }))}
+                  />
+                </div>
                 <div className="space-y-1">
                   <div className="text-xs text-gray-500">Size raw</div>
                   <input
@@ -912,6 +940,16 @@ export default function GalaxusCatalogPage() {
                   rows={3}
                   value={advancedEdit.images ?? ""}
                   onChange={(e) => setAdvancedEdit((prev) => ({ ...prev, images: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-500">SupplierVariant (DB snapshot — read-only)</div>
+                <textarea
+                  className="w-full border rounded px-2 py-1 text-[11px] font-mono bg-gray-50"
+                  rows={4}
+                  readOnly
+                  value={relatedSupplierVariant}
+                  disabled={relatedLoading}
                 />
               </div>
               <div className="grid gap-3 md:grid-cols-3">

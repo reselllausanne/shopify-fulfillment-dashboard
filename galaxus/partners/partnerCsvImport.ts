@@ -32,6 +32,9 @@ type ValidImportRow = {
   brand?: string | null;
   imageUrl?: string | null;
   gtinProvided?: string | null;
+  /** Optional; same names as DB columns — feeds Decathlon/Galaxus when KickDB is absent. */
+  supplierGender?: string | null;
+  supplierColorway?: string | null;
 };
 
 export type PartnerCsvImportRowOutcome = {
@@ -135,6 +138,8 @@ export async function runPartnerCsvImport(
     const productNameRaw = read("productName");
     const brandRaw = read("brand");
     const imageRaw = read("image");
+    const supplierGenderRaw = read("supplierGender");
+    const supplierColorwayRaw = read("supplierColorway");
     const rowErrors: Array<{ field: string; message: string }> = [];
 
     const dupeKey = buildDuplicateKey(providerKeyRaw, skuRaw, sizeRaw);
@@ -181,6 +186,8 @@ export async function runPartnerCsvImport(
     const productName = productNameRaw ? productNameRaw.trim() : null;
     const brand = brandRaw ? brandRaw.trim() : null;
     const imageUrl = imageRaw ? imageRaw.trim() : null;
+    const supplierGender = supplierGenderRaw ? supplierGenderRaw.trim() : null;
+    const supplierColorway = supplierColorwayRaw ? supplierColorwayRaw.trim() : null;
 
     if (rowErrors.length > 0) {
       rowErrors.forEach((err) => errors.push({ row: i + 1, ...err }));
@@ -224,6 +231,8 @@ export async function runPartnerCsvImport(
       brand,
       imageUrl,
       gtinProvided,
+      supplierGender,
+      supplierColorway,
     });
   }
 
@@ -273,6 +282,8 @@ export async function runPartnerCsvImport(
       supplierBrand?: string | null;
       supplierProductName?: string | null;
       images?: unknown;
+      supplierGender?: string | null;
+      supplierColorway?: string | null;
     }> = [];
     const mappingUpserts: Array<{
       supplierVariantId: string;
@@ -354,7 +365,14 @@ export async function runPartnerCsvImport(
           kickdbVariantId: null,
         });
       }
-      if (v.productName || v.brand || v.imageUrl || providedGtin) {
+      if (
+        v.productName ||
+        v.brand ||
+        v.imageUrl ||
+        providedGtin ||
+        v.supplierGender ||
+        v.supplierColorway
+      ) {
         supplierUpdates.push({
           supplierVariantId: canonicalId,
           supplierSku: v.normalizedSku,
@@ -363,6 +381,8 @@ export async function runPartnerCsvImport(
           supplierBrand: v.brand ?? undefined,
           supplierProductName: v.productName ?? undefined,
           images: v.imageUrl ? [v.imageUrl] : undefined,
+          supplierGender: v.supplierGender ?? undefined,
+          supplierColorway: v.supplierColorway ?? undefined,
         });
       }
     }

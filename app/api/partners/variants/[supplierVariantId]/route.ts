@@ -22,6 +22,8 @@ function serializeSupplierVariant(v: Record<string, unknown>) {
     sizeNormalized: v.sizeNormalized ?? null,
     supplierBrand: v.supplierBrand ?? null,
     supplierProductName: v.supplierProductName ?? null,
+    supplierGender: v.supplierGender ?? null,
+    supplierColorway: v.supplierColorway ?? null,
     weightGrams: v.weightGrams ?? null,
     images: v.images ?? null,
     sourceImageUrl: v.sourceImageUrl ?? null,

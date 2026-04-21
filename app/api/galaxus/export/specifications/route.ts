@@ -186,8 +186,10 @@ export async function GET(request: Request) {
       specStats.missingTraits.brand += 1;
     }
 
-    const color = pickTrait(traits, ["color", "colour"]);
-    const gender = pickTrait(traits, ["gender", "sex", "target"]);
+    const color =
+      pickTrait(traits, ["color", "colour"]) || String(variant?.supplierColorway ?? "").trim() || null;
+    const gender =
+      pickTrait(traits, ["gender", "sex", "target"]) || String(variant?.supplierGender ?? "").trim() || null;
     const material = pickTrait(traits, ["material"]);
 
     if (color) {

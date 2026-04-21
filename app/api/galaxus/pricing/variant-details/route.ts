@@ -65,6 +65,22 @@ function toDecimalOrNull(value: unknown): Prisma.Decimal | null {
   return new Prisma.Decimal(parsed.toFixed(2));
 }
 
+function supplierVariantSnapshot(supplierVariantId: string) {
+  return prisma.supplierVariant.findUnique({
+    where: { supplierVariantId },
+    select: {
+      supplierVariantId: true,
+      providerKey: true,
+      gtin: true,
+      supplierBrand: true,
+      supplierProductName: true,
+      supplierGender: true,
+      supplierColorway: true,
+      hostedImageUrl: true,
+    },
+  });
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const supplierVariantId = (searchParams.get("supplierVariantId") ?? "").trim();
@@ -72,10 +88,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "Missing supplierVariantId" }, { status: 400 });
   }
 
-  const mapping = await prisma.variantMapping.findUnique({
-    where: { supplierVariantId },
-    include: { kickdbVariant: { include: { product: true } } },
-  });
+  const [mapping, supplierVariant] = await Promise.all([
+    prisma.variantMapping.findUnique({
+      where: { supplierVariantId },
+      include: { kickdbVariant: { include: { product: true } } },
+    }),
+    supplierVariantSnapshot(supplierVariantId),
+  ]);
 
   if (!mapping) {
     return NextResponse.json({
@@ -83,6 +102,7 @@ export async function GET(request: Request) {
       mapping: null,
       kickdbVariant: null,
       kickdbProduct: null,
+      supplierVariant,
       mappingMissing: true,
     });
   }
@@ -92,6 +112,7 @@ export async function GET(request: Request) {
     mapping: mapping ?? null,
     kickdbVariant: mapping.kickdbVariant ?? null,
     kickdbProduct: mapping.kickdbVariant?.product ?? null,
+    supplierVariant,
   });
 }
 
@@ -200,12 +221,14 @@ export async function POST(request: Request) {
         );
       }
       if (Object.keys(mappingUpdate).length === 0) {
+        const supplierVariant = await supplierVariantSnapshot(supplierVariantId);
         return NextResponse.json({
           ok: true,
           skipped: true,
           mapping: null,
           kickdbVariant: null,
           kickdbProduct: null,
+          supplierVariant,
           mappingMissing: true,
         });
       }
@@ -259,15 +282,17 @@ export async function POST(request: Request) {
     }
 
     if (updates.length === 0) {
+      const supplierVariant = await supplierVariantSnapshot(supplierVariantId);
       if (appliedMappingCreate && mapping) {
         return NextResponse.json({
           ok: true,
           mapping,
           kickdbVariant: mapping.kickdbVariant ?? null,
           kickdbProduct: mapping.kickdbVariant?.product ?? null,
+          supplierVariant,
         });
       }
-      return NextResponse.json({ ok: true, skipped: true });
+      return NextResponse.json({ ok: true, skipped: true, supplierVariant });
     }
 
     await prisma.$transaction(updates);
@@ -276,12 +301,14 @@ export async function POST(request: Request) {
       where: { supplierVariantId },
       include: { kickdbVariant: { include: { product: true } } },
     });
+    const supplierVariant = await supplierVariantSnapshot(supplierVariantId);
 
     return NextResponse.json({
       ok: true,
       mapping: refreshed ?? null,
       kickdbVariant: refreshed?.kickdbVariant ?? null,
       kickdbProduct: refreshed?.kickdbVariant?.product ?? null,
+      supplierVariant,
     });
   } catch (error: any) {
     return NextResponse.json(

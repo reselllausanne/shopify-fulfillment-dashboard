@@ -105,6 +105,8 @@ export function PartnerProductDataModal({ open, supplierVariantId, onClose, onSa
         gtin: String(v.gtin ?? "").trim() || null,
         supplierBrand: String(v.supplierBrand ?? "").trim() || null,
         supplierProductName: String(v.supplierProductName ?? "").trim() || null,
+        supplierGender: String(v.supplierGender ?? "").trim() || null,
+        supplierColorway: String(v.supplierColorway ?? "").trim() || null,
         sizeRaw: String(v.sizeRaw ?? "").trim() || null,
         sizeNormalized: String(v.sizeNormalized ?? "").trim() || null,
         price,
@@ -276,6 +278,30 @@ export function PartnerProductDataModal({ open, supplierVariantId, onClose, onSa
                 />
               </label>
               <label className="space-y-1">
+                <span className="text-[11px] font-medium text-slate-600">Gender (Decathlon / specs)</span>
+                <input
+                  className="w-full rounded border border-slate-200 px-2 py-1.5"
+                  placeholder="e.g. men, women, unisex"
+                  value={field(v, "supplierGender")}
+                  onChange={(e) => setScalar("supplierGender", e.target.value)}
+                />
+                <span className="block text-[10px] text-slate-400">
+                  Used when there is no KickDB link (replaces KickDB product gender).
+                </span>
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-medium text-slate-600">Colorway (Decathlon / specs)</span>
+                <input
+                  className="w-full rounded border border-slate-200 px-2 py-1.5"
+                  placeholder="e.g. Cement / Douglas Fir"
+                  value={field(v, "supplierColorway")}
+                  onChange={(e) => setScalar("supplierColorway", e.target.value)}
+                />
+                <span className="block text-[10px] text-slate-400">
+                  Used when there is no KickDB link (replaces KickDB colorway).
+                </span>
+              </label>
+              <label className="space-y-1">
                 <span className="text-[11px] font-medium text-slate-600">Size (raw)</span>
                 <input
                   className="w-full rounded border border-slate-200 px-2 py-1.5"
@@ -434,7 +460,8 @@ export function PartnerProductDataModal({ open, supplierVariantId, onClose, onSa
             Use <strong>Save to DB</strong> for ProductData fields (GTIN, images, names, etc.). When KickDB cannot
             enrich this SKU, use <strong>Skip KickDB — ready for feeds</strong> after GTIN + provider key + image are
             correct: it sets mapping to SUPPLIER_GTIN (no KickDB) and resolves inbox rows so Galaxus export / Decathlon
-            catalog paths can treat it like a normal supplier-GTIN offer.
+            catalog paths can treat it like a normal supplier-GTIN offer. For Decathlon product CSV without KickDB, also
+            set <strong>Gender</strong> and <strong>Colorway</strong> above (mirrors KickDB fields).
           </p>
         </div>
       </div>

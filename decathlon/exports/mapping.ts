@@ -110,6 +110,8 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
             sizeNormalized: true,
             supplierBrand: true,
             supplierProductName: true,
+            supplierGender: true,
+            supplierColorway: true,
             weightGrams: true,
             hostedImageUrl: true,
             sourceImageUrl: true,

@@ -979,6 +979,10 @@ model SupplierVariant {
   sizeNormalized    String?
   supplierBrand     String?
   supplierProductName String?
+  /// When KickDB is absent: feeds Decathlon `Genre` / Galaxus "Target group" (e.g. men, women, unisex).
+  supplierGender    String?
+  /// When KickDB is absent: feeds Decathlon `Couleur` / Galaxus "Color" (e.g. Cement / Black).
+  supplierColorway  String?
   weightGrams       Int?
   images            Json?
   sourceImageUrl    String?

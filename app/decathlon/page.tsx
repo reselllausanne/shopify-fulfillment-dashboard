@@ -84,8 +84,19 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
-const formatTime = (value: string | null | undefined) =>
-  value ? new Date(value).toLocaleString() : "—";
+function formatTime(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
+function buildP41CsvDownloadHref(rowLimit: string) {
+  const params = new URLSearchParams();
+  const limitValue = Number.parseInt(rowLimit.trim(), 10);
+  if (Number.isFinite(limitValue) && limitValue > 0) {
+    params.set("limit", String(limitValue));
+  }
+  const q = params.toString();
+  return q ? `/api/decathlon/ops/p41-csv?${q}` : "/api/decathlon/ops/p41-csv";
+}
 
 export default function DecathlonDashboardPage() {
   const [runs, setRuns] = useState<DecathlonRun[]>([]);
@@ -310,11 +321,22 @@ export default function DecathlonDashboardPage() {
                   <>
                     <span className="block font-semibold">Sync new products only (P41)</span>
                     <span className="block text-[11px] font-normal opacity-90 mt-0.5">
-                      Upload product data only. Use “Send offers only” for OF01.
+                      Mirakl AI enrichment on by default (color etc. can be filled server-side). Use “Send offers
+                      only” for OF01.
                     </span>
                   </>
                 )}
               </button>
+              <a
+                className="inline-flex max-w-sm items-center px-3 py-2 rounded border border-indigo-300 bg-white text-indigo-800 text-left text-sm leading-snug hover:bg-indigo-50"
+                href={buildP41CsvDownloadHref(rowLimit)}
+              >
+                <span className="block font-semibold">Download P41 product CSV</span>
+                <span className="block text-[11px] font-normal text-gray-600 mt-0.5">
+                  Same CSV as P41 (not yet LIVE). Row limit uses the field below. AI-inclusive rows are the default;
+                  add <code className="rounded bg-gray-100 px-0.5">&amp;useAiEnrichment=0</code> for strict PM11 only.
+                </span>
+              </a>
               <button
                 type="button"
                 className="max-w-sm px-3 py-2 rounded bg-indigo-100 text-indigo-900 text-left text-sm leading-snug disabled:opacity-50"

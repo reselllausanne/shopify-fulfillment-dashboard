@@ -357,6 +357,8 @@ export async function bulkUpdateSupplierVariants(
     leadTimeDays?: number | null;
     deliveryType?: string | null;
     gtin?: string | null;
+    supplierGender?: string | null;
+    supplierColorway?: string | null;
   }>,
   now: Date,
   options?: { updateGtinWhenProvided?: boolean }
@@ -382,7 +384,9 @@ export async function bulkUpdateSupplierVariants(
       ${r.supplierProductName ?? null},
       ${r.images === undefined ? Prisma.sql`NULL::jsonb` : jsonb(r.images)},
       ${numericOrNull(r.leadTimeDays, "int")},
-      ${r.deliveryType ?? null}
+      ${r.deliveryType ?? null},
+      ${r.supplierGender ?? null},
+      ${r.supplierColorway ?? null}
     )`;
   });
 
@@ -400,7 +404,9 @@ export async function bulkUpdateSupplierVariants(
       "supplierProductName",
       "images",
       "leadTimeDays",
-      "deliveryType"
+      "deliveryType",
+      "supplierGender",
+      "supplierColorway"
     ) AS (
       VALUES ${Prisma.join(values)}
     ),
@@ -425,6 +431,8 @@ export async function bulkUpdateSupplierVariants(
         END,
         "leadTimeDays" = COALESCE(vals."leadTimeDays", t."leadTimeDays"),
         "deliveryType" = COALESCE(vals."deliveryType", t."deliveryType"),
+        "supplierGender" = COALESCE(vals."supplierGender", t."supplierGender"),
+        "supplierColorway" = COALESCE(vals."supplierColorway", t."supplierColorway"),
         "gtin" = CASE
           WHEN vals."gtin" IS NULL THEN t."gtin"
           WHEN t."gtin" IS DISTINCT FROM vals."gtin"
@@ -449,6 +457,8 @@ export async function bulkUpdateSupplierVariants(
             (vals."images" IS NOT NULL AND t."images" IS DISTINCT FROM vals."images") OR
             t."leadTimeDays" IS DISTINCT FROM COALESCE(vals."leadTimeDays", t."leadTimeDays") OR
             t."deliveryType" IS DISTINCT FROM COALESCE(vals."deliveryType", t."deliveryType") OR
+            t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
+            t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
             (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
             (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL)
           )
@@ -469,6 +479,8 @@ export async function bulkUpdateSupplierVariants(
           (vals."images" IS NOT NULL AND t."images" IS DISTINCT FROM vals."images") OR
           t."leadTimeDays" IS DISTINCT FROM COALESCE(vals."leadTimeDays", t."leadTimeDays") OR
           t."deliveryType" IS DISTINCT FROM COALESCE(vals."deliveryType", t."deliveryType") OR
+          t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
+          t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
           (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
           (vals."providerKey" IS NOT NULL AND t."providerKey" IS DISTINCT FROM vals."providerKey") OR
           (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR

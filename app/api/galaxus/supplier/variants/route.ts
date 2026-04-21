@@ -58,6 +58,8 @@ type UpdatePayload = {
   manualStock?: number | null;
   manualLock?: boolean;
   manualNote?: string | null;
+  supplierGender?: string | null;
+  supplierColorway?: string | null;
 };
 
 function toDecimalOrNull(value: number | null | undefined): Prisma.Decimal | null {
@@ -164,6 +166,12 @@ export async function POST(request: Request) {
           if ("manualNote" in entry) {
             data.manualNote = entry.manualNote ?? null;
             touchManualMeta = true;
+          }
+          if ("supplierGender" in entry) {
+            data.supplierGender = entry.supplierGender ? String(entry.supplierGender).trim() : null;
+          }
+          if ("supplierColorway" in entry) {
+            data.supplierColorway = entry.supplierColorway ? String(entry.supplierColorway).trim() : null;
           }
           if (touchManualMeta) {
             data.manualUpdatedAt = now;

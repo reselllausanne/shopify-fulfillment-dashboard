@@ -85,6 +85,8 @@ export function buildProductRow(
   const variant = candidate.variant ?? {};
   const product = candidate.product ?? {};
   const traits = product?.traitsJson ?? null;
+  const genderFromSupplier = String(variant?.supplierGender ?? "").trim();
+  const colorwayFromSupplier = String(variant?.supplierColorway ?? "").trim();
   const productName = String(variant?.supplierProductName ?? product?.name ?? "").trim();
   if (!productName) {
     recordDecathlonExclusion(summary, {
@@ -101,8 +103,8 @@ export function buildProductRow(
   const row = createRow();
   const brand = String(variant?.supplierBrand ?? product?.brand ?? "").trim();
   const description = String(product?.description ?? "").trim();
-  const gender = String(product?.gender ?? "").trim();
-  const colorway = String(product?.colorway ?? "").trim();
+  const gender = String(product?.gender ?? "").trim() || genderFromSupplier;
+  const colorway = String(product?.colorway ?? "").trim() || colorwayFromSupplier;
   const weightGrams =
     typeof variant?.weightGrams === "number" && Number.isFinite(variant.weightGrams)
       ? String(variant.weightGrams)

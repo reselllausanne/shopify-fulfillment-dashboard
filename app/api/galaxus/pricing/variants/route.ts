@@ -173,6 +173,8 @@ type UpdatePayload = {
   deliveryType?: string | null;
   lastSyncAt?: string | Date | null;
   clearManual?: boolean;
+  supplierGender?: string | null;
+  supplierColorway?: string | null;
 };
 
 function toDecimalOrNull(value: number | null | undefined): Prisma.Decimal | null {
@@ -315,6 +317,12 @@ export async function POST(request: Request) {
           }
           if ("lastSyncAt" in entry) {
             data.lastSyncAt = parseDateOrNull(entry.lastSyncAt);
+          }
+          if ("supplierGender" in entry) {
+            data.supplierGender = entry.supplierGender ? String(entry.supplierGender).trim() : null;
+          }
+          if ("supplierColorway" in entry) {
+            data.supplierColorway = entry.supplierColorway ? String(entry.supplierColorway).trim() : null;
           }
           if (entry.clearManual) {
             data.manualPrice = null;

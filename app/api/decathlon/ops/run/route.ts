@@ -20,7 +20,6 @@ export async function POST(request: Request) {
     const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : undefined;
     const offsetRaw = Number.parseInt(body?.offset ?? "", 10);
     const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
-    const useAiEnrichment = Boolean(body?.useAiEnrichment ?? body?.ai_enrichment ?? false);
     const modeRaw = String(body?.mode ?? "").trim().toUpperCase();
     const mode: MiraklImportMode | undefined = modeRaw === "REPLACE" ? "REPLACE" : modeRaw === "NORMAL" ? "NORMAL" : undefined;
 
@@ -37,6 +36,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, result });
     }
     if (action === "product-sync") {
+      const rawAi = body?.useAiEnrichment ?? body?.ai_enrichment;
+      let useAiEnrichment: boolean | undefined;
+      if (rawAi === false || rawAi === 0) {
+        useAiEnrichment = false;
+      } else if (typeof rawAi === "string") {
+        const s = rawAi.trim().toLowerCase();
+        if (s === "false" || s === "0" || s === "no") useAiEnrichment = false;
+        else if (s === "true" || s === "1" || s === "yes") useAiEnrichment = true;
+      } else if (rawAi === true || rawAi === 1) {
+        useAiEnrichment = true;
+      }
+      // Omitted / unknown → undefined so runP41Import defaults to Mirakl AI (AI_CONVERTER on).
       const result = await runDecathlonProductSync({ limit, offset, useAiEnrichment });
       return NextResponse.json({ ok: true, result });
     }
