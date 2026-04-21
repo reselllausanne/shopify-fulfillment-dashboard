@@ -15,15 +15,23 @@ export function isGalaxusStxSupplierLine(line: {
 
 /**
  * Galaxus `supplierSku` prefix only (set on the product in Galaxus):
- * - `THE_` — your own in-stock item (no StockX purchase link)
- * - `NER_` — partner in-stock item (no StockX purchase link)
+ * - `THE_` / `the_` — your own in-stock item (no StockX purchase link)
+ * - `NER_` / `ner_` — partner in-stock item (no StockX purchase link)
  */
 export type GalaxusWarehouseStockHint = "MAISON" | "NER_STOCK";
+
+export function isTheWarehouseSupplierSku(sku: string | null | undefined): boolean {
+  return /^THE_/i.test(String(sku ?? "").trim());
+}
+
+export function isNerWarehouseSupplierSku(sku: string | null | undefined): boolean {
+  return /^NER_/i.test(String(sku ?? "").trim());
+}
 
 export function galaxusLineWarehouseStockHint(line: { supplierSku?: string | null }): GalaxusWarehouseStockHint | null {
   const sku = String(line?.supplierSku ?? "").trim();
   if (!sku) return null;
-  if (sku.startsWith("THE_")) return "MAISON";
-  if (sku.startsWith("NER_")) return "NER_STOCK";
+  if (isTheWarehouseSupplierSku(sku)) return "MAISON";
+  if (isNerWarehouseSupplierSku(sku)) return "NER_STOCK";
   return null;
 }

@@ -194,6 +194,9 @@ export default function ScanPage() {
     return `AWB ${scan.awb} → ${parts.join(" | ")}`;
   };
 
+  const galaxusOrderRef = (g: NonNullable<ScanResult["galaxus"]>) =>
+    String(g.orderNumber || g.orderId || g.orderDbId || "").trim() || "—";
+
   const resolveDecathlonOrderRef = (match: ScanResult["decathlon"]) =>
     match?.orderId || match?.orderDbId || "";
 
@@ -240,10 +243,21 @@ export default function ScanPage() {
   };
 
   const handleChannelActions = async (scan: ScanResult) => {
-    const alertText = buildChannelAlert(scan);
-    if (alertText) window.alert(alertText);
+    if (scan.galaxus) {
+      const ref = galaxusOrderRef(scan.galaxus);
+      window.alert(
+        `Galaxus — order ${ref}\nAWB is stored on GalaxusStockxMatch (marketplace).\nNo Shopify label / fulfill on this page.`
+      );
+    }
     if (scan.decathlon) {
+      if (!scan.galaxus) {
+        const alertText = buildChannelAlert(scan);
+        if (alertText) window.alert(alertText);
+      }
       await autoHandleDecathlon(scan.decathlon, scan.awb);
+    } else if (!scan.galaxus) {
+      const alertText = buildChannelAlert(scan);
+      if (alertText) window.alert(alertText);
     }
   };
 
@@ -290,7 +304,7 @@ export default function ScanPage() {
 
       await handleChannelActions(data);
 
-      if (ENABLE_FULFILLMENT && data.ok && data.match) {
+      if (ENABLE_FULFILLMENT && data.ok && data.match && !data.galaxus) {
         await runFulfillFromScan(data);
       }
     } catch (err: any) {
@@ -318,7 +332,7 @@ export default function ScanPage() {
   };
 
   const runFulfillFromScan = async (scan: ScanResult) => {
-    if (!scan?.awb || !scan?.match) return;
+    if (!scan?.awb || !scan?.match || scan.galaxus) return;
     setFulfillLoading(true);
     setFulfillResult(null);
     try {
@@ -341,7 +355,7 @@ export default function ScanPage() {
   };
 
   const handleFulfill = async () => {
-    if (!result?.awb || !result?.match) return;
+    if (!result?.awb || !result?.match || result.galaxus) return;
     await runFulfillFromScan(result);
   };
 
@@ -380,7 +394,8 @@ export default function ScanPage() {
         </div>
         <h1 className="text-3xl font-bold text-gray-900 mb-2 text-center">📦 Scan AWB / Barcode</h1>
         <p className="text-center text-gray-600 mb-6">
-          Scan AWB to fulfill and print the Swiss Post label in one step.
+          Scan AWB: Shopify orders can fulfill + label here. Galaxus marketplace hits only show a notice (AWB lives on
+          GalaxusStockxMatch — no label on this page).
         </p>
 
         {(goatTracking?.count || goatError) && (
@@ -462,7 +477,26 @@ export default function ScanPage() {
               <div className="text-sm text-gray-600">AWB: {result.awb || "—"}</div>
             </div>
             {!result.match && !result.decathlon && !result.galaxus && result.status !== "ERROR" && (
-              <p className="text-sm mt-2">No match found. Ensure the AWB exists in OrderMatch.stockxAwb.</p>
+              <p className="text-sm mt-2">
+                No match found. Check OrderMatch / DecathlonStockxMatch / GalaxusStockxMatch (stockxAwb or tracking URL).
+              </p>
+            )}
+
+            {result.galaxus && (
+              <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-950">
+                <div className="font-semibold text-teal-900">Galaxus marketplace</div>
+                <p className="text-sm mt-1">
+                  Order ref: <span className="font-mono">{galaxusOrderRef(result.galaxus)}</span> — AWB linked on{" "}
+                  <code className="text-xs bg-teal-100 px-1 rounded">GalaxusStockxMatch</code>. No Shopify label step
+                  here.
+                </p>
+                <a
+                  href="/galaxus/warehouse"
+                  className="mt-2 inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
+                >
+                  Open Galaxus warehouse →
+                </a>
+              </div>
             )}
             {result.error && (
               <p className="text-sm mt-2 text-red-700">
@@ -522,12 +556,16 @@ export default function ScanPage() {
                   Force fulfillment (ignore existing tracking)
                 </label>
                 <button
-                  disabled={fulfillLoading}
+                  disabled={fulfillLoading || Boolean(result?.galaxus)}
                   onClick={handleFulfill}
                   className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
+                  title={result?.galaxus ? "Galaxus orders: no Shopify label on this page" : undefined}
                 >
                   {fulfillLoading ? "Processing..." : "Fulfill + Print Label"}
                 </button>
+                {result?.galaxus ? (
+                  <p className="text-xs text-gray-600 mt-1">Disabled: scan matched GalaxusStockxMatch (marketplace).</p>
+                ) : null}
                 {fulfillResult && (
                   <div className="mt-3 text-sm">
                     {fulfillResult.ok ? (

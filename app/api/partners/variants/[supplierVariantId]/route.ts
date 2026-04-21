@@ -3,13 +3,10 @@ import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { assertMappingIntegrity, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { partnerOwnsSupplierVariant } from "@/app/lib/partnerCatalogScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function ownsVariant(supplierVariantId: string, partnerKey: string) {
-  return supplierVariantId.toLowerCase().startsWith(`${partnerKey.toLowerCase()}:`);
-}
 
 function serializeSupplierVariant(v: Record<string, unknown>) {
   const dec = (x: unknown) => (x != null ? String(x) : null);
@@ -61,7 +58,7 @@ export async function GET(
   const isNer = session.partnerKey?.toLowerCase() === "ner";
   const { supplierVariantId } = await params;
   const decodedId = decodeURIComponent(supplierVariantId ?? "").trim();
-  if (!decodedId || (!isNer && !ownsVariant(decodedId, session.partnerKey))) {
+  if (!decodedId || (!isNer && !partnerOwnsSupplierVariant(decodedId, session.partnerKey))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -98,7 +95,10 @@ export async function PATCH(
 
   const { supplierVariantId } = await params;
   const decodedSupplierVariantId = decodeURIComponent(supplierVariantId ?? "");
-  if (!decodedSupplierVariantId || (!isNer && !ownsVariant(decodedSupplierVariantId, session.partnerKey))) {
+  if (
+    !decodedSupplierVariantId ||
+    (!isNer && !partnerOwnsSupplierVariant(decodedSupplierVariantId, session.partnerKey))
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -147,7 +147,10 @@ export async function DELETE(
 
   const { supplierVariantId } = await params;
   const decodedSupplierVariantId = decodeURIComponent(supplierVariantId ?? "");
-  if (!decodedSupplierVariantId || (!isNer && !ownsVariant(decodedSupplierVariantId, session.partnerKey))) {
+  if (
+    !decodedSupplierVariantId ||
+    (!isNer && !partnerOwnsSupplierVariant(decodedSupplierVariantId, session.partnerKey))
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

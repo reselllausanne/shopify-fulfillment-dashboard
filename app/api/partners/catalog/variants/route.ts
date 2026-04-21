@@ -7,6 +7,10 @@ import { GALAXUS_FEED_SUPPLIER_BLOCKLIST } from "@/galaxus/config";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { enrichSupplierVariantsForListing } from "@/galaxus/supplier/supplierVariantListExtras";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import {
+  partnerCatalogVariantWhere,
+  partnerOwnsSupplierVariant,
+} from "@/app/lib/partnerCatalogScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,10 +43,6 @@ type UpdatePayload = {
   manualNote?: string | null;
 };
 
-function ownsVariant(supplierVariantId: string, partnerKey: string) {
-  return supplierVariantId.toLowerCase().startsWith(`${partnerKey.toLowerCase()}:`);
-}
-
 function parseDateOrNull(value: unknown): Date | null {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.valueOf())) return value;
@@ -70,21 +70,21 @@ export async function GET(req: NextRequest) {
   const q = (searchParams.get("q") ?? "").trim();
   const mineOnly =
     !isNer || ["1", "true", "yes"].includes((searchParams.get("mine") ?? "").toLowerCase());
-  const prefix = `${session.partnerKey.toLowerCase()}:`;
 
-  const where: Record<string, unknown> = {};
-  if (mineOnly) {
-    where.supplierVariantId = { startsWith: prefix };
-  }
-  if (q) {
-    where.OR = [
-      { supplierVariantId: { contains: q, mode: "insensitive" } },
-      { providerKey: { contains: q, mode: "insensitive" } },
-      { gtin: { contains: q, mode: "insensitive" } },
-      { supplierSku: { contains: q, mode: "insensitive" } },
-      { supplierProductName: { contains: q, mode: "insensitive" } },
-    ];
-  }
+  const mineWhere = mineOnly ? partnerCatalogVariantWhere(session.partnerKey) : null;
+  const qWhere: Prisma.SupplierVariantWhereInput | null = q
+    ? {
+        OR: [
+          { supplierVariantId: { contains: q, mode: "insensitive" } },
+          { providerKey: { contains: q, mode: "insensitive" } },
+          { gtin: { contains: q, mode: "insensitive" } },
+          { supplierSku: { contains: q, mode: "insensitive" } },
+          { supplierProductName: { contains: q, mode: "insensitive" } },
+        ],
+      }
+    : null;
+  const where: Prisma.SupplierVariantWhereInput =
+    mineWhere && qWhere ? { AND: [mineWhere, qWhere] } : mineWhere ?? qWhere ?? {};
 
   const items = await prisma.supplierVariant.findMany({
     where,
@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
       partnerDisplayName: item.partnerDisplayName,
       kickdbProductName: item.kickdbProductName,
     };
-    const owned = isNer ? true : ownsVariant(item.supplierVariantId, session.partnerKey);
+    const owned = isNer || partnerOwnsSupplierVariant(item.supplierVariantId, session.partnerKey);
     if (!owned) {
       return {
         ...extras,
@@ -165,12 +165,14 @@ export async function GET(req: NextRequest) {
   const refByGtin = new Map<string, { min: number; count: number }>();
   if (gtins.length > 0) {
     const idPrefixPattern = `${partnerKeyLower}:%`;
+    const idUnderscoreRe = `^${partnerKeyLower}_`;
     const rows = await prisma.$queryRaw<Array<{ gtin: string; min_price: unknown; cnt: bigint }>>(
       Prisma.sql`
         SELECT sv."gtin", MIN(sv."price") AS min_price, COUNT(*)::bigint AS cnt
         FROM "public"."SupplierVariant" sv
         WHERE sv."gtin" IN (${Prisma.join(gtins)})
           AND NOT (sv."supplierVariantId" ILIKE ${idPrefixPattern})
+          AND sv."supplierVariantId" !~* ${idUnderscoreRe}
         GROUP BY sv."gtin"
       `
     );
@@ -239,7 +241,7 @@ export async function POST(req: NextRequest) {
             output.push({ ok: false, error: "Missing supplierVariantId" });
             continue;
           }
-          if (!isNer && !ownsVariant(supplierVariantId, session.partnerKey)) {
+          if (!isNer && !partnerOwnsSupplierVariant(supplierVariantId, session.partnerKey)) {
             output.push({ ok: false, error: "Forbidden", supplierVariantId });
             continue;
           }

@@ -35,6 +35,7 @@ type ReturnLineItem = {
   id: string;
   returnId: string | null;
   orderId: string | null;
+  decathlonOrderDbId?: string | null;
   status: string | null;
   offerSku: string | null;
   productTitle: string | null;
@@ -215,6 +216,25 @@ export default function DecathlonOrdersPage() {
       await loadReturns();
     } catch (err: any) {
       setError(err?.message ?? "Restock failed");
+    } finally {
+      setRestockingId(null);
+    }
+  };
+
+  /** Clears DB restock flags only (does not touch SupplierVariant stock). */
+  const clearReturnRestockFlags = async (lineId: string) => {
+    setRestockingId(lineId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/decathlon/returns/${encodeURIComponent(lineId)}/restock`, {
+        method: "DELETE",
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error((data as any).error ?? `Reset failed (${res.status})`);
+      await loadReturns();
+    } catch (err: any) {
+      setError(err?.message ?? "Reset failed");
     } finally {
       setRestockingId(null);
     }
@@ -844,8 +864,30 @@ export default function DecathlonOrdersPage() {
                         : status === "CANCELED" || status === "CANCELLED"
                           ? "bg-red-100 text-red-800"
                           : "bg-amber-100 text-amber-800";
+                  const openOrder =
+                    item.decathlonOrderDbId != null && String(item.decathlonOrderDbId).trim() !== "";
                   return (
-                    <div key={item.id} className="border rounded p-2 text-xs">
+                    <div
+                      key={item.id}
+                      role={openOrder ? "button" : undefined}
+                      tabIndex={openOrder ? 0 : undefined}
+                      onClick={() => {
+                        if (!openOrder) return;
+                        setSelectedOrderId(item.decathlonOrderDbId!);
+                        setLeftTab("to_process");
+                      }}
+                      onKeyDown={(e) => {
+                        if (!openOrder) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedOrderId(item.decathlonOrderDbId!);
+                          setLeftTab("to_process");
+                        }
+                      }}
+                      className={`border rounded p-2 text-xs ${
+                        openOrder ? "cursor-pointer hover:bg-gray-50/80" : ""
+                      }`}
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <div className="font-medium">{item.offerSku ?? "—"}</div>
                         <div className="flex flex-wrap items-center justify-end gap-1">
@@ -855,21 +897,38 @@ export default function DecathlonOrdersPage() {
                             {statusLabel}
                           </span>
                           {restocked ? (
-                            <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-600 text-white">
-                              RESTOCKED
-                            </span>
+                            <>
+                              <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-600 text-white">
+                                RESTOCKED
+                              </span>
+                              <button
+                                type="button"
+                                disabled={restockBusy}
+                                title="Clear restock flag in DB so you can Restock again (catalog stock unchanged)"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void clearReturnRestockFlags(item.id);
+                                }}
+                                className="rounded border border-amber-700 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-900 disabled:opacity-40"
+                              >
+                                {restockBusy ? "…" : "Reset"}
+                              </button>
+                            </>
                           ) : (
                             <button
                               type="button"
                               disabled={!restockEnabled}
                               title={
                                 !isTheOrStx
-                                  ? "THE_/STX_ offers only"
+                                  ? "THE_/STX_ on order line missing"
                                   : !canRestockStatus
                                     ? "CLOSED or RECEIVED required"
                                     : "Add qty to THE stock"
                               }
-                              onClick={() => void restockReturnLine(item.id)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void restockReturnLine(item.id);
+                              }}
                               className="rounded border border-gray-900 bg-gray-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {restockBusy ? "…" : "Restock"}

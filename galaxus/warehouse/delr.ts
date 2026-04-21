@@ -370,22 +370,53 @@ export async function uploadDelrForShipment(
       },
     });
     const shippedAt = now;
-    const uniqueItemKeys = new Set<string>();
+    const shippedQtyByKey = new Map<string, number>();
     for (const item of rawItems ?? []) {
       const orderId = item?.orderId ? String(item.orderId) : shipment.orderId ? String(shipment.orderId) : "";
       const supplierPid = String(item?.supplierPid ?? "").trim();
       const gtin = String(item?.gtin14 ?? "").trim();
-      if (!orderId || !supplierPid || !gtin) continue;
+      const qty = Math.max(0, Number(item?.quantity ?? 0));
+      if (!orderId || !supplierPid || !gtin || qty <= 0) continue;
       const key = `${orderId}|${supplierPid}|${gtin}`;
-      if (uniqueItemKeys.has(key)) continue;
-      uniqueItemKeys.add(key);
+      shippedQtyByKey.set(key, (shippedQtyByKey.get(key) ?? 0) + qty);
+    }
+
+    const orderLinesById = new Map<string, any>();
+    for (const order of ordersForMeta ?? []) {
+      for (const line of order?.lines ?? []) {
+        if (!line?.id) continue;
+        orderLinesById.set(String(line.id), line);
+      }
+    }
+
+    const lineIdsToMark: string[] = [];
+    for (const [key, shippedQty] of shippedQtyByKey.entries()) {
+      let remaining = shippedQty;
+      const [orderId, supplierPid, gtin] = key.split("|");
+      const lines = (ordersForMeta ?? [])
+        .find((o: any) => String(o?.id ?? "") === orderId)
+        ?.lines?.filter(
+          (l: any) =>
+            String(l?.supplierPid ?? "").trim() === supplierPid &&
+            String(l?.gtin ?? "").trim() === gtin &&
+            !l?.warehouseMarkedShippedAt
+        ) ?? [];
+      lines.sort((a: any, b: any) => Number(a?.lineNumber ?? 0) - Number(b?.lineNumber ?? 0));
+      for (const line of lines) {
+        const qty = Math.max(0, Number(line?.quantity ?? 0));
+        if (qty <= 0) continue;
+        if (remaining >= qty) {
+          lineIdsToMark.push(String(line.id));
+          remaining -= qty;
+        } else {
+          break;
+        }
+      }
+    }
+
+    if (lineIdsToMark.length > 0) {
       await prismaAny.galaxusOrderLine.updateMany({
-        where: {
-          orderId,
-          supplierPid,
-          gtin,
-          warehouseMarkedShippedAt: null,
-        },
+        where: { id: { in: lineIdsToMark }, warehouseMarkedShippedAt: null },
         data: { warehouseMarkedShippedAt: shippedAt },
       });
     }

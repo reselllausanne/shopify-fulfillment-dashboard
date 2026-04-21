@@ -521,7 +521,7 @@ export default function GalaxusDirectDeliveryPage() {
                             {buildLineTitle(line)}
                             {proc?.warehouseStockHint === "MAISON" ? (
                               <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-violet-100 text-violet-900">
-                                THE_ · your stock
+                                THE / your stock
                               </span>
                             ) : proc?.warehouseStockHint === "NER_STOCK" ? (
                               <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950">
@@ -552,7 +552,7 @@ export default function GalaxusDirectDeliveryPage() {
                             {procOk
                               ? proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK"
                                 ? proc?.warehouseStockHint === "MAISON"
-                                  ? "THE_ your stock (no StockX)"
+                                  ? "THE_/the_ your stock (no StockX)"
                                   : "NER_ partner stock (no StockX)"
                                 : proc?.source === "stx_sync"
                                   ? `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`

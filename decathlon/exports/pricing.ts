@@ -235,8 +235,11 @@ export function resolveDecathlonBuyNow(input: {
 const DECATHLON_NER_SUPPLIER_KEY = "ner";
 
 /**
- * Partner products: 25% margin on final sell price → `price / 0.75`.
- * Own products: +1% to track price sensitivity.
+ * NER and other partner keys: **only** `price / 0.75` (25% partner slice on list TTC — input is DB buy / partner cost).
+ * Non-partner own catalog: +1% on list.
+ *
+ * Do **not** feed NER through {@link computeDecathlonOfferListPriceFromBuyNow} first — that double-counts and
+ * blows up offers (e.g. buy 209 → list ~278 with /0.75 only, not ~423).
  */
 export function applyDecathlonPartnerListPriceMultipliers(
   baseListPriceTtc: number,

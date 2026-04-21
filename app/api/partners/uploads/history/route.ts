@@ -3,6 +3,7 @@ import { inboxRowSupplierVariantId } from "@/app/lib/partnerImport";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { partnerCatalogVariantWhere } from "@/app/lib/partnerCatalogScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,16 +31,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Invalid partner key" }, { status: 400 });
   }
 
-  // 1) SupplierVariant rows belonging to this partner (supplierVariantId starts with "xxx:")
+  // 1) SupplierVariant rows: inbox `ner:` and Mirakl-style `NER_` / `the_` keys
+  const catalogWhere = partnerCatalogVariantWhere(providerKey);
   const variants = await prismaAny.supplierVariant.findMany({
-    where: { supplierVariantId: { startsWith: `${providerKey.toLowerCase()}:` } },
+    where: catalogWhere,
     orderBy: { updatedAt: "desc" },
     take: limit,
     skip: offset,
   });
 
   const variantCount = await prismaAny.supplierVariant.count({
-    where: { supplierVariantId: { startsWith: `${providerKey.toLowerCase()}:` } },
+    where: catalogWhere,
   });
 
   // 2) VariantMapping rows linked to those variants

@@ -83,6 +83,18 @@ export function resolveEffectivePrice(
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
+  const sk = extractDecathlonSupplierKey(candidate);
+  /** NER: same as offer CSV — DB buy ÷ 0.75 only (never margin-on-buy then ÷0.75). */
+  if (sk === "ner") {
+    const buyNow = resolveDecathlonBuyNow({
+      buyNowStockx: parseDecimal(variant?.price),
+      manualOverride: manualPrice,
+      manualLock,
+    });
+    if (!buyNow || buyNow <= 0) return null;
+    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
+    return listTtc.toFixed(2);
+  }
   if (manualLock && manualPrice && manualPrice > 0) {
     return decathlonOfferListPriceFromManualLockedPrice(manualPrice).toFixed(2);
   }
@@ -92,7 +104,6 @@ export function resolveEffectivePrice(
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const sk = extractDecathlonSupplierKey(candidate);
   const base = computeDecathlonOfferListPriceFromBuyNow(buyNow);
   if (!base || base <= 0) return null;
   const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);

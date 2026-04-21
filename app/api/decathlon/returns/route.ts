@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { resolveDecathlonReturnOfferSku } from "@/decathlon/returns/resolveReturnOfferSku";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,15 @@ export async function GET(request: NextRequest) {
       take: limit,
       orderBy: { updatedAt: "desc" },
       include: {
-        decathlonReturn: { select: { returnId: true, orderId: true, status: true, updatedAt: true } },
+        decathlonReturn: {
+          select: {
+            returnId: true,
+            orderId: true,
+            status: true,
+            updatedAt: true,
+            order: { select: { id: true } },
+          },
+        },
         orderLine: { select: { productTitle: true, size: true, offerSku: true } },
       },
     });
@@ -23,8 +32,9 @@ export async function GET(request: NextRequest) {
         id: row.id,
         returnId: row.decathlonReturn?.returnId ?? row.returnId,
         orderId: row.decathlonReturn?.orderId ?? null,
+        decathlonOrderDbId: row.decathlonReturn?.order?.id ?? null,
         status: row.decathlonReturn?.status ?? null,
-        offerSku: row.offerSku ?? row.productId ?? row.orderLine?.offerSku ?? null,
+        offerSku: resolveDecathlonReturnOfferSku(row),
         productTitle: row.orderLine?.productTitle ?? null,
         size: row.orderLine?.size ?? null,
         quantity: row.quantity,

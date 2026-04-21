@@ -5,13 +5,10 @@ import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "
 import { validateGtin } from "@/app/lib/normalize";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
+import { partnerOwnsSupplierVariant } from "@/app/lib/partnerCatalogScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function ownsVariant(supplierVariantId: string, partnerKey: string) {
-  return supplierVariantId.toLowerCase().startsWith(`${partnerKey.toLowerCase()}:`);
-}
 
 function hasListingImage(v: {
   hostedImageUrl?: string | null;
@@ -43,7 +40,7 @@ export async function POST(
     const isNer = session.partnerKey?.toLowerCase() === "ner";
     const { supplierVariantId } = await params;
     const decodedId = decodeURIComponent(supplierVariantId ?? "").trim();
-    if (!decodedId || (!isNer && !ownsVariant(decodedId, session.partnerKey))) {
+    if (!decodedId || (!isNer && !partnerOwnsSupplierVariant(decodedId, session.partnerKey))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

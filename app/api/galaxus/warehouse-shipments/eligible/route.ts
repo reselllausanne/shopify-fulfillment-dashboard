@@ -232,7 +232,8 @@ export async function GET(request: Request) {
           })
           .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
         const ordered = Number.isFinite(orderedQty) ? orderedQty : 0;
-        const shippedFinal = markedShipped ? Math.max(shipped, ordered) : shipped;
+        const shippedFinal =
+          markedShipped && shipped + reserved >= ordered ? Math.max(shipped, ordered) : shipped;
         shipmentCoverage[lineId] = {
           ordered,
           shipped: shippedFinal,

@@ -466,7 +466,7 @@ export default function WarehouseBulkPage() {
                                 <span className="truncate">{buildLineTitle(line)}</span>
                                 {proc?.warehouseStockHint === "MAISON" ? (
                                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-violet-100 text-violet-900 shrink-0">
-                                    THE_ · your stock
+                                    THE / your stock
                                   </span>
                                 ) : proc?.warehouseStockHint === "NER_STOCK" ? (
                                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 shrink-0">
@@ -566,7 +566,7 @@ export default function WarehouseBulkPage() {
                                 <div className="text-amber-800 text-[11px]">
                                   {proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK" ? (
                                     <span>
-                                      Supplier SKU starts with THE_ or NER_ — no StockX link. Mark shipped when ready.
+                                      Supplier SKU THE_/the_ or NER_/ner_ — no StockX link. Mark shipped when ready.
                                     </span>
                                   ) : (
                                     <span>Sync or manual supplier entry to link, then you can mark shipped.</span>

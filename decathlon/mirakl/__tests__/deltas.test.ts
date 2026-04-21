@@ -23,7 +23,7 @@ describe("mirakl deltas", () => {
   it("resolves manual stock and price overrides", () => {
     const candidate = makeCandidate();
     expect(resolveEffectiveStock(candidate)).toBe(5);
-    expect(resolveEffectivePrice(candidate)).toBe("145.00");
+    expect(resolveEffectivePrice(candidate)).toBe("160.00");
   });
 
   it("does not emit updates when values are unchanged", () => {
@@ -34,7 +34,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 5,
-          lastPrice: "145.00",
+          lastPrice: "160.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -53,7 +53,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 2,
-          lastPrice: "145.00",
+          lastPrice: "160.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -101,7 +101,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 5,
-          lastPrice: "145.00",
+          lastPrice: "160.00",
           offerCreatedAt: null,
         },
       ],

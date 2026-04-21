@@ -32,7 +32,8 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
   return lines.map((line) => {
     const qty = Math.max(Number(line.quantity ?? 1), 1);
     const whHint = galaxusLineWarehouseStockHint(line);
-    if (whHint && isGalaxusStxSupplierLine(line)) {
+    /** Own / partner stock (THE_/NER_ sku): not fulfilled via StockX buy link. */
+    if (whHint) {
       const units = Array.from({ length: qty }, (_, i) => ({
         unitIndex: i,
         linked: true,

@@ -47,6 +47,18 @@ function resolvePrice(
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
+  const sk = extractSupplierKey(candidate);
+  /** NER: list TTC = DB buy (partner API) ÷ 0.75 only — no Mirakl margin stack, no +CHF manual surcharge. */
+  if (sk === "ner") {
+    const buyNow = resolveDecathlonBuyNow({
+      buyNowStockx: parseDecimal(variant?.price),
+      manualOverride: manualPrice,
+      manualLock,
+    });
+    if (!buyNow || buyNow <= 0) return null;
+    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
+    return listTtc.toFixed(2);
+  }
   if (manualLock && manualPrice && manualPrice > 0) {
     return decathlonOfferListPriceFromManualLockedPrice(manualPrice).toFixed(2);
   }
@@ -56,8 +68,7 @@ function resolvePrice(
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const sk = extractSupplierKey(candidate);
-  const isPartner = sk && (sk === "ner" || partnerKeysLower.has(sk));
+  const isPartner = sk && partnerKeysLower.has(sk);
   if (isPartner) {
     const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
     return listTtc.toFixed(2);
