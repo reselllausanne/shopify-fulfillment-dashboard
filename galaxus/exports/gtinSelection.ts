@@ -2,6 +2,7 @@ import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { validateGtin } from "@/app/lib/normalize";
 import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
+import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 
 type VariantCandidate = {
   mapping: any;
@@ -37,8 +38,8 @@ function isAbsoluteUrl(value: string) {
   }
 }
 
-function hasPrimaryImage(hostedImageUrl?: string | null): boolean {
-  return typeof hostedImageUrl === "string" && hostedImageUrl.length > 0 && isAbsoluteUrl(hostedImageUrl);
+function hasPrimaryImage(variant?: { images?: unknown; sourceImageUrl?: string | null; hostedImageUrl?: string | null } | null): boolean {
+  return pickGalaxusProductImageList(variant ?? {}).length > 0;
 }
 
 type CandidateExcludeReason =
@@ -126,7 +127,7 @@ export function accumulateBestCandidates(
     }
 
     const product = mapping.kickdbVariant?.product ?? null;
-    if (requireImage && !hasPrimaryImage(variant?.hostedImageUrl ?? null)) {
+    if (requireImage && !hasPrimaryImage(variant)) {
       options?.onExclude?.({
         reason: "MISSING_IMAGE",
         supplierKey,

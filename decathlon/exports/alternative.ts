@@ -3,6 +3,7 @@ import { BASE_REQUIRED_COLUMNS } from "./productCsv";
 import { resolveDecathlonCategory } from "./categories";
 import { isBasketballTitle } from "./basketballTitles";
 import { recordDecathlonExclusion } from "./mapping";
+import { normalizeDecathlonImageUrl } from "./imageUrl";
 import type { DecathlonExclusionSummary, DecathlonExportFilePayload } from "./types";
 import type { AlternativeProductRecord } from "@/galaxus/exports/alternative";
 
@@ -50,7 +51,7 @@ export function buildDecathlonAlternativeProductRow(
   }
 
   const row = createRow(PRODUCTS_HEADERS);
-  const images = extractImageUrls(product);
+  const images = extractImageUrls(product).map(normalizeDecathlonImageUrl);
   const description = String(product.description ?? "").trim() || productName;
   const category = String(product.category ?? "").trim();
 

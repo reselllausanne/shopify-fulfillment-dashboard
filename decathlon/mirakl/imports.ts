@@ -16,9 +16,11 @@ import { getStorageAdapter } from "@/galaxus/storage/storage";
 import {
   DECATHLON_MIRAKL_P41_POLL_INTERVAL_MS,
   DECATHLON_MIRAKL_P41_POLL_MAX_MS,
+  DECATHLON_MIRAKL_P41_SKIP_LONG_POLL,
   DECATHLON_MIRAKL_TEST_LIMIT,
   DECATHLON_MIRAKL_TEST_MODE,
   DECATHLON_MIRAKL_WAREHOUSE_CODE,
+  DECATHLON_OF01_REQUIRE_P41_SUCCESS,
 } from "./config";
 import { buildMiraklClient } from "@/decathlon/mirakl/client";
 import { detectDelimiter, parseDelimitedCsv } from "./csvParse";
@@ -728,12 +730,13 @@ export async function runOf01Import(params?: {
 }) {
   // OF01 should default to full eligible dataset unless a limit is explicitly passed.
   const limit = params?.limit;
-  // Ensure product creation runs through P41 endpoint first (unless explicitly disabled).
-  const productRun = params?.offersOnly ? null : await runP41Import({ limit, offset: 0, useAiEnrichment: true });
+  /** Products (P41) and offers (OF01) are separate Mirakl jobs — do not chain P41 here (was causing very long waits). */
   const delta = await buildDecathlonDeltas({ limit, includeAll: params?.includeAll });
   let eligibleOffers = delta.newOffers;
   let blockedMissingP41 = 0;
-  if (!params?.offersOnly) {
+  const gateP41 =
+    !params?.offersOnly && DECATHLON_OF01_REQUIRE_P41_SUCCESS;
+  if (gateP41) {
     const byP41 = await filterOffersBySuccessfulP41(delta.newOffers, delta.exclusions);
     eligibleOffers = byP41.eligible;
     blockedMissingP41 = byP41.blockedMissingP41;
@@ -772,12 +775,10 @@ export async function runOf01Import(params?: {
   const { csv } = buildOf01Csv(rows as any);
   const summary = {
     ...delta.summary,
-    p41RunId: productRun?.runId ?? null,
-    p41Status: productRun?.status ?? null,
-    p41LinesInError: productRun?.linesInError ?? null,
     newOffers: eligibleOffers.length,
     offerBlockedMissingP41: blockedMissingP41,
     offersOnly: Boolean(params?.offersOnly),
+    of01P41DbGate: gateP41,
   };
   const mode: MiraklImportMode =
     params?.mode === "TEST" || DECATHLON_MIRAKL_TEST_MODE ? "TEST" : "REPLACE";
@@ -908,6 +909,9 @@ async function pollProductImportStatusUntilTerminal(params: {
 }> {
   const deadline = Date.now() + DECATHLON_MIRAKL_P41_POLL_MAX_MS;
   let last = await checkImportStatus({ flow: "P41", importId: params.importId, runId: params.runId });
+  if (DECATHLON_MIRAKL_P41_SKIP_LONG_POLL) {
+    return { ...last, timedOut: last.status === "RUNNING" };
+  }
   while (last.status === "RUNNING" && Date.now() < deadline) {
     await sleep(DECATHLON_MIRAKL_P41_POLL_INTERVAL_MS);
     last = await checkImportStatus({ flow: "P41", importId: params.importId, runId: params.runId });

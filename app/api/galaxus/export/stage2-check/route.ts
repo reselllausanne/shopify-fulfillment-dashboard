@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,15 +92,6 @@ function stripGenderTokens(text: string): string {
     .trim();
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function buildProductTitle(
   payload: KickDbPayload | null,
   fallbackSku?: string | null,
@@ -143,13 +135,6 @@ function buildProductCategory(payload: KickDbPayload | null): string {
   const secondary = sanitizeText(payload.secondary_category ?? "");
   if (category && secondary) return truncate(`${category} > ${secondary}`, 200);
   return truncate(category || sanitizeText(payload.product_type ?? ""), 200);
-}
-
-function extractProductImages(hostedImageUrl?: string | null): string[] {
-  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
-    return [hostedImageUrl.trim()];
-  }
-  return [];
 }
 
 function isAsciiPrintable(value: string): boolean {
@@ -241,8 +226,10 @@ export async function GET(request: Request) {
           sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
         } as KickDbPayload)
       : null;
-    const providerKey = buildProviderKey(mapping.gtin, supplierVariant?.supplierVariantId) ?? "";
-    const gtin = String(mapping.gtin ?? "");
+    const gtin = String(candidate?.gtin ?? mapping?.gtin ?? supplierVariant?.gtin ?? "").trim();
+    const providerKey =
+      String(candidate?.providerKey ?? "").trim() ||
+      (buildProviderKey(gtin, supplierVariant?.supplierVariantId) ?? "");
     const priceRaw = supplierVariant?.price ?? null;
     const stockRaw = supplierVariant?.stock ?? null;
     const price = priceRaw === null || priceRaw === undefined ? NaN : Number(priceRaw);
@@ -256,7 +243,7 @@ export async function GET(request: Request) {
       supplierVariantAny?.supplierProductName ?? supplierVariantAny?.productName ?? null
     );
     const category = buildProductCategory(payload) || "Sneakers";
-    const images = extractProductImages(supplierVariant?.hostedImageUrl ?? null);
+    const images = pickGalaxusProductImageList(supplierVariant ?? {});
     const weightRaw = supplierVariantAny?.weightGrams ?? 1000;
     const weight = weightRaw === null || weightRaw === undefined ? NaN : Number(weightRaw);
 

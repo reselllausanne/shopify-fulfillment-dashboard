@@ -15,6 +15,7 @@ import {
   trmFeedExclusionsHeaderValue,
 } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,15 +97,6 @@ function stripGenderTokens(text: string): string {
     .trim();
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function buildProductTitle(
   payload: KickDbPayload | null,
   fallbackSku?: string | null,
@@ -165,13 +157,6 @@ function cleanDescription(value?: string | null): string {
   text = text.replace(/our team[^.]*\./gi, "");
   text = sanitizeText(text);
   return truncate(text, 4000);
-}
-
-function pickPrimaryImages(hostedImageUrl?: string | null): string[] {
-  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
-    return [hostedImageUrl.trim()];
-  }
-  return [];
 }
 
 function parseNumber(value: unknown): number | null {
@@ -386,12 +371,13 @@ export async function GET(request: Request) {
     const supplierBrand = normalizeBrand(
       supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand ?? ""
     );
-    const images = pickPrimaryImages(supplierVariant?.hostedImageUrl ?? null);
+    const images = pickGalaxusProductImageList(supplierVariant ?? {});
     if (!images.length) continue;
+    const resolvedGtin = String(candidate.gtin ?? mapping.gtin ?? supplierVariant?.gtin ?? "").trim();
     if (minimal) {
       rows.push({
         ProviderKey: providerKey,
-        Gtin: mapping.gtin ?? "",
+        Gtin: resolvedGtin,
         BrandName: supplierBrand,
       });
       continue;
@@ -412,13 +398,13 @@ export async function GET(request: Request) {
       payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
     const manufacturerKey = buildManufacturerKey(
       manufacturerBase,
-      mapping.gtin ?? null,
+      resolvedGtin || null,
       mapping.providerKey ?? null
     );
 
     const row: ExportRow = {
       ProviderKey: providerKey,
-      Gtin: candidate.gtin ?? mapping.gtin ?? "",
+      Gtin: resolvedGtin,
       ManufacturerKey: manufacturerKey,
       BrandName: supplierBrand || normalizeBrand(payload?.brand ?? product?.brand ?? ""),
       ProductCategory: buildProductCategory(payload) || "Sneakers",

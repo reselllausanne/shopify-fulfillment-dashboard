@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { validateGtin } from "@/app/lib/normalize";
 import { ALTERNATIVE_PARTNER_KEY, isAlternativeProductsPartnerKey } from "@/app/lib/alternativeProducts";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
@@ -219,6 +220,9 @@ export function filterAlternativeProducts(params: {
   }> = [];
 
   for (const product of params.alternatives) {
+    if (!validateGtin(String(product.gtin ?? "").trim())) {
+      continue;
+    }
     const providerKeyMatch = params.normalByProviderKey.get(product.providerKey);
     if (providerKeyMatch !== undefined) {
       excluded.push({ product, reason: "MATCHING_PROVIDER_KEY", normalPrice: providerKeyMatch });

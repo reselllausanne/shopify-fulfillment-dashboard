@@ -3,6 +3,7 @@ import { recordDecathlonExclusion } from "./mapping";
 import { PRODUCTS_HEADERS } from "./templates";
 import { resolveDecathlonCategory } from "./categories";
 import { isBasketballTitle } from "./basketballTitles";
+import { normalizeDecathlonImageUrl } from "./imageUrl";
 
 const DEFAULT_CONDITION = "11";
 const DEFAULT_PRODUCT_NATURE_SHOES = "Shoes";
@@ -117,7 +118,7 @@ export function buildProductRow(
     ...extractImageUrls(product?.images),
     String(product?.imageUrl ?? "").trim(),
   ].filter((value) => value.length > 0);
-  const uniqueImages = Array.from(new Set(imageUrls));
+  const uniqueImages = Array.from(new Set(imageUrls)).map(normalizeDecathlonImageUrl);
 
   row["Product Identifier"] = candidate.providerKey;
   row["Main Title"] = productName;

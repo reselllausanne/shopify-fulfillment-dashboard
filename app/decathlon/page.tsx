@@ -293,9 +293,13 @@ export default function DecathlonDashboardPage() {
 
       <div className="space-y-4 border rounded p-4 bg-white">
         <div>
-          <h2 className="text-lg font-semibold">Decathlon Ops Dashboard</h2>
+          <h2 className="text-lg font-semibold">Mirakl uploads</h2>
           <p className="text-sm text-gray-500">
-            Run Mirakl imports, review deltas, and inspect error summaries without leaving the UI.
+            <strong className="font-medium text-gray-700">Products (P41)</strong> and{" "}
+            <strong className="font-medium text-gray-700">offers (OF01)</strong> are independent: sync products first,
+            then offers when Mirakl has the SKU. OF01 no longer auto-runs P41 before upload (faster). Deltas for
+            OF01/STO01/PRI01 are still computed from DB vs last Mirakl sync — use{" "}
+            <span className="font-medium">Send offers only</span> if you only need offers.
           </p>
         </div>
 
@@ -319,10 +323,12 @@ export default function DecathlonDashboardPage() {
                   "Running…"
                 ) : (
                   <>
-                    <span className="block font-semibold">Sync new products only (P41)</span>
+                    <span className="block font-semibold">Upload products (P41)</span>
                     <span className="block text-[11px] font-normal opacity-90 mt-0.5">
-                      Mirakl AI enrichment on by default (color etc. can be filled server-side). Use “Send offers
-                      only” for OF01.
+                      Same PM11 CSV as download + Mirakl AI_CONVERTER by default. Returns after upload (short status
+                      check); Mirakl may still process — use Refresh status. Env{" "}
+                      <code className="rounded bg-white/20 px-0.5">DECATHLON_MIRAKL_P41_SKIP_LONG_POLL=0</code> to wait
+                      on Mirakl until done.
                     </span>
                   </>
                 )}
@@ -400,7 +406,8 @@ export default function DecathlonDashboardPage() {
                   <>
                     <span className="block font-semibold">Reconcile all offers (OF01 full)</span>
                     <span className="block text-[11px] font-normal opacity-90 mt-0.5">
-                      Re-sends every eligible offer line (not delta-only)
+                      All eligible new-offer rows (not delta-only). Does not upload P41 — products must already exist on
+                      Mirakl.
                     </span>
                   </>
                 )}

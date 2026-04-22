@@ -60,7 +60,7 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
 
   const eligibleWhere = {
     status: { in: FEED_ELIGIBLE_MAPPING_STATUSES as unknown as string[] },
-    gtin: { not: null },
+    OR: [{ gtin: { not: null } }, { supplierVariant: { gtin: { not: null } } }],
   };
   const statusFilter = includeTrmDiagnostics
     ? {

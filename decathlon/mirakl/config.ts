@@ -31,6 +31,13 @@ export const DECATHLON_MIRAKL_TEST_LIMIT = 50;
 export const DECATHLON_MIRAKL_P41_POLL_INTERVAL_MS = 5000;
 export const DECATHLON_MIRAKL_P41_POLL_MAX_MS = 600_000;
 
+/**
+ * When true (default): one status read after upload then return — Mirakl may still be RUNNING.
+ * Set env DECATHLON_MIRAKL_P41_SKIP_LONG_POLL=0 to poll until terminal or P41_POLL_MAX_MS.
+ */
+const p41SkipLongPollRaw = String(process.env.DECATHLON_MIRAKL_P41_SKIP_LONG_POLL ?? "1").trim().toLowerCase();
+export const DECATHLON_MIRAKL_P41_SKIP_LONG_POLL = !["0", "false", "no"].includes(p41SkipLongPollRaw);
+
 export type DecathlonOf01Cm11Filter = "LIVE" | "KNOWN" | "OFF";
 
 /**
@@ -39,4 +46,9 @@ export type DecathlonOf01Cm11Filter = "LIVE" | "KNOWN" | "OFF";
  */
 export const DECATHLON_OF01_CM11_FILTER: DecathlonOf01Cm11Filter = "OFF";
 
-export const DECATHLON_OF01_REQUIRE_P41_SUCCESS = false;
+/**
+ * When true: OF01 only sends rows that already have a successful P41 row in DB (decathlonOfferSync.lastProductSyncAt).
+ * When false (default): OF01 sends offer deltas without that gate — run P41 separately when you onboard products.
+ */
+const of01RequireP41Raw = String(process.env.DECATHLON_OF01_REQUIRE_P41_SUCCESS ?? "0").trim().toLowerCase();
+export const DECATHLON_OF01_REQUIRE_P41_SUCCESS = ["1", "true", "yes"].includes(of01RequireP41Raw);

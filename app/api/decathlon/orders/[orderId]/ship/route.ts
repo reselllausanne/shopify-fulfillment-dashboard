@@ -443,15 +443,35 @@ function fitAddress(address1: string, address2: string): {
 
 function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: string | null } {
   const rawRecipient = resolveRawRecipient(order);
-  const recipientName = pickString(rawRecipient?.name, order.recipientName);
-  const recipientAddress1 = pickString(rawRecipient?.address1, order.recipientAddress1);
-  const recipientAddress2 = pickString(rawRecipient?.address2, order.recipientAddress2);
-  const recipientPostalCode = pickString(rawRecipient?.postalCode, order.recipientPostalCode);
-  const recipientCity = pickString(rawRecipient?.city, order.recipientCity);
-  const recipientCountry = pickString(rawRecipient?.country, order.recipientCountry);
-  const recipientCountryCode = pickString(rawRecipient?.countryCode, order.recipientCountryCode);
-  const recipientPhone = pickString(rawRecipient?.phone, order.recipientPhone);
-  const recipientEmail = pickString(rawRecipient?.email, order.recipientEmail, order.customerEmail);
+  /** After "Edit address" + lock, DB columns are source of truth; Mirakl rawJson still has old shipping. */
+  const dbFirst = Boolean(order?.recipientAddressLocked);
+  const recipientName = dbFirst
+    ? pickString(order.recipientName, rawRecipient?.name)
+    : pickString(rawRecipient?.name, order.recipientName);
+  const recipientAddress1 = dbFirst
+    ? pickString(order.recipientAddress1, rawRecipient?.address1)
+    : pickString(rawRecipient?.address1, order.recipientAddress1);
+  const recipientAddress2 = dbFirst
+    ? pickString(order.recipientAddress2, rawRecipient?.address2)
+    : pickString(rawRecipient?.address2, order.recipientAddress2);
+  const recipientPostalCode = dbFirst
+    ? pickString(order.recipientPostalCode, rawRecipient?.postalCode)
+    : pickString(rawRecipient?.postalCode, order.recipientPostalCode);
+  const recipientCity = dbFirst
+    ? pickString(order.recipientCity, rawRecipient?.city)
+    : pickString(rawRecipient?.city, order.recipientCity);
+  const recipientCountry = dbFirst
+    ? pickString(order.recipientCountry, rawRecipient?.country)
+    : pickString(rawRecipient?.country, order.recipientCountry);
+  const recipientCountryCode = dbFirst
+    ? pickString(order.recipientCountryCode, rawRecipient?.countryCode)
+    : pickString(rawRecipient?.countryCode, order.recipientCountryCode);
+  const recipientPhone = dbFirst
+    ? pickString(order.recipientPhone, rawRecipient?.phone)
+    : pickString(rawRecipient?.phone, order.recipientPhone);
+  const recipientEmail = dbFirst
+    ? pickString(order.recipientEmail, rawRecipient?.email, order.customerEmail)
+    : pickString(rawRecipient?.email, order.recipientEmail, order.customerEmail);
   const hasRecipient = Boolean(
     recipientName ||
       recipientAddress1 ||

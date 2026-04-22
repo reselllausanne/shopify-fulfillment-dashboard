@@ -101,8 +101,10 @@ export async function GET(request: Request) {
     const row = index + 1;
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
-    const providerKey = buildProviderKey(mapping.gtin, variant?.supplierVariantId) ?? "";
-    const gtin = String(mapping.gtin ?? "");
+    const gtin = String(candidate?.gtin ?? mapping?.gtin ?? variant?.gtin ?? "").trim();
+    const providerKey =
+      String(candidate?.providerKey ?? "").trim() ||
+      (buildProviderKey(gtin, variant?.supplierVariantId) ?? "");
     const priceRaw = variant?.price ?? null;
     const stockRaw = variant?.stock ?? null;
     const price = priceRaw === null || priceRaw === undefined ? NaN : Number(priceRaw);

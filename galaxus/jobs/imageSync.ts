@@ -27,10 +27,18 @@ type ImageSyncResult = {
   durationMs: number;
 };
 
+function pathnameLower(url: string): string {
+  try {
+    return new URL(url).pathname.toLowerCase();
+  } catch {
+    return url.toLowerCase().split("?")[0] ?? "";
+  }
+}
+
 function isJpegHosted(url: string | null | undefined): boolean {
   if (!url) return false;
-  const lower = url.toLowerCase();
-  return lower.endsWith(".jpg") || lower.endsWith(".jpeg");
+  const p = pathnameLower(url.trim());
+  return p.endsWith(".jpg") || p.endsWith(".jpeg");
 }
 
 function hasNonJpegHosted(url: string | null | undefined): boolean {

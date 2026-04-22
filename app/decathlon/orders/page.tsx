@@ -545,15 +545,23 @@ export default function DecathlonOrdersPage() {
     return !canceledStates.has(state);
   }, [selectedOrder, selectedOrder?.orderState, selectedShipmentSummary.remainingUnits, canceledStates]);
 
+  /** Partial / 2nd label: backend + Mirakl support per-line qty; UI must allow 1 Mirakl line with qty > 1. */
   const canSplitShipment = useMemo(() => {
     if (!selectedOrder) return false;
-    const lineCount = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines.length : 0;
-    if (lineCount < 2) return false;
-    const remainingUnits = selectedShipmentSummary.remainingUnits ?? 0;
-    if (remainingUnits <= 0) return false;
     const state = normalizeState(selectedOrder?.orderState);
-    return !canceledStates.has(state);
-  }, [selectedOrder, selectedOrder?.orderState, selectedShipmentSummary.remainingUnits, canceledStates]);
+    if (canceledStates.has(state)) return false;
+    const { remainingUnits, lineTotals } = buildShipmentSummary(selectedOrder);
+    if (remainingUnits <= 0) return false;
+    const lines = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : [];
+    if (lines.length >= 2) return true;
+    if (lines.length === 1) {
+      const line = lines[0];
+      const ordered = Number(line.quantity ?? 0);
+      const shipped = lineTotals.get(line.id) ?? 0;
+      return Math.max(ordered - shipped, 0) > 1;
+    }
+    return false;
+  }, [selectedOrder, selectedOrder?.orderState, selectedOrder?.lines, canceledStates]);
 
   const openManualEntry = (line: any) => {
     if (!selectedOrderId || !selectedOrder) {
@@ -1095,7 +1103,15 @@ export default function DecathlonOrdersPage() {
             <button
               onClick={shipOrder}
               disabled={!selectedOrderId || !canFulfill}
-              title={!canFulfill ? "Canceled orders cannot be fulfilled" : undefined}
+              title={
+                !canFulfill
+                  ? "Canceled orders cannot be fulfilled"
+                  : (selectedShipmentSummary.remainingUnits ?? 0) > 1 &&
+                      Array.isArray(selectedOrder?.lines) &&
+                      selectedOrder.lines.length === 1
+                    ? "Ships all remaining units on this line in one label. Use Split shipment to send fewer (e.g. 1 of 2)."
+                    : "Ship all remaining lines / units for this order (one label when one shipment)."
+              }
               className="px-3 py-1.5 bg-gray-900 text-white rounded text-xs"
             >
               Generate label + ship
@@ -1553,7 +1569,9 @@ export default function DecathlonOrdersPage() {
               <div>
                 <div className="text-lg font-semibold">Split shipment</div>
                 <div className="text-xs text-gray-500">
-                  Select the quantities to ship now.
+                  Select quantities for this label. Same SKU on one Mirakl line (e.g. qty 2): ship 1 now, 1 later —
+                  each run creates one Swiss Post label + one Mirakl shipment. Generate label + ship sends all
+                  remaining units in one go.
                 </div>
               </div>
               <button

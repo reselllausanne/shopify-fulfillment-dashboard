@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { toCsv } from "@/galaxus/exports/csv";
 
 export const runtime = "nodejs";
@@ -118,15 +119,6 @@ function stripGenderTokens(text: string): string {
     .trim();
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function buildProductTitle(payload: KickDbPayload | null, fallbackSku?: string | null): string {
   const brand = normalizeBrand(payload?.brand ?? "");
   const sku = sanitizeText(payload?.sku ?? "");
@@ -178,13 +170,6 @@ function cleanDescription(value?: string | null): string {
   text = text.replace(/our team[^.]*\./gi, "");
   text = sanitizeText(text);
   return truncate(text, 4000);
-}
-
-function extractProductImages(hostedImageUrl?: string | null): string[] {
-  if (typeof hostedImageUrl === "string" && hostedImageUrl.trim() && isAbsoluteUrl(hostedImageUrl)) {
-    return [hostedImageUrl.trim()];
-  }
-  return [];
 }
 
 function decimalToString(value: unknown): string {
@@ -239,6 +224,10 @@ function dedupeCandidatesByProviderKey(candidates: any[]) {
   return unique;
 }
 
+function resolveRowGtin(candidate: any, mapping: any, supplierVariant: any): string {
+  return String(candidate?.gtin ?? mapping?.gtin ?? supplierVariant?.gtin ?? "").trim();
+}
+
 function buildMasterRows(candidates: any[]): ExportRow[] {
   return candidates.flatMap((candidate): ExportRow[] => {
     const mapping = candidate.mapping;
@@ -252,7 +241,7 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
         } as KickDbPayload)
       : null;
     const providerKey = candidate.providerKey ?? "";
-    const images = extractProductImages(supplierVariant?.hostedImageUrl ?? null);
+    const images = pickGalaxusProductImageList(supplierVariant ?? {});
     if (images.length === 0) {
       return [];
     }
@@ -261,15 +250,16 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
 
     const manufacturerBase =
       payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
+    const resolvedGtin = resolveRowGtin(candidate, mapping, supplierVariant);
     const manufacturerKey = buildManufacturerKey(
       manufacturerBase,
-      mapping.gtin ?? null,
+      resolvedGtin || null,
       mapping.providerKey ?? null
     );
 
     const row: ExportRow = {
       ProviderKey: providerKey,
-      Gtin: mapping.gtin ?? "",
+      Gtin: resolvedGtin,
       ManufacturerKey: manufacturerKey,
       BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? ""),
       ProductCategory: buildProductCategory(payload) || "Sneakers",
