@@ -17,6 +17,9 @@ type ScanResult = {
     orderDbId: string | null;
     orderNumber?: string | null;
     orderState?: string | null;
+    lineId?: string | null;
+    miraklOrderLineId?: string | null;
+    quantity?: number | null;
   } | null;
   galaxus?: {
     matchId?: string | null;
@@ -208,8 +211,23 @@ export default function ScanPage() {
       window.alert(`Decathlon order ${orderRef} is canceled; skipping fulfillment.`);
       return;
     }
+    const lineId = String(match?.lineId ?? "").trim();
+    const qty = Number(match?.quantity ?? 0) || 0;
+    if (!lineId || qty <= 0) {
+      window.alert(
+        `Decathlon auto-fulfill skipped: missing line match for AWB ${awb}. Link AWB to line first.`
+      );
+      return;
+    }
     try {
-      const shipRes = await fetch(`/api/decathlon/orders/${orderRef}/ship`, { method: "POST" });
+      const shipRes = await fetch(`/api/decathlon/orders/${orderRef}/ship`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          trackingNumber: awb,
+          items: [{ lineId, quantity: qty }],
+        }),
+      });
       const shipData = await shipRes.json().catch(() => ({}));
       if (!shipRes.ok || !shipData.ok) {
         throw new Error(shipData.error ?? "Decathlon ship failed");

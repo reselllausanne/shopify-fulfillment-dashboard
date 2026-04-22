@@ -123,6 +123,14 @@ export async function POST(req: NextRequest) {
         select: {
           id: true,
           decathlonOrderId: true,
+          decathlonOrderLineId: true,
+          decathlonQuantity: true,
+          line: {
+            select: {
+              id: true,
+              orderLineId: true,
+            },
+          },
           order: {
             select: {
               id: true,
@@ -194,6 +202,9 @@ export async function POST(req: NextRequest) {
             orderDbId: decathlonMatch.order?.id ?? decathlonMatch.decathlonOrderId ?? null,
             orderNumber: decathlonMatch.order?.orderNumber ?? null,
             orderState: decathlonMatch.order?.orderState ?? null,
+            lineId: decathlonMatch.line?.id ?? decathlonMatch.decathlonOrderLineId ?? null,
+            miraklOrderLineId: decathlonMatch.line?.orderLineId ?? null,
+            quantity: Number(decathlonMatch.decathlonQuantity ?? 0) || 0,
           }
         : null,
       galaxus: galaxusMatch
