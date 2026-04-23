@@ -310,6 +310,34 @@ function normalizePostalCode(value: unknown): string | null {
   return raw.replace(/^CH[\s-]*/i, "").trim();
 }
 
+function parseMaybeNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const num = typeof value === "number" ? value : Number.parseFloat(String(value));
+  return Number.isFinite(num) ? num : null;
+}
+
+function resolveMiraklLineAvailableQty(line: any): number | null {
+  const directKeys = [
+    "quantity_to_ship",
+    "quantityToShip",
+    "quantity_available_to_ship",
+    "quantityAvailableToShip",
+    "quantity_shippable",
+    "quantityShippable",
+    "available_quantity",
+    "availableQuantity",
+  ];
+  for (const key of directKeys) {
+    const direct = parseMaybeNumber(line?.[key]);
+    if (direct !== null) return Math.max(direct, 0);
+  }
+  const ordered = parseMaybeNumber(line?.quantity ?? line?.qty ?? line?.quantity_ordered ?? line?.quantityOrdered);
+  const shipped = parseMaybeNumber(line?.quantity_shipped ?? line?.quantityShipped ?? line?.shipped_quantity);
+  if (ordered === null) return null;
+  const remaining = ordered - (shipped ?? 0);
+  return Math.max(remaining, 0);
+}
+
 function extractOrderDetails(payload: any) {
   if (!payload) return null;
   if (payload?.order) return payload.order;
@@ -698,8 +726,13 @@ export async function POST(
     } else {
       for (const line of orderLines) {
         if (scope === "partner" && partnerKey) {
-          const sku = String(line.offerSku ?? "").toUpperCase();
-          if (!sku.startsWith(`${partnerKey}_`)) continue;
+          const linePartnerKey = normalizeProviderKey(line?.partnerKey ?? null);
+          if (linePartnerKey && linePartnerKey === partnerKey) {
+            // ok
+          } else {
+            const sku = String(line.offerSku ?? "").toUpperCase();
+            if (!sku.startsWith(`${partnerKey}_`)) continue;
+          }
         }
         const remaining = resolveRemainingQty(line);
         if (remaining > 0) {
@@ -710,6 +743,47 @@ export async function POST(
 
     if (itemsToShip.length === 0) {
       return NextResponse.json({ ok: false, error: "No remaining quantity to ship" }, { status: 400 });
+    }
+
+    if (scope === "partner") {
+      try {
+        const client = buildDecathlonOrdersClient();
+        const livePayload = await client.getOrder(order.orderId);
+        const liveOrder = extractOrderDetails(livePayload) as Record<string, unknown> | null | undefined;
+        const liveLines = Array.isArray((liveOrder as any)?.order_lines)
+          ? (liveOrder as any).order_lines
+          : (liveOrder as any)?.lines ?? [];
+        const liveById = new Map<string, any>();
+        for (const liveLine of liveLines) {
+          const id = String(
+            liveLine?.id ?? liveLine?.order_line_id ?? liveLine?.orderLineId ?? ""
+          ).trim();
+          if (id) liveById.set(id, liveLine);
+        }
+        for (const { line, quantity } of itemsToShip) {
+          const liveLine = liveById.get(String(line?.orderLineId ?? "").trim());
+          if (!liveLine) continue;
+          const available = resolveMiraklLineAvailableQty(liveLine);
+          if (available === null) continue;
+          if (available <= 0) {
+            return NextResponse.json(
+              { ok: false, error: "No shippable quantity available in Mirakl for this line." },
+              { status: 409 }
+            );
+          }
+          if (available < quantity) {
+            return NextResponse.json(
+              {
+                ok: false,
+                error: `Requested quantity exceeds Mirakl remaining (requested ${quantity}, available ${available}).`,
+              },
+              { status: 409 }
+            );
+          }
+        }
+      } catch (mirrorErr) {
+        console.warn("[DECATHLON][SHIP] Partner Mirakl quantity check failed:", mirrorErr);
+      }
     }
 
     // Mirakl is already SHIPPED but local DB still shows remaining units (partial/stale rows, or persist failed after Mirakl ship).
@@ -891,7 +965,7 @@ export async function POST(
       } catch (stErr: any) {
         const msg = String(stErr?.message ?? stErr);
         if (isMiraklShippingRequiredError(msg)) {
-          const payload = buildMiraklAcceptPayload(orderLines);
+          const payload = buildMiraklAcceptPayload(itemsToShip.map(({ line }) => line));
           if (payload.order_lines.length) {
             try {
               await client.acceptOrder(order.orderId, payload);

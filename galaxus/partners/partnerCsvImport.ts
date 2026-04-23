@@ -101,7 +101,13 @@ export async function runPartnerCsvImport(
 
   const headers = rows[0].map((value) => value.trim());
   const headerMap = new Map(headers.map((value, index) => [value, index]));
-  const missingHeaders = REQUIRED_HEADERS.filter((header) => !headerMap.has(header));
+  const normalizeHeader = (value: string) => value.toLowerCase().replace(/[\s_-]+/g, "");
+  const headerMapNormalized = new Map(
+    headers.map((value, index) => [normalizeHeader(value), index])
+  );
+  const hasHeader = (header: string) =>
+    headerMap.has(header) || headerMapNormalized.has(normalizeHeader(header));
+  const missingHeaders = REQUIRED_HEADERS.filter((header) => !hasHeader(header));
   if (missingHeaders.length) {
     throw new Error(`Missing headers: ${missingHeaders.join(", ")}`);
   }
@@ -127,19 +133,74 @@ export async function runPartnerCsvImport(
 
   for (let i = 1; i < rows.length; i += 1) {
     const row = rows[i];
-    const read = (header: string) => row[headerMap.get(header) ?? -1]?.trim() ?? "";
+    const read = (header: string) => {
+      const idx =
+        headerMap.get(header) ??
+        headerMapNormalized.get(normalizeHeader(header)) ??
+        -1;
+      return row[idx]?.trim() ?? "";
+    };
+    const readAny = (headers: string[]) => {
+      for (const header of headers) {
+        const value = read(header);
+        if (value) return value;
+      }
+      return "";
+    };
+    const readByPredicate = (predicate: (normalizedHeader: string) => boolean) => {
+      for (const [normalized, index] of headerMapNormalized.entries()) {
+        if (!predicate(normalized)) continue;
+        const value = row[index]?.trim() ?? "";
+        if (value) return value;
+      }
+      return "";
+    };
 
     const providerKeyRaw = read("providerKey");
     const skuRaw = read("sku");
     const sizeRaw = read("size");
     const stockRaw = read("rawStock");
     const priceRaw = read("price");
-    const gtinRaw = read("gtin");
-    const productNameRaw = read("productName");
-    const brandRaw = read("brand");
-    const imageRaw = read("image");
-    const supplierGenderRaw = read("supplierGender");
-    const supplierColorwayRaw = read("supplierColorway");
+    const gtinRaw = readAny(["gtin", "ean", "barcode", "gtin14", "gtin13", "upc"]);
+    const productNameRaw = readAny([
+      "productName",
+      "product_name",
+      "name",
+      "title",
+      "product",
+    ]);
+    const brandRaw = readAny([
+      "brand",
+      "brandName",
+      "brand_name",
+      "brand name",
+    ]);
+    const imageRaw = readAny([
+      "image",
+      "imageUrl",
+      "image_url",
+      "image url",
+      "imageLink",
+      "image_link",
+    ]);
+    const supplierGenderRaw =
+      readAny(["supplierGender", "gender", "sex"]) ||
+      readByPredicate((normalized) => normalized.includes("gender"));
+    const supplierColorwayRaw =
+      readAny([
+        "supplierColorway",
+        "colorway",
+        "colourway",
+        "color",
+        "colour",
+      ]) ||
+      readByPredicate(
+        (normalized) =>
+          normalized.includes("colorway") ||
+          normalized.includes("colourway") ||
+          (normalized.includes("color") && normalized.includes("supplier")) ||
+          (normalized.includes("colour") && normalized.includes("supplier"))
+      );
     const rowErrors: Array<{ field: string; message: string }> = [];
 
     const dupeKey = buildDuplicateKey(providerKeyRaw, skuRaw, sizeRaw);

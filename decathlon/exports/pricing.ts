@@ -233,9 +233,11 @@ export function resolveDecathlonBuyNow(input: {
 }
 
 const DECATHLON_NER_SUPPLIER_KEY = "ner";
+const DECATHLON_THE_SUPPLIER_KEY = "the";
 
 /**
  * NER and other partner keys: **only** `price / 0.75` (25% partner slice on list TTC — input is DB buy / partner cost).
+ * THE: apply the same 25% list margin for Decathlon.
  * Non-partner own catalog: +1% on list.
  *
  * Do **not** feed NER through {@link computeDecathlonOfferListPriceFromBuyNow} first — that double-counts and
@@ -248,7 +250,7 @@ export function applyDecathlonPartnerListPriceMultipliers(
 ): number {
   if (!Number.isFinite(baseListPriceTtc) || baseListPriceTtc <= 0) return baseListPriceTtc;
   const k = supplierKey?.toLowerCase() ?? "";
-  if (k === DECATHLON_NER_SUPPLIER_KEY || partnerKeysLower.has(k)) {
+  if (k === DECATHLON_NER_SUPPLIER_KEY || k === DECATHLON_THE_SUPPLIER_KEY || partnerKeysLower.has(k)) {
     return roundToIncrement(baseListPriceTtc / 0.75, DECATHLON_PRICE_ROUND_TO);
   }
   return roundToIncrement(baseListPriceTtc * 1.01, DECATHLON_PRICE_ROUND_TO);

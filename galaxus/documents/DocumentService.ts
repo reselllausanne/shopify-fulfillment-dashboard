@@ -359,6 +359,12 @@ export class DocumentService {
 }
 
 function buildSupplier(): Company {
+  const uniqueOrderNumbers = Array.from(
+    new Set(groups.map((group) => String(group.orderNumber ?? "").trim()).filter(Boolean))
+  );
+  const orderReference =
+    uniqueOrderNumbers.length === 1 ? uniqueOrderNumbers[0] : anchor.orderNumber ?? anchor.galaxusOrderId;
+
   return {
     name: GALAXUS_SUPPLIER_NAME,
     addressLines: GALAXUS_SUPPLIER_ADDRESS_LINES,
@@ -600,7 +606,7 @@ function buildCompositeDeliveryNoteDataFromItems(
     incoterms: shipmentState.incoterms,
     buyer: buildRecipient(anchor),
     supplier: buildSupplier(),
-    orderReference: anchor.orderNumber ?? anchor.galaxusOrderId,
+    orderReference,
     referencePerson: anchor.referencePerson ?? null,
     yourReference: anchor.yourReference ?? null,
     buyerPhone: anchor.deliveryType === "direct_delivery" ? null : anchor.recipientPhone ?? null,

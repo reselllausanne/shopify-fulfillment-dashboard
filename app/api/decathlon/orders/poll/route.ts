@@ -612,6 +612,7 @@ async function syncDecathlonReturns(options: {
 
 export async function POST(request: Request) {
   try {
+    const prismaAny = prisma as any;
     const { searchParams } = new URL(request.url);
     const state = String(searchParams.get("state") ?? "").trim();
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
@@ -661,9 +662,13 @@ export async function POST(request: Request) {
       }
       canceledOrders = Array.from(unique.values());
     }
-    const partnerRows = await prisma.partner.findMany({ select: { key: true } });
+    const partnerRows = (await prismaAny.partner.findMany({
+      select: { key: true },
+    })) as Array<{ key: string | null }>;
     const partnerKeys = new Set(
-      partnerRows.map((row) => normalizeProviderKey(row.key)).filter((key): key is string => Boolean(key))
+      partnerRows
+        .map((row) => normalizeProviderKey(row.key))
+        .filter((key): key is string => Boolean(key))
     );
     let upserted = 0;
     for (const order of orders) {
@@ -683,25 +688,32 @@ export async function POST(request: Request) {
           if (!lineId) continue;
           const quantity = Number(line?.quantity ?? line?.qty ?? 1);
           const resolvedGtin = pickMiraklLineGtin(line) ?? line?.gtin ?? line?.ean ?? null;
-          await prisma.decathlonOrderLine.upsert({
+          const resolvedLinePartnerKey = resolvePartnerKeyFromLine(line);
+          const linePartnerKey =
+            resolvedLinePartnerKey && partnerKeys.has(resolvedLinePartnerKey)
+              ? resolvedLinePartnerKey
+              : null;
+          const updateData = {
+            orderId: orderRow.id,
+            lineNumber: line?.line_number ?? line?.lineNumber ?? null,
+            offerSku: line?.offer_sku ?? line?.offerSku ?? null,
+            productSku: line?.product_sku ?? line?.productSku ?? null,
+            productTitle: line?.product_title ?? line?.productTitle ?? null,
+            description: line?.description ?? null,
+            size: line?.size ?? null,
+            gtin: resolvedGtin,
+            providerKey: line?.provider_key ?? line?.providerKey ?? null,
+            supplierSku: line?.supplier_sku ?? line?.supplierSku ?? null,
+            quantity: Number.isFinite(quantity) ? quantity : 1,
+            unitPrice: pickLineAmount(line),
+            lineTotal: line?.line_total ?? line?.lineTotal ?? null,
+            currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
+            rawJson: line ?? null,
+            ...(linePartnerKey ? { partnerKey: linePartnerKey } : {}),
+          } as any;
+          await prismaAny.decathlonOrderLine.upsert({
             where: { orderLineId: lineId },
-            update: {
-              orderId: orderRow.id,
-              lineNumber: line?.line_number ?? line?.lineNumber ?? null,
-              offerSku: line?.offer_sku ?? line?.offerSku ?? null,
-              productSku: line?.product_sku ?? line?.productSku ?? null,
-              productTitle: line?.product_title ?? line?.productTitle ?? null,
-              description: line?.description ?? null,
-              size: line?.size ?? null,
-              gtin: resolvedGtin,
-              providerKey: line?.provider_key ?? line?.providerKey ?? null,
-              supplierSku: line?.supplier_sku ?? line?.supplierSku ?? null,
-              quantity: Number.isFinite(quantity) ? quantity : 1,
-              unitPrice: pickLineAmount(line),
-              lineTotal: line?.line_total ?? line?.lineTotal ?? null,
-              currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
-              rawJson: line ?? null,
-            },
+            update: updateData,
             create: {
               orderId: orderRow.id,
               orderLineId: lineId,
@@ -714,6 +726,7 @@ export async function POST(request: Request) {
               gtin: resolvedGtin,
               providerKey: line?.provider_key ?? line?.providerKey ?? null,
               supplierSku: line?.supplier_sku ?? line?.supplierSku ?? null,
+              partnerKey: linePartnerKey,
               quantity: Number.isFinite(quantity) ? quantity : 1,
               unitPrice: pickLineAmount(line),
               lineTotal: line?.line_total ?? line?.lineTotal ?? null,

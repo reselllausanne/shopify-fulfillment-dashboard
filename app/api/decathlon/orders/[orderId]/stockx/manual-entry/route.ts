@@ -30,11 +30,23 @@ function trimStr(v: unknown): string {
   return String(v ?? "").trim();
 }
 
+function normalizeAwb(value: unknown): string | null {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "");
+  if (/^\d{13,}$/.test(cleaned)) {
+    return cleaned.slice(-12);
+  }
+  return cleaned || null;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
+    const { searchParams } = new URL(request.url);
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
     const { orderId } = await params;
     const body = await request.json().catch(() => ({}));
     const lineId = String(body?.lineId ?? "").trim();
@@ -60,7 +72,7 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Line not found" }, { status: 404 });
     }
 
-    const partnerSession = await getPartnerSession(request);
+    const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
     if (partnerSession) {
       const sessionPk = normalizeProviderKey(partnerSession.partnerKey ?? null);
       if (!sessionPk) {
@@ -169,7 +181,7 @@ export async function POST(
       stockxEstimatedDelivery: parseMaybeDate(data.stockxEstimatedDelivery) ?? a.stockxEstimatedDelivery ?? null,
       stockxLatestEstimatedDelivery:
         parseMaybeDate(data.stockxLatestEstimatedDelivery) ?? a.stockxLatestEstimatedDelivery ?? null,
-      stockxAwb: trimStr(data.stockxAwb) || a.stockxAwb || null,
+      stockxAwb: normalizeAwb(data.stockxAwb) || normalizeAwb(a.stockxAwb) || null,
       stockxTrackingUrl: trimStr(data.stockxTrackingUrl) || a.stockxTrackingUrl || null,
       stockxCheckoutType: trimStr(data.stockxCheckoutType) || a.stockxCheckoutType || null,
       stockxStates: data.stockxStates ?? a.stockxStates ?? null,

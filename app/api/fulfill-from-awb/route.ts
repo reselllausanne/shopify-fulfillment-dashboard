@@ -212,6 +212,25 @@ function buildStreetLine(address: any, ignore: Set<string>) {
   return line1 ?? line2 ?? null;
 }
 
+function normalizePostalCity(address: any) {
+  const rawZip =
+    address?.zip ??
+    address?.zipCode ??
+    address?.postalCode ??
+    address?.postcode ??
+    null;
+  const rawCity = String(address?.city ?? "").trim();
+  const zip = rawZip ? String(rawZip).trim() : "";
+  if (zip) {
+    return { zip, city: rawCity };
+  }
+  const match = rawCity.match(/(\d{4,6})\s*(.+)/);
+  if (match) {
+    return { zip: match[1], city: match[2].trim() };
+  }
+  return { zip: "", city: rawCity };
+}
+
 function isPowerpayBilling(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null) {
   const gateways = orderInfo?.paymentGatewayNames ?? [];
   return gateways.some((gateway) =>
@@ -232,6 +251,7 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
       .filter(Boolean)
   );
   const street = buildStreetLine(address, ignore);
+  const { zip, city } = normalizePostalCity(address);
 
   const phone =
     [address?.phone, orderInfo?.phone].map((p) => String(p || "").trim()).find(Boolean) || null;
@@ -241,8 +261,8 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
     firstName: null,
     name2: company ? fullName : null,
     street,
-    zip: address?.zip || null,
-    city: address?.city || null,
+    zip: zip || null,
+    city: city || null,
     country: address?.countryCodeV2 || address?.country || null,
     phone,
     email: orderInfo?.email || null,

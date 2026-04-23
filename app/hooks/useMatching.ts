@@ -6,6 +6,7 @@ import {
   type MatchResult,
   EXCLUDED_SKUS,
   isShopifyFinancialRefunded,
+  isLiquidationShopifyTitle,
 } from "@/app/utils/matching";
 import type { PricingResult } from "@/app/types";
 import { postJson, getJson } from "@/app/lib/api";
@@ -617,7 +618,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       alert("This Shopify line is refunded. Manual cost entry is disabled.");
       return;
     }
-    const isLiquidation = /%/.test(shopifyItem.title);
+    const isLiquidation = isLiquidationShopifyTitle(shopifyItem.title);
     const isEssentialHoodie = shopifyItem.sku && EXCLUDED_SKUS.includes(shopifyItem.sku);
 
     let supplierCost: number;
@@ -924,8 +925,9 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
           return;
         }
 
-        const stockxAwb = (resolvedSupplier as any).awb || null;
         const stockxTrackingUrl = (resolvedSupplier as any).trackingUrl || null;
+        const stockxAwb =
+          (resolvedSupplier as any).awb || extractAwbFromTrackingUrl(stockxTrackingUrl) || null;
 
         const shopifyRevenue = parseFloat(shopifyItem.totalPrice) || 0;
         let supplierCost = 0;
@@ -1121,7 +1123,11 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         const marginAmount = shopifyRevenue - supplierCost;
         const marginPercent = shopifyRevenue > 0 ? (marginAmount / shopifyRevenue) * 100 : 0;
         const trackingUrl = supplierOrder.trackingUrl || (rawStockxOrder as any)?.trackingUrl || null;
-        const awb = supplierOrder.awb || (rawStockxOrder as any)?.awb || null;
+        const awb =
+          supplierOrder.awb ||
+          (rawStockxOrder as any)?.awb ||
+          extractAwbFromTrackingUrl(trackingUrl) ||
+          null;
         const estimatedStart =
           supplierOrder.estimatedDeliveryDate ||
           (rawStockxOrder as any)?.estimatedDeliveryB ||
@@ -1185,7 +1191,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
             marginPercent: marginPercent,
             manualCostOverride: supplierCostOverride || null,
             shopifyMetafieldsSynced: true,
-          updateTrackingOnly: true,
+            updateTrackingOnly: true,
             syncTracking: true,
           });
 

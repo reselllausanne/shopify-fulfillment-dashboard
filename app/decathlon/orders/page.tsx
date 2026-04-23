@@ -99,6 +99,8 @@ export default function DecathlonOrdersPage() {
     currency: string;
   } | null>(null);
   const [partnerFeeStatsErr, setPartnerFeeStatsErr] = useState<string | null>(null);
+  const [linePartnerDraft, setLinePartnerDraft] = useState<Record<string, string>>({});
+  const [assigningLineId, setAssigningLineId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,12 +163,25 @@ export default function DecathlonOrdersPage() {
     setLoadingOrders(true);
     setError(null);
     try {
-      const qs = new URLSearchParams({ limit: "50", view: leftTab });
-      if (productSearch) qs.set("product", productSearch);
-      const res = await fetch(`/api/decathlon/orders?${qs.toString()}`, { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-      const items: OrderListItem[] = data.items || [];
+      const items: OrderListItem[] = [];
+      const limit = 200;
+      let offset = 0;
+      let lastBatch = 0;
+      do {
+        const qs = new URLSearchParams({
+          limit: String(limit),
+          offset: String(offset),
+          view: leftTab,
+        });
+        if (productSearch) qs.set("product", productSearch);
+        const res = await fetch(`/api/decathlon/orders?${qs.toString()}`, { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+        const batch: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+        items.push(...batch);
+        lastBatch = batch.length;
+        offset += limit;
+      } while (lastBatch === limit && offset < 2000);
       const fresh = new Set<string>();
       for (const item of items) {
         if (!knownOrderIds.current.has(item.id)) {
@@ -370,6 +385,27 @@ export default function DecathlonOrdersPage() {
     }
   };
 
+  const assignLinePartner = async (lineId: string) => {
+    if (!selectedOrderId || !lineId) return;
+    setAssigningLineId(lineId);
+    setError(null);
+    try {
+      const partnerKey = String(linePartnerDraft[lineId] ?? "").trim();
+      const res = await fetch(`/api/decathlon/orders/${selectedOrderId}/lines/${lineId}/assign`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ partnerKey: partnerKey || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Line assignment failed");
+      await Promise.all([loadOrderDetail(selectedOrderId), loadOrders()]);
+    } catch (err: any) {
+      setError(err.message ?? "Line assignment failed");
+    } finally {
+      setAssigningLineId(null);
+    }
+  };
+
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
@@ -399,6 +435,14 @@ export default function DecathlonOrdersPage() {
   useEffect(() => {
     setSelectedPartnerKey(selectedOrder?.partnerKey ?? "");
   }, [selectedOrder?.partnerKey]);
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    (selectedOrder?.lines ?? []).forEach((line: any) => {
+      next[String(line.id)] = String(line.partnerKey ?? "").trim();
+    });
+    setLinePartnerDraft(next);
+  }, [selectedOrder?.lines]);
 
   const matchesByLine = useMemo(() => {
     const map = new Map<string, any>();
@@ -1384,6 +1428,7 @@ export default function DecathlonOrdersPage() {
                           ? `Linked ${match.stockxOrderNumber}`
                           : "Linked"
                       : "Not linked";
+                  const linePartnerKey = normalizeProviderKey(line.partnerKey ?? null);
                   const partnerLineFromOrder = selectedOrder
                     ? isDecathlonPartnerFulfillmentLine(selectedOrder, line)
                     : false;
@@ -1393,6 +1438,7 @@ export default function DecathlonOrdersPage() {
                   );
                   const partnerLine = partnerLineFromOrder || matchedPartnerFromCatalog != null;
                   const displayPartnerKey = (
+                    linePartnerKey ??
                     matchedPartnerFromCatalog ??
                     (partnerLineFromOrder ? normalizeProviderKey(selectedOrder?.partnerKey ?? null) : null) ??
                     ""
@@ -1403,6 +1449,11 @@ export default function DecathlonOrdersPage() {
                   const partnerLinkedLabel =
                     pk.length > 0 ? `Bought · partner catalog (${pk.toUpperCase()})` : "Bought · partner catalog";
                   const linkedLabelShown = partnerLine && !lineOk ? partnerLinkedLabel : linkedLabel;
+                  const stockHints = Array.isArray(line.stockHints) ? line.stockHints : [];
+                  const primaryStockHint = stockHints[0] ?? null;
+                  const stockHintLabel = primaryStockHint
+                    ? `In stock: ${primaryStockHint.partnerKey.toUpperCase()} (${primaryStockHint.stock})`
+                    : null;
                   const linkedToneClass =
                     partnerLine && !lineOk
                       ? "text-green-700"
@@ -1495,6 +1546,42 @@ export default function DecathlonOrdersPage() {
                             {catalogSyncHint ? (
                               <div className="text-gray-400 text-[10px]">{catalogSyncHint}</div>
                             ) : null}
+                          </div>
+                          {stockHintLabel ? (
+                            <div className="text-[11px] text-amber-700">
+                              {stockHintLabel} · avoid StockX buy
+                            </div>
+                          ) : null}
+                          <div className="mt-2">
+                            <div className="text-[11px] text-gray-600">Assign partner (line)</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                className="border border-gray-200 rounded px-2 py-1 text-[11px]"
+                                value={linePartnerDraft[String(line.id)] ?? ""}
+                                onChange={(e) =>
+                                  setLinePartnerDraft((prev) => ({
+                                    ...prev,
+                                    [String(line.id)]: e.target.value,
+                                  }))
+                                }
+                              >
+                                <option value="">None</option>
+                                <option value="THE">THE (stock)</option>
+                                {partners.map((partner) => (
+                                  <option key={partner.id} value={partner.key}>
+                                    {partner.name} ({partner.key})
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                disabled={assigningLineId === line.id || loadingOrder}
+                                onClick={() => assignLinePartner(String(line.id))}
+                                className="rounded border border-gray-900 bg-gray-900 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-40"
+                              >
+                                {assigningLineId === line.id ? "…" : "Assign"}
+                              </button>
+                            </div>
                           </div>
                         </div>
                         <div className="text-right shrink-0">

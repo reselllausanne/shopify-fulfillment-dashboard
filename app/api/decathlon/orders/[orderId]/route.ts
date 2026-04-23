@@ -5,6 +5,7 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
+import { buildDecathlonLineStockHints } from "@/decathlon/orders/gtinStockHints";
 import {
   canPartnerAccessDecathlonOrder,
   filterDecathlonLinesForPartner,
@@ -66,14 +67,20 @@ export async function GET(
       scope === "partner" && partnerKey
         ? filterDecathlonLinesForPartner(orderWithMatches.lines ?? [], orderWithMatches, partnerKey)
         : orderWithMatches.lines ?? [];
-    const [kickdbByLineId, catalogByLineId] = await Promise.all([
+    const [kickdbByLineId, catalogByLineId, partnerRows] = await Promise.all([
       enrichDecathlonOrderLinesWithKickdb(lines),
       enrichDecathlonOrderLinesWithSupplierCatalog(lines),
+      prisma.partner.findMany({ where: { active: true }, select: { key: true } }),
     ]);
+    const stockHintsByLineId = await buildDecathlonLineStockHints(
+      lines,
+      partnerRows.map((row) => row.key)
+    );
     const linesEnriched = lines.map((line: { id: string }) => ({
       ...line,
       kickdb: kickdbByLineId.get(line.id) ?? null,
       catalog: catalogByLineId.get(line.id) ?? null,
+      stockHints: stockHintsByLineId.get(line.id) ?? [],
     }));
 
     const byStockxLineId = new Map(stockxMatches.map((m) => [String(m.decathlonOrderLineId), m]));

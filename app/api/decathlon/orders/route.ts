@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
@@ -16,7 +15,8 @@ export async function GET(request: NextRequest) {
     const view = String(searchParams.get("view") ?? "active").trim();
     const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
     const productSearch = String(searchParams.get("product") ?? "").trim();
-    let where: Prisma.DecathlonOrderWhereInput = {};
+    const prismaAny = prisma as any;
+    let where: any = {};
     let sessionPartnerKey: string | null = null;
     let partnerOfferPrefix: string | null = null;
     if (scope === "partner") {
@@ -32,6 +32,7 @@ export async function GET(request: NextRequest) {
       partnerOfferPrefix = keyPrefix;
       where.OR = [
         { partnerKey: sessionPartnerKey },
+        { lines: { some: { partnerKey: sessionPartnerKey } } },
         { lines: { some: { offerSku: { startsWith: keyPrefix } } } },
       ];
     }
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (productSearch.length > 0) {
-      const byLineName: Prisma.DecathlonOrderWhereInput = {
+      const byLineName = {
         lines: {
           some: {
             OR: [
@@ -64,19 +65,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const orders = await prisma.decathlonOrder.findMany({
+    const orders = await prismaAny.decathlonOrder.findMany({
       where,
       orderBy: { orderDate: "desc" },
       take: limit,
       skip: offset,
       include: {
         _count: { select: { lines: true, shipments: true } },
-        lines: { select: { id: true, quantity: true, offerSku: true, providerKey: true } },
+        lines: { select: { id: true, quantity: true, offerSku: true, providerKey: true, partnerKey: true } },
         shipments: { select: { shippedAt: true, lines: { select: { orderLineId: true, quantity: true } } } },
       },
     });
     const [matchRows, partnerRows] = await Promise.all([
-      prisma.decathlonStockxMatch.findMany({
+      prismaAny.decathlonStockxMatch.findMany({
         select: {
           decathlonOrderLineId: true,
           stockxOrderNumber: true,
@@ -84,12 +85,14 @@ export async function GET(request: NextRequest) {
           stockxChainId: true,
         },
       }),
-      prisma.partner.findMany({
+      prismaAny.partner.findMany({
         where: { active: true },
         select: { key: true },
       }),
     ]);
-    const partnerKeysForMatch = partnerRows.map((p) => String(p.key ?? "").trim()).filter(Boolean);
+    const partnerKeysForMatch = partnerRows
+      .map((row: { key?: string | null }) => String(row.key ?? "").trim())
+      .filter(Boolean);
 
     const stockxLinkedLineIds = new Set<string>();
     for (const row of matchRows) {
@@ -104,8 +107,10 @@ export async function GET(request: NextRequest) {
       id: string;
       offerSku?: string | null;
       providerKey?: string | null;
+      partnerKey?: string | null;
     }) => {
       if (stockxLinkedLineIds.has(line.id)) return true;
+      if (normalizeProviderKey(line.partnerKey)) return true;
       return (
         partnerKeysForMatch.length > 0 &&
         partnerKeyMatchingLineOffer(
@@ -118,7 +123,11 @@ export async function GET(request: NextRequest) {
       const lines = Array.isArray(order.lines) ? order.lines : [];
       const prefix = (partnerOfferPrefix ?? "").toUpperCase();
       let metricsLines = partnerOfferPrefix
-        ? lines.filter((line: any) => String(line.offerSku ?? "").toUpperCase().startsWith(prefix))
+        ? lines.filter((line: any) => {
+            const linePartnerKey = normalizeProviderKey(line.partnerKey);
+            if (linePartnerKey && sessionPartnerKey && linePartnerKey === sessionPartnerKey) return true;
+            return String(line.offerSku ?? "").toUpperCase().startsWith(prefix);
+          })
         : lines;
       // Whole-order assignment: partner key matches but line SKUs may not use the partner_ prefix yet.
       if (

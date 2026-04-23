@@ -53,6 +53,12 @@ export function isShopifyFinancialRefunded(displayFinancialStatus: string | null
   return displayFinancialStatus.toUpperCase().includes("REFUND");
 }
 
+/** Liquidation convention: "%" at end of title only (not e.g. "100% cotton" mid-string). */
+export function isLiquidationShopifyTitle(title: string | null | undefined): boolean {
+  if (!title) return false;
+  return /%\s*$/.test(title.trim());
+}
+
 export interface MatchCandidate {
   supplierOrder: NormalizedSupplierOrder;
   score: number;
@@ -538,7 +544,7 @@ export function matchShopifyToSupplier(
 ): MatchResult {
   // Check exclusions
   const isExcluded = EXCLUDED_SKUS.includes(shopifyItem.sku || "");
-  const isLiquidation = /%/.test(shopifyItem.title); // More robust: % anywhere
+  const isLiquidation = isLiquidationShopifyTitle(shopifyItem.title);
 
   if (isExcluded) {
     console.log(`[AUTO] Essential Hoodie in stock → auto 42 CHF (SKU ${shopifyItem.sku})`);

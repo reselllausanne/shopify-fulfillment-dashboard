@@ -9,6 +9,7 @@ import {
 } from "./pricing";
 
 const DECATHLON_DEFAULT_OFFER_STATE = "11";
+const DECATHLON_MAX_OFFER_PRICE = 10000;
 
 function createRow(): Record<string, string> {
   const row: Record<string, string> = {};
@@ -149,6 +150,18 @@ export function buildOfferCsv(
       recordDecathlonExclusion(summary, {
         reason: "MISSING_PRICE",
         message: "Missing buy now price",
+        fileType: "offers",
+        providerKey: candidate.providerKey,
+        supplierVariantId: variant?.supplierVariantId ?? null,
+        gtin: candidate.gtin,
+      });
+      continue;
+    }
+    const priceValue = Number(price);
+    if (Number.isFinite(priceValue) && priceValue > DECATHLON_MAX_OFFER_PRICE) {
+      recordDecathlonExclusion(summary, {
+        reason: "MISSING_PRICE",
+        message: `Price exceeds ${DECATHLON_MAX_OFFER_PRICE}`,
         fileType: "offers",
         providerKey: candidate.providerKey,
         supplierVariantId: variant?.supplierVariantId ?? null,

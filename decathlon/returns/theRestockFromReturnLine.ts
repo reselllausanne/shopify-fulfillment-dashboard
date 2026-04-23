@@ -211,7 +211,7 @@ export async function applyReturnRestock(params: {
       : Number(target.price ?? 0);
   const restockPrice =
     isStxReturn && priceBase > 0
-      ? roundToCents(priceBase * 0.88)
+      ? roundToCents(priceBase * 0.52)
       : priceBase > 0
         ? roundToCents(priceBase)
         : null;

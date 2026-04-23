@@ -59,17 +59,19 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Missing SSCC package id" }, { status: 400 });
     }
 
-    const orderNumberCandidates = [
-      shipment.order.orderNumber ?? shipment.order.galaxusOrderId,
-      ...(shipment.items ?? []).map(
-        (item) => item.order?.orderNumber ?? item.order?.galaxusOrderId
-      ),
-    ];
-    const orderNumbers = Array.from(
+    const itemOrderNumbers = Array.from(
       new Set(
-        orderNumberCandidates.filter((v): v is string => typeof v === "string" && v.length > 0)
+        (shipment.items ?? [])
+          .map((item) => item.order?.orderNumber ?? item.order?.galaxusOrderId)
+          .filter((v): v is string => typeof v === "string" && v.length > 0)
       )
     );
+    const orderNumbers =
+      itemOrderNumbers.length > 0
+        ? itemOrderNumbers
+        : [shipment.order.orderNumber ?? shipment.order.galaxusOrderId].filter(
+            (v): v is string => typeof v === "string" && v.length > 0
+          );
     const label = await generateSsccLabelPdf(shipment.order, shipment.packageId, {
       shipmentId: shipment.dispatchNotificationId ?? shipment.shipmentId ?? shipment.order.galaxusOrderId,
       orderNumbers,

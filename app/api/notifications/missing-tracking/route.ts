@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { EXCLUDED_SKUS } from "@/app/utils/matching";
+import { EXCLUDED_SKUS, isLiquidationShopifyTitle } from "@/app/utils/matching";
 
 export const runtime = "nodejs";
 
@@ -23,7 +23,7 @@ const CRITICAL_AGE_DAYS = 9;
 
 const isExcludedNoTracking = (sku: string | null, title: string) => {
   if (sku && EXCLUDED_SKUS.includes(sku)) return true;
-  if (/%/.test(title)) return true; // liquidation
+  if (isLiquidationShopifyTitle(title)) return true;
   if (/liquidation/i.test(title)) return true;
   return false;
 };

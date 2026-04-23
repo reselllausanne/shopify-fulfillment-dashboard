@@ -1532,6 +1532,7 @@ model DecathlonOrderLine {
   gtin            String?
   providerKey     String?
   supplierSku     String?
+  partnerKey      String?
   quantity        Int
   unitPrice       Decimal? @db.Decimal(10, 2)
   lineTotal       Decimal? @db.Decimal(10, 2)
@@ -1547,6 +1548,7 @@ model DecathlonOrderLine {
 
   @@index([orderId])
   @@index([offerSku])
+  @@index([partnerKey])
   @@schema("public")
 }
 

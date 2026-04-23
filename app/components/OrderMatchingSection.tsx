@@ -1,6 +1,6 @@
 import React from "react";
 import type { MatchResult, ShopifyLineItem } from "@/app/utils/matching";
-import { isShopifyFinancialRefunded } from "@/app/utils/matching";
+import { isShopifyFinancialRefunded, isLiquidationShopifyTitle } from "@/app/utils/matching";
 import type { PricingResult, OrderNode } from "@/app/types";
 
 type Props = {
@@ -95,7 +95,7 @@ export default function OrderMatchingSection({
             const shopify = result.shopifyItem;
             const match = result.bestMatch;
             const isRefunded = isShopifyFinancialRefunded(shopify.displayFinancialStatus);
-            const isLiquidation = /%/.test(shopify.title);
+            const isLiquidation = isLiquidationShopifyTitle(shopify.title);
             const isEssentialHoodie = false; // Already handled upstream; keep UI minimal here
 
             return (
