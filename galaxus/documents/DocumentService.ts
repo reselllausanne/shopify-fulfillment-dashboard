@@ -359,12 +359,6 @@ export class DocumentService {
 }
 
 function buildSupplier(): Company {
-  const uniqueOrderNumbers = Array.from(
-    new Set(groups.map((group) => String(group.orderNumber ?? "").trim()).filter(Boolean))
-  );
-  const orderReference =
-    uniqueOrderNumbers.length === 1 ? uniqueOrderNumbers[0] : anchor.orderNumber ?? anchor.galaxusOrderId;
-
   return {
     name: GALAXUS_SUPPLIER_NAME,
     addressLines: GALAXUS_SUPPLIER_ADDRESS_LINES,
@@ -598,6 +592,11 @@ function buildCompositeDeliveryNoteDataFromItems(
       lines,
     });
   }
+  const uniqueOrderNumbers = Array.from(
+    new Set(groups.map((group) => String(group.orderNumber ?? "").trim()).filter(Boolean))
+  );
+  const orderReference =
+    uniqueOrderNumbers.length === 1 ? uniqueOrderNumbers[0] : anchor.orderNumber ?? anchor.galaxusOrderId;
 
   return {
     shipmentId: shipmentState.shipmentId,
