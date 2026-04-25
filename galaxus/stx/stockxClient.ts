@@ -1,5 +1,6 @@
 import { DEFAULT_QUERY } from "@/app/lib/constants";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
+import { readStockxSessionHeaders } from "@/lib/stockxSessionCookies";
 
 export type StockxBuyingNode = {
   chainId: string | null;
@@ -381,7 +382,8 @@ async function callStockx<T>(
 ): Promise<T> {
   const maxAttempts = 6;
   const body = JSON.stringify({ operationName, query, variables });
-  const headers = {
+  const sessionHeaders = await readStockxSessionHeaders();
+  const headers: Record<string, string> = {
     "content-type": "application/json",
     authorization: `Bearer ${token}`,
     origin: "https://stockx.com",
@@ -392,6 +394,15 @@ async function callStockx<T>(
     "app-version": "2026.01.11.01",
     "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0)",
   };
+  if (sessionHeaders?.cookie) {
+    headers.cookie = sessionHeaders.cookie;
+  }
+  if (sessionHeaders?.deviceId) {
+    headers["x-stockx-device-id"] = sessionHeaders.deviceId;
+  }
+  if (sessionHeaders?.sessionId) {
+    headers["x-stockx-session-id"] = sessionHeaders.sessionId;
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const res = await withStockxRateLimit(() =>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { readStockxSessionHeaders } from "@/lib/stockxSessionCookies";
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,20 +20,32 @@ export async function POST(request: NextRequest) {
 
     // Prepare the request to StockX Pro API
     const url = "https://stockx.com/api/graphql";
+    const sessionHeaders = await readStockxSessionHeaders();
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "authorization": `Bearer ${token}`,
+      "origin": "https://stockx.com",
+      "referer": "https://stockx.com/buying/orders",
+      "apollographql-client-name": "Iron",
+      "apollographql-client-version": "2026.01.11.01",
+      "app-platform": "Iron",
+      "app-version": "2026.01.11.01",
+      // Some intermittent responses come back as HTML (WAF/edge); a stable UA helps.
+      "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0; +https://resell-lausanne.ch)",
+    };
+    if (sessionHeaders?.cookie) {
+      headers.cookie = sessionHeaders.cookie;
+    }
+    if (sessionHeaders?.deviceId) {
+      headers["x-stockx-device-id"] = sessionHeaders.deviceId;
+    }
+    if (sessionHeaders?.sessionId) {
+      headers["x-stockx-session-id"] = sessionHeaders.sessionId;
+    }
+
     const opts: RequestInit = {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "authorization": `Bearer ${token}`,
-        "origin": "https://stockx.com",
-        "referer": "https://stockx.com/buying/orders",
-        "apollographql-client-name": "Iron",
-        "apollographql-client-version": "2026.01.11.01",
-        "app-platform": "Iron",
-        "app-version": "2026.01.11.01",
-        // Some intermittent responses come back as HTML (WAF/edge); a stable UA helps.
-        "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0; +https://resell-lausanne.ch)",
-      },
+      headers,
       body: JSON.stringify({
         operationName,
         query,
@@ -50,6 +63,9 @@ export async function POST(request: NextRequest) {
       "x-request-id": r.headers.get("x-request-id"),
       "x-stockx-request-id": r.headers.get("x-stockx-request-id"),
       "set-cookie": r.headers.get("set-cookie"),
+      "session-cookie": sessionHeaders?.cookie ? "present" : "missing",
+      "stockx-device-id": sessionHeaders?.deviceId ? "present" : "missing",
+      "stockx-session-id": sessionHeaders?.sessionId ? "present" : "missing",
     };
     const rawHead = raw.slice(0, 1200);
 
