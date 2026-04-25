@@ -18,14 +18,14 @@ export async function POST(request: NextRequest) {
     console.log("[API] Calling StockX with operation:", operationName);
 
     // Prepare the request to StockX Pro API
-    const url = "https://pro.stockx.com/api/graphql";
+    const url = "https://stockx.com/api/graphql";
     const opts: RequestInit = {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "authorization": `Bearer ${token}`,
-        "origin": "https://pro.stockx.com",
-        "referer": "https://pro.stockx.com/purchasing/orders",
+        "origin": "https://stockx.com",
+        "referer": "https://stockx.com/buying/orders",
         "apollographql-client-name": "Iron",
         "apollographql-client-version": "2026.01.11.01",
         "app-platform": "Iron",

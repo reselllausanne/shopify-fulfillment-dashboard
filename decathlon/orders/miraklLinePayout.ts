@@ -15,6 +15,35 @@ function miraklLineRecord(raw: unknown): Record<string, unknown> | null {
   return raw as Record<string, unknown>;
 }
 
+function sumCommissionTaxes(o: Record<string, unknown>): number {
+  let commissionTaxSum = 0;
+  const taxes = o.commission_taxes ?? o.commissionTaxes;
+  if (Array.isArray(taxes)) {
+    for (const t of taxes) {
+      if (t && typeof t === "object") {
+        const a = pickFiniteNumber((t as Record<string, unknown>).amount);
+        if (a != null) commissionTaxSum += a;
+      }
+    }
+  } else {
+    const legacyVat = pickFiniteNumber(o.commission_vat ?? o.commissionVat);
+    if (legacyVat != null) commissionTaxSum = legacyVat;
+  }
+  return commissionTaxSum;
+}
+
+function pickLineTaxes(o: Record<string, unknown>): number | null {
+  const direct = pickFiniteNumber(
+    o.total_taxes ??
+      o.totalTaxes ??
+      o.total_tax ??
+      o.totalTax ??
+      o.total_tax_amount ??
+      o.totalTaxAmount
+  );
+  return direct != null ? direct : null;
+}
+
 /**
  * Full-line seller net amount from Mirakl (all units on the line), or null if the payload has no totals.
  */
@@ -24,24 +53,17 @@ export function decathlonMiraklSellerPayoutLineTotal(raw: unknown): number | nul
   const totalPrice = pickFiniteNumber(o.total_price ?? o.totalPrice);
   const totalCommission = pickFiniteNumber(o.total_commission ?? o.totalCommission);
   if (totalPrice != null && totalCommission != null) {
-    return totalPrice - totalCommission;
+    const lineTaxes = pickLineTaxes(o);
+    if (lineTaxes != null) {
+      return totalPrice - totalCommission - lineTaxes;
+    }
+    const commissionTaxes = sumCommissionTaxes(o);
+    return totalPrice - totalCommission - commissionTaxes;
   }
   const price = pickFiniteNumber(o.price);
   const commissionFee = pickFiniteNumber(o.commission_fee ?? o.commissionFee);
   if (price != null && commissionFee != null) {
-    let commissionTaxSum = 0;
-    const taxes = o.commission_taxes ?? o.commissionTaxes;
-    if (Array.isArray(taxes)) {
-      for (const t of taxes) {
-        if (t && typeof t === "object") {
-          const a = pickFiniteNumber((t as Record<string, unknown>).amount);
-          if (a != null) commissionTaxSum += a;
-        }
-      }
-    } else {
-      const legacyVat = pickFiniteNumber(o.commission_vat ?? o.commissionVat);
-      if (legacyVat != null) commissionTaxSum = legacyVat;
-    }
+    const commissionTaxSum = sumCommissionTaxes(o);
     return price - commissionFee - commissionTaxSum;
   }
   return null;

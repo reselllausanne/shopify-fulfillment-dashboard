@@ -38,7 +38,7 @@ type StockxBuyOrder = {
   } | null;
 };
 
-const STOCKX_PRO_URL = "https://pro.stockx.com/api/graphql";
+const STOCKX_API_URL = "https://stockx.com/api/graphql";
 const STOCKX_RATE_LIMIT_GAP_MS = Number(process.env.STOCKX_RATE_LIMIT_GAP_MS ?? "0");
 const STOCKX_PAGE_GAP_MS = Number(process.env.STOCKX_PAGE_GAP_MS ?? "0");
 const STOCKX_RETRY_429 = ["1", "true", "yes"].includes(
@@ -384,8 +384,8 @@ async function callStockx<T>(
   const headers = {
     "content-type": "application/json",
     authorization: `Bearer ${token}`,
-    origin: "https://pro.stockx.com",
-    referer: "https://pro.stockx.com/purchasing/orders",
+    origin: "https://stockx.com",
+    referer: "https://stockx.com/buying/orders",
     "apollographql-client-name": "Iron",
     "apollographql-client-version": "2026.01.11.01",
     "app-platform": "Iron",
@@ -395,7 +395,7 @@ async function callStockx<T>(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const res = await withStockxRateLimit(() =>
-      fetch(STOCKX_PRO_URL, {
+      fetch(STOCKX_API_URL, {
       method: "POST",
       headers,
       body,

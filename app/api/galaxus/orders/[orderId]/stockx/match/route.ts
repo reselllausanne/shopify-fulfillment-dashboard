@@ -15,11 +15,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const STOCKX_ENDPOINT = "https://pro.stockx.com/api/graphql";
+const STOCKX_ENDPOINT = "https://stockx.com/api/graphql";
 const STOCKX_HEADERS = {
   "content-type": "application/json",
-  origin: "https://pro.stockx.com",
-  referer: "https://pro.stockx.com/purchasing/orders",
+  origin: "https://stockx.com",
+  referer: "https://stockx.com/buying/orders",
   "apollographql-client-name": "Iron",
   "apollographql-client-version": "2026.01.11.01",
   "app-platform": "Iron",

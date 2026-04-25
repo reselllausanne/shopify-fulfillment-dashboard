@@ -284,7 +284,7 @@ export async function POST(req: NextRequest) {
       if (
         !url.includes("stockx.com") &&
         !url.includes("gateway.stockx.com") &&
-        !url.includes("pro.stockx.com")
+        !url.includes("stockx.com")
       ) {
         return;
       }
@@ -305,7 +305,7 @@ export async function POST(req: NextRequest) {
       if (
         !url.includes("stockx.com") &&
         !url.includes("gateway.stockx.com") &&
-        !url.includes("pro.stockx.com")
+        !url.includes("stockx.com")
       ) {
         return;
       }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const GRAPHQL_URL = "https://pro.stockx.com/api/graphql";
+const GRAPHQL_URL = "https://stockx.com/api/graphql";
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,8 +46,8 @@ export async function POST(request: NextRequest) {
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${token}`,
-        origin: "https://pro.stockx.com",
-        referer: "https://pro.stockx.com/purchasing/orders",
+        origin: "https://stockx.com",
+        referer: "https://stockx.com/buying/orders",
       },
       body: JSON.stringify({
         operationName: "PurchasePricing",
