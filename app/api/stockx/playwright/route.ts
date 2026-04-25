@@ -380,6 +380,22 @@ export async function POST(req: NextRequest) {
 
     const start = Date.now();
     let lastKick = 0;
+    const safeEvaluate = async <T>(fn: () => Promise<T>): Promise<T | null> => {
+      try {
+        return await fn();
+      } catch (error: any) {
+        const message = String(error?.message || "");
+        if (
+          message.includes("Execution context was destroyed") ||
+          message.includes("Cannot find context") ||
+          message.includes("has been closed")
+        ) {
+          return null;
+        }
+        throw error;
+      }
+    };
+
     while (!capturedToken && Date.now() - start < maxWaitMs) {
       await page.waitForTimeout(2000);
       if (capturedToken) break;
@@ -394,26 +410,30 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-      const localStorageDump = await page.evaluate(() => {
-        const out: Record<string, string | null> = {};
-        for (const key of Object.keys(localStorage)) {
-          out[key] = localStorage.getItem(key);
-        }
-        return out;
-      });
-      const token = extractTokenFromStorage(localStorageDump);
+      const localStorageDump = await safeEvaluate(() =>
+        page.evaluate(() => {
+          const out: Record<string, string | null> = {};
+          for (const key of Object.keys(localStorage)) {
+            out[key] = localStorage.getItem(key);
+          }
+          return out;
+        })
+      );
+      const token = localStorageDump ? extractTokenFromStorage(localStorageDump) : null;
       if (token) {
         capturedToken = token;
         break;
       }
-      const sessionDump = await page.evaluate(() => {
-        const out: Record<string, string | null> = {};
-        for (const key of Object.keys(sessionStorage)) {
-          out[key] = sessionStorage.getItem(key);
-        }
-        return out;
-      });
-      const sessionToken = extractTokenFromStorage(sessionDump);
+      const sessionDump = await safeEvaluate(() =>
+        page.evaluate(() => {
+          const out: Record<string, string | null> = {};
+          for (const key of Object.keys(sessionStorage)) {
+            out[key] = sessionStorage.getItem(key);
+          }
+          return out;
+        })
+      );
+      const sessionToken = sessionDump ? extractTokenFromStorage(sessionDump) : null;
       if (sessionToken) {
         capturedToken = sessionToken;
         break;
