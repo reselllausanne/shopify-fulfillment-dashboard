@@ -384,6 +384,8 @@ async function callStockx<T>(
   const body = JSON.stringify({ operationName, query, variables });
   const sessionHeaders = await readStockxSessionHeaders();
   const headers: Record<string, string> = {
+    accept: "application/json",
+    "accept-language": "en-US",
     "content-type": "application/json",
     authorization: `Bearer ${token}`,
     origin: "https://stockx.com",
@@ -392,6 +394,8 @@ async function callStockx<T>(
     "apollographql-client-version": "2026.01.11.01",
     "app-platform": "Iron",
     "app-version": "2026.01.11.01",
+    "selected-country": "CH",
+    "x-operation-name": operationName,
     "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0)",
   };
   if (sessionHeaders?.cookie) {

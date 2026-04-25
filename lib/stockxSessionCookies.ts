@@ -67,6 +67,7 @@ export async function readStockxSessionHeaders(): Promise<StockxSessionHeaders |
       if (isExpired(cookie, nowSeconds)) continue;
       if (name === "stockx_device_id") deviceId = value;
       if (name === "stockx_session_id") sessionId = value;
+      if (!sessionId && name === "stockx_session") sessionId = value;
       parts.push(`${name}=${value}`);
     }
 

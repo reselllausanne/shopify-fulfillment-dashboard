@@ -22,6 +22,8 @@ export async function POST(request: NextRequest) {
     const url = "https://stockx.com/api/graphql";
     const sessionHeaders = await readStockxSessionHeaders();
     const headers: Record<string, string> = {
+      accept: "application/json",
+      "accept-language": "en-US",
       "content-type": "application/json",
       "authorization": `Bearer ${token}`,
       "origin": "https://stockx.com",
@@ -30,6 +32,8 @@ export async function POST(request: NextRequest) {
       "apollographql-client-version": "2026.01.11.01",
       "app-platform": "Iron",
       "app-version": "2026.01.11.01",
+      "selected-country": "CH",
+      "x-operation-name": String(operationName || ""),
       // Some intermittent responses come back as HTML (WAF/edge); a stable UA helps.
       "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0; +https://resell-lausanne.ch)",
     };
