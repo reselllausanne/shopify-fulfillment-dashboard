@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { prisma } from "@/app/lib/prisma";
-import { leanBuyOrder } from "@/galaxus/stx/leanBuyOrder";
 import {
   extractStockxVariantId,
   fetchRecentStockxBuyingOrders,
-  fetchStockxBuyOrderDetailsFull,
 } from "@/galaxus/stx/stockxClient";
 import {
   GALAXUS_STOCKX_SESSION_FILE,
@@ -128,99 +126,19 @@ export async function POST(
     });
     const ordersToInspect = orders.slice(0, desiredCount);
 
-    const detailsCache = new Map<string, Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null>();
-    const fetchDetailsCached = async (
-      chainId: string,
-      orderId: string
-    ): Promise<Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null> => {
-      const key = `${chainId}::${orderId}`;
-      if (detailsCache.has(key)) {
-        return detailsCache.get(key) ?? null;
-      }
-      try {
-        const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
-        detailsCache.set(key, details);
-        return details;
-      } catch (error) {
-        detailsCache.set(key, null);
-        throw error;
-      }
-    };
-
-    const prefetchLimiter = createLimiter(6);
-    await Promise.all(
-      ordersToInspect.map((listNode) =>
-        prefetchLimiter(async () => {
-          const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
-          const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
-          if (!stockxOrderId || !chainId) return;
-          try {
-            await fetchDetailsCached(chainId, stockxOrderId);
-          } catch {
-            // ignore fast mode
-          }
-        })
-      )
-    );
-
-    const enrichLimiter = createLimiter(3);
-    const enrichSource = (ordersToInspect as any[]).slice(0, Math.min(ordersToInspect.length, 40));
-    const stockxBuyingOrdersEnriched = await Promise.all(
-      enrichSource.map((listNode) =>
-        enrichLimiter(async () => {
-          const stockxOrderId = typeof listNode.orderId === "string" ? listNode.orderId.trim() : "";
-          const chainId = typeof listNode.chainId === "string" ? listNode.chainId.trim() : "";
-          if (!stockxOrderId || !chainId) {
-            return {
-              orderId: stockxOrderId || null,
-              chainId: chainId || null,
-              orderNumber: (listNode as any)?.orderNumber ?? null,
-              purchaseDate: (listNode as any)?.purchaseDate ?? null,
-              localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
-              details: null,
-              enrichmentError: "missing_order_id",
-            };
-          }
-          try {
-            const details = await fetchDetailsCached(chainId, stockxOrderId);
-            if (!details) {
-              return {
-                orderId: stockxOrderId,
-                chainId,
-                orderNumber: (listNode as any)?.orderNumber ?? null,
-                purchaseDate: (listNode as any)?.purchaseDate ?? null,
-                localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
-                details: null,
-                enrichmentError: "details_failed",
-              };
-            }
-            return {
-              orderId: stockxOrderId,
-              chainId,
-              orderNumber: (listNode as any)?.orderNumber ?? null,
-              purchaseDate: (listNode as any)?.purchaseDate ?? null,
-              localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
-              details: {
-                awb: details.awb ?? null,
-                etaMin: details.etaMin ? details.etaMin.toISOString() : null,
-                etaMax: details.etaMax ? details.etaMax.toISOString() : null,
-                order: leanBuyOrder(details.order),
-              },
-            };
-          } catch (error: any) {
-            return {
-              orderId: stockxOrderId,
-              chainId,
-              orderNumber: (listNode as any)?.orderNumber ?? null,
-              purchaseDate: (listNode as any)?.purchaseDate ?? null,
-              localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
-              details: null,
-              enrichmentError: error?.message ?? "details_failed",
-            };
-          }
-        })
-      )
-    );
+    const stockxBuyingOrdersEnriched = (ordersToInspect as any[]).slice(0, 40).map((listNode) => ({
+      orderId: String(listNode?.orderId ?? "").trim() || null,
+      chainId: String(listNode?.chainId ?? "").trim() || null,
+      orderNumber: (listNode as any)?.orderNumber ?? null,
+      purchaseDate: (listNode as any)?.purchaseDate ?? null,
+      localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
+      details: {
+        awb: null,
+        etaMin: listNode?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null,
+        etaMax: listNode?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null,
+        order: listNode ?? null,
+      },
+    }));
 
     const queue = [...unmatchedTargets];
     const takeNextLineForVariant = (supplierVariantId: string) => {
@@ -259,14 +177,7 @@ export async function POST(
           }
 
           inspectedOrders += 1;
-          const key = `${chainId}::${stockxOrderId}`;
-          const details = detailsCache.get(key) ?? null;
-          if (!details) {
-            errors += 1;
-            return;
-          }
-
-          const variantId = extractStockxVariantId(listNode, details.order);
+          const variantId = extractStockxVariantId(listNode, null);
           if (!variantId) {
             skippedNoVariant += 1;
             return;
@@ -292,12 +203,12 @@ export async function POST(
             return;
           }
 
-          const normalizedEtaMin = details.etaMin ?? details.etaMax ?? null;
-          const normalizedEtaMax = details.etaMax ?? details.etaMin ?? null;
+          const etaMinRaw = listNode?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
+          const etaMaxRaw = listNode?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
+          const normalizedEtaMin = etaMinRaw ?? etaMaxRaw ?? null;
+          const normalizedEtaMax = etaMaxRaw ?? etaMinRaw ?? null;
           if (!normalizedEtaMin || !normalizedEtaMax) {
             missingEta += 1;
-            queue.unshift(target);
-            return;
           }
 
           const lineRow = order.lines.find((l: { id: string }) => l.id === target.lineId);
@@ -326,16 +237,20 @@ export async function POST(
             stockxProductName: String(listNode?.productVariant?.product?.title ?? "").trim() || null,
             stockxSkuKey: String(listNode?.productVariant?.product?.styleId ?? "").trim() || null,
             stockxSizeEU: String(size ?? "").trim() || null,
-            stockxPurchaseDate: details?.order?.created ? new Date(details.order.created) : null,
-            stockxAmount: details?.order?.payment?.settledAmount?.value ?? null,
-            stockxCurrencyCode: details?.order?.payment?.settledAmount?.currency ?? null,
-            stockxStatus: details?.order?.status ?? null,
+            stockxPurchaseDate: listNode?.purchaseDate
+              ? new Date(listNode.purchaseDate)
+              : listNode?.creationDate
+              ? new Date(listNode.creationDate)
+              : null,
+            stockxAmount: listNode?.amount ?? null,
+            stockxCurrencyCode: listNode?.currencyCode ?? null,
+            stockxStatus: listNode?.status ?? listNode?.state?.statusTitle ?? null,
             stockxEstimatedDelivery: normalizedEtaMin,
             stockxLatestEstimatedDelivery: normalizedEtaMax,
-            stockxAwb: details?.awb ?? null,
-            stockxTrackingUrl: details?.order?.shipping?.shipment?.trackingUrl ?? null,
-            stockxCheckoutType: details?.order?.checkoutType ?? null,
-            stockxStates: details?.order?.states ?? null,
+            stockxAwb: null,
+            stockxTrackingUrl: null,
+            stockxCheckoutType: null,
+            stockxStates: listNode?.state ?? null,
             matchConfidence: "high",
             matchScore: 1,
             matchType: "SYNC",

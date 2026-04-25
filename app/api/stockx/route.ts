@@ -43,10 +43,20 @@ export async function POST(request: NextRequest) {
     const r = await fetch(url, opts);
     const raw = await r.text();
 
+    const debugHeaders = {
+      "content-type": r.headers.get("content-type"),
+      "cf-ray": r.headers.get("cf-ray"),
+      "cf-cache-status": r.headers.get("cf-cache-status"),
+      "x-request-id": r.headers.get("x-request-id"),
+      "x-stockx-request-id": r.headers.get("x-stockx-request-id"),
+      "set-cookie": r.headers.get("set-cookie"),
+    };
+    const rawHead = raw.slice(0, 1200);
+
     if (debug) {
       console.log("stockx status", r.status);
-      console.log("content-type", r.headers.get("content-type"));
-      console.log("raw head", raw.slice(0, 300));
+      console.log("headers", debugHeaders);
+      console.log("raw head", rawHead);
     } else {
       console.log("[API] StockX response status:", r.status);
     }
@@ -60,11 +70,19 @@ export async function POST(request: NextRequest) {
       console.error("[API] Failed to parse StockX response:", parseError.message);
       console.error("stockx status", r.status);
       console.error("content-type", r.headers.get("content-type"));
-      console.error("raw head", raw.slice(0, 300));
+      console.error("headers", debugHeaders);
+      console.error("raw head", rawHead);
       return NextResponse.json(
         {
           error: "Invalid JSON response from StockX",
-          details: `StockX non-JSON or truncated. status=${r.status} raw_head=${raw.slice(0, 300)}`,
+          details: `StockX non-JSON or truncated. status=${r.status} raw_head=${rawHead}`,
+          debug: {
+            status: r.status,
+            statusText: r.statusText,
+            rawLength: raw.length,
+            rawHead,
+            headers: debugHeaders,
+          },
         },
         { status: 502 }
       );
