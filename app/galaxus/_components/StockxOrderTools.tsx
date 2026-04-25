@@ -43,7 +43,7 @@ export function StockxOrderTools({
           forceLogin: false,
           headless: false,
           browser: "firefox",
-          persistent: true,
+          persistent: false,
           maxWaitMs: 120000,
           waitForUserClose: false,
           autoNavigate: false,

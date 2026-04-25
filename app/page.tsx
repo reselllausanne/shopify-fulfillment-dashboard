@@ -522,7 +522,9 @@ export default function Home() {
           headless: false,
           forceLogin: false,
           browser: "chromium",
-          persistent: true,
+          persistent: false,
+          sessionFile: ".data/stockx-session.json",
+          tokenFile: ".data/stockx-token.json",
         }),
       });
       const json = await res.json().catch(() => ({}));
