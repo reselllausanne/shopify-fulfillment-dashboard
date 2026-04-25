@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
     let forceLogin = Boolean(body?.forceLogin ?? false);
     const waitForUserClose = Boolean(body?.waitForUserClose ?? false);
     const waitForCloseMs = Math.min(Number(body?.waitForCloseMs || 120000), 600000);
-    const autoNavigate = Boolean(body?.autoNavigate ?? true);
+    const autoNavigate = Boolean(body?.autoNavigate ?? false);
     const startUrl = String(body?.startUrl || "https://stockx.com/login");
     const reuseTokenFile = Boolean(body?.reuseTokenFile ?? true);
     const persistent = Boolean(body?.persistent ?? false);
