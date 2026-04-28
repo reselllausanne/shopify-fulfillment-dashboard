@@ -1,6 +1,13 @@
-import { DEFAULT_QUERY } from "@/app/lib/constants";
+import fs from "node:fs/promises";
+import path from "node:path";
+import {
+  DEFAULT_QUERY,
+  STOCKX_GET_BUY_ORDER_OPERATION_NAME,
+  STOCKX_GET_BUY_ORDER_PERSISTED_HASH,
+  STOCKX_PERSISTED_OPERATION_NAME,
+  STOCKX_PERSISTED_QUERY_HASH,
+} from "@/app/lib/constants";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
-import { readStockxSessionHeaders } from "@/lib/stockxSessionCookies";
 
 export type StockxBuyingNode = {
   chainId: string | null;
@@ -39,7 +46,12 @@ type StockxBuyOrder = {
   } | null;
 };
 
-const STOCKX_API_URL = "https://stockx.com/api/graphql";
+const STOCKX_GATEWAY_URL = "https://gateway.stockx.com/api/graphql";
+const STOCKX_WEB_URL = "https://stockx.com/api/graphql";
+const STOCKX_PRO_URL = "https://pro.stockx.com/api/graphql";
+const STOCKX_SESSION_META_FILE = path.join(process.cwd(), ".data", "stockx-session-meta.json");
+const STOCKX_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 const STOCKX_RATE_LIMIT_GAP_MS = Number(process.env.STOCKX_RATE_LIMIT_GAP_MS ?? "0");
 const STOCKX_PAGE_GAP_MS = Number(process.env.STOCKX_PAGE_GAP_MS ?? "0");
 const STOCKX_RETRY_429 = ["1", "true", "yes"].includes(
@@ -47,6 +59,12 @@ const STOCKX_RETRY_429 = ["1", "true", "yes"].includes(
 );
 let stockxQueue = Promise.resolve();
 let stockxLastCallAt = 0;
+
+type StockxSessionMeta = {
+  deviceId?: string | null;
+  sessionId?: string | null;
+  cookieHeader?: string | null;
+};
 
 function stockxNonJsonErrorDetail(res: Response, raw: string, operationName: string): string {
   const ct = (res.headers.get("content-type") ?? "").trim() || "none";
@@ -68,6 +86,16 @@ function stockxNonJsonErrorDetail(res: Response, raw: string, operationName: str
     return `HTML response (login/WAF/captcha), not GraphQL JSON; content-type=${ct}; op=${operationName}.${authHint}${rateHint}`;
   }
   return `content-type=${ct}; op=${operationName}; body≈ ${snippet || "(whitespace only)"}${authHint}${rateHint}`;
+}
+
+async function readStockxSessionMeta(): Promise<StockxSessionMeta | null> {
+  try {
+    const raw = await fs.readFile(STOCKX_SESSION_META_FILE, "utf8");
+    const parsed = JSON.parse(raw) as StockxSessionMeta;
+    return parsed ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function sleepMs(ms: number): Promise<void> {
@@ -374,15 +402,43 @@ const GET_BUY_ORDER_QUERY = `
   }
 `;
 
+type StockxCallOptions = {
+  url?: string;
+  includeQuery?: boolean;
+  extensions?: Record<string, unknown>;
+  headers?: Record<string, string>;
+};
+
 async function callStockx<T>(
   token: string,
   operationName: string,
   query: string,
-  variables: Record<string, unknown>
+  variables: Record<string, unknown>,
+  options?: StockxCallOptions
 ): Promise<T> {
   const maxAttempts = 6;
-  const body = JSON.stringify({ operationName, query, variables });
-  const sessionHeaders = await readStockxSessionHeaders();
+  const payload: Record<string, unknown> = { operationName, variables };
+  if (options?.includeQuery !== false) {
+    payload.query = query;
+  }
+  if (options?.extensions && typeof options.extensions === "object") {
+    payload.extensions = options.extensions;
+  }
+  const body = JSON.stringify(payload);
+  const session = await readStockxSessionMeta();
+  const sessionDeviceId =
+    typeof session?.deviceId === "string" && session.deviceId.trim()
+      ? session.deviceId.trim()
+      : "";
+  const sessionId =
+    typeof session?.sessionId === "string" && session.sessionId.trim()
+      ? session.sessionId.trim()
+      : "";
+  const cookieFromSession =
+    typeof session?.cookieHeader === "string" && session.cookieHeader.trim()
+      ? session.cookieHeader.trim()
+      : "";
+
   const headers: Record<string, string> = {
     accept: "application/json",
     "accept-language": "en-US",
@@ -391,26 +447,29 @@ async function callStockx<T>(
     origin: "https://stockx.com",
     referer: "https://stockx.com/buying/orders",
     "apollographql-client-name": "Iron",
-    "apollographql-client-version": "2026.01.11.01",
+    "apollographql-client-version": "2026.04.19.00",
     "app-platform": "Iron",
-    "app-version": "2026.01.11.01",
+    "app-version": "2026.04.19.00",
     "selected-country": "CH",
     "x-operation-name": operationName,
-    "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0)",
+    "user-agent": STOCKX_USER_AGENT,
   };
-  if (sessionHeaders?.cookie) {
-    headers.cookie = sessionHeaders.cookie;
+  if (sessionDeviceId) headers["x-stockx-device-id"] = sessionDeviceId;
+  if (sessionId) headers["x-stockx-session-id"] = sessionId;
+  if (cookieFromSession) {
+    headers.cookie = cookieFromSession;
+  } else if (token) {
+    const cookieParts = [`token=${token}`];
+    if (sessionDeviceId) cookieParts.push(`stockx_device_id=${sessionDeviceId}`);
+    if (sessionId) cookieParts.push(`stockx_session_id=${sessionId}`);
+    headers.cookie = cookieParts.join("; ");
   }
-  if (sessionHeaders?.deviceId) {
-    headers["x-stockx-device-id"] = sessionHeaders.deviceId;
-  }
-  if (sessionHeaders?.sessionId) {
-    headers["x-stockx-session-id"] = sessionHeaders.sessionId;
-  }
+  Object.assign(headers, options?.headers ?? {});
+  const url = options?.url || STOCKX_WEB_URL;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const res = await withStockxRateLimit(() =>
-      fetch(STOCKX_API_URL, {
+      fetch(url, {
       method: "POST",
       headers,
       body,
@@ -491,28 +550,91 @@ export async function fetchRecentStockxBuyingOrders(
   const first = Math.max(1, Math.min(options?.first ?? 50, 100));
   const maxPages = Math.max(1, options?.maxPages ?? 4);
   const out: StockxBuyingNode[] = [];
+  const seen = new Set<string>();
   let after = "";
+  let lastCursor = "";
   /** `undefined` → PENDING; explicit `null` = any buying state (used when searching by order #). */
   const stateForQuery = options?.state === undefined ? "PENDING" : options.state;
+  const queryFilter =
+    typeof options?.query === "string" && options.query.trim().length > 0
+      ? options.query.trim()
+      : null;
+  const useLegacyBuyingQuery = Boolean(queryFilter);
 
   for (let page = 0; page < maxPages; page += 1) {
     if (page > 0 && Number.isFinite(STOCKX_PAGE_GAP_MS) && STOCKX_PAGE_GAP_MS > 0) {
       await sleepMs(STOCKX_PAGE_GAP_MS);
     }
-    const response = await callStockx<any>(token, "Buying", DEFAULT_QUERY, {
-      first,
-      after,
-      currencyCode: "CHF",
-      query: options?.query ?? null,
-      state: stateForQuery,
-      sort: "MATCHED_AT",
-      order: "DESC",
-    });
+    const response = useLegacyBuyingQuery
+      ? await callStockx<any>(
+          token,
+          "Buying",
+          DEFAULT_QUERY,
+          {
+            first,
+            after,
+            currencyCode: "CHF",
+            query: queryFilter,
+            state: stateForQuery,
+            sort: "MATCHED_AT",
+            order: "DESC",
+          },
+          {
+            url: STOCKX_PRO_URL,
+            includeQuery: true,
+            headers: {
+              origin: "https://pro.stockx.com",
+              referer: "https://pro.stockx.com/purchasing/orders",
+              "x-operation-name": "Buying",
+            },
+          }
+        )
+      : await callStockx<any>(
+          token,
+          STOCKX_PERSISTED_OPERATION_NAME,
+          "",
+          {
+            first,
+            after,
+            state: stateForQuery ?? "PENDING",
+            sort: "MATCHED_AT",
+            order: "DESC",
+            currencyCode: "CHF",
+            market: "CH",
+            country: "CH",
+          },
+          {
+            url: STOCKX_GATEWAY_URL,
+            includeQuery: false,
+            extensions: {
+              persistedQuery: {
+                version: 1,
+                sha256Hash: STOCKX_PERSISTED_QUERY_HASH,
+              },
+            },
+            headers: {
+              origin: "https://stockx.com",
+              referer: "https://stockx.com/buying/orders",
+              "x-operation-name": STOCKX_PERSISTED_OPERATION_NAME,
+              "selected-country": "CH",
+              "apollographql-client-name": "Iron",
+              "apollographql-client-version": "2026.04.19.00",
+              "app-platform": "Iron",
+              "app-version": "2026.04.19.00",
+            },
+          }
+        );
     const buying = response?.data?.viewer?.buying;
     const edges = Array.isArray(buying?.edges) ? buying.edges : [];
     for (const edge of edges) {
       const node = edge?.node;
       if (!node) continue;
+      const chainKey = String(node.chainId ?? "").trim();
+      const orderKey = String(node.orderId ?? "").trim();
+      const numberKey = String(node.orderNumber ?? "").trim().toUpperCase();
+      const key = `${chainKey}::${orderKey}::${numberKey}`;
+      if ((chainKey || orderKey || numberKey) && seen.has(key)) continue;
+      if (chainKey || orderKey || numberKey) seen.add(key);
       // Keep the full node payload (but ensure expected root keys exist).
       out.push({
         ...node,
@@ -524,7 +646,8 @@ export async function fetchRecentStockxBuyingOrders(
     const pageInfo = buying?.pageInfo;
     const hasNext = Boolean(pageInfo?.hasNextPage);
     const nextCursor = typeof pageInfo?.endCursor === "string" ? pageInfo.endCursor : "";
-    if (!hasNext || !nextCursor) break;
+    if (!hasNext || !nextCursor || nextCursor === after || nextCursor === lastCursor) break;
+    lastCursor = after;
     after = nextCursor;
   }
 
@@ -592,6 +715,55 @@ export async function findBuyOrderListNodeByOrderNumber(
   return null;
 }
 
+async function fetchStockxBuyOrderPersisted(
+  token: string,
+  params: { chainId: string }
+): Promise<any> {
+  return callStockx<any>(
+    token,
+    STOCKX_GET_BUY_ORDER_OPERATION_NAME,
+    "",
+    {
+      chainId: params.chainId,
+      country: "CH",
+      market: "CH",
+      isShipByDateEnabled: true,
+      isDFSUpdatesEnabled: true,
+    },
+    {
+      url: STOCKX_WEB_URL,
+      includeQuery: false,
+      extensions: {
+        persistedQuery: {
+          version: 1,
+          sha256Hash: STOCKX_GET_BUY_ORDER_PERSISTED_HASH,
+        },
+      },
+      headers: {
+        origin: "https://stockx.com",
+        referer: `https://stockx.com/buying/${encodeURIComponent(params.chainId)}?listingType=STANDARD`,
+        "x-operation-name": STOCKX_GET_BUY_ORDER_OPERATION_NAME,
+        "selected-country": "CH",
+        "apollographql-client-name": "Iron",
+        "apollographql-client-version": "2026.04.19.00",
+        "app-platform": "Iron",
+        "app-version": "2026.04.19.00",
+      },
+    }
+  );
+}
+
+function shouldFallbackToLegacyOrderFetch(
+  order: any,
+  params: { orderId?: string | null }
+): boolean {
+  if (!order) return true;
+  const wanted = String(params.orderId ?? "").trim();
+  if (!wanted) return false;
+  const got = String(order?.id ?? "").trim();
+  return Boolean(got && got !== wanted);
+}
+
 export async function fetchStockxBuyOrderDetails(
   token: string,
   params: { chainId: string; orderId: string }
@@ -601,15 +773,26 @@ export async function fetchStockxBuyOrderDetails(
   etaMin: Date | null;
   etaMax: Date | null;
 }> {
-  const response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_QUERY, {
-    chainId: params.chainId,
-    orderId: params.orderId,
-    country: "CH",
-    market: "CH",
-    isShipByDateEnabled: true,
-    isDFSUpdatesEnabled: true,
-  });
-  const order = (response?.data?.viewer?.order ?? null) as StockxBuyOrder | null;
+  const chainId = String(params.chainId ?? "").trim();
+  const orderId = String(params.orderId ?? "").trim();
+  let response: any = null;
+  try {
+    response = await fetchStockxBuyOrderPersisted(token, { chainId });
+  } catch {
+    response = null;
+  }
+  let order = (response?.data?.viewer?.order ?? null) as StockxBuyOrder | null;
+  if (shouldFallbackToLegacyOrderFetch(order, { orderId })) {
+    response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_QUERY, {
+      chainId,
+      orderId,
+      country: "CH",
+      market: "CH",
+      isShipByDateEnabled: true,
+      isDFSUpdatesEnabled: true,
+    });
+    order = (response?.data?.viewer?.order ?? null) as StockxBuyOrder | null;
+  }
   const trackingUrl = order?.shipping?.shipment?.trackingUrl ?? null;
   const etaMinRaw = order?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
   const etaMaxRaw = order?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
@@ -655,15 +838,30 @@ export async function fetchStockxBuyOrderDetailsFull(
     return null;
   };
 
-  const response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_FULL_QUERY, {
-    chainId: params.chainId,
-    orderId: params.orderId,
-    country: "CH",
-    market: "CH",
-    isShipByDateEnabled: true,
-    isDFSUpdatesEnabled: true,
-  });
-  const order = (response?.data?.viewer?.order ?? null) as any | null;
+  const chainId = String(params.chainId ?? "").trim();
+  const orderId = String(params.orderId ?? "").trim();
+  let response: any = null;
+  try {
+    response = await fetchStockxBuyOrderPersisted(token, { chainId });
+  } catch {
+    response = null;
+  }
+  let order = (response?.data?.viewer?.order ?? null) as any | null;
+  const needsLegacyDetailShape =
+    shouldFallbackToLegacyOrderFetch(order, { orderId }) ||
+    !order?.payment?.settledAmount ||
+    !Array.isArray(order?.states);
+  if (needsLegacyDetailShape) {
+    response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_FULL_QUERY, {
+      chainId,
+      orderId,
+      country: "CH",
+      market: "CH",
+      isShipByDateEnabled: true,
+      isDFSUpdatesEnabled: true,
+    });
+    order = (response?.data?.viewer?.order ?? null) as any | null;
+  }
   const trackingUrl = order?.shipping?.shipment?.trackingUrl ?? null;
   const returnTrackingUrl = order?.shipping?.returnShipment?.trackingUrl ?? null;
   const tradeInvoiceUrl =

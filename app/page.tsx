@@ -12,13 +12,21 @@ import ManualMatchingOverride from "@/app/components/ManualMatchingOverride";
 import DatabaseAutoSync from "@/app/components/DatabaseAutoSync";
 import OrderMatchingSection from "@/app/components/OrderMatchingSection";
 import { type ShopifyLineItem, isShopifyFinancialRefunded } from "./utils/matching";
-import { DEFAULT_QUERY, DEFAULT_VARIABLES } from "@/app/lib/constants";
+import {
+  DEFAULT_QUERY,
+  DEFAULT_VARIABLES,
+  STOCKX_PERSISTED_OPERATION_NAME,
+  STOCKX_PERSISTED_QUERY_HASH,
+  STOCKX_PERSISTED_VARIABLES,
+} from "@/app/lib/constants";
 import type { OrderNode } from "@/app/types";
 import { toNumber } from "@/app/utils/format";
 import { useSupplierOrders } from "@/app/hooks/useSupplierOrders";
 import { exportOrdersToCSV } from "@/app/utils/csv";
 import { useMatching } from "@/app/hooks/useMatching";
 import { getJson, postJson, delJson } from "@/app/lib/api";
+
+const STOCKX_QUERY_CONFIG_STORAGE_KEY = "supplier_stockx_query_config_v1";
 
 export default function Home() {
   const router = useRouter();
@@ -50,19 +58,50 @@ export default function Home() {
     token = token.replace(/^"+|"+$/g, "");
     return token.trim();
   };
+  const syncStockxTokenFromSession = async (options?: { silent?: boolean }) => {
+    try {
+      const res = await fetch("/api/stockx/token", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json?.ok === false || typeof json?.token !== "string") {
+        if (!options?.silent && res.status !== 404) {
+          alert(`⚠️ StockX token sync failed: ${json?.error || `HTTP ${res.status}`}`);
+        }
+        return null as null | { source: string | null; accountMismatch: boolean };
+      }
+      const normalized = normalizeStockxTokenInput(json.token);
+      if (!normalized) {
+        return null;
+      }
+      setStockxToken(normalized);
+      return {
+        source: typeof json?.source === "string" ? json.source : null,
+        accountMismatch: Boolean(json?.accountMismatch),
+      };
+    } catch (error: any) {
+      if (!options?.silent) {
+        alert(`⚠️ StockX token sync error: ${error?.message || "Unknown error"}`);
+      }
+      return null;
+    }
+  };
 
   const [goatCookie, setGoatCookie] = useState("");
   const [goatCsrfToken, setGoatCsrfToken] = useState("");
   const [saveToken, setSaveToken] = useState(false);
+  const [operationName, setOperationName] = useState(STOCKX_PERSISTED_OPERATION_NAME);
+  const [persistedQueryHash, setPersistedQueryHash] = useState(STOCKX_PERSISTED_QUERY_HASH);
   const [query, setQuery] = useState(DEFAULT_QUERY);
-  const [variables, setVariables] = useState(JSON.stringify(DEFAULT_VARIABLES, null, 2));
-  const [stateFilter, setStateFilter] = useState<string>("PENDING");
+  const [variables, setVariables] = useState(JSON.stringify(STOCKX_PERSISTED_VARIABLES, null, 2));
+  const [stateFilter, setStateFilter] = useState<string>(String(DEFAULT_VARIABLES.state || "PENDING"));
+  const [stockxManualPageIndex, setStockxManualPageIndex] = useState(1);
 
   const {
     orders,
     pageInfo,
     lastStatus,
     lastErrors,
+    lastRequestPayload,
+    lastResponsePayload,
     enrichedOrders,
     isEnriching,
     detailsProgress,
@@ -72,12 +111,15 @@ export default function Home() {
     pricingLoading,
     fetchPage,
     handleFetchAllPages,
+    handleEnrichLoadedOrders,
     fetchPricingForOrder,
     fetchAllPricing,
     setOrders,
     setPageInfo,
     setLastStatus,
     setLastErrors,
+    setLastRequestPayload,
+    setLastResponsePayload,
     setEnrichedOrders,
   } = useSupplierOrders();
 
@@ -250,26 +292,78 @@ export default function Home() {
     const savedStockx = localStorage.getItem("supplier_stockx_token");
     const savedGoatCookie = localStorage.getItem("supplier_goat_cookie");
     const savedGoatCsrf = localStorage.getItem("supplier_goat_csrf");
-    if (savedStockx || savedGoatCookie || savedGoatCsrf) {
+    const savedStockxQueryConfig = localStorage.getItem(STOCKX_QUERY_CONFIG_STORAGE_KEY);
+    if (savedStockx) {
       setStockxToken(normalizeStockxTokenInput(savedStockx || ""));
+    }
+    if (savedStockxQueryConfig) {
+      try {
+        const parsed = JSON.parse(savedStockxQueryConfig) as Record<string, unknown>;
+        const parsedHash =
+          typeof parsed.persistedQueryHash === "string" ? parsed.persistedQueryHash : "";
+        if (typeof parsed.operationName === "string" && parsed.operationName.trim()) {
+          const normalizedOp =
+            parsedHash.trim() === STOCKX_PERSISTED_QUERY_HASH
+              ? STOCKX_PERSISTED_OPERATION_NAME
+              : parsed.operationName;
+          setOperationName(normalizedOp);
+        }
+        if (typeof parsedHash === "string") {
+          setPersistedQueryHash(parsedHash);
+        }
+        if (typeof parsed.query === "string") {
+          setQuery(parsed.query);
+        }
+        if (typeof parsed.variables === "string" && parsed.variables.trim()) {
+          setVariables(parsed.variables);
+        }
+        if (typeof parsed.stateFilter === "string") {
+          setStateFilter(parsed.stateFilter);
+        }
+      } catch {
+        // ignore invalid saved query config
+      }
+    }
+    if (savedGoatCookie || savedGoatCsrf) {
       setGoatCookie(savedGoatCookie || "");
       setGoatCsrfToken(savedGoatCsrf || "");
       setSaveToken(true);
     }
+    void syncStockxTokenFromSession({ silent: true });
   }, []);
 
-  // Save/remove credentials from localStorage
+  // Always persist StockX token locally so manual rotation survives refresh.
+  useEffect(() => {
+    const normalized = normalizeStockxTokenInput(stockxToken);
+    if (normalized) {
+      localStorage.setItem("supplier_stockx_token", normalized);
+    } else {
+      localStorage.removeItem("supplier_stockx_token");
+    }
+  }, [stockxToken]);
+
+  // Optional persistence only for GOAT credentials.
   useEffect(() => {
     if (saveToken) {
-      localStorage.setItem("supplier_stockx_token", normalizeStockxTokenInput(stockxToken));
       localStorage.setItem("supplier_goat_cookie", goatCookie);
       localStorage.setItem("supplier_goat_csrf", goatCsrfToken);
     } else {
-      localStorage.removeItem("supplier_stockx_token");
       localStorage.removeItem("supplier_goat_cookie");
       localStorage.removeItem("supplier_goat_csrf");
     }
-  }, [saveToken, stockxToken, goatCookie, goatCsrfToken]);
+  }, [saveToken, goatCookie, goatCsrfToken]);
+
+  // Persist StockX query config so hash/op survives refresh.
+  useEffect(() => {
+    const payload = {
+      operationName,
+      persistedQueryHash,
+      query,
+      variables,
+      stateFilter,
+    };
+    localStorage.setItem(STOCKX_QUERY_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+  }, [operationName, persistedQueryHash, query, variables, stateFilter]);
 
   useEffect(() => {
     loadTrackingAlert();
@@ -284,59 +378,132 @@ export default function Home() {
     }
   };
 
-  const over9TrackingItems = React.useMemo(() => {
+  const over7TrackingItems = React.useMemo(() => {
     if (!trackingAlert?.items) return [];
     return trackingAlert.items.filter((item: any) => {
       const ageDays = typeof item.ageDays === "number" ? item.ageDays : null;
-      return ageDays != null && ageDays > 9;
+      return ageDays != null && ageDays > 7;
     });
   }, [trackingAlert?.items]);
 
+  const resolveActiveStockxToken = () => normalizeStockxTokenInput(stockxToken);
+  const isFetchCurrentBidsMode = (op: string, hash: string) =>
+    String(op || "").trim() === STOCKX_PERSISTED_OPERATION_NAME ||
+    String(hash || "").trim() === STOCKX_PERSISTED_QUERY_HASH;
+  const resolveOperationName = () => {
+    const op = String(operationName || "").trim();
+    const hash = String(persistedQueryHash || "").trim();
+    if (isFetchCurrentBidsMode(op, hash)) return STOCKX_PERSISTED_OPERATION_NAME;
+    return op || STOCKX_PERSISTED_OPERATION_NAME;
+  };
+  const resolveVariablesJSON = (op: string) => {
+    const raw = String(variables || "").trim();
+    if (raw) return raw;
+    return isFetchCurrentBidsMode(op, persistedQueryHash)
+      ? JSON.stringify(STOCKX_PERSISTED_VARIABLES, null, 2)
+      : JSON.stringify(DEFAULT_VARIABLES, null, 2);
+  };
+  const resolvePersistedHash = (op: string) => {
+    const hash = String(persistedQueryHash || "").trim();
+    if (hash) return hash;
+    return isFetchCurrentBidsMode(op, hash) ? STOCKX_PERSISTED_QUERY_HASH : "";
+  };
+  const resolveState = () => String(stateFilter || "").trim() || String(DEFAULT_VARIABLES.state || "PENDING");
+  const isPersistedListOp = (op: string, hash: string) => isFetchCurrentBidsMode(op, hash);
+
   const handleFetchFirstPage = async () => {
-    await fetchPage({
-      token: stockxToken,
+    const op = resolveOperationName();
+    const vars = resolveVariablesJSON(op);
+    const hash = resolvePersistedHash(op);
+    const state = resolveState();
+    const persistedListMode = isPersistedListOp(op, hash);
+    const result = await fetchPage({
+      token: resolveActiveStockxToken(),
+      operationName: op,
       query,
-      variablesJSON: variables,
-      stateFilter,
+      persistedQueryHash: hash,
+      variablesJSON: vars,
+      stateFilter: state,
       cursor: null,
       append: false,
+      stockxPageIndex: persistedListMode ? 1 : null,
     });
+    if (result && persistedListMode) {
+      const usedIndex =
+        typeof (result as any).stockxPageIndexUsed === "number"
+          ? Number((result as any).stockxPageIndexUsed)
+          : 1;
+      setStockxManualPageIndex(usedIndex);
+    }
   };
 
   const handleFetchNextPage = async () => {
     if (pageInfo?.endCursor && pageInfo.hasNextPage) {
-      await fetchPage({
-        token: stockxToken,
+      const op = resolveOperationName();
+      const vars = resolveVariablesJSON(op);
+      const hash = resolvePersistedHash(op);
+      const state = resolveState();
+      const persistedListMode = isPersistedListOp(op, hash);
+      const nextPageIndex = persistedListMode ? stockxManualPageIndex + 1 : null;
+      const result = await fetchPage({
+        token: resolveActiveStockxToken(),
+        operationName: op,
         query,
-        variablesJSON: variables,
-        stateFilter,
+        persistedQueryHash: hash,
+        variablesJSON: vars,
+        stateFilter: state,
         cursor: pageInfo.endCursor,
         append: true,
+        stockxPageIndex: nextPageIndex,
       });
+      if (result && persistedListMode && nextPageIndex != null) {
+        const usedIndex =
+          typeof (result as any).stockxPageIndexUsed === "number"
+            ? Number((result as any).stockxPageIndexUsed)
+            : nextPageIndex;
+        setStockxManualPageIndex(usedIndex);
+      }
     } else {
       alert("No next page available");
     }
   };
 
-  const handleFetchAllPagesWrapper = async () => {
+  const handleFetchAllOrdersWrapper = async () => {
+    const op = resolveOperationName();
+    const vars = resolveVariablesJSON(op);
+    const hash = resolvePersistedHash(op);
+    const state = resolveState();
+    if (isPersistedListOp(op, hash)) {
+      setStockxManualPageIndex(1);
+    }
     await handleFetchAllPages({
-      token: stockxToken,
+      token: resolveActiveStockxToken(),
+      operationName: op,
       query,
-      variablesJSON: variables,
-      stateFilter,
+      persistedQueryHash: hash,
+      variablesJSON: vars,
+      stateFilter: state,
       goatCookie,
       goatCsrfToken,
     });
   };
 
+  const handleEnrichLoadedOrdersWrapper = async () => {
+    await handleEnrichLoadedOrders({ token: resolveActiveStockxToken() });
+  };
+
   const handleFetchAllPricingWrapper = async () => {
-    await fetchAllPricing(stockxToken);
+    await fetchAllPricing(resolveActiveStockxToken());
   };
   const handleClearResults = () => {
     setOrders([]);
+    setEnrichedOrders(null);
     setPageInfo(null);
+    setStockxManualPageIndex(1);
     setLastStatus(null);
     setLastErrors([]);
+    setLastRequestPayload(null);
+    setLastResponsePayload(null);
   };
 
   const handleGoatLogin = async () => {
@@ -520,11 +687,16 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           headless: false,
-          forceLogin: false,
+          forceLogin: true,
           browser: "chromium",
-          persistent: false,
+          persistent: true,
+          autoNavigate: false,
+          waitForUserClose: true,
+          waitForCloseMs: 600000,
           sessionFile: ".data/stockx-session.json",
+          sessionMetaFile: ".data/stockx-session-meta.json",
           tokenFile: ".data/stockx-token.json",
+          reuseTokenFile: true,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -533,9 +705,27 @@ export default function Home() {
         return;
       }
       if (json?.token) {
-        setStockxToken(normalizeStockxTokenInput(json.token));
-        setSaveToken(true);
-        alert("✅ StockX token captured and saved");
+        const capturedToken = normalizeStockxTokenInput(json.token);
+        if (capturedToken) {
+          setStockxToken(capturedToken);
+        }
+        const synced = await syncStockxTokenFromSession({ silent: true });
+        const fallbackNotice = json?.persistentFallback
+          ? "\n⚠️ Persistent browser profile was busy, temporary context used for this login."
+          : "";
+        const syncSource =
+          synced?.source === "session_cookie"
+            ? "session cookie"
+            : synced?.source === "token_file"
+              ? "token file"
+              : "captured token";
+        const mismatchNotice = synced?.accountMismatch
+          ? "\n⚠️ Session cookie token and token file differed. UI uses session cookie token."
+          : "";
+        const captureNotice = `\nDeviceId: ${json?.captured?.deviceId ? "yes" : "no"} | SessionId: ${
+          json?.captured?.sessionId ? "yes" : "no"
+        } | CookieHeader: ${json?.captured?.hasCookieHeader ? "yes" : "no"}`;
+        alert(`✅ StockX token captured and synced (${syncSource})${fallbackNotice}${captureNotice}${mismatchNotice}`);
       } else {
         alert("⚠️ StockX login succeeded but no token found");
       }
@@ -551,7 +741,7 @@ export default function Home() {
   };
 
   const fetchPricingForOrderWrapper = async (order: OrderNode) => {
-    await fetchPricingForOrder(order, stockxToken);
+    await fetchPricingForOrder(order, resolveActiveStockxToken());
   };
 
   // Sync worker removed from UI (no-op placeholder)
@@ -910,13 +1100,13 @@ export default function Home() {
           </nav>
         </div>
 
-        {(over9TrackingItems.length > 0 || trackingAlertError) && (
+        {(over7TrackingItems.length > 0 || trackingAlertError) && (
           <div className="mb-6 space-y-3">
-            {over9TrackingItems.length > 0 && (
+            {over7TrackingItems.length > 0 && (
               <div className="border rounded-lg p-4 bg-yellow-50 border-yellow-200">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold text-yellow-800">
-                    ⚠️ Orders missing tracking more than 9 days old: {over9TrackingItems.length}
+                    ⚠️ Orders missing tracking more than 7 days old: {over7TrackingItems.length}
                   </div>
                   <button
                     onClick={loadTrackingAlert}
@@ -927,7 +1117,7 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="mt-2 space-y-1 text-xs text-yellow-900">
-                  {over9TrackingItems.map((item: any) => (
+                  {over7TrackingItems.map((item: any) => (
                     <div key={item.id} className="flex flex-wrap gap-2">
                       <span className="font-semibold">{item.shopifyOrderName}</span>
                       <span>Ref: {item.stockxOrderNumber}</span>
@@ -996,19 +1186,16 @@ export default function Home() {
         />
 
         <QueryControls
-          query={query}
-          onQueryChange={setQuery}
-          variables={variables}
-          onVariablesChange={setVariables}
-          stateFilter={stateFilter}
-          onStateFilterChange={setStateFilter}
+          persistedQueryHash={persistedQueryHash}
+          onPersistedQueryHashChange={setPersistedQueryHash}
         />
 
         <FetchActions
           onFetchFirst={handleFetchFirstPage}
           onFetchNext={handleFetchNextPage}
-        onFetchAll={handleFetchAllPagesWrapper}
-        onFetchPricing={handleFetchAllPricingWrapper}
+          onFetchAllOrders={handleFetchAllOrdersWrapper}
+          onEnrichLoaded={handleEnrichLoadedOrdersWrapper}
+          onFetchPricing={handleFetchAllPricingWrapper}
           onClear={handleClearResults}
           onExport={handleExportCSV}
           onGoatLogin={handleGoatLogin}
@@ -1030,6 +1217,8 @@ export default function Home() {
           pageInfo={pageInfo}
           ordersCount={orders.length}
           lastErrors={lastErrors}
+          lastRequestPayload={lastRequestPayload}
+          lastResponsePayload={lastResponsePayload}
         />
 
         <ResultsTable

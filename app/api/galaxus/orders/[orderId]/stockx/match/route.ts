@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { DEFAULT_QUERY, DEFAULT_VARIABLES } from "@/app/lib/constants";
 import {
   matchShopifyToSupplier,
   type NormalizedSupplierOrder,
   type ShopifyLineItem,
 } from "@/app/utils/matching";
-import { extractAwbFromTrackingUrl } from "@/app/utils/format";
+import {
+  fetchRecentStockxBuyingOrders,
+  fetchStockxBuyOrderDetailsFull,
+} from "@/galaxus/stx/stockxClient";
 import {
   galaxusLineWarehouseStockHint,
   isGalaxusStxSupplierLine,
@@ -14,111 +16,6 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const STOCKX_ENDPOINT = "https://stockx.com/api/graphql";
-const STOCKX_HEADERS = {
-  "content-type": "application/json",
-  origin: "https://stockx.com",
-  referer: "https://stockx.com/buying/orders",
-  "apollographql-client-name": "Iron",
-  "apollographql-client-version": "2026.01.11.01",
-  "app-platform": "Iron",
-  "app-version": "2026.01.11.01",
-  "user-agent": "Mozilla/5.0 (compatible; ResellLausanneBot/1.0; +https://resell-lausanne.ch)",
-};
-
-const GET_BUY_ORDER_TRACKING_QUERY = `
-  query GET_BUY_ORDER(
-    $chainId: String
-    $orderId: String
-    $country: String
-    $market: String
-    $isShipByDateEnabled: Boolean!
-    $isDFSUpdatesEnabled: Boolean!
-  ) {
-    viewer {
-      order(chainId: $chainId, orderId: $orderId) {
-        ... on BuyOrder {
-          status
-          currentStatus { key }
-          checkoutType
-          states {
-            title
-            subtitle
-            status
-            progress
-            meta
-            sourceType
-          }
-          estimatedDeliveryDateRange {
-            estimatedDeliveryDate
-            latestEstimatedDeliveryDate
-          }
-          shipping {
-            shipment {
-              trackingUrl
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-async function stockxRequest(params: {
-  token: string;
-  operationName: string;
-  query: string;
-  variables: Record<string, any>;
-}) {
-  const res = await fetch(STOCKX_ENDPOINT, {
-    method: "POST",
-    headers: {
-      ...STOCKX_HEADERS,
-      authorization: `Bearer ${params.token}`,
-    },
-    body: JSON.stringify({
-      operationName: params.operationName,
-      query: params.query,
-      variables: params.variables,
-    }),
-  });
-  const raw = await res.text();
-  let data: any = null;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    data = null;
-  }
-  return { ok: res.ok, status: res.status, data, raw };
-}
-
-async function fetchStockxBuyingOrders(token: string, maxPages = 6) {
-  const out: any[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < maxPages; page += 1) {
-    const variables = {
-      ...DEFAULT_VARIABLES,
-      after: cursor,
-    };
-    const res = await stockxRequest({
-      token,
-      operationName: "Buying",
-      query: DEFAULT_QUERY,
-      variables,
-    });
-    if (!res.ok || res.data?.errors?.length) {
-      throw new Error(`StockX buying query failed (${res.status})`);
-    }
-    const edges = res.data?.data?.viewer?.buying?.edges ?? [];
-    const nodes = edges.map((edge: any) => edge?.node).filter(Boolean);
-    out.push(...nodes);
-    const pageInfo = res.data?.data?.viewer?.buying?.pageInfo ?? null;
-    if (!pageInfo?.hasNextPage || !pageInfo?.endCursor) break;
-    cursor = pageInfo.endCursor;
-  }
-  return out;
-}
 
 function normalizeStockxOrder(node: any): NormalizedSupplierOrder {
   const product = node?.productVariant?.product ?? {};
@@ -194,34 +91,22 @@ function computeTimeDiffHours(orderDate: string, purchaseDate: string): number |
 }
 
 async function fetchTrackingDetails(token: string, chainId: string, orderId: string) {
-  const res = await stockxRequest({
-    token,
-    operationName: "GET_BUY_ORDER",
-    query: GET_BUY_ORDER_TRACKING_QUERY,
-    variables: {
-      chainId,
-      orderId,
-      country: "CH",
-      market: "CH",
-      isShipByDateEnabled: true,
-      isDFSUpdatesEnabled: true,
-    },
-  });
-  if (!res.ok || res.data?.errors?.length) {
+  try {
+    const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+    const order = details.order ?? null;
+    if (!order) return null;
+    return {
+      trackingUrl: order?.shipping?.shipment?.trackingUrl ?? null,
+      awb: details.awb ?? null,
+      stockxStatus: order?.currentStatus?.key ?? order?.status ?? null,
+      checkoutType: order?.checkoutType ?? null,
+      states: order?.states ?? null,
+      estimatedDelivery: order?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null,
+      latestEstimatedDelivery: order?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null,
+    };
+  } catch {
     return null;
   }
-  const order = res.data?.data?.viewer?.order ?? null;
-  if (!order) return null;
-  const trackingUrl = order?.shipping?.shipment?.trackingUrl ?? null;
-  return {
-    trackingUrl,
-    awb: extractAwbFromTrackingUrl(trackingUrl),
-    stockxStatus: order?.currentStatus?.key ?? order?.status ?? null,
-    checkoutType: order?.checkoutType ?? null,
-    states: order?.states ?? null,
-    estimatedDelivery: order?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null,
-    latestEstimatedDelivery: order?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null,
-  };
 }
 
 async function resolveOrderId(orderIdOrRef: string) {
@@ -253,7 +138,11 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    const stockxOrdersRaw = await fetchStockxBuyingOrders(token);
+    const stockxOrdersRaw = await fetchRecentStockxBuyingOrders(token, {
+      first: 50,
+      maxPages: 6,
+      state: "PENDING",
+    });
     const normalizedOrders = stockxOrdersRaw.map(normalizeStockxOrder);
 
     const existingMatches = await (prisma as any).galaxusStockxMatch.findMany({

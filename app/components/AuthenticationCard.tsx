@@ -82,9 +82,12 @@ export default function AuthenticationCard({
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
           <label htmlFor="saveToken" className="ml-2 block text-sm text-gray-700">
-            Save credentials locally (localStorage)
+            Save GOAT credentials locally (localStorage)
           </label>
         </div>
+        <p className="text-xs text-gray-500">
+          StockX token is always saved locally; Playwright login auto-refreshes this field, and manual rotation stays available.
+        </p>
       </div>
     </div>
   );
