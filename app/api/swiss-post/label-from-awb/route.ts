@@ -6,6 +6,10 @@ import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import { fetchOrderIdByName, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { requestSwissPostLabel } from "@/lib/swissPost";
+import {
+  getStaffRoleFromRequest,
+  resolveSwissPostFrankingLicenseForRole,
+} from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -261,9 +265,15 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
   };
 }
 
-function buildSwissPostPayload(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>, awb: string) {
+function buildSwissPostPayload(
+  orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>,
+  awb: string,
+  frankingLicenseOverride?: string
+) {
   const language = process.env.SWISS_POST_LANGUAGE || "DE";
-  const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
+  const frankingLicense =
+    String(frankingLicenseOverride || "").trim() ||
+    String(process.env.SWISS_POST_FRANKING_LICENSE || "").trim();
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
   const customerSystem = process.env.SWISS_POST_CUSTOMER_SYSTEM || null;
   const sendingID = process.env.SWISS_POST_SENDING_ID || "";
@@ -364,6 +374,8 @@ function buildSwissPostPayload(orderInfo: Awaited<ReturnType<typeof fetchOrderSh
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+    const staffRole = await getStaffRoleFromRequest(req);
+    const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const awb = normalizeAwb(body?.awb ?? body?.code);
 
     if (!awb) {
@@ -395,7 +407,7 @@ export async function POST(req: NextRequest) {
     }
 
     const orderInfo = await fetchOrderShippingInfo(shopifyOrderId);
-    const payload = buildSwissPostPayload(orderInfo, awb);
+    const payload = buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense);
     console.log("[SWISS POST] payload", payload);
 
     const swissRes = await requestSwissPostLabel(payload);

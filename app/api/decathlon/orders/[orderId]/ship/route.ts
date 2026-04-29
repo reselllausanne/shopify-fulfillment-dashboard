@@ -14,6 +14,10 @@ import { canPartnerAccessDecathlonOrder } from "@/decathlon/orders/partnerLineSc
 import { deductPartnerCatalogStockForDecathlonLines } from "@/galaxus/partners/partnerOrderStock";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
+import {
+  getStaffRoleFromRequest,
+  resolveSwissPostFrankingLicenseForRole,
+} from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -548,9 +552,16 @@ function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: stri
   };
 }
 
-function buildSwissPostPayload(order: any, trackingNumber: string, recipientOverride?: SwissPostRecipient) {
+function buildSwissPostPayload(
+  order: any,
+  trackingNumber: string,
+  recipientOverride?: SwissPostRecipient,
+  frankingLicenseOverride?: string
+) {
   const language = process.env.SWISS_POST_LANGUAGE || "DE";
-  const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
+  const frankingLicense =
+    String(frankingLicenseOverride || "").trim() ||
+    String(process.env.SWISS_POST_FRANKING_LICENSE || "").trim();
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
   const imageResolution = Number(process.env.SWISS_POST_IMAGE_RESOLUTION || 300);
   const notificationServiceCode = Number(process.env.SWISS_POST_NOTIFICATION_SERVICE || 0);
@@ -628,6 +639,8 @@ export async function POST(
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
+    const staffRole = await getStaffRoleFromRequest(request);
+    const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const { orderId } = await params;
     const { searchParams } = new URL(request.url);
     const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
@@ -934,7 +947,12 @@ export async function POST(
       }
     }
 
-    const payload = buildSwissPostPayload(order, trackingNumber, recipient);
+    const payload = buildSwissPostPayload(
+      order,
+      trackingNumber,
+      recipient,
+      selectedFrankingLicense
+    );
     const swissRes = await requestSwissPostLabel(payload);
     if (!swissRes.ok) {
       return NextResponse.json(

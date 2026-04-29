@@ -10,6 +10,10 @@ import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { requestSwissPostLabel } from "@/lib/swissPost";
 import { DocumentType } from "@prisma/client";
+import {
+  getStaffRoleFromRequest,
+  resolveSwissPostFrankingLicenseForRole,
+} from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,9 +83,15 @@ function buildRecipient(order: any) {
   };
 }
 
-function buildSwissPostPayload(order: any, trackingNumber: string) {
+function buildSwissPostPayload(
+  order: any,
+  trackingNumber: string,
+  frankingLicenseOverride?: string
+) {
   const language = process.env.SWISS_POST_LANGUAGE || "DE";
-  const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
+  const frankingLicense =
+    String(frankingLicenseOverride || "").trim() ||
+    String(process.env.SWISS_POST_FRANKING_LICENSE || "").trim();
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
   const imageResolution = Number(process.env.SWISS_POST_IMAGE_RESOLUTION || 300);
   const notificationServiceCode = Number(process.env.SWISS_POST_NOTIFICATION_SERVICE || 0);
@@ -157,6 +167,8 @@ export async function POST(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
+    const staffRole = await getStaffRoleFromRequest(req);
+    const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const session = await getPartnerSession(req);
     if (!session) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -237,7 +249,11 @@ export async function POST(
     if (existingShipping && !forceLabels) {
       shippingLabelUrl = `/api/galaxus/documents/${existingShipping.id}`;
     } else {
-      const payload = buildSwissPostPayload(shipment.order, trackingNumber);
+      const payload = buildSwissPostPayload(
+        shipment.order,
+        trackingNumber,
+        selectedFrankingLicense
+      );
       const swissRes = await requestSwissPostLabel(payload);
       if (!swissRes.ok) {
         return NextResponse.json(

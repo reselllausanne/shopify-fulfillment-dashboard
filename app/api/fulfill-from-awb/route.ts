@@ -14,6 +14,10 @@ import {
   orderHasTrackingNumber,
 } from "@/lib/shopifyFulfillment";
 import { requestSwissPostLabel } from "@/lib/swissPost";
+import {
+  getStaffRoleFromRequest,
+  resolveSwissPostFrankingLicenseForRole,
+} from "@/app/lib/staffAuth";
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -336,10 +340,13 @@ function swissPostLanguageFromOrderLocale(
 
 function buildSwissPostPayload(
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>,
-  awb: string
+  awb: string,
+  frankingLicenseOverride?: string
 ) {
   const language = swissPostLanguageFromOrderLocale(orderInfo?.customerLocale);
-  const frankingLicense = process.env.SWISS_POST_FRANKING_LICENSE || "";
+  const frankingLicense =
+    String(frankingLicenseOverride || "").trim() ||
+    String(process.env.SWISS_POST_FRANKING_LICENSE || "").trim();
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
   const imageResolution = Number(process.env.SWISS_POST_IMAGE_RESOLUTION || 300);
   /**
@@ -467,6 +474,8 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
+    const staffRole = await getStaffRoleFromRequest(req);
+    const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const awb = normalizeAwb(body?.awb ?? body?.code);
     const trackingCompany = body?.trackingCompany ? String(body.trackingCompany).trim() : null;
     const trackingUrlFromBody = body?.trackingUrl ? String(body.trackingUrl).trim() : null;
@@ -661,7 +670,7 @@ export async function POST(req: NextRequest) {
         const payload =
           swissPostPayload && typeof swissPostPayload === "object"
             ? swissPostPayload
-            : buildSwissPostPayload(orderInfo, awb);
+            : buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense);
         console.log("[SWISS POST] payload", payload);
         const swissRes = await withContext("requestSwissPostLabel", () =>
           requestSwissPostLabel(payload)
