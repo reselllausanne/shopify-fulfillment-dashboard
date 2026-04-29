@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { STOCKX_GET_BUY_ORDER_OPERATION_NAME } from "@/app/lib/constants";
 
 type Props = {
   orderId: string | null;
@@ -9,7 +10,10 @@ type Props = {
   /** POST …/orders/:id/<path> — default: stockx/sync (Decathlon), stx/sync (Galaxus). */
   ordersSyncPath?: string;
   sessionFile?: string;
+  sessionMetaFile?: string;
   tokenFile?: string;
+  persistedHashesFile?: string;
+  hashOperationName?: string;
 };
 
 export function StockxOrderTools({
@@ -18,7 +22,10 @@ export function StockxOrderTools({
   apiBasePath = "/api/galaxus",
   ordersSyncPath,
   sessionFile = ".data/stockx-session-galaxus.json",
+  sessionMetaFile = ".data/stockx-session-meta-galaxus.json",
   tokenFile = ".data/stockx-token-galaxus.json",
+  persistedHashesFile = ".data/stockx-persisted-hashes-galaxus.json",
+  hashOperationName = STOCKX_GET_BUY_ORDER_OPERATION_NAME,
 }: Props) {
   const resolvedOrdersSyncPath =
     ordersSyncPath ?? (apiBasePath.includes("decathlon") ? "stockx/sync" : "stx/sync");
@@ -26,6 +33,28 @@ export function StockxOrderTools({
   const [localError, setLocalError] = useState<string | null>(null);
   const [log, setLog] = useState<string | null>(null);
   const [manualToken, setManualToken] = useState<string>("");
+  const [manualHash, setManualHash] = useState<string>("");
+  const [hashLoaded, setHashLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${apiBasePath}/stx/hash`, { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok === false) return;
+        const hash = typeof data?.hash === "string" ? data.hash.trim() : "";
+        if (!cancelled) setManualHash(hash);
+      } catch {
+        // ignore load error; manual entry still possible
+      } finally {
+        if (!cancelled) setHashLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBasePath]);
 
   const after = async () => {
     if (onAfterAction) await onAfterAction();
@@ -43,14 +72,16 @@ export function StockxOrderTools({
           forceLogin: false,
           headless: false,
           browser: "firefox",
-          persistent: false,
+          persistent: true,
           maxWaitMs: 120000,
           waitForUserClose: false,
           autoNavigate: false,
           startUrl: "https://stockx.com/login",
           reuseTokenFile: true,
           sessionFile,
+          sessionMetaFile,
           tokenFile,
+          persistedHashesFile,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -125,6 +156,33 @@ export function StockxOrderTools({
     }
   };
 
+  const saveManualHash = async () => {
+    const hash = manualHash.trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(hash)) {
+      setLocalError("Hash must be 64 hex chars.");
+      return;
+    }
+    setBusy("hash");
+    setLocalError(null);
+    setLog(null);
+    try {
+      const res = await fetch(`${apiBasePath}/stx/hash`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hash, operationName: hashOperationName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) throw new Error(data?.error ?? "Save hash failed");
+      setManualHash(String(data?.hash ?? hash));
+      setLog(`✅ Hash saved (${hashOperationName}).`);
+      await after();
+    } catch (e: any) {
+      setLocalError(e?.message ?? "Save hash failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="rounded border border-amber-200 bg-amber-50/90 p-3 space-y-2">
       <div className="text-sm font-medium text-gray-900">StockX — login &amp; sync</div>
@@ -166,6 +224,26 @@ export function StockxOrderTools({
         >
           {busy === "token" ? "Saving…" : "Save token"}
         </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="text"
+          className="w-full sm:w-[38rem] px-2 py-1 rounded border border-gray-300 text-xs font-mono"
+          placeholder={`Persisted hash (${hashOperationName})`}
+          value={manualHash}
+          onChange={(e) => setManualHash(e.target.value)}
+        />
+        <button
+          type="button"
+          className="px-3 py-2 rounded bg-sky-700 text-white text-xs disabled:opacity-50"
+          onClick={() => void saveManualHash()}
+          disabled={busy !== null}
+        >
+          {busy === "hash" ? "Saving…" : "Save hash"}
+        </button>
+        {!hashLoaded ? (
+          <span className="text-[11px] text-gray-500">Loading hash…</span>
+        ) : null}
       </div>
       {localError ? <div className="text-xs text-red-600">{localError}</div> : null}
       {log ? (

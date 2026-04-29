@@ -11,6 +11,9 @@ import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType, Prisma } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 import { canPartnerAccessDecathlonOrder } from "@/decathlon/orders/partnerLineScope";
+import { deductPartnerCatalogStockForDecathlonLines } from "@/galaxus/partners/partnerOrderStock";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -652,6 +655,11 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
+    /** Same prefix as `SupplierVariant.supplierVariantId` / partner session (e.g. `resell_lausanne`). */
+    const partnerCatalogKeyLower = partnerSession?.partnerKey
+      ? String(partnerSession.partnerKey).trim().toLowerCase()
+      : "";
+
     const body = (await request.json().catch(() => ({}))) as {
       trackingNumber?: string;
       items?: Array<{ lineId?: string; orderLineId?: string; quantity?: number }>;
@@ -842,12 +850,32 @@ export async function POST(
               where: { id: order.id },
               data: { orderState: "SHIPPED" },
             });
+            let partnerCatalogStock: { adjusted: number; details: string[] } | undefined;
+            if (partnerCatalogKeyLower) {
+              const stockRes = await deductPartnerCatalogStockForDecathlonLines({
+                partnerKeyLower: partnerCatalogKeyLower,
+                items: itemsToShip,
+              });
+              partnerCatalogStock = { adjusted: stockRes.adjusted, details: stockRes.details };
+              if (stockRes.adjusted > 0) {
+                const origin = resolveAppOriginForPartnerJobs(new URL(request.url).origin);
+                if (origin) {
+                  await requestFeedPush({
+                    origin,
+                    scope: "full",
+                    triggerSource: "decathlon-partner-ship-reconciled",
+                    runNow: true,
+                  });
+                }
+              }
+            }
             return NextResponse.json({
               ok: true,
               reconciled: true,
               shipmentId: shipment.id,
               trackingNumber: tracking,
               miraklShipmentId: meta.miraklShipmentId,
+              partnerCatalogStock,
               message:
                 "Mirakl order was already SHIPPED; local DB was behind — synced remaining lines without calling Mirakl ship or Swiss Post.",
             });
@@ -1078,6 +1106,26 @@ export async function POST(
       }
     }
 
+    let partnerCatalogStock: { adjusted: number; details: string[] } | undefined;
+    if (partnerCatalogKeyLower) {
+      const stockRes = await deductPartnerCatalogStockForDecathlonLines({
+        partnerKeyLower: partnerCatalogKeyLower,
+        items: itemsToShip,
+      });
+      partnerCatalogStock = { adjusted: stockRes.adjusted, details: stockRes.details };
+      if (stockRes.adjusted > 0) {
+        const origin = resolveAppOriginForPartnerJobs(new URL(request.url).origin);
+        if (origin) {
+          await requestFeedPush({
+            origin,
+            scope: "full",
+            triggerSource: "decathlon-partner-ship",
+            runNow: true,
+          });
+        }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       documentId: document.id,
@@ -1086,6 +1134,7 @@ export async function POST(
       shipmentId: shipment.id,
       miraklShipmentId,
       printJobResult,
+      partnerCatalogStock,
     });
   } catch (error: any) {
     console.error("[DECATHLON][SHIP] Failed:", error);

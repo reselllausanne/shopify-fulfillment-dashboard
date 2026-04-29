@@ -17,7 +17,9 @@ import {
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
 import {
+  GALAXUS_STOCKX_PERSISTED_HASHES_FILE,
   GALAXUS_STOCKX_SESSION_FILE,
+  GALAXUS_STOCKX_SESSION_META_FILE,
   GALAXUS_STOCKX_TOKEN_FILE,
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
@@ -29,6 +31,19 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const GALAXUS_STX_DETAIL_GAP_MS = Math.max(
+  120,
+  Number(process.env.STOCKX_GALAXUS_DETAIL_GAP_MS ?? "260")
+);
+const GALAXUS_STX_DETAIL_CONCURRENCY = Math.max(
+  1,
+  Math.min(3, Number(process.env.STOCKX_GALAXUS_DETAIL_CONCURRENCY ?? "1"))
+);
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function isUnknownCancelledAtArg(error: any): boolean {
   return String(error?.message ?? "").includes("Unknown argument `cancelledAt`");
@@ -130,6 +145,9 @@ export async function POST(
         reserve: reservation,
         sync: {
           fetchedOrders: 0,
+          enrichedOrders: 0,
+          enrichmentFailed: 0,
+          detailCalls: 0,
           inspectedOrders: 0,
           linked: 0,
           alreadyLinked: 0,
@@ -151,9 +169,11 @@ export async function POST(
           error: "Missing Galaxus StockX token file",
           hint: {
             sessionFile: GALAXUS_STOCKX_SESSION_FILE,
+            sessionMetaFile: GALAXUS_STOCKX_SESSION_META_FILE,
             tokenFile: GALAXUS_STOCKX_TOKEN_FILE,
+            persistedHashesFile: GALAXUS_STOCKX_PERSISTED_HASHES_FILE,
             setup:
-              "Call /api/stockx/playwright with {\"sessionFile\":\".data/stockx-session-galaxus.json\",\"tokenFile\":\".data/stockx-token-galaxus.json\",\"forceLogin\":true}",
+              "Call /api/stockx/playwright with {\"sessionFile\":\".data/stockx-session-galaxus.json\",\"sessionMetaFile\":\".data/stockx-session-meta-galaxus.json\",\"tokenFile\":\".data/stockx-token-galaxus.json\",\"persistedHashesFile\":\".data/stockx-persisted-hashes-galaxus.json\",\"forceLogin\":true}",
           },
           reserve: reservation,
           status: initialStatus,
@@ -166,7 +186,7 @@ export async function POST(
     let orders: StockxBuyingNode[] = [];
     let stockxListFetchError: string | null = null;
     try {
-      orders = await fetchRecentStockxBuyingOrders(token, { first: 50, maxPages: 8, state: "PENDING" });
+      orders = await fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: 8, state: "PENDING" });
     } catch (err: any) {
       stockxListFetchError = err?.message ?? String(err);
       console.error("[GALAXUS][STX][SYNC] fetchRecentStockxBuyingOrders failed:", err);
@@ -247,6 +267,44 @@ export async function POST(
     let linkedFromSavedMatches = 0;
     let savedMatchAttempts = 0;
     let savedMatchSkipped = 0;
+    let detailCalls = 0;
+
+    const detailsCache = new Map<string, Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null>();
+    const inflightDetails = new Map<
+      string,
+      Promise<Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null>
+    >();
+    let lastDetailCallAt = 0;
+    const fetchDetailsCached = async (
+      chainId: string,
+      orderId: string
+    ): Promise<Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null> => {
+      const key = `${chainId}::${orderId}`;
+      if (detailsCache.has(key)) return detailsCache.get(key) ?? null;
+      const pending = inflightDetails.get(key);
+      if (pending) return pending;
+      const task = (async () => {
+        try {
+          if (GALAXUS_STX_DETAIL_GAP_MS > 0) {
+            const now = Date.now();
+            const waitMs = GALAXUS_STX_DETAIL_GAP_MS - (now - lastDetailCallAt);
+            if (waitMs > 0) await sleepMs(waitMs);
+            lastDetailCallAt = Date.now();
+          }
+          detailCalls += 1;
+          const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+          detailsCache.set(key, details);
+          return details;
+        } catch {
+          detailsCache.set(key, null);
+          return null;
+        } finally {
+          inflightDetails.delete(key);
+        }
+      })();
+      inflightDetails.set(key, task);
+      return task;
+    };
 
     /** Link `StxPurchaseUnit` rows using chain/order (or order # lookup) already stored on `GalaxusStockxMatch` from manual save — the PENDING feed alone never sees shipped buys. */
     const galaxusOrderRow = await resolveGalaxusOrderByIdOrRef(orderId);
@@ -254,7 +312,6 @@ export async function POST(
       const savedMatches = await prismaAny.galaxusStockxMatch.findMany({
         where: { galaxusOrderId: galaxusOrderRow.id },
       });
-      const detailsCache = new Map<string, Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>>();
 
       for (const match of savedMatches) {
         savedMatchAttempts += 1;
@@ -286,20 +343,12 @@ export async function POST(
         }
 
         const buyKey = `${chainId}::${buyOrderId}`;
-        let details = detailsCache.get(buyKey);
+        const details = await fetchDetailsCached(chainId, buyOrderId);
         if (!details) {
-          try {
-            details = await fetchStockxBuyOrderDetailsFull(token, {
-              chainId,
-              orderId: buyOrderId,
-            });
-            detailsCache.set(buyKey, details);
-          } catch (e: any) {
-            errors += 1;
-            console.error("[GALAXUS][STX][SYNC][SAVED_MATCH_FETCH]", buyKey, e?.message);
-            savedMatchSkipped += 1;
-            continue;
-          }
+          errors += 1;
+          console.error("[GALAXUS][STX][SYNC][SAVED_MATCH_FETCH]", buyKey, "details_failed");
+          savedMatchSkipped += 1;
+          continue;
         }
 
         const variantFromBuy = extractStockxVariantId(null, details.order);
@@ -427,8 +476,8 @@ export async function POST(
       }
     }
 
-    // Enrich all fetched account orders (A+B) for UI log output.
-    const enrichLimiter = createLimiter(4);
+    // Enrich full list first; matching then reuses this cache.
+    const enrichLimiter = createLimiter(GALAXUS_STX_DETAIL_CONCURRENCY);
     const stockxBuyingOrdersEnriched = await Promise.all(
       (orders as any[]).map((listNode) =>
         enrichLimiter(async () => {
@@ -445,23 +494,8 @@ export async function POST(
               enrichmentError: "missing_order_id",
             };
           }
-          try {
-            const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId: stockxOrderId });
-            const resolvedAwb = resolveAwbFromDetails(details);
-            return {
-              orderId: stockxOrderId,
-              chainId,
-              orderNumber: (listNode as any)?.orderNumber ?? null,
-              purchaseDate: (listNode as any)?.purchaseDate ?? null,
-              localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
-              details: {
-                awb: resolvedAwb ?? null,
-                etaMin: details.etaMin ? details.etaMin.toISOString() : null,
-                etaMax: details.etaMax ? details.etaMax.toISOString() : null,
-                order: leanBuyOrder(details.order),
-              },
-            };
-          } catch (error: any) {
+          const details = await fetchDetailsCached(chainId, stockxOrderId);
+          if (!details) {
             return {
               orderId: stockxOrderId,
               chainId,
@@ -469,14 +503,36 @@ export async function POST(
               purchaseDate: (listNode as any)?.purchaseDate ?? null,
               localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
               details: null,
-              enrichmentError: error?.message ?? "details_failed",
+              enrichmentError: "details_failed",
             };
           }
+          const resolvedAwb = resolveAwbFromDetails(details);
+          return {
+            orderId: stockxOrderId,
+            chainId,
+            orderNumber: (listNode as any)?.orderNumber ?? null,
+            purchaseDate: (listNode as any)?.purchaseDate ?? null,
+            localizedSizeTitle: (listNode as any)?.localizedSizeTitle ?? null,
+            details: {
+              awb: resolvedAwb ?? null,
+              etaMin: details.etaMin ? details.etaMin.toISOString() : null,
+              etaMax: details.etaMax ? details.etaMax.toISOString() : null,
+              order: leanBuyOrder(details.order),
+            },
+          };
         })
       )
     );
+    const enrichmentFailed = stockxBuyingOrdersEnriched.filter(
+      (row) => (row as any)?.details == null
+    ).length;
+    const orderIdsNeedingSettledBackfill = new Set(
+      [...settledBackfillKeys]
+        .map((key) => String(key || "").split("::")[0] || "")
+        .filter(Boolean)
+    );
 
-    const limiter = createLimiter(4);
+    const limiter = createLimiter(2);
 
     await Promise.all(
       orders.map((listNode) =>
@@ -508,13 +564,8 @@ export async function POST(
           }
 
           inspectedOrders += 1;
-          let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>;
-          try {
-            details = await fetchStockxBuyOrderDetailsFull(token, {
-              chainId,
-              orderId: stockxOrderId,
-            });
-          } catch {
+          const details = await fetchDetailsCached(chainId, stockxOrderId);
+          if (!details) {
             errors += 1;
             console.error("[GALAXUS][STX][SYNC][ERROR] Failed to fetch order details", {
               chainId,
@@ -734,6 +785,9 @@ export async function POST(
       stockxBuyingOrdersEnriched,
       sync: {
         fetchedOrders: orders.length,
+        enrichedOrders: stockxBuyingOrdersEnriched.length,
+        enrichmentFailed,
+        detailCalls,
         inspectedOrders,
         linked,
         alreadyLinked,

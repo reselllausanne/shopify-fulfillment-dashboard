@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import type { OpsJobKey } from "./types";
 
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 export const DEFAULT_JOBS: Array<{
   jobKey: OpsJobKey;
@@ -12,6 +13,9 @@ export const DEFAULT_JOBS: Array<{
   { jobKey: "stx-refresh", intervalMs: 24 * HOUR_MS, enabled: true },
   { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: true },
   { jobKey: "image-sync", intervalMs: 24 * HOUR_MS, enabled: true },
+  { jobKey: "shopify-order-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
+  { jobKey: "multichannel-stock-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
+  { jobKey: "inventory-reconcile", intervalMs: 1 * HOUR_MS, enabled: true },
 ];
 
 export async function ensureJobDefinitions() {
@@ -36,6 +40,7 @@ export async function listJobDefinitions() {
   await ensureJobDefinitions();
   const prismaAny = prisma as any;
   return prismaAny.galaxusJobDefinition.findMany({
+    where: { jobKey: { in: DEFAULT_JOBS.map((job) => job.jobKey) } },
     orderBy: { jobKey: "asc" },
   });
 }

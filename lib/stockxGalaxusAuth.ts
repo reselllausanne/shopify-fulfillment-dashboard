@@ -3,6 +3,16 @@ import path from "node:path";
 
 export const GALAXUS_STOCKX_SESSION_FILE = path.join(process.cwd(), ".data", "stockx-session-galaxus.json");
 export const GALAXUS_STOCKX_TOKEN_FILE = path.join(process.cwd(), ".data", "stockx-token-galaxus.json");
+export const GALAXUS_STOCKX_SESSION_META_FILE = path.join(
+  process.cwd(),
+  ".data",
+  "stockx-session-meta-galaxus.json"
+);
+export const GALAXUS_STOCKX_PERSISTED_HASHES_FILE = path.join(
+  process.cwd(),
+  ".data",
+  "stockx-persisted-hashes-galaxus.json"
+);
 
 type TokenPayload = {
   token: string;

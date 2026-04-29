@@ -3,7 +3,8 @@ import React from "react";
 type FetchActionsProps = {
   onFetchFirst: () => void;
   onFetchNext: () => void;
-  onFetchAll: () => void;
+  onFetchAllOrders: () => void;
+  onEnrichLoaded: () => void;
   onFetchPricing: () => void;
   onClear: () => void;
   onExport: () => void;
@@ -24,7 +25,8 @@ type FetchActionsProps = {
 export default function FetchActions({
   onFetchFirst,
   onFetchNext,
-  onFetchAll,
+  onFetchAllOrders,
+  onEnrichLoaded,
   onFetchPricing,
   onClear,
   onExport,
@@ -65,15 +67,18 @@ export default function FetchActions({
           Fetch Next Page
         </button>
         <button
-          onClick={onFetchAll}
+          onClick={onFetchAllOrders}
           disabled={loading || isFetchingAll || isEnriching}
           className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          {isFetchingAll
-            ? "📥 Fetching All Pages (A)..."
-            : isEnriching
-            ? `🔍 Enriching (B) ${detailsProgress.done}/${detailsProgress.total}...`
-            : "🔍 Fetch All Pages + Details"}
+          {isFetchingAll ? "📥 Fetching all order numbers (A)..." : "📥 Fetch all order numbers (A)"}
+        </button>
+        <button
+          onClick={onEnrichLoaded}
+          disabled={loading || isFetchingAll || isEnriching || ordersCount === 0}
+          className="px-4 py-2 bg-violet-700 text-white rounded-md hover:bg-violet-800 disabled:bg-gray-400 disabled:cursor-not-allowed"
+        >
+          {isEnriching ? `🔍 Enriching loaded orders (B) ${detailsProgress.done}/${detailsProgress.total}...` : "🔍 Enrich loaded orders (B)"}
         </button>
         <button
           onClick={onFetchPricing}

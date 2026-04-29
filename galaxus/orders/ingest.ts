@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import type { GalaxusOrderInput } from "./types";
+import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
 
 type IngestResult = {
   galaxusOrderId: string;
@@ -7,6 +8,10 @@ type IngestResult = {
   lines: number;
   shipments: number;
   statusEvents: number;
+  inventoryApplied: number;
+  inventoryAlreadyProcessed: number;
+  inventoryUnresolved: number;
+  inventoryInvalid: number;
 };
 
 type ComparableLine = {
@@ -773,12 +778,48 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
       };
     });
 
-    results.push(result);
+    let inventoryApplied = 0;
+    let inventoryAlreadyProcessed = 0;
+    let inventoryUnresolved = 0;
+    let inventoryInvalid = 0;
+    for (const line of lines) {
+      const externalLineId = `GALAXUS:${normalized.galaxusOrderId}:${line.lineNumber}`;
+      const inventoryResult = await applyInventoryOrderLine({
+        channel: "GALAXUS",
+        externalOrderId: normalized.galaxusOrderId,
+        externalLineId,
+        quantity: Number(line.quantity ?? 1),
+        supplierVariantId: line.supplierVariantId ?? null,
+        providerKey: line.providerKey ?? null,
+        gtin: line.gtin ?? null,
+        occurredAt: normalized.orderDate,
+        payloadJson: {
+          source: "galaxus-orders-ingest",
+          lineNumber: line.lineNumber,
+        },
+      });
+      if (inventoryResult.applied) inventoryApplied += 1;
+      else if (inventoryResult.reason === "already_processed") inventoryAlreadyProcessed += 1;
+      else if (inventoryResult.reason === "unresolved_variant") inventoryUnresolved += 1;
+      else inventoryInvalid += 1;
+    }
+
+    results.push({
+      ...result,
+      inventoryApplied,
+      inventoryAlreadyProcessed,
+      inventoryUnresolved,
+      inventoryInvalid,
+    });
     console.info("[galaxus][ingest] order processed", {
       orderId: result.galaxusOrderId,
       lines: result.lines,
       shipments: result.shipments,
       statusEvents: result.statusEvents,
+      inventoryApplied,
+      inventoryAlreadyProcessed,
+      inventoryUnresolved,
+      inventoryInvalid,
       ...ingestStats,
     });
   }

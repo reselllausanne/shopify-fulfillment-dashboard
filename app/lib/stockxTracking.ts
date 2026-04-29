@@ -60,20 +60,33 @@ export function extractAwbFromTrackingUrl(trackingUrl: string | null | undefined
     // Try common query parameter names (case-insensitive)
     const paramKeys = new Set([
       "awb",
+      "awbno",
       "trackingnumber",
+      "trackingnumbers",
       "tracking_number",
+      "tracking_no",
+      "tracking",
       "waybill",
       "consignment",
       "shipmentnumber",
+      "shipment_number",
       "tracknum",
       "tracknums",
       "tracknumber",
       "tracknumbers",
+      "track_number",
+      "track_no",
+      "piececode",
     ]);
 
     for (const [key, rawValue] of url.searchParams.entries()) {
       const keyLower = key.toLowerCase();
-      const looksLikeTrackingKey = paramKeys.has(keyLower) || keyLower.includes("track");
+      const looksLikeTrackingKey =
+        paramKeys.has(keyLower) ||
+        keyLower.includes("track") ||
+        keyLower.includes("awb") ||
+        keyLower.includes("waybill") ||
+        keyLower.includes("consignment");
       if (!looksLikeTrackingKey) continue;
 
       const normalized = normalizeTrackingNumber(rawValue);

@@ -60,7 +60,7 @@ export default function OrderMatchingSection({
           disabled={loadingShopify || orders.length === 0}
           className="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          {loadingShopify ? "Loading..." : "Load Shopify (100 recent unfulfilled)"}
+          {loadingShopify ? "Loading..." : "Load Shopify (matchable / open fulfillment)"}
         </button>
       </div>
 

@@ -19,6 +19,11 @@ const REQUIRED_HEADERS = ["providerKey", "sku", "size", "rawStock", "price"];
 
 const PARTNER_PENDING_STATUSES = ["PENDING_ENRICH", "PENDING_GTIN", "AMBIGUOUS_GTIN"] as const;
 
+function httpsPrimaryImageUrl(url: string | null | undefined): string | null {
+  const t = (url ?? "").trim();
+  return /^https:\/\//i.test(t) ? t : null;
+}
+
 type ValidImportRow = {
   rowNum: number;
   supplierVariantId: string;
@@ -31,6 +36,8 @@ type ValidImportRow = {
   productName?: string | null;
   brand?: string | null;
   imageUrl?: string | null;
+  /** Galaxus master / listing gating; filled from `image` when it is https, or from explicit columns. */
+  hostedImageUrl?: string | null;
   gtinProvided?: string | null;
   /** Optional; same names as DB columns — feeds Decathlon/Galaxus when KickDB is absent. */
   supplierGender?: string | null;
@@ -183,6 +190,13 @@ export async function runPartnerCsvImport(
       "imageLink",
       "image_link",
     ]);
+    const hostedImageRaw = readAny([
+      "hostedImageUrl",
+      "hosted_image_url",
+      "hosted image url",
+      "primaryImageUrl",
+      "primary_image_url",
+    ]);
     const supplierGenderRaw =
       readAny(["supplierGender", "gender", "sex"]) ||
       readByPredicate((normalized) => normalized.includes("gender"));
@@ -247,6 +261,9 @@ export async function runPartnerCsvImport(
     const productName = productNameRaw ? productNameRaw.trim() : null;
     const brand = brandRaw ? brandRaw.trim() : null;
     const imageUrl = imageRaw ? imageRaw.trim() : null;
+    const hostedImageExplicit = hostedImageRaw ? hostedImageRaw.trim() : null;
+    const hostedImageUrl =
+      httpsPrimaryImageUrl(hostedImageExplicit) ?? httpsPrimaryImageUrl(imageUrl);
     const supplierGender = supplierGenderRaw ? supplierGenderRaw.trim() : null;
     const supplierColorway = supplierColorwayRaw ? supplierColorwayRaw.trim() : null;
 
@@ -291,6 +308,7 @@ export async function runPartnerCsvImport(
       productName,
       brand,
       imageUrl,
+      hostedImageUrl,
       gtinProvided,
       supplierGender,
       supplierColorway,
@@ -343,6 +361,7 @@ export async function runPartnerCsvImport(
       supplierBrand?: string | null;
       supplierProductName?: string | null;
       images?: unknown;
+      hostedImageUrl?: string | null;
       supplierGender?: string | null;
       supplierColorway?: string | null;
     }> = [];
@@ -430,6 +449,7 @@ export async function runPartnerCsvImport(
         v.productName ||
         v.brand ||
         v.imageUrl ||
+        v.hostedImageUrl ||
         providedGtin ||
         v.supplierGender ||
         v.supplierColorway
@@ -442,6 +462,7 @@ export async function runPartnerCsvImport(
           supplierBrand: v.brand ?? undefined,
           supplierProductName: v.productName ?? undefined,
           images: v.imageUrl ? [v.imageUrl] : undefined,
+          hostedImageUrl: v.hostedImageUrl ?? undefined,
           supplierGender: v.supplierGender ?? undefined,
           supplierColorway: v.supplierColorway ?? undefined,
         });

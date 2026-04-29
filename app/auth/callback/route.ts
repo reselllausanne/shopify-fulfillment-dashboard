@@ -28,7 +28,8 @@ export async function GET(request: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
-      message: "Paste this access token into ACCESS_TOKEN_SHOPIFY",
+      message:
+        "Paste access token into ACCESS_TOKEN_SHOPIFY (or SHOPIFY_ADMIN_ACCESS_TOKEN alias)",
       accessToken,
     });
     response.cookies.delete("shopify_oauth_state");

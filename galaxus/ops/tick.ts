@@ -6,6 +6,8 @@ import { runStxPriceStockRefresh } from "@/galaxus/jobs/stxSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { OpsJobKey } from "./types";
+import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
+import { runShopifyOrdersSync } from "@/shopify/orders/sync";
 
 type TickJobResult = {
   due: boolean;
@@ -70,6 +72,24 @@ async function executeJob(jobKey: OpsJobKey, origin: string) {
       runImageSync({
         limit: 2000,
         concurrency: 8,
+      })
+    );
+  }
+  if (jobKey === "shopify-order-sync") {
+    return runOpsJob(jobKey, async () => runShopifyOrdersSync({ pageSize: 100 }));
+  }
+  if (jobKey === "multichannel-stock-sync") {
+    return runOpsJob(jobKey, async () =>
+      runMultiChannelStockSync({
+        origin,
+        dryRun: false,
+      })
+    );
+  }
+  if (jobKey === "inventory-reconcile") {
+    return runOpsJob(jobKey, async () =>
+      runInventoryReconciliation({
+        limit: 3000,
       })
     );
   }

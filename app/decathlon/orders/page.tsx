@@ -58,6 +58,7 @@ export default function DecathlonOrdersPage() {
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
   const [polling, setPolling] = useState(false);
+  const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "canceled" | "returns">("to_process");
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
@@ -285,6 +286,80 @@ export default function DecathlonOrdersPage() {
     } finally {
       await Promise.all([loadOrders(), loadReturns()]);
       setPolling(false);
+    }
+  };
+
+  const runBulkStockxSyncVisible = async () => {
+    if (leftTab === "returns") {
+      setError("Bulk StockX sync is only for order tabs.");
+      return;
+    }
+    const targets = ordersByTab;
+    if (!targets.length) {
+      setError("No visible orders to sync.");
+      return;
+    }
+    setBulkStockxSyncing(true);
+    setError(null);
+    setOpsLog(null);
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+    const failures: Array<{ orderId: string; error: string }> = [];
+    try {
+      for (const order of targets) {
+        const orderId = String(order.id ?? "").trim();
+        if (!orderId) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const res = await fetch(`/api/decathlon/orders/${orderId}/stockx/sync`, {
+            method: "POST",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) {
+            failed += 1;
+            failures.push({
+              orderId,
+              error: String(data?.error ?? `HTTP ${res.status}`),
+            });
+          } else {
+            success += 1;
+          }
+        } catch (error: any) {
+          failed += 1;
+          failures.push({
+            orderId,
+            error: String(error?.message ?? "Sync failed"),
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+      setOpsLog(
+        JSON.stringify(
+          {
+            ok: failed === 0,
+            mode: "decathlon_bulk_stockx_sync_visible",
+            tab: leftTab,
+            total: targets.length,
+            success,
+            failed,
+            skipped,
+            failures: failures.slice(0, 25),
+          },
+          null,
+          2
+        )
+      );
+      await Promise.all([
+        loadOrders(),
+        loadReturns(),
+        selectedOrderId ? loadOrderDetail(selectedOrderId) : Promise.resolve(),
+      ]);
+    } finally {
+      setBulkStockxSyncing(false);
     }
   };
 
@@ -837,11 +912,20 @@ export default function DecathlonOrdersPage() {
           >
             {polling ? "Refreshing..." : "Refresh orders"}
           </button>
+          <button
+            onClick={() => void runBulkStockxSyncVisible()}
+            disabled={loadingOrders || polling || bulkStockxSyncing || leftTab === "returns"}
+            className="px-3 py-2 bg-blue-700 text-white rounded disabled:opacity-50"
+            title="Run StockX sync on all currently visible orders (sequential)"
+          >
+            {bulkStockxSyncing ? "Bulk StockX sync..." : "Bulk StockX sync (visible)"}
+          </button>
         </div>
       </div>
 
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
       {polling ? <div className="text-xs text-gray-500">Polling Mirakl...</div> : null}
+      {bulkStockxSyncing ? <div className="text-xs text-gray-500">Running sequential StockX sync over visible orders...</div> : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded p-3 min-w-0">

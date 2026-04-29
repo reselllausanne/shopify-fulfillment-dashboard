@@ -2,6 +2,10 @@
 import { NextResponse } from "next/server";
 import { shopifyGraphQL, extractEUSize } from "@/lib/shopifyAdmin";
 import { formatInTimeZone } from "date-fns-tz";
+import {
+  lineFulfillableQuantity,
+  shouldSkipOrderForFulfillmentMatching,
+} from "@/app/lib/shopifyOrderFulfillmentFilters";
 
 export const runtime = "nodejs";
 
@@ -42,6 +46,16 @@ function convertToShopTimezone(utcTimestamp: string): string {
   return formatInTimeZone(utcDate, SHOP_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ssXXX");
 }
 
+/** When no custom `orderQuery`, narrow to open fulfillment + not cancelled + date window. */
+function buildDefaultOrdersSearchQuery(sinceDays: number): string | null {
+  if (!Number.isFinite(sinceDays) || sinceDays <= 0) return null;
+  const capped = Math.min(365, Math.floor(sinceDays));
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - capped);
+  const ymd = d.toISOString().slice(0, 10);
+  return `(fulfillment_status:unfulfilled OR fulfillment_status:partial) -status:cancelled created:>=${ymd}`;
+}
+
 /**
  * Calculate proportional line item pricing from order total
  * Ensures line items sum to exact order total (accounting for discounts)
@@ -78,6 +92,7 @@ query LastOrders($first: Int!, $orderQuery: String) {
         id
         name
         createdAt
+        cancelledAt
         displayFinancialStatus
         displayFulfillmentStatus
         email
@@ -107,6 +122,7 @@ query LastOrders($first: Int!, $orderQuery: String) {
               title
               sku
               quantity
+              fulfillableQuantity
               variantTitle
               variant {
                 media(first: 1) {
@@ -238,10 +254,14 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const requestedFirst = Number(body?.first) > 0 ? Number(body.first) : 100;
     const first = Math.min(100, requestedFirst);
-    const orderQuery = typeof body?.orderQuery === "string" ? body.orderQuery : null;
+    const customOrderQuery = typeof body?.orderQuery === "string" && body.orderQuery.trim() ? String(body.orderQuery).trim() : null;
+    const sinceDaysRaw = Number(body?.sinceDays);
+    const orderQuery =
+      customOrderQuery ||
+      (Number.isFinite(sinceDaysRaw) && sinceDaysRaw > 0 ? buildDefaultOrdersSearchQuery(sinceDaysRaw) : null);
     const includeReturns = Boolean(body?.includeExchanges);
 
-    console.log(`[SHOPIFY] Fetching last ${first} orders...`);
+    console.log(`[SHOPIFY] Fetching last ${first} orders...`, { orderQuery: orderQuery ?? "(none)" });
 
     if (body?.orderExchange) {
       const orderId = body.orderId || "12560147906946";
@@ -286,7 +306,11 @@ export async function POST(req: Request) {
 
     for (const e of edges) {
       const o = e.node;
-      
+
+      if (shouldSkipOrderForFulfillmentMatching(o)) {
+        continue;
+      }
+
       // Extract order-level data
       const orderId = o.id;
       const orderName = o.name;
@@ -306,8 +330,12 @@ export async function POST(req: Request) {
       const orderTotalAmount = orderTotal?.amount ? parseFloat(orderTotal.amount) : 0;
       const orderCurrency = orderTotal?.currencyCode || "CHF";
 
-      const liEdges = o.lineItems?.edges ?? [];
+      const liEdgesAll = o.lineItems?.edges ?? [];
+      const liEdges = liEdgesAll.filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
       const lineItemCount = liEdges.length;
+      if (lineItemCount === 0) {
+        continue;
+      }
 
       // Calculate line item sum for proportional allocation (multi-item orders only)
       let lineItemTotalSum = 0;
@@ -318,13 +346,13 @@ export async function POST(req: Request) {
         }
       }
 
-      // Process each line item
+      // Process each line item (only rows still fulfillable — refunds/exchanges often go to 0)
       for (const liE of liEdges) {
         const li = liE.node;
+        const qty = lineFulfillableQuantity(li);
         if (li?.id) {
           seenLineItemIds.add(li.id);
         }
-        const qty = Number(li.quantity ?? 0);
         const lineDiscountedAmount = li.discountedTotalSet?.shopMoney?.amount 
           ? parseFloat(li.discountedTotalSet.shopMoney.amount) 
           : 0;

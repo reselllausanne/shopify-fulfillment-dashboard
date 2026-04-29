@@ -3,15 +3,21 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import {
+  STOCKX_GET_BUY_ORDER_PERSISTED_HASH,
   STOCKX_PERSISTED_OPERATION_NAME,
   STOCKX_PERSISTED_QUERY_HASH,
 } from "@/app/lib/constants";
+import {
+  readStockxPersistedHashes,
+  resolveStockxPersistedHash,
+} from "@/app/lib/stockxPersistedHashes";
 
 const STOCKX_GATEWAY_GRAPHQL_URL = "https://gateway.stockx.com/api/graphql";
 const STOCKX_WEB_GRAPHQL_URL = "https://stockx.com/api/graphql";
 const STOCKX_PRO_GRAPHQL_URL = "https://pro.stockx.com/api/graphql";
 const DEFAULT_SESSION_FILE = path.join(process.cwd(), ".data", "stockx-session.json");
 const DEFAULT_SESSION_META_FILE = path.join(process.cwd(), ".data", "stockx-session-meta.json");
+const DEFAULT_TOKEN_FILE = path.join(process.cwd(), ".data", "stockx-token.json");
 const CHROME_147_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";
 
@@ -33,6 +39,29 @@ async function readStockxSessionMeta(): Promise<StockxSessionMeta | null> {
     return parsed || null;
   } catch {
     return null;
+  }
+}
+
+async function readStockxTokenFile(): Promise<string> {
+  try {
+    const raw = await fs.readFile(DEFAULT_TOKEN_FILE, "utf8");
+    const trimmed = String(raw || "").trim();
+    if (!trimmed) return "";
+    if (!trimmed.startsWith("{")) {
+      return trimmed.replace(/^bearer\s+/i, "").trim();
+    }
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const candidate =
+      (typeof parsed?.token === "string" && parsed.token) ||
+      (typeof parsed?.value === "string" && parsed.value) ||
+      (typeof parsed?.accessToken === "string" && parsed.accessToken) ||
+      (typeof parsed?.access_token === "string" && parsed.access_token) ||
+      "";
+    return String(candidate || "")
+      .replace(/^bearer\s+/i, "")
+      .trim();
+  } catch {
+    return "";
   }
 }
 
@@ -65,6 +94,30 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
+function extractTokenAccountFingerprint(token: string): string | null {
+  const cleaned = String(token || "").trim().replace(/^bearer\s+/i, "");
+  if (!cleaned) return null;
+  const payload = decodeJwtPayload(cleaned);
+  if (!payload) return null;
+  const customerUuidRaw = payload["https://stockx.com/customer_uuid"];
+  const customerUuid =
+    typeof customerUuidRaw === "string" && customerUuidRaw.trim()
+      ? customerUuidRaw.trim().toLowerCase()
+      : "";
+  if (customerUuid) return `customer_uuid:${customerUuid}`;
+  const subRaw = payload.sub;
+  const sub = typeof subRaw === "string" && subRaw.trim() ? subRaw.trim().toLowerCase() : "";
+  if (sub) return `sub:${sub}`;
+  return null;
+}
+
+function isSameTokenAccount(a: string, b: string): boolean {
+  const af = extractTokenAccountFingerprint(a);
+  const bf = extractTokenAccountFingerprint(b);
+  if (!af || !bf) return false;
+  return af === bf;
+}
+
 function isExpiredJwtToken(token: string, skewSeconds = 45): boolean {
   const cleaned = String(token || "").trim().replace(/^bearer\s+/i, "");
   const looksLikeJwt = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(cleaned);
@@ -86,8 +139,8 @@ function resolveReferer(
   const chainId = typeof variables?.chainId === "string" ? variables.chainId.trim() : "";
 
   // Pin operation-specific referers first; do not let a stale session URL override these.
-  if (op === "getBuyOrder" && chainId) {
-    return `${upstreamOrigin}/buying/${chainId}?listingType=STANDARD`;
+  if (op === "getBuyOrder") {
+    return `${upstreamOrigin}/buying/orders`;
   }
   if (op === STOCKX_PERSISTED_OPERATION_NAME || op === "FetchCurrentBids") {
     return `${upstreamOrigin}/buying/orders`;
@@ -110,6 +163,98 @@ function normalizeOperationHeaderName(operationName: string): string {
   return operationName;
 }
 
+function normalizePersistedHash(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(cleaned)) return null;
+  return cleaned;
+}
+
+function extractPersistedHashFromPayload(payload: Record<string, unknown>): string | null {
+  const extensions =
+    payload?.extensions && typeof payload.extensions === "object" && !Array.isArray(payload.extensions)
+      ? (payload.extensions as Record<string, unknown>)
+      : null;
+  const persisted =
+    extensions?.persistedQuery &&
+    typeof extensions.persistedQuery === "object" &&
+    !Array.isArray(extensions.persistedQuery)
+      ? (extensions.persistedQuery as Record<string, unknown>)
+      : null;
+  return normalizePersistedHash(persisted?.sha256Hash);
+}
+
+function withPayloadPersistedHash(
+  payload: Record<string, unknown>,
+  hash: string
+): Record<string, unknown> {
+  return {
+    ...payload,
+    extensions: {
+      persistedQuery: {
+        version: 1,
+        sha256Hash: hash,
+      },
+    },
+  };
+}
+
+function hasPersistedQueryNotFound(raw: string): boolean {
+  const loweredRaw = String(raw || "").toLowerCase();
+  if (
+    loweredRaw.includes("persistedquerynotfound") ||
+    loweredRaw.includes("persisted query not found")
+  ) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { errors?: Array<{ message?: unknown }> };
+    const messages = Array.isArray(parsed?.errors)
+      ? parsed.errors.map((err) => String(err?.message ?? "").toLowerCase())
+      : [];
+    return messages.some(
+      (msg) => msg.includes("persistedquerynotfound") || msg.includes("persisted query not found")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasMissingRequiredVariables(raw: string, variableNames: string[]): boolean {
+  const expected = variableNames.map((name) => String(name || "").toLowerCase()).filter(Boolean);
+  if (expected.length === 0) return false;
+  try {
+    const parsed = JSON.parse(raw) as { errors?: Array<{ message?: unknown }> };
+    const messages = Array.isArray(parsed?.errors)
+      ? parsed.errors.map((err) => String(err?.message ?? "").toLowerCase())
+      : [];
+    return messages.some((msg) =>
+      expected.some(
+        (name) => msg.includes(name) || msg.includes(`$${name}`) || msg.includes(`"${name}"`)
+      )
+    );
+  } catch {
+    const lowered = String(raw || "").toLowerCase();
+    return expected.some((name) => lowered.includes(name));
+  }
+}
+
+function isRetryableUpstreamStatus(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+function retryAfterMsFromHeaders(response: Response): number | null {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return null;
+  const parsed = Number(String(raw).trim());
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.min(parsed * 1000, 120_000);
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function resolveUpstreamTarget(operationName: string): { url: string; origin: string } {
   const op = String(operationName || "").trim();
   if (op === "Buying") {
@@ -118,7 +263,7 @@ function resolveUpstreamTarget(operationName: string): { url: string; origin: st
       origin: "https://pro.stockx.com",
     };
   }
-  if (op === STOCKX_PERSISTED_OPERATION_NAME) {
+  if (op === STOCKX_PERSISTED_OPERATION_NAME || op === "getBuyOrder") {
     return {
       url: STOCKX_GATEWAY_GRAPHQL_URL,
       origin: "https://stockx.com",
@@ -196,7 +341,7 @@ function applyUpstreamDebugHeaders(
   referer: string,
   operationHeaderName: string,
   upstreamHeaders?: Record<string, string>,
-  authSource: "cookie" | "input" = "input"
+  authSource: "cookie" | "input" | "file" = "input"
 ): NextResponse {
   response.headers.set("x-stockx-upstream-origin", upstreamOrigin);
   response.headers.set("x-stockx-upstream-url", upstreamUrl);
@@ -353,16 +498,28 @@ export async function POST(request: NextRequest) {
     const opName = String(operationName || "").trim() || "Buying";
     const inputToken = typeof token === "string" ? token.trim() : "";
     const session = await readStockxSessionMeta();
+    const tokenFromFile = await readStockxTokenFile();
+    const persistedHashes = await readStockxPersistedHashes();
     const cookieToken = readCookieValue(session?.cookieHeader, "token")?.trim() || "";
     const inputBearer = inputToken.replace(/^bearer\s+/i, "");
+    const fileBearer = tokenFromFile.replace(/^bearer\s+/i, "");
+    const hasInputBearer = Boolean(inputBearer);
+    const hasCookieBearer = Boolean(cookieToken);
+    const hasFileBearer = Boolean(fileBearer);
+    const sameBearer = hasInputBearer && hasCookieBearer && inputBearer === cookieToken;
+    const sameAccount = hasInputBearer && hasCookieBearer && isSameTokenAccount(inputBearer, cookieToken);
+    const accountMismatch = hasInputBearer && hasCookieBearer && !sameBearer && !sameAccount;
+    const inputFileSameBearer = hasInputBearer && hasFileBearer && inputBearer === fileBearer;
+    const inputFileSameAccount =
+      hasInputBearer && hasFileBearer && isSameTokenAccount(inputBearer, fileBearer);
     const authCandidates: Array<{
-      source: "input" | "cookie";
+      source: "input" | "cookie" | "file";
       token: string;
       includeCookie: boolean;
     }> = [];
     const seenTokens = new Set<string>();
     const pushAuthCandidate = (
-      source: "input" | "cookie",
+      source: "input" | "cookie" | "file",
       candidate: string,
       includeCookie: boolean
     ) => {
@@ -373,8 +530,19 @@ export async function POST(request: NextRequest) {
       seenTokens.add(cleaned);
       authCandidates.push({ source, token: cleaned, includeCookie });
     };
-    pushAuthCandidate("input", inputBearer, !cookieToken || cookieToken === inputBearer);
-    pushAuthCandidate("cookie", cookieToken, true);
+    if (hasInputBearer) {
+      // First try clean bearer/minimal cookie payload; stale cookie jars can break valid tokens.
+      pushAuthCandidate("input", inputBearer, false);
+      if (hasCookieBearer && !accountMismatch) {
+        pushAuthCandidate("cookie", cookieToken, true);
+      }
+      if (hasFileBearer && (inputFileSameBearer || inputFileSameAccount)) {
+        pushAuthCandidate("file", fileBearer, false);
+      }
+    } else {
+      pushAuthCandidate("cookie", cookieToken, true);
+      pushAuthCandidate("file", fileBearer, false);
+    }
     if (authCandidates.length === 0) {
       return NextResponse.json(
         {
@@ -386,7 +554,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const payload: Record<string, unknown> = {
+    const resolvedOperationHash = resolveStockxPersistedHash(opName, persistedHashes);
+    let payload: Record<string, unknown> = {
       operationName: opName,
       variables: variables ?? {},
     };
@@ -395,14 +564,41 @@ export async function POST(request: NextRequest) {
     }
     if (extensions && typeof extensions === "object") {
       payload.extensions = extensions;
-    } else if (typeof persistedQueryHash === "string" && persistedQueryHash.trim()) {
+    } else {
+      const requestedHash = normalizePersistedHash(persistedQueryHash);
+      if (requestedHash) {
+        payload.extensions = {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: requestedHash,
+          },
+        };
+      }
+    }
+    if (!payload.extensions && resolvedOperationHash) {
       payload.extensions = {
         persistedQuery: {
           version: 1,
-          sha256Hash: persistedQueryHash.trim(),
+          sha256Hash: resolvedOperationHash,
         },
       };
     }
+
+    const payloadPersistedHash = extractPersistedHashFromPayload(payload);
+    const detailHashCandidates =
+      opName === "getBuyOrder"
+        ? Array.from(
+            new Set(
+              [
+                payloadPersistedHash,
+                resolvedOperationHash,
+                normalizePersistedHash(STOCKX_GET_BUY_ORDER_PERSISTED_HASH),
+              ]
+                .map((candidate) => normalizePersistedHash(candidate))
+                .filter((candidate): candidate is string => Boolean(candidate))
+            )
+          )
+        : [];
 
     const payloadVariables =
       payload.variables && typeof payload.variables === "object" && payload.variables != null
@@ -412,6 +608,9 @@ export async function POST(request: NextRequest) {
     // Keep legacy Buying compat path only for Buying.
     // FetchCurrentBids should run direct upstream request first.
     const isListOpCompat = opName === "Buying";
+    const listPersistedHash =
+      resolveStockxPersistedHash(STOCKX_PERSISTED_OPERATION_NAME, persistedHashes) ||
+      STOCKX_PERSISTED_QUERY_HASH;
     if (isListOpCompat) {
       const compatVariables: Record<string, unknown> = {
         first:
@@ -461,7 +660,7 @@ export async function POST(request: NextRequest) {
         extensions: {
           persistedQuery: {
             version: 1,
-            sha256Hash: STOCKX_PERSISTED_QUERY_HASH,
+            sha256Hash: listPersistedHash,
           },
         },
       };
@@ -542,11 +741,14 @@ export async function POST(request: NextRequest) {
     const secondaryTarget =
       primaryTarget.url === STOCKX_PRO_GRAPHQL_URL
         ? { url: STOCKX_GATEWAY_GRAPHQL_URL, origin: "https://stockx.com" }
-        : null;
+        : opName === "getBuyOrder"
+          ? { url: STOCKX_WEB_GRAPHQL_URL, origin: "https://stockx.com" }
+          : null;
 
     const runUpstreamRequest = async (
       target: { url: string; origin: string },
-      authCandidate: { source: "input" | "cookie"; token: string; includeCookie: boolean }
+      authCandidate: { source: "input" | "cookie" | "file"; token: string; includeCookie: boolean },
+      requestPayload: Record<string, unknown>
     ) => {
       const referer = resolveReferer(opName, payloadVariables, session, target.origin);
       const headers = stockxGraphqlHeaders(
@@ -557,39 +759,105 @@ export async function POST(request: NextRequest) {
         target.origin,
         { includeCookie: authCandidate.includeCookie }
       );
-      const response = await fetch(target.url, {
-        method: "POST",
-        headers,
-        referrer: referer,
-        referrerPolicy: "strict-origin-when-cross-origin",
-        body: JSON.stringify(payload),
-      });
-      const raw = await response.text();
-      return {
-        target,
-        referer,
-        headers,
-        response,
-        raw,
-        authSource: authCandidate.source,
-        authToken: authCandidate.token,
-      };
+      const MAX_UPSTREAM_ATTEMPTS = 3;
+      let attempt = 0;
+      while (attempt < MAX_UPSTREAM_ATTEMPTS) {
+        attempt += 1;
+        const response = await fetch(target.url, {
+          method: "POST",
+          headers,
+          referrer: referer,
+          referrerPolicy: "strict-origin-when-cross-origin",
+          body: JSON.stringify(requestPayload),
+        });
+        const raw = await response.text();
+        const retryable = isRetryableUpstreamStatus(response.status);
+        if (retryable && attempt < MAX_UPSTREAM_ATTEMPTS) {
+          const waitMs =
+            retryAfterMsFromHeaders(response) ??
+            Math.min(700 * 2 ** (attempt - 1), 4500) + Math.floor(Math.random() * 220);
+          await sleepMs(waitMs);
+          continue;
+        }
+        return {
+          target,
+          referer,
+          headers,
+          response,
+          raw,
+          authSource: authCandidate.source,
+          authToken: authCandidate.token,
+          requestPayload,
+        };
+      }
+      // unreachable guard
+      throw new Error("StockX upstream retry loop exhausted");
     };
 
-    const runTargetWithAuthFallback = async (target: { url: string; origin: string }) => {
-      let latest = await runUpstreamRequest(target, authCandidates[0]);
+    const runTargetWithAuthFallback = async (
+      target: { url: string; origin: string },
+      requestPayload: Record<string, unknown>
+    ) => {
+      let latest = await runUpstreamRequest(target, authCandidates[0], requestPayload);
       for (let i = 1; i < authCandidates.length && latest.response.status === 403; i += 1) {
-        latest = await runUpstreamRequest(target, authCandidates[i]);
+        latest = await runUpstreamRequest(target, authCandidates[i], requestPayload);
       }
       return latest;
     };
 
-    let upstream = await runTargetWithAuthFallback(primaryTarget);
+    let activePayload = payload;
+    let upstream = await runTargetWithAuthFallback(primaryTarget, activePayload);
     if (
       secondaryTarget &&
       (upstream.response.status === 404 || upstream.response.status === 403)
     ) {
-      upstream = await runTargetWithAuthFallback(secondaryTarget);
+      upstream = await runTargetWithAuthFallback(secondaryTarget, activePayload);
+    }
+
+    if (opName === STOCKX_PERSISTED_OPERATION_NAME && resolvedOperationHash) {
+      const currentHash = extractPersistedHashFromPayload(activePayload);
+      const normalizedCurrent = normalizePersistedHash(currentHash);
+      const normalizedResolved = normalizePersistedHash(resolvedOperationHash);
+      const looksLikeWrongHash =
+        hasPersistedQueryNotFound(upstream.raw) ||
+        hasMissingRequiredVariables(upstream.raw, ["isShipByDateEnabled", "isDFSUpdatesEnabled"]);
+      if (
+        normalizedCurrent &&
+        normalizedResolved &&
+        normalizedCurrent !== normalizedResolved &&
+        looksLikeWrongHash
+      ) {
+        activePayload = withPayloadPersistedHash(payload, normalizedResolved);
+        upstream = await runTargetWithAuthFallback(primaryTarget, activePayload);
+        if (
+          secondaryTarget &&
+          (upstream.response.status === 404 || upstream.response.status === 403)
+        ) {
+          upstream = await runTargetWithAuthFallback(secondaryTarget, activePayload);
+        }
+      }
+    }
+
+    if (opName === "getBuyOrder" && detailHashCandidates.length > 1) {
+      const triedHashes = new Set<string>();
+      const initialHash = extractPersistedHashFromPayload(activePayload);
+      if (initialHash) triedHashes.add(initialHash);
+
+      while (hasPersistedQueryNotFound(upstream.raw)) {
+        const nextHash = detailHashCandidates.find((hash) => !triedHashes.has(hash));
+        if (!nextHash) break;
+        triedHashes.add(nextHash);
+        activePayload = withPayloadPersistedHash(payload, nextHash);
+        upstream = await runTargetWithAuthFallback(primaryTarget, activePayload);
+        if (
+          secondaryTarget &&
+          (upstream.response.status === 404 ||
+            upstream.response.status === 403 ||
+            hasPersistedQueryNotFound(upstream.raw))
+        ) {
+          upstream = await runTargetWithAuthFallback(secondaryTarget, activePayload);
+        }
+      }
     }
 
     const upstreamTarget = upstream.target;
@@ -641,7 +909,7 @@ export async function POST(request: NextRequest) {
       fallbackTried = true;
       const parsed = await runPlaywrightJson({
         operationName: opName,
-        payload,
+        payload: activePayload,
         upstreamUrl: upstreamTarget.url,
         upstreamOrigin: upstreamTarget.origin,
       });
@@ -715,7 +983,7 @@ export async function POST(request: NextRequest) {
         extensions: {
           persistedQuery: {
             version: 1,
-            sha256Hash: STOCKX_PERSISTED_QUERY_HASH,
+            sha256Hash: listPersistedHash,
           },
         },
       };

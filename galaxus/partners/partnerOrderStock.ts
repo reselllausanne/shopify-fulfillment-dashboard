@@ -1,4 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
+import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
+import { pickMiraklLineGtin } from "@/decathlon/mirakl/orderLineFields";
 
 /**
  * Pick the same supplier variant as assign route: for a GTIN, prefer the partner-prefixed
@@ -98,4 +100,71 @@ export async function deductStockForPartnerOrderFulfillment(params: {
   });
 
   return { adjusted, skipped: false, details };
+}
+
+/**
+ * When a partner ships Decathlon (Mirakl) lines, decrement the same `SupplierVariant` rows
+ * used for Galaxus feeds (matched via catalog enrichment / GTIN).
+ */
+export async function deductPartnerCatalogStockForDecathlonLines(params: {
+  partnerKeyLower: string;
+  items: Array<{ line: any; quantity: number }>;
+}): Promise<{ adjusted: number; details: string[] }> {
+  const { partnerKeyLower, items } = params;
+  const details: string[] = [];
+  if (!items.length) {
+    return { adjusted: 0, details: ["no lines"] };
+  }
+
+  const prefix = `${partnerKeyLower}:`;
+  const prismaAny = prisma as any;
+  const lines = items.map((i) => i.line).filter(Boolean);
+  const catalogByLineId = await enrichDecathlonOrderLinesWithSupplierCatalog(lines);
+
+  let adjusted = 0;
+  await prisma.$transaction(async (tx) => {
+    const txAny = tx as any;
+    for (const { line, quantity } of items) {
+      const lineId = String(line?.id ?? "").trim();
+      const qty = Math.max(1, Math.round(Number(quantity ?? 1)));
+      const catalog = lineId ? catalogByLineId.get(lineId) : undefined;
+      let targetId = String(catalog?.supplierVariantId ?? "").trim();
+      const gtin = String(pickMiraklLineGtin(line) ?? line?.gtin ?? "").trim();
+
+      if (!targetId && gtin) {
+        const resolved = await resolveSupplierVariantForPartnerGtin(txAny, gtin, partnerKeyLower);
+        targetId = resolved?.supplierVariantId ?? "";
+      }
+
+      if (!targetId) {
+        details.push(`skip decathlon line ${lineId || "?"}: no supplierVariantId`);
+        continue;
+      }
+      if (!targetId.toLowerCase().startsWith(prefix)) {
+        details.push(`skip decathlon line ${lineId || "?"}: variant ${targetId} not owned by partner`);
+        continue;
+      }
+
+      const variant = await txAny.supplierVariant.findUnique({
+        where: { supplierVariantId: targetId },
+      });
+      if (!variant) {
+        details.push(`skip decathlon line ${lineId || "?"}: variant missing`);
+        continue;
+      }
+
+      const current = Math.max(0, Math.round(Number(variant.stock ?? 0)));
+      const next = Math.max(0, current - qty);
+      if (next !== current) {
+        await txAny.supplierVariant.update({
+          where: { supplierVariantId: targetId },
+          data: { stock: next },
+        });
+        adjusted += 1;
+        details.push(`${targetId}: ${current} → ${next} (−${qty}) [Decathlon]`);
+      }
+    }
+  });
+
+  return { adjusted, details };
 }

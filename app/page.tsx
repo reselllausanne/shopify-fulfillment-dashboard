@@ -27,6 +27,28 @@ import { useMatching } from "@/app/hooks/useMatching";
 import { getJson, postJson, delJson } from "@/app/lib/api";
 
 const STOCKX_QUERY_CONFIG_STORAGE_KEY = "supplier_stockx_query_config_v1";
+const STOCKX_TOKEN_STORAGE_KEY = "supplier_stockx_token";
+
+const decodeJwtPayloadSafe = (token: string): Record<string, unknown> | null => {
+  try {
+    const payloadPart = String(token || "").split(".")[1] || "";
+    if (!payloadPart) return null;
+    const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = atob(padded);
+    return JSON.parse(decoded) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+};
+
+const isExpiredStockxJwt = (token: string, skewSeconds = 60): boolean => {
+  const payload = decodeJwtPayloadSafe(token);
+  const exp = typeof payload?.exp === "number" ? payload.exp : null;
+  if (!exp) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return exp <= now + skewSeconds;
+};
 
 export default function Home() {
   const router = useRouter();
@@ -58,7 +80,7 @@ export default function Home() {
     token = token.replace(/^"+|"+$/g, "");
     return token.trim();
   };
-  const syncStockxTokenFromSession = async (options?: { silent?: boolean }) => {
+  const syncStockxTokenFromSession = async (options?: { silent?: boolean; force?: boolean }) => {
     try {
       const res = await fetch("/api/stockx/token", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
@@ -72,10 +94,28 @@ export default function Home() {
       if (!normalized) {
         return null;
       }
+      const currentNormalized = normalizeStockxTokenInput(stockxToken);
+      const savedNormalized =
+        typeof window !== "undefined"
+          ? normalizeStockxTokenInput(localStorage.getItem(STOCKX_TOKEN_STORAGE_KEY) || "")
+          : "";
+      const existingPreferred = currentNormalized || savedNormalized;
+      const accountMismatch = Boolean(json?.accountMismatch);
+      if (
+        options?.silent &&
+        !options?.force &&
+        existingPreferred &&
+        existingPreferred !== normalized
+      ) {
+        return {
+          source: typeof json?.source === "string" ? json.source : null,
+          accountMismatch: accountMismatch || true,
+        };
+      }
       setStockxToken(normalized);
       return {
         source: typeof json?.source === "string" ? json.source : null,
-        accountMismatch: Boolean(json?.accountMismatch),
+        accountMismatch,
       };
     } catch (error: any) {
       if (!options?.silent) {
@@ -88,6 +128,7 @@ export default function Home() {
   const [goatCookie, setGoatCookie] = useState("");
   const [goatCsrfToken, setGoatCsrfToken] = useState("");
   const [saveToken, setSaveToken] = useState(false);
+  const [tokenStorageHydrated, setTokenStorageHydrated] = useState(false);
   const [operationName, setOperationName] = useState(STOCKX_PERSISTED_OPERATION_NAME);
   const [persistedQueryHash, setPersistedQueryHash] = useState(STOCKX_PERSISTED_QUERY_HASH);
   const [query, setQuery] = useState(DEFAULT_QUERY);
@@ -253,7 +294,11 @@ export default function Home() {
   const autoSetAllHighMatchesAndRefresh = async () => {
     await autoSetAllHighMatches();
     // Important: update existing DB rows too (ETA range, tracking, states)
-    await refreshDbMatchesTracking(stockxToken, { onlyMissingTracking: true, limit: 800 });
+    await refreshDbMatchesTracking(stockxToken, {
+      onlyMissingTracking: true,
+      limit: 800,
+      detailPersistedQueryHash: persistedQueryHash,
+    });
     await loadFromDB();
   };
 
@@ -262,7 +307,11 @@ export default function Home() {
       alert("Please enter a StockX token first.");
       return;
     }
-    await refreshDbMatchesTracking(stockxToken, { onlyMissingTracking: true, limit: 800 });
+    await refreshDbMatchesTracking(stockxToken, {
+      onlyMissingTracking: true,
+      limit: 800,
+      detailPersistedQueryHash: persistedQueryHash,
+    });
     await loadFromDB();
   };
 
@@ -289,12 +338,18 @@ export default function Home() {
 
   // Load credentials from localStorage on mount
   useEffect(() => {
-    const savedStockx = localStorage.getItem("supplier_stockx_token");
+    const savedStockx = localStorage.getItem(STOCKX_TOKEN_STORAGE_KEY);
     const savedGoatCookie = localStorage.getItem("supplier_goat_cookie");
     const savedGoatCsrf = localStorage.getItem("supplier_goat_csrf");
     const savedStockxQueryConfig = localStorage.getItem(STOCKX_QUERY_CONFIG_STORAGE_KEY);
-    if (savedStockx) {
-      setStockxToken(normalizeStockxTokenInput(savedStockx || ""));
+    const normalizedSavedStockx = normalizeStockxTokenInput(savedStockx || "");
+    const savedStockxExpired = normalizedSavedStockx
+      ? isExpiredStockxJwt(normalizedSavedStockx, 120)
+      : false;
+    if (normalizedSavedStockx && !savedStockxExpired) {
+      setStockxToken(normalizedSavedStockx);
+    } else if (normalizedSavedStockx && savedStockxExpired) {
+      localStorage.removeItem(STOCKX_TOKEN_STORAGE_KEY);
     }
     if (savedStockxQueryConfig) {
       try {
@@ -329,18 +384,23 @@ export default function Home() {
       setGoatCsrfToken(savedGoatCsrf || "");
       setSaveToken(true);
     }
-    void syncStockxTokenFromSession({ silent: true });
+    // Local token first; if missing/expired, pull fresh token from session files.
+    if (!normalizedSavedStockx || savedStockxExpired) {
+      void syncStockxTokenFromSession({ silent: true, force: true });
+    }
+    setTokenStorageHydrated(true);
   }, []);
 
   // Always persist StockX token locally so manual rotation survives refresh.
   useEffect(() => {
+    if (!tokenStorageHydrated) return;
     const normalized = normalizeStockxTokenInput(stockxToken);
     if (normalized) {
-      localStorage.setItem("supplier_stockx_token", normalized);
+      localStorage.setItem(STOCKX_TOKEN_STORAGE_KEY, normalized);
     } else {
-      localStorage.removeItem("supplier_stockx_token");
+      localStorage.removeItem(STOCKX_TOKEN_STORAGE_KEY);
     }
-  }, [stockxToken]);
+  }, [stockxToken, tokenStorageHydrated]);
 
   // Optional persistence only for GOAT credentials.
   useEffect(() => {
@@ -489,7 +549,10 @@ export default function Home() {
   };
 
   const handleEnrichLoadedOrdersWrapper = async () => {
-    await handleEnrichLoadedOrders({ token: resolveActiveStockxToken() });
+    await handleEnrichLoadedOrders({
+      token: resolveActiveStockxToken(),
+      detailPersistedQueryHash: persistedQueryHash,
+    });
   };
 
   const handleFetchAllPricingWrapper = async () => {
@@ -709,7 +772,7 @@ export default function Home() {
         if (capturedToken) {
           setStockxToken(capturedToken);
         }
-        const synced = await syncStockxTokenFromSession({ silent: true });
+        const synced = await syncStockxTokenFromSession({ silent: true, force: true });
         const fallbackNotice = json?.persistentFallback
           ? "\n⚠️ Persistent browser profile was busy, temporary context used for this login."
           : "";
@@ -722,10 +785,22 @@ export default function Home() {
         const mismatchNotice = synced?.accountMismatch
           ? "\n⚠️ Session cookie token and token file differed. UI uses session cookie token."
           : "";
+        const capturedHashes = json?.captured?.persistedHashes || {};
+        const hashEntries = Object.entries(capturedHashes).filter(
+          ([op, value]) => typeof op === "string" && typeof value === "string"
+        );
+        const hashNotice =
+          hashEntries.length > 0
+            ? `\nCaptured hashes: ${hashEntries
+                .map(([op, value]) => `${op}:${String(value).slice(0, 10)}...`)
+                .join(" | ")}`
+            : "\nCaptured hashes: none (open StockX order list/view during Playwright session)";
         const captureNotice = `\nDeviceId: ${json?.captured?.deviceId ? "yes" : "no"} | SessionId: ${
           json?.captured?.sessionId ? "yes" : "no"
-        } | CookieHeader: ${json?.captured?.hasCookieHeader ? "yes" : "no"}`;
-        alert(`✅ StockX token captured and synced (${syncSource})${fallbackNotice}${captureNotice}${mismatchNotice}`);
+        } | CookieHeader: ${json?.captured?.hasCookieHeader ? "yes" : "no"}${hashNotice}`;
+        alert(
+          `✅ StockX token captured and synced (${syncSource})${fallbackNotice}${captureNotice}${mismatchNotice}`
+        );
       } else {
         alert("⚠️ StockX login succeeded but no token found");
       }

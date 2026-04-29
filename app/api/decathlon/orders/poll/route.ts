@@ -5,6 +5,7 @@ import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mir
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { extractGtinFromOfferSku, roundToCents } from "@/decathlon/returns/theRestockFromReturnLine";
+import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -671,9 +672,19 @@ export async function POST(request: Request) {
         .filter((key): key is string => Boolean(key))
     );
     let upserted = 0;
+    const inventorySummary = {
+      applied: 0,
+      alreadyProcessed: 0,
+      unresolved: 0,
+      invalid: 0,
+    };
     for (const order of orders) {
       const orderId = String(order?.id ?? order?.order_id ?? order?.orderId ?? "").trim();
       if (!orderId) continue;
+      const orderOccurredAt =
+        order?.created_date || order?.date_created || order?.order_date
+          ? new Date(order?.created_date ?? order?.date_created ?? order?.order_date)
+          : undefined;
       const lines = Array.isArray(order?.order_lines) ? order.order_lines : order?.lines ?? [];
       const partnerKey = resolveOrderPartnerKey(lines, partnerKeys);
       const { orderRow } = await upsertDecathlonOrder({
@@ -734,6 +745,36 @@ export async function POST(request: Request) {
               rawJson: line ?? null,
             },
           });
+          const inventoryResult = await applyInventoryOrderLine({
+            channel: "DECATHLON",
+            externalOrderId: orderId,
+            externalLineId: lineId,
+            quantity: Number(updateData.quantity ?? 1),
+            providerKey:
+              updateData.providerKey ??
+              updateData.offerSku ??
+              updateData.productSku ??
+              updateData.supplierSku ??
+              null,
+            gtin: resolvedGtin,
+            occurredAt:
+              orderOccurredAt && !Number.isNaN(orderOccurredAt.getTime())
+                ? orderOccurredAt
+                : undefined,
+            payloadJson: {
+              source: "decathlon-orders-poll",
+              orderState: normalizeOrderState(order),
+            },
+          });
+          if (inventoryResult.applied) {
+            inventorySummary.applied += 1;
+          } else if (inventoryResult.reason === "already_processed") {
+            inventorySummary.alreadyProcessed += 1;
+          } else if (inventoryResult.reason === "unresolved_variant") {
+            inventorySummary.unresolved += 1;
+          } else {
+            inventorySummary.invalid += 1;
+          }
         }
       }
       await repairDecathlonStockxMatchLineRefs(orderRow.id);
@@ -760,7 +801,13 @@ export async function POST(request: Request) {
       maxPages,
       fallbackUpdatedFrom: lastSyncAt,
     });
-    return NextResponse.json({ ok: true, fetched: orders.length, upserted, returns: returnsSummary });
+    return NextResponse.json({
+      ok: true,
+      fetched: orders.length,
+      upserted,
+      returns: returnsSummary,
+      inventory: inventorySummary,
+    });
   } catch (error: any) {
     console.error("[DECATHLON][ORDERS][POLL] Failed", error);
     return NextResponse.json(

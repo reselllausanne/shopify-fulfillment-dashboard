@@ -17,6 +17,8 @@ import {
   totalTrmFeedExclusions,
   trmFeedExclusionsHeaderValue,
 } from "@/galaxus/exports/trmExport";
+import { attachAvailableStock } from "@/inventory/availableStock";
+import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -192,6 +194,11 @@ export async function GET(request: Request) {
       { status: 409 }
     );
   }
+  const stockBySupplierVariantId = await attachAvailableStock(
+    exportCandidates
+      .map((candidate: any) => candidate?.variant)
+      .filter((variant: any) => Boolean(variant))
+  );
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
@@ -206,8 +213,24 @@ export async function GET(request: Request) {
       manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
     const manualPriceExVat =
       manualLock && manualPrice && manualPrice > 0 ? manualPrice / (1 + (vatRate ?? 0)) : null;
+    const channelClassification = classifyProductPricingKind({
+      title: candidate?.product?.name ?? variant?.supplierProductName ?? null,
+      sizeRaw: variant?.sizeRaw ?? null,
+      sizeNormalized: variant?.sizeNormalized ?? null,
+      sizeEu: candidate?.kickdbVariant?.sizeEu ?? null,
+      sizeUs: candidate?.kickdbVariant?.sizeUs ?? null,
+    });
+    const channelAdjustedPrice = computeChannelVariantPrice({
+      channel: "GALAXUS",
+      basePrice: manualPriceExVat && manualPriceExVat > 0 ? manualPriceExVat : sellPrice,
+      classification: channelClassification,
+    });
     const priceValue =
-      manualPriceExVat && manualPriceExVat > 0 ? manualPriceExVat : sellPrice;
+      channelAdjustedPrice && channelAdjustedPrice > 0
+        ? channelAdjustedPrice
+        : manualPriceExVat && manualPriceExVat > 0
+          ? manualPriceExVat
+          : sellPrice;
     if (!Number.isFinite(priceValue) || priceValue <= 0) {
       skippedInvalidPrice += 1;
       if (providerKey) skippedProviderKeys.push(providerKey);
@@ -221,9 +244,17 @@ export async function GET(request: Request) {
       continue;
     }
 
-    const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
-    const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const availableStock = supplierVariantId
+      ? stockBySupplierVariantId.get(supplierVariantId)
+      : undefined;
+    const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    const rawStock =
+      availableStock !== undefined
+        ? availableStock
+        : manualLock && manualStock !== null
+          ? manualStock
+          : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
     const effectiveStock = isStx && deliveryType.startsWith("express_")

@@ -46,6 +46,7 @@ const LOGISTICS_ALLOWED_PATHS = [
 
 export async function proxy(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
+  const isApiPath = pathname.startsWith("/api/");
 
   // Staff login URL with partner callback → partner login (no auth_token needed)
   if (pathname === "/login" || pathname === "/login/") {
@@ -72,6 +73,16 @@ export async function proxy(req: NextRequest) {
   const token = req.cookies.get("auth_token")?.value;
 
   if (!token) {
+    if (isApiPath) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Unauthorized",
+          details: "Missing auth_token cookie. Login required.",
+        },
+        { status: 401 }
+      );
+    }
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);
@@ -106,14 +117,34 @@ export async function proxy(req: NextRequest) {
         return NextResponse.next();
       }
 
+      if (isApiPath) {
+        return NextResponse.json(
+          { ok: false, error: "Forbidden", details: "Role logistics cannot access this API route." },
+          { status: 403 }
+        );
+      }
+
       // Logistics blocked from this path - redirect to scan
       return NextResponse.redirect(new URL("/scan", req.url));
+    }
+
+    if (isApiPath) {
+      return NextResponse.json(
+        { ok: false, error: "Forbidden", details: "Unknown or unauthorized role." },
+        { status: 403 }
+      );
     }
 
     // Unknown role - redirect to login
     return NextResponse.redirect(new URL("/login", req.url));
   } catch (error) {
     console.error("[PROXY] Auth error:", error);
+    if (isApiPath) {
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized", details: "Invalid or expired auth_token." },
+        { status: 401 }
+      );
+    }
     const loginUrl = new URL("/login", req.url);
     loginUrl.searchParams.set("callbackUrl", pathname);
     return NextResponse.redirect(loginUrl);

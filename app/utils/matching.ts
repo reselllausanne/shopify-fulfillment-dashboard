@@ -1,4 +1,5 @@
 import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
+import { isLiquidationProductTitle } from "@/inventory/pricingPolicy";
 
 export interface NormalizedSupplierOrder {
   chainId: string; // StockX long chainId (e.g. "14826275139352606543")
@@ -55,8 +56,7 @@ export function isShopifyFinancialRefunded(displayFinancialStatus: string | null
 
 /** Liquidation convention: "%" at end of title only (not e.g. "100% cotton" mid-string). */
 export function isLiquidationShopifyTitle(title: string | null | undefined): boolean {
-  if (!title) return false;
-  return /%\s*$/.test(title.trim());
+  return isLiquidationProductTitle(title);
 }
 
 export interface MatchCandidate {

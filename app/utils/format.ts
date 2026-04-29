@@ -27,23 +27,38 @@ export const extractAwbFromTrackingUrl = (trackingUrl: string | null): string | 
       return null;
     };
 
-    const paramNames = [
-      "AWB",
+    const paramNames = new Set([
       "awb",
-      "trackingNumber",
+      "awbno",
+      "trackingnumber",
+      "trackingnumbers",
       "tracking_number",
+      "tracking_no",
+      "tracking",
       "tracknum",
-      "trackNum",
+      "tracknums",
+      "tracknumber",
+      "tracknumbers",
       "track_number",
+      "track_no",
       "waybill",
       "consignment",
-      "shipmentNumber",
-    ];
-    for (const param of paramNames) {
-      const value = params.get(param);
+      "shipmentnumber",
+      "shipment_number",
+      "piececode",
+    ]);
+    for (const [key, value] of params.entries()) {
+      const keyLower = key.toLowerCase();
+      const looksLikeTrackingKey =
+        paramNames.has(keyLower) ||
+        keyLower.includes("track") ||
+        keyLower.includes("awb") ||
+        keyLower.includes("waybill") ||
+        keyLower.includes("consignment");
+      if (!looksLikeTrackingKey) continue;
       const normalized = normalizeAwb(value);
       if (normalized) {
-        console.log(`[AWB] ✅ Extracted from param "${param}": ${normalized}`);
+        console.log(`[AWB] ✅ Extracted from param "${key}": ${normalized}`);
         return normalized;
       }
     }
@@ -54,6 +69,17 @@ export const extractAwbFromTrackingUrl = (trackingUrl: string | null): string | 
       if (!normalized) continue;
       console.log(`[AWB] ✅ Extracted from path: ${normalized}`);
       return normalized;
+    }
+
+    const hash = url.hash ? url.hash.replace(/^#/, "") : "";
+    if (hash) {
+      const hashSegments = hash.split(/[/\s]+/).filter(Boolean);
+      for (const segment of hashSegments) {
+        const normalized = normalizeAwb(segment);
+        if (!normalized) continue;
+        console.log(`[AWB] ✅ Extracted from hash: ${normalized}`);
+        return normalized;
+      }
     }
 
     console.log(`[AWB] ❌ Could not extract AWB from: ${trackingUrl}`);

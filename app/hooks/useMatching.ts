@@ -10,6 +10,9 @@ import {
 } from "@/app/utils/matching";
 import type { PricingResult } from "@/app/types";
 import { postJson, getJson } from "@/app/lib/api";
+import {
+  STOCKX_GET_BUY_ORDER_OPERATION_NAME,
+} from "@/app/lib/constants";
 import { toNumber } from "@/app/utils/format";
 import { extractAwbFromTrackingUrl } from "@/app/utils/format";
 
@@ -34,40 +37,6 @@ type UseMatchingArgs = {
   pricingByOrder: Record<string, PricingResult | null>;
   reloadDb?: () => Promise<void>;
 };
-
-const GET_BUY_ORDER_TRACKING_QUERY = `
-  query GET_BUY_ORDER(
-    $chainId: String
-    $orderId: String
-  ) {
-    viewer {
-      order(chainId: $chainId, orderId: $orderId) {
-        ... on BuyOrder {
-          status
-          currentStatus { key }
-          checkoutType
-          states {
-            title
-            subtitle
-            status
-            progress
-            meta
-            sourceType
-          }
-          estimatedDeliveryDateRange {
-            estimatedDeliveryDate
-            latestEstimatedDeliveryDate
-          }
-          shipping {
-            shipment {
-              trackingUrl
-            }
-          }
-        }
-      }
-    }
-  }
-`;
 
 export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }: UseMatchingArgs) {
   const [shopifyItems, setShopifyItems] = useState<ShopifyLineItem[]>([]);
@@ -317,7 +286,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
    */
   const refreshDbMatchesTracking = async (
     token?: string,
-    options?: { onlyMissingTracking?: boolean; limit?: number }
+    options?: { onlyMissingTracking?: boolean; limit?: number; detailPersistedQueryHash?: string }
   ) => {
     try {
       const dbRes = await getJson<any>("/api/db/matches");
@@ -367,15 +336,27 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
           }
 
           try {
-            const detailRes = await postJson<any>("/api/stockx", {
+            const detailHash = String(options?.detailPersistedQueryHash || "").trim();
+            const requestBody: Record<string, unknown> = {
               token: token.trim(),
-              operationName: "GET_BUY_ORDER",
-              query: GET_BUY_ORDER_TRACKING_QUERY,
+              operationName: STOCKX_GET_BUY_ORDER_OPERATION_NAME,
+              query: "",
               variables: {
                 chainId,
                 orderId,
+                country: "CH",
+                market: "CH",
+                isShipByDateEnabled: true,
+                isDFSUpdatesEnabled: true,
               },
-            });
+            };
+            if (detailHash) {
+              requestBody.persistedQueryHash = detailHash;
+              requestBody.extensions = {
+                persistedQuery: { version: 1, sha256Hash: detailHash },
+              };
+            }
+            const detailRes = await postJson<any>("/api/stockx", requestBody);
             const buyOrder = detailRes.data?.data?.viewer?.order;
             // StockX can return partial GraphQL errors while still providing a valid order payload.
             // Accept partial responses when viewer.order exists so tracking/AWB backfill can proceed.

@@ -1,6 +1,10 @@
 // app/api/shopify/order-by-name/route.ts
 import { NextResponse } from "next/server";
 import { shopifyGraphQL, extractEUSize } from "@/lib/shopifyAdmin";
+import {
+  lineFulfillableQuantity,
+  shouldSkipOrderForFulfillmentMatching,
+} from "@/app/lib/shopifyOrderFulfillmentFilters";
 
 export const runtime = "nodejs";
 
@@ -12,6 +16,7 @@ query OrderByName($first: Int!, $query: String!) {
         id
         name
         createdAt
+        cancelledAt
         displayFinancialStatus
         displayFulfillmentStatus
         customer { displayName }
@@ -22,6 +27,7 @@ query OrderByName($first: Int!, $query: String!) {
               title
               sku
               quantity
+              fulfillableQuantity
               variantTitle
               originalUnitPriceSet { shopMoney { amount currencyCode } }
               discountedTotalSet { shopMoney { amount currencyCode } }
@@ -65,14 +71,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ lineItems: [] });
     }
 
-    const liEdges = node.lineItems?.edges ?? [];
+    if (shouldSkipOrderForFulfillmentMatching(node)) {
+      console.log(`[SHOPIFY] Order skipped (cancelled / void / refunded): ${orderName}`);
+      return NextResponse.json({ lineItems: [] });
+    }
+
+    const liEdges = (node.lineItems?.edges ?? []).filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
     const lineItems = liEdges.map((liE: any) => {
       const li = liE.node;
       const unit = li.originalUnitPriceSet?.shopMoney;
       const total = li.discountedTotalSet?.shopMoney;
       const currencyCode = total?.currencyCode || unit?.currencyCode || "CHF";
       const totalAmount = total?.amount ?? "0";
-      const qty = Number(li.quantity ?? 0);
+      const qty = lineFulfillableQuantity(li);
       const unitAmount =
         unit?.amount ??
         (qty > 0 ? String(Number(totalAmount) / qty) : "0");

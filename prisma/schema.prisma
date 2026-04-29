@@ -386,6 +386,16 @@ enum MarketplaceChannel {
   @@schema("public")
 }
 
+enum InventoryEventType {
+  SALE
+  RETURN
+  ADJUSTMENT
+  RESERVATION
+  RELEASE
+
+  @@schema("public")
+}
+
 enum CashInDelayType {
   BUSINESS_DAYS
   CALENDAR_DAYS
@@ -1003,11 +1013,132 @@ model SupplierVariant {
   updatedAt         DateTime @updatedAt
 
   mappings          VariantMapping[]
+  inventoryEvents   InventoryEvent[]
+  channelListings   ChannelListingState[]
+  orderLineSyncRows OrderLineSyncState[]
 
   @@index([providerKey])
   @@index([gtin])
   @@unique([providerKey, gtin])
   @@index([supplierSku])
+  @@schema("public")
+}
+
+model InventoryEvent {
+  id               String             @id @default(uuid())
+  eventType        InventoryEventType @default(SALE)
+  channel          MarketplaceChannel
+  externalOrderId  String?
+  externalLineId   String?
+  supplierVariantId String
+  providerKey      String?
+  quantityDelta    Int
+  occurredAt       DateTime
+  processedAt      DateTime?
+  idempotencyKey   String?            @unique
+  payloadJson      Json?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  supplierVariant  SupplierVariant    @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  orderLineSyncRows OrderLineSyncState[]
+
+  @@index([supplierVariantId, occurredAt])
+  @@index([channel, externalOrderId])
+  @@index([channel, externalLineId])
+  @@schema("public")
+}
+
+model ChannelListingState {
+  id                     String             @id @default(uuid())
+  channel                MarketplaceChannel
+  providerKey            String
+  supplierVariantId      String?
+  gtin                   String?
+  externalProductId      String?
+  externalVariantId      String?
+  externalInventoryItemId String?
+  externalLocationId     String?
+  lastPushedStock        Int?
+  lastPushedPrice        Decimal?           @db.Decimal(10, 2)
+  lastSyncedAt           DateTime?
+  status                 String             @default("PENDING")
+  lastError              String?
+  soldOutAt              DateTime?
+  archivedAt             DateTime?
+  metadataJson           Json?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  supplierVariant        SupplierVariant?   @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: SetNull)
+
+  @@unique([channel, providerKey])
+  @@index([supplierVariantId])
+  @@index([channel, status])
+  @@index([externalVariantId])
+  @@schema("public")
+}
+
+model OrderLineSyncState {
+  id               String             @id @default(uuid())
+  channel          MarketplaceChannel
+  externalOrderId  String?
+  externalLineId   String
+  supplierVariantId String
+  providerKey      String?
+  quantity         Int
+  eventType        InventoryEventType @default(SALE)
+  eventId          String?
+  firstSeenAt      DateTime           @default(now())
+  lastSeenAt       DateTime           @default(now())
+  payloadJson      Json?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  supplierVariant  SupplierVariant    @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  inventoryEvent   InventoryEvent?    @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@unique([channel, externalLineId])
+  @@index([supplierVariantId, channel])
+  @@index([externalOrderId])
+  @@schema("public")
+}
+
+model InventorySyncRun {
+  id          String   @id @default(uuid())
+  jobKey      String
+  dryRun      Boolean  @default(false)
+  status      String   @default("RUNNING")
+  startedAt   DateTime @default(now())
+  finishedAt  DateTime?
+  summaryJson Json?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  reconcileDrifts InventoryReconcileDrift[]
+
+  @@index([jobKey, startedAt])
+  @@index([status])
+  @@schema("public")
+}
+
+model InventoryReconcileDrift {
+  id               String   @id @default(uuid())
+  runId            String
+  channel          MarketplaceChannel
+  providerKey      String
+  supplierVariantId String?
+  listingStock     Int?
+  dbAvailableStock Int?
+  delta            Int?
+  status           String?
+  createdAt        DateTime @default(now())
+
+  run              InventorySyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([channel, providerKey])
   @@schema("public")
 }
 

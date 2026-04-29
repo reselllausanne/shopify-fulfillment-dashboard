@@ -14,6 +14,7 @@ import {
 } from "@/decathlon/exports/pricing";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
+import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
 
 export type DecathlonSyncRow = {
   providerKey: string;
@@ -80,6 +81,22 @@ export function resolveEffectivePrice(
   candidate: DecathlonExportCandidate,
   partnerKeysLower: Set<string> = new Set()
 ): string | null {
+  const applyPricingPolicy = (basePrice: number) => {
+    const classification = classifyProductPricingKind({
+      title: candidate?.product?.name ?? candidate?.variant?.supplierProductName ?? null,
+      sizeRaw: candidate?.variant?.sizeRaw ?? null,
+      sizeNormalized: candidate?.variant?.sizeNormalized ?? null,
+      sizeEu: candidate?.kickdbVariant?.sizeEu ?? null,
+      sizeUs: candidate?.kickdbVariant?.sizeUs ?? null,
+    });
+    const adjusted =
+      computeChannelVariantPrice({
+        channel: "DECATHLON",
+        basePrice,
+        classification,
+      }) ?? basePrice;
+    return adjusted.toFixed(2);
+  };
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
@@ -93,10 +110,10 @@ export function resolveEffectivePrice(
     });
     if (!buyNow || buyNow <= 0) return null;
     const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
-    return listTtc.toFixed(2);
+    return applyPricingPolicy(listTtc);
   }
   if (manualLock && manualPrice && manualPrice > 0) {
-    return decathlonOfferListPriceFromManualLockedPrice(manualPrice).toFixed(2);
+    return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
   }
   const buyNow = resolveDecathlonBuyNow({
     buyNowStockx: parseDecimal(variant?.price),
@@ -107,7 +124,7 @@ export function resolveEffectivePrice(
   const base = computeDecathlonOfferListPriceFromBuyNow(buyNow);
   if (!base || base <= 0) return null;
   const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);
-  return listTtc.toFixed(2);
+  return applyPricingPolicy(listTtc);
 }
 
 function normalizePrice(value: unknown): string | null {

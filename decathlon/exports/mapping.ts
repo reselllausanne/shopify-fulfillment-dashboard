@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier/providerKey";
+import { attachAvailableStock } from "@/inventory/availableStock";
 import { isAllowedDecathlonBrand } from "./brands";
 import type {
   DecathlonExclusion,
@@ -156,9 +157,26 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
       cursorId = last.id ?? null;
     }
 
+    const stockBySupplierVariantId = await attachAvailableStock(
+      mappings
+        .map((mapping: any) => mapping?.supplierVariant)
+        .filter((variant: any) => Boolean(variant))
+    );
+
     for (const mapping of mappings) {
       scanned += 1;
-      const variant = mapping?.supplierVariant ?? null;
+      const rawVariant = mapping?.supplierVariant ?? null;
+      const resolvedStock =
+        rawVariant?.supplierVariantId && stockBySupplierVariantId.has(rawVariant.supplierVariantId)
+          ? stockBySupplierVariantId.get(rawVariant.supplierVariantId)
+          : undefined;
+      const variant =
+        rawVariant && resolvedStock !== undefined
+          ? {
+              ...rawVariant,
+              stock: resolvedStock,
+            }
+          : rawVariant;
       const supplierVariantId =
         mapping?.supplierVariantId ?? variant?.supplierVariantId ?? null;
       if (!variant) {

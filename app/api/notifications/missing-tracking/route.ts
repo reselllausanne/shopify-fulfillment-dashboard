@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 
 type TrackingItem = {
   id: string;
+  shopifyOrderId: string;
   shopifyOrderName: string;
   shopifyProductTitle: string;
   shopifySku: string | null;
@@ -19,7 +20,7 @@ type TrackingItem = {
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const CUTOFF_DATE = new Date("2026-02-01T00:00:00.000Z");
-const CRITICAL_AGE_DAYS = 9;
+const CRITICAL_AGE_DAYS = 7;
 
 const isExcludedNoTracking = (sku: string | null, title: string) => {
   if (sku && EXCLUDED_SKUS.includes(sku)) return true;
@@ -38,6 +39,7 @@ export async function GET() {
       take: 100,
       select: {
         id: true,
+        shopifyOrderId: true,
         shopifyOrderName: true,
         shopifyProductTitle: true,
         shopifySku: true,
@@ -50,45 +52,58 @@ export async function GET() {
       },
     });
 
+    const orderIds = Array.from(
+      new Set(items.map((item) => item.shopifyOrderId).filter(Boolean))
+    );
+    const fulfilledOrders =
+      orderIds.length > 0
+        ? await prisma.shopifyFulfillmentRecord.findMany({
+            where: { shopifyOrderId: { in: orderIds } },
+            select: { shopifyOrderId: true },
+          })
+        : [];
+    const fulfilledOrderIds = new Set(fulfilledOrders.map((order) => order.shopifyOrderId));
+
     const now = new Date();
     const normalized = items
       .filter((item: TrackingItem) => {
+        if (item.shopifyOrderId && fulfilledOrderIds.has(item.shopifyOrderId)) return false;
         if (isExcludedNoTracking(item.shopifySku, item.shopifyProductTitle || "")) return false;
         const createdAt = item.shopifyCreatedAt || item.stockxPurchaseDate;
         if (createdAt && createdAt < CUTOFF_DATE) return false;
         return true;
       })
       .map((item: TrackingItem) => {
-      const createdAt = item.shopifyCreatedAt || item.stockxPurchaseDate;
-      const ageDays =
-        createdAt ? Math.floor((now.getTime() - createdAt.getTime()) / MS_PER_DAY) : null;
+        const createdAt = item.shopifyCreatedAt || item.stockxPurchaseDate;
+        const ageDays =
+          createdAt ? Math.floor((now.getTime() - createdAt.getTime()) / MS_PER_DAY) : null;
 
-      const deliveryDate = item.stockxLatestEstimatedDelivery || item.stockxEstimatedDelivery;
-      const daysToDelivery =
-        deliveryDate ? Math.ceil((deliveryDate.getTime() - now.getTime()) / MS_PER_DAY) : null;
+        const deliveryDate = item.stockxLatestEstimatedDelivery || item.stockxEstimatedDelivery;
+        const daysToDelivery =
+          deliveryDate ? Math.ceil((deliveryDate.getTime() - now.getTime()) / MS_PER_DAY) : null;
 
-      const isOverdue = daysToDelivery != null && daysToDelivery < 0;
-      const isDueSoon = daysToDelivery != null && daysToDelivery <= 2 && daysToDelivery >= 0;
-      const isOlderThan9 = ageDays != null && ageDays >= CRITICAL_AGE_DAYS;
-      const isOver9Days = ageDays != null && ageDays > CRITICAL_AGE_DAYS;
-      const isGoat = item.stockxOrderNumber?.toUpperCase().includes("GOAT") ?? false;
+        const isOverdue = daysToDelivery != null && daysToDelivery < 0;
+        const isDueSoon = daysToDelivery != null && daysToDelivery <= 2 && daysToDelivery >= 0;
+        const isOlderThan9 = ageDays != null && ageDays >= CRITICAL_AGE_DAYS;
+        const isOver9Days = ageDays != null && ageDays > CRITICAL_AGE_DAYS;
+        const isGoat = item.stockxOrderNumber?.toUpperCase().includes("GOAT") ?? false;
 
-      return {
-        ...item,
-        ageDays,
-        deliveryDate,
-        daysToDelivery,
-        isOverdue,
-        isDueSoon,
-        isOlderThan9,
-        isOver9Days,
-        isGoat,
-      };
-    });
+        return {
+          ...item,
+          ageDays,
+          deliveryDate,
+          daysToDelivery,
+          isOverdue,
+          isDueSoon,
+          isOlderThan9,
+          isOver9Days,
+          isGoat,
+        };
+      });
 
     const goatItems = normalized.filter((i) => i.isGoat);
     const warningItems = normalized.filter((i) => i.isOver9Days && !i.isOverdue && !i.isDueSoon);
-    // Avoid duplicate rows: "warning" is the >9d age-only bucket; critical keeps overdue/due-soon and 9d edge case.
+    // Avoid duplicate rows: "warning" is the >7d age-only bucket; critical keeps overdue/due-soon and 7d edge case.
     const criticalItems = normalized.filter((i) => {
       const inWarningOnlyBucket =
         i.isOver9Days && !i.isOverdue && !i.isDueSoon;

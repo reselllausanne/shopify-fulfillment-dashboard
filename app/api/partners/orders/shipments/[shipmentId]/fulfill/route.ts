@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { deductStockForPartnerOrderFulfillment } from "@/galaxus/partners/partnerOrderStock";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
@@ -272,10 +275,36 @@ export async function POST(
       shippingLabelUrl = `/api/galaxus/documents/${document.id}`;
     }
 
+    const partnerOrder = await (prisma as any).partnerOrder.findFirst({
+      where: { partnerId: session.partnerId, galaxusOrderId: shipment.order.galaxusOrderId },
+    });
+    const previousPartnerOrderStatus = partnerOrder?.status ?? null;
+
     await (prisma as any).partnerOrder.updateMany({
       where: { partnerId: session.partnerId, galaxusOrderId: shipment.order.galaxusOrderId },
       data: { status: "FULFILLED", confirmedAt: new Date(), trackingNumber },
     });
+
+    let stock: { adjustedRows: number; skipped: boolean; details: string[] } | null = null;
+    if (partnerOrder) {
+      const partnerKeyLower = String(session.partnerKey ?? "").toLowerCase();
+      const stockResult = await deductStockForPartnerOrderFulfillment({
+        partnerOrderId: partnerOrder.id,
+        partnerKeyLower,
+        previousStatus: previousPartnerOrderStatus,
+      });
+      stock = {
+        adjustedRows: stockResult.adjusted,
+        skipped: stockResult.skipped,
+        details: stockResult.details,
+      };
+      if (stockResult.adjusted > 0) {
+        const origin = resolveAppOriginForPartnerJobs(new URL(req.url).origin);
+        if (origin) {
+          await requestFeedPush({ origin, scope: "full", triggerSource: "partner-shipment-fulfilled", runNow: true });
+        }
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -283,6 +312,7 @@ export async function POST(
       delr,
       ssccLabel,
       shippingLabelUrl,
+      stock,
     });
   } catch (error: any) {
     console.error("[PARTNER][SHIPMENT][FULFILL] Failed:", error);

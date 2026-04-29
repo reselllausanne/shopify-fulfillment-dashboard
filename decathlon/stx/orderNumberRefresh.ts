@@ -117,7 +117,7 @@ export async function refreshDecathlonStockxMatchesBySavedOrderNumber(
 
   if (eligibleList.length === 0) return stats;
 
-  const limiter = createLimiter(12);
+  const limiter = createLimiter(2);
   await Promise.all(
     eligibleList.map((match) =>
       limiter(async () => {

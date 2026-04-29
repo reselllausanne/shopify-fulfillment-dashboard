@@ -270,11 +270,7 @@ export default function WarehouseBulkPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
-      if (json.stockxEnrich?.attempted && !json.stockxEnrich?.ok) {
-        setError(
-          `StockX lookup: ${json.stockxEnrich.reason ?? "failed"} (saved your form values). Check order # and .data/stockx-token-galaxus.json.`
-        );
-      }
+      // Non-StockX order numbers should save without warnings (match is still stored).
       setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
       await loadDetail(orderId);
       await loadOrders();

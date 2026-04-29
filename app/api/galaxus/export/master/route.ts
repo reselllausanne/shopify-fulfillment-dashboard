@@ -16,6 +16,7 @@ import {
 } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
+import { attachAvailableStock } from "@/inventory/availableStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -324,6 +325,11 @@ export async function GET(request: Request) {
       trmExcluded: trmExclusionStats,
     });
   }
+  const stockBySupplierVariantId = await attachAvailableStock(
+    exportCandidates
+      .map((candidate: any) => candidate?.variant)
+      .filter((variant: any) => Boolean(variant))
+  );
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const supplierVariant = candidate.variant as any;
@@ -345,9 +351,17 @@ export async function GET(request: Request) {
       manualStockRaw === null || manualStockRaw === undefined
         ? null
         : Number.parseInt(String(manualStockRaw), 10);
-    const baseStock = Number.parseInt(String(supplierVariant?.stock ?? 0), 10);
-    const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
     const supplierVariantId = String(supplierVariant?.supplierVariantId ?? "");
+    const availableStock = supplierVariantId
+      ? stockBySupplierVariantId.get(supplierVariantId)
+      : undefined;
+    const baseStock = Number.parseInt(String(supplierVariant?.stock ?? 0), 10);
+    const rawStock =
+      availableStock !== undefined
+        ? availableStock
+        : manualLock && manualStock !== null
+          ? manualStock
+          : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
     const effectiveStock = isStx && deliveryType.startsWith("express_")

@@ -49,13 +49,36 @@ npm install
 
 #### 1. Create `.env.local` file
 
-Create a file named `.env.local` in the root directory with your Shopify credentials:
+Create a file named `.env.local` in root directory with Shopify credentials:
 
 ```bash
 # Shopify Admin API Configuration
-SHOPIFY_SHOP_DOMAIN=your-shop.myshopify.com
-SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_xxxxxxxxxxxxx
-SHOPIFY_API_VERSION=2024-01
+# Preferred env keys
+SHOP_NAME_SHOPIFY=your-shop.myshopify.com
+ACCESS_TOKEN_SHOPIFY=shpat_xxxxxxxxxxxxx
+API_VERSION_SHOPIFY=2026-01
+
+# Backward-compatible aliases still accepted by code
+# SHOPIFY_SHOP_DOMAIN=your-shop.myshopify.com
+# SHOPIFY_ADMIN_ACCESS_TOKEN=shpat_xxxxxxxxxxxxx
+# SHOPIFY_API_VERSION=2026-01
+
+# Optional OAuth install flow
+SHOPIFY_API_KEY=shpka_xxxxxxxxxxxxx
+SHOPIFY_API_SECRET=xxxxxxxxxxxxx
+SHOPIFY_SCOPES=read_orders,read_products,write_products,read_inventory,write_inventory,read_locations
+SHOPIFY_APP_URL=https://your-app-domain.com
+
+# Scan page auto-fulfill + browser print (VPS build-time/runtime envs)
+# 1 = enabled, 0 = disabled
+NEXT_PUBLIC_SCAN_AUTO_FULFILLMENT=1
+NEXT_PUBLIC_SCAN_BROWSER_PRINT=1
+SCAN_BROWSER_PRINT_ENABLED=1
+
+# Browser print paper size in mm (example: Brother 62x86)
+SCAN_BROWSER_PRINT_WIDTH_MM=62
+SCAN_BROWSER_PRINT_HEIGHT_MM=86
+SCAN_BROWSER_PRINT_MARGIN_MM=0
 ```
 
 #### 2. Get Shopify Admin Access Token
@@ -63,9 +86,19 @@ SHOPIFY_API_VERSION=2024-01
 1. Go to your Shopify Admin → Settings → Apps and sales channels
 2. Click "Develop apps"
 3. Create a new app or select existing
-4. Configure Admin API scopes: `read_orders`, `read_products`
+4. Configure Admin API scopes:
+   - `read_orders`
+   - `read_products`
+   - `write_products`
+   - `read_inventory`
+   - `write_inventory`
+   - `read_locations`
 5. Install app and copy the Admin API access token
 6. Copy your store domain (e.g., `my-store.myshopify.com`)
+
+#### 3. Verify token scopes
+
+Run `GET /api/shopify/admin/scope-check` to verify required Admin scopes for catalog, inventory, and order sync.
 
 ### Run Development Server
 

@@ -1,17 +1,17 @@
 // lib/shopifyAdmin.ts
 
+import { missingShopifyAdminEnvKeys, resolveShopifyAdminEnv } from "@/lib/shopifyEnv";
 type ShopifyGqlError = { message: string; extensions?: any };
 
 export async function shopifyGraphQL<T>(
   query: string,
   variables: Record<string, any> = {}
 ): Promise<{ data: T; errors?: ShopifyGqlError[] }> {
-  const shop = process.env.SHOP_NAME_SHOPIFY;
-  const token = process.env.ACCESS_TOKEN_SHOPIFY;
-  const version = process.env.API_VERSION_SHOPIFY || "2026-01";
+  const { shop, token, version } = resolveShopifyAdminEnv();
 
   if (!shop || !token) {
-    throw new Error("Missing SHOPIFY_SHOP_DOMAIN or SHOPIFY_ADMIN_ACCESS_TOKEN env vars");
+    const missing = missingShopifyAdminEnvKeys({ shop, token, version });
+    throw new Error(`Missing Shopify admin env vars: ${missing.join(", ")}`);
   }
 
   const url = `https://${shop}/admin/api/${version}/graphql.json`;

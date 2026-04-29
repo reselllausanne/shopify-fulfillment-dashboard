@@ -139,7 +139,7 @@ export async function POST(
     }
 
     const stockxOrdersRaw = await fetchRecentStockxBuyingOrders(token, {
-      first: 50,
+      first: 100,
       maxPages: 6,
       state: "PENDING",
     });

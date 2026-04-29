@@ -6,5 +6,6 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { loadEnvConfig } = await import("@next/env");
-  loadEnvConfig(process.cwd());
+  // Avoid direct Node API call that Edge analyzer flags in shared instrumentation file.
+  loadEnvConfig(".");
 }

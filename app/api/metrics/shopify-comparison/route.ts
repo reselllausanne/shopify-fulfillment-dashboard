@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { resolveShopifyAdminEnv } from "@/lib/shopifyEnv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,9 +98,8 @@ const decimalToNumber = (
 ): number | null => (value !== null && value !== undefined ? Number(value) : null);
 
 async function fetchShopifyOrders(namespace: string, first = 50): Promise<ShopifyOrderEdge[]> {
-  const shopifyAccessToken = process.env.ACCESS_TOKEN_SHOPIFY;
-  const shopifyShopDomain = process.env.SHOP_NAME_SHOPIFY;
-  const shopifyApiVersion = process.env.API_VERSION_SHOPIFY || "2025-01";
+  const { shop: shopifyShopDomain, token: shopifyAccessToken, version: shopifyApiVersion } =
+    resolveShopifyAdminEnv();
 
   if (!shopifyAccessToken || !shopifyShopDomain) {
     throw new Error("Shopify credentials not configured");

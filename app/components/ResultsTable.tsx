@@ -70,7 +70,7 @@ const ResultsTable: React.FC<Props> = ({
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={enrichedOrders ? 10 : 9} className="px-6 py-8 text-center text-gray-500">
-                  No orders loaded. Click "🔍 Fetch All Pages + Details" to start.
+                  No orders loaded. Click "📥 Fetch all order numbers (A)" to start.
                 </td>
               </tr>
             ) : (

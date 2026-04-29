@@ -15,6 +15,7 @@ import {
   trmFeedExclusionsHeaderValue,
 } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import { attachAvailableStock } from "@/inventory/availableStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -265,6 +266,12 @@ export async function GET(request: Request) {
     }
   }
 
+  const stockBySupplierVariantId = await attachAvailableStock(
+    exportCandidates
+      .map((candidate: any) => candidate?.variant)
+      .filter((variant: any) => Boolean(variant))
+  );
+
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
@@ -274,13 +281,21 @@ export async function GET(request: Request) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       return;
     }
+    const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const availableStock = supplierVariantId
+      ? stockBySupplierVariantId.get(supplierVariantId)
+      : undefined;
     const manualLock = Boolean(variant?.manualLock);
     const manualStockRaw = variant?.manualStock;
     const manualStock =
       manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
     const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
-    const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
-    const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const rawStock =
+      availableStock !== undefined
+        ? availableStock
+        : manualLock && manualStock !== null
+          ? manualStock
+          : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
     const stock = isStx && deliveryType.startsWith("express_")
@@ -289,7 +304,7 @@ export async function GET(request: Request) {
         ? 0
         : rawStock;
 
-    if (!Number.isFinite(stock) || stock <= 0) {
+    if (!Number.isFinite(stock) || stock < 0) {
       return;
     }
 

@@ -31,13 +31,23 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
     decathlonShipmentLine?: unknown;
     decathlonReturn?: unknown;
     decathlonReturnLine?: unknown;
+    inventoryEvent?: unknown;
+    channelListingState?: unknown;
+    orderLineSyncState?: unknown;
+    inventorySyncRun?: unknown;
+    inventoryReconcileDrift?: unknown;
   };
   return Boolean(
     c.decathlonOrder &&
       c.decathlonShipment &&
       c.decathlonShipmentLine &&
       c.decathlonReturn &&
-      c.decathlonReturnLine
+      c.decathlonReturnLine &&
+      c.inventoryEvent &&
+      c.channelListingState &&
+      c.orderLineSyncState &&
+      c.inventorySyncRun &&
+      c.inventoryReconcileDrift
   );
 }
 

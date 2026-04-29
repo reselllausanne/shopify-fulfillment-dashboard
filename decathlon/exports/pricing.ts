@@ -14,6 +14,13 @@ export const DECATHLON_PRICE_ROUND_TO = 0.01;
  */
 export const DECATHLON_MARGIN_RULE_ADD_PP = 0.01;
 
+/**
+ * Extra margin-on-buy percentage points applied **only to STX products** on top of the base margin.
+ * Combined with the base (~11.9%) + global bump (+1pp) this lands at ~15% on buy.
+ * Override with `DECATHLON_STX_MARGIN_BUMP_PP` env var.
+ */
+export const DECATHLON_STX_MARGIN_BUMP_PP = 0.021;
+
 const MARGIN_RULE_ADD_PP_ENV_KEYS = ["DECATHLON_MARGIN_RULE_ADD_PP"];
 
 function readMarginRuleAddPp(): number {
@@ -129,6 +136,24 @@ function readDecathlonMarginOnBuyFraction(): number {
   return DEFAULT_DECATHLON_MARGIN_ON_BUY;
 }
 
+function readDecathlonStxMarginBumpPp(): number {
+  const raw = process.env.DECATHLON_STX_MARGIN_BUMP_PP;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 0.5) return parsed;
+  }
+  return DECATHLON_STX_MARGIN_BUMP_PP;
+}
+
+/**
+ * Returns the `marginOnBuy` fraction to pass as an override for STX products.
+ * = base margin + STX-specific bump. The global +1pp bump is applied on top
+ * inside `computeDecathlonOfferListPriceFromMarginOnBuy`.
+ */
+export function resolveDecathlonStxMarginOnBuy(): number {
+  return readDecathlonMarginOnBuyFraction() + readDecathlonStxMarginBumpPp();
+}
+
 function isTieredPricingMode(): boolean {
   return String(process.env.DECATHLON_PRICING_MODE ?? "")
     .trim()
@@ -233,11 +258,9 @@ export function resolveDecathlonBuyNow(input: {
 }
 
 const DECATHLON_NER_SUPPLIER_KEY = "ner";
-const DECATHLON_THE_SUPPLIER_KEY = "the";
 
 /**
  * NER and other partner keys: **only** `price / 0.75` (25% partner slice on list TTC — input is DB buy / partner cost).
- * THE: apply the same 25% list margin for Decathlon.
  * Non-partner own catalog: +1% on list.
  *
  * Do **not** feed NER through {@link computeDecathlonOfferListPriceFromBuyNow} first — that double-counts and
@@ -250,7 +273,7 @@ export function applyDecathlonPartnerListPriceMultipliers(
 ): number {
   if (!Number.isFinite(baseListPriceTtc) || baseListPriceTtc <= 0) return baseListPriceTtc;
   const k = supplierKey?.toLowerCase() ?? "";
-  if (k === DECATHLON_NER_SUPPLIER_KEY || k === DECATHLON_THE_SUPPLIER_KEY || partnerKeysLower.has(k)) {
+  if (k === DECATHLON_NER_SUPPLIER_KEY || partnerKeysLower.has(k)) {
     return roundToIncrement(baseListPriceTtc / 0.75, DECATHLON_PRICE_ROUND_TO);
   }
   return roundToIncrement(baseListPriceTtc * 1.01, DECATHLON_PRICE_ROUND_TO);
