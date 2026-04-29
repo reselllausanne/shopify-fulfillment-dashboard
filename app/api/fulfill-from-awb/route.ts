@@ -493,7 +493,12 @@ export async function POST(req: NextRequest) {
     );
     if (!map.order) {
       return NextResponse.json(
-        { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, awb, error: "Order not found" },
+        {
+          ok: false,
+          status: "SHOPIFY_ERROR" as FulfillStatus,
+          awb,
+          error: "login to shopify order not found, manual search",
+        },
         { status: 404 }
       );
     }

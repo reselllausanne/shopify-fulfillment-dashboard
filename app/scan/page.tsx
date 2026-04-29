@@ -6,11 +6,56 @@ import { useRouter } from "next/navigation";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
+type ScanShopifyOrderExtras = {
+  name?: string;
+  customerLocale?: string | null;
+  paymentGatewayNames?: string[];
+  shippingLines?: string[];
+  lineItems?: Array<{
+    id: string;
+    title: string;
+    name?: string | null;
+    quantity: number;
+    sku?: string | null;
+    variantTitle?: string | null;
+  }>;
+};
+
+type ScanMatchPayload = {
+  shopifyOrderId?: string | null;
+  shopifyOrderName?: string | null;
+  shopifyLineItemId?: string | null;
+  matchConfidence?: string | null;
+  matchScore?: number | null;
+  trackingUrl?: string | null;
+  customer?: {
+    name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    shippingAddress?: {
+      address1?: string | null;
+      address2?: string | null;
+      zip?: string | null;
+      city?: string | null;
+      province?: string | null;
+      country?: string | null;
+      company?: string | null;
+    } | null;
+  };
+  lineItem?: {
+    title?: string | null;
+    variantTitle?: string | null;
+    sku?: string | null;
+    quantity?: number | null;
+  };
+  shopifyOrder?: ScanShopifyOrderExtras;
+};
+
 type ScanResult = {
   ok: boolean;
   status: ScanStatus;
   awb: string;
-  match: any | null;
+  match: ScanMatchPayload | null;
   decathlon?: {
     matchId?: string | null;
     orderId: string | null;
@@ -39,20 +84,6 @@ type HistoryItem = {
   gapMs?: number;
 };
 
-type GoatTrackingItem = {
-  id: string;
-  shopifyOrderName: string;
-  shopifyLineItemId: string;
-  shopifyCustomerEmail: string | null;
-  shopifyCustomerFirstName: string | null;
-  shopifyCustomerLastName: string | null;
-  shopifyCreatedAt: string | null;
-  stockxOrderNumber: string;
-  stockxAwb: string | null;
-  stockxTrackingUrl: string | null;
-  supplierSource: string | null;
-};
-
 type AwbListItem = {
   awb: string;
   shopifyOrderName?: string | null;
@@ -74,10 +105,6 @@ export default function ScanPage() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [awbList, setAwbList] = useState<AwbListItem[]>([]);
   const [awbFilter, setAwbFilter] = useState("");
-  const [forceFulfill, setForceFulfill] = useState(false);
-  const [goatLoading, setGoatLoading] = useState(false);
-  const [goatError, setGoatError] = useState<string | null>(null);
-  const [goatTracking, setGoatTracking] = useState<{ count: number; items: GoatTrackingItem[] } | null>(null);
   const canceledStates = useMemo(
     () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
     []
@@ -98,32 +125,6 @@ export default function ScanPage() {
       }
     };
     loadAwbList();
-  }, []);
-
-  const loadGoatTracking = async () => {
-    setGoatLoading(true);
-    setGoatError(null);
-    try {
-      const res = await fetch("/api/notifications/goat-tracking");
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      if (data?.ok) {
-        setGoatTracking({ count: data.count || 0, items: data.items || [] });
-      } else {
-        setGoatError(data?.error || "Failed to load GOAT tracking");
-      }
-    } catch (err: any) {
-      setGoatError(err?.message || "Failed to load GOAT tracking");
-    } finally {
-      setGoatLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadGoatTracking();
   }, []);
 
   const downloadPdf = async (url: string, fallbackName: string) => {
@@ -360,7 +361,6 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
-          allowAlreadyFulfilled: forceFulfill,
         }),
       });
       const data = await res.json();
@@ -391,6 +391,16 @@ export default function ScanPage() {
     return "bg-gray-50 border-gray-200 text-gray-800";
   }, [result?.status]);
 
+  const formatFulfillErrorMessage = (data: { ok?: boolean; status?: string; error?: string } | null) => {
+    if (!data || data.ok) return "";
+    const err = String(data.error || "").toLowerCase();
+    const st = String(data.status || "");
+    if (st === "SHOPIFY_ERROR" && err.includes("order not found")) {
+      return "login to shopify order not found, manual search";
+    }
+    return String(data.error || "");
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
@@ -410,47 +420,7 @@ export default function ScanPage() {
             Logout
           </button>
         </div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2 text-center">📦 Scan AWB / Barcode</h1>
-        <p className="text-center text-gray-600 mb-6">
-          Scan AWB: Shopify orders can fulfill + label here. Galaxus marketplace hits only show a notice (AWB lives on
-          GalaxusStockxMatch — no label on this page).
-        </p>
-
-        {(goatTracking?.count || goatError) && (
-          <div className="mb-6 border rounded-lg p-4 bg-amber-50 border-amber-200">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-amber-800">
-                🐐 GOAT / Manual orders missing tracking: {goatTracking?.count || 0}
-              </div>
-              <button
-                onClick={loadGoatTracking}
-                disabled={goatLoading}
-                className="text-xs px-2 py-1 bg-amber-200 text-amber-900 rounded hover:bg-amber-300 disabled:opacity-60"
-              >
-                {goatLoading ? "Refreshing..." : "Refresh"}
-              </button>
-            </div>
-            {goatError && (
-              <div className="text-xs text-red-700 mt-2">{goatError}</div>
-            )}
-            {!goatError && (goatTracking?.items?.length || 0) > 0 && (
-              <div className="mt-2 space-y-1 text-xs text-amber-900">
-                {goatTracking!.items.map((item) => (
-                  <div key={item.id} className="flex flex-wrap gap-2">
-                    <span className="font-semibold">{item.shopifyOrderName}</span>
-                    <span>Ref: {item.stockxOrderNumber}</span>
-                    {item.shopifyCreatedAt && (
-                      <span>
-                        {new Date(item.shopifyCreatedAt).toLocaleDateString("fr-CH")}
-                      </span>
-                    )}
-                    {item.shopifyCustomerEmail && <span>{item.shopifyCustomerEmail}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        <h1 className="text-3xl font-bold text-gray-900 mb-6 text-center">📦 Scan AWB / Barcode</h1>
 
         <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center gap-4">
           <input
@@ -494,12 +464,6 @@ export default function ScanPage() {
               <div className="text-lg font-semibold">Status: {result.status}</div>
               <div className="text-sm text-gray-600">AWB: {result.awb || "—"}</div>
             </div>
-            {!result.match && !result.decathlon && !result.galaxus && result.status !== "ERROR" && (
-              <p className="text-sm mt-2">
-                No match found. Check OrderMatch / DecathlonStockxMatch / GalaxusStockxMatch (stockxAwb or tracking URL).
-              </p>
-            )}
-
             {result.galaxus && (
               <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-950">
                 <div className="font-semibold text-teal-900">Galaxus marketplace</div>
@@ -540,6 +504,7 @@ export default function ScanPage() {
                     Address:{" "}
                     {result.match.customer?.shippingAddress
                       ? [
+                          result.match.customer.shippingAddress.company,
                           result.match.customer.shippingAddress.address1,
                           result.match.customer.shippingAddress.address2,
                           result.match.customer.shippingAddress.zip,
@@ -559,20 +524,51 @@ export default function ScanPage() {
                   <div>Qty: {result.match.lineItem?.quantity ?? "—"}</div>
                   <div>Tracking URL: {result.match.trackingUrl || "—"}</div>
                 </div>
+                {result.match.shopifyOrder && (
+                  <div className="bg-white bg-opacity-80 p-3 rounded border md:col-span-2 text-xs space-y-1">
+                    <h3 className="font-semibold text-gray-800 text-sm mb-1">Shopify order</h3>
+                    <div>Name: {result.match.shopifyOrder.name || "—"}</div>
+                    <div>Locale: {result.match.shopifyOrder.customerLocale || "—"}</div>
+                    <div>
+                      Payment:{" "}
+                      {(result.match.shopifyOrder.paymentGatewayNames || []).join(", ") || "—"}
+                    </div>
+                    <div>
+                      Shipping lines:{" "}
+                      {(result.match.shopifyOrder.shippingLines || []).join(" · ") || "—"}
+                    </div>
+                    {(result.match.shopifyOrder.lineItems || []).length > 0 && (
+                      <div className="mt-2 overflow-x-auto">
+                        <div className="font-medium text-gray-700 mb-0.5">All line items</div>
+                        <table className="w-full border-collapse text-left">
+                          <thead>
+                            <tr className="border-b text-gray-600">
+                              <th className="py-0.5 pr-2">Qty</th>
+                              <th className="py-0.5 pr-2">Title</th>
+                              <th className="py-0.5 pr-2">Variant</th>
+                              <th className="py-0.5">SKU</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {result.match.shopifyOrder.lineItems!.map((li) => (
+                              <tr key={li.id} className="border-b border-gray-100">
+                                <td className="py-0.5 pr-2">{li.quantity}</td>
+                                <td className="py-0.5 pr-2">{li.title}</td>
+                                <td className="py-0.5 pr-2">{li.variantTitle || "—"}</td>
+                                <td className="py-0.5 font-mono">{li.sku || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {ENABLE_FULFILLMENT && (
               <div className="mt-4">
-                <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
-                  <input
-                    type="checkbox"
-                    checked={forceFulfill}
-                    onChange={(e) => setForceFulfill(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                  />
-                  Force fulfillment (ignore existing tracking)
-                </label>
                 <button
                   disabled={fulfillLoading || Boolean(result?.galaxus)}
                   onClick={handleFulfill}
@@ -593,7 +589,9 @@ export default function ScanPage() {
                     ) : (
                       <div className="text-red-700">
                         ❌ {fulfillResult.status || "ERROR"}{" "}
-                        {fulfillResult.error || fulfillResult.userErrors?.[0]?.message || ""}
+                        {formatFulfillErrorMessage(fulfillResult) ||
+                          fulfillResult.userErrors?.[0]?.message ||
+                          ""}
                       </div>
                     )}
                   </div>

@@ -1,10 +1,86 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
+
+async function enrichOrderMatchFromShopify(match: {
+  shopifyOrderId: string;
+  shopifyLineItemId: string | null;
+  shopifyProductTitle: string | null;
+  shopifySizeEU: string | null;
+  shopifySku: string | null;
+}) {
+  try {
+    const orderInfo = await fetchOrderShippingInfo(match.shopifyOrderId);
+    if (!orderInfo) return null;
+
+    const addr = orderInfo.shippingAddress;
+    const composedName =
+      [addr?.firstName, addr?.lastName].filter(Boolean).join(" ").trim() ||
+      (addr?.name || "").trim() ||
+      null;
+
+    const lineNodes = orderInfo.lineItems?.nodes ?? [];
+    const targetId = match.shopifyLineItemId;
+    const li =
+      (targetId ? lineNodes.find((n) => n.id === targetId) : undefined) || lineNodes[0] || null;
+
+    return {
+      customer: {
+        name: composedName,
+        email: orderInfo.email ?? null,
+        phone: orderInfo.phone || addr?.phone || null,
+        shippingAddress: addr
+          ? {
+              address1: addr.address1 ?? null,
+              address2: addr.address2 ?? null,
+              zip: addr.zip ?? null,
+              city: addr.city ?? null,
+              province: addr.province ?? null,
+              country: (addr.country || addr.countryCodeV2) ?? null,
+              company: addr.company ?? null,
+            }
+          : null,
+      },
+      lineItem: li
+        ? {
+            title: li.title,
+            variantTitle: li.variantTitle,
+            sku: li.sku || li.variantSku || null,
+            quantity: li.quantity,
+          }
+        : {
+            title: match.shopifyProductTitle,
+            variantTitle: match.shopifySizeEU,
+            sku: match.shopifySku,
+            quantity: 1,
+          },
+      shopifyOrder: {
+        name: orderInfo.name,
+        customerLocale: orderInfo.customerLocale ?? null,
+        paymentGatewayNames: orderInfo.paymentGatewayNames ?? [],
+        shippingLines: (orderInfo.shippingLines || [])
+          .filter((s) => !s.isRemoved)
+          .map((s) => `${s.title} (${s.amount} ${s.currencyCode})`),
+        lineItems: lineNodes.map((n) => ({
+          id: n.id,
+          title: n.title,
+          name: n.name ?? null,
+          quantity: n.quantity,
+          sku: n.sku || n.variantSku || null,
+          variantTitle: n.variantTitle,
+        })),
+      },
+    };
+  } catch (err) {
+    console.error("[SCAN-AWB] Shopify enrich failed:", err);
+    return null;
+  }
+}
 
 const normalizeCode = (code?: string | null) => {
   if (!code) return "";
@@ -162,39 +238,54 @@ export async function POST(req: NextRequest) {
     const hasAnyMatch = Boolean(match || decathlonMatch || galaxusMatch);
     const status: ScanStatus = hasAnyMatch ? "FOUND" : "NOT_FOUND";
 
+    let shopifyMatchPayload: Record<string, unknown> | null = null;
+    if (match) {
+      const base = {
+        shopifyOrderId: match.shopifyOrderId,
+        shopifyOrderName: match.shopifyOrderName,
+        shopifyLineItemId: match.shopifyLineItemId,
+        matchConfidence: match.matchConfidence,
+        matchScore: match.matchScore ? Number(match.matchScore) : null,
+        customer: {
+          name: null as string | null,
+          email: null as string | null,
+          phone: null as string | null,
+          shippingAddress: {
+            address1: null as string | null,
+            address2: null as string | null,
+            zip: null as string | null,
+            city: null as string | null,
+            province: null as string | null,
+            country: null as string | null,
+          },
+        },
+        lineItem: {
+          title: match.shopifyProductTitle,
+          variantTitle: match.shopifySizeEU,
+          sku: match.shopifySku,
+          quantity: 1,
+        },
+        trackingUrl: match.stockxTrackingUrl || null,
+      };
+
+      const enriched = await enrichOrderMatchFromShopify(match);
+      if (enriched) {
+        shopifyMatchPayload = {
+          ...base,
+          customer: enriched.customer,
+          lineItem: enriched.lineItem,
+          shopifyOrder: enriched.shopifyOrder,
+        };
+      } else {
+        shopifyMatchPayload = base;
+      }
+    }
+
     const response = {
       ok: hasAnyMatch,
       status,
       awb,
-      match: match
-        ? {
-            shopifyOrderId: match.shopifyOrderId,
-            shopifyOrderName: match.shopifyOrderName,
-            shopifyLineItemId: match.shopifyLineItemId,
-            matchConfidence: match.matchConfidence,
-            matchScore: match.matchScore ? Number(match.matchScore) : null,
-            customer: {
-              name: null,
-              email: null,
-              phone: null,
-              shippingAddress: {
-                address1: null,
-                address2: null,
-                zip: null,
-                city: null,
-                province: null,
-                country: null,
-              },
-            },
-            lineItem: {
-              title: match.shopifyProductTitle,
-              variantTitle: match.shopifySizeEU,
-              sku: match.shopifySku,
-              quantity: 1,
-            },
-            trackingUrl: match.stockxTrackingUrl || null,
-          }
-        : null,
+      match: shopifyMatchPayload,
       decathlon: decathlonMatch
         ? {
             matchId: decathlonMatch.id,
