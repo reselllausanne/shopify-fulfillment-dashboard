@@ -92,7 +92,126 @@ type AwbListItem = {
   trackingUrl?: string | null;
 };
 
-const ENABLE_FULFILLMENT = true; // feature flag placeholder (do not enable)
+type BrowserPrintConfig = {
+  enabled?: boolean;
+  widthMm?: number;
+  heightMm?: number;
+  marginMm?: number;
+};
+
+type LabelDataPayload = {
+  base64?: string;
+  mimeType?: string;
+  extension?: string;
+};
+
+type FulfillResponse = {
+  ok?: boolean;
+  status?: string;
+  error?: string;
+  userErrors?: Array<{ message?: string }>;
+  labelFilePath?: string | null;
+  printJobResult?: {
+    ok?: boolean;
+    skipped?: boolean;
+    message?: string;
+    error?: string;
+  } | null;
+  labelData?: LabelDataPayload | null;
+  browserPrintConfig?: BrowserPrintConfig;
+};
+
+const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+};
+
+const ENABLE_AUTO_FULFILLMENT = resolveClientFlag(
+  process.env.NEXT_PUBLIC_SCAN_AUTO_FULFILLMENT,
+  true
+);
+const ENABLE_BROWSER_PRINT = resolveClientFlag(
+  process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
+  true
+);
+
+const toBlobFromBase64 = (base64: string, mimeType: string) => {
+  const cleaned = String(base64 || "").replace(/\s+/g, "");
+  const binary = atob(cleaned);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mimeType || "application/octet-stream" });
+};
+
+const openLabelPrintDialog = (
+  payload: LabelDataPayload,
+  config?: BrowserPrintConfig
+) => {
+  const base64 = String(payload?.base64 || "").trim();
+  if (!base64) return false;
+  const mimeType = String(payload?.mimeType || "application/pdf");
+  const labelBlob = toBlobFromBase64(base64, mimeType);
+  const labelUrl = URL.createObjectURL(labelBlob);
+
+  const widthMm =
+    Number.isFinite(Number(config?.widthMm)) && Number(config?.widthMm) > 0
+      ? Number(config?.widthMm)
+      : 62;
+  const heightMm =
+    Number.isFinite(Number(config?.heightMm)) && Number(config?.heightMm) > 0
+      ? Number(config?.heightMm)
+      : 86;
+  const marginMm =
+    Number.isFinite(Number(config?.marginMm)) && Number(config?.marginMm) >= 0
+      ? Number(config?.marginMm)
+      : 0;
+
+  const popup = window.open("", "_blank", "width=540,height=760");
+  if (!popup) {
+    URL.revokeObjectURL(labelUrl);
+    return false;
+  }
+
+  const mediaNode = mimeType.startsWith("image/")
+    ? `<img src="${labelUrl}" alt="Shipping label" style="width:100%;height:100%;object-fit:contain;display:block;" />`
+    : `<iframe src="${labelUrl}" title="Shipping label" style="width:100%;height:100%;border:0;" />`;
+
+  popup.document.open();
+  popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Shipping label</title>
+    <style>
+      @page { size: ${widthMm}mm ${heightMm}mm; margin: ${marginMm}mm; }
+      html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: #fff; overflow: hidden; }
+      .page { width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div class="page">${mediaNode}</div>
+    <script>
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          window.focus();
+          window.print();
+        }, 180);
+      });
+      window.addEventListener("afterprint", function () {
+        setTimeout(function () { window.close(); }, 200);
+      });
+    </script>
+  </body>
+</html>`);
+  popup.document.close();
+  setTimeout(() => URL.revokeObjectURL(labelUrl), 120000);
+  return true;
+};
 
 export default function ScanPage() {
   const router = useRouter();
@@ -100,7 +219,7 @@ export default function ScanPage() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [fulfillLoading, setFulfillLoading] = useState(false);
-  const [fulfillResult, setFulfillResult] = useState<any | null>(null);
+  const [fulfillResult, setFulfillResult] = useState<FulfillResponse | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [awbList, setAwbList] = useState<AwbListItem[]>([]);
@@ -323,7 +442,7 @@ export default function ScanPage() {
 
       await handleChannelActions(data);
 
-      if (ENABLE_FULFILLMENT && data.ok && data.match && !data.galaxus) {
+      if (ENABLE_AUTO_FULFILLMENT && data.ok && data.match && !data.galaxus) {
         await runFulfillFromScan(data);
       }
     } catch (err: any) {
@@ -361,10 +480,21 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
+          includeLabelData: ENABLE_BROWSER_PRINT,
+          allowAlreadyFulfilled: true,
         }),
       });
-      const data = await res.json();
+      const data: FulfillResponse = await res.json();
       setFulfillResult(data);
+      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      if (res.ok && data.ok && browserPrintEnabled && data.labelData?.base64) {
+        const opened = openLabelPrintDialog(data.labelData, data.browserPrintConfig);
+        if (!opened) {
+          window.alert(
+            "Label generated but popup blocked. Allow popups for this page, then scan again."
+          );
+        }
+      }
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
     } finally {
@@ -567,7 +697,7 @@ export default function ScanPage() {
               </div>
             )}
 
-            {ENABLE_FULFILLMENT && (
+            {ENABLE_AUTO_FULFILLMENT && (
               <div className="mt-4">
                 <button
                   disabled={fulfillLoading || Boolean(result?.galaxus)}

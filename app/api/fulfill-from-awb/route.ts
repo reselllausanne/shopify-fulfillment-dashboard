@@ -31,6 +31,57 @@ type PrintJobResult = {
   message?: string;
 };
 
+type LabelDataPayload = {
+  base64: string;
+  mimeType: string;
+  extension: string;
+};
+
+type BrowserPrintConfig = {
+  enabled: boolean;
+  widthMm: number;
+  heightMm: number;
+  marginMm: number;
+};
+
+function resolveBooleanFlag(raw: string | undefined, defaultValue: boolean) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (!value) return defaultValue;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return defaultValue;
+}
+
+function resolveNumber(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+) {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function extensionToMimeType(extension: string) {
+  const ext = String(extension || "").trim().toLowerCase();
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "png") return "image/png";
+  if (ext === "gif") return "image/gif";
+  if (ext === "svg") return "image/svg+xml";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  return "application/octet-stream";
+}
+
+function resolveBrowserPrintConfig(): BrowserPrintConfig {
+  return {
+    enabled: resolveBooleanFlag(process.env.SCAN_BROWSER_PRINT_ENABLED, true),
+    widthMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_WIDTH_MM, 62, 20, 300),
+    heightMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_HEIGHT_MM, 86, 20, 400),
+    marginMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_MARGIN_MM, 0, 0, 25),
+  };
+}
+
 async function ensureLabelDirectory() {
   try {
     await fs.mkdir(LABEL_OUTPUT_DIR, { recursive: true });
@@ -423,6 +474,7 @@ export async function POST(req: NextRequest) {
     const swissPostEnabled = Boolean(body?.swissPostEnabled ?? false);
     const swissPostPayload = body?.swissPostPayload ?? null;
     const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
+    const includeLabelData = Boolean(body?.includeLabelData ?? false);
 
     if (!awb) {
       return NextResponse.json(
@@ -600,6 +652,7 @@ export async function POST(req: NextRequest) {
     let swissPostStatus: string | null = null;
     let labelFilePath: string | null = null;
     let printJobResult: PrintJobResult | null = null;
+    let labelData: LabelDataPayload | null = null;
     let trackingNumberForFulfillment = awb;
     let trackingCompanyForFulfillment = trackingCompany || "Swiss Post";
 
@@ -655,6 +708,13 @@ export async function POST(req: NextRequest) {
 
         const labelPayload = extractLabelPayload(swissRes.data);
         if (labelPayload?.base64) {
+          if (includeLabelData) {
+            labelData = {
+              base64: labelPayload.base64,
+              extension: labelPayload.extension,
+              mimeType: extensionToMimeType(labelPayload.extension),
+            };
+          }
           try {
             labelFilePath = await persistLabel(
               labelPayload.base64,
@@ -762,6 +822,8 @@ export async function POST(req: NextRequest) {
         swissPostResponse: swissPostResult?.data || null,
         labelFilePath,
         printJobResult,
+        labelData,
+        browserPrintConfig: resolveBrowserPrintConfig(),
         warnings,
         swissPost: shouldCallSwissPost ? "attempted" : "skipped",
       },
