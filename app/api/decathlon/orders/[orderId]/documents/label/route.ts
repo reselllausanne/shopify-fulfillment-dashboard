@@ -4,6 +4,9 @@ import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
+import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { canPartnerAccessDecathlonOrder } from "@/decathlon/orders/partnerLineScope";
 import { getStorageAdapterForUrl } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
 
@@ -118,13 +121,26 @@ async function fetchLatestLabelDocument(order: { id: string }) {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
     const { orderId } = await params;
     const order = await resolveDecathlonOrder(orderId);
     if (!order) {
+      return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+    }
+    const { searchParams } = new URL(request.url);
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
+    const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
+    const partnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+    if (scope === "partner" && !partnerSession) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (scope === "partner" && !partnerKey) {
+      return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
+    }
+    if (scope === "partner" && partnerKey && !canPartnerAccessDecathlonOrder(order as any, partnerKey)) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
     const document = await fetchLatestLabelDocument(order);
@@ -174,6 +190,19 @@ export async function POST(
     const { orderId } = await params;
     const order = await resolveDecathlonOrder(orderId);
     if (!order) {
+      return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
+    }
+    const { searchParams } = new URL(request.url);
+    const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
+    const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
+    const partnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
+    if (scope === "partner" && !partnerSession) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (scope === "partner" && !partnerKey) {
+      return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
+    }
+    if (scope === "partner" && partnerKey && !canPartnerAccessDecathlonOrder(order as any, partnerKey)) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
     const document = await fetchLatestLabelDocument(order);

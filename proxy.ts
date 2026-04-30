@@ -18,6 +18,11 @@ function isPartnerApiPath(pathname: string) {
   return pathname.startsWith("/api/partners/");
 }
 
+function isPartnerDecathlonApiRequest(pathname: string, searchParams: URLSearchParams) {
+  if (!pathname.startsWith("/api/decathlon/")) return false;
+  return String(searchParams.get("scope") ?? "").trim().toLowerCase() === "partner";
+}
+
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
   "/login",
@@ -64,6 +69,7 @@ export async function proxy(req: NextRequest) {
   if (
     isPartnerPortalPath(pathname) ||
     isPartnerApiPath(pathname) ||
+    isPartnerDecathlonApiRequest(pathname, searchParams) ||
     PUBLIC_PATHS.some((path) => pathname.startsWith(path))
   ) {
     return NextResponse.next();
