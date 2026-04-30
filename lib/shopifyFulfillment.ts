@@ -47,6 +47,7 @@ type ShippingLineInfo = {
 type OrderShippingInfo = {
   id: string;
   name: string;
+  cancelledAt?: string | null;
   email?: string | null;
   phone?: string | null;
   /** Shopify order locale, e.g. fr-CH, de */
@@ -183,6 +184,7 @@ query OrderShippingInfo($orderId: ID!) {
   order(id: $orderId) {
     id
     name
+    cancelledAt
     email
     phone
     customerLocale

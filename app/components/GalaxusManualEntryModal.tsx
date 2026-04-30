@@ -112,9 +112,9 @@ export default function GalaxusManualEntryModal({
             <h3 className="font-semibold text-gray-900">🏪 Supplier (StockX)</h3>
             {isDecathlon || isGalaxus ? (
               <p className="text-xs text-gray-600">
-                Enter the StockX buy order number (as in Pro). Saving loads chain/order id, variant, settled cost, ETA,
-                and AWB when the Galaxus token file is set (same token as Decathlon). Leave other fields blank to fill
-                from StockX, or type values to override.
+                Paste a StockX buy order number to auto-load chain/order id, variant, cost, ETA, and AWB.
+                If you sold from your own stock or another source, enter any custom reference (for example
+                <span className="font-mono"> IN_STOCK-PAIR-01</span>) and save; link is still stored as manual.
               </p>
             ) : null}
             <div className="grid grid-cols-2 gap-3">

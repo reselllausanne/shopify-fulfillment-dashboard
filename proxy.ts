@@ -107,25 +107,9 @@ export async function proxy(req: NextRequest) {
       return NextResponse.next();
     }
 
-    // If Logistics, check if path is allowed
+    // Logistics is staff (not partner) → allow normal staff routes.
     if (role === "logistics") {
-      const isAllowed = LOGISTICS_ALLOWED_PATHS.some((path) => 
-        pathname === path || pathname.startsWith(path + "/")
-      );
-
-      if (isAllowed) {
-        return NextResponse.next();
-      }
-
-      if (isApiPath) {
-        return NextResponse.json(
-          { ok: false, error: "Forbidden", details: "Role logistics cannot access this API route." },
-          { status: 403 }
-        );
-      }
-
-      // Logistics blocked from this path - redirect to scan
-      return NextResponse.redirect(new URL("/scan", req.url));
+      return NextResponse.next();
     }
 
     if (isApiPath) {

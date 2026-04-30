@@ -86,6 +86,10 @@ function resolveBrowserPrintConfig(): BrowserPrintConfig {
   };
 }
 
+function isBrowserPrintAllowedForRole(role: "admin" | "logistics" | null) {
+  return role === "logistics";
+}
+
 async function ensureLabelDirectory() {
   try {
     await fs.mkdir(LABEL_OUTPUT_DIR, { recursive: true });
@@ -435,6 +439,7 @@ export const dynamic = "force-dynamic";
 type FulfillStatus =
   | "FULFILLED"
   | "ALREADY_FULFILLED"
+  | "CANCELLED"
   | "NOT_FOUND"
   | "INVALID"
   | "SHOPIFY_ERROR";
@@ -484,6 +489,13 @@ export async function POST(req: NextRequest) {
     const swissPostPayload = body?.swissPostPayload ?? null;
     const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
+    const roleAllowsBrowserPrint = isBrowserPrintAllowedForRole(staffRole);
+    const browserPrintConfigBase = resolveBrowserPrintConfig();
+    const browserPrintConfig: BrowserPrintConfig = {
+      ...browserPrintConfigBase,
+      enabled: browserPrintConfigBase.enabled && roleAllowsBrowserPrint,
+    };
+    const shouldReturnLabelData = includeLabelData && browserPrintConfig.enabled;
 
     if (!awb) {
       return NextResponse.json(
@@ -575,6 +587,18 @@ export async function POST(req: NextRequest) {
     const orderInfo = await withContext("fetchOrderShippingInfo", () =>
       fetchOrderShippingInfo(shopifyOrderId)
     );
+    if (orderInfo?.cancelledAt) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "CANCELLED" as FulfillStatus,
+          awb,
+          shopifyOrderId,
+          error: "Order cancelled",
+        },
+        { status: 409 }
+      );
+    }
     const orderLineItems = orderInfo?.lineItems?.nodes || [];
 
     const buildResult = buildLineItemsByFulfillmentOrder(
@@ -583,6 +607,13 @@ export async function POST(req: NextRequest) {
       orderLineItems
     );
     let { lineItemsByFulfillmentOrder, unmatched, warnings, fulfillableFOs } = buildResult;
+    const allRemainingLineItems = fulfillableFOs.flatMap((fo) => {
+      const remaining = (fo.lineItems?.nodes || [])
+        .filter((li) => Number(li.remainingQuantity ?? 0) > 0)
+        .map((li) => ({ id: li.id, quantity: Number(li.remainingQuantity ?? 0) }));
+      if (remaining.length === 0) return [];
+      return [{ fulfillmentOrderId: fo.id, fulfillmentOrderLineItems: remaining }];
+    });
 
     if (
       allowAlreadyFulfilled &&
@@ -615,24 +646,27 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (lineItemsByFulfillmentOrder.length === 0 && allRemainingLineItems.length > 0) {
+      lineItemsByFulfillmentOrder = allRemainingLineItems;
+      warnings.push("Fallback applied: fulfilling all remaining line items for this order.");
+    }
+
     if (lineItemsByFulfillmentOrder.length === 0) {
       if (fulfillableFOs.length === 0) {
-        if (!allowAlreadyFulfilled) {
-          const hasTracking = await withContext("orderHasTrackingNumber", () =>
-            orderHasTrackingNumber(shopifyOrderId, awb)
+        const hasTracking = await withContext("orderHasTrackingNumber", () =>
+          orderHasTrackingNumber(shopifyOrderId, awb)
+        );
+        if (hasTracking || existing) {
+          return NextResponse.json(
+            {
+              ok: true,
+              status: "ALREADY_FULFILLED" as FulfillStatus,
+              awb,
+              fulfillmentId: null,
+              shopifyOrderId,
+            },
+            { status: 200 }
           );
-          if (hasTracking || existing) {
-            return NextResponse.json(
-              {
-                ok: true,
-                status: "ALREADY_FULFILLED" as FulfillStatus,
-                awb,
-                fulfillmentId: null,
-                shopifyOrderId,
-              },
-              { status: 200 }
-            );
-          }
         }
       }
 
@@ -717,7 +751,7 @@ export async function POST(req: NextRequest) {
 
         const labelPayload = extractLabelPayload(swissRes.data);
         if (labelPayload?.base64) {
-          if (includeLabelData) {
+          if (shouldReturnLabelData) {
             labelData = {
               base64: labelPayload.base64,
               extension: labelPayload.extension,
@@ -832,7 +866,7 @@ export async function POST(req: NextRequest) {
         labelFilePath,
         printJobResult,
         labelData,
-        browserPrintConfig: resolveBrowserPrintConfig(),
+        browserPrintConfig,
         warnings,
         swissPost: shouldCallSwissPost ? "attempted" : "skipped",
       },

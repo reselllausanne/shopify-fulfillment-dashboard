@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import {
   applyStockxDetailsToDecathlonMatchFields,
+  looksLikeStockxOrderNumber,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
 
@@ -64,17 +65,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       ok: false,
     };
 
-    if (enrichFromStockx && orderNumberInput) {
+    if (enrichFromStockx && orderNumberInput && looksLikeStockxOrderNumber(orderNumberInput)) {
       stockxEnrich.attempted = true;
-      const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
-      if (resolved.ok) {
-        auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {
-          matchReasons: ["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"],
-        });
-        stockxEnrich = { attempted: true, ok: true };
-      } else {
-        stockxEnrich = { attempted: true, ok: false, reason: resolved.reason };
+      try {
+        const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
+        if (resolved.ok) {
+          auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {
+            matchReasons: ["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"],
+          });
+          stockxEnrich = { attempted: true, ok: true };
+        } else {
+          stockxEnrich = { attempted: true, ok: false, reason: resolved.reason };
+        }
+      } catch (error: any) {
+        stockxEnrich = {
+          attempted: true,
+          ok: false,
+          reason: `lookup_failed:${String(error?.message ?? "").trim() || "unknown"}`,
+        };
       }
+    } else if (orderNumberInput && !looksLikeStockxOrderNumber(orderNumberInput)) {
+      stockxEnrich = { attempted: false, ok: false, reason: "manual_reference_only" };
     }
 
     const a = auto ?? ({} as ReturnType<typeof applyStockxDetailsToDecathlonMatchFields>);

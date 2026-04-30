@@ -14,6 +14,15 @@ export type DecathlonManualStockxEnrichResult =
     }
   | { ok: false; reason: string };
 
+export function looksLikeStockxOrderNumber(input: string | null | undefined): boolean {
+  const value = String(input ?? "").trim();
+  if (!value) return false;
+  if (value.length < 6 || value.length > 60) return false;
+  if (/^https?:\/\//i.test(value)) return false;
+  if (/\s/.test(value)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/.test(value);
+}
+
 /**
  * Resolve a StockX buy by order # using an existing Pro token (no file read).
  */
@@ -23,16 +32,22 @@ export async function resolveStockxBuyByOrderNumberWithToken(
 ): Promise<DecathlonManualStockxEnrichResult> {
   const orderNum = String(stockxOrderNumberInput ?? "").trim();
   if (!orderNum) return { ok: false, reason: "empty_order_number" };
-
-  const listNode = await findBuyOrderListNodeByOrderNumber(token, orderNum);
-  const chainId = String(listNode?.chainId ?? "").trim();
-  const orderId = String(listNode?.orderId ?? "").trim();
-  if (!listNode || !chainId || !orderId) {
-    return { ok: false, reason: "order_not_found_in_buying_list" };
+  try {
+    const listNode = await findBuyOrderListNodeByOrderNumber(token, orderNum);
+    const chainId = String(listNode?.chainId ?? "").trim();
+    const orderId = String(listNode?.orderId ?? "").trim();
+    if (!listNode || !chainId || !orderId) {
+      return { ok: false, reason: "order_not_found_in_buying_list" };
+    }
+    const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+    return { ok: true, listNode, details };
+  } catch (error: any) {
+    const reason = String(error?.message ?? "").trim();
+    return {
+      ok: false,
+      reason: reason ? `lookup_failed:${reason}` : "lookup_failed",
+    };
   }
-
-  const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
-  return { ok: true, listNode, details };
 }
 
 /**

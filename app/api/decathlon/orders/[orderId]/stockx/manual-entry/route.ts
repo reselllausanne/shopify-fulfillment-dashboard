@@ -4,6 +4,7 @@ import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import {
   applyStockxDetailsToDecathlonMatchFields,
+  looksLikeStockxOrderNumber,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
 import {
@@ -119,15 +120,25 @@ export async function POST(
       ok: false,
     };
 
-    if (enrichFromStockx && orderNumberInput) {
+    if (enrichFromStockx && orderNumberInput && looksLikeStockxOrderNumber(orderNumberInput)) {
       stockxEnrich.attempted = true;
-      const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
-      if (resolved.ok) {
-        auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details);
-        stockxEnrich = { attempted: true, ok: true };
-      } else {
-        stockxEnrich = { attempted: true, ok: false, reason: resolved.reason };
+      try {
+        const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
+        if (resolved.ok) {
+          auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details);
+          stockxEnrich = { attempted: true, ok: true };
+        } else {
+          stockxEnrich = { attempted: true, ok: false, reason: resolved.reason };
+        }
+      } catch (error: any) {
+        stockxEnrich = {
+          attempted: true,
+          ok: false,
+          reason: `lookup_failed:${String(error?.message ?? "").trim() || "unknown"}`,
+        };
       }
+    } else if (orderNumberInput && !looksLikeStockxOrderNumber(orderNumberInput)) {
+      stockxEnrich = { attempted: false, ok: false, reason: "manual_reference_only" };
     }
 
     const a = auto ?? ({} as ReturnType<typeof applyStockxDetailsToDecathlonMatchFields>);
