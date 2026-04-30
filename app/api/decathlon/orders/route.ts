@@ -33,7 +33,17 @@ export async function GET(request: NextRequest) {
       where.OR = [
         { partnerKey: sessionPartnerKey },
         { lines: { some: { partnerKey: sessionPartnerKey } } },
-        { lines: { some: { offerSku: { startsWith: keyPrefix } } } },
+        {
+          lines: {
+            some: {
+              OR: [
+                { offerSku: { startsWith: keyPrefix, mode: "insensitive" } },
+                { providerKey: { startsWith: keyPrefix, mode: "insensitive" } },
+                { providerKey: { equals: sessionPartnerKey, mode: "insensitive" } },
+              ],
+            },
+          },
+        },
       ];
     }
     const canceledStates = ["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"];
@@ -126,7 +136,11 @@ export async function GET(request: NextRequest) {
         ? lines.filter((line: any) => {
             const linePartnerKey = normalizeProviderKey(line.partnerKey);
             if (linePartnerKey && sessionPartnerKey && linePartnerKey === sessionPartnerKey) return true;
-            return String(line.offerSku ?? "").toUpperCase().startsWith(prefix);
+            const lineProviderKey = normalizeProviderKey(line.providerKey);
+            if (lineProviderKey && sessionPartnerKey && lineProviderKey === sessionPartnerKey) return true;
+            const offerSku = String(line.offerSku ?? "").toUpperCase();
+            const provider = String(line.providerKey ?? "").toUpperCase();
+            return offerSku.startsWith(prefix) || provider.startsWith(prefix);
           })
         : lines;
       // Whole-order assignment: partner key matches but line SKUs may not use the partner_ prefix yet.

@@ -7,7 +7,11 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 export function canPartnerAccessDecathlonOrder(
   order: {
     partnerKey?: string | null;
-    lines?: Array<{ offerSku?: string | null; partnerKey?: string | null }> | null;
+    lines?: Array<{
+      offerSku?: string | null;
+      partnerKey?: string | null;
+      providerKey?: string | null;
+    }> | null;
   },
   partnerKey: string | null | undefined
 ): boolean {
@@ -17,7 +21,11 @@ export function canPartnerAccessDecathlonOrder(
   return (order.lines ?? []).some((line) => {
     const lineKey = normalizeProviderKey(line.partnerKey);
     if (lineKey && lineKey === pk) return true;
-    return String(line.offerSku ?? "").toUpperCase().startsWith(`${pk}_`);
+    const providerKey = normalizeProviderKey(line.providerKey);
+    if (providerKey && providerKey === pk) return true;
+    const offer = String(line.offerSku ?? "").toUpperCase();
+    const provider = String(line.providerKey ?? "").toUpperCase();
+    return offer.startsWith(`${pk}_`) || provider.startsWith(`${pk}_`);
   });
 }
 
@@ -25,7 +33,12 @@ export function canPartnerAccessDecathlonOrder(
  * Lines visible to a partner session: prefixed offer SKUs, or whole order when assigned by partnerKey only.
  */
 export function filterDecathlonLinesForPartner<
-  T extends { id: string; offerSku?: string | null; partnerKey?: string | null }
+  T extends {
+    id: string;
+    offerSku?: string | null;
+    partnerKey?: string | null;
+    providerKey?: string | null;
+  }
 >(
   lines: T[],
   order: { partnerKey?: string | null },
@@ -37,7 +50,11 @@ export function filterDecathlonLinesForPartner<
   const scoped = (lines ?? []).filter((line) => {
     const lineKey = normalizeProviderKey(line.partnerKey);
     if (lineKey && lineKey === key) return true;
-    return String(line.offerSku ?? "").toUpperCase().startsWith(prefix);
+    const providerKey = normalizeProviderKey(line.providerKey);
+    if (providerKey && providerKey === key) return true;
+    const offer = String(line.offerSku ?? "").toUpperCase();
+    const provider = String(line.providerKey ?? "").toUpperCase();
+    return offer.startsWith(prefix) || provider.startsWith(prefix);
   });
   if (scoped.length > 0) return scoped;
   const orderPartner = order?.partnerKey ? normalizeProviderKey(order.partnerKey) : null;
@@ -51,20 +68,30 @@ export function filterDecathlonLinesForPartner<
  * whole-order partner assignment treats every line as partner.
  */
 export function isDecathlonPartnerFulfillmentLine(
-  order: { partnerKey?: string | null; lines?: Array<{ offerSku?: string | null; partnerKey?: string | null }> },
-  line: { offerSku?: string | null; partnerKey?: string | null }
+  order: {
+    partnerKey?: string | null;
+    lines?: Array<{ offerSku?: string | null; partnerKey?: string | null; providerKey?: string | null }>;
+  },
+  line: { offerSku?: string | null; partnerKey?: string | null; providerKey?: string | null }
 ): boolean {
   const lineKey = normalizeProviderKey(line.partnerKey);
   if (lineKey) return true;
   const pk = normalizeProviderKey(order?.partnerKey);
+  const providerKey = normalizeProviderKey(line.providerKey);
+  if (pk && providerKey && providerKey === pk) return true;
   if (!pk) return false;
   const prefix = `${pk.toUpperCase()}_`;
   const lines = order.lines ?? [];
   const hasLineAssignments = lines.some((l) => Boolean(normalizeProviderKey(l.partnerKey)));
   if (hasLineAssignments) return false;
-  const hasPrefixed = lines.some((l) => String(l.offerSku ?? "").toUpperCase().startsWith(prefix));
+  const hasPrefixed = lines.some((l) => {
+    const offerSku = String(l.offerSku ?? "").toUpperCase();
+    const provider = String(l.providerKey ?? "").toUpperCase();
+    return offerSku.startsWith(prefix) || provider.startsWith(prefix);
+  });
   const offer = String(line.offerSku ?? "").toUpperCase();
-  if (hasPrefixed) return offer.startsWith(prefix);
+  const provider = String(line.providerKey ?? "").toUpperCase();
+  if (hasPrefixed) return offer.startsWith(prefix) || provider.startsWith(prefix);
   return true;
 }
 
@@ -73,16 +100,21 @@ export function isDecathlonPartnerFulfillmentLine(
  * returns that partner key — works for mixed orders (e.g. STX + NER) even when `order.partnerKey` is unset.
  */
 export function partnerKeyMatchingLineOffer(
-  line: { offerSku?: string | null; catalog?: { providerKey?: string | null } | null },
+  line: {
+    offerSku?: string | null;
+    providerKey?: string | null;
+    catalog?: { providerKey?: string | null } | null;
+  },
   partnerKeys: readonly string[]
 ): string | null {
   const offer = String(line.offerSku ?? "").toUpperCase();
+  const lineProvider = String(line.providerKey ?? "").toUpperCase();
   const catPk = String(line.catalog?.providerKey ?? "").toUpperCase();
   for (const raw of partnerKeys) {
     const k = normalizeProviderKey(raw);
     if (!k) continue;
     const prefix = `${k}_`;
-    if (offer.startsWith(prefix) || catPk.startsWith(prefix)) return k;
+    if (offer.startsWith(prefix) || lineProvider.startsWith(prefix) || catPk.startsWith(prefix)) return k;
   }
   return null;
 }
