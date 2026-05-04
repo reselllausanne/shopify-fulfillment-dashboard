@@ -15,13 +15,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Missing required query parameters" }, { status: 400 });
     }
 
-    if (!storedState || storedState !== state) {
-      return NextResponse.json({ error: "Invalid OAuth state" }, { status: 400 });
-    }
-
     const isValidHmac = await verifyCallbackHmac(searchParams);
     if (!isValidHmac) {
       return NextResponse.json({ error: "Invalid OAuth signature" }, { status: 400 });
+    }
+
+    // Some browsers block third-party cookies in embedded flows.
+    // If cookie exists, enforce strict state match. If missing, rely on signed Shopify HMAC + shop lock.
+    if (storedState && storedState !== state) {
+      return NextResponse.json({ error: "Invalid OAuth state" }, { status: 400 });
     }
 
     const shop = resolveShopDomain(shopParam);
