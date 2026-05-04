@@ -87,7 +87,16 @@ SWISS_POST_FRANKING_LICENSE_LOGISTICS=YOUR_LOGISTICS_LICENSE
 # SWISS_POST_FRANKING_LICENSE_ADMIN=YOUR_ADMIN_LICENSE
 ```
 
-#### 2. Get Shopify Admin Access Token
+#### 2. Configure Shopify OAuth URLs (VPS/production)
+
+In Shopify app settings, keep OAuth URLs on the same HTTPS domain:
+
+- App URL: `https://solutions.resell-lausanne.ch`
+- Allowed redirection URL(s): `https://solutions.resell-lausanne.ch/auth/callback`
+
+Set `SHOPIFY_APP_URL` to the same base domain. The app now exposes public OAuth routes (`/auth`, `/auth/callback`) and auto-redirects install traffic from `/` to `/auth` when Shopify sends `shop` parameters.
+
+#### 3. Get Shopify Admin Access Token
 
 1. Go to your Shopify Admin → Settings → Apps and sales channels
 2. Click "Develop apps"
@@ -102,7 +111,7 @@ SWISS_POST_FRANKING_LICENSE_LOGISTICS=YOUR_LOGISTICS_LICENSE
 5. Install app and copy the Admin API access token
 6. Copy your store domain (e.g., `my-store.myshopify.com`)
 
-#### 3. Verify token scopes
+#### 4. Verify token scopes
 
 Run `GET /api/shopify/admin/scope-check` to verify required Admin scopes for catalog, inventory, and order sync.
 

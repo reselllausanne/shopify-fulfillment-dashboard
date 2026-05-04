@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeAuthCode } from "@/app/lib/shopifyAuth";
+import { exchangeAuthCode, resolveShopDomain, verifyCallbackHmac } from "@/app/lib/shopifyAuth";
 
 export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const shop = searchParams.get("shop");
+    const shopParam = searchParams.get("shop");
     const code = searchParams.get("code");
     const state = searchParams.get("state");
-    const hmac = searchParams.get("hmac");
     const storedState = request.cookies.get("shopify_oauth_state")?.value;
 
-    if (!shop || !code || !hmac) {
+    if (!shopParam || !code || !state) {
       return NextResponse.json({ error: "Missing required query parameters" }, { status: 400 });
     }
 
@@ -20,6 +19,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid OAuth state" }, { status: 400 });
     }
 
+    const isValidHmac = await verifyCallbackHmac(searchParams);
+    if (!isValidHmac) {
+      return NextResponse.json({ error: "Invalid OAuth signature" }, { status: 400 });
+    }
+
+    const shop = resolveShopDomain(shopParam);
     const accessToken = await exchangeAuthCode(shop, code);
 
     if (!accessToken) {

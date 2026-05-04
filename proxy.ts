@@ -23,9 +23,18 @@ function isPartnerDecathlonApiRequest(pathname: string, searchParams: URLSearchP
   return String(searchParams.get("scope") ?? "").trim().toLowerCase() === "partner";
 }
 
+function isShopifyInstallRequest(pathname: string, searchParams: URLSearchParams): boolean {
+  if (pathname !== "/") return false;
+  const shop = String(searchParams.get("shop") ?? "").trim();
+  if (!shop) return false;
+  return searchParams.has("hmac") || searchParams.has("host") || searchParams.has("timestamp");
+}
+
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
   "/login",
+  "/auth",
+  "/api/auth",
   "/api/auth/login",
   "/api/galaxus",
   "/api/galaxus/ops",
@@ -52,6 +61,7 @@ const LOGISTICS_ALLOWED_PATHS = [
 export async function proxy(req: NextRequest) {
   const { pathname, searchParams } = req.nextUrl;
   const isApiPath = pathname.startsWith("/api/");
+  const token = req.cookies.get("auth_token")?.value;
 
   // Staff login URL with partner callback → partner login (no auth_token needed)
   if (pathname === "/login" || pathname === "/login/") {
@@ -65,6 +75,16 @@ export async function proxy(req: NextRequest) {
     }
   }
 
+  // Shopify install often lands on "/" first (App URL). Bounce unauthenticated traffic to /auth.
+  if (!token && isShopifyInstallRequest(pathname, searchParams)) {
+    const authUrl = new URL("/auth", req.url);
+    const shop = String(searchParams.get("shop") ?? "").trim();
+    if (shop) {
+      authUrl.searchParams.set("shop", shop);
+    }
+    return NextResponse.redirect(authUrl, 302);
+  }
+
   // 1. Allow public paths (includes full partner portal + partner APIs)
   if (
     isPartnerPortalPath(pathname) ||
@@ -74,9 +94,6 @@ export async function proxy(req: NextRequest) {
   ) {
     return NextResponse.next();
   }
-
-  // 2. Get token from cookies
-  const token = req.cookies.get("auth_token")?.value;
 
   if (!token) {
     if (isApiPath) {
