@@ -41,7 +41,23 @@ function pickLineTaxes(o: Record<string, unknown>): number | null {
       o.total_tax_amount ??
       o.totalTaxAmount
   );
-  return direct != null ? direct : null;
+  if (direct != null) return direct;
+
+  // OR11 line payload often exposes VAT under `taxes: [{ amount }]` (no `total_taxes` scalar).
+  const taxes = o.taxes;
+  if (Array.isArray(taxes)) {
+    let sum = 0;
+    let seen = false;
+    for (const t of taxes) {
+      if (!t || typeof t !== "object") continue;
+      const amount = pickFiniteNumber((t as Record<string, unknown>).amount);
+      if (amount == null) continue;
+      sum += amount;
+      seen = true;
+    }
+    if (seen) return sum;
+  }
+  return null;
 }
 
 /**
