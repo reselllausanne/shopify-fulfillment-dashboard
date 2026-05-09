@@ -1,7 +1,7 @@
 export const DECATHLON_COMMISSION_RATE = 0.17;
-export const DECATHLON_VAT_RATE = 0.08;
+export const DECATHLON_VAT_RATE = 0.081;
 /** Per-pair fulfilment / ops lump in CHF (not Mirakl fees). */
-export const DECATHLON_FIXED_COST_CHF = 7;
+export const DECATHLON_FIXED_COST_CHF = 13;
 export const DECATHLON_PRICE_ROUND_TO = 0.01;
 
 /**
@@ -16,10 +16,10 @@ export const DECATHLON_MARGIN_RULE_ADD_PP = 0.01;
 
 /**
  * Extra margin-on-buy percentage points applied **only to STX products** on top of the base margin.
- * Combined with the base (~11.9%) + global bump (+1pp) this lands at ~15% on buy.
+ * Default `0` = same "normal" margin as non-partner Decathlon products (legacy behavior before STX uplift).
  * Override with `DECATHLON_STX_MARGIN_BUMP_PP` env var.
  */
-export const DECATHLON_STX_MARGIN_BUMP_PP = 0.021;
+export const DECATHLON_STX_MARGIN_BUMP_PP = 0;
 
 const MARGIN_RULE_ADD_PP_ENV_KEYS = ["DECATHLON_MARGIN_RULE_ADD_PP"];
 
@@ -55,6 +55,7 @@ const _DECATHLON_RETAINED_FOR_CALIBRATION =
 export const DEFAULT_DECATHLON_MARGIN_ON_BUY =
   (202 * _DECATHLON_RETAINED_FOR_CALIBRATION - DECATHLON_FIXED_COST_CHF - 130.16) / 130.16;
 
+/** Target margin on StockX/DB buy, e.g. `DECATHLON_MARGIN_ON_BUY=0.12` for 12% (before global rule bump). */
 const MARGIN_ON_BUY_ENV_KEYS = ["DECATHLON_MARGIN_ON_BUY", "DECATHLON_TARGET_MARGIN_ON_BUY"];
 
 export type DecathlonSalePriceInputs = {
@@ -259,12 +260,38 @@ export function resolveDecathlonBuyNow(input: {
 
 const DECATHLON_NER_SUPPLIER_KEY = "ner";
 
+const OWN_CATALOG_LIST_MULT_ENV_KEYS = ["DECATHLON_OWN_CATALOG_LIST_MULTIPLIER"];
+const THE_LIST_MULT_ENV_KEYS = ["DECATHLON_THE_LIST_MULTIPLIER"];
+
+/** Non-partner / non-NER list after margin formula. Default `1` = raw formula output (no legacy +1%). Set `1.01` to restore old buffer. */
+function readDecathlonOwnCatalogListMultiplier(): number {
+  for (const key of OWN_CATALOG_LIST_MULT_ENV_KEYS) {
+    const raw = process.env[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 2) return parsed;
+  }
+  return 1;
+}
+
+/** Extra discount on **THE** warehouse lines only (after own-catalog mult, before rounding). Default `0.95` = −5%. */
+function readDecathlonTheListMultiplier(): number {
+  for (const key of THE_LIST_MULT_ENV_KEYS) {
+    const raw = process.env[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed > 0 && parsed <= 2) return parsed;
+  }
+  return 0.95;
+}
+
 /**
- * NER and other partner keys: **only** `price / 0.75` (25% partner slice on list TTC — input is DB buy / partner cost).
- * Non-partner own catalog: +1% on list.
+ * NER and other partner keys: **only** `input / 0.75` (25% partner slice on list TTC).
+ * For margin-based exports, `input` is already the Mirakl list from {@link computeDecathlonOfferListPriceFromBuyNow}.
+ * NER partner path passes **DB buy** here — do not run margin formula on NER first.
  *
- * Do **not** feed NER through {@link computeDecathlonOfferListPriceFromBuyNow} first — that double-counts and
- * blows up offers (e.g. buy 209 → list ~278 with /0.75 only, not ~423).
+ * Non-partner own catalog (STX, THE, …): `input ×` {@link readDecathlonOwnCatalogListMultiplier} (default 1).
+ * THE rows get an extra `×` {@link readDecathlonTheListMultiplier} (default 0.95) when **not** on the partner /0.75 path.
  */
 export function applyDecathlonPartnerListPriceMultipliers(
   baseListPriceTtc: number,
@@ -276,7 +303,11 @@ export function applyDecathlonPartnerListPriceMultipliers(
   if (k === DECATHLON_NER_SUPPLIER_KEY || partnerKeysLower.has(k)) {
     return roundToIncrement(baseListPriceTtc / 0.75, DECATHLON_PRICE_ROUND_TO);
   }
-  return roundToIncrement(baseListPriceTtc * 1.01, DECATHLON_PRICE_ROUND_TO);
+  let out = baseListPriceTtc * readDecathlonOwnCatalogListMultiplier();
+  if (k === "the") {
+    out *= readDecathlonTheListMultiplier();
+  }
+  return roundToIncrement(out, DECATHLON_PRICE_ROUND_TO);
 }
 
 function roundToIncrement(value: number, increment: number): number {

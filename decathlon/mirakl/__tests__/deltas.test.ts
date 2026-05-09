@@ -75,7 +75,7 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set())).toBe("159.50");
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("151.80");
   });
 
   it("applies partner gross-up (/0.75) on margin-based list when supplier key is in partner set", () => {
@@ -90,7 +90,7 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("210.56");
+    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("213.05");
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {
