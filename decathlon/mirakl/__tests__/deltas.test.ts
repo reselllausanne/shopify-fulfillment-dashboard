@@ -23,7 +23,7 @@ describe("mirakl deltas", () => {
   it("resolves manual stock and price overrides", () => {
     const candidate = makeCandidate();
     expect(resolveEffectiveStock(candidate)).toBe(5);
-    expect(resolveEffectivePrice(candidate)).toBe("160.00");
+    expect(resolveEffectivePrice(candidate)).toBe("145.00");
   });
 
   it("does not emit updates when values are unchanged", () => {
@@ -34,7 +34,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 5,
-          lastPrice: "160.00",
+          lastPrice: "145.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -53,7 +53,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 2,
-          lastPrice: "160.00",
+          lastPrice: "145.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -63,7 +63,7 @@ describe("mirakl deltas", () => {
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
   });
 
-  it("applies Decathlon margin list rule for non-partner THE_* (no partner-key multiplier)", () => {
+  it("uses margin pricing for THE rows", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -75,10 +75,10 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set())).toBe("151.80");
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("165.53");
   });
 
-  it("applies partner gross-up (/0.75) on margin-based list when supplier key is in partner set", () => {
+  it("keeps same margin pricing when partner set includes THE", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -90,7 +90,22 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("213.05");
+    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("165.53");
+  });
+
+  it("uses 12.55% margin path for non-THE rows", () => {
+    const candidate = makeCandidate({
+      providerKey: "STX_1234567890123",
+      variant: {
+        supplierVariantId: "stx_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 180.44,
+      },
+    });
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("286.18");
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   applyDecathlonPartnerListPriceMultipliers,
-  computeDecathlonOfferListPriceFromBuyNow,
+  computeDecathlonOfferListPriceFromBuyNowForSupplier,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
 
@@ -643,7 +643,7 @@ export default function GalaxusCatalogPage() {
                         new Set([svPrefix])
                       );
                     }
-                    const base = computeDecathlonOfferListPriceFromBuyNow(decathlonBuyNow);
+                    const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(decathlonBuyNow, svPrefix);
                     if (!base || base <= 0) return null;
                     return applyDecathlonPartnerListPriceMultipliers(base, svPrefix, new Set());
                   })();

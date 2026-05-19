@@ -7,8 +7,7 @@ import {
 } from "@/decathlon/exports/mapping";
 import type { DecathlonExclusionSummary, DecathlonExportCandidate } from "@/decathlon/exports/types";
 import {
-  applyDecathlonPartnerListPriceMultipliers,
-  computeDecathlonOfferListPriceFromBuyNow,
+  computeDecathlonOfferListPriceFromBuyNowForSupplier,
   decathlonOfferListPriceFromManualLockedPrice,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
@@ -100,18 +99,6 @@ export function resolveEffectivePrice(
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
-  const sk = extractDecathlonSupplierKey(candidate);
-  /** NER: same as offer CSV — DB buy ÷ 0.75 only (never margin-on-buy then ÷0.75). */
-  if (sk === "ner") {
-    const buyNow = resolveDecathlonBuyNow({
-      buyNowStockx: parseDecimal(variant?.price),
-      manualOverride: manualPrice,
-      manualLock,
-    });
-    if (!buyNow || buyNow <= 0) return null;
-    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
-    return applyPricingPolicy(listTtc);
-  }
   if (manualLock && manualPrice && manualPrice > 0) {
     return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
   }
@@ -121,10 +108,10 @@ export function resolveEffectivePrice(
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const base = computeDecathlonOfferListPriceFromBuyNow(buyNow);
+  const supplierKey = extractDecathlonSupplierKey(candidate);
+  const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(buyNow, supplierKey);
   if (!base || base <= 0) return null;
-  const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);
-  return applyPricingPolicy(listTtc);
+  return applyPricingPolicy(base);
 }
 
 function normalizePrice(value: unknown): string | null {
@@ -259,13 +246,21 @@ export function computeDecathlonDeltasFromCandidates(
 export async function buildDecathlonDeltas(params?: {
   limit?: number;
   includeAll?: boolean;
+  providerKeys?: string[];
 }): Promise<DecathlonDeltaResult> {
   const exclusions = createDecathlonExclusionSummary();
   const { candidates, scanned } = await loadDecathlonCandidates(exclusions);
+  const providerKeysFilter = new Set(
+    (params?.providerKeys ?? []).map((value) => String(value).trim()).filter(Boolean)
+  );
+  const scopedCandidates =
+    providerKeysFilter.size > 0
+      ? candidates.filter((candidate) => providerKeysFilter.has(String(candidate?.providerKey ?? "").trim()))
+      : candidates;
   const limited =
     params?.limit && Number.isFinite(params.limit) && params.limit > 0
-      ? candidates.slice(0, params.limit)
-      : candidates;
+      ? scopedCandidates.slice(0, params.limit)
+      : scopedCandidates;
   const providerKeySet = new Set<string>();
   for (const c of limited) {
     const gtin = String(c.gtin ?? "").trim();

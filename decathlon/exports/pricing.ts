@@ -12,7 +12,7 @@ export const DECATHLON_PRICE_ROUND_TO = 0.01;
  * Example: `0.01` → a 12% margin-on-buy becomes 13%. Set to `0` to disable.
  * Optional override: `DECATHLON_MARGIN_RULE_ADD_PP` (e.g. `0` or `0.015`).
  */
-export const DECATHLON_MARGIN_RULE_ADD_PP = 0.01;
+export const DECATHLON_MARGIN_RULE_ADD_PP = 0;
 
 /**
  * Extra margin-on-buy percentage points applied **only to STX products** on top of the base margin.
@@ -42,18 +42,12 @@ function bumpMarginFraction(fraction: number): number {
   return Math.min(0.99, Math.max(0, fraction + add));
 }
 
-const _DECATHLON_RETAINED_FOR_CALIBRATION =
-  1 -
-  DECATHLON_COMMISSION_RATE -
-  DECATHLON_VAT_RATE / (1 + DECATHLON_VAT_RATE);
-
 /**
- * Calibrated so a **130.16 CHF** buy lands at **~202 CHF** list TTC (slightly under typical ~203 competition),
- * with {@link DECATHLON_FIXED_COST_CHF} in the numerator. Same fraction applies to all pairs.
+ * Default target margin-on-buy for Decathlon standard rows.
+ * 0.1255 = 12.55%.
  * Override with `DECATHLON_MARGIN_ON_BUY` (e.g. `0.12` for 12% on cost).
  */
-export const DEFAULT_DECATHLON_MARGIN_ON_BUY =
-  (202 * _DECATHLON_RETAINED_FOR_CALIBRATION - DECATHLON_FIXED_COST_CHF - 130.16) / 130.16;
+export const DEFAULT_DECATHLON_MARGIN_ON_BUY = 0.1255;
 
 /** Target margin on StockX/DB buy, e.g. `DECATHLON_MARGIN_ON_BUY=0.12` for 12% (before global rule bump). */
 const MARGIN_ON_BUY_ENV_KEYS = ["DECATHLON_MARGIN_ON_BUY", "DECATHLON_TARGET_MARGIN_ON_BUY"];
@@ -155,12 +149,6 @@ export function resolveDecathlonStxMarginOnBuy(): number {
   return readDecathlonMarginOnBuyFraction() + readDecathlonStxMarginBumpPp();
 }
 
-function isTieredPricingMode(): boolean {
-  return String(process.env.DECATHLON_PRICING_MODE ?? "")
-    .trim()
-    .toLowerCase() === "tiered";
-}
-
 /**
  * List TTC from buy using **margin on buy (cost)** + fixed fulfilment:
  * `list = (buy + fixed + buy × marginOnBuy) / retainedRate`
@@ -198,6 +186,12 @@ export function computeDecathlonOfferListPriceFromMarginOnBuy(
   return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
 }
 
+function readDecathlonPricingMode(): string {
+  return String(process.env.DECATHLON_PRICING_MODE ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 function computeDecathlonOfferListPriceTiered(
   buyNow: number,
   overrides?: DecathlonSalePriceOverrides
@@ -227,10 +221,26 @@ export function computeDecathlonOfferListPriceFromBuyNow(
   buyNow: number,
   overrides?: DecathlonSalePriceOverrides
 ): number | null {
-  if (isTieredPricingMode()) {
+  const mode = readDecathlonPricingMode();
+  if (mode === "tiered") {
     return computeDecathlonOfferListPriceTiered(buyNow, overrides);
   }
+  if (mode === "margin" || mode === "margin_on_buy") {
+    return computeDecathlonOfferListPriceFromMarginOnBuy(buyNow, overrides);
+  }
   return computeDecathlonOfferListPriceFromMarginOnBuy(buyNow, overrides);
+}
+
+/**
+ * Supplier-aware pricing selector:
+ * supplierKey kept for API compatibility; pricing no longer branches by supplier.
+ */
+export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
+  buyNow: number,
+  _supplierKey: string | null,
+  overrides?: DecathlonSalePriceOverrides
+): number | null {
+  return computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
 }
 
 /**

@@ -2,11 +2,9 @@ import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExpo
 import { parseDecimal, recordDecathlonExclusion } from "./mapping";
 import { OFFERS_HEADERS } from "./templates";
 import {
-  applyDecathlonPartnerListPriceMultipliers,
-  computeDecathlonOfferListPriceFromBuyNow,
+  computeDecathlonOfferListPriceFromBuyNowForSupplier,
   decathlonOfferListPriceFromManualLockedPrice,
   resolveDecathlonBuyNow,
-  resolveDecathlonStxMarginOnBuy,
 } from "./pricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
 
@@ -66,18 +64,6 @@ function resolvePrice(
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
-  const sk = extractSupplierKey(candidate);
-  /** NER: list TTC = DB buy (partner API) ÷ 0.75 only — no Mirakl margin stack, no +CHF manual surcharge. */
-  if (sk === "ner") {
-    const buyNow = resolveDecathlonBuyNow({
-      buyNowStockx: parseDecimal(variant?.price),
-      manualOverride: manualPrice,
-      manualLock,
-    });
-    if (!buyNow || buyNow <= 0) return null;
-    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
-    return applyPricingPolicy(listTtc);
-  }
   if (manualLock && manualPrice && manualPrice > 0) {
     return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
   }
@@ -87,19 +73,10 @@ function resolvePrice(
     manualLock,
   });
   if (!buyNow || buyNow <= 0) return null;
-  const isPartner = sk && partnerKeysLower.has(sk);
-  if (isPartner) {
-    const listTtc = applyDecathlonPartnerListPriceMultipliers(buyNow, sk, partnerKeysLower);
-    return applyPricingPolicy(listTtc);
-  }
-  const isStx = sk === "stx";
-  const base = computeDecathlonOfferListPriceFromBuyNow(
-    buyNow,
-    isStx ? { marginOnBuy: resolveDecathlonStxMarginOnBuy() } : undefined
-  );
+  const supplierKey = extractSupplierKey(candidate);
+  const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(buyNow, supplierKey);
   if (!base || base <= 0) return null;
-  const listTtc = applyDecathlonPartnerListPriceMultipliers(base, sk, partnerKeysLower);
-  return applyPricingPolicy(listTtc);
+  return applyPricingPolicy(base);
 }
 
 function extractSupplierKey(candidate: DecathlonExportCandidate): string | null {
