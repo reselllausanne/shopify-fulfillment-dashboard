@@ -3,6 +3,12 @@ export const DECATHLON_VAT_RATE = 0.081;
 /** Per-pair fulfilment / ops lump in CHF (not Mirakl fees). */
 export const DECATHLON_FIXED_COST_CHF = 13;
 export const DECATHLON_PRICE_ROUND_TO = 0.01;
+/** THE warehouse rows: target loss as fraction of buy (15% → list gross-up only). */
+export const DECATHLON_TARGET_LOSS_FRACTION = 0.15;
+
+const DECATHLON_NER_SUPPLIER_KEY = "ner";
+const DECATHLON_THE_SUPPLIER_KEY = "the";
+const DECATHLON_STX_SUPPLIER_KEY = "stx";
 
 /**
  * One global bump on **margin rules** (not a CHF surcharge on list price).
@@ -67,6 +73,8 @@ export type DecathlonSalePriceOverrides = {
   targetNetMargin?: number;
   /** Fraction of buy (e.g. 0.12 = 12% on cost). */
   marginOnBuy?: number | null;
+  /** Fraction of buy treated as loss (THE only). */
+  targetLossFraction?: number | null;
 };
 
 /**
@@ -186,6 +194,45 @@ export function computeDecathlonOfferListPriceFromMarginOnBuy(
   return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
 }
 
+function readDecathlonTargetLossFraction(): number {
+  const raw = process.env.DECATHLON_TARGET_LOSS_FRACTION;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed < 1) return parsed;
+  }
+  return DECATHLON_TARGET_LOSS_FRACTION;
+}
+
+/**
+ * THE list TTC: sell at a controlled loss on buy — `list = buy × (1 − loss) / retainedRate`.
+ * No fixed-cost term (legacy Decathlon loss path).
+ */
+export function computeDecathlonOfferListPriceFromLossFraction(
+  buyNow: number,
+  overrides?: DecathlonSalePriceOverrides
+): number | null {
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+  const lossFraction =
+    overrides?.targetLossFraction !== null && overrides?.targetLossFraction !== undefined
+      ? (() => {
+          const v = overrides.targetLossFraction!;
+          if (!Number.isFinite(v) || v < 0 || v >= 1) return NaN;
+          return v > 1 ? v / 100 : v;
+        })()
+      : readDecathlonTargetLossFraction();
+  if (!Number.isFinite(lossFraction) || lossFraction < 0 || lossFraction >= 1) return null;
+
+  const retainedRate = computeDecathlonRetainedRate({
+    commissionRate: overrides?.commissionRate ?? DECATHLON_COMMISSION_RATE,
+    vatRate: overrides?.vatRate ?? DECATHLON_VAT_RATE,
+  });
+  if (!Number.isFinite(retainedRate) || retainedRate <= 0) return null;
+
+  const raw = (buyNow * (1 - lossFraction)) / retainedRate;
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return roundToIncrement(raw, DECATHLON_PRICE_ROUND_TO);
+}
+
 function readDecathlonPricingMode(): string {
   return String(process.env.DECATHLON_PRICING_MODE ?? "")
     .trim()
@@ -232,14 +279,29 @@ export function computeDecathlonOfferListPriceFromBuyNow(
 }
 
 /**
- * Supplier-aware pricing selector:
- * supplierKey kept for API compatibility; pricing no longer branches by supplier.
+ * Supplier-aware Mirakl list TTC from DB buy (`buyNow`):
+ * - **NER**: `buy / 0.75` (partner slice on list)
+ * - **THE**: loss fraction on buy (default 15%)
+ * - **STX** and others: margin-on-buy (default 12.55%) + fixed fulfilment
  */
 export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
   buyNow: number,
-  _supplierKey: string | null,
+  supplierKey: string | null,
   overrides?: DecathlonSalePriceOverrides
 ): number | null {
+  const sk = supplierKey?.toLowerCase() ?? "";
+  if (sk === DECATHLON_NER_SUPPLIER_KEY) {
+    return roundToIncrement(buyNow / 0.75, DECATHLON_PRICE_ROUND_TO);
+  }
+  if (sk === DECATHLON_THE_SUPPLIER_KEY) {
+    return computeDecathlonOfferListPriceFromLossFraction(buyNow, overrides);
+  }
+  if (sk === DECATHLON_STX_SUPPLIER_KEY) {
+    return computeDecathlonOfferListPriceFromMarginOnBuy(buyNow, {
+      ...overrides,
+      marginOnBuy: overrides?.marginOnBuy ?? DEFAULT_DECATHLON_MARGIN_ON_BUY,
+    });
+  }
   return computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
 }
 
@@ -267,8 +329,6 @@ export function resolveDecathlonBuyNow(input: {
   }
   return null;
 }
-
-const DECATHLON_NER_SUPPLIER_KEY = "ner";
 
 const OWN_CATALOG_LIST_MULT_ENV_KEYS = ["DECATHLON_OWN_CATALOG_LIST_MULTIPLIER"];
 const THE_LIST_MULT_ENV_KEYS = ["DECATHLON_THE_LIST_MULTIPLIER"];

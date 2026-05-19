@@ -63,7 +63,22 @@ describe("mirakl deltas", () => {
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
   });
 
-  it("uses margin pricing for THE rows", () => {
+  it("uses buy/0.75 for NER rows", () => {
+    const candidate = makeCandidate({
+      providerKey: "NER_1234567890123",
+      variant: {
+        supplierVariantId: "ner_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 100,
+      },
+    });
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("133.33");
+  });
+
+  it("uses loss pricing for THE rows", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -75,10 +90,10 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set())).toBe("165.53");
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("112.01");
   });
 
-  it("keeps same margin pricing when partner set includes THE", () => {
+  it("keeps THE loss pricing when partner set includes THE", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -90,10 +105,10 @@ describe("mirakl deltas", () => {
         price: 99.5,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("165.53");
+    expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("112.01");
   });
 
-  it("uses 12.55% margin path for non-THE rows", () => {
+  it("uses 12.55% margin path for STX rows", () => {
     const candidate = makeCandidate({
       providerKey: "STX_1234567890123",
       variant: {
