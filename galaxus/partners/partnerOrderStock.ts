@@ -93,6 +93,16 @@ export async function deductStockForPartnerOrderFulfillment(params: {
           where: { supplierVariantId: targetId },
           data: { stock: next },
         });
+        // Keep partner upload source in sync; otherwise next partner-stock-sync can restore old stock.
+        await txAny.partnerUploadRow.updateMany({
+          where: {
+            supplierVariantId: targetId,
+            status: "RESOLVED",
+          },
+          data: {
+            rawStock: next,
+          },
+        });
         adjusted += 1;
         details.push(`${targetId}: ${current} → ${next} (−${qty})`);
       }
@@ -159,6 +169,16 @@ export async function deductPartnerCatalogStockForDecathlonLines(params: {
         await txAny.supplierVariant.update({
           where: { supplierVariantId: targetId },
           data: { stock: next },
+        });
+        // Mirror decremented stock into upload rows used by partner sync.
+        await txAny.partnerUploadRow.updateMany({
+          where: {
+            supplierVariantId: targetId,
+            status: "RESOLVED",
+          },
+          data: {
+            rawStock: next,
+          },
         });
         adjusted += 1;
         details.push(`${targetId}: ${current} → ${next} (−${qty}) [Decathlon]`);
