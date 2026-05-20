@@ -9,6 +9,7 @@ type PartnerLine = {
   quantity: number;
   providerKey?: string | null;
   supplierVariantId?: string | null;
+  warehouseMarkedShippedAt?: Date | null;
   lineNetAmount?: unknown;
   priceLineAmount?: unknown;
 };
