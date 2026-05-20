@@ -9,7 +9,7 @@ import {
   collectGtinsFromLines,
   lineMatchesPartnerScope,
   resolvePartnerGtins,
-} from "../partnerLineScope";
+} from "../../partnerLineScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,7 +102,7 @@ export async function POST(
     if (stockResult.adjusted > 0) {
       const origin = resolveAppOriginForPartnerJobs(new URL(req.url).origin);
       if (origin) {
-        await requestFeedPush({ origin, scope: "full", triggerSource: "partner-galaxus-mark-shipped", runNow: true });
+        await requestFeedPush({ origin, scope: "full", triggerSource: "partner-admin", runNow: true });
       }
     }
 
