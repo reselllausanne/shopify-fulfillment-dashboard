@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
       ordrStatus: string | null;
       shippedCount: number;
       fulfilledCount: number;
+      warehouseLinesShipped: number;
       totalUnits: number;
       lineCount: number;
       fulfillmentState: string;
