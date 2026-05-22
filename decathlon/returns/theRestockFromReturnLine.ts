@@ -183,9 +183,10 @@ export async function applyReturnRestock(params: {
         params.basePrice,
         Number(stxRow.price ?? 0)
       );
+      const lastForCloneNum = Number(lastForClone);
       const price =
-        Number.isFinite(lastForClone as number) && (lastForClone as number) > 0
-          ? roundToCents(lastForClone * RESTOCK_PRICE_FROM_LAST) ?? 0
+        Number.isFinite(lastForCloneNum) && lastForCloneNum > 0
+          ? roundToCents(lastForCloneNum * RESTOCK_PRICE_FROM_LAST) ?? 0
           : 0;
 
       const createData: Record<string, unknown> = {
