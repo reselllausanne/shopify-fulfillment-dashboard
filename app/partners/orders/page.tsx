@@ -16,6 +16,23 @@ type OrderListItem = {
   _count?: { lines: number; shipments: number };
 };
 
+type GalaxusOrderListItem = {
+  id: string;
+  galaxusOrderId: string;
+  orderNumber?: string | null;
+  orderDate: string;
+  deliveryType?: string | null;
+  cancelledAt?: string | null;
+  archivedAt?: string | null;
+  ordrStatus?: string | null;
+  shippedCount?: number;
+  fulfilledCount?: number;
+  warehouseLinesShipped?: number;
+  totalUnits?: number;
+  lineCount?: number;
+  fulfillmentState?: string | null;
+};
+
 function lineDisplayTitle(line: any) {
   const mir = line.productTitle || line.description || line.offerSku || "—";
   return (
@@ -39,10 +56,16 @@ function isPartnerOrderFulfilled(order: OrderListItem): boolean {
 
 export default function PartnerOrdersPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
+  const [galaxusOrders, setGalaxusOrders] = useState<GalaxusOrderListItem[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [selectedGalaxusOrderId, setSelectedGalaxusOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [selectedGalaxusOrder, setSelectedGalaxusOrder] = useState<any | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [loadingOrder, setLoadingOrder] = useState(false);
+  const [loadingGalaxusOrders, setLoadingGalaxusOrders] = useState(false);
+  const [loadingGalaxusOrder, setLoadingGalaxusOrder] = useState(false);
+  const [markingGalaxus, setMarkingGalaxus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
 
@@ -67,6 +90,25 @@ export default function PartnerOrdersPage() {
     }
   };
 
+  const loadGalaxusOrders = async () => {
+    setLoadingGalaxusOrders(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/partners/galaxus/orders?limit=50`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load Galaxus orders");
+      const items: GalaxusOrderListItem[] = data.items || [];
+      setGalaxusOrders(items);
+      if (!selectedGalaxusOrderId && items[0]?.id) {
+        setSelectedGalaxusOrderId(items[0].id);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingGalaxusOrders(false);
+    }
+  };
+
   const loadOrderDetail = async (orderId: string) => {
     setLoadingOrder(true);
     setError(null);
@@ -82,6 +124,21 @@ export default function PartnerOrdersPage() {
     }
   };
 
+  const loadGalaxusOrderDetail = async (orderId: string) => {
+    setLoadingGalaxusOrder(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/partners/galaxus/orders/${orderId}`, { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load Galaxus order");
+      setSelectedGalaxusOrder(data.order);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoadingGalaxusOrder(false);
+    }
+  };
+
   useEffect(() => {
     loadOrders();
   }, [leftTab]);
@@ -92,6 +149,17 @@ export default function PartnerOrdersPage() {
       loadOrderDetail(selectedOrderId);
     }
   }, [selectedOrderId]);
+
+  useEffect(() => {
+    loadGalaxusOrders();
+  }, []);
+
+  useEffect(() => {
+    if (selectedGalaxusOrderId) {
+      setSelectedGalaxusOrder(null);
+      loadGalaxusOrderDetail(selectedGalaxusOrderId);
+    }
+  }, [selectedGalaxusOrderId]);
 
   const normalizeState = (state?: string | null) => String(state ?? "").trim().toUpperCase();
   const canceledStates = useMemo(
@@ -215,16 +283,38 @@ export default function PartnerOrdersPage() {
     if (selectedOrderId) {
       await loadOrderDetail(selectedOrderId);
     }
+    await loadGalaxusOrders();
+    if (selectedGalaxusOrderId) {
+      await loadGalaxusOrderDetail(selectedGalaxusOrderId);
+    }
+  };
+
+  const markGalaxusShipped = async () => {
+    if (!selectedGalaxusOrderId) return;
+    setError(null);
+    setMarkingGalaxus(true);
+    try {
+      const res = await fetch(`/api/partners/galaxus/orders/${selectedGalaxusOrderId}/mark-shipped`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Mark shipped failed");
+      await loadGalaxusOrders();
+      await loadGalaxusOrderDetail(selectedGalaxusOrderId);
+    } catch (err: any) {
+      setError(err.message ?? "Mark shipped failed");
+    } finally {
+      setMarkingGalaxus(false);
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Decathlon Orders</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">Partner Orders</h1>
           <p className="text-sm text-slate-500">
-            Orders are filtered to your products only. Download the packing slip, then generate a label to ship your
-            lines. Mixed orders are split automatically so each partner ships their own items.
+            Decathlon orders are actionable; Galaxus orders are read-only. All orders are filtered to your products.
           </p>
         </div>
         <button
@@ -236,12 +326,14 @@ export default function PartnerOrdersPage() {
         </button>
       </div>
 
-      {loadingOrders ? <div className="text-xs text-slate-500">Loading orders…</div> : null}
+      {loadingOrders || loadingGalaxusOrders ? (
+        <div className="text-xs text-slate-500">Loading orders…</div>
+      ) : null}
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded p-3 bg-white">
-          <div className="font-semibold mb-2">Orders</div>
+          <div className="font-semibold mb-2">Decathlon Orders</div>
           <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
             <button
               className={`rounded border px-2 py-1 ${
@@ -288,7 +380,7 @@ export default function PartnerOrdersPage() {
         </div>
 
         <div className="md:col-span-2 border rounded p-3 space-y-3 bg-white">
-          <div className="font-semibold">Order detail</div>
+          <div className="font-semibold">Decathlon Order detail</div>
           <div className="flex justify-end gap-2">
             <button
               onClick={generatePackingSlip}
@@ -458,6 +550,86 @@ export default function PartnerOrdersPage() {
             </div>
           ) : (
             <div className="text-sm text-slate-500">Select an order to view details.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="border rounded p-3 bg-white">
+          <div className="font-semibold mb-2">Galaxus Orders (read-only)</div>
+          <div className="space-y-2 max-h-[500px] overflow-auto">
+            {galaxusOrders.map((order) => {
+              const totalUnits = order.totalUnits ?? 0;
+              const shipped = order.fulfillmentState === "fulfilled";
+              const listTone = shipped
+                ? "border-emerald-200 bg-emerald-50/50"
+                : "border-amber-200 bg-amber-50/40";
+              return (
+                <button
+                  key={order.id}
+                  onClick={() => setSelectedGalaxusOrderId(order.id)}
+                  className={`w-full text-left border rounded p-2 text-sm ${
+                    selectedGalaxusOrderId === order.id ? "border-black" : listTone || "border-slate-200"
+                  }`}
+                >
+                  <div className="font-medium">{order.orderNumber ?? order.galaxusOrderId}</div>
+                  <div className="text-xs text-slate-500">
+                    {new Date(order.orderDate).toLocaleDateString("fr-CH")} • {totalUnits} units
+                    {order.warehouseLinesShipped != null && order.lineCount != null
+                      ? ` • ${order.warehouseLinesShipped}/${order.lineCount} shipped`
+                      : ""}
+                  </div>
+                </button>
+              );
+            })}
+            {galaxusOrders.length === 0 ? (
+              <div className="text-xs text-slate-500">No Galaxus orders.</div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="md:col-span-2 border rounded p-3 space-y-3 bg-white">
+          <div className="font-semibold">Galaxus Order detail</div>
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={markGalaxusShipped}
+              disabled={!selectedGalaxusOrderId || markingGalaxus}
+              className="px-3 py-1.5 bg-slate-900 text-white rounded text-xs"
+            >
+              {markingGalaxus ? "Marking…" : "Mark shipped"}
+            </button>
+          </div>
+          {loadingGalaxusOrder ? (
+            <div className="text-sm text-slate-500">Loading…</div>
+          ) : selectedGalaxusOrder ? (
+            <div className="space-y-4">
+              <div className="text-sm text-slate-600">
+                {selectedGalaxusOrder.galaxusOrderId} · {selectedGalaxusOrder.orderNumber ?? "—"}
+              </div>
+              {Array.isArray(selectedGalaxusOrder.lines) && selectedGalaxusOrder.lines.length > 0 ? (
+                <div className="rounded border border-slate-200 bg-slate-50/90 p-3 text-xs space-y-2">
+                  <div className="font-semibold text-slate-900">Products sold</div>
+                  <ul className="space-y-1.5">
+                    {selectedGalaxusOrder.lines.map((line: any) => (
+                      <li
+                        key={line.id}
+                        className="flex flex-wrap gap-x-2 gap-y-0.5 text-sm text-slate-700 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0"
+                      >
+                        <span className="min-w-0 flex-1 font-medium text-slate-900">
+                          {line.productName ?? line.description ?? "—"}
+                        </span>
+                        <span className="font-mono text-xs text-slate-500 shrink-0">
+                          {line.providerKey ?? line.gtin ?? "—"}
+                        </span>
+                        <span className="text-slate-500 shrink-0">×{line.quantity ?? "—"}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="text-sm text-slate-500">Select a Galaxus order.</div>
           )}
         </div>
       </div>

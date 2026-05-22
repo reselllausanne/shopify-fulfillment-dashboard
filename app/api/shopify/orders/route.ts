@@ -6,6 +6,7 @@ import {
   lineFulfillableQuantity,
   shouldSkipOrderForFulfillmentMatching,
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
+import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,9 @@ type ShopifyLineItem = {
   price: string;      // unit price AFTER discounts
   totalPrice: string; // line total AFTER discounts
   currencyCode: string;
+  fraudRiskLevel: string | null;
+  fraudRecommendation: string | null;
+  fraudSummaryLabel: string;
 };
 
 /**
@@ -112,6 +116,13 @@ query LastOrders($first: Int!, $orderQuery: String) {
         }
         currentTotalPriceSet {
           shopMoney { amount currencyCode }
+        }
+
+        risk {
+          recommendation
+          assessments {
+            riskLevel
+          }
         }
 
         lineItems(first: 50) {
@@ -330,6 +341,8 @@ export async function POST(req: Request) {
       const orderTotalAmount = orderTotal?.amount ? parseFloat(orderTotal.amount) : 0;
       const orderCurrency = orderTotal?.currencyCode || "CHF";
 
+      const riskNorm = normalizeOrderRisk(o.risk);
+
       const liEdgesAll = o.lineItems?.edges ?? [];
       const liEdges = liEdgesAll.filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
       const lineItemCount = liEdges.length;
@@ -403,6 +416,9 @@ export async function POST(req: Request) {
           price: unitPrice,
           totalPrice,
           currencyCode: orderCurrency,
+          fraudRiskLevel: riskNorm.fraudRiskLevel,
+          fraudRecommendation: riskNorm.fraudRecommendation,
+          fraudSummaryLabel: riskNorm.fraudSummaryLabel,
         });
       }
 

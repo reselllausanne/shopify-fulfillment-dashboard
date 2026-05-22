@@ -45,6 +45,14 @@ type UpdatePayload = {
   supplierColorway?: string | null;
 };
 
+type ChannelStateSummary = {
+  status: string | null;
+  externalProductId: string | null;
+  externalVariantId: string | null;
+  lastError: string | null;
+  lastSyncedAt: Date | null;
+};
+
 function parseDateOrNull(value: unknown): Date | null {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date && !Number.isNaN(value.valueOf())) return value;
@@ -152,6 +160,46 @@ export async function GET(req: NextRequest) {
     };
   });
 
+  const supplierVariantIds = Array.from(
+    new Set(mapped.map((item) => String(item.supplierVariantId ?? "").trim()).filter(Boolean))
+  );
+  const listingRows =
+    supplierVariantIds.length > 0
+      ? await (prisma as any).channelListingState.findMany({
+          where: {
+            supplierVariantId: { in: supplierVariantIds },
+            channel: { in: ["SHOPIFY", "GALAXUS", "DECATHLON"] },
+          },
+          select: {
+            supplierVariantId: true,
+            channel: true,
+            status: true,
+            externalProductId: true,
+            externalVariantId: true,
+            lastError: true,
+            lastSyncedAt: true,
+          },
+        })
+      : [];
+  const listingBySupplierVariantId = new Map<
+    string,
+    Record<string, ChannelStateSummary>
+  >();
+  for (const row of listingRows) {
+    const id = String(row?.supplierVariantId ?? "").trim();
+    const channel = String(row?.channel ?? "").trim().toUpperCase();
+    if (!id || !channel) continue;
+    const current = listingBySupplierVariantId.get(id) ?? {};
+    current[channel] = {
+      status: row?.status ? String(row.status) : null,
+      externalProductId: row?.externalProductId ? String(row.externalProductId) : null,
+      externalVariantId: row?.externalVariantId ? String(row.externalVariantId) : null,
+      lastError: row?.lastError ? String(row.lastError) : null,
+      lastSyncedAt: row?.lastSyncedAt ?? null,
+    };
+    listingBySupplierVariantId.set(id, current);
+  }
+
   const partnerKeyLower = session.partnerKey.toLowerCase();
   const galaxusFeedExcludedForPartner = GALAXUS_FEED_SUPPLIER_BLOCKLIST.split(",")
     .map((s) => s.trim().toLowerCase())
@@ -196,6 +244,11 @@ export async function GET(req: NextRequest) {
       ...item,
       referenceMinPriceChf: ref != null ? ref.min : null,
       referenceOfferCount: ref != null ? ref.count : null,
+      channelStates: {
+        shopify: listingBySupplierVariantId.get(item.supplierVariantId)?.SHOPIFY ?? null,
+        galaxus: listingBySupplierVariantId.get(item.supplierVariantId)?.GALAXUS ?? null,
+        decathlon: listingBySupplierVariantId.get(item.supplierVariantId)?.DECATHLON ?? null,
+      },
     };
   });
 

@@ -46,12 +46,18 @@ export interface ShopifyLineItem {
   currencyCode: string;
   sizeEU: string | null;
   lineItemImageUrl: string | null;
+  /** From `Order.risk` (Shopify fraud analysis). */
+  fraudRiskLevel?: string | null;
+  fraudRecommendation?: string | null;
+  fraudSummaryLabel?: string | null;
 }
 
-/** True when Shopify financial status is refunded (e.g. REFUNDED, REFUNDEDUNFULFILLED, PARTIALLY_REFUNDED). */
+/** True when Shopify order is fully refunded (not partial — partial refunds stay matchable). */
 export function isShopifyFinancialRefunded(displayFinancialStatus: string | null | undefined): boolean {
   if (!displayFinancialStatus) return false;
-  return displayFinancialStatus.toUpperCase().includes("REFUND");
+  const fin = displayFinancialStatus.toUpperCase();
+  if (fin.startsWith("PARTIALLY_REFUNDED")) return false;
+  return fin.includes("REFUND");
 }
 
 /** Liquidation convention: "%" at end of title only (not e.g. "100% cotton" mid-string). */
@@ -74,7 +80,8 @@ export interface MatchResult {
   allCandidates: MatchCandidate[];
 }
 
-const THRESHOLD_HOURS = 96; // 4 days
+const THRESHOLD_HOURS = 96; // 4 days (default)
+const SKU_EXACT_AUTO_THRESHOLD_HOURS = 168; // 7 days for exact SKU delayed fulfillment flows
 
 // Fear of God Essentials SKUs in stock (auto-match with 42 CHF, do not match to StockX)
 export const EXCLUDED_SKUS = [
@@ -237,7 +244,7 @@ function normalizeProductName(name: string): string {
  * Rules:
  * 1. Remove trailing size patterns: -XXS/-XS/-S/-M/-L/-XL/-XXL/-XXXL
  * 2. Remove trailing: -OS, -O/S, -ONE SIZE
- * 3. Remove trailing numeric sizes: -37.5, -42, etc.
+ * 3. Remove trailing numeric sizes: -37.5, -42, -36 2/3, etc.
  * 4. Keep everything else (e.g., color codes like "-011")
  */
 function skuBaseFromShopifySKU(sku: string | null): string | null {
@@ -248,8 +255,10 @@ function skuBaseFromShopifySKU(sku: string | null): string | null {
   // Pattern: Match trailing size suffix
   // Letter sizes: -XXS, -XS, -S, -M, -L, -XL, -XXL, -XXXL (case insensitive)
   // One Size: -OS, -O/S, -ONE SIZE
-  // Numeric sizes: -37.5, -42, etc.
-  const sizePattern = /-(XXXL|XXL|XL|XXS|XS|L|M|S|OS|O\/S|ONE\s*SIZE|\d+(\.\d+)?)$/i;
+  // Numeric sizes: -37.5, -42, -36 2/3, -EU 36 2/3
+  // Guarded to 1-2 leading digits to avoid stripping SKU color codes like "-011".
+  const sizePattern =
+    /-(XXXL|XXL|XL|XXS|XS|L|M|S|OS|O\/S|ONE\s*SIZE|EU\s*[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?|[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?)$/i;
   
   const baseSku = trimmed.replace(sizePattern, "");
   
@@ -756,6 +765,23 @@ export function matchShopifyToSupplier(
     // Base score for passing filters
     score += 100;
     
+    // Pre-compute SKU quality for time-threshold exception + score bonus.
+    let skuExactMatch = false;
+    let skuPartialMatch = false;
+    if (shopifyItem.sku && supplierOrder.skuKey) {
+      const shopifyBase = skuBaseFromShopifySKU(shopifyItem.sku);
+      if (shopifyBase) {
+        const s1 = shopifyBase.toUpperCase();
+        const s2 = supplierOrder.skuKey.trim().toUpperCase();
+        skuExactMatch = s1 === s2;
+        skuPartialMatch = !skuExactMatch && (s1.includes(s2) || s2.includes(s1));
+      }
+    }
+
+    const effectiveThresholdHours = skuExactMatch
+      ? SKU_EXACT_AUTO_THRESHOLD_HOURS
+      : THRESHOLD_HOURS;
+
     // Time score (0-50 points) - main way to differentiate duplicates
     if (timeDiffHours <= 1) {
       score += 50;
@@ -772,6 +798,9 @@ export function matchShopifyToSupplier(
     } else if (timeDiffHours <= 96) {
       score += 20;
       reasons.push("⏱️ Within 4 days");
+    } else if (skuExactMatch && timeDiffHours <= SKU_EXACT_AUTO_THRESHOLD_HOURS) {
+      score += 15;
+      reasons.push("⏱️ Within 7 days (exact SKU exception)");
     } else {
       score += 5;
       const timeDiffDays = (timeDiffHours / 24).toFixed(1);
@@ -781,22 +810,16 @@ export function matchShopifyToSupplier(
     // Optional SKU validation (bonus points for scoring)
     // Use base SKU extraction for accurate comparison
     if (shopifyItem.sku && supplierOrder.skuKey) {
-      const shopifyBase = skuBaseFromShopifySKU(shopifyItem.sku);
-      if (shopifyBase) {
-        const s1 = shopifyBase.toUpperCase();
-        const s2 = supplierOrder.skuKey.trim().toUpperCase();
-
-        if (s1 === s2) {
+      if (skuExactMatch) {
         score += 10;
         reasons.push("🔐 SKU exact match (bonus)");
-        } else if (s1.includes(s2) || s2.includes(s1)) {
+      } else if (skuPartialMatch) {
         score += 5;
         reasons.push("🔐 SKU partial match (bonus)");
-        }
       }
     }
 
-    const overThreshold = timeDiffHours > THRESHOLD_HOURS;
+    const overThreshold = timeDiffHours > effectiveThresholdHours;
 
     // Determine confidence
     let confidence: "high" | "medium" | "low";

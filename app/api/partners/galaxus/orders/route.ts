@@ -70,6 +70,9 @@ export async function GET(req: NextRequest) {
               quantity: true,
               providerKey: true,
               supplierVariantId: true,
+            supplierPid: true,
+            supplierSku: true,
+            warehouseMarkedShippedAt: true,
             },
           },
           shipments: {
@@ -99,6 +102,7 @@ export async function GET(req: NextRequest) {
         if (partnerLines.length === 0) continue;
 
         const totalUnits = partnerLines.reduce((sum, line) => sum + Number(line.quantity ?? 0), 0);
+        const warehouseLinesShipped = partnerLines.filter((line) => line.warehouseMarkedShippedAt).length;
         const isDirect = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
         const shippedCount = isDirect
           ? order.shipments.filter((shipment) => Boolean(shipment.trackingNumber)).length
@@ -110,7 +114,11 @@ export async function GET(req: NextRequest) {
               return Boolean(shipment.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
             }).length;
         const fulfillmentState =
-          fulfilledCount > 0 ? "fulfilled" : shippedCount > 0 ? "shipped" : "to_process";
+          fulfilledCount > 0 || (partnerLines.length > 0 && warehouseLinesShipped >= partnerLines.length)
+            ? "fulfilled"
+            : shippedCount > 0
+            ? "shipped"
+            : "to_process";
 
         matched.push({
           id: order.id,
@@ -123,6 +131,7 @@ export async function GET(req: NextRequest) {
           ordrStatus: order.ordrStatus ?? null,
           shippedCount,
           fulfilledCount,
+          warehouseLinesShipped,
           totalUnits,
           lineCount: partnerLines.length,
           fulfillmentState,

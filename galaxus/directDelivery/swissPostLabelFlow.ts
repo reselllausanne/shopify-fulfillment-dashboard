@@ -177,7 +177,7 @@ function buildSwissPostPayload(order: any, trackingNumber: string) {
       recipient,
       attributes: { przl: przlValues },
       notification:
-        notificationService && (recipient.email || recipient.phone)
+        notificationService && recipient.email
           ? [
               {
                 communication: {

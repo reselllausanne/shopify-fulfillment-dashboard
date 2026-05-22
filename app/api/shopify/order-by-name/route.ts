@@ -5,6 +5,7 @@ import {
   lineFulfillableQuantity,
   shouldSkipOrderForFulfillmentMatching,
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
+import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,12 @@ query OrderByName($first: Int!, $query: String!) {
         displayFinancialStatus
         displayFulfillmentStatus
         customer { displayName }
+        risk {
+          recommendation
+          assessments {
+            riskLevel
+          }
+        }
         lineItems(first: 50) {
           edges {
             node {
@@ -76,6 +83,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ lineItems: [] });
     }
 
+    const riskNorm = normalizeOrderRisk(node.risk);
+
     const liEdges = (node.lineItems?.edges ?? []).filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
     const lineItems = liEdges.map((liE: any) => {
       const li = liE.node;
@@ -108,6 +117,9 @@ export async function POST(req: Request) {
         price: String(unitAmount),
         totalPrice: String(totalAmount),
         currencyCode,
+        fraudRiskLevel: riskNorm.fraudRiskLevel,
+        fraudRecommendation: riskNorm.fraudRecommendation,
+        fraudSummaryLabel: riskNorm.fraudSummaryLabel,
       };
     });
 

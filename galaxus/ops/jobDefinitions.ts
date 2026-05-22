@@ -10,7 +10,8 @@ export const DEFAULT_JOBS: Array<{
   enabled: boolean;
 }> = [
   { jobKey: "partner-stock-sync", intervalMs: 5 * HOUR_MS, enabled: true },
-  { jobKey: "stx-refresh", intervalMs: 24 * HOUR_MS, enabled: true },
+  /** KickDB → STX price/stock; manual runs are always allowed from ops UI. */
+  { jobKey: "stx-refresh", intervalMs: 6 * HOUR_MS, enabled: true },
   { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: true },
   { jobKey: "image-sync", intervalMs: 24 * HOUR_MS, enabled: true },
   { jobKey: "shopify-order-sync", intervalMs: 15 * MINUTE_MS, enabled: true },

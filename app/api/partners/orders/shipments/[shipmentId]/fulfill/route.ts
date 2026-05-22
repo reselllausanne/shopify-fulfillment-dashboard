@@ -8,7 +8,7 @@ import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
-import { requestSwissPostLabel } from "@/lib/swissPost";
+import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
 import { DocumentType } from "@prisma/client";
 import {
   getStaffRoleFromRequest,
@@ -58,6 +58,7 @@ function buildRecipient(order: any) {
     Boolean(order?.recipientCity) ||
     Boolean(order?.recipientCountry);
   if (hasRecipient) {
+    const country = order.recipientCountryCode ?? order.recipientCountry ?? "CH";
     return {
       name1: order.recipientName ?? order.customerName ?? "",
       firstName: null,
@@ -65,11 +66,12 @@ function buildRecipient(order: any) {
       street: order.recipientAddress1 ?? "",
       zip: order.recipientPostalCode ?? "",
       city: order.recipientCity ?? "",
-      country: order.recipientCountryCode ?? order.recipientCountry ?? "CH",
-      phone: order.recipientPhone ?? null,
+      country,
+      phone: normalizeSwissPostRecipientPhone(order.recipientPhone ?? null, country),
       email: order.recipientEmail ?? order.customerEmail ?? null,
     };
   }
+  const country = order.customerCountryCode ?? order.customerCountry ?? "CH";
   return {
     name1: order.customerName ?? "",
     firstName: null,
@@ -77,8 +79,8 @@ function buildRecipient(order: any) {
     street: order.customerAddress1 ?? "",
     zip: order.customerPostalCode ?? "",
     city: order.customerCity ?? "",
-    country: order.customerCountryCode ?? order.customerCountry ?? "CH",
-    phone: null,
+    country,
+    phone: normalizeSwissPostRecipientPhone(order.customerPhone ?? null, country),
     email: order.customerEmail ?? null,
   };
 }
@@ -143,7 +145,7 @@ function buildSwissPostPayload(
       recipient,
       attributes: { przl: przlValues },
       notification:
-        notificationService && (recipient.email || recipient.phone)
+        notificationService && recipient.email
           ? [
               {
                 communication: {

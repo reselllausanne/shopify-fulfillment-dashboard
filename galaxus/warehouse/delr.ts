@@ -373,36 +373,37 @@ export async function uploadDelrForShipment(
     const shippedQtyByKey = new Map<string, number>();
     for (const item of rawItems ?? []) {
       const orderId = item?.orderId ? String(item.orderId) : shipment.orderId ? String(shipment.orderId) : "";
+      const buyerPid = String(item?.buyerPid ?? "").trim();
       const supplierPid = String(item?.supplierPid ?? "").trim();
       const gtin = String(item?.gtin14 ?? "").trim();
       const qty = Math.max(0, Number(item?.quantity ?? 0));
       if (!orderId || !supplierPid || !gtin || qty <= 0) continue;
-      const key = `${orderId}|${supplierPid}|${gtin}`;
+      const key = `${orderId}|${buyerPid}|${supplierPid}|${gtin}`;
       shippedQtyByKey.set(key, (shippedQtyByKey.get(key) ?? 0) + qty);
-    }
-
-    const orderLinesById = new Map<string, any>();
-    for (const order of ordersForMeta ?? []) {
-      for (const line of order?.lines ?? []) {
-        if (!line?.id) continue;
-        orderLinesById.set(String(line.id), line);
-      }
     }
 
     const lineIdsToMark: string[] = [];
     for (const [key, shippedQty] of shippedQtyByKey.entries()) {
       let remaining = shippedQty;
-      const [orderId, supplierPid, gtin] = key.split("|");
-      const lines = (ordersForMeta ?? [])
-        .find((o: any) => String(o?.id ?? "") === orderId)
-        ?.lines?.filter(
-          (l: any) =>
-            String(l?.supplierPid ?? "").trim() === supplierPid &&
-            String(l?.gtin ?? "").trim() === gtin &&
-            !l?.warehouseMarkedShippedAt
-        ) ?? [];
-      lines.sort((a: any, b: any) => Number(a?.lineNumber ?? 0) - Number(b?.lineNumber ?? 0));
-      for (const line of lines) {
+      const [orderId, buyerPid, supplierPid, gtin] = key.split("|");
+      const orderLines =
+        (ordersForMeta ?? []).find((o: any) => String(o?.id ?? "") === orderId)?.lines?.filter((l: any) => !l?.warehouseMarkedShippedAt) ??
+        [];
+      const lines =
+        (buyerPid
+          ? orderLines.filter((l: any) => String(l?.buyerPid ?? "").trim() === buyerPid)
+          : []) ||
+        [];
+      const selectedLines =
+        lines.length > 0
+          ? lines
+          : orderLines.filter(
+              (l: any) =>
+                String(l?.supplierPid ?? "").trim() === supplierPid &&
+                String(l?.gtin ?? "").trim() === gtin
+            );
+      selectedLines.sort((a: any, b: any) => Number(a?.lineNumber ?? 0) - Number(b?.lineNumber ?? 0));
+      for (const line of selectedLines) {
         const qty = Math.max(0, Number(line?.quantity ?? 0));
         if (qty <= 0) continue;
         if (remaining >= qty) {
@@ -443,7 +444,20 @@ export async function uploadDelrForShipment(
       orderRef: shipment.order?.galaxusOrderId ?? undefined,
       status: "uploaded",
       shipmentId: shipment.id,
-      payloadJson: { shipmentId: shipment.id },
+      payloadJson: {
+        shipmentId: shipment.id,
+        dispatchNotificationId: shipment.dispatchNotificationId ?? null,
+        orderRefs: Array.from(
+          new Set(dispatchItems.map((item) => String(item?.orderReferenceId ?? "").trim()).filter(Boolean))
+        ),
+        items: dispatchItems.map((item) => ({
+          supplierPid: item.supplierPid,
+          gtin14: item.gtin14,
+          buyerPid: item.buyerPid ?? null,
+          quantity: item.quantity,
+          orderReferenceId: item.orderReferenceId,
+        })),
+      },
     });
 
     // Auto-invoicing removed — invoices are sent manually from the dedicated invoice page.

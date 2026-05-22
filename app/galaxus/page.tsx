@@ -600,15 +600,19 @@ export function GalaxusWarehouseDashboard() {
     }
   };
 
-  const runOpsAction = async (action: string) => {
-    setOpsBusy(`ops-${action}`);
+  const runOpsAction = async (action: string, extra?: Record<string, unknown>) => {
+    const busyKey =
+      action === "stx-refresh" && String(extra?.stxMode ?? "").toLowerCase() === "full"
+        ? "ops-stx-refresh-full"
+        : `ops-${action}`;
+    setOpsBusy(busyKey);
     setError(null);
     setOpsLog(null);
     try {
       const res = await fetch("/api/galaxus/ops/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, ...extra }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Ops action failed");
@@ -1843,6 +1847,22 @@ export function GalaxusWarehouseDashboard() {
                   disabled={opsBusy !== null}
                 >
                   {opsBusy === "ops-stx-refresh" ? "Running…" : "Run StockX/Kicks refresh now"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        "Run full STX catalog sync? This re-runs runStxSync (inserts, mappings, cleanup) and is heavier than the usual price refresh."
+                      )
+                    ) {
+                      return;
+                    }
+                    void runOpsAction("stx-refresh", { stxMode: "full" });
+                  }}
+                  disabled={opsBusy !== null}
+                >
+                  {opsBusy === "ops-stx-refresh-full" ? "Running…" : "Full STX catalog sync"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-gray-900 text-white disabled:opacity-50"

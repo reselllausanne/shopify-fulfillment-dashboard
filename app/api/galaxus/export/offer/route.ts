@@ -220,16 +220,21 @@ export async function GET(request: Request) {
       sizeEu: candidate?.kickdbVariant?.sizeEu ?? null,
       sizeUs: candidate?.kickdbVariant?.sizeUs ?? null,
     });
+    // Galaxus feed price must use margin-adjusted sell (from gtinSelection), not raw DB buy.
+    const baseForChannel =
+      manualPriceExVat && manualPriceExVat > 0
+        ? manualPriceExVat
+        : sellPrice;
     const channelAdjustedPrice = computeChannelVariantPrice({
       channel: "GALAXUS",
-      basePrice: manualPriceExVat && manualPriceExVat > 0 ? manualPriceExVat : sellPrice,
+      basePrice: baseForChannel,
       classification: channelClassification,
     });
     const priceValue =
       channelAdjustedPrice && channelAdjustedPrice > 0
         ? channelAdjustedPrice
-        : manualPriceExVat && manualPriceExVat > 0
-          ? manualPriceExVat
+        : baseForChannel && baseForChannel > 0
+          ? baseForChannel
           : sellPrice;
     if (!Number.isFinite(priceValue) || priceValue <= 0) {
       skippedInvalidPrice += 1;

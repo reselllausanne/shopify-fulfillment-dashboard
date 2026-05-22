@@ -14,7 +14,9 @@ export async function GET(request: Request) {
       .map((s) => s.trim())
       .filter(Boolean);
     const origin = new URL(request.url).origin;
-    const data = await runOpsTick(origin, { force, only });
+    const stxModeRaw = String(searchParams.get("stxMode") ?? "price").toLowerCase();
+    const stxRefreshMode = stxModeRaw === "full" ? "full" : "price";
+    const data = await runOpsTick(origin, { force, only, stxRefreshMode });
     return NextResponse.json(data);
   } catch (error: any) {
     console.error("[GALAXUS][OPS][TICK] Failed:", error);

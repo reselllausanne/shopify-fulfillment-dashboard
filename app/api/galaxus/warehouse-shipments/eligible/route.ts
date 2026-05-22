@@ -38,6 +38,12 @@ function shipmentIsFinalized(item: {
   return Boolean(item.shipment?.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
 }
 
+function getPayloadShipmentId(payloadJson: any): string | null {
+  if (!payloadJson || typeof payloadJson !== "object") return null;
+  const id = String(payloadJson?.shipmentId ?? "").trim();
+  return id || null;
+}
+
 function digitsOnlyGtin(s: string): string {
   return String(s ?? "").replace(/\D/g, "");
 }
@@ -192,11 +198,34 @@ export async function GET(request: Request) {
       })
     );
 
+    const orderRefs = Array.from(
+      new Set(ordersWithAnchor.map((o) => String(o.galaxusOrderId ?? "").trim()).filter(Boolean))
+    );
+    const delrFiles = await (prisma as any).galaxusEdiFile.findMany({
+      where: {
+        direction: "OUT",
+        docType: "DELR",
+        status: { in: ["uploaded", "processed", "UPLOADED", "PROCESSED", "sent", "SENT"] },
+        OR: [{ orderId: { in: orderIds } }, { orderRef: { in: orderRefs } }],
+      },
+      select: {
+        shipmentId: true,
+        payloadJson: true,
+      },
+    });
+    const delrShipmentIds = new Set<string>();
+    for (const file of delrFiles as any[]) {
+      const shipmentId = normalizeText(file?.shipmentId) || getPayloadShipmentId(file?.payloadJson);
+      if (shipmentId) delrShipmentIds.add(shipmentId);
+    }
+
     const shipmentCoverage: Record<string, ShipmentCoverage> = {};
     const existingItems = await (prisma as any).shipmentItem.findMany({
       where: { orderId: { in: orderIds } },
       select: {
+        shipmentId: true,
         orderId: true,
+        buyerPid: true,
         supplierPid: true,
         gtin14: true,
         quantity: true,
@@ -209,26 +238,45 @@ export async function GET(request: Request) {
     for (const order of ordersWithAnchor) {
       for (const line of order.lines ?? []) {
         const lineId = String(line.id);
+        const buyerPid = normalizeText(line.buyerPid);
         const supplierPid = normalizeText(line.supplierPid);
+        const supplierPidKey = supplierPid.toLowerCase();
         const gtin = normalizeText(line.gtin);
         const orderedQty = Number(line.quantity ?? 0);
         const markedShipped = Boolean(line?.warehouseMarkedShippedAt);
+        const lineMatchesShipmentItem = (item: any) => {
+          if (String(item?.orderId ?? "") !== String(order.id)) return false;
+          const itemBuyerPid = normalizeText(item?.buyerPid);
+          if (buyerPid && itemBuyerPid) {
+            return itemBuyerPid === buyerPid;
+          }
+          const itemSupplierPid = normalizeText(item?.supplierPid);
+          const itemSupplierPidKey = itemSupplierPid.toLowerCase();
+          const itemGtin = normalizeText(item?.gtin14);
+          const canComparePid = Boolean(supplierPid && itemSupplierPid);
+          const canCompareGtin = Boolean(gtin && itemGtin);
+
+          if (canComparePid && canCompareGtin) {
+            return supplierPidKey === itemSupplierPidKey && sameGtinKey(itemGtin, gtin);
+          }
+          if (canComparePid) return supplierPidKey === itemSupplierPidKey;
+          if (canCompareGtin) return sameGtinKey(itemGtin, gtin);
+          return false;
+        };
         const shipped = existingItems
           .filter((item: any) => {
-            const sameLine =
-              String(item?.orderId ?? "") === String(order.id) &&
-              normalizeText(item?.supplierPid) === supplierPid &&
-              normalizeText(item?.gtin14) === gtin;
-            return sameLine && shipmentIsFinalized(item);
+            if (!lineMatchesShipmentItem(item)) return false;
+            const shipmentId = normalizeText(item?.shipmentId);
+            const fromDelrHistory = shipmentId ? delrShipmentIds.has(shipmentId) : false;
+            return shipmentIsFinalized(item) || fromDelrHistory;
           })
           .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
         const reserved = existingItems
           .filter((item: any) => {
-            const sameLine =
-              String(item?.orderId ?? "") === String(order.id) &&
-              normalizeText(item?.supplierPid) === supplierPid &&
-              normalizeText(item?.gtin14) === gtin;
-            return sameLine && shipmentIsReserved(item);
+            if (!lineMatchesShipmentItem(item)) return false;
+            const shipmentId = normalizeText(item?.shipmentId);
+            if (shipmentId && delrShipmentIds.has(shipmentId)) return false;
+            return shipmentIsReserved(item);
           })
           .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
         const ordered = Number.isFinite(orderedQty) ? orderedQty : 0;

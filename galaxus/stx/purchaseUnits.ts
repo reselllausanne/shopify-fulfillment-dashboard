@@ -437,6 +437,10 @@ export async function linkOldestPendingStxUnit(params: {
   allowMissingEta?: boolean;
 }) {
   const stockxOrderId = params.stockxOrderId.trim();
+  const stockxOrderNumber =
+    typeof params.stockxOrderNumber === "string" && params.stockxOrderNumber.trim()
+      ? params.stockxOrderNumber.trim()
+      : "";
   if (!stockxOrderId) return { status: "invalid_order_id" as const };
   if (!params.allowMissingEta && (!params.etaMin || !params.etaMax)) {
     return { status: "missing_eta" as const };
@@ -448,6 +452,19 @@ export async function linkOldestPendingStxUnit(params: {
   });
   if (alreadyLinked) {
     return { status: "already_linked" as const, unitId: String(alreadyLinked.id) };
+  }
+
+  // Cross-channel guard: one StockX buy order must not be consumed by both Decathlon and Galaxus.
+  const decathlonWhereOr: any[] = [{ stockxOrderId }];
+  if (stockxOrderNumber) {
+    decathlonWhereOr.push({ stockxOrderNumber });
+  }
+  const claimedByDecathlon = await prisma.decathlonStockxMatch.findFirst({
+    where: decathlonWhereOr.length === 1 ? decathlonWhereOr[0] : { OR: decathlonWhereOr },
+    select: { id: true },
+  });
+  if (claimedByDecathlon) {
+    return { status: "already_linked" as const };
   }
 
   let pendingUnit: { id: string } | null = null;
@@ -487,10 +504,7 @@ export async function linkOldestPendingStxUnit(params: {
       where: { id: pendingUnit.id },
       data: {
         stockxOrderId,
-        stockxOrderNumber:
-          typeof params.stockxOrderNumber === "string" && params.stockxOrderNumber.trim()
-            ? params.stockxOrderNumber.trim()
-            : null,
+        stockxOrderNumber: stockxOrderNumber || null,
         stockxSettledAmount: settled,
         stockxSettledCurrency:
           typeof params.stockxSettledCurrency === "string" && params.stockxSettledCurrency.trim()

@@ -1,13 +1,31 @@
 import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExportFilePayload } from "./types";
 import { recordDecathlonExclusion } from "./mapping";
 import { PRODUCTS_HEADERS } from "./templates";
-import { resolveDecathlonCategory } from "./categories";
 import { isBasketballTitle } from "./basketballTitles";
 import { normalizeDecathlonImageUrl } from "./imageUrl";
 
-const DEFAULT_CONDITION = "11";
-const DEFAULT_PRODUCT_NATURE_SHOES = "Shoes";
+const DEFAULT_CONDITION_CODE = "6336";
+const DEFAULT_PRODUCT_NATURE_SHOES_CODE = "25126";
 const DEFAULT_SPORTS_VALUE = "sport walking";
+const DEFAULT_CATEGORY_CODE = "134500";
+
+const COLOR_CODE_BY_TOKEN: Array<{ token: string; code: string }> = [
+  { token: "black", code: "1" },
+  { token: "grey", code: "2" },
+  { token: "gray", code: "2" },
+  { token: "white", code: "4" },
+  { token: "blue", code: "5" },
+  { token: "green", code: "9" },
+  { token: "red", code: "14" },
+  { token: "purple", code: "16" },
+  { token: "pink", code: "24" },
+  { token: "brown", code: "27" },
+  { token: "khaki", code: "29" },
+  { token: "beige", code: "30" },
+  { token: "tan", code: "30" },
+  { token: "orange", code: "20" },
+  { token: "yellow", code: "22" },
+];
 
 /** Columns we always fill for Decathlon operator product CSV; PM11 pre-check only gates these. */
 export const BASE_REQUIRED_COLUMNS = [
@@ -75,6 +93,25 @@ function resolveSportFromTitle(title: string): string {
   return DEFAULT_SPORTS_VALUE;
 }
 
+function sanitizeDescription(text: string): string {
+  if (!text) return text;
+  // Mirakl rejects this keyword (error 2031) on Description en-GB/IE.
+  return text
+    .replace(/\bsustainability\b/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
+}
+
+function resolveMainColorCode(rawColor: string): string {
+  const normalized = String(rawColor ?? "").toLowerCase();
+  if (!normalized) return "";
+  for (const candidate of COLOR_CODE_BY_TOKEN) {
+    if (normalized.includes(candidate.token)) return candidate.code;
+  }
+  return "";
+}
+
 function resolveRequiredMissing(row: Record<string, string>) {
   return BASE_REQUIRED_COLUMNS.filter((column) => !row[column]);
 }
@@ -122,16 +159,12 @@ export function buildProductRow(
 
   row["Product Identifier"] = candidate.providerKey;
   row["Main Title"] = productName;
-  row["Catégorie"] = resolveDecathlonCategory({
-    name: productName,
-    description,
-    brand,
-  });
+  row["Catégorie"] = DEFAULT_CATEGORY_CODE;
   row["Product Title en-GB/IE"] = productName;
   row["Product Title it-IT"] = productName;
   row["Product Title fr-CH"] = productName;
   row["Product Title de-CH"] = productName;
-  const baseDescription = description || productName;
+  const baseDescription = sanitizeDescription(description || productName);
   row["Webcatchline en-GB/IE"] = productName;
   row["Description en-GB/IE"] = baseDescription;
   row["Webcatchline it-IT"] = productName;
@@ -149,13 +182,15 @@ export function buildProductRow(
   row["Image 7"] = uniqueImages[6] ?? "";
   row["codes EAN"] = candidate.gtin;
   row["Brand"] = brand;
-  row["état"] = DEFAULT_CONDITION;
+  row["état"] = DEFAULT_CONDITION_CODE;
   row["Sports"] = resolveSportFromTitle(productName);
   row["Genre"] = gender || pickTrait(traits, ["gender", "sex", "target"]) || "";
-  row["Couleur"] = colorway || pickTrait(traits, ["color", "colour", "colorway"]) || "";
+  row["Couleur"] = resolveMainColorCode(
+    colorway || pickTrait(traits, ["color", "colour", "colorway"]) || ""
+  );
   row["poids (en g)"] = weightGrams;
   row["Sizes for Footwear"] = String(variant?.sizeRaw ?? candidate?.kickdbVariant?.sizeEu ?? "").trim();
-  row["Product Natures - Shoes"] = DEFAULT_PRODUCT_NATURE_SHOES;
+  row["Product Natures - Shoes"] = DEFAULT_PRODUCT_NATURE_SHOES_CODE;
 
   const missingRequired = resolveRequiredMissing(row);
   if (missingRequired.length > 0) {

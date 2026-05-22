@@ -22,6 +22,44 @@ const tokenCache = new Map<string, CachedToken>();
 
 const DEFAULT_SCOPE = "DCAPI_BARCODE_READ";
 const DEFAULT_TRACKING_SCOPE = "MYSB_MAILPIECE_TRACKING_B2B_READ";
+const E164_PHONE_REGEX = /^\+[1-9]\d{7,14}$/;
+const COUNTRY_DIAL_CODES: Record<string, string> = {
+  CH: "41",
+  DE: "49",
+  FR: "33",
+  IT: "39",
+  AT: "43",
+};
+
+export function normalizeSwissPostRecipientPhone(
+  rawPhone: unknown,
+  rawCountry?: unknown
+): string | null {
+  const source = String(rawPhone ?? "").trim();
+  if (!source) return null;
+
+  let compact = source.replace(/[^\d+]/g, "");
+  if (!compact) return null;
+  if (compact.startsWith("00")) {
+    compact = `+${compact.slice(2)}`;
+  }
+
+  if (compact.startsWith("+")) {
+    const normalized = `+${compact.slice(1).replace(/\D/g, "")}`;
+    return E164_PHONE_REGEX.test(normalized) ? normalized : null;
+  }
+
+  const digits = compact.replace(/\D/g, "");
+  if (!digits) return null;
+  const country = String(rawCountry ?? "").trim().toUpperCase();
+  const dialCode = COUNTRY_DIAL_CODES[country];
+  if (!dialCode) return null;
+
+  const local = digits.startsWith("0") ? digits.slice(1) : digits;
+  if (!local) return null;
+  const normalized = `+${dialCode}${local}`;
+  return E164_PHONE_REGEX.test(normalized) ? normalized : null;
+}
 
 function getTokenEndpoint() {
   return process.env.SWISS_POST_TOKEN_URL || "https://api.post.ch/OAuth/token";

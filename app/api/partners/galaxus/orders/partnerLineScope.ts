@@ -56,7 +56,13 @@ export async function resolvePartnerGtins(gtins: string[], partnerKeyUpper: stri
 }
 
 export function lineMatchesPartnerScope(
-  line: { providerKey?: string | null; supplierVariantId?: string | null; gtin?: string | null },
+  line: {
+    providerKey?: string | null;
+    supplierVariantId?: string | null;
+    supplierPid?: string | null;
+    supplierSku?: string | null;
+    gtin?: string | null;
+  },
   partnerKeyUpper: string,
   partnerGtins: Set<string>
 ): boolean {
@@ -64,9 +70,13 @@ export function lineMatchesPartnerScope(
   const pkLower = pkUpper.toLowerCase();
   const providerKey = clean(line?.providerKey).toUpperCase();
   const supplierVariantId = clean(line?.supplierVariantId).toLowerCase();
+  const supplierPid = clean(line?.supplierPid).toUpperCase();
+  const supplierSku = clean(line?.supplierSku).toUpperCase();
   const gtin = clean(line?.gtin);
 
   if (providerKey.startsWith(`${pkUpper}_`)) return true;
+  if (supplierPid === pkUpper) return true;
+  if (supplierSku.startsWith(`${pkUpper}_`)) return true;
   if (supplierVariantId.startsWith(`${pkLower}:`)) return true;
   if (supplierVariantId.startsWith(`${pkLower}_`)) return true;
   if (gtin && partnerGtins.has(gtin)) return true;

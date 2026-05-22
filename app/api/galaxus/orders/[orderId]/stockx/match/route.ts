@@ -13,6 +13,10 @@ import {
   galaxusLineWarehouseStockHint,
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
+import {
+  buildStockxOrderClaimIndex,
+  registerStockxOrderClaim,
+} from "@/app/lib/stockxCrossChannelClaims";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -145,16 +149,16 @@ export async function POST(
     });
     const normalizedOrders = stockxOrdersRaw.map(normalizeStockxOrder);
 
-    const existingMatches = await (prisma as any).galaxusStockxMatch.findMany({
-      select: { stockxOrderNumber: true },
+    const stockxClaimIndex = await buildStockxOrderClaimIndex({
+      stockxOrderIds: normalizedOrders.map((o) => o.orderId),
+      stockxOrderNumbers: normalizedOrders.map((o) => o.supplierOrderNumber),
     });
-    const usedSupplierNumbers = new Set<string>(
-      existingMatches
-        .map((m: any) => String(m.stockxOrderNumber ?? "").trim())
-        .filter((v: string) => Boolean(v))
-    );
+    const usedSupplierNumbers = new Set<string>(Array.from(stockxClaimIndex.byOrderNumber.keys()));
+    const usedSupplierOrderIds = new Set<string>(Array.from(stockxClaimIndex.byOrderId.keys()));
     const availableSupplier = normalizedOrders.filter(
-      (order) => !usedSupplierNumbers.has(order.supplierOrderNumber)
+      (order) =>
+        !usedSupplierNumbers.has(String(order.supplierOrderNumber ?? "").trim()) &&
+        !usedSupplierOrderIds.has(String(order.orderId ?? "").trim())
     );
 
     const results: any[] = [];
@@ -182,7 +186,8 @@ export async function POST(
           ? availableSupplier.filter(
               (s) =>
                 s.productVariantId === variantId &&
-                !usedSupplierNumbers.has(s.supplierOrderNumber)
+                !usedSupplierNumbers.has(String(s.supplierOrderNumber ?? "").trim()) &&
+                !usedSupplierOrderIds.has(String(s.orderId ?? "").trim())
             )
           : [];
 
@@ -223,7 +228,22 @@ export async function POST(
           continue;
         }
 
-        usedSupplierNumbers.add(match.supplierOrder.supplierOrderNumber);
+        const matchedOrderNumber = String(match.supplierOrder.supplierOrderNumber ?? "").trim();
+        const matchedOrderId = String(match.supplierOrder.orderId ?? "").trim();
+        if (
+          (matchedOrderNumber && usedSupplierNumbers.has(matchedOrderNumber)) ||
+          (matchedOrderId && usedSupplierOrderIds.has(matchedOrderId))
+        ) {
+          results.push({
+            lineId: line.id,
+            unitIndex,
+            status: "skipped",
+            reason: "stockx_order_already_linked",
+          });
+          continue;
+        }
+        if (matchedOrderNumber) usedSupplierNumbers.add(matchedOrderNumber);
+        if (matchedOrderId) usedSupplierOrderIds.add(matchedOrderId);
 
         const tracking =
           match.supplierOrder.chainId && match.supplierOrder.orderId
@@ -288,6 +308,12 @@ export async function POST(
             updatedAt: new Date(),
           },
           create: payload,
+        });
+        registerStockxOrderClaim(stockxClaimIndex, {
+          channel: "galaxus",
+          matchId: String(saved.id ?? `${line.id}:${unitIndex}`),
+          stockxOrderId: matchedOrderId || null,
+          stockxOrderNumber: matchedOrderNumber || null,
         });
 
         results.push({

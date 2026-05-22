@@ -1,6 +1,7 @@
 import React from "react";
 import type { MatchResult, ShopifyLineItem } from "@/app/utils/matching";
 import { isShopifyFinancialRefunded, isLiquidationShopifyTitle } from "@/app/utils/matching";
+import { shopifyFraudUiTone } from "@/app/lib/shopifyOrderRisk";
 import type { PricingResult, OrderNode } from "@/app/types";
 
 type Props = {
@@ -97,6 +98,11 @@ export default function OrderMatchingSection({
             const isRefunded = isShopifyFinancialRefunded(shopify.displayFinancialStatus);
             const isLiquidation = isLiquidationShopifyTitle(shopify.title);
             const isEssentialHoodie = false; // Already handled upstream; keep UI minimal here
+            const fraudTone = shopifyFraudUiTone({
+              fraudRiskLevel: shopify.fraudRiskLevel ?? null,
+              fraudRecommendation: shopify.fraudRecommendation ?? null,
+            });
+            const fraudLabel = shopify.fraudSummaryLabel || "Fraud: —";
 
             return (
               <div
@@ -104,6 +110,10 @@ export default function OrderMatchingSection({
                 className={`border rounded-lg p-4 ${
                   isRefunded
                     ? "border-red-400 bg-red-50 ring-1 ring-red-200"
+                    : fraudTone === "danger"
+                    ? "border-red-600 bg-red-50 ring-2 ring-red-400"
+                    : fraudTone === "warn"
+                    ? "border-amber-400 bg-amber-50 ring-1 ring-amber-200"
                     : isLiquidation
                     ? "border-purple-300 bg-purple-50"
                     : isEssentialHoodie
@@ -149,6 +159,25 @@ export default function OrderMatchingSection({
                           <span className="ml-1 px-1.5 py-0.5 rounded text-xs bg-blue-100 text-blue-800">
                             {shopify.displayFulfillmentStatus}
                           </span>
+                        )}
+                      </p>
+                      <p>
+                        <span className="font-medium">Fraud analysis:</span>{" "}
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
+                            fraudTone === "danger"
+                              ? "bg-red-200 text-red-900"
+                              : fraudTone === "warn"
+                              ? "bg-amber-200 text-amber-900"
+                              : fraudTone === "ok"
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-gray-100 text-gray-600"
+                          }`}
+                        >
+                          {fraudLabel}
+                        </span>
+                        {fraudTone === "danger" && (
+                          <span className="ml-1 text-xs font-bold text-red-700">— do not buy</span>
                         )}
                       </p>
                       {shopify.customerName && (

@@ -2,7 +2,7 @@ import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 import { runOpsJob } from "./jobRunner";
 import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
-import { runStxPriceStockRefresh } from "@/galaxus/jobs/stxSync";
+import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { OpsJobKey } from "./types";
@@ -23,7 +23,7 @@ const buildNextAt = (lastRunAt: Date | null, intervalMs: number) => {
   return new Date(base.getTime() + intervalMs);
 };
 
-async function runPartnerSyncAll() {
+async function runPartnerSyncAll(partnerKey?: string) {
   const batchSize = 1000;
   let offset = 0;
   let lastScanned = 0;
@@ -39,7 +39,7 @@ async function runPartnerSyncAll() {
   };
 
   do {
-    const res = await runPartnerSync({ limit: batchSize, offset });
+    const res = await runPartnerSync({ limit: batchSize, offset, partnerKey });
     lastScanned = res.scanned ?? 0;
     totals = {
       scanned: totals.scanned + (res.scanned ?? 0),
@@ -57,12 +57,23 @@ async function runPartnerSyncAll() {
   return totals;
 }
 
-async function executeJob(jobKey: OpsJobKey, origin: string) {
+export type OpsTickOptions = {
+  force?: boolean;
+  only?: string[];
+  /** `price` = KickDB fetch + bulk price/stock update (default). `full` = runStxSync (inserts + mappings + cleanup). */
+  stxRefreshMode?: "price" | "full";
+  partnerKey?: string;
+};
+
+async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTickOptions) {
   if (jobKey === "partner-stock-sync") {
-    return runOpsJob(jobKey, async () => runPartnerSyncAll());
+    return runOpsJob(jobKey, async () => runPartnerSyncAll(tickOptions?.partnerKey));
   }
   if (jobKey === "stx-refresh") {
-    return runOpsJob(jobKey, async () => runStxPriceStockRefresh());
+    const mode = tickOptions?.stxRefreshMode === "full" ? "full" : "price";
+    return runOpsJob(jobKey, async () =>
+      mode === "full" ? runStxSync() : runStxPriceStockRefresh()
+    );
   }
   if (jobKey === "edi-in") {
     return runOpsJob(jobKey, async () => runEdiInPipeline());
@@ -96,11 +107,13 @@ async function executeJob(jobKey: OpsJobKey, origin: string) {
   throw new Error(`Unknown jobKey ${jobKey}`);
 }
 
-export async function runOpsTick(origin: string, options?: { force?: boolean; only?: string[] }) {
+export async function runOpsTick(origin: string, options?: OpsTickOptions) {
   const now = new Date();
   const only = new Set((options?.only ?? []).map((s) => s.trim()).filter(Boolean));
   const isOnly = only.size > 0;
   const force = Boolean(options?.force);
+  /** Manual “run this job only” from ops UI: skip pg advisory lock so a second run the same day is not blocked. */
+  const skipAdvisoryLock = force && isOnly && only.size === 1;
   const defs = await listJobDefinitions();
   const results: Record<string, TickJobResult> = {};
 
@@ -124,14 +137,20 @@ export async function runOpsTick(origin: string, options?: { force?: boolean; on
     // Important: do NOT update job definition inside the advisory-lock transaction.
     // With low `connection_limit` in local dev, the transaction can keep the single
     // connection busy and cause pool timeouts on the later UPDATE.
-    const locked = await withAdvisoryLock(`galaxus:ops:${jobKey}`, async () => executeJob(jobKey, origin));
+    let res: Awaited<ReturnType<typeof executeJob>>;
+    if (skipAdvisoryLock) {
+      res = await executeJob(jobKey, origin, options);
+    } else {
+      const locked = await withAdvisoryLock(`galaxus:ops:${jobKey}`, async () =>
+        executeJob(jobKey, origin, options)
+      );
 
-    if (!locked.locked) {
-      results[jobKey] = { due: true, ran: false, skipped: "locked", nextAt: nextAt.toISOString() };
-      continue;
+      if (!locked.locked) {
+        results[jobKey] = { due: true, ran: false, skipped: "locked", nextAt: nextAt.toISOString() };
+        continue;
+      }
+      res = locked.result;
     }
-
-    const res = locked.result;
     const nextRunAt = buildNextAt(now, def.intervalMs);
     try {
       await updateJobDefinition(jobKey, {

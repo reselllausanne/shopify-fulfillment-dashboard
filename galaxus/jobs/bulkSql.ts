@@ -199,7 +199,7 @@ export async function bulkInsertSupplierVariantsByProviderKeyGtin(
         "updatedAt"
       )
       VALUES ${Prisma.join(values)}
-      ON CONFLICT ("providerKey","gtin") DO NOTHING
+      ON CONFLICT ("supplierVariantId") DO NOTHING
       RETURNING 1
     )
     SELECT COUNT(*)::int AS "count" FROM ins;

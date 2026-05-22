@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDispatch";
 import { getInvoiceLineProgressByOrderIds } from "@/galaxus/edi/invoiceCoverage";
+import { getOpenWarehouseLineCountByOrderId } from "@/galaxus/warehouse/shipmentLineCoverage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ export async function GET(request: Request) {
       sort === "orderdate" ? { orderDate: "desc" as const } : { createdAt: "desc" as const };
     const deliveryType = String(searchParams.get("deliveryType") ?? "").trim();
     const q = String(searchParams.get("q") ?? "").trim();
+    const warehouseOpen = searchParams.get("warehouseOpen") === "1";
 
     let baseWhere: Record<string, unknown> = {};
     if (view === "history") {
@@ -131,6 +133,14 @@ export async function GET(request: Request) {
         // Ignore if warehouseMarkedShippedAt is not available.
       }
     }
+    let warehouseOpenLineCountByOrderId: Map<string, number> | null = null;
+    if (warehouseOpen && orderIds.length > 0) {
+      try {
+        warehouseOpenLineCountByOrderId = await getOpenWarehouseLineCountByOrderId(orderIds);
+      } catch (err) {
+        console.error("[GALAXUS][ORDERS] Warehouse open line counts failed:", err);
+      }
+    }
 
     const items = orders.map((order) => {
       const isDirect = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
@@ -145,6 +155,10 @@ export async function GET(request: Request) {
           }).length;
       const linkedCount = linkedCountByOrderId.get(order.id) ?? 0;
       const warehouseLinesShipped = warehouseShippedByOrderId.get(order.id) ?? 0;
+      const warehouseOpenLineCount =
+        warehouseOpenLineCountByOrderId != null
+          ? (warehouseOpenLineCountByOrderId.get(order.id) ?? 0)
+          : null;
       const fulfillmentState =
         fulfilledCount > 0
           ? "fulfilled"
@@ -159,6 +173,7 @@ export async function GET(request: Request) {
         fulfilledCount,
         linkedCount,
         warehouseLinesShipped,
+        warehouseOpenLineCount,
         fulfillmentState,
         invoiceLinesFullyInvoiced:
           invoiceProgressByOrderId != null ? (inv?.linesFullyInvoiced ?? 0) : null,

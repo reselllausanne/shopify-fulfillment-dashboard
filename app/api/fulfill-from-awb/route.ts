@@ -13,7 +13,7 @@ import {
   fetchOrderShippingInfo,
   orderHasTrackingNumber,
 } from "@/lib/shopifyFulfillment";
-import { requestSwissPostLabel } from "@/lib/swissPost";
+import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
 import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
@@ -311,9 +311,11 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
   );
   const street = buildStreetLine(address, ignore);
   const { zip, city } = normalizePostalCity(address);
+  const country = address?.countryCodeV2 || address?.country || null;
 
-  const phone =
+  const rawPhone =
     [address?.phone, orderInfo?.phone].map((p) => String(p || "").trim()).find(Boolean) || null;
+  const phone = normalizeSwissPostRecipientPhone(rawPhone, country);
 
   return {
     name1: company || fullName,
@@ -322,7 +324,7 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
     street,
     zip: zip || null,
     city: city || null,
-    country: address?.countryCodeV2 || address?.country || null,
+    country,
     phone,
     email: orderInfo?.email || null,
   };
@@ -495,7 +497,9 @@ export async function POST(req: NextRequest) {
       ...browserPrintConfigBase,
       enabled: browserPrintConfigBase.enabled && roleAllowsBrowserPrint,
     };
-    const shouldReturnLabelData = includeLabelData && browserPrintConfig.enabled;
+    // Return label payload whenever client asks, even if browser print is disabled for role.
+    // This allows UI fallback to preview/download when server print is skipped/unavailable.
+    const shouldReturnLabelData = includeLabelData;
 
     if (!awb) {
       return NextResponse.json(

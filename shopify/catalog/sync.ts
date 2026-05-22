@@ -30,6 +30,11 @@ function decimalToNumber(value: unknown): number | null {
   return parsed;
 }
 
+function isShopifyMissingProductError(error: unknown): boolean {
+  const msg = String((error as any)?.message ?? "").toLowerCase();
+  return msg.includes("product does not exist");
+}
+
 function resolveTitle(mapping: any): string {
   return (
     String(
@@ -379,15 +384,33 @@ export async function syncShopifyCatalog(
         );
       }
       if (!dryRun && variantId && productId && pushVariantFields) {
-        const updatedVariant = await updateVariantPricingAndIdentity({
-          productId,
-          variantId,
-          sku: candidate.providerKey,
-          barcode: candidate.gtin,
-          price: candidate.targetPrice,
-        });
-        productId = updatedVariant.productId ?? productId;
-        inventoryItemId = updatedVariant.inventoryItemId ?? inventoryItemId;
+        try {
+          const updatedVariant = await updateVariantPricingAndIdentity({
+            productId,
+            variantId,
+            sku: candidate.providerKey,
+            barcode: candidate.gtin,
+            price: candidate.targetPrice,
+          });
+          productId = updatedVariant.productId ?? productId;
+          inventoryItemId = updatedVariant.inventoryItemId ?? inventoryItemId;
+        } catch (error: any) {
+          if (!isShopifyMissingProductError(error)) {
+            throw error;
+          }
+          // Stale Shopify ids in ChannelListingState: re-create listing and continue.
+          const createdRow = await createProductWithVariant({
+            title: candidate.title,
+            brand: candidate.brand,
+            providerKey: candidate.providerKey,
+            gtin: candidate.gtin,
+            price: candidate.targetPrice,
+          });
+          action = "created";
+          productId = createdRow.productId;
+          variantId = createdRow.variantId;
+          inventoryItemId = createdRow.inventoryItemId;
+        }
       }
 
       if (!dryRun && locationId && inventoryItemId && pushVariantFields) {

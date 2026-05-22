@@ -351,7 +351,7 @@ function buildSwissPostPayload(
       attributes: attributesPayload,
       notification:
           notificationService &&
-          (recipient.email || recipient.phone)
+          recipient.email
             ? [
                 {
                   communication: {

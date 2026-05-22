@@ -9,7 +9,9 @@ import {
 } from "@/galaxus/jobs/bulkSql";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
-import { selectStxActiveOffer, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
+import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
+import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
+import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 
 type ImportPreviewVariant = {
   supplierVariantId: string;
@@ -59,33 +61,6 @@ type ParsedVariantRow = {
   ean: string | null;
 };
 
-const LEGO_CUSTOM_ADDON_BY_SLUG: Record<string, number> = {
-  "lego-pet-shop-set-10218": 45,
-  "lego-grand-emporium-set-10211": 25,
-};
-
-const LEGO_LARGE_SET_SLUGS = new Set([
-  "lego-eiffel-tower-set-10307",
-  "lego-titanic-set-10294",
-  "lego-palace-cinema-set-10232",
-  "lego-marvel-studios-infinity-saga-hulkbuster-set-76210",
-]);
-
-const LEGO_MEDIUM_SET_SLUGS = new Set([
-  "lego-creator-fairgrounds-mixer-set-10244",
-  "lego-stranger-things-the-upside-down-set-75810",
-  "lego-tower-bridge-set-10214",
-  "lego-technic-land-rover-defender-set-42110",
-  "lego-creator-ferris-wheel-2015-set-10247",
-  "lego-architecture-taj-mahal-set-21056",
-]);
-
-const LEGO_SMALL_SET_SLUGS = new Set([
-  "lego-star-wars-tie-fighter-set-75095",
-  "lego-creator-horizon-express-set-10233",
-  "lego-creator-santas-workshop-set-10245",
-]);
-
 function pickString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -118,27 +93,6 @@ function pickSizeRawEuFirst(variant: any): string | null {
     }
   }
   return pickString(variant?.size);
-}
-
-function normalizeSlug(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase();
-}
-
-function resolveStxShippingCHF(product: any): number {
-  const baseShipping = 20;
-  const slug = normalizeSlug(product?.slug ?? product?.url_key ?? product?.urlKey);
-  const title = normalizeSlug(product?.title ?? product?.primary_title ?? product?.name);
-  const isLego = slug.includes("lego") || title.includes("lego");
-  if (!isLego) return baseShipping;
-
-  const customAddon = LEGO_CUSTOM_ADDON_BY_SLUG[slug];
-  if (Number.isFinite(customAddon)) return baseShipping + customAddon;
-  if (LEGO_LARGE_SET_SLUGS.has(slug)) return 60;
-  if (LEGO_MEDIUM_SET_SLUGS.has(slug)) return 45;
-  if (LEGO_SMALL_SET_SLUGS.has(slug)) return 35;
-  return baseShipping;
 }
 
 export function normalizeStxImportInput(input: string): string {
@@ -278,6 +232,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
 
   const variants = Array.isArray(product?.variants) ? product.variants : [];
   const supplierSkuFallback = pickString(styleId, product?.sku, slug, product?.id) ?? `stx_${normalizedInput}`;
+  const forceImport = isStxForceImportSlug(slug ?? normalizedInput);
   const parsedRows: ParsedVariantRow[] = [];
   let eligibleVariantsCount = 0;
 
@@ -288,12 +243,16 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
       continue;
     }
 
-    const selected = selectStxActiveOffer(variant?.prices);
+    const selected = selectStxOfferForImport(variant?.prices, { forceImport });
     if (!selected) {
-      warnings.push(`Variant ${variantId}: no express price found (standard-only or invalid).`);
+      warnings.push(
+        forceImport
+          ? `Variant ${variantId}: no usable price found (force-import slug).`
+          : `Variant ${variantId}: no express price found (standard-only or invalid).`
+      );
       continue;
     }
-    if (selected.asks >= 2) eligibleVariantsCount += 1;
+    if (forceImport || selected.asks >= 2) eligibleVariantsCount += 1;
 
     const supplierVariantId = `stx_${variantId}`;
     const gtinRaw = pickString(extractVariantGtin(variant));
@@ -335,7 +294,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
   if (parsedRows.length === 0) {
     errors.push("No importable variants were found on this product.");
   }
-  if (eligibleVariantsCount === 0) {
+  if (!forceImport && eligibleVariantsCount === 0) {
     errors.push("No eligible express variants found");
   }
   if (errors.length > 0) {

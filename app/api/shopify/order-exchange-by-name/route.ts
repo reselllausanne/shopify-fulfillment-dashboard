@@ -1,6 +1,8 @@
 // app/api/shopify/order-exchange-by-name/route.ts
 import { NextResponse } from "next/server";
 import { shopifyGraphQL, extractEUSize } from "@/lib/shopifyAdmin";
+import { shouldSkipOrderForFulfillmentMatching } from "@/app/lib/shopifyOrderFulfillmentFilters";
+import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
 
 export const runtime = "nodejs";
 
@@ -23,9 +25,16 @@ query OrderExchangeById($orderId: ID!) {
     id
     name
     createdAt
+    cancelledAt
     displayFinancialStatus
     displayFulfillmentStatus
     email
+    risk {
+      recommendation
+      assessments {
+        riskLevel
+      }
+    }
     customer {
       displayName
       firstName
@@ -144,6 +153,12 @@ export async function POST(req: Request) {
     const order = data?.order;
     if (!order) return NextResponse.json({ lineItems: [] });
 
+    if (shouldSkipOrderForFulfillmentMatching(order)) {
+      return NextResponse.json({ lineItems: [] });
+    }
+
+    const riskNorm = normalizeOrderRisk(order.risk);
+
     const customerName = order.customer?.displayName ?? null;
     const customerFirstName = order.customer?.firstName ?? null;
     const customerLastName = order.customer?.lastName ?? null;
@@ -220,6 +235,9 @@ export async function POST(req: Request) {
         price: String(unitAmount),
         totalPrice: String(totalAmount),
         currencyCode,
+        fraudRiskLevel: riskNorm.fraudRiskLevel,
+        fraudRecommendation: riskNorm.fraudRecommendation,
+        fraudSummaryLabel: riskNorm.fraudSummaryLabel,
       };
     });
 

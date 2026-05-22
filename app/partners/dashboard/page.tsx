@@ -54,6 +54,7 @@ export default function PartnerDashboardPage() {
   const [downloadBusy, setDownloadBusy] = useState(false);
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
   const [totalSaleFeedChf, setTotalSaleFeedChf] = useState<number | null>(null);
+  const [totalGalaxusSaleChf, setTotalGalaxusSaleChf] = useState<number | null>(null);
   const router = useRouter();
   const lastEnrichEnsureMs = useRef(0);
 
@@ -87,11 +88,18 @@ export default function PartnerDashboardPage() {
 
   const loadShippedSales = async () => {
     try {
-      const res = await fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok || !data.ok) return;
-      const raw = Number(data.totalSaleFeedChf ?? 0);
-      setTotalSaleFeedChf(Number.isFinite(raw) ? raw : 0);
+      const [decRes, galRes] = await Promise.all([
+        fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" }),
+        fetch("/api/partners/galaxus-shipped-stats", { cache: "no-store" }),
+      ]);
+      const decData = await decRes.json().catch(() => ({}));
+      const galData = await galRes.json().catch(() => ({}));
+      const decRaw = decRes.ok && decData.ok ? Number(decData.totalSaleFeedChf ?? 0) : 0;
+      const galRaw = galRes.ok && galData.ok ? Number(galData.totalSaleFeedChf ?? 0) : 0;
+      const decValue = Number.isFinite(decRaw) ? decRaw : 0;
+      const galValue = Number.isFinite(galRaw) ? galRaw : 0;
+      setTotalSaleFeedChf(decValue + galValue);
+      setTotalGalaxusSaleChf(galValue);
     } catch {
       // silent
     }
@@ -99,9 +107,12 @@ export default function PartnerDashboardPage() {
 
   const loadOrdersSummary = async () => {
     try {
-      const res = await fetch("/api/decathlon/orders?limit=200&scope=partner", { cache: "no-store" });
-      if (!res.ok) return;
-      const data = await res.json();
+      const [decRes, galRes] = await Promise.all([
+        fetch("/api/decathlon/orders?limit=200&scope=partner", { cache: "no-store" }),
+        fetch("/api/partners/galaxus/orders?limit=200", { cache: "no-store" }),
+      ]);
+      if (!decRes.ok) return;
+      const data = await decRes.json();
       if (!data.ok) return;
       const items: Array<{
         orderState?: string | null;
@@ -120,7 +131,20 @@ export default function PartnerDashboardPage() {
         const isFulfilled = totalUnits > 0 ? remainingUnits <= 0 : shippedCount > 0;
         return !isFulfilled && !canceledStates.has(state);
       }).length;
-      setOrdersToProcessCount(toProcess);
+      let galaxusToProcess = 0;
+      if (galRes.ok) {
+        const galData = await galRes.json().catch(() => ({}));
+        const galItems: Array<{ fulfillmentState?: string | null; cancelledAt?: string | null }> = Array.isArray(
+          galData.items
+        )
+          ? galData.items
+          : [];
+        galaxusToProcess = galItems.filter((order) => {
+          const state = String(order.fulfillmentState ?? "").toLowerCase();
+          return state !== "fulfilled" && !order.cancelledAt;
+        }).length;
+      }
+      setOrdersToProcessCount(toProcess + galaxusToProcess);
     } catch {
       // silent
     }
@@ -304,9 +328,13 @@ export default function PartnerDashboardPage() {
           </div>
         </button>
         <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center">
+          <div className="text-xs font-medium text-slate-500">Sales (Decathlon + Galaxus)</div>
           <div className="text-3xl font-semibold text-slate-900 tabular-nums tracking-tight">
             {totalSaleFeedChf == null ? "—" : `CHF ${totalSaleFeedChf.toFixed(2)}`}
           </div>
+          {totalGalaxusSaleChf != null ? (
+            <div className="mt-1 text-xs text-slate-500">Galaxus: CHF {totalGalaxusSaleChf.toFixed(2)}</div>
+          ) : null}
         </div>
       </div>
 

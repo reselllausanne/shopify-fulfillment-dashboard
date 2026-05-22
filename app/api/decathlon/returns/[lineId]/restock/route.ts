@@ -71,7 +71,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ li
       });
     }
     const basePriceRaw =
-      supplierVariant?.price ?? orderLine?.unitPrice ?? row.unitPrice ?? null;
+      row.returnPrice ?? row.unitPrice ?? orderLine?.unitPrice ?? supplierVariant?.price ?? null;
     const basePriceParsed = basePriceRaw !== null ? Number(basePriceRaw) : NaN;
     const basePrice = Number.isFinite(basePriceParsed) && basePriceParsed > 0 ? basePriceParsed : null;
 
@@ -104,6 +104,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ li
     return NextResponse.json({
       ok: true,
       restockSupplierVariantId: restockResult.supplierVariantId ?? null,
+      restockNewPrice: restockResult.newPrice ?? null,
     });
   } catch (error: any) {
     console.error("[DECATHLON][RETURNS][RESTOCK]", error);

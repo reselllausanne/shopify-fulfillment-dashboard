@@ -725,13 +725,18 @@ export async function runOf01Import(params?: {
   limit?: number;
   mode?: MiraklImportMode;
   includeAll?: boolean;
+  providerKeys?: string[];
   /** If true, skip P41 upload and send all eligible offer delta rows directly. */
   offersOnly?: boolean;
 }) {
   // OF01 should default to full eligible dataset unless a limit is explicitly passed.
   const limit = params?.limit;
   /** Products (P41) and offers (OF01) are separate Mirakl jobs — do not chain P41 here (was causing very long waits). */
-  const delta = await buildDecathlonDeltas({ limit, includeAll: params?.includeAll });
+  const delta = await buildDecathlonDeltas({
+    limit,
+    includeAll: params?.includeAll,
+    providerKeys: params?.providerKeys,
+  });
   let eligibleOffers = delta.newOffers;
   let blockedMissingP41 = 0;
   const gateP41 =

@@ -334,18 +334,11 @@ export async function createManualShipmentsForOrder(
       providerKeys.add(resolution.providerKey);
     }
     const distinctProviders = Array.from(providerKeys.values()).filter((key) => key && key !== "UNASSIGNED");
-    if (distinctProviders.length > 1) {
-      return {
-        status: "error",
-        shipments: [],
-        message: `Package ${idx + 1} mixes supplier channels (${distinctProviders.join(", ")}). Put StockX-only and other suppliers in separate parcels.`,
-      };
-    }
-    const providerKey = distinctProviders;
+    const providerKey = resolveParcelProviderKey(distinctProviders) ?? "UNASSIGNED";
 
     packagesResolved.push({
       items,
-      providerKey: providerKey[0] ?? "UNASSIGNED",
+      providerKey,
     });
   }
 
@@ -669,28 +662,13 @@ export async function createCompositeWarehouseShipment(
     providerKeys.add(resolution.providerKey);
   }
   const distinctProviders = Array.from(providerKeys.values()).filter((key) => key && key !== "UNASSIGNED");
-  if (distinctProviders.length > 1) {
-    return {
-      status: "error",
-      shipments: [],
-      message: `Mixed supplier channels (${distinctProviders.join(", ")}). Use separate parcels per channel.`,
-    };
-  }
-  const packProviderKey = distinctProviders[0] ?? "UNASSIGNED";
+  const packProviderKey = resolveParcelProviderKey(distinctProviders);
 
   const sourceOrderIds = Array.from(orderMap.keys());
   const existingShipments = await prisma.shipment.findMany({
-    where: { orderId: anchor.id },
+    where: { orderId: { in: sourceOrderIds } },
     orderBy: { createdAt: "asc" },
   });
-  if (existingShipments.length > 0 && !options.confirmReplace) {
-    return {
-      status: "error",
-      shipments: [],
-      message:
-        "Shipments already exist for the anchor order — pass confirmReplace: true to replace non-final drafts (same as pack UI).",
-    };
-  }
 
   const totalsByLine = new Map<string, number>();
   const shippedQtyByLine = new Map<string, number>();
@@ -761,37 +739,21 @@ export async function createCompositeWarehouseShipment(
     totalsByLine.set(lineId, nextTotal);
   }
 
-  // When confirmReplace is set, also purge MANUAL-pending (not yet DELR-sent/uploaded) drafts across
-  // ALL source orders so items reserved in old single-order drafts can be moved into this composite.
-  const allSourceOrderIds = Array.from(orderMap.keys());
-  const allSourceShipments =
-    options.confirmReplace && allSourceOrderIds.length > 1
-      ? await prismaAny.shipment.findMany({
-          where: {
-            orderId: { in: allSourceOrderIds.filter((id) => id !== anchor.id) },
-          },
-        })
-      : [];
-
   const isPurgeable = (shipment: any) => {
     if (shipment?.delrSentAt) return false;
     const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
-    if (delrStatus === "UPLOADED") return false;
+    if (delrStatus === "UPLOADED" || delrStatus === "SENT") return false;
     return true;
   };
 
-  const purgeCandidates = [
-    // Anchor order: purge non-MANUAL pending drafts (unchanged behaviour without confirmReplace).
-    // With confirmReplace also purge MANUAL-pending ones.
-    ...existingShipments.filter((shipment) => {
-      if (!isPurgeable(shipment)) return false;
-      const status = String(shipment?.status ?? "").toUpperCase();
-      if (status === "MANUAL" && !options.confirmReplace) return false;
-      return true;
-    }),
-    // Other source orders: purge their pending (including MANUAL) drafts only when confirmReplace.
-    ...(options.confirmReplace ? allSourceShipments.filter(isPurgeable) : []),
-  ];
+  // Drop non-final drafts (including MANUAL warehouse drafts) on all source orders so reserved
+  // lines can be re-packed. Finalized shipments (DELR sent) are kept — new composite is additive.
+  const purgeCandidates = existingShipments.filter((shipment) => {
+    if (!isPurgeable(shipment)) return false;
+    const status = String(shipment?.status ?? "").toUpperCase();
+    if (status === "MANUAL") return true;
+    return options.confirmReplace;
+  });
 
   if (purgeCandidates.length > 0) {
     const purgeIds = purgeCandidates.map((shipment: any) => shipment.id);
@@ -814,7 +776,8 @@ export async function createCompositeWarehouseShipment(
     const shipment = await tx.shipment.create({
       data: {
         orderId: anchor.id,
-        providerKey: packProviderKey === "UNASSIGNED" ? null : packProviderKey,
+        providerKey:
+          packProviderKey && packProviderKey !== "UNASSIGNED" ? packProviderKey : null,
         status: "MANUAL",
         shipmentId: `SHIP-${anchor.galaxusOrderId}-COMPOSITE-${Date.now()}`,
         dispatchNotificationId,
@@ -1106,6 +1069,14 @@ async function bucketStxLinesByDeliveryType(lines: any[]) {
 }
 
 type ProviderResolution = { providerKey: string; rule: string; assigned: boolean };
+
+/** Single channel on shipment, or null when NER/STX/etc. are mixed in one parcel. */
+function resolveParcelProviderKey(distinctProviders: string[]): string | null {
+  const keys = distinctProviders.filter((key) => key && key !== "UNASSIGNED");
+  if (keys.length === 0) return null;
+  if (keys.length === 1) return keys[0]!;
+  return null;
+}
 
 async function resolveProviderKeyForLine(line: any): Promise<ProviderResolution> {
   const direct = extractProviderKeyFromOrderKey(line.providerKey ?? null);

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { runOpsTick } from "@/galaxus/ops/tick";
 import { runFeedPipeline } from "@/galaxus/ops/feedPipeline";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
+import { syncShopifyCatalog } from "@/shopify/catalog/sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +10,13 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   try {
     const origin = new URL(request.url).origin;
-    const body = (await request.json().catch(() => ({}))) as { action?: string };
+    const body = (await request.json().catch(() => ({}))) as {
+      action?: string;
+      stxMode?: string;
+      partnerKey?: string;
+    };
     const action = String(body?.action ?? "").trim().toLowerCase();
+    const partnerKey = String(body?.partnerKey ?? "").trim();
 
     if (!action) {
       return NextResponse.json({ ok: false, error: "Missing action" }, { status: 400 });
@@ -22,13 +28,30 @@ export async function POST(request: Request) {
     }
 
     if (action === "partner-sync") {
-      const data = await runOpsTick(origin, { force: true, only: ["partner-stock-sync"] });
-      return NextResponse.json({ ok: true, data });
+      const partnerScope = partnerKey || "THE";
+      const data = await runOpsTick(origin, {
+        force: true,
+        only: ["partner-stock-sync"],
+        partnerKey: partnerScope,
+      });
+      const shopifyCatalog = await syncShopifyCatalog({
+        limit: 5000,
+        supplierKey: partnerScope.toLowerCase(),
+        inStockOnly: true,
+        missingOnly: false,
+        dryRun: false,
+      });
+      return NextResponse.json({ ok: true, partnerKey: partnerScope, data, shopifyCatalog });
     }
 
     if (action === "stx-refresh") {
-      const data = await runOpsTick(origin, { force: true, only: ["stx-refresh"] });
-      return NextResponse.json({ ok: true, data });
+      const stxMode = String(body?.stxMode ?? "price").toLowerCase() === "full" ? "full" : "price";
+      const data = await runOpsTick(origin, {
+        force: true,
+        only: ["stx-refresh"],
+        stxRefreshMode: stxMode,
+      });
+      return NextResponse.json({ ok: true, data, stxMode });
     }
 
     if (action === "edi-in") {

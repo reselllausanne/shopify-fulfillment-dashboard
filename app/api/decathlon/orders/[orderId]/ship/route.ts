@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
-import { requestSwissPostLabel } from "@/lib/swissPost";
+import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType, Prisma } from "@prisma/client";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
@@ -519,6 +519,7 @@ function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: stri
     const country = normalizeCountryCode(recipientCountryCode ?? recipientCountry) ?? "CH";
     const zip = normalizePostalCode(recipientPostalCode) ?? "";
     const { street, addressSuffix, name2 } = fitAddress(recipientAddress1 ?? "", recipientAddress2 ?? "");
+    const normalizedPhone = normalizeSwissPostRecipientPhone(recipientPhone, country);
     return {
       name1: (recipientName ?? "").slice(0, SWISS_POST_FIELD_MAX),
       firstName: null,
@@ -528,7 +529,7 @@ function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: stri
       zip,
       city: (recipientCity ?? "").slice(0, SWISS_POST_FIELD_MAX),
       country,
-      phone: recipientPhone ?? null,
+      phone: normalizedPhone,
       email: recipientEmail ?? null,
     };
   }
@@ -538,6 +539,7 @@ function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: stri
   const country = normalizeCountryCode(order.customerCountryCode ?? order.customerCountry) ?? "CH";
   const zip = normalizePostalCode(order.customerPostalCode) ?? "";
   const { street, addressSuffix, name2 } = fitAddress(order.customerAddress1 ?? "", order.customerAddress2 ?? "");
+  const normalizedPhone = normalizeSwissPostRecipientPhone(customerPhone, country);
   return {
     name1: (customerName ?? "").slice(0, SWISS_POST_FIELD_MAX),
     firstName: null,
@@ -547,7 +549,7 @@ function buildRecipient(order: any): SwissPostRecipient & { addressSuffix?: stri
     zip,
     city: (customerCity ?? "").slice(0, SWISS_POST_FIELD_MAX),
     country,
-    phone: customerPhone ?? null,
+    phone: normalizedPhone,
     email: order.customerEmail ?? null,
   };
 }
@@ -615,7 +617,7 @@ function buildSwissPostPayload(
       recipient,
       attributes: { przl: przlValues },
       notification:
-        notificationService && (recipient.email || recipient.phone)
+        notificationService && recipient.email
           ? [
               {
                 communication: {

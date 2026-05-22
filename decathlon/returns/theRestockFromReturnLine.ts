@@ -15,6 +15,9 @@ export function roundToCents(value: number | null): number | null {
   return Math.round((value as number) * 100) / 100;
 }
 
+/** Restock: new catalog price = restock source price × this factor (25% off). */
+export const RESTOCK_PRICE_FROM_LAST = 0.75;
+
 /** Decathlon / DB: same tail as offer, `STX_` → `the_` (matches `stx_` / `ner:` style ids). */
 export function stxOfferSkuToTheCatalogOfferSku(offerSku: string): string {
   const t = String(offerSku ?? "").trim();
@@ -112,17 +115,29 @@ async function upsertVariantMappingForThe(
   });
 }
 
+function resolveRestockSourcePrice(preferredPrice: number | null, fallbackPrice: number | null): number | null {
+  if (preferredPrice != null && Number.isFinite(preferredPrice) && preferredPrice > 0) return preferredPrice;
+  if (fallbackPrice != null && Number.isFinite(fallbackPrice) && fallbackPrice > 0) return fallbackPrice;
+  return null;
+}
+
 /**
  * Return restock → YOUR (THE) catalog:
- * - `the_` / `THE_` row exists: add qty (+ optional price min for STX-origin).
- * - Else STX return: clone STX row with `the_…` id/sku (same tail as offer after prefix swap).
+ * - `the_` / `THE_` row exists: add qty; if not `manualLock`, set price to 75% of the return/restock price.
+ * - Else STX return: clone STX row with `the_…` id/sku at 75% of the return/restock price.
+ * - DB catalog price is only a fallback if the return line has no usable price.
  */
 export async function applyReturnRestock(params: {
   returnLine: any;
   orderLine: any | null;
   offerSku: string | null;
   basePrice: number | null;
-}): Promise<{ applied: boolean; supplierVariantId?: string | null }> {
+}): Promise<{
+  applied: boolean;
+  supplierVariantId?: string | null;
+  /** Set when a restock price was written (25% off restock source price). */
+  newPrice?: number | null;
+}> {
   const offerSkuRaw = String(params.offerSku ?? "").trim();
   if (!offerSkuRaw) return { applied: false };
   const offerLower = offerSkuRaw.toLowerCase();
@@ -164,8 +179,14 @@ export async function applyReturnRestock(params: {
       target = existingByCloneId;
     } else {
       const newProviderKey = buildProviderKey(stxRow.gtin, primaryTheId);
-      const priceNum = Number(stxRow.price ?? params.basePrice ?? 0);
-      const price = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : 0;
+      const lastForClone = resolveRestockSourcePrice(
+        params.basePrice,
+        Number(stxRow.price ?? 0)
+      );
+      const price =
+        Number.isFinite(lastForClone as number) && (lastForClone as number) > 0
+          ? roundToCents(lastForClone * RESTOCK_PRICE_FROM_LAST) ?? 0
+          : 0;
 
       const createData: Record<string, unknown> = {
         supplierVariantId: primaryTheId,
@@ -199,25 +220,22 @@ export async function applyReturnRestock(params: {
         kickdbVariantId: srcMap?.kickdbVariantId ?? null,
       });
 
-      return { applied: true, supplierVariantId: primaryTheId };
+      return {
+        applied: true,
+        supplierVariantId: primaryTheId,
+        newPrice: price > 0 ? price : null,
+      };
     }
   }
 
   if (!target?.supplierVariantId) return { applied: false };
 
-  const priceBase =
-    params.basePrice != null && Number.isFinite(params.basePrice) && params.basePrice > 0
-      ? params.basePrice
-      : Number(target.price ?? 0);
+  const curDb = Number(target.price ?? 0);
+  const restockSourcePrice = resolveRestockSourcePrice(params.basePrice, curDb);
   const restockPrice =
-    isStxReturn && priceBase > 0
-      ? roundToCents(priceBase * 0.52)
-      : priceBase > 0
-        ? roundToCents(priceBase)
-        : null;
+    restockSourcePrice != null ? roundToCents(restockSourcePrice * RESTOCK_PRICE_FROM_LAST) : null;
 
   const applyPrice =
-    isStxReturn &&
     restockPrice != null &&
     Number.isFinite(restockPrice) &&
     restockPrice > 0 &&
@@ -233,15 +251,18 @@ export async function applyReturnRestock(params: {
     lastSyncAt: new Date(),
     updatedAt: new Date(),
   };
+  let newPrice: number | null = null;
   if (applyPrice && restockPrice != null) {
-    const cur = Number(target.price ?? 0);
-    const next = Number.isFinite(cur) && cur > 0 ? Math.min(cur, restockPrice) : restockPrice;
-    updateData.price = roundToCents(next);
+    const rounded = roundToCents(restockPrice);
+    if (rounded != null) {
+      updateData.price = rounded;
+      newPrice = rounded;
+    }
   }
   await prismaAny.supplierVariant.update({
     where: { supplierVariantId: target.supplierVariantId },
     data: updateData,
   });
 
-  return { applied: true, supplierVariantId: target.supplierVariantId };
+  return { applied: true, supplierVariantId: target.supplierVariantId, newPrice };
 }

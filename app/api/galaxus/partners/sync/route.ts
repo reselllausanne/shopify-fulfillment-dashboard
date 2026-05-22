@@ -11,6 +11,7 @@ export async function POST(request: Request) {
     const all = ["1", "true", "yes"].includes((searchParams.get("all") ?? "").toLowerCase());
     const limit = Math.min(Number(searchParams.get("limit") ?? "500"), 2000);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const partnerKey = String(searchParams.get("partnerKey") ?? "").trim();
 
     if (all) {
       const batchSize = 1000;
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
       let lastBatch = 0;
       do {
         const result = await runJob("partners-sync", () =>
-          runPartnerSync({ limit: batchSize, offset: currentOffset })
+          runPartnerSync({ limit: batchSize, offset: currentOffset, partnerKey: partnerKey || undefined })
         );
         const payload = result.result ?? {
           scanned: 0,
@@ -56,7 +57,9 @@ export async function POST(request: Request) {
       });
     }
 
-    const result = await runJob("partners-sync", () => runPartnerSync({ limit, offset }));
+    const result = await runJob("partners-sync", () =>
+      runPartnerSync({ limit, offset, partnerKey: partnerKey || undefined })
+    );
     return NextResponse.json({ ok: true, limit, offset, result });
   } catch (error: any) {
     console.error("[GALAXUS][PARTNERS][SYNC] Failed:", error);

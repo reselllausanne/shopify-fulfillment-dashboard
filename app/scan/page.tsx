@@ -215,6 +215,21 @@ const openLabelPrintDialog = (
   return true;
 };
 
+const openLabelPreview = (payload: LabelDataPayload) => {
+  const base64 = String(payload?.base64 || "").trim();
+  if (!base64) return false;
+  const mimeType = String(payload?.mimeType || "application/pdf");
+  const labelBlob = toBlobFromBase64(base64, mimeType);
+  const labelUrl = URL.createObjectURL(labelBlob);
+  const popup = window.open(labelUrl, "_blank");
+  if (!popup) {
+    URL.revokeObjectURL(labelUrl);
+    return false;
+  }
+  setTimeout(() => URL.revokeObjectURL(labelUrl), 120000);
+  return true;
+};
+
 export default function ScanPage() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -509,19 +524,19 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
-          includeLabelData: ENABLE_BROWSER_PRINT,
+          includeLabelData: true,
           allowAlreadyFulfilled,
         }),
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
       const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
-      if (res.ok && data.ok && browserPrintEnabled && data.labelData?.base64) {
-        const opened = openLabelPrintDialog(data.labelData, data.browserPrintConfig);
+      if (res.ok && data.ok && data.labelData?.base64) {
+        const opened = browserPrintEnabled
+          ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+          : openLabelPreview(data.labelData);
         if (!opened) {
-          window.alert(
-            "Label generated but popup blocked. Allow popups for this page, then scan again."
-          );
+          window.alert("Label generated but popup blocked. Allow popups for this page, then scan again.");
         }
       }
     } catch (err: any) {

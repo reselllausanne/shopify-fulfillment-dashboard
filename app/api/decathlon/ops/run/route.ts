@@ -22,17 +22,38 @@ export async function POST(request: Request) {
     const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
     const modeRaw = String(body?.mode ?? "").trim().toUpperCase();
     const mode: MiraklImportMode | undefined = modeRaw === "REPLACE" ? "REPLACE" : modeRaw === "NORMAL" ? "NORMAL" : undefined;
+    const providerKeys = [
+      ...((Array.isArray(body?.providerKeys) ? body.providerKeys : []) as unknown[]),
+      ...(body?.providerKey ? [body.providerKey] : []),
+    ]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean);
 
     if (action === "offer-sync") {
-      const result = await runDecathlonOfferSync({ limit, includeAll: false, mode: mode ?? "NORMAL" });
+      const result = await runDecathlonOfferSync({
+        limit,
+        includeAll: false,
+        mode: mode ?? "NORMAL",
+        providerKeys,
+      });
       return NextResponse.json({ ok: true, result });
     }
     if (action === "offer-full") {
-      const result = await runDecathlonOfferSync({ limit, includeAll: true, mode: mode ?? "NORMAL" });
+      const result = await runDecathlonOfferSync({
+        limit,
+        includeAll: true,
+        mode: mode ?? "NORMAL",
+        providerKeys,
+      });
       return NextResponse.json({ ok: true, result });
     }
     if (action === "offer-only") {
-      const result = await runDecathlonOfferOnlySync({ limit, includeAll: false, mode: mode ?? "NORMAL" });
+      const result = await runDecathlonOfferOnlySync({
+        limit,
+        includeAll: false,
+        mode: mode ?? "NORMAL",
+        providerKeys,
+      });
       return NextResponse.json({ ok: true, result });
     }
     if (action === "product-sync") {

@@ -11,6 +11,7 @@ type OrderListItem = {
   shippedCount: number;
   fulfilledCount: number;
   warehouseLinesShipped?: number;
+  warehouseOpenLineCount?: number | null;
   fulfillmentState?: "fulfilled" | "shipped" | "to_process";
   _count?: { lines: number; shipments: number };
   invoiceLinesFullyInvoiced?: number | null;
@@ -207,7 +208,7 @@ export default function GalaxusWarehouseShipmentsPage() {
   const [labelResult, setLabelResult] = useState<string>("");
   const [scanInput, setScanInput] = useState("");
   const [scanResult, setScanResult] = useState("");
-  const [replaceDrafts, setReplaceDrafts] = useState(false);
+  const [replaceDrafts, setReplaceDrafts] = useState(true);
   const [trackingHint, setTrackingHint] = useState("");
   const [autoSendAfterCreate, setAutoSendAfterCreate] = useState(false);
   const [autoPrintLabel, setAutoPrintLabel] = useState(true);
@@ -223,16 +224,21 @@ export default function GalaxusWarehouseShipmentsPage() {
     setError(null);
     try {
       const q = debouncedOrderSearch ? `&q=${encodeURIComponent(debouncedOrderSearch)}` : "";
-      const res = await fetch(`/api/galaxus/orders?view=active&limit=200${q}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/galaxus/orders?view=active&warehouseOpen=1&limit=500${q}`,
+        { cache: "no-store" }
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load orders");
       const items = Array.isArray(data.items) ? data.items : [];
       const filtered = items.filter((item: any) => {
         if (isDirectDelivery(item)) return false;
-        if (String(item?.fulfillmentState ?? "") === "fulfilled") return false;
         const totalLines = Number(item?._count?.lines ?? 0);
-        const shippedLines = Number(item?.warehouseLinesShipped ?? 0);
-        if (Number.isFinite(totalLines) && totalLines > 0 && shippedLines >= totalLines) return false;
+        if (!Number.isFinite(totalLines) || totalLines <= 0) return false;
+        const openLines = item?.warehouseOpenLineCount;
+        if (openLines != null && Number.isFinite(Number(openLines))) {
+          return Number(openLines) > 0;
+        }
         return true;
       });
       setOrders(filtered);
@@ -306,7 +312,6 @@ export default function GalaxusWarehouseShipmentsPage() {
   }, [debouncedOrderSearch]);
 
   useEffect(() => {
-    setSelectedLines({});
     setCreatedShipment(null);
     setResult("");
     setLabelResult("");
@@ -314,6 +319,28 @@ export default function GalaxusWarehouseShipmentsPage() {
     setScanResult("");
     if (selectedOrderId) void loadEligibility(selectedOrderId);
   }, [selectedOrderId]);
+
+  useEffect(() => {
+    if (!eligibleOrders.length) return;
+    setSelectedLines((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      for (const [lid, item] of Object.entries(prev)) {
+        const remaining = shipmentCoverage[lid]?.remaining ?? 0;
+        if (remaining <= 0) {
+          delete next[lid];
+          changed = true;
+          continue;
+        }
+        if (item.quantity > remaining) {
+          next[lid] = { ...item, quantity: remaining };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [eligibleOrders, shipmentCoverage]);
 
   useEffect(() => {
     if (!createdShipment) return;
@@ -394,13 +421,11 @@ export default function GalaxusWarehouseShipmentsPage() {
         const lid = String(line.id ?? "");
         const orderedQty = invoiceCoverage[lid]?.ordered ?? num(line.quantity);
         const orderedSafe = Number.isFinite(orderedQty) ? orderedQty : 0;
-        const invoicedQty = invoiceCoverage[lid]?.invoiced ?? 0;
-        const fullyInvoiced = orderedSafe > 0 && invoicedQty >= orderedSafe;
         const shippedQty = shipmentCoverage[lid]?.shipped ?? 0;
         const reservedQty = shipmentCoverage[lid]?.reserved ?? 0;
         const remainingQty =
           shipmentCoverage[lid]?.remaining ?? Math.max(0, orderedSafe - shippedQty - reservedQty);
-        if (fullyInvoiced || remainingQty <= 0) continue;
+        if (remainingQty <= 0) continue;
         matches.push({ order, line, remaining: remainingQty });
       }
     }
@@ -410,6 +435,18 @@ export default function GalaxusWarehouseShipmentsPage() {
       return;
     }
 
+    const parseOrderDate = (value: string) => {
+      const ts = Date.parse(value);
+      return Number.isNaN(ts) ? Number.POSITIVE_INFINITY : ts;
+    };
+    matches.sort((a, b) => {
+      const aDate = parseOrderDate(a.order.orderDate);
+      const bDate = parseOrderDate(b.order.orderDate);
+      if (aDate !== bDate) return aDate - bDate;
+      const aNum = String(a.order.orderNumber ?? a.order.galaxusOrderId ?? "");
+      const bNum = String(b.order.orderNumber ?? b.order.galaxusOrderId ?? "");
+      return aNum.localeCompare(bNum);
+    });
     const target = matches[0];
     const lid = String(target.line.id);
     setSelectedLines((prev) => {
@@ -454,7 +491,7 @@ export default function GalaxusWarehouseShipmentsPage() {
             sourceOrderId: item.sourceOrderId,
             quantity: item.quantity,
           })),
-          confirmReplace: replaceDrafts,
+          confirmReplace: true,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -700,7 +737,7 @@ export default function GalaxusWarehouseShipmentsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Warehouse shipments</h1>
           <p className="text-sm text-gray-600">
-            Select not-yet-invoiced lines, mix orders with the same address, then send DELR via Swiss Post.
+            Pick unshipped lines (same delivery address can be combined), then send DELR via Swiss Post.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -772,7 +809,9 @@ export default function GalaxusWarehouseShipmentsPage() {
             <div>
               <div className="font-semibold">Shipment builder</div>
               <div className="text-xs text-gray-500">
-                {eligibilityLoading ? "Loading eligible orders..." : "Same-delivery-address orders are shown below."}
+                {eligibilityLoading
+                  ? "Loading eligible orders..."
+                  : "Same-address orders — only lines not yet shipped."}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-gray-600">
@@ -1000,7 +1039,7 @@ export default function GalaxusWarehouseShipmentsPage() {
               const remainingQty =
                 shipmentCoverage[lid]?.remaining ?? Math.max(0, orderedSafe - shippedQty - reservedQty);
               const selected = selectedLines[lid];
-              const disabled = busy !== null || !lid || fullyInvoiced || remainingQty <= 0;
+              const disabled = busy !== null || !lid || remainingQty <= 0;
               const lineNet = num(line.lineNetAmount ?? line.priceLineAmount ?? line.unitNetPrice);
               return {
                 line,
@@ -1016,8 +1055,7 @@ export default function GalaxusWarehouseShipmentsPage() {
                 lineNet,
               };
             });
-            const openMetas = lineMetas.filter((m) => m.remainingQty > 0 && !m.fullyInvoiced);
-            const closedMetas = lineMetas.filter((m) => !(m.remainingQty > 0 && !m.fullyInvoiced));
+            const openMetas = lineMetas.filter((m) => m.remainingQty > 0);
 
             const renderLineRow = (m: (typeof lineMetas)[0], dimmed: boolean) => {
               const { line, lid, orderedSafe, invoicedQty, fullyInvoiced, shippedQty, reservedQty, remainingQty, selected, disabled, lineNet } = m;
@@ -1136,43 +1174,6 @@ export default function GalaxusWarehouseShipmentsPage() {
                         openMetas.map((m) => renderLineRow(m, false))
                       )}
                     </tbody>
-                    {closedMetas.length > 0 ? (
-                      <tbody>
-                        <tr>
-                          <td colSpan={11} className="p-0 align-top">
-                            <details className="group border-t border-gray-200">
-                              <summary className="cursor-pointer list-none bg-gray-50 px-3 py-2 text-xs font-medium text-gray-700 flex items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
-                                <span>Shipped / reserved / invoiced ({closedMetas.length})</span>
-                                <span className="text-gray-500 font-normal shrink-0 group-open:hidden">Expand</span>
-                                <span className="text-gray-500 font-normal shrink-0 hidden group-open:inline">
-                                  Collapse
-                                </span>
-                              </summary>
-                              <div className="max-h-[min(45vh,320px)] overflow-auto border-t border-gray-100">
-                                <table className="min-w-full text-xs">
-                                  <thead className="bg-gray-100 sticky top-0 z-[1]">
-                                    <tr>
-                                      <th className="px-2 py-1.5 text-left">Pick</th>
-                                      <th className="px-2 py-1.5 text-left">Line</th>
-                                      <th className="px-2 py-1.5 text-left">Product</th>
-                                      <th className="px-2 py-1.5 text-left">Size</th>
-                                      <th className="px-2 py-1.5 text-left">SKU</th>
-                                      <th className="px-2 py-1.5 text-left">GTIN</th>
-                                      <th className="px-2 py-1.5 text-right">Ordered</th>
-                                      <th className="px-2 py-1.5 text-right">Remaining</th>
-                                      <th className="px-2 py-1.5 text-right">Ship qty</th>
-                                      <th className="px-2 py-1.5 text-right">Unit net</th>
-                                      <th className="px-2 py-1.5 text-right">Line net</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>{closedMetas.map((m) => renderLineRow(m, true))}</tbody>
-                                </table>
-                              </div>
-                            </details>
-                          </td>
-                        </tr>
-                      </tbody>
-                    ) : null}
                   </table>
                 </div>
               </div>

@@ -3,7 +3,9 @@ import { validateGtin } from "@/app/lib/normalize";
 import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/kickdb/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
-import { selectStxActiveOffer, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
+import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
+import { isStxForceImportSlug, listForceImportStxSupplierVariantIds } from "@/galaxus/stx/forceImportSlugs";
+import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import {
   bulkInsertSupplierVariants,
   bulkUpdateSupplierVariants,
@@ -55,33 +57,6 @@ type ParsedStxRow = {
 
 const STX_PREFIX = "stx_";
 
-const LEGO_CUSTOM_ADDON_BY_SLUG: Record<string, number> = {
-  "lego-pet-shop-set-10218": 45,
-  "lego-grand-emporium-set-10211": 25,
-};
-
-const LEGO_LARGE_SET_SLUGS = new Set([
-  "lego-eiffel-tower-set-10307",
-  "lego-titanic-set-10294",
-  "lego-palace-cinema-set-10232",
-  "lego-marvel-studios-infinity-saga-hulkbuster-set-76210",
-]);
-
-const LEGO_MEDIUM_SET_SLUGS = new Set([
-  "lego-creator-fairgrounds-mixer-set-10244",
-  "lego-stranger-things-the-upside-down-set-75810",
-  "lego-tower-bridge-set-10214",
-  "lego-technic-land-rover-defender-set-42110",
-  "lego-creator-ferris-wheel-2015-set-10247",
-  "lego-architecture-taj-mahal-set-21056",
-]);
-
-const LEGO_SMALL_SET_SLUGS = new Set([
-  "lego-star-wars-tie-fighter-set-75095",
-  "lego-creator-horizon-express-set-10233",
-  "lego-creator-santas-workshop-set-10245",
-]);
-
 function pickString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -113,27 +88,6 @@ function pickSizeRawEuFirst(variant: any): string | null {
   return pickString(variant?.size);
 }
 
-function normalizeSlug(value: unknown): string {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase();
-}
-
-function resolveStxShippingCHF(product: any): number {
-  const baseShipping = 20;
-  const slug = normalizeSlug(product?.slug ?? product?.url_key ?? product?.urlKey);
-  const title = normalizeSlug(product?.title ?? product?.primary_title ?? product?.name);
-  const isLego = slug.includes("lego") || title.includes("lego");
-  if (!isLego) return baseShipping;
-
-  const customAddon = LEGO_CUSTOM_ADDON_BY_SLUG[slug];
-  if (Number.isFinite(customAddon)) return baseShipping + customAddon;
-  if (LEGO_LARGE_SET_SLUGS.has(slug)) return 60;
-  if (LEGO_MEDIUM_SET_SLUGS.has(slug)) return 45;
-  if (LEGO_SMALL_SET_SLUGS.has(slug)) return 35;
-  return baseShipping;
-}
-
 function pickImages(product: any): string[] | null {
   const images: string[] = [];
   if (Array.isArray(product?.gallery)) {
@@ -155,6 +109,9 @@ function extractRowsFromPayload(payload: any, productId: string) {
   const images = pickImages(payload);
   const supplierSkuFallback =
     pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
+  const forceImport = isStxForceImportSlug(
+    pickString(payload?.slug, payload?.url_key, payload?.urlKey)
+  );
 
   for (const variant of variants) {
     const variantId = pickString(variant?.id);
@@ -164,7 +121,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
     const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
     if (!gtin) continue;
 
-    const selected = selectStxActiveOffer(variant?.prices);
+    const selected = selectStxOfferForImport(variant?.prices, { forceImport });
     if (!selected) continue;
 
     const supplierVariantId = `${STX_PREFIX}${variantId}`;
@@ -218,8 +175,10 @@ async function listStxSupplierVariantIdsForKickdbProductId(kickdbProductId: stri
 async function zeroStockForStxVariantsNotInEligibleBatch(
   kickdbProductId: string,
   eligibleSupplierVariantIds: Set<string>,
-  now: Date
+  now: Date,
+  options?: { skip?: boolean }
 ): Promise<number> {
+  if (options?.skip) return 0;
   const dbIds = await listStxSupplierVariantIdsForKickdbProductId(kickdbProductId);
   const toZero = dbIds.filter((sid) => !eligibleSupplierVariantIds.has(sid));
   if (toZero.length === 0) return 0;
@@ -313,7 +272,10 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
           const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
           if (!gtin) continue;
 
-          const selected = selectStxActiveOffer(variant?.prices);
+          const forceImport = isStxForceImportSlug(
+            pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
+          );
+          const selected = selectStxOfferForImport(variant?.prices, { forceImport });
           if (!selected) continue;
 
           const supplierVariantId = `${STX_PREFIX}${variantId}`;
@@ -384,9 +346,14 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
     mappingUpdated += result.updated;
   }
 
-  const removedMissingOrIneligible = await removeMissingOrIneligibleStxVariants(
-    rows.map((row) => row.supplierVariantId)
-  );
+  const forceProtectedIds = await listForceImportStxSupplierVariantIds();
+  const activeSupplierVariantIds = new Set([
+    ...rows.map((row) => row.supplierVariantId),
+    ...forceProtectedIds,
+  ]);
+  const removedMissingOrIneligible = await removeMissingOrIneligibleStxVariants([
+    ...activeSupplierVariantIds,
+  ]);
 
   const durationMs = Date.now() - startedAt;
   console.info("[galaxus][sync:stx] done", {
@@ -456,7 +423,15 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
         const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now);
+        const skipZeroStock = isStxForceImportSlug(
+          pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
+        );
+        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
+          dbProductId,
+          eligibleIds,
+          now,
+          { skip: skipZeroStock }
+        );
         return {
           processedProducts: 1,
           processedVariants: rows.length,
@@ -584,9 +559,14 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
   const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
   const rows = remappedResult.rows;
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
+  const skipZeroStock = isStxForceImportSlug(
+    pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey, slug)
+  );
   const stockZeroed =
     dbProductId.length > 0
-      ? await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now)
+      ? await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now, {
+          skip: skipZeroStock,
+        })
       : 0;
 
   let updated = 0;
@@ -679,7 +659,15 @@ export async function refreshStxProductsByKickdbProductIds(
         const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(cleanId, eligibleIds, now);
+        const skipZeroStock = isStxForceImportSlug(
+          pickString(payload?.slug, payload?.url_key, payload?.urlKey, kickRow?.urlKey)
+        );
+        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
+          cleanId,
+          eligibleIds,
+          now,
+          { skip: skipZeroStock }
+        );
         return {
           processedProducts: 1,
           processedVariants: rows.length,

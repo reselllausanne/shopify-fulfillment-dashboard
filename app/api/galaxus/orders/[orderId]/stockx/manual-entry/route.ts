@@ -5,6 +5,10 @@ import {
   looksLikeStockxOrderNumber,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
+import {
+  buildStockxOrderClaimIndex,
+  findStockxOrderClaim,
+} from "@/app/lib/stockxCrossChannelClaims";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -110,6 +114,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       trimStr(a.stockxOrderNumber) ||
       trimStr(existing?.stockxOrderNumber) ||
       `MANUAL-${order.galaxusOrderId}-${line.lineNumber ?? 1}`;
+    const stockxOrderIdFinal =
+      trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null;
+
+    const claimIndex = await buildStockxOrderClaimIndex({
+      stockxOrderIds: [stockxOrderIdFinal],
+      stockxOrderNumbers: [stockxOrderNumberFinal],
+    });
+    const claim = findStockxOrderClaim(claimIndex, stockxOrderIdFinal, stockxOrderNumberFinal);
+    if (claim && !(claim.channel === "galaxus" && claim.matchId === String(existing?.id ?? ""))) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `StockX order is already linked on ${claim.channel}.`,
+        },
+        { status: 409 }
+      );
+    }
 
     const payload = {
       galaxusOrderId: order.id,
@@ -130,7 +151,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       galaxusVatRate: line.vatRate,
       galaxusCurrencyCode: order.currencyCode ?? "CHF",
       stockxChainId: trimStr(data.stockxChainId) || trimStr(a.stockxChainId) || trimStr(existing?.stockxChainId) || null,
-      stockxOrderId: trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null,
+      stockxOrderId: stockxOrderIdFinal,
       stockxOrderNumber: stockxOrderNumberFinal,
       stockxVariantId: trimStr(data.stockxVariantId) || trimStr(a.stockxVariantId) || trimStr(existing?.stockxVariantId) || null,
       stockxProductName:

@@ -11,6 +11,10 @@ import {
   canPartnerAccessDecathlonOrder,
   isDecathlonPartnerFulfillmentLine,
 } from "@/decathlon/orders/partnerLineScope";
+import {
+  buildStockxOrderClaimIndex,
+  findStockxOrderClaim,
+} from "@/app/lib/stockxCrossChannelClaims";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,6 +76,10 @@ export async function POST(
     if (!line) {
       return NextResponse.json({ ok: false, error: "Line not found" }, { status: 404 });
     }
+    const existingMatch = await prisma.decathlonStockxMatch.findUnique({
+      where: { decathlonOrderLineId: line.id },
+      select: { id: true, stockxOrderId: true, stockxOrderNumber: true, stockxStatus: true },
+    });
 
     const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
     if (partnerSession) {
@@ -97,11 +105,8 @@ export async function POST(
           { status: 403 }
         );
       }
-      const existing = await prisma.decathlonStockxMatch.findUnique({
-        where: { decathlonOrderLineId: lineId },
-      });
-      if (existing) {
-        const status = trimStr(existing.stockxStatus) || "MATCHED";
+      if (existingMatch) {
+        const status = trimStr(existingMatch.stockxStatus) || "MATCHED";
         return NextResponse.json(
           {
             ok: false,
@@ -158,6 +163,22 @@ export async function POST(
       trimStr(data.stockxOrderNumber) ||
       a.stockxOrderNumber ||
       `MANUAL-${order.orderId}-${line.lineNumber ?? 1}`;
+    const stockxOrderIdFinal = trimStr(data.stockxOrderId) || a.stockxOrderId || null;
+
+    const claimIndex = await buildStockxOrderClaimIndex({
+      stockxOrderIds: [stockxOrderIdFinal],
+      stockxOrderNumbers: [stockxOrderNumberFinal],
+    });
+    const claim = findStockxOrderClaim(claimIndex, stockxOrderIdFinal, stockxOrderNumberFinal);
+    if (claim && !(claim.channel === "decathlon" && claim.matchId === existingMatch?.id)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `StockX order is already linked on ${claim.channel}.`,
+        },
+        { status: 409 }
+      );
+    }
 
     const payload = {
       decathlonOrderId: order.id,
@@ -176,7 +197,7 @@ export async function POST(
       decathlonVatRate: null,
       decathlonCurrencyCode: order.currencyCode ?? "CHF",
       stockxChainId: trimStr(data.stockxChainId) || a.stockxChainId || null,
-      stockxOrderId: trimStr(data.stockxOrderId) || a.stockxOrderId || null,
+      stockxOrderId: stockxOrderIdFinal,
       stockxOrderNumber: stockxOrderNumberFinal,
       stockxVariantId: trimStr(data.stockxVariantId) || a.stockxVariantId || null,
       stockxProductName: trimStr(data.stockxProductName) || a.stockxProductName || null,

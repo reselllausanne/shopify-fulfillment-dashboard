@@ -7,11 +7,13 @@ import {
   bulkUpdateSupplierVariantsByProviderKeyGtin,
   bulkUpsertVariantMappings,
   chunkArray,
+  remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 
 type PartnerSyncOptions = {
   limit?: number;
   offset?: number;
+  partnerKey?: string;
 };
 
 type PartnerSyncResult = {
@@ -36,12 +38,14 @@ function buildSupplierVariantId(providerKey: string, sku: string, sizeNormalized
 export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<PartnerSyncResult> {
   const limit = Math.min(Math.max(options.limit ?? 500, 1), 2000);
   const offset = Math.max(options.offset ?? 0, 0);
+  const partnerKeyFilter = normalizeProviderKey(options.partnerKey);
   const startedAt = Date.now();
 
   const rows = await (prisma as any).partnerUploadRow.findMany({
     where: {
       status: "RESOLVED",
       gtinResolved: { not: null },
+      ...(partnerKeyFilter ? { providerKey: partnerKeyFilter } : {}),
     },
     orderBy: { updatedAt: "desc" },
     take: limit,
@@ -70,6 +74,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   }> = [];
   const zeroStockPairs: Array<{ providerKey: string; gtin: string }> = [];
 
+  const seenSupplierVariantIds = new Set<string>();
   for (const row of rows) {
     const supplierCode = normalizeProviderKey(row.providerKey);
     const gtin = validateGtin(row.gtinResolved) ? row.gtinResolved : null;
@@ -84,6 +89,12 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
       continue;
     }
     const supplierVariantId = buildSupplierVariantId(supplierCode, sku, sizeNormalized);
+    if (seenSupplierVariantIds.has(supplierVariantId)) {
+      // Same logical variant can appear multiple times in partner upload history.
+      // Keep newest row only (rows sorted by updatedAt desc).
+      continue;
+    }
+    seenSupplierVariantIds.add(supplierVariantId);
     const providerKey = buildProviderKey(gtin, supplierVariantId);
     if (!providerKey) {
       skippedInvalid += 1;
@@ -115,6 +126,23 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   }
 
   processed = offers.length;
+  const remapped = await remapRowsToExistingProviderKeyGtin(
+    offers.map((offer) => ({
+      supplierVariantId: offer.supplierVariantId,
+      providerKey: offer.providerKey,
+      gtin: offer.gtin,
+    }))
+  );
+  const supplierVariantIdByPair = new Map(
+    remapped.rows.map((row) => [`${row.providerKey}__${row.gtin}`, row.supplierVariantId])
+  );
+  const normalizedOffers = offers.map((offer) => {
+    const key = `${offer.providerKey}__${offer.gtin}`;
+    const remappedSupplierVariantId = supplierVariantIdByPair.get(key);
+    return remappedSupplierVariantId
+      ? { ...offer, supplierVariantId: remappedSupplierVariantId }
+      : offer;
+  });
 
   // Hard delete sold-out partner offers (stock <= 0) so they don't leak into Galaxus feeds.
   for (const batch of chunkArray(zeroStockPairs, 500)) {
@@ -134,7 +162,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
     removedZeroStock += res.count;
   }
 
-  for (const batch of chunkArray(offers, 500)) {
+  for (const batch of chunkArray(normalizedOffers, 500)) {
     created += await bulkInsertSupplierVariantsByProviderKeyGtin(
       batch.map((o) => ({
         supplierVariantId: o.supplierVariantId,
@@ -164,7 +192,7 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   }
 
   // Build mappings by resolving the actual supplierVariantId for each (providerKey, gtin).
-  for (const batch of chunkArray(offers, 500)) {
+  for (const batch of chunkArray(normalizedOffers, 500)) {
     const pairs = batch.map((o) => Prisma.sql`(${o.providerKey}, ${o.gtin})`);
     const found = await prisma.$queryRaw<Array<{ supplierVariantId: string; providerKey: string; gtin: string }>>(
       Prisma.sql`

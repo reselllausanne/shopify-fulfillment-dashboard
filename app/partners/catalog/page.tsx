@@ -25,6 +25,20 @@ type CatalogItem = {
   /** Lowest `SupplierVariant.price` in DB for this GTIN, excluding this partner’s own ids. */
   referenceMinPriceChf?: number | null;
   referenceOfferCount?: number | null;
+  channelStates?: {
+    shopify?: {
+      status?: string | null;
+      lastError?: string | null;
+    } | null;
+    galaxus?: {
+      status?: string | null;
+      lastError?: string | null;
+    } | null;
+    decathlon?: {
+      status?: string | null;
+      lastError?: string | null;
+    } | null;
+  } | null;
 };
 
 type UpdatePayload = {
@@ -88,6 +102,30 @@ function PriceReferenceHint(props: { row: CatalogItem; priceFieldValue: string }
       </div>
       {deltaEl}
     </div>
+  );
+}
+
+function ChannelBadge(props: { label: string; state?: { status?: string | null; lastError?: string | null } | null }) {
+  const { label, state } = props;
+  const status = String(state?.status ?? "").trim().toUpperCase();
+  const isError = status === "ERROR" || Boolean(state?.lastError);
+  const isActive = status === "ACTIVE";
+  const isSoldOut = status === "SOLD_OUT";
+  const tone = isError
+    ? "border-red-200 bg-red-50 text-red-700"
+    : isActive
+      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+      : isSoldOut
+        ? "border-amber-200 bg-amber-50 text-amber-700"
+        : "border-slate-200 bg-slate-50 text-slate-600";
+  const short = status || "NONE";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] ${tone}`}
+      title={state?.lastError ? `${label}: ${short} — ${state.lastError}` : `${label}: ${short}`}
+    >
+      {label}:{short}
+    </span>
   );
 }
 
@@ -303,6 +341,7 @@ export default function PartnerCatalogPage() {
                 Price
               </th>
               <th className="px-2 py-2 text-right">Stock</th>
+              <th className="px-2 py-2 text-left">Channels</th>
               <th className="px-2 py-2 text-left">Updated</th>
               <th className="px-2 py-2 text-left">Actions</th>
             </tr>
@@ -360,6 +399,13 @@ export default function PartnerCatalogPage() {
                     <span className="text-slate-400">—</span>
                   )}
                 </td>
+                <td className="px-2 py-2 min-w-[14rem]">
+                  <div className="flex flex-wrap gap-1">
+                    <ChannelBadge label="SHP" state={row.channelStates?.shopify ?? null} />
+                    <ChannelBadge label="GLX" state={row.channelStates?.galaxus ?? null} />
+                    <ChannelBadge label="DCT" state={row.channelStates?.decathlon ?? null} />
+                  </div>
+                </td>
                 <td className="px-2 py-2">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "-"}</td>
                 <td className="px-2 py-2">
                   {row.owned ? (
@@ -396,7 +442,7 @@ export default function PartnerCatalogPage() {
             ))}
             {items.length === 0 && (
               <tr>
-                <td className="px-2 py-4 text-center text-slate-500" colSpan={10}>
+                <td className="px-2 py-4 text-center text-slate-500" colSpan={11}>
                   No catalog rows found.
                 </td>
               </tr>

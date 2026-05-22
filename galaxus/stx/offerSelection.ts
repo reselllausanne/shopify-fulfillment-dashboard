@@ -70,3 +70,50 @@ export function selectStxActiveOffer(prices: unknown): SelectedStxOffer | null {
     asks: winner.asks,
   };
 }
+
+/**
+ * Express-first offer selection. When `forceImport` is true, falls back to any valid
+ * price row (e.g. standard-only) and ensures asks ≥ 2 so Galaxus stock export can list.
+ */
+export function selectStxOfferForImport(
+  prices: unknown,
+  options?: { forceImport?: boolean }
+): SelectedStxOffer | null {
+  const express = selectStxActiveOffer(prices);
+  if (express) return express;
+  if (!options?.forceImport) return null;
+
+  const list = Array.isArray(prices) ? prices : [];
+  const candidates: Array<SelectedStxOffer & { idx: number }> = [];
+
+  for (let idx = 0; idx < list.length; idx += 1) {
+    const row = list[idx] as Record<string, unknown>;
+    const price = toNumber(row?.price);
+    if (!price || price <= 0) continue;
+
+    const asksRaw = toInt(row?.asks);
+    const asks = asksRaw === null ? 0 : Math.max(0, asksRaw);
+    const type = String(row?.type ?? "")
+      .trim()
+      .toLowerCase();
+    const deliveryType: StxDeliveryType = type.includes("expedited")
+      ? "express_expedited"
+      : "express_standard";
+
+    candidates.push({ deliveryType, price, asks, idx });
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    if (a.price !== b.price) return a.price - b.price;
+    return a.idx - b.idx;
+  });
+
+  const winner = candidates[0];
+  return {
+    deliveryType: winner.deliveryType,
+    price: winner.price,
+    asks: Math.max(winner.asks, 2),
+  };
+}

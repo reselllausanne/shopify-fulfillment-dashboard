@@ -6,19 +6,27 @@ export async function runDecathlonOfferSync(params?: {
   limit?: number;
   mode?: MiraklImportMode;
   includeAll?: boolean;
+  providerKeys?: string[];
 }) {
-  return runOf01Import({ limit: params?.limit, mode: params?.mode, includeAll: params?.includeAll });
+  return runOf01Import({
+    limit: params?.limit,
+    mode: params?.mode,
+    includeAll: params?.includeAll,
+    providerKeys: params?.providerKeys,
+  });
 }
 
 export async function runDecathlonOfferOnlySync(params?: {
   limit?: number;
   mode?: MiraklImportMode;
   includeAll?: boolean;
+  providerKeys?: string[];
 }) {
   return runOf01Import({
     limit: params?.limit,
     mode: params?.mode,
     includeAll: params?.includeAll,
+    providerKeys: params?.providerKeys,
     offersOnly: true,
   });
 }

@@ -16,6 +16,11 @@ import {
   getDecathlonStxLinkStatusForOrder,
 } from "@/decathlon/stx/linkStatus";
 import { refreshDecathlonStockxMatchesBySavedOrderNumber } from "@/decathlon/stx/orderNumberRefresh";
+import {
+  buildStockxOrderClaimIndex,
+  findStockxOrderClaim,
+  registerStockxOrderClaim,
+} from "@/app/lib/stockxCrossChannelClaims";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -216,6 +221,14 @@ export async function POST(
         : ordersForLinking.length === 0
           ? "StockX rows fetched but no candidate rows could be prepared for linking."
           : null;
+    const stockxClaimIndex = await buildStockxOrderClaimIndex({
+      stockxOrderIds: ordersForLinking.map((n: any) =>
+        typeof n?.orderId === "string" ? String(n.orderId).trim() : null
+      ),
+      stockxOrderNumbers: ordersForLinking.map((n: any) =>
+        typeof n?.orderNumber === "string" ? String(n.orderNumber).trim() : null
+      ),
+    });
 
     const detailsCache = new Map<
       string,
@@ -328,11 +341,15 @@ export async function POST(
         continue;
       }
 
-      const existingStx = await prisma.decathlonStockxMatch.findFirst({
-        where: { stockxOrderId },
-        select: { id: true },
-      });
-      if (existingStx) {
+      const stockxOrderNumberResolved =
+        String(listNode?.orderNumber ?? details?.order?.orderNumber ?? "").trim() ||
+        `STX-${order.orderId}`;
+      const existingClaim = findStockxOrderClaim(
+        stockxClaimIndex,
+        stockxOrderId,
+        stockxOrderNumberResolved
+      );
+      if (existingClaim) {
         alreadyLinked += 1;
         pushEnrichedRow({
           orderId: stockxOrderId,
@@ -346,7 +363,7 @@ export async function POST(
             etaMax: details.etaMax ? details.etaMax.toISOString() : null,
             order: leanBuyOrder(details.order),
           },
-          enrichmentError: "already_linked_order",
+          enrichmentError: `already_linked_${existingClaim.channel}`,
         });
         continue;
       }
@@ -396,9 +413,7 @@ export async function POST(
         decathlonCurrencyCode: order.currencyCode ?? "CHF",
         stockxChainId: String(chainId).trim() || null,
         stockxOrderId: stockxOrderId,
-        stockxOrderNumber:
-          String(listNode?.orderNumber ?? details?.order?.orderNumber ?? "").trim() ||
-          `STX-${order.orderId}`,
+        stockxOrderNumber: stockxOrderNumberResolved,
         stockxVariantId: String(variantId ?? "").trim() || null,
         stockxProductName:
           String(
@@ -433,10 +448,16 @@ export async function POST(
         timeDiffHours: null,
       };
 
-      await prisma.decathlonStockxMatch.upsert({
+      const savedMatch = await prisma.decathlonStockxMatch.upsert({
         where: { decathlonOrderLineId: target.lineId },
         update: payload,
         create: payload,
+      });
+      registerStockxOrderClaim(stockxClaimIndex, {
+        channel: "decathlon",
+        matchId: String(savedMatch.id),
+        stockxOrderId,
+        stockxOrderNumber: stockxOrderNumberResolved,
       });
       linked += 1;
       pushEnrichedRow({
