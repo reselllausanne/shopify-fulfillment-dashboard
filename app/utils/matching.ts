@@ -212,6 +212,8 @@ function cleanShopifyTitleForMatch(title: string): string {
   return title
     // Remove trailing numeric size: " - 49.5", " - EU 49.5", etc.
     .replace(/\s*-\s*(EU\s*)?\d+(\.\d+)?\s*$/i, "")
+    // Remove trailing composite letter sizes: " - L/XL", " - S/M", " - 2XL/3XL"
+    .replace(/\s*-\s*[A-Z0-9]+(?:\/[A-Z0-9]+)+\s*$/i, "")
     // Remove trailing letter size: " - L", " - XL", " - One Size", " - OS"
     .replace(/\s*-\s*(XXS|XS|S|M|L|XL|XXL|XXXL|One Size|OS|EU\s*\d+(\.\d+)?)\s*$/i, "")
     // Remove trailing %
@@ -253,12 +255,13 @@ function skuBaseFromShopifySKU(sku: string | null): string | null {
   const trimmed = sku.trim();
   
   // Pattern: Match trailing size suffix
+  // Composite letter sizes first: -L/XL, -S/M, -2XL/3XL (must precede single -L/-XL)
   // Letter sizes: -XXS, -XS, -S, -M, -L, -XL, -XXL, -XXXL (case insensitive)
   // One Size: -OS, -O/S, -ONE SIZE
   // Numeric sizes: -37.5, -42, -36 2/3, -EU 36 2/3
   // Guarded to 1-2 leading digits to avoid stripping SKU color codes like "-011".
   const sizePattern =
-    /-(XXXL|XXL|XL|XXS|XS|L|M|S|OS|O\/S|ONE\s*SIZE|EU\s*[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?|[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?)$/i;
+    /-(?:[A-Z0-9]+(?:\/[A-Z0-9]+)+|XXXL|XXL|XL|XXS|XS|L|M|S|OS|O\/S|ONE\s*SIZE|EU\s*[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?|[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?)$/i;
   
   const baseSku = trimmed.replace(sizePattern, "");
   
