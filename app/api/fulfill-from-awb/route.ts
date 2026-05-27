@@ -491,7 +491,8 @@ export async function POST(req: NextRequest) {
     const swissPostPayload = body?.swissPostPayload ?? null;
     const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
-    const roleAllowsBrowserPrint = isBrowserPrintAllowedForRole(staffRole);
+    const roleAllowsBrowserPrint =
+      isBrowserPrintAllowedForRole(staffRole) || allowAlreadyFulfilled;
     const browserPrintConfigBase = resolveBrowserPrintConfig();
     const browserPrintConfig: BrowserPrintConfig = {
       ...browserPrintConfigBase,
@@ -619,75 +620,59 @@ export async function POST(req: NextRequest) {
       return [{ fulfillmentOrderId: fo.id, fulfillmentOrderLineItems: remaining }];
     });
 
-    if (
-      allowAlreadyFulfilled &&
-      lineItemsByFulfillmentOrder.length === 0 &&
-      fulfillableFOs.length > 0
-    ) {
-      const remainingCandidates = fulfillableFOs.flatMap((fo) =>
-        (fo.lineItems?.nodes || [])
-          .filter((li: any) => Number(li.remainingQuantity ?? 0) > 0)
-          .map((li: any) => ({
-            fulfillmentOrderId: fo.id,
-            lineItemId: li.id,
-            remainingQuantity: Number(li.remainingQuantity ?? 0),
-          }))
-      );
-
-      if (remainingCandidates.length === 1) {
-        const onlyRemaining = remainingCandidates[0];
-        lineItemsByFulfillmentOrder = [
-          {
-            fulfillmentOrderId: onlyRemaining.fulfillmentOrderId,
-            fulfillmentOrderLineItems: [
-              { id: onlyRemaining.lineItemId, quantity: onlyRemaining.remainingQuantity },
-            ],
-          },
-        ];
-        warnings.push(
-          "Fallback applied: matched items were already fulfilled, fulfilling the only remaining line item."
-        );
-      }
-    }
-
-    if (lineItemsByFulfillmentOrder.length === 0 && allRemainingLineItems.length > 0) {
+    if (allowAlreadyFulfilled && allRemainingLineItems.length > 0) {
+      lineItemsByFulfillmentOrder = allRemainingLineItems;
+      warnings.push("Force fulfill: fulfilling all remaining line items for this order.");
+    } else if (lineItemsByFulfillmentOrder.length === 0 && allRemainingLineItems.length > 0) {
       lineItemsByFulfillmentOrder = allRemainingLineItems;
       warnings.push("Fallback applied: fulfilling all remaining line items for this order.");
     }
 
+    let skipShopifyFulfillment = false;
     if (lineItemsByFulfillmentOrder.length === 0) {
       if (fulfillableFOs.length === 0) {
         const hasTracking = await withContext("orderHasTrackingNumber", () =>
           orderHasTrackingNumber(shopifyOrderId, awb)
         );
         if (hasTracking || existing) {
-          return NextResponse.json(
-            {
-              ok: true,
-              status: "ALREADY_FULFILLED" as FulfillStatus,
-              awb,
-              fulfillmentId: null,
-              shopifyOrderId,
-            },
-            { status: 200 }
-          );
+          if (!allowAlreadyFulfilled) {
+            return NextResponse.json(
+              {
+                ok: true,
+                status: "ALREADY_FULFILLED" as FulfillStatus,
+                awb,
+                fulfillmentId: null,
+                shopifyOrderId,
+              },
+              { status: 200 }
+            );
+          }
+          skipShopifyFulfillment = true;
+          warnings.push("Force fulfill: order already fulfilled; generating label only.");
         }
       }
 
-      return NextResponse.json(
-        {
-          ok: false,
-          status: "INVALID" as FulfillStatus,
-          awb,
-          error:
-            fulfillableFOs.length === 0
-              ? "No fulfillable quantities remaining for this order"
-              : "No fulfillable line items matched requested SKUs/titles",
-          unmatched,
-          warnings,
-        },
-        { status: 422 }
-      );
+      if (!skipShopifyFulfillment) {
+        if (allowAlreadyFulfilled) {
+          skipShopifyFulfillment = true;
+          warnings.push("Force fulfill: no fulfillable lines left; generating label only.");
+        } else {
+          return NextResponse.json(
+            {
+              ok: false,
+              status: "INVALID" as FulfillStatus,
+              awb,
+              error:
+                fulfillableFOs.length === 0
+                  ? "No fulfillable quantities remaining for this order"
+                  : "No fulfillable line items matched requested SKUs/titles",
+              unmatched,
+              warnings,
+            },
+            { status: 422 }
+          );
+        }
+      }
     }
 
     const shouldCallSwissPost =
@@ -790,6 +775,32 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (skipShopifyFulfillment) {
+      return NextResponse.json(
+        {
+          ok: true,
+          status: "ALREADY_FULFILLED" as FulfillStatus,
+          awb,
+          fulfillmentId: null,
+          shopifyOrderId,
+          shopifyOrderName: map.order.name,
+          trackingNumber: trackingNumberForFulfillment,
+          trackingCompany: trackingCompanyForFulfillment,
+          swissPostLabelId,
+          swissPostBarcode,
+          swissPostStatus,
+          swissPostResponse: swissPostResult?.data || null,
+          labelFilePath,
+          printJobResult,
+          labelData,
+          browserPrintConfig,
+          warnings,
+          swissPost: shouldCallSwissPost ? "attempted" : "skipped",
+        },
+        { status: 200 }
+      );
+    }
+
     const fulfillmentInput = {
       notifyCustomer,
       trackingInfo: {
@@ -805,6 +816,32 @@ export async function POST(req: NextRequest) {
     );
     const userErrors = result.fulfillmentCreate.userErrors || [];
     if (userErrors.length > 0) {
+      if (allowAlreadyFulfilled && (labelData || labelFilePath)) {
+        warnings.push(
+          `Shopify fulfillment skipped: ${userErrors.map((e) => e.message).join("; ")}`
+        );
+        return NextResponse.json(
+          {
+            ok: true,
+            status: "ALREADY_FULFILLED" as FulfillStatus,
+            awb,
+            shopifyOrderId,
+            shopifyOrderName: map.order.name,
+            trackingNumber: trackingNumberForFulfillment,
+            trackingCompany: trackingCompanyForFulfillment,
+            swissPostLabelId,
+            swissPostBarcode,
+            swissPostStatus,
+            labelFilePath,
+            printJobResult,
+            labelData,
+            browserPrintConfig,
+            warnings,
+            userErrors,
+          },
+          { status: 200 }
+        );
+      }
       return NextResponse.json(
         {
           ok: false,
@@ -818,6 +855,27 @@ export async function POST(req: NextRequest) {
 
     const fulfillment = result.fulfillmentCreate.fulfillment;
     if (!fulfillment) {
+      if (allowAlreadyFulfilled && (labelData || labelFilePath)) {
+        return NextResponse.json(
+          {
+            ok: true,
+            status: "ALREADY_FULFILLED" as FulfillStatus,
+            awb,
+            shopifyOrderId,
+            shopifyOrderName: map.order.name,
+            trackingNumber: trackingNumberForFulfillment,
+            trackingCompany: trackingCompanyForFulfillment,
+            swissPostLabelId,
+            swissPostBarcode,
+            labelFilePath,
+            printJobResult,
+            labelData,
+            browserPrintConfig,
+            warnings,
+          },
+          { status: 200 }
+        );
+      }
       return NextResponse.json(
         { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, awb, error: "Missing fulfillment" },
         { status: 500 }

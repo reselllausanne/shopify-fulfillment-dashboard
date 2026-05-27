@@ -121,8 +121,6 @@ type FulfillResponse = {
   browserPrintConfig?: BrowserPrintConfig;
 };
 
-type StaffRole = "admin" | "logistics";
-
 const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return fallback;
@@ -237,7 +235,6 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [fulfillLoading, setFulfillLoading] = useState(false);
   const [fulfillResult, setFulfillResult] = useState<FulfillResponse | null>(null);
-  const [staffRole, setStaffRole] = useState<StaffRole | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [awbList, setAwbList] = useState<AwbListItem[]>([]);
@@ -262,28 +259,6 @@ export default function ScanPage() {
       }
     };
     loadAwbList();
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const loadSessionRole = async () => {
-      try {
-        const res = await fetch("/api/auth/session", { cache: "no-store" });
-        const data = await res.json().catch(() => ({}));
-        if (!mounted) return;
-        if (res.ok && (data?.role === "admin" || data?.role === "logistics")) {
-          setStaffRole(data.role);
-        } else {
-          setStaffRole(null);
-        }
-      } catch {
-        if (mounted) setStaffRole(null);
-      }
-    };
-    loadSessionRole();
-    return () => {
-      mounted = false;
-    };
   }, []);
 
   const downloadPdf = async (url: string, fallbackName: string) => {
@@ -757,25 +732,22 @@ export default function ScanPage() {
                   >
                     {fulfillLoading ? "Processing..." : "Fulfill + Print Label"}
                   </button>
-                  {staffRole === "admin" ? (
-                    <button
-                      disabled={fulfillLoading || Boolean(result?.galaxus)}
-                      onClick={handleForceFulfill}
-                      className="px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-gray-400"
-                      title={result?.galaxus ? "Galaxus orders: no Shopify label on this page" : undefined}
-                    >
-                      {fulfillLoading ? "Processing..." : "Force Fulfill (Admin)"}
-                    </button>
-                  ) : null}
+                  <button
+                    disabled={fulfillLoading || Boolean(result?.galaxus)}
+                    onClick={handleForceFulfill}
+                    className="px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-gray-400"
+                    title={result?.galaxus ? "Galaxus orders: no Shopify label on this page" : undefined}
+                  >
+                    {fulfillLoading ? "Processing..." : "Force Fulfill"}
+                  </button>
                 </div>
                 {result?.galaxus ? (
                   <p className="text-xs text-gray-600 mt-1">Disabled: scan matched GalaxusStockxMatch (marketplace).</p>
                 ) : null}
-                {staffRole === "admin" ? (
-                  <p className="text-xs text-gray-600 mt-1">
-                    Force fulfill retries when Shopify already has tracking and only one line remains fulfillable.
-                  </p>
-                ) : null}
+                <p className="text-xs text-gray-600 mt-1">
+                  Force fulfill fulfills every remaining line on the order, then prints a label even if Shopify already
+                  has tracking.
+                </p>
                 {fulfillResult && (
                   <div className="mt-3 text-sm">
                     {fulfillResult.ok ? (
