@@ -192,7 +192,8 @@ export async function POST(request: Request) {
     const specsCount = specsRes ? countCsvRows(specsCsv) : null;
 
     const shouldRunValidation = needsMaster || needsStock || needsSpecs;
-    const validationUrl = `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}`;
+    const validationScope = needsStock ? "all" : needsMaster && needsSpecs ? "master-specs" : needsMaster ? "master" : "specs";
+    const validationUrl = `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}&scope=${validationScope}`;
     const validationRes = shouldRunValidation ? await runGalaxusExportGET(validationUrl).catch(() => null) : null;
     const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
     const report = validationData?.report ?? null;

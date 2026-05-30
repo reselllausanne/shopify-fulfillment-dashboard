@@ -1205,6 +1205,7 @@ model VariantMapping {
   kickdbVariant    KickDBVariant?  @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
 
   @@index([kickdbVariantId])
+  @@index([updatedAt(sort: Desc), id(sort: Desc)])
   @@schema("public")
 }
 

@@ -641,6 +641,10 @@ export async function GET(request: Request) {
     const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 500);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const supplier = searchParams.get("supplier")?.trim();
+    const scope = searchParams.get("scope")?.trim() ?? "all";
+    const checkMaster = scope === "all" || scope === "master" || scope === "master-specs";
+    const checkStock = scope === "all" || scope === "stock";
+    const checkSpecs = scope === "all" || scope === "specs" || scope === "master-specs";
 
     const mappingsWhere = buildFeedMappingsWhere(supplier, all);
 
@@ -671,7 +675,20 @@ export async function GET(request: Request) {
         where: whereClause,
         include: {
           supplierVariant: true,
-          kickdbVariant: { include: { product: true } },
+          kickdbVariant: {
+            select: {
+              id: true,
+              product: {
+                select: {
+                  name: true,
+                  brand: true,
+                  description: true,
+                  styleId: true,
+                  traitsJson: true,
+                },
+              },
+            },
+          },
         },
         orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         take: pageSize,
@@ -695,13 +712,13 @@ export async function GET(request: Request) {
     } while (all && lastBatch === pageSize);
 
     const candidates = dedupeCandidatesByProviderKey(Array.from(bestByGtin.values()));
-    masterRows.push(...buildMasterRows(candidates));
-    stockRows.push(...buildStockRows(candidates));
-    specsRows.push(...buildSpecsRows(candidates));
+    if (checkMaster) masterRows.push(...buildMasterRows(candidates));
+    if (checkStock) stockRows.push(...buildStockRows(candidates));
+    if (checkSpecs) specsRows.push(...buildSpecsRows(candidates));
 
-    const masterIssues = validateMaster(masterRows);
-    const stockIssues = validateStock(stockRows);
-    const specsIssues = validateSpecs(specsRows);
+    const masterIssues = checkMaster ? validateMaster(masterRows) : [];
+    const stockIssues = checkStock ? validateStock(stockRows) : [];
+    const specsIssues = checkSpecs ? validateSpecs(specsRows) : [];
 
     const attachIssueContext = (issues: Issue[], rows: ExportRow[]) =>
       issues.map((issue) => {

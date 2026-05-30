@@ -288,7 +288,21 @@ export async function GET(request: Request) {
       where: whereClause,
       include: {
         supplierVariant: true,
-        ...(minimal ? {} : { kickdbVariant: { include: { product: true } } }),
+        ...(minimal ? {} : {
+          kickdbVariant: {
+            select: {
+              id: true,
+              product: {
+                select: {
+                  name: true,
+                  brand: true,
+                  description: true,
+                  styleId: true,
+                },
+              },
+            },
+          },
+        }),
       },
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       take: pageSize,
