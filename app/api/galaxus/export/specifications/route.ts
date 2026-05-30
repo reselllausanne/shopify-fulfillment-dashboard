@@ -68,6 +68,8 @@ export async function GET(request: Request) {
   const pageSize = all ? 500 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
+  let cursorUpdatedAt: Date | null = null;
+  let cursorId: string | null = null;
   const prismaAny = prisma as any;
   const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
   const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
@@ -90,20 +92,35 @@ export async function GET(request: Request) {
   };
 
   do {
+    const baseWhere = {
+      ...mappingsWhere,
+      ...(providerKeyFilter ? providerKeyFilter : {}),
+    };
+    const whereClause = all && cursorUpdatedAt && cursorId
+      ? {
+          ...baseWhere,
+          OR: [
+            { updatedAt: { lt: cursorUpdatedAt } },
+            { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
+          ],
+        }
+      : baseWhere;
     const mappings = await prismaAny.variantMapping.findMany({
-      where: {
-        ...mappingsWhere,
-        ...(providerKeyFilter ? providerKeyFilter : {}),
-      },
+      where: whereClause,
       include: {
         supplierVariant: true,
         kickdbVariant: { include: { product: true } },
       },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
       take: pageSize,
-      skip: currentOffset,
+      ...(all ? {} : { skip: currentOffset }),
     });
     lastBatch = mappings.length;
+    if (all && mappings.length > 0) {
+      const last: any = mappings[mappings.length - 1];
+      cursorUpdatedAt = last.updatedAt ?? null;
+      cursorId = last.id ?? null;
+    }
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
