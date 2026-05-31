@@ -119,7 +119,25 @@ export const STOCKX_PERSISTED_VARIABLES = {
 /** Single buy order (tracking, AWB, pricing) — same as browser persisted op. Hash changes on deploy. */
 export const STOCKX_GET_BUY_ORDER_OPERATION_NAME = "getBuyOrder";
 export const STOCKX_GET_BUY_ORDER_PERSISTED_HASH =
-  "8f8967d0168d4c3a6990f7d48ceb038f7b7332dd255f64442aacc43ffa037107";
+  "9b06bf970cee1dd33455c0ef16834ba7ddee7764fb5e1ea078d3ef368a809f17";
+
+/** Variables required by persisted getBuyOrder (StockX adds flags over time). */
+export function buildStockxGetBuyOrderVariables(params: {
+  chainId: string;
+  orderId?: string | null;
+}): Record<string, unknown> {
+  const variables: Record<string, unknown> = {
+    chainId: String(params.chainId ?? "").trim(),
+    country: "CH",
+    market: "CH",
+    isShipByDateEnabled: true,
+    isDFSUpdatesEnabled: true,
+    isMysteryBoxEnabled: true,
+  };
+  const orderId = String(params.orderId ?? "").trim();
+  if (orderId) variables.orderId = orderId;
+  return variables;
+}
 
 /** Purchase pricing persisted op (estimate total/adjustments). */
 export const STOCKX_PURCHASE_PRICING_OPERATION_NAME = "PurchasePricing";

@@ -15,6 +15,7 @@
  */
 
 import crypto from "node:crypto";
+import { buildStockxGetBuyOrderVariables } from "@/app/lib/constants";
 import { getSupplierToken } from "@/lib/stockxToken";
 
 const STOCKX_GRAPHQL_URL = "https://stockx.com/api/p/e";
@@ -361,14 +362,7 @@ async function fetchStockXTracking(
     throw new Error("Supplier token not found or expired in DB");
   }
 
-  const variables = {
-    chainId,
-    orderId,
-    country: "CH",
-    market: "CH",
-    isShipByDateEnabled: true,
-    isDFSUpdatesEnabled: true,
-  };
+  const variables = buildStockxGetBuyOrderVariables({ chainId, orderId });
 
   const headers: Record<string, string> = {
     "content-type": "application/json",

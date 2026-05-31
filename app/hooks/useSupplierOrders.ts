@@ -8,6 +8,7 @@ import {
   STOCKX_PERSISTED_OPERATION_NAME,
   STOCKX_PERSISTED_QUERY_HASH,
   STOCKX_PERSISTED_VARIABLES,
+  buildStockxGetBuyOrderVariables,
 } from "@/app/lib/constants";
 import { extractAwbFromTrackingUrl } from "@/app/utils/format";
 import type { OrderNode, PageInfo, PricingResult } from "@/app/types";
@@ -680,13 +681,10 @@ export function useSupplierOrders() {
           },
         };
       }
-      const variables = {
+      const variables = buildStockxGetBuyOrderVariables({
         chainId,
-        country: "CH",
-        market: "CH",
-        isShipByDateEnabled: true,
-        isDFSUpdatesEnabled: true,
-      };
+        orderId: node.orderId,
+      });
 
       const detailHash = String(detailPersistedQueryHash || "").trim();
       const requestBody: Record<string, unknown> = {

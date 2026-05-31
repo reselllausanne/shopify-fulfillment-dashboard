@@ -6,6 +6,7 @@ import {
   STOCKX_GET_BUY_ORDER_PERSISTED_HASH,
   STOCKX_PERSISTED_OPERATION_NAME,
   STOCKX_PERSISTED_QUERY_HASH,
+  buildStockxGetBuyOrderVariables,
 } from "@/app/lib/constants";
 import {
   readStockxPersistedHashes,
@@ -600,10 +601,22 @@ export async function POST(request: NextRequest) {
           )
         : [];
 
-    const payloadVariables =
+    let payloadVariables =
       payload.variables && typeof payload.variables === "object" && payload.variables != null
         ? (payload.variables as Record<string, unknown>)
         : {};
+
+    if (opName === "getBuyOrder") {
+      const chainId =
+        typeof payloadVariables.chainId === "string" ? payloadVariables.chainId : "";
+      const orderId =
+        typeof payloadVariables.orderId === "string" ? payloadVariables.orderId : null;
+      payload.variables = {
+        ...buildStockxGetBuyOrderVariables({ chainId, orderId }),
+        ...payloadVariables,
+      };
+      payloadVariables = payload.variables as Record<string, unknown>;
+    }
 
     // Keep legacy Buying compat path only for Buying.
     // FetchCurrentBids should run direct upstream request first.
@@ -820,7 +833,11 @@ export async function POST(request: NextRequest) {
       const normalizedResolved = normalizePersistedHash(resolvedOperationHash);
       const looksLikeWrongHash =
         hasPersistedQueryNotFound(upstream.raw) ||
-        hasMissingRequiredVariables(upstream.raw, ["isShipByDateEnabled", "isDFSUpdatesEnabled"]);
+        hasMissingRequiredVariables(upstream.raw, [
+          "isShipByDateEnabled",
+          "isDFSUpdatesEnabled",
+          "isMysteryBoxEnabled",
+        ]);
       if (
         normalizedCurrent &&
         normalizedResolved &&

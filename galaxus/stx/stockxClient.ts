@@ -4,6 +4,7 @@ import {
   DEFAULT_QUERY,
   STOCKX_GET_BUY_ORDER_OPERATION_NAME,
   STOCKX_PERSISTED_OPERATION_NAME,
+  buildStockxGetBuyOrderVariables,
 } from "@/app/lib/constants";
 import {
   DEFAULT_STOCKX_PERSISTED_HASHES_FILE,
@@ -395,17 +396,10 @@ async function fetchStockxBuyOrderPersisted(
   if (!buyOrderHash) {
     throw new Error("Missing persisted hash for GET_BUY_ORDER");
   }
-  const variables: Record<string, unknown> = {
+  const variables = buildStockxGetBuyOrderVariables({
     chainId: params.chainId,
-    country: "CH",
-    market: "CH",
-    isShipByDateEnabled: true,
-    isDFSUpdatesEnabled: true,
-  };
-  const orderId = String(params.orderId ?? "").trim();
-  if (orderId) {
-    variables.orderId = orderId;
-  }
+    orderId: params.orderId,
+  });
   return callStockx<any>(
     token,
     STOCKX_GET_BUY_ORDER_OPERATION_NAME,
@@ -465,13 +459,8 @@ export async function fetchStockxBuyOrderDetails(
   let order = (response?.data?.viewer?.order ?? null) as StockxBuyOrder | null;
   if (shouldFallbackToLegacyOrderFetch(order, { orderId })) {
     response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_QUERY, {
-      chainId,
-      orderId,
-      country: "CH",
-      market: "CH",
-      isShipByDateEnabled: true,
-      isDFSUpdatesEnabled: true,
-    });
+      ...buildStockxGetBuyOrderVariables({ chainId, orderId }),
+    }, { url: "https://stockx.com/api/p/e" });
     order = (response?.data?.viewer?.order ?? null) as StockxBuyOrder | null;
   }
   const trackingUrl = order?.shipping?.shipment?.trackingUrl ?? null;
@@ -531,13 +520,8 @@ export async function fetchStockxBuyOrderDetailsFull(
   const needsLegacyDetailShape = shouldFallbackToLegacyOrderFetch(order, { orderId });
   if (needsLegacyDetailShape) {
     response = await callStockx<any>(token, "GET_BUY_ORDER", GET_BUY_ORDER_FULL_QUERY, {
-      chainId,
-      orderId,
-      country: "CH",
-      market: "CH",
-      isShipByDateEnabled: true,
-      isDFSUpdatesEnabled: true,
-    });
+      ...buildStockxGetBuyOrderVariables({ chainId, orderId }),
+    }, { url: "https://stockx.com/api/p/e" });
     order = (response?.data?.viewer?.order ?? null) as any | null;
   }
   const trackingUrl = order?.shipping?.shipment?.trackingUrl ?? null;
