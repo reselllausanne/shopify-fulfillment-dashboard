@@ -616,6 +616,17 @@ export async function POST(request: NextRequest) {
         ...payloadVariables,
       };
       payloadVariables = payload.variables as Record<string, unknown>;
+      // Always force the correct getBuyOrder hash regardless of what the client sends.
+      // page.tsx reuses the buying-list hash for detailPersistedQueryHash, which causes
+      // StockX to return "operation with name 'getBuyOrder' not found".
+      const detailHash =
+        resolvedOperationHash ||
+        normalizePersistedHash(STOCKX_GET_BUY_ORDER_PERSISTED_HASH);
+      if (detailHash) {
+        payload.extensions = {
+          persistedQuery: { version: 1, sha256Hash: detailHash },
+        };
+      }
     }
 
     // Keep legacy Buying compat path only for Buying.
