@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 export type PartnerProductDataModalProps = {
   open: boolean;
   supplierVariantId: string | null;
+  isNer?: boolean;
   onClose: () => void;
   onSaved: () => void;
 };
@@ -19,7 +20,7 @@ function field(v: VariantJson | null, key: string): string {
   return String(x);
 }
 
-export function PartnerProductDataModal({ open, supplierVariantId, onClose, onSaved }: PartnerProductDataModalProps) {
+export function PartnerProductDataModal({ open, supplierVariantId, isNer = false, onClose, onSaved }: PartnerProductDataModalProps) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [listingBusy, setListingBusy] = useState(false);
@@ -115,33 +116,37 @@ export function PartnerProductDataModal({ open, supplierVariantId, onClose, onSa
         images,
         sourceImageUrl: String(v.sourceImageUrl ?? "").trim() || null,
         hostedImageUrl: String(v.hostedImageUrl ?? "").trim() || null,
-        imageSyncStatus: String(v.imageSyncStatus ?? "").trim() || null,
-        imageVersion,
-        imageSyncError: String(v.imageSyncError ?? "").trim() || null,
-        deliveryType: String(v.deliveryType ?? "").trim() || null,
         leadTimeDays,
         manualNote: String(v.manualNote ?? "").trim() || null,
       };
 
-      const mp = String(v.manualPrice ?? "").trim();
-      if (mp !== "") {
-        const m = Number.parseFloat(mp.replace(",", "."));
-        if (!Number.isFinite(m)) throw new Error("Invalid manual price");
-        payload.manualPrice = m;
-      } else {
-        payload.manualPrice = null;
-      }
+      // NER-only / internal fields — non-NER partners cannot edit these via the catalog API.
+      if (isNer) {
+        payload.imageSyncStatus = String(v.imageSyncStatus ?? "").trim() || null;
+        payload.imageVersion = imageVersion;
+        payload.imageSyncError = String(v.imageSyncError ?? "").trim() || null;
+        payload.deliveryType = String(v.deliveryType ?? "").trim() || null;
 
-      const ms = String(v.manualStock ?? "").trim();
-      if (ms !== "") {
-        const m = Number.parseInt(ms, 10);
-        if (!Number.isFinite(m)) throw new Error("Invalid manual stock");
-        payload.manualStock = m;
-      } else {
-        payload.manualStock = null;
-      }
+        const mp = String(v.manualPrice ?? "").trim();
+        if (mp !== "") {
+          const m = Number.parseFloat(mp.replace(",", "."));
+          if (!Number.isFinite(m)) throw new Error("Invalid manual price");
+          payload.manualPrice = m;
+        } else {
+          payload.manualPrice = null;
+        }
 
-      payload.manualLock = Boolean(v.manualLock);
+        const ms = String(v.manualStock ?? "").trim();
+        if (ms !== "") {
+          const m = Number.parseInt(ms, 10);
+          if (!Number.isFinite(m)) throw new Error("Invalid manual stock");
+          payload.manualStock = m;
+        } else {
+          payload.manualStock = null;
+        }
+
+        payload.manualLock = Boolean(v.manualLock);
+      }
 
       const res = await fetch("/api/partners/catalog/variants", {
         method: "POST",
@@ -358,62 +363,66 @@ export function PartnerProductDataModal({ open, supplierVariantId, onClose, onSa
                   placeholder='["https://..."] or {}'
                 />
               </label>
-              <label className="space-y-1">
-                <span className="text-[11px] font-medium text-slate-600">Image sync status</span>
-                <input
-                  className="w-full rounded border border-slate-200 px-2 py-1.5"
-                  value={field(v, "imageSyncStatus")}
-                  onChange={(e) => setScalar("imageSyncStatus", e.target.value)}
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] font-medium text-slate-600">Image version</span>
-                <input
-                  className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
-                  value={field(v, "imageVersion")}
-                  onChange={(e) => setScalar("imageVersion", e.target.value)}
-                />
-              </label>
-              <label className="space-y-1 sm:col-span-2">
-                <span className="text-[11px] font-medium text-slate-600">Image sync error (read/write)</span>
-                <input
-                  className="w-full rounded border border-slate-200 px-2 py-1.5 text-[11px]"
-                  value={field(v, "imageSyncError")}
-                  onChange={(e) => setScalar("imageSyncError", e.target.value)}
-                />
-              </label>
-              <label className="space-y-1 sm:col-span-2">
-                <span className="text-[11px] font-medium text-slate-600">Delivery type</span>
-                <input
-                  className="w-full rounded border border-slate-200 px-2 py-1.5"
-                  value={field(v, "deliveryType")}
-                  onChange={(e) => setScalar("deliveryType", e.target.value)}
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] font-medium text-slate-600">Manual price</span>
-                <input
-                  className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
-                  value={field(v, "manualPrice")}
-                  onChange={(e) => setScalar("manualPrice", e.target.value)}
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-[11px] font-medium text-slate-600">Manual stock</span>
-                <input
-                  className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
-                  value={field(v, "manualStock")}
-                  onChange={(e) => setScalar("manualStock", e.target.value)}
-                />
-              </label>
-              <label className="flex items-center gap-2 sm:col-span-2">
-                <input
-                  type="checkbox"
-                  checked={Boolean(v.manualLock)}
-                  onChange={(e) => setV((prev) => (prev ? { ...prev, manualLock: e.target.checked } : prev))}
-                />
-                <span className="text-[11px] font-medium text-slate-600">Manual lock</span>
-              </label>
+              {isNer ? (
+                <>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-medium text-slate-600">Image sync status</span>
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1.5"
+                      value={field(v, "imageSyncStatus")}
+                      onChange={(e) => setScalar("imageSyncStatus", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-medium text-slate-600">Image version</span>
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
+                      value={field(v, "imageVersion")}
+                      onChange={(e) => setScalar("imageVersion", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1 sm:col-span-2">
+                    <span className="text-[11px] font-medium text-slate-600">Image sync error (read/write)</span>
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-[11px]"
+                      value={field(v, "imageSyncError")}
+                      onChange={(e) => setScalar("imageSyncError", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1 sm:col-span-2">
+                    <span className="text-[11px] font-medium text-slate-600">Delivery type</span>
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1.5"
+                      value={field(v, "deliveryType")}
+                      onChange={(e) => setScalar("deliveryType", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-medium text-slate-600">Manual price</span>
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
+                      value={field(v, "manualPrice")}
+                      onChange={(e) => setScalar("manualPrice", e.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-medium text-slate-600">Manual stock</span>
+                    <input
+                      className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
+                      value={field(v, "manualStock")}
+                      onChange={(e) => setScalar("manualStock", e.target.value)}
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(v.manualLock)}
+                      onChange={(e) => setV((prev) => (prev ? { ...prev, manualLock: e.target.checked } : prev))}
+                    />
+                    <span className="text-[11px] font-medium text-slate-600">Manual lock</span>
+                  </label>
+                </>
+              ) : null}
               <label className="space-y-1 sm:col-span-2">
                 <span className="text-[11px] font-medium text-slate-600">Manual note</span>
                 <input

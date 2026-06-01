@@ -7,16 +7,33 @@ import { decathlonMiraklSellerPayoutLineTotal } from "./miraklLinePayout";
  */
 export const DECATHLON_MARKETPLACE_COMMISSION_RATE = 0.17;
 export const DECATHLON_VAT_RATE = 0.08;
+/** Out-of-pocket ship/ops per pair (align with {@link DECATHLON_FIXED_COST_CHF} in exports/pricing). */
+export const DECATHLON_FULFILMENT_COST_CHF = 13;
 const DECATHLON_PAYOUT_RATE =
   1 - DECATHLON_MARKETPLACE_COMMISSION_RATE - DECATHLON_VAT_RATE;
+
+/** Seller payout estimate from Mirakl sell TTC (−17% commission −8% taxes). Same as dashboard. */
+export function decathlonEstimatedPayoutFromSellTtc(sellTtc: number): number | null {
+  if (!Number.isFinite(sellTtc) || sellTtc <= 0) return null;
+  return sellTtc * DECATHLON_PAYOUT_RATE;
+}
+
+export function decathlonEstimatedPayoutRate(): number {
+  return DECATHLON_PAYOUT_RATE;
+}
 
 export type DecathlonMarginBreakdown = {
   /** Payout Decathlon estimé pour la ligne (après commission + TVA). */
   lineAfterDecathlon: number;
   supplierCost: number;
+  /** Payout − coût fournisseur (sans frais d'expédition ~13 CHF). */
   margin: number;
+  /** Payout − coût fournisseur − {@link DECATHLON_FULFILMENT_COST_CHF}. */
+  pocketAfterFulfilment: number;
   /** Marge / payout ligne × 100 */
   marginPercentOfLineAfter: number | null;
+  /** Pocket / payout ligne × 100 */
+  pocketPercentOfLineAfter: number | null;
 };
 
 /** Raw Mirakl sell: `lineTotal`, else `unitPrice × quantity`. */
@@ -68,16 +85,21 @@ export function decathlonLinePayoutPreferMirakl(line: {
 /** Marge vs coût StockX ; premier arg = payout ligne Decathlon. */
 export function decathlonMarginFromGrossAndCost(
   lineAfterDecathlon: number,
-  supplierCost: number
+  supplierCost: number,
+  fulfilmentCost: number = DECATHLON_FULFILMENT_COST_CHF
 ): DecathlonMarginBreakdown | null {
   if (!Number.isFinite(lineAfterDecathlon) || !Number.isFinite(supplierCost)) return null;
   const margin = lineAfterDecathlon - supplierCost;
+  const pocketAfterFulfilment = margin - fulfilmentCost;
   return {
     lineAfterDecathlon,
     supplierCost,
     margin,
+    pocketAfterFulfilment,
     marginPercentOfLineAfter:
       lineAfterDecathlon > 0 ? (margin / lineAfterDecathlon) * 100 : null,
+    pocketPercentOfLineAfter:
+      lineAfterDecathlon > 0 ? (pocketAfterFulfilment / lineAfterDecathlon) * 100 : null,
   };
 }
 

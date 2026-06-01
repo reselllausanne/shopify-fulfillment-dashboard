@@ -45,7 +45,6 @@ export async function GET() {
       const title = item.shopifyProductTitle || "";
       if (sku && EXCLUDED_SKUS.includes(sku)) return false;
       if (isLiquidationShopifyTitle(title)) return false;
-      if (/liquidation/i.test(title)) return false;
       const createdAt = item.shopifyCreatedAt ? new Date(item.shopifyCreatedAt) : null;
       if (createdAt && createdAt < cutoff) return false;
       return true;

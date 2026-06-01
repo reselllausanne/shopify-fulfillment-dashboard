@@ -90,6 +90,10 @@ function isBrowserPrintAllowedForRole(role: "admin" | "logistics" | null) {
   return role === "logistics";
 }
 
+function isServerAutoPrintAllowedForRole(role: "admin" | "logistics" | null) {
+  return role === "admin";
+}
+
 async function ensureLabelDirectory() {
   try {
     await fs.mkdir(LABEL_OUTPUT_DIR, { recursive: true });
@@ -493,6 +497,7 @@ export async function POST(req: NextRequest) {
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
     const roleAllowsBrowserPrint =
       isBrowserPrintAllowedForRole(staffRole) || allowAlreadyFulfilled;
+    const roleAllowsServerAutoPrint = isServerAutoPrintAllowedForRole(staffRole);
     const browserPrintConfigBase = resolveBrowserPrintConfig();
     const browserPrintConfig: BrowserPrintConfig = {
       ...browserPrintConfigBase,
@@ -753,7 +758,15 @@ export async function POST(req: NextRequest) {
               labelPayload.extension,
               `${shopifyOrderId}-${labelPayload.identifier}`
             );
-            printJobResult = await submitPrintJob(labelFilePath);
+            if (roleAllowsServerAutoPrint) {
+              printJobResult = await submitPrintJob(labelFilePath);
+            } else {
+              printJobResult = {
+                ok: false,
+                skipped: true,
+                message: "Server auto print disabled for this role; browser print is enabled.",
+              };
+            }
           } catch (persistError: any) {
             console.error(
               "[SWISS POST] Failed to persist/print label:",

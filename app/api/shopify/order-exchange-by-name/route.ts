@@ -1,10 +1,29 @@
 // app/api/shopify/order-exchange-by-name/route.ts
 import { NextResponse } from "next/server";
+import { formatInTimeZone } from "date-fns-tz";
 import { shopifyGraphQL, extractEUSize } from "@/lib/shopifyAdmin";
 import { shouldSkipOrderForFulfillmentMatching } from "@/app/lib/shopifyOrderFulfillmentFilters";
 import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
 
 export const runtime = "nodejs";
+
+const SHOP_TIMEZONE = "Europe/Zurich";
+
+function convertToShopTimezone(utcTimestamp: string): string {
+  return formatInTimeZone(new Date(utcTimestamp), SHOP_TIMEZONE, "yyyy-MM-dd'T'HH:mm:ssXXX");
+}
+
+function isShopifyReturnName(name: string): boolean {
+  return /^#\d+-R\d+$/i.test(name.trim());
+}
+
+/** Shopify return names like #5816-R1 — not searchable as orders; use parent #5816. */
+function resolveOrderNameForExchangeLookup(orderName: string): string {
+  const trimmed = orderName.trim();
+  const parentMatch = trimmed.match(/^(#\d+)-R\d+$/i);
+  if (parentMatch) return parentMatch[1];
+  return trimmed;
+}
 
 const ORDER_ID_QUERY = /* GraphQL */ `
 query OrderIdByName($first: Int!, $query: String!) {
@@ -78,6 +97,27 @@ query OrderExchangeById($orderId: ID!) {
             return {
               id
               name
+              returnLineItems(first: 50) {
+                edges {
+                  node {
+                    ... on ReturnLineItem {
+                      id
+                      quantity
+                      returnReason
+                      fulfillmentLineItem {
+                        lineItem {
+                          id
+                          name
+                          sku
+                          originalUnitPriceSet {
+                            shopMoney { amount currencyCode }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
               exchangeLineItems(first: 50) {
                 edges {
                   node {
@@ -120,7 +160,8 @@ export async function POST(req: Request) {
     }
 
     if (!orderName.startsWith("#")) orderName = `#${orderName}`;
-    const search = `name:${orderName}`;
+    const lookupName = resolveOrderNameForExchangeLookup(orderName);
+    const search = `name:${lookupName}`;
 
     const orderIdRes = await shopifyGraphQL<{
       orders: { edges: { node: { id: string; name: string } }[] };
@@ -135,7 +176,13 @@ export async function POST(req: Request) {
 
     const orderNode = orderIdRes.data?.orders?.edges?.[0]?.node;
     if (!orderNode) {
-      return NextResponse.json({ lineItems: [] });
+      return NextResponse.json({
+        lineItems: [],
+        hint:
+          lookupName !== orderName
+            ? `No order for ${orderName}; parent ${lookupName} also not found.`
+            : `No order found for ${orderName}.`,
+      });
     }
 
     const { data, errors } = await shopifyGraphQL<{ order: any }>(
@@ -181,11 +228,56 @@ export async function POST(req: Request) {
       lineItemMeta.set(li.id, { variantTitle: li.variantTitle ?? null, imageUrl });
     }
 
+    const filterReturnName = isShopifyReturnName(orderName) ? orderName : null;
     const agreements = order.agreements?.edges ?? [];
-    const exchangeLineItems: any[] = [];
+    const exchangeLineItems: {
+      exchangeLineItemId: string | null;
+      lineItem: any;
+      returnHappenedAt: string | null;
+      returnName: string | null;
+    }[] = [];
+    const returnedLineItems: {
+      lineItemId: string;
+      title: string;
+      sku: string | null;
+      quantity: number;
+      totalPrice: string;
+      currencyCode: string;
+      returnName: string | null;
+      shopifyReturnReason: string | null;
+    }[] = [];
+    const seenReturnedLineIds = new Set<string>();
+
     for (const edge of agreements) {
       const node = edge?.node;
       if (node?.__typename !== "ReturnAgreement") continue;
+      const returnName = node?.return?.name ?? null;
+      if (filterReturnName && returnName !== filterReturnName) continue;
+      const returnHappenedAt = node?.happenedAt ?? null;
+
+      const returnEdges = node?.return?.returnLineItems?.edges ?? [];
+      for (const retEdge of returnEdges) {
+        const retNode = retEdge?.node;
+        const li = retNode?.fulfillmentLineItem?.lineItem;
+        if (!li?.id || seenReturnedLineIds.has(li.id)) continue;
+        seenReturnedLineIds.add(li.id);
+        const unit = li.originalUnitPriceSet?.shopMoney;
+        const qty = Number(retNode?.quantity ?? li.quantity ?? 1);
+        const unitAmount = unit?.amount ?? "0";
+        const totalAmount =
+          qty > 0 ? String(Number(unitAmount) * qty) : unitAmount;
+        returnedLineItems.push({
+          lineItemId: li.id,
+          title: li.name ?? "—",
+          sku: li.sku ?? null,
+          quantity: qty,
+          totalPrice: totalAmount,
+          currencyCode: unit?.currencyCode || "CHF",
+          returnName,
+          shopifyReturnReason: retNode?.returnReason ?? null,
+        });
+      }
+
       const exchangeEdges = node?.return?.exchangeLineItems?.edges ?? [];
       for (const exEdge of exchangeEdges) {
         const exNode = exEdge?.node;
@@ -194,6 +286,8 @@ export async function POST(req: Request) {
           exchangeLineItems.push({
             exchangeLineItemId: exNode?.id ?? null,
             lineItem: li,
+            returnHappenedAt,
+            returnName,
           });
         }
       }
@@ -211,12 +305,15 @@ export async function POST(req: Request) {
 
       const meta = lineItemMeta.get(li.id) || { variantTitle: null, imageUrl: null };
       const sizeEU = extractEUSize(meta.variantTitle) ?? extractEUSize(li.name) ?? null;
+      const eventAt = entry.returnHappenedAt || order.createdAt;
+      const createdAt = convertToShopTimezone(eventAt);
 
       return {
         shopifyOrderId: order.id,
         orderId: order.id,
         orderName: order.name,
-        createdAt: order.createdAt,
+        returnName: entry.returnName,
+        createdAt,
         displayFinancialStatus: order.displayFinancialStatus ?? null,
         displayFulfillmentStatus: order.displayFulfillmentStatus ?? null,
         customerEmail,
@@ -241,7 +338,12 @@ export async function POST(req: Request) {
       };
     });
 
-    return NextResponse.json({ lineItems });
+    return NextResponse.json({
+      lineItems,
+      returnedLineItems,
+      resolvedFromReturnName: lookupName !== orderName ? orderName : null,
+      orderName: order.name,
+    });
   } catch (err: any) {
     console.error("[/api/shopify/order-exchange-by-name] error:", err);
     return NextResponse.json(

@@ -4,6 +4,7 @@ import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils"
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { digitsOnlyGtin, sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { attachProcurementToLines } from "@/galaxus/orders/lineProcurement";
+import { resolveGalaxusLineOfferSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
 
 export const runtime = "nodejs";
@@ -130,16 +131,15 @@ function enrichGalaxusOrderLine(
 
   const size = (sizeFromGtin && String(sizeFromGtin).trim()) || line.size || null;
   const rawLineSku = String(line?.supplierSku ?? "").trim();
-  const skuFromCat = skuFromGtin && String(skuFromGtin).trim();
-  /** Galaxus THE_/NER_ prefixes mark warehouse stock; never replace with catalog StockX SKU. */
-  const supplierSku =
-    rawLineSku.startsWith("THE_") || rawLineSku.startsWith("NER_")
-      ? rawLineSku
-      : skuFromCat || rawLineSku || null;
+  const skuFromCat = skuFromGtin ? String(skuFromGtin).trim() : "";
+  const styleSku = skuFromCat || null;
+  const offerSupplierSku = resolveGalaxusLineOfferSupplierSku(line);
+  /** Display: catalog style SKU when known; warehouse NER/THE detection uses offerSupplierSku. */
+  const supplierSku = styleSku || offerSupplierSku || null;
   const sizeRaw =
     (sizeRawFromMap && String(sizeRawFromMap).trim()) || (line.size ? String(line.size).trim() : null) || null;
 
-  return { ...line, productName, size, supplierSku, sizeRaw, catalogPrice };
+  return { ...line, productName, size, supplierSku, styleSku, offerSupplierSku, sizeRaw, catalogPrice };
 }
 
 export async function GET(
@@ -460,6 +460,8 @@ export async function GET(
         size: line.size ?? null,
         sizeRaw: line.sizeRaw ?? null,
         supplierSku: line.supplierSku ?? null,
+        styleSku: line.styleSku ?? null,
+        offerSupplierSku: line.offerSupplierSku ?? null,
         buyerPid: line.buyerPid ?? null,
         warehouseMarkedShippedAt: line.warehouseMarkedShippedAt ?? null,
         procurement: line.procurement ?? { ok: false, source: null, stockxOrderNumber: null, stockxOrderId: null, awb: null },

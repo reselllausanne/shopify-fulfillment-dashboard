@@ -410,15 +410,13 @@ export default function PartnerCatalogPage() {
                 <td className="px-2 py-2">
                   {row.owned ? (
                     <div className="flex flex-wrap gap-2">
-                      {isNer ? (
-                        <button
-                          type="button"
-                          className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-800"
-                          onClick={() => setDetailVariantId(row.supplierVariantId)}
-                        >
-                          Product data
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-800"
+                        onClick={() => setDetailVariantId(row.supplierVariantId)}
+                      >
+                        Product data
+                      </button>
                       <button
                         className="rounded-full bg-[#55b3f3] px-3 py-1 text-xs font-semibold text-slate-950 disabled:opacity-50"
                         onClick={() => saveInline(row)}
@@ -464,6 +462,7 @@ export default function PartnerCatalogPage() {
       <PartnerProductDataModal
         open={detailVariantId != null}
         supplierVariantId={detailVariantId}
+        isNer={isNer}
         onClose={() => setDetailVariantId(null)}
         onSaved={() => void loadItems(offset, "replace")}
       />

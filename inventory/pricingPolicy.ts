@@ -94,9 +94,17 @@ function extractNumericSizes(input: string): number[] {
   return values;
 }
 
+/**
+ * Liquidation titles carry "%" as a suffix marker on the product name, e.g.
+ * `Jordan 4 … (Women's) % - 38.5` or `Nike Dunk 20%`.
+ * Not composition in the middle (`100% cotton`).
+ */
 export function isLiquidationProductTitle(title: string | null | undefined): boolean {
   if (!title) return false;
-  return /%\s*$/.test(title.trim());
+  const t = title.trim();
+  if (/\s%\s*-\s/.test(t)) return true;
+  if (/%\s*$/.test(t)) return true;
+  return false;
 }
 
 export function isPlusSizeProduct(input: ProductClassificationInput): boolean {

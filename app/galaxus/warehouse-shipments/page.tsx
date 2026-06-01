@@ -24,6 +24,7 @@ type EligibleLine = {
   supplierPid: string | null;
   buyerPid: string | null;
   gtin: string | null;
+  supplierVariantId?: string | null;
   quantity: number;
   unitNetPrice: number | string | null;
   priceLineAmount: number | string | null;
@@ -163,7 +164,13 @@ function displaySize(line: EligibleLine): string {
 
 function displaySku(line: EligibleLine): string {
   const s = String(line.supplierSku ?? "").trim();
-  return s || "-";
+  if (s) return s;
+  const rawId = String(line.supplierVariantId ?? "").trim();
+  if (!rawId) return "-";
+  const lower = rawId.toLowerCase();
+  if (lower.startsWith("ner:")) return rawId.slice(4) || rawId;
+  if (lower.startsWith("ner_")) return rawId.slice(4) || rawId;
+  return rawId;
 }
 
 function isDirectDelivery(order: { deliveryType?: string | null }): boolean {

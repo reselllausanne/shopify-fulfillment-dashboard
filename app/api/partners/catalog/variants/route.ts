@@ -276,15 +276,43 @@ export async function POST(req: NextRequest) {
     }
 
     if (!isNer) {
-      const allowedKeys = new Set(["supplierVariantId", "price", "stock"]);
-      const invalid = updates.find((entry) =>
-        Object.keys(entry).some((key) => !allowedKeys.has(key))
-      );
-      if (invalid) {
-        return NextResponse.json(
-          { ok: false, error: "Only price and stock updates are allowed." },
-          { status: 403 }
-        );
+      // Non-NER partners may edit their own product data (GTIN, images, brand, etc.)
+      // for OWNED rows; internal sync/manual-lock fields stay restricted.
+      const partnerAllowedKeys = new Set([
+        "supplierVariantId",
+        "price",
+        "stock",
+        "gtin",
+        "providerKey",
+        "supplierSku",
+        "supplierBrand",
+        "supplierProductName",
+        "supplierGender",
+        "supplierColorway",
+        "sizeRaw",
+        "sizeNormalized",
+        "weightGrams",
+        "images",
+        "sourceImageUrl",
+        "hostedImageUrl",
+        "leadTimeDays",
+        "manualNote",
+      ]);
+      for (const entry of updates) {
+        const id = String(entry.supplierVariantId ?? "").trim();
+        if (id && !partnerOwnsSupplierVariant(id, session.partnerKey)) {
+          return NextResponse.json(
+            { ok: false, error: "Forbidden: row not owned by partner", supplierVariantId: id },
+            { status: 403 }
+          );
+        }
+        const badKey = Object.keys(entry).find((key) => !partnerAllowedKeys.has(key));
+        if (badKey) {
+          return NextResponse.json(
+            { ok: false, error: `Field "${badKey}" is not editable for partner accounts.` },
+            { status: 403 }
+          );
+        }
       }
     }
 

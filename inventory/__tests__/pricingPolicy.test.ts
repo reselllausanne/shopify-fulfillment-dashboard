@@ -10,6 +10,12 @@ describe("inventory pricing policy", () => {
   it("detects liquidation title suffix", () => {
     expect(isLiquidationProductTitle("Nike Dunk 20%")).toBe(true);
     expect(isLiquidationProductTitle("Nike 100% cotton tee")).toBe(false);
+    expect(
+      isLiquidationProductTitle("Jordan 4 Retro Vivid Sulfur (Women's) % - 38.5")
+    ).toBe(true);
+    expect(
+      isLiquidationProductTitle("Nike Air Max 95 OG Big Bubble 100% Authentic - 42")
+    ).toBe(false);
   });
 
   it("detects plus-size from EU sizing", () => {

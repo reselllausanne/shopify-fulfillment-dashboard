@@ -99,16 +99,16 @@ export function resolveEffectivePrice(
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
-  if (manualLock && manualPrice && manualPrice > 0) {
-    return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
-  }
+  const supplierKey = extractDecathlonSupplierKey(candidate);
   const buyNow = resolveDecathlonBuyNow({
     buyNowStockx: parseDecimal(variant?.price),
     manualOverride: manualPrice,
     manualLock,
   });
+  if (manualLock && manualPrice && manualPrice > 0) {
+    return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
+  }
   if (!buyNow || buyNow <= 0) return null;
-  const supplierKey = extractDecathlonSupplierKey(candidate);
   const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(buyNow, supplierKey);
   if (!base || base <= 0) return null;
   return applyPricingPolicy(base);

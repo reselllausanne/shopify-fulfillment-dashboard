@@ -25,7 +25,6 @@ const CRITICAL_AGE_DAYS = 7;
 const isExcludedNoTracking = (sku: string | null, title: string) => {
   if (sku && EXCLUDED_SKUS.includes(sku)) return true;
   if (isLiquidationShopifyTitle(title)) return true;
-  if (/liquidation/i.test(title)) return true;
   return false;
 };
 

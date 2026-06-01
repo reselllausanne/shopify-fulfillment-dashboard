@@ -1,3 +1,8 @@
+import {
+  decathlonEstimatedPayoutFromSellTtc,
+  decathlonEstimatedPayoutRate,
+} from "@/decathlon/orders/margin";
+
 export const DECATHLON_COMMISSION_RATE = 0.17;
 export const DECATHLON_VAT_RATE = 0.081;
 /** Per-pair fulfilment / ops lump in CHF (not Mirakl fees). */
@@ -24,8 +29,22 @@ export const DECATHLON_MARGIN_RULE_ADD_PP = 0;
  * Extra margin-on-buy percentage points applied **only to STX products** on top of the base margin.
  * Default `0` = same "normal" margin as non-partner Decathlon products (legacy behavior before STX uplift).
  * Override with `DECATHLON_STX_MARGIN_BUMP_PP` env var.
+ * @deprecated STX list price uses {@link computeDecathlonStxOfferListPrice} (return-adjusted net target).
  */
 export const DECATHLON_STX_MARGIN_BUMP_PP = 0;
+
+/** STX Decathlon export: margin on buy (default 20% = base 15% + 5pp). Override: `DECATHLON_STX_MARGIN_ON_BUY`. */
+export const DEFAULT_DECATHLON_STX_MARGIN_ON_BUY = 0.2;
+/** Max Mirakl list TTC for STX (ceiling only). Default 200 CHF. */
+export const DECATHLON_STX_MAX_LIST_PRICE_CHF = 200;
+/** Target net CHF per gross sale on (buy + fulfil), after modeled returns. Default 5%. */
+export const DECATHLON_STX_TARGET_NET_ON_CASH = 0.05;
+/** Modeled return rate on gross STX sales (e.g. 42/240 ≈ 0.175). */
+export const DECATHLON_STX_RETURN_RATE = 42 / 240;
+/** Share of returns treated as dead stock (buy + fulfil lost). */
+export const DECATHLON_STX_RETURN_DEAD_FRACTION = 0.9;
+/** Share of returns eventually resold (second fulfil). */
+export const DECATHLON_STX_RETURN_RESELL_FRACTION = 0.1;
 
 const MARGIN_RULE_ADD_PP_ENV_KEYS = ["DECATHLON_MARGIN_RULE_ADD_PP"];
 
@@ -50,10 +69,10 @@ function bumpMarginFraction(fraction: number): number {
 
 /**
  * Default target margin-on-buy for Decathlon standard rows.
- * 0.1255 = 12.55%.
- * Override with `DECATHLON_MARGIN_ON_BUY` (e.g. `0.12` for 12% on cost).
+ * 0.15 = 15% on buy.
+ * Override with `DECATHLON_MARGIN_ON_BUY` (e.g. `0.18` for 18% on cost).
  */
-export const DEFAULT_DECATHLON_MARGIN_ON_BUY = 0.1255;
+export const DEFAULT_DECATHLON_MARGIN_ON_BUY = 0.15;
 
 /** Target margin on StockX/DB buy, e.g. `DECATHLON_MARGIN_ON_BUY=0.12` for 12% (before global rule bump). */
 const MARGIN_ON_BUY_ENV_KEYS = ["DECATHLON_MARGIN_ON_BUY", "DECATHLON_TARGET_MARGIN_ON_BUY"];
@@ -148,13 +167,189 @@ function readDecathlonStxMarginBumpPp(): number {
   return DECATHLON_STX_MARGIN_BUMP_PP;
 }
 
-/**
- * Returns the `marginOnBuy` fraction to pass as an override for STX products.
- * = base margin + STX-specific bump. The global +1pp bump is applied on top
- * inside `computeDecathlonOfferListPriceFromMarginOnBuy`.
- */
+const STX_MARGIN_ON_BUY_ENV_KEYS = ["DECATHLON_STX_MARGIN_ON_BUY"];
+
+function readDecathlonStxMarginOnBuyFraction(): number {
+  for (const key of STX_MARGIN_ON_BUY_ENV_KEYS) {
+    const raw = process.env[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const parsed = Number.parseFloat(String(raw));
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) continue;
+    return parsed > 1 ? parsed / 100 : parsed;
+  }
+  return DEFAULT_DECATHLON_STX_MARGIN_ON_BUY + readDecathlonStxMarginBumpPp();
+}
+
+/** STX `marginOnBuy` for {@link computeDecathlonOfferListPriceFromMarginOnBuy}. */
 export function resolveDecathlonStxMarginOnBuy(): number {
-  return readDecathlonMarginOnBuyFraction() + readDecathlonStxMarginBumpPp();
+  return readDecathlonStxMarginOnBuyFraction();
+}
+
+function readDecathlonStxTargetNetOnCash(): number {
+  const raw = process.env.DECATHLON_STX_TARGET_NET_ON_CASH;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 0.5) {
+      return parsed > 1 ? parsed / 100 : parsed;
+    }
+  }
+  return DECATHLON_STX_TARGET_NET_ON_CASH;
+}
+
+function readDecathlonStxMaxListPriceChf(): number {
+  const raw = process.env.DECATHLON_STX_MAX_LIST_PRICE_CHF;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DECATHLON_STX_MAX_LIST_PRICE_CHF;
+}
+
+function readDecathlonStxReturnRate(): number {
+  const raw = process.env.DECATHLON_STX_RETURN_RATE;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed < 1) return parsed;
+  }
+  return DECATHLON_STX_RETURN_RATE;
+}
+
+function readDecathlonStxReturnDeadFraction(): number {
+  const raw = process.env.DECATHLON_STX_RETURN_DEAD_FRACTION;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+  }
+  return DECATHLON_STX_RETURN_DEAD_FRACTION;
+}
+
+function readDecathlonStxReturnResellFraction(): number {
+  const raw = process.env.DECATHLON_STX_RETURN_RESELL_FRACTION;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) return parsed;
+  }
+  return DECATHLON_STX_RETURN_RESELL_FRACTION;
+}
+
+export type DecathlonStxReturnModel = {
+  returnRate: number;
+  deadFraction: number;
+  resellFraction: number;
+  fixedCost: number;
+  commissionRate: number;
+  vatRate: number;
+};
+
+/**
+ * Net CHF per gross STX sale attempt (one pair listed/sold), after modeled returns.
+ * Positive = profit on cash cycle; negative = loss per attempt.
+ */
+export function computeDecathlonStxNetPerSaleAttempt(
+  sellTtc: number,
+  buyPrice: number,
+  model?: Partial<DecathlonStxReturnModel>
+): number | null {
+  if (!Number.isFinite(sellTtc) || sellTtc <= 0) return null;
+  if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
+
+  const returnRate = model?.returnRate ?? readDecathlonStxReturnRate();
+  const deadFraction = model?.deadFraction ?? readDecathlonStxReturnDeadFraction();
+  const resellFraction = model?.resellFraction ?? readDecathlonStxReturnResellFraction();
+  const fixedCost = model?.fixedCost ?? DECATHLON_FIXED_COST_CHF;
+  const commissionRate = model?.commissionRate ?? DECATHLON_COMMISSION_RATE;
+  const vatRate = model?.vatRate ?? DECATHLON_VAT_RATE;
+
+  if (returnRate < 0 || returnRate >= 1) return null;
+  if (deadFraction < 0 || deadFraction > 1) return null;
+  if (resellFraction < 0 || resellFraction > 1) return null;
+
+  const payoutPerSell = decathlonEstimatedPayoutFromSellTtc(sellTtc);
+  if (payoutPerSell == null) return null;
+
+  const kept = (1 - returnRate) * (payoutPerSell - buyPrice - fixedCost);
+  const dead = -returnRate * deadFraction * (buyPrice + fixedCost);
+  const resell = returnRate * resellFraction * (payoutPerSell - buyPrice - 2 * fixedCost);
+  const net = kept + dead + resell;
+  return Number.isFinite(net) ? net : null;
+}
+
+/** Payout − buy − fulfil on a kept sale (no return). */
+export function computeDecathlonStxPocketPerKeptSale(
+  sellTtc: number,
+  buyPrice: number,
+  fixedCost: number = DECATHLON_FIXED_COST_CHF
+): number | null {
+  const payout = decathlonEstimatedPayoutFromSellTtc(sellTtc);
+  if (payout == null) return null;
+  if (!Number.isFinite(buyPrice) || buyPrice <= 0) return null;
+  return payout - buyPrice - fixedCost;
+}
+
+/**
+ * Min sell TTC so a **kept** sale covers buy + fulfil after Decathlon fees (−17% / −8%).
+ */
+export function computeDecathlonStxMinSellForKeptBreakeven(
+  buyNow: number,
+  fixedCost: number = DECATHLON_FIXED_COST_CHF
+): number | null {
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+  const rate = decathlonEstimatedPayoutRate();
+  if (!Number.isFinite(rate) || rate <= 0) return null;
+  return (buyNow + fixedCost) / rate;
+}
+
+export type DecathlonStxPricingGuide = {
+  buyNow: number;
+  /** Kept sale covers buy + fixed cost after Decathlon fees. */
+  breakEvenSellTtc: number | null;
+  /** For simple mode, same as recommended list. */
+  sellForTargetNetTtc: number | null;
+  /** Price to push Mirakl. */
+  recommendedListTtc: number | null;
+  listableUnderCap: true;
+};
+
+/** Break-even + recommended list for one STX buy (simple mode). */
+export function computeDecathlonStxPricingGuide(buyNow: number): DecathlonStxPricingGuide | null {
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+
+  const breakEvenSellTtc = computeDecathlonStxMinSellForKeptBreakeven(
+    buyNow,
+    DECATHLON_FIXED_COST_CHF
+  );
+  if (breakEvenSellTtc == null) return null;
+  const recommendedListTtc = computeDecathlonStxOfferListPrice(buyNow);
+  if (recommendedListTtc == null) return null;
+
+  return {
+    buyNow,
+    breakEvenSellTtc: roundToIncrement(breakEvenSellTtc, DECATHLON_PRICE_ROUND_TO),
+    sellForTargetNetTtc: recommendedListTtc,
+    recommendedListTtc,
+    listableUnderCap: true,
+  };
+}
+
+export function isDecathlonStxListableBuy(buyNow: number): boolean {
+  return computeDecathlonStxOfferListPrice(buyNow) != null;
+}
+
+/**
+ * STX simple list TTC:
+ * `sell = (buy + buy*20% + 13) / retainedRate`
+ * No cap, no return model.
+ */
+export function computeDecathlonStxOfferListPrice(
+  buyNow: number,
+  overrides?: DecathlonSalePriceOverrides
+): number | null {
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+  return computeDecathlonOfferListPriceFromMarginOnBuy(buyNow, {
+    ...overrides,
+    fixedCost: overrides?.fixedCost ?? DECATHLON_FIXED_COST_CHF,
+    marginOnBuy: overrides?.marginOnBuy ?? readDecathlonStxMarginOnBuyFraction(),
+  });
 }
 
 /**
@@ -261,7 +456,7 @@ function computeDecathlonOfferListPriceTiered(
 
 /**
  * Mirakl offer list TTC from buy (`buyNow`).
- * Default: **margin on buy** + {@link DECATHLON_FIXED_COST_CHF} (7) + retained-rate gross-up.
+ * Default: **margin on buy** (15%) + fixed-cost + retained-rate gross-up.
  * Legacy tiered net-on-list: set env `DECATHLON_PRICING_MODE=tiered`.
  */
 export function computeDecathlonOfferListPriceFromBuyNow(
@@ -282,7 +477,8 @@ export function computeDecathlonOfferListPriceFromBuyNow(
  * Supplier-aware Mirakl list TTC from DB buy (`buyNow`):
  * - **NER**: `buy / 0.75` (partner slice on list)
  * - **THE**: loss fraction on buy (default 15%)
- * - **STX** and others: margin-on-buy (default 12.55%) + fixed fulfilment
+ * - **STX**: margin-on-buy (default 20%) + fixed fulfilment
+ * - **others**: margin-on-buy (default 15%) + fixed fulfilment
  */
 export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
   buyNow: number,
@@ -297,10 +493,7 @@ export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
     return computeDecathlonOfferListPriceFromLossFraction(buyNow, overrides);
   }
   if (sk === DECATHLON_STX_SUPPLIER_KEY) {
-    return computeDecathlonOfferListPriceFromMarginOnBuy(buyNow, {
-      ...overrides,
-      marginOnBuy: overrides?.marginOnBuy ?? DEFAULT_DECATHLON_MARGIN_ON_BUY,
-    });
+    return computeDecathlonStxOfferListPrice(buyNow, overrides);
   }
   return computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
 }
@@ -399,12 +592,12 @@ function readDecathlonManualListSurchargeChf(): number {
     const parsed = Number.parseFloat(String(raw));
     if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   }
-  return 25;
+  return 0;
 }
 
 /**
  * Decathlon Mirakl offer `price` when the variant uses a DB manual (locked) list price: that value is your
- * intended sell TTC; we add a flat CHF buffer (default 25) for marketplace take — no margin formula on top.
+ * intended sell TTC; optional surcharge defaults to 0.
  */
 export function decathlonOfferListPriceFromManualLockedPrice(manualListPriceTtc: number): number {
   const surcharge = readDecathlonManualListSurchargeChf();

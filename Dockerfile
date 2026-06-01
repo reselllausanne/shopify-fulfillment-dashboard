@@ -4,6 +4,7 @@
 FROM node:20-bookworm-slim
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
@@ -22,9 +23,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
     npm install --include=dev
 
-# Only browsers you use (saves vs full install). Add webkit if needed.
-RUN --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked \
-    npx playwright install --with-deps chromium firefox
+# Install browser binaries inside image (runtime can launch without reinstall).
+RUN mkdir -p /ms-playwright \
+    && npx playwright install --with-deps chromium
 
 COPY . .
 

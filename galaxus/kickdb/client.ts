@@ -124,7 +124,7 @@ function normalizeBrandForChart(value?: string | null): string | null {
   if (!value) return null;
   const lower = value.toLowerCase();
   if (lower.includes("yeezy") && lower.includes("slide")) return "yeezyslide";
-  if (lower.includes("yeezy") || lower.includes("yeez")) return "adidas";
+  if (lower.includes("yeezy") || lower.includes("yeez") || lower.includes("yzy")) return "adidas";
   if (lower.includes("jordan")) return "air jordan";
   return lower;
 }

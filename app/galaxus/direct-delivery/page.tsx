@@ -529,7 +529,9 @@ export default function GalaxusDirectDeliveryPage() {
                             Supplier PID: {line.supplierPid ?? "—"}
                           </div>
                           <div className="text-gray-500">
-                            Size raw: {line.sizeRaw ?? "—"} · Size: {line.size ?? "—"} · SKU: {line.supplierSku ?? "—"} ·
+                            Size raw: {line.sizeRaw ?? "—"} · Size: {line.size ?? "—"} · Style:{" "}
+                            {line.styleSku ?? line.supplierSku ?? "—"} · Offer:{" "}
+                            {line.offerSupplierSku ?? line.providerKey ?? "—"} ·
                             Qty: {line.quantity}
                           </div>
                           <div className="text-gray-500">Sell price: {priceText}</div>

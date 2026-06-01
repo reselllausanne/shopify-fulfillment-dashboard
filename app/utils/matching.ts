@@ -60,7 +60,7 @@ export function isShopifyFinancialRefunded(displayFinancialStatus: string | null
   return fin.includes("REFUND");
 }
 
-/** Liquidation convention: "%" at end of title only (not e.g. "100% cotton" mid-string). */
+/** Liquidation: "%" before " - {size}" or at title end — not mid-string (e.g. "100% cotton"). */
 export function isLiquidationShopifyTitle(title: string | null | undefined): boolean {
   return isLiquidationProductTitle(title);
 }
@@ -114,7 +114,7 @@ function normalizeBrandForChart(value?: string | null): string | null {
   if (!value) return null;
   const lower = value.toLowerCase();
   if (lower.includes("yeezy") && lower.includes("slide")) return "yeezyslide";
-  if (lower.includes("yeezy") || lower.includes("yeez")) return "adidas";
+  if (lower.includes("yeezy") || lower.includes("yeez") || lower.includes("yzy")) return "adidas";
   if (lower.includes("jordan")) return "air jordan";
   return lower;
 }
@@ -160,6 +160,8 @@ function inferSizeSystem(value: string): "EU" | "US" | null {
   if (/(^|[^A-Z])(\d+(\.\d+)?)(Y|GS)\b/.test(upper)) return "US";
   if (upper.includes("EU")) return "EU";
   if (upper.includes("US")) return "US";
+  // Adidas-style EU (e.g. Shopify variant "41 1/3" without EU prefix)
+  if (/\d+\s+\d+\s*\/\s*\d+/.test(value) || /\d+\s+2\/3/.test(value)) return "EU";
   return null;
 }
 
@@ -184,7 +186,7 @@ function inferBrandFromTitle(...titles: Array<string | null | undefined>): strin
     const lower = title.toLowerCase();
     if (!lower) continue;
     if (lower.includes("jordan")) return "air jordan";
-    if (lower.includes("yeezy")) return "adidas";
+    if (lower.includes("yeezy") || lower.includes("yzy")) return "adidas";
     for (const brand of brandList) {
       if (lower.includes(brand)) return brand;
     }
@@ -210,13 +212,15 @@ function buildSizeMatchContext(
 
 function cleanShopifyTitleForMatch(title: string): string {
   return title
+    // Remove liquidation "%" before size suffix: " … % - 38.5"
+    .replace(/\s+%\s*-\s*(EU\s*)?\d+(\.\d+)?\s*$/i, "")
     // Remove trailing numeric size: " - 49.5", " - EU 49.5", etc.
     .replace(/\s*-\s*(EU\s*)?\d+(\.\d+)?\s*$/i, "")
     // Remove trailing composite letter sizes: " - L/XL", " - S/M", " - 2XL/3XL"
     .replace(/\s*-\s*[A-Z0-9]+(?:\/[A-Z0-9]+)+\s*$/i, "")
     // Remove trailing letter size: " - L", " - XL", " - One Size", " - OS"
     .replace(/\s*-\s*(XXS|XS|S|M|L|XL|XXL|XXXL|One Size|OS|EU\s*\d+(\.\d+)?)\s*$/i, "")
-    // Remove trailing %
+    // Remove trailing liquidation "%": "Nike Dunk 20%"
     .replace(/\s*%\s*$/i, "")
     .trim();
 }

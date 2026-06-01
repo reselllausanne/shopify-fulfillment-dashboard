@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CreateProductModal } from "./CreateProductModal";
 
 type PartnerInfo = {
   id: string;
@@ -52,6 +53,8 @@ export default function PartnerDashboardPage() {
   const [pendingEnrichCount, setPendingEnrichCount] = useState<number>(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createMode, setCreateMode] = useState<"custom" | "from-db">("custom");
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
   const [totalSaleFeedChf, setTotalSaleFeedChf] = useState<number | null>(null);
   const [totalGalaxusSaleChf, setTotalGalaxusSaleChf] = useState<number | null>(null);
@@ -338,6 +341,46 @@ export default function PartnerDashboardPage() {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Add a single product</div>
+            <div className="text-xs text-slate-500">
+              Faster than a CSV when you only need to publish one offer. Use an existing DB
+              product as a base, or build a fully custom product (works for new releases
+              without a StockX page).
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-full border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 hover:border-[#55b3f3]"
+              onClick={() => {
+                setCreateMode("from-db");
+                setCreateOpen(true);
+              }}
+            >
+              Add offer from DB
+            </button>
+            <button
+              type="button"
+              className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold text-slate-950"
+              onClick={() => {
+                setCreateMode("custom");
+                setCreateOpen(true);
+              }}
+            >
+              Create custom product
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] text-slate-500 leading-snug">
+          With a valid GTIN the variant is created as <code>SUPPLIER_GTIN</code> (ready for
+          Galaxus / Decathlon after marking ready in Catalog → Product data). Without GTIN it
+          is saved as <code>PENDING_GTIN</code> draft and stays in your catalog only.
+        </p>
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
           <div className="flex items-start justify-between gap-3">
@@ -507,6 +550,14 @@ export default function PartnerDashboardPage() {
         )}
       </div>
 
+      <CreateProductModal
+        open={createOpen}
+        initialMode={createMode}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => {
+          void loadHistory();
+        }}
+      />
     </div>
   );
 }

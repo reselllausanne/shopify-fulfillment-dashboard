@@ -1694,11 +1694,19 @@ export default function DecathlonOrdersPage() {
                             </div>
                           ) : null}
                           {lineOk && lineMargin ? (
-                            <div className="text-gray-700 font-medium">
-                              Marge: CHF {lineMargin.margin.toFixed(2)}
-                              {lineMargin.marginPercentOfLineAfter != null
-                                ? ` · ${lineMargin.marginPercentOfLineAfter.toFixed(1)}% du payout`
-                                : ""}
+                            <div className="text-gray-700 font-medium space-y-0.5">
+                              <div>
+                                Marge (payout − StockX): CHF {lineMargin.margin.toFixed(2)}
+                                {lineMargin.marginPercentOfLineAfter != null
+                                  ? ` · ${lineMargin.marginPercentOfLineAfter.toFixed(1)}% du payout`
+                                  : ""}
+                              </div>
+                              <div className="text-gray-600 text-[10px] font-normal">
+                                Pocket (~−13 exp.): CHF {lineMargin.pocketAfterFulfilment.toFixed(2)}
+                                {lineMargin.pocketPercentOfLineAfter != null
+                                  ? ` · ${lineMargin.pocketPercentOfLineAfter.toFixed(1)}% du payout`
+                                  : ""}
+                              </div>
                             </div>
                           ) : null}
                           {costVsCatalog != null && Number.isFinite(costVsCatalog) ? (

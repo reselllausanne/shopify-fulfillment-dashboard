@@ -23,7 +23,7 @@ describe("mirakl deltas", () => {
   it("resolves manual stock and price overrides", () => {
     const candidate = makeCandidate();
     expect(resolveEffectiveStock(candidate)).toBe(5);
-    expect(resolveEffectivePrice(candidate)).toBe("145.00");
+    expect(resolveEffectivePrice(candidate)).toBe("120.00");
   });
 
   it("does not emit updates when values are unchanged", () => {
@@ -34,7 +34,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 5,
-          lastPrice: "145.00",
+          lastPrice: "120.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -53,7 +53,7 @@ describe("mirakl deltas", () => {
         {
           providerKey: "NER_1234567890123",
           lastStock: 2,
-          lastPrice: "145.00",
+          lastPrice: "120.00",
           offerCreatedAt: new Date(),
         },
       ],
@@ -63,7 +63,7 @@ describe("mirakl deltas", () => {
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
   });
 
-  it("uses buy/0.75 for NER rows", () => {
+  it("uses partner /0.75 rule for NER rows", () => {
     const candidate = makeCandidate({
       providerKey: "NER_1234567890123",
       variant: {
@@ -78,7 +78,7 @@ describe("mirakl deltas", () => {
     expect(resolveEffectivePrice(candidate, new Set())).toBe("133.33");
   });
 
-  it("uses loss pricing for THE rows", () => {
+  it("uses loss-fraction rule for THE rows", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -93,7 +93,7 @@ describe("mirakl deltas", () => {
     expect(resolveEffectivePrice(candidate, new Set())).toBe("112.01");
   });
 
-  it("keeps THE loss pricing when partner set includes THE", () => {
+  it("keeps THE loss-fraction rule when partner set includes THE", () => {
     const candidate = makeCandidate({
       providerKey: "THE_1234567890123",
       variant: {
@@ -108,7 +108,7 @@ describe("mirakl deltas", () => {
     expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("112.01");
   });
 
-  it("uses 12.55% margin path for STX rows", () => {
+  it("STX high buy stays priced by simple rule", () => {
     const candidate = makeCandidate({
       providerKey: "STX_1234567890123",
       variant: {
@@ -120,7 +120,23 @@ describe("mirakl deltas", () => {
         price: 180.44,
       },
     });
-    expect(resolveEffectivePrice(candidate, new Set())).toBe("286.18");
+    expect(resolveEffectivePrice(candidate, new Set())).toBe("292.03");
+  });
+
+  it("uses same simple rule for STX normal buy", () => {
+    const candidate = makeCandidate({
+      providerKey: "STX_1234567890123",
+      variant: {
+        supplierVariantId: "stx_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 106.47,
+      },
+    });
+    const price = resolveEffectivePrice(candidate, new Set());
+    expect(price).toBe("179.37");
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {

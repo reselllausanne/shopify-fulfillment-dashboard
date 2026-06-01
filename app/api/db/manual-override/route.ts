@@ -87,8 +87,15 @@ export async function POST(req: NextRequest) {
       manualRevenueAdjustment !== undefined && manualRevenueAdjustment !== null
         ? Number(manualRevenueAdjustment)
         : Number(existingMatch.manualRevenueAdjustment || 0);
-    const effectiveRevenue =
-      returnReason && returnFeeAmountChf !== null
+    const exchangeReturnedFullReversal =
+      manualCaseStatus === "RETURNED" &&
+      returnReason === "EXCHANGE" &&
+      manualRevenueAdjustment !== undefined &&
+      manualRevenueAdjustment !== null &&
+      resolvedRevenueAdjustment < 0;
+    const effectiveRevenue = exchangeReturnedFullReversal
+      ? revenue + resolvedRevenueAdjustment
+      : returnReason && returnFeeAmountChf !== null
         ? returnFeeAmountChf
         : revenue + resolvedRevenueAdjustment;
     const supplierCostValue =

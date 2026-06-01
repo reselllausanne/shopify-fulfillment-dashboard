@@ -28,10 +28,31 @@ export function isNerWarehouseSupplierSku(sku: string | null | undefined): boole
   return /^NER_/i.test(String(sku ?? "").trim());
 }
 
-export function galaxusLineWarehouseStockHint(line: { supplierSku?: string | null }): GalaxusWarehouseStockHint | null {
-  const sku = String(line?.supplierSku ?? "").trim();
-  if (!sku) return null;
-  if (isTheWarehouseSupplierSku(sku)) return "MAISON";
-  if (isNerWarehouseSupplierSku(sku)) return "NER_STOCK";
+/** Galaxus offer SKU (NER_/THE_ prefix or providerKey), not catalog style id. */
+export function resolveGalaxusLineOfferSupplierSku(line: {
+  supplierSku?: string | null;
+  providerKey?: string | null;
+}): string | null {
+  const rawLineSku = String(line?.supplierSku ?? "").trim();
+  const providerKey = String(line?.providerKey ?? "").trim();
+  if (isTheWarehouseSupplierSku(rawLineSku) || isNerWarehouseSupplierSku(rawLineSku)) return rawLineSku;
+  if (isTheWarehouseSupplierSku(providerKey) || isNerWarehouseSupplierSku(providerKey)) return providerKey;
+  return rawLineSku || providerKey || null;
+}
+
+export function galaxusLineWarehouseStockHint(line: {
+  supplierSku?: string | null;
+  providerKey?: string | null;
+  offerSupplierSku?: string | null;
+}): GalaxusWarehouseStockHint | null {
+  const offer =
+    String(line?.offerSupplierSku ?? "").trim() ||
+    resolveGalaxusLineOfferSupplierSku({
+      supplierSku: line.supplierSku,
+      providerKey: line.providerKey,
+    });
+  if (!offer) return null;
+  if (isTheWarehouseSupplierSku(offer)) return "MAISON";
+  if (isNerWarehouseSupplierSku(offer)) return "NER_STOCK";
   return null;
 }

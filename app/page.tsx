@@ -175,6 +175,12 @@ export default function Home() {
   } | null>(null);
   const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
   const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
+  const [unlinkedAlert, setUnlinkedAlert] = useState<{
+    count: number;
+    items: any[];
+  } | null>(null);
+  const [unlinkedAlertLoading, setUnlinkedAlertLoading] = useState(false);
+  const [unlinkedAlertError, setUnlinkedAlertError] = useState<string | null>(null);
   const [goatDebugLoading, setGoatDebugLoading] = useState(false);
   const [goatDebugResult, setGoatDebugResult] = useState<string | null>(null);
   const [stockxLoginLoading, setStockxLoginLoading] = useState(false);
@@ -218,6 +224,27 @@ export default function Home() {
     }
   };
 
+  const loadUnlinkedAlert = async () => {
+    setUnlinkedAlertLoading(true);
+    setUnlinkedAlertError(null);
+    try {
+      const res = await fetch("/api/notifications/unlinked-orders");
+      const data = await res.json();
+      if (res.ok && data?.ok) {
+        setUnlinkedAlert({
+          count: data.count || 0,
+          items: data.items || [],
+        });
+      } else {
+        setUnlinkedAlertError(data?.error || "Failed to load unlinked orders");
+      }
+    } catch (error: any) {
+      setUnlinkedAlertError(error?.message || "Failed to load unlinked orders");
+    } finally {
+      setUnlinkedAlertLoading(false);
+    }
+  };
+
   const runOrderTest = async () => {
     setOrderTestLoading(true);
     setOrderTestResult(null);
@@ -246,8 +273,25 @@ export default function Home() {
     }
     setExchangeOrderLoading(true);
     try {
-      await loadExchangeOrderByName(exchangeOrderName.trim());
-      alert(`✅ Loaded exchange line items for ${exchangeOrderName.trim()}`);
+      const outcome = await loadExchangeOrderByName(exchangeOrderName.trim());
+      if (!outcome) return;
+      const saveMsg =
+        outcome.saved > 0
+          ? `\nAuto-saved ${outcome.saved} HIGH match(es) to DB.`
+          : outcome.noHighMatch
+          ? "\nNo HIGH confidence match to auto-save."
+          : outcome.failed > 0
+          ? `\nAuto-save failed for ${outcome.failed} line(s) (missing cost?).`
+          : "";
+      const returnedMsg =
+        outcome.returnedMarked > 0
+          ? `\nMarked ${outcome.returnedMarked} returned line(s): RETURNED + stock + negative revenue.`
+          : outcome.returnedSkipped > 0
+          ? `\nReturned line not updated (${outcome.returnedSkipped} — no prior DB match?).`
+          : "";
+      alert(
+        `✅ Loaded ${outcome.itemCount} exchange line item(s) for ${exchangeOrderName.trim()}${saveMsg}${returnedMsg}`
+      );
     } catch (err: any) {
       alert(`❌ Failed to load exchange order:\n\n${err?.message || "Unknown error"}`);
     } finally {
@@ -427,6 +471,7 @@ export default function Home() {
 
   useEffect(() => {
     loadTrackingAlert();
+    loadUnlinkedAlert();
   }, []);
 
   const formatDate = (value?: string | null) => {
@@ -1175,6 +1220,44 @@ export default function Home() {
           </nav>
         </div>
 
+        {(unlinkedAlert?.items?.length > 0 || unlinkedAlertError) && (
+          <div className="mb-6 border rounded-lg p-4 bg-orange-50 border-orange-300">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-orange-900">
+                ⚠️ Unlinked Shopify lines (last 50 orders, no supplier / AWB):{" "}
+                {unlinkedAlert?.count ?? 0}
+              </div>
+              <button
+                onClick={loadUnlinkedAlert}
+                disabled={unlinkedAlertLoading}
+                className="text-xs px-2 py-1 bg-orange-200 text-orange-900 rounded hover:bg-orange-300 disabled:opacity-60"
+              >
+                {unlinkedAlertLoading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-orange-800">
+              Fulfillable lines without a DB match. Excludes liquidation and in-stock hoodies.
+            </p>
+            {unlinkedAlertError && (
+              <p className="mt-2 text-xs text-red-700">Failed to load: {unlinkedAlertError}</p>
+            )}
+            {unlinkedAlert?.items?.length > 0 && (
+              <div className="mt-2 max-h-48 overflow-auto space-y-1 text-xs text-orange-900">
+                {unlinkedAlert.items.map((item: any) => (
+                  <div key={item.shopifyLineItemId} className="flex flex-wrap gap-2 border-b border-orange-200 pb-1">
+                    <span className="font-semibold">{item.shopifyOrderName}</span>
+                    <span>{item.shopifyProductTitle}</span>
+                    {item.shopifySku && <span className="font-mono">{item.shopifySku}</span>}
+                    <span>Qty: {item.fulfillableQuantity}</span>
+                    <span>{item.displayFulfillmentStatus ?? "—"}</span>
+                    <span>Age: {item.ageDays ?? "—"}d</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {(over7TrackingItems.length > 0 || trackingAlertError) && (
           <div className="mb-6 space-y-3">
             {over7TrackingItems.length > 0 && (
@@ -1222,7 +1305,7 @@ export default function Home() {
               type="text"
               value={exchangeOrderName}
               onChange={(e) => setExchangeOrderName(e.target.value)}
-              placeholder="Order number (e.g. #4745)"
+              placeholder="Order #5816 or return #5816-R1"
               className="px-3 py-2 border border-gray-300 rounded-md text-sm w-56"
             />
             <button
