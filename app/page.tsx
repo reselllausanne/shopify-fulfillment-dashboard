@@ -1220,7 +1220,7 @@ export default function Home() {
           </nav>
         </div>
 
-        {(unlinkedAlert?.items?.length > 0 || unlinkedAlertError) && (
+        {((unlinkedAlert?.items?.length ?? 0) > 0 || unlinkedAlertError) && (
           <div className="mb-6 border rounded-lg p-4 bg-orange-50 border-orange-300">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-orange-900">
@@ -1241,9 +1241,9 @@ export default function Home() {
             {unlinkedAlertError && (
               <p className="mt-2 text-xs text-red-700">Failed to load: {unlinkedAlertError}</p>
             )}
-            {unlinkedAlert?.items?.length > 0 && (
+            {(unlinkedAlert?.items?.length ?? 0) > 0 && (
               <div className="mt-2 max-h-48 overflow-auto space-y-1 text-xs text-orange-900">
-                {unlinkedAlert.items.map((item: any) => (
+                {(unlinkedAlert?.items ?? []).map((item: any) => (
                   <div key={item.shopifyLineItemId} className="flex flex-wrap gap-2 border-b border-orange-200 pb-1">
                     <span className="font-semibold">{item.shopifyOrderName}</span>
                     <span>{item.shopifyProductTitle}</span>
