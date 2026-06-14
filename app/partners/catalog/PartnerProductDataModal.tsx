@@ -28,13 +28,17 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
   const [msg, setMsg] = useState<string | null>(null);
   const [v, setV] = useState<VariantJson | null>(null);
   const [mapping, setMapping] = useState<{ status?: string; kickdbVariantId?: string | null } | null>(null);
-  const [imagesText, setImagesText] = useState("");
+  const [imageUrl1, setImageUrl1] = useState("");
+  const [imageUrl2, setImageUrl2] = useState("");
+  const [imageUrl3, setImageUrl3] = useState("");
 
   useEffect(() => {
     if (!open || !supplierVariantId) {
       setV(null);
       setMapping(null);
-      setImagesText("");
+      setImageUrl1("");
+      setImageUrl2("");
+      setImageUrl3("");
       return;
     }
     setErr(null);
@@ -50,9 +54,14 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
         const variant = data.variant as VariantJson;
         setV(variant);
         setMapping(data.mapping ?? null);
-        setImagesText(
-          variant.images != null ? JSON.stringify(variant.images, null, 2) : ""
-        );
+        // Populate image URL fields from images array, then fallback to hosted/source
+        const rawImages = variant.images;
+        const arr: string[] = Array.isArray(rawImages)
+          ? rawImages.map((x: unknown) => (typeof x === "string" ? x : "")).filter(Boolean)
+          : [];
+        setImageUrl1(arr[0] ?? String(variant.hostedImageUrl ?? variant.sourceImageUrl ?? ""));
+        setImageUrl2(arr[1] ?? "");
+        setImageUrl3(arr[2] ?? "");
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : "Load failed");
         setV(null);
@@ -72,15 +81,7 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
     setErr(null);
     setMsg(null);
     try {
-      let images: unknown = null;
-      const trimmed = imagesText.trim();
-      if (trimmed) {
-        try {
-          images = JSON.parse(trimmed) as unknown;
-        } catch {
-          throw new Error("images must be valid JSON (array of URLs or object).");
-        }
-      }
+      const images: string[] = [imageUrl1.trim(), imageUrl2.trim(), imageUrl3.trim()].filter(Boolean);
 
       const price = Number.parseFloat(String(v.price ?? "").replace(",", "."));
       const stock = Number.parseInt(String(v.stock ?? ""), 10);
@@ -114,8 +115,8 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
         stock,
         weightGrams,
         images,
-        sourceImageUrl: String(v.sourceImageUrl ?? "").trim() || null,
-        hostedImageUrl: String(v.hostedImageUrl ?? "").trim() || null,
+        sourceImageUrl: images[0] ?? null,
+        hostedImageUrl: null,
         leadTimeDays,
         manualNote: String(v.manualNote ?? "").trim() || null,
       };
@@ -339,28 +340,30 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
                 />
               </label>
               <label className="space-y-1 sm:col-span-2">
-                <span className="text-[11px] font-medium text-slate-600">Source image URL</span>
+                <span className="text-[11px] font-medium text-slate-600">Image 1 URL (main)</span>
                 <input
                   className="w-full rounded border border-slate-200 px-2 py-1.5 font-mono text-[11px]"
-                  value={field(v, "sourceImageUrl")}
-                  onChange={(e) => setScalar("sourceImageUrl", e.target.value)}
+                  value={imageUrl1}
+                  onChange={(e) => setImageUrl1(e.target.value)}
+                  placeholder="https://..."
                 />
               </label>
               <label className="space-y-1 sm:col-span-2">
-                <span className="text-[11px] font-medium text-slate-600">Hosted image URL</span>
+                <span className="text-[11px] font-medium text-slate-600">Image 2 URL</span>
                 <input
                   className="w-full rounded border border-slate-200 px-2 py-1.5 font-mono text-[11px]"
-                  value={field(v, "hostedImageUrl")}
-                  onChange={(e) => setScalar("hostedImageUrl", e.target.value)}
+                  value={imageUrl2}
+                  onChange={(e) => setImageUrl2(e.target.value)}
+                  placeholder="https://..."
                 />
               </label>
               <label className="space-y-1 sm:col-span-2">
-                <span className="text-[11px] font-medium text-slate-600">images (JSON)</span>
-                <textarea
-                  className="w-full min-h-[5rem] rounded border border-slate-200 px-2 py-1.5 font-mono text-[11px]"
-                  value={imagesText}
-                  onChange={(e) => setImagesText(e.target.value)}
-                  placeholder='["https://..."] or {}'
+                <span className="text-[11px] font-medium text-slate-600">Image 3 URL</span>
+                <input
+                  className="w-full rounded border border-slate-200 px-2 py-1.5 font-mono text-[11px]"
+                  value={imageUrl3}
+                  onChange={(e) => setImageUrl3(e.target.value)}
+                  placeholder="https://..."
                 />
               </label>
               {isNer ? (

@@ -34,8 +34,9 @@ type FormState = {
   supplierColorway: string;
   weightGrams: string;
   leadTimeDays: string;
-  hostedImageUrl: string;
-  sourceImageUrl: string;
+  imageUrl1: string;
+  imageUrl2: string;
+  imageUrl3: string;
   manualNote: string;
 };
 
@@ -51,8 +52,9 @@ const EMPTY_FORM: FormState = {
   supplierColorway: "",
   weightGrams: "",
   leadTimeDays: "",
-  hostedImageUrl: "",
-  sourceImageUrl: "",
+  imageUrl1: "",
+  imageUrl2: "",
+  imageUrl3: "",
   manualNote: "",
 };
 
@@ -124,8 +126,7 @@ export function CreateProductModal({
       supplierProductName: prev.supplierProductName || (item.supplierProductName ?? ""),
       supplierGender: prev.supplierGender || (item.supplierGender ?? ""),
       supplierColorway: prev.supplierColorway || (item.supplierColorway ?? ""),
-      hostedImageUrl: prev.hostedImageUrl || (item.hostedImageUrl ?? ""),
-      sourceImageUrl: prev.sourceImageUrl || (item.sourceImageUrl ?? ""),
+      imageUrl1: prev.imageUrl1 || (item.hostedImageUrl ?? item.sourceImageUrl ?? ""),
       weightGrams:
         prev.weightGrams ||
         (item.weightGrams != null ? String(item.weightGrams) : ""),
@@ -165,8 +166,7 @@ export function CreateProductModal({
         supplierColorway: form.supplierColorway.trim() || null,
         weightGrams: form.weightGrams.trim() || null,
         leadTimeDays: form.leadTimeDays.trim() || null,
-        hostedImageUrl: form.hostedImageUrl.trim() || null,
-        sourceImageUrl: form.sourceImageUrl.trim() || null,
+        images: [form.imageUrl1.trim(), form.imageUrl2.trim(), form.imageUrl3.trim()].filter(Boolean),
         manualNote: form.manualNote.trim() || null,
         overwrite,
       };
@@ -361,16 +361,23 @@ export function CreateProductModal({
               align="right"
             />
             <Field
-              label="Hosted image URL (https)"
-              value={form.hostedImageUrl}
-              onChange={(v) => setField("hostedImageUrl", v)}
+              label="Image 1 URL (main)"
+              value={form.imageUrl1}
+              onChange={(v) => setField("imageUrl1", v)}
               mono
               spanFull
             />
             <Field
-              label="Source image URL"
-              value={form.sourceImageUrl}
-              onChange={(v) => setField("sourceImageUrl", v)}
+              label="Image 2 URL"
+              value={form.imageUrl2}
+              onChange={(v) => setField("imageUrl2", v)}
+              mono
+              spanFull
+            />
+            <Field
+              label="Image 3 URL"
+              value={form.imageUrl3}
+              onChange={(v) => setField("imageUrl3", v)}
               mono
               spanFull
             />

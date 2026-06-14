@@ -338,7 +338,7 @@ export async function GET(request: Request) {
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: isStx ? "Switzerland" : "Poland",
-      DirectDeliverySupported: isStx ? "yes" : "no",
+      DirectDeliverySupported: "1",
     });
   });
     let finalRows = rows;

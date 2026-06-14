@@ -228,6 +228,8 @@ export async function GET(request: Request) {
         "VariantName",
         "LongDescription_de",
         "MainImageUrl",
+        "ImageUrl_1",
+        "ImageUrl_2",
       ];
   if (!minimal && includeWeight) headers.push("ProductWeight");
 
@@ -459,6 +461,8 @@ export async function GET(request: Request) {
       VariantName: variantName,
       LongDescription_de: description,
       MainImageUrl: images[0] ?? "",
+      ImageUrl_1: images[1] ?? "",
+      ImageUrl_2: images[2] ?? "",
     };
     if (includeWeight) {
       const weightValue = supplierVariant?.weightGrams ?? 1000;

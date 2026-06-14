@@ -297,7 +297,7 @@ export function buildGalaxusAlternativeStockRows(products: AlternativeProductRec
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: "Poland",
-      DirectDeliverySupported: "no",
+      DirectDeliverySupported: "1",
     });
   }
   return rows;
