@@ -27,6 +27,7 @@ const EXCLUSION_REASONS: DecathlonExclusionReason[] = [
   "MISSING_REQUIRED_ATTRIBUTE",
   "PRODUCT_ALREADY_LIVE",
   "PRODUCT_NOT_LIVE",
+  "PRICE_TOO_HIGH",
 ];
 
 export function createDecathlonExclusionSummary(): DecathlonExclusionSummary {

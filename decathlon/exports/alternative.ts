@@ -122,6 +122,7 @@ export function buildDecathlonAlternativeOfferRow(
     });
     return null;
   }
+
   const stock = Number(product.stock);
   if (!Number.isFinite(stock) || stock <= 0) {
     recordDecathlonExclusion(summary, {

@@ -4,6 +4,7 @@ import { OFFERS_HEADERS } from "./templates";
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   decathlonOfferListPriceFromManualLockedPrice,
+  readDecathlonMaxListPriceChf,
   resolveDecathlonBuyNow,
 } from "./pricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
@@ -167,6 +168,22 @@ export function buildOfferCsv(
         gtin: candidate.gtin,
       });
       continue;
+    }
+    const supplierKey = extractSupplierKey(candidate);
+    const isStxOffer = supplierKey === "stx";
+    if (isStxOffer && Number.isFinite(priceValue)) {
+      const maxListPrice = readDecathlonMaxListPriceChf();
+      if (priceValue > maxListPrice) {
+        recordDecathlonExclusion(summary, {
+          reason: "PRICE_TOO_HIGH",
+          message: `STX list price ${priceValue.toFixed(2)} CHF exceeds max ${maxListPrice} CHF`,
+          fileType: "offers",
+          providerKey: candidate.providerKey,
+          supplierVariantId: variant?.supplierVariantId ?? null,
+          gtin: candidate.gtin,
+        });
+        continue;
+      }
     }
 
     const effectiveStock = resolveEffectiveStock(candidate);

@@ -16,7 +16,8 @@ export type DecathlonExclusionReason =
   | "MISSING_REQUIRED_ATTRIBUTE"
   | "PRODUCT_ALREADY_LIVE"
   | "PRODUCT_NOT_LIVE"
-  | "DUPLICATE_GTIN";
+  | "DUPLICATE_GTIN"
+  | "PRICE_TOO_HIGH";
 
 export type DecathlonExclusion = {
   reason: DecathlonExclusionReason;

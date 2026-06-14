@@ -37,6 +37,8 @@ export const DECATHLON_STX_MARGIN_BUMP_PP = 0;
 export const DEFAULT_DECATHLON_STX_MARGIN_ON_BUY = 0.2;
 /** Max Mirakl list TTC for STX (ceiling only). Default 200 CHF. */
 export const DECATHLON_STX_MAX_LIST_PRICE_CHF = 200;
+/** Max Mirakl list TTC for ALL products (ceiling). Default 250 CHF. Override: DECATHLON_MAX_LIST_PRICE_CHF. */
+export const DECATHLON_MAX_LIST_PRICE_CHF = 250;
 /** Target net CHF per gross sale on (buy + fulfil), after modeled returns. Default 5%. */
 export const DECATHLON_STX_TARGET_NET_ON_CASH = 0.05;
 /** Modeled return rate on gross STX sales (e.g. 42/240 ≈ 0.175). */
@@ -203,6 +205,15 @@ function readDecathlonStxMaxListPriceChf(): number {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return DECATHLON_STX_MAX_LIST_PRICE_CHF;
+}
+
+export function readDecathlonMaxListPriceChf(): number {
+  const raw = process.env.DECATHLON_MAX_LIST_PRICE_CHF;
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const parsed = Number.parseFloat(String(raw));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return DECATHLON_MAX_LIST_PRICE_CHF;
 }
 
 function readDecathlonStxReturnRate(): number {
