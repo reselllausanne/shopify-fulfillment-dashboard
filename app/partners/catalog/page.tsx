@@ -22,6 +22,11 @@ type CatalogItem = {
   stock?: number | null;
   updatedAt?: string | null;
   leadTimeDays?: number | null;
+  weightGrams?: number | null;
+  images?: unknown | null;
+  sourceImageUrl?: string | null;
+  hostedImageUrl?: string | null;
+  deliveryType?: string | null;
   /** Lowest `SupplierVariant.price` in DB for this GTIN, excluding this partner’s own ids. */
   referenceMinPriceChf?: number | null;
   referenceOfferCount?: number | null;
@@ -125,6 +130,112 @@ function ChannelBadge(props: { label: string; state?: { status?: string | null; 
       title={state?.lastError ? `${label}: ${short} — ${state.lastError}` : `${label}: ${short}`}
     >
       {label}:{short}
+    </span>
+  );
+}
+
+// --------------- Preflight checks ---------------
+
+type PreflightIssue = { field: string; message: string };
+type PreflightResult = { pass: boolean; issues: PreflightIssue[] };
+
+function isGtinValid(gtin: string | null | undefined): boolean {
+  const g = String(gtin ?? "").replace(/\D/g, "");
+  return g.length === 13 || g.length === 12;
+}
+
+function hasImage(item: CatalogItem): boolean {
+  if (item.hostedImageUrl) return true;
+  if (item.sourceImageUrl) return true;
+  const imgs = item.images;
+  if (Array.isArray(imgs) && imgs.length > 0) return true;
+  return false;
+}
+
+function preflightGalaxus(item: CatalogItem): PreflightResult {
+  const issues: PreflightIssue[] = [];
+  if (!isGtinValid(item.gtin)) issues.push({ field: "GTIN", message: "GTIN missing or invalid (needs 12-13 digits)" });
+  const price = typeof item.price === "number" ? item.price : Number(item.price ?? 0);
+  if (!price || price <= 0) issues.push({ field: "Price", message: "No buy price" });
+  const stock = Number(item.stock ?? 0);
+  if (stock <= 0) issues.push({ field: "Stock", message: "Stock = 0" });
+  if (!item.supplierBrand) issues.push({ field: "Brand", message: "Brand missing" });
+  if (!item.supplierProductName) issues.push({ field: "Name", message: "Product name missing" });
+  if (!hasImage(item)) issues.push({ field: "Image", message: "No image (hostedImageUrl / sourceImageUrl / images[])" });
+  if (!item.weightGrams || Number(item.weightGrams) <= 0) issues.push({ field: "Weight", message: "Weight (grams) missing — required for Galaxus shipping" });
+  return { pass: issues.length === 0, issues };
+}
+
+function preflightDecathlon(item: CatalogItem): PreflightResult {
+  const issues: PreflightIssue[] = [];
+  if (!isGtinValid(item.gtin)) issues.push({ field: "GTIN", message: "GTIN missing or invalid" });
+  const price = typeof item.price === "number" ? item.price : Number(item.price ?? 0);
+  if (!price || price <= 0) issues.push({ field: "Price", message: "No buy price" });
+  const stock = Number(item.stock ?? 0);
+  if (stock <= 0) issues.push({ field: "Stock", message: "Stock = 0" });
+  const svId = String(item.supplierVariantId ?? "").toLowerCase();
+  const isStx = svId.startsWith("stx_");
+  if (isStx && price > 0) {
+    // Approx sell price with 20% margin on buy + ~5 CHF fulfilment / 0.95 retained
+    const approxSell = (price * 1.20 + 5) / 0.95;
+    if (approxSell > 250) {
+      issues.push({
+        field: "Price cap",
+        message: `Estimated sell price ~${approxSell.toFixed(0)} CHF exceeds 250 CHF Decathlon cap`,
+      });
+    }
+  }
+  return { pass: issues.length === 0, issues };
+}
+
+function PreflightBadge({ label, result, liveState }: {
+  label: string;
+  result: PreflightResult | null;
+  liveState?: { status?: string | null; lastError?: string | null } | null;
+}) {
+  if (!result) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-400">
+        {label}:?
+      </span>
+    );
+  }
+  const liveStatus = String(liveState?.status ?? "").trim().toUpperCase();
+  const liveError = liveState?.lastError ?? null;
+  const isLiveActive = liveStatus === "ACTIVE";
+  const isLiveError = liveStatus === "ERROR" || Boolean(liveError);
+
+  let tone = result.pass
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : "border-red-200 bg-red-50 text-red-700";
+
+  // Override with live status if submitted
+  if (isLiveActive && result.pass) tone = "border-emerald-300 bg-emerald-100 text-emerald-800";
+  if (isLiveError) tone = "border-red-200 bg-red-50 text-red-700";
+
+  const preflightSummary = result.pass
+    ? "All checks pass"
+    : result.issues.map((i) => `✗ ${i.field}: ${i.message}`).join("\n");
+
+  const liveSummary = isLiveActive
+    ? `Live: ACTIVE`
+    : liveError
+      ? `Live error: ${liveError}`
+      : liveStatus
+        ? `Live: ${liveStatus}`
+        : "Not yet live";
+
+  const tooltip = [preflightSummary, liveSummary].filter(Boolean).join("\n---\n");
+  const displayLabel = result.pass
+    ? `${label}:${isLiveActive ? "ACTIVE" : "READY"}`
+    : `${label}:FAIL(${result.issues.length})`;
+
+  return (
+    <span
+      className={`inline-flex cursor-default items-center rounded-full border px-2 py-0.5 text-[10px] ${tone}`}
+      title={tooltip}
+    >
+      {displayLabel}
     </span>
   );
 }
@@ -399,11 +510,26 @@ export default function PartnerCatalogPage() {
                     <span className="text-slate-400">—</span>
                   )}
                 </td>
-                <td className="px-2 py-2 min-w-[14rem]">
+                <td className="px-2 py-2 min-w-[18rem]">
                   <div className="flex flex-wrap gap-1">
+                    {/* DB: product exists in catalog (trivially true here) */}
+                    <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700" title="Product record exists in DB">
+                      DB:OK
+                    </span>
+                    {/* Shopify live state */}
                     <ChannelBadge label="SHP" state={row.channelStates?.shopify ?? null} />
-                    <ChannelBadge label="GLX" state={row.channelStates?.galaxus ?? null} />
-                    <ChannelBadge label="DCT" state={row.channelStates?.decathlon ?? null} />
+                    {/* Galaxus preflight + live state */}
+                    <PreflightBadge
+                      label="GLX"
+                      result={row.owned ? preflightGalaxus(row) : null}
+                      liveState={row.channelStates?.galaxus ?? null}
+                    />
+                    {/* Decathlon preflight + live state */}
+                    <PreflightBadge
+                      label="DCT"
+                      result={row.owned ? preflightDecathlon(row) : null}
+                      liveState={row.channelStates?.decathlon ?? null}
+                    />
                   </div>
                 </td>
                 <td className="px-2 py-2">{row.updatedAt ? new Date(row.updatedAt).toLocaleString() : "-"}</td>
