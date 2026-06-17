@@ -103,7 +103,7 @@ export async function POST(
           await requestFeedPush({
             origin,
             scope: "full",
-            triggerSource: "galaxus-the-warehouse-shipped",
+            triggerSource: "admin",
             runNow: true,
           });
         }

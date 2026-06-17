@@ -435,7 +435,7 @@ export async function uploadDelrForShipment(
           await requestFeedPush({
             origin,
             scope: "full",
-            triggerSource: "galaxus-delr-the-shipped",
+            triggerSource: "admin",
             runNow: true,
           }).catch(() => undefined);
         }
