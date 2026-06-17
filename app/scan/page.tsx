@@ -72,6 +72,12 @@ type ScanResult = {
     orderDbId: string | null;
     orderNumber?: string | null;
   } | null;
+  inboundHome?: {
+    routeId: string;
+    stockxOrderNumber: string;
+    stockxAwb?: string | null;
+    stockxTrackingUrl?: string | null;
+  } | null;
   error?: { message?: string; code?: string };
 };
 
@@ -131,6 +137,10 @@ const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
 
 const ENABLE_AUTO_FULFILLMENT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_AUTO_FULFILLMENT,
+  true
+);
+const ENABLE_AUTO_HOME_RETURN = resolveClientFlag(
+  process.env.NEXT_PUBLIC_SCAN_AUTO_HOME_RETURN,
   true
 );
 const ENABLE_BROWSER_PRINT = resolveClientFlag(
@@ -396,6 +406,10 @@ export default function ScanPage() {
   };
 
   const handleChannelActions = async (scan: ScanResult) => {
+    if (scan.inboundHome && ENABLE_AUTO_HOME_RETURN) {
+      await runReturnToHomeFromScan(scan);
+      return;
+    }
     if (scan.galaxus) {
       const ref = galaxusOrderRef(scan.galaxus);
       window.alert(
@@ -457,7 +471,7 @@ export default function ScanPage() {
 
       await handleChannelActions(data);
 
-      if (ENABLE_AUTO_FULFILLMENT && data.ok && data.match && !data.galaxus) {
+      if (ENABLE_AUTO_FULFILLMENT && data.ok && data.match && !data.galaxus && !data.inboundHome) {
         await runFulfillFromScan(data);
       }
     } catch (err: any) {
@@ -482,6 +496,39 @@ export default function ScanPage() {
     const min = Math.floor(sec / 60);
     const rem = sec % 60;
     return `${min}m ${rem.toFixed(0)}s`;
+  };
+
+  const runReturnToHomeFromScan = async (scan: ScanResult) => {
+    if (!scan?.inboundHome) return;
+    const code = scan.awb || scan.inboundHome.stockxAwb || scan.inboundHome.stockxOrderNumber;
+    if (!code) return;
+    setFulfillLoading(true);
+    setFulfillResult(null);
+    try {
+      const res = await fetch("/api/scan-return-to-home", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code, includeLabelData: true }),
+      });
+      const data: FulfillResponse = await res.json();
+      setFulfillResult(data);
+      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      if (res.ok && data.ok && data.labelData?.base64) {
+        const opened = browserPrintEnabled
+          ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+          : openLabelPreview(data.labelData);
+        if (!opened) {
+          window.alert("Home label generated but popup blocked. Allow popups, then scan again.");
+        }
+      } else if (!res.ok || !data.ok) {
+        window.alert(data.error || "Home label generation failed");
+      }
+    } catch (err: any) {
+      setFulfillResult({ ok: false, error: err?.message || "Network error" });
+      window.alert(err?.message || "Home label network error");
+    } finally {
+      setFulfillLoading(false);
+    }
   };
 
   const runFulfillFromScan = async (
@@ -618,6 +665,31 @@ export default function ScanPage() {
               <div className="text-lg font-semibold">Status: {result.status}</div>
               <div className="text-sm text-gray-600">AWB: {result.awb || "—"}</div>
             </div>
+            {result.inboundHome && (
+              <div className="mt-4 rounded-lg border border-violet-300 bg-violet-50 p-4 text-violet-950">
+                <div className="font-semibold text-violet-900">Inbound StockX → home</div>
+                <p className="text-sm mt-1">
+                  Order <span className="font-mono">{result.inboundHome.stockxOrderNumber}</span>
+                  {result.inboundHome.stockxAwb ? (
+                    <>
+                      {" "}
+                      · AWB <span className="font-mono">{result.inboundHome.stockxAwb}</span>
+                    </>
+                  ) : null}
+                </p>
+                <p className="text-sm mt-1 text-violet-800">
+                  Scan generates Swiss Post label to Solutions Manzinali, Chemin de bas de plan 6, 1030 Bussigny.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void runReturnToHomeFromScan(result)}
+                  disabled={fulfillLoading}
+                  className="mt-2 px-3 py-1.5 rounded bg-violet-800 text-white text-sm disabled:opacity-50"
+                >
+                  {fulfillLoading ? "Generating…" : "Print home label"}
+                </button>
+              </div>
+            )}
             {result.galaxus && (
               <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-950">
                 <div className="font-semibold text-teal-900">Galaxus marketplace</div>

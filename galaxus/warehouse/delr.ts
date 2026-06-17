@@ -15,7 +15,10 @@ import {
 } from "@/galaxus/edi/config";
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { GALAXUS_SHIPMENT_CARRIER_ALLOWLIST } from "@/galaxus/config";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
+import { deductTheCatalogStockForGalaxusLines } from "@/galaxus/warehouse/theCatalogStock";
+import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 
 
 type UploadResult = {
@@ -383,6 +386,7 @@ export async function uploadDelrForShipment(
     }
 
     const lineIdsToMark: string[] = [];
+    const linesToMark: any[] = [];
     for (const [key, shippedQty] of shippedQtyByKey.entries()) {
       let remaining = shippedQty;
       const [orderId, buyerPid, supplierPid, gtin] = key.split("|");
@@ -408,6 +412,7 @@ export async function uploadDelrForShipment(
         if (qty <= 0) continue;
         if (remaining >= qty) {
           lineIdsToMark.push(String(line.id));
+          linesToMark.push(line);
           remaining -= qty;
         } else {
           break;
@@ -420,6 +425,21 @@ export async function uploadDelrForShipment(
         where: { id: { in: lineIdsToMark }, warehouseMarkedShippedAt: null },
         data: { warehouseMarkedShippedAt: shippedAt },
       });
+
+      const stockResult = await deductTheCatalogStockForGalaxusLines({
+        lines: linesToMark.map((line) => ({ line, quantity: line.quantity })),
+      });
+      if (stockResult.adjusted > 0) {
+        const origin = resolveAppOriginForPartnerJobs(null);
+        if (origin) {
+          await requestFeedPush({
+            origin,
+            scope: "full",
+            triggerSource: "galaxus-delr-the-shipped",
+            runNow: true,
+          }).catch(() => undefined);
+        }
+      }
     }
     if (shipment.orderId) {
       await prismaAny.orderStatusEvent.create({

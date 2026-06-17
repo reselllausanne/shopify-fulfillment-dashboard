@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { findStockxInboundHomeRouteByCode } from "@/app/lib/stockxInboundHomeRoutes";
 import { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 
 export const runtime = "nodejs";
@@ -163,6 +164,9 @@ export async function POST(req: NextRequest) {
     const trackingUrlFilters = awbCandidates
       .filter((candidate) => candidate.length >= 6)
       .map((candidate) => ({ stockxTrackingUrl: { contains: candidate } }));
+    const stockxOrderFilters = awbCandidates
+      .filter((candidate) => candidate.length >= 6)
+      .map((candidate) => ({ stockxOrderNumber: { contains: candidate, mode: "insensitive" as const } }));
 
     if (!awb) {
       return NextResponse.json(
@@ -171,11 +175,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Look for a match by AWB; fallbacks could be trackingUrl but keep strict for V1
+    const inboundHomeRoute = await findStockxInboundHomeRouteByCode(rawClean || awb);
+
+    // Look for a match by AWB / StockX order # / tracking URL.
     const [match, decathlonMatch, galaxusMatch] = await Promise.all([
       prisma.orderMatch.findFirst({
         where: {
-          OR: [{ stockxAwb: { in: awbCandidates } }, ...trackingUrlFilters],
+          OR: [
+            { stockxAwb: { in: awbCandidates } },
+            ...trackingUrlFilters,
+            ...stockxOrderFilters,
+          ],
         },
         select: {
           shopifyOrderId: true,
@@ -194,7 +204,11 @@ export async function POST(req: NextRequest) {
       }),
       prisma.decathlonStockxMatch.findFirst({
         where: {
-          OR: [{ stockxAwb: { in: awbCandidates } }, ...trackingUrlFilters],
+          OR: [
+            { stockxAwb: { in: awbCandidates } },
+            ...trackingUrlFilters,
+            ...stockxOrderFilters,
+          ],
         },
         select: {
           id: true,
@@ -219,7 +233,11 @@ export async function POST(req: NextRequest) {
       }),
       prisma.galaxusStockxMatch.findFirst({
         where: {
-          OR: [{ stockxAwb: { in: awbCandidates } }, ...trackingUrlFilters],
+          OR: [
+            { stockxAwb: { in: awbCandidates } },
+            ...trackingUrlFilters,
+            ...stockxOrderFilters,
+          ],
         },
         select: {
           id: true,
@@ -235,7 +253,7 @@ export async function POST(req: NextRequest) {
       }),
     ]);
 
-    const hasAnyMatch = Boolean(match || decathlonMatch || galaxusMatch);
+    const hasAnyMatch = Boolean(match || decathlonMatch || galaxusMatch || inboundHomeRoute);
     const status: ScanStatus = hasAnyMatch ? "FOUND" : "NOT_FOUND";
 
     let shopifyMatchPayload: Record<string, unknown> | null = null;
@@ -304,6 +322,14 @@ export async function POST(req: NextRequest) {
             orderId: galaxusMatch.order?.galaxusOrderId ?? null,
             orderDbId: galaxusMatch.order?.id ?? galaxusMatch.galaxusOrderId ?? null,
             orderNumber: galaxusMatch.order?.orderNumber ?? null,
+          }
+        : null,
+      inboundHome: inboundHomeRoute
+        ? {
+            routeId: inboundHomeRoute.id,
+            stockxOrderNumber: inboundHomeRoute.stockxOrderNumber,
+            stockxAwb: inboundHomeRoute.stockxAwb,
+            stockxTrackingUrl: inboundHomeRoute.stockxTrackingUrl,
           }
         : null,
     };

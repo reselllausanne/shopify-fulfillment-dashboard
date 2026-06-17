@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
+import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
+import { galaxusLineWarehouseStockHint } from "@/galaxus/warehouse/lineInventorySource";
+import {
+  deductTheCatalogStockForGalaxusLines,
+  isTheWarehouseGalaxusLine,
+} from "@/galaxus/warehouse/theCatalogStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,8 +25,13 @@ async function resolveOrder(orderIdOrRef: string) {
   );
 }
 
-/** True if line is procurement-linked (match row or STX unit linked for this GTIN). */
-async function isLineLinked(order: { id: string; galaxusOrderId: string }, line: { id: string; gtin: string | null }) {
+/** True if line can be marked shipped: StockX-linked, or THE_/NER_ warehouse stock. */
+async function isLineReadyToShip(
+  order: { id: string; galaxusOrderId: string },
+  line: { id: string; gtin: string | null; supplierSku?: string | null; providerKey?: string | null }
+) {
+  if (galaxusLineWarehouseStockHint(line)) return true;
+
   const match = await (prisma as any).galaxusStockxMatch.findFirst({
     where: { galaxusOrderLineId: line.id },
     select: { stockxOrderNumber: true },
@@ -41,7 +53,7 @@ async function isLineLinked(order: { id: string; galaxusOrderId: string }, line:
  * Only allowed when the line is procurement-linked and not already marked.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ orderId: string; lineId: string }> }
 ) {
   try {
@@ -58,8 +70,8 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Already marked shipped" }, { status: 409 });
     }
 
-    const linked = await isLineLinked(order as any, line as any);
-    if (!linked) {
+    const ready = await isLineReadyToShip(order as any, line as any);
+    if (!ready) {
       return NextResponse.json(
         { ok: false, error: "Line must be linked (StockX sync or manual match) before marking shipped" },
         { status: 400 }
@@ -69,8 +81,34 @@ export async function POST(
     const updated = await prisma.galaxusOrderLine.update({
       where: { id: lineId },
       data: { warehouseMarkedShippedAt: new Date() },
-      select: { id: true, warehouseMarkedShippedAt: true },
+      select: {
+        id: true,
+        warehouseMarkedShippedAt: true,
+        gtin: true,
+        supplierSku: true,
+        providerKey: true,
+        supplierVariantId: true,
+        quantity: true,
+      },
     });
+
+    let stockResult: { adjusted: number; details: string[] } | null = null;
+    if (isTheWarehouseGalaxusLine(updated)) {
+      stockResult = await deductTheCatalogStockForGalaxusLines({
+        lines: [{ line: updated, quantity: updated.quantity }],
+      });
+      if (stockResult.adjusted > 0) {
+        const origin = resolveAppOriginForPartnerJobs(new URL(request.url).origin);
+        if (origin) {
+          await requestFeedPush({
+            origin,
+            scope: "full",
+            triggerSource: "galaxus-the-warehouse-shipped",
+            runNow: true,
+          });
+        }
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -78,6 +116,7 @@ export async function POST(
         id: updated.id,
         warehouseMarkedShippedAt: updated.warehouseMarkedShippedAt?.toISOString() ?? null,
       },
+      stock: stockResult,
     });
   } catch (error: any) {
     console.error("[GALAXUS][LINE_WAREHOUSE_SHIPPED]", error);
