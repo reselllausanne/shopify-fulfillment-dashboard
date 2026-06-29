@@ -63,13 +63,28 @@ export async function resolveTheSupplierVariantForGalaxusLine(
   return null;
 }
 
-async function applyTheStockDeduction(
+export function isTheSupplierVariantId(supplierVariantId: string | null | undefined): boolean {
+  return String(supplierVariantId ?? "")
+    .trim()
+    .toLowerCase()
+    .startsWith("the_");
+}
+
+/**
+ * Apply a signed stock delta on a THE catalog row (sale = negative, return/release = positive).
+ * Keeps `SupplierVariant.stock` aligned with inventory ledger so DB UI and feeds match.
+ */
+export async function applyTheCatalogStockDeltaInTx(
   tx: any,
   targetId: string,
-  qty: number,
-  details: string[],
-  lineRef: string
+  quantityDelta: number,
+  lineRef: string,
+  details: string[] = []
 ): Promise<boolean> {
+  if (!isTheSupplierVariantId(targetId)) return false;
+  const delta = Math.trunc(Number(quantityDelta));
+  if (!Number.isFinite(delta) || delta === 0) return false;
+
   const variant = await tx.supplierVariant.findUnique({
     where: { supplierVariantId: targetId },
   });
@@ -84,23 +99,26 @@ async function applyTheStockDeduction(
     variant.manualStock != null && Number.isFinite(Number(variant.manualStock))
       ? Math.max(0, Math.round(Number(variant.manualStock)))
       : null;
-  const next = Math.max(0, current - qty);
+  const next = Math.max(0, current + delta);
+  const nextManual =
+    manualStock != null ? Math.max(0, manualStock + delta) : null;
 
   const updateData: Record<string, unknown> = {
     stock: manualLock && manualStock != null ? variant.stock : next,
     lastSyncAt: new Date(),
     updatedAt: new Date(),
   };
-  if (manualLock && manualStock != null) {
-    updateData.manualStock = Math.max(0, manualStock - qty);
+  if (manualLock && manualStock != null && nextManual != null) {
+    updateData.manualStock = nextManual;
   }
 
-  const stockChanged =
-    (!manualLock && next !== current) ||
-    (manualLock && manualStock != null && Math.max(0, manualStock - qty) !== manualStock);
-
-  if (!stockChanged) {
-    details.push(`${targetId}: already 0 stock (${lineRef})`);
+  const effectiveBefore = manualLock && manualStock != null ? manualStock : current;
+  const effectiveAfter =
+    manualLock && nextManual != null ? nextManual : manualLock && manualStock != null ? manualStock : next;
+  if (effectiveAfter === effectiveBefore) {
+    if (details.length > 0) {
+      details.push(`${targetId}: stock unchanged at ${effectiveBefore} (${lineRef})`);
+    }
     return false;
   }
 
@@ -109,8 +127,20 @@ async function applyTheStockDeduction(
     data: updateData,
   });
 
-  details.push(`${targetId}: stock ${current} → ${manualLock && manualStock != null ? manualStock : next} (−${qty}) [Galaxus THE]`);
+  details.push(
+    `${targetId}: stock ${effectiveBefore} → ${effectiveAfter} (${delta > 0 ? "+" : ""}${delta}) [THE]`
+  );
   return true;
+}
+
+async function applyTheStockDeduction(
+  tx: any,
+  targetId: string,
+  qty: number,
+  details: string[],
+  lineRef: string
+): Promise<boolean> {
+  return applyTheCatalogStockDeltaInTx(tx, targetId, -Math.abs(qty), lineRef, details);
 }
 
 /**

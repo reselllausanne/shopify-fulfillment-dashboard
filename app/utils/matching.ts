@@ -50,6 +50,13 @@ export interface ShopifyLineItem {
   fraudRiskLevel?: string | null;
   fraudRecommendation?: string | null;
   fraudSummaryLabel?: string | null;
+  /** From line item custom attributes / variant metafields at checkout. */
+  deliveryMode?: "express" | "standard" | null;
+  deliveryModeLabel?: string | null;
+  deliveryEstimate?: string | null;
+  expressAvailable?: boolean | null;
+  expressPrice?: string | null;
+  variantExpressPrice?: string | null;
 }
 
 /** True when Shopify order is fully refunded (not partial — partial refunds stay matchable). */
@@ -83,12 +90,105 @@ export interface MatchResult {
 const THRESHOLD_HOURS = 96; // 4 days (default)
 const SKU_EXACT_AUTO_THRESHOLD_HOURS = 168; // 7 days for exact SKU delayed fulfillment flows
 
-// Fear of God Essentials SKUs in stock (auto-match with 42 CHF, do not match to StockX)
+export type InStockEssentialConfig = {
+  costChf: number;
+  label: string;
+  matchReason: string;
+};
+
+type InStockEssentialRule = InStockEssentialConfig & {
+  skuBases?: string[];
+  titlePatterns?: RegExp[];
+};
+
+const IN_STOCK_ESSENTIAL_RULES: InStockEssentialRule[] = [
+  {
+    costChf: 42,
+    label: "Essential Hoodie (in stock)",
+    matchReason: "Essential Hoodie (auto 42 CHF)",
+    skuBases: ["192HO246258F", "192HO246250F"],
+  },
+  {
+    costChf: 20,
+    label: "Essential T-Shirt (in stock)",
+    matchReason: "Essential T-Shirt (auto 20 CHF)",
+    skuBases: ["125HO244368F"],
+    titlePatterns: [
+      /Fear of God Essentials.*(Jersey|Crewneck|T-Shirt|Tee)\b/i,
+      /^Essentials Tee\b/i,
+    ],
+  },
+  {
+    costChf: 20,
+    label: "Essential Shorts (in stock)",
+    matchReason: "Essential Shorts (auto 20 CHF)",
+    skuBases: ["160BT212012F", "160BT212013F"],
+    titlePatterns: [/^Essentials Shorts\b/i],
+  },
+];
+
+function normalizeSkuKey(sku: string): string {
+  return sku.trim().toUpperCase();
+}
+
+function skuMatchesBase(sku: string, base: string): boolean {
+  const normalizedSku = normalizeSkuKey(sku);
+  const normalizedBase = normalizeSkuKey(base);
+  return normalizedSku === normalizedBase || normalizedSku.startsWith(`${normalizedBase}-`);
+}
+
+function resolveInStockEssentialRule(
+  sku: string | null | undefined,
+  title?: string | null
+): InStockEssentialRule | null {
+  const normalizedSku = sku?.trim() ?? "";
+  const normalizedTitle = title?.trim() ?? "";
+
+  for (const rule of IN_STOCK_ESSENTIAL_RULES) {
+    if (
+      normalizedSku &&
+      rule.skuBases?.some((base) => skuMatchesBase(normalizedSku, base))
+    ) {
+      return rule;
+    }
+    if (
+      normalizedTitle &&
+      rule.titlePatterns?.some((pattern) => pattern.test(normalizedTitle))
+    ) {
+      return rule;
+    }
+  }
+
+  return null;
+}
+
+/** Fear of God Essentials in-stock lines: auto-link with fixed COGS, skip StockX matching. */
+export function resolveInStockEssential(
+  sku: string | null | undefined,
+  title?: string | null
+): InStockEssentialConfig | null {
+  const rule = resolveInStockEssentialRule(sku, title);
+  if (!rule) return null;
+  return {
+    costChf: rule.costChf,
+    label: rule.label,
+    matchReason: rule.matchReason,
+  };
+}
+
+export function isInStockEssentialLine(
+  sku: string | null | undefined,
+  title?: string | null
+): boolean {
+  return resolveInStockEssentialRule(sku, title) !== null;
+}
+
+/** @deprecated Use isInStockEssentialLine() — kept for legacy imports. */
 export const EXCLUDED_SKUS = [
-  // Light Heather Gray
+  // Light Heather Gray hoodie
   "192HO246258F-XS", "192HO246258F-S", "192HO246258F-M",
   "192HO246258F-L", "192HO246258F-XL", "192HO246258F-XXL",
-  // Black FW24
+  // Black FW24 hoodie
   "192HO246250F-XXS", "192HO246250F-XS", "192HO246250F-S",
   "192HO246250F-M", "192HO246250F-L", "192HO246250F-XL", "192HO246250F-XXL",
 ];
@@ -214,8 +314,8 @@ function cleanShopifyTitleForMatch(title: string): string {
   return title
     // Remove liquidation "%" before size suffix: " … % - 38.5"
     .replace(/\s+%\s*-\s*(EU\s*)?\d+(\.\d+)?\s*$/i, "")
-    // Remove trailing numeric size: " - 49.5", " - EU 49.5", etc.
-    .replace(/\s*-\s*(EU\s*)?\d+(\.\d+)?\s*$/i, "")
+    // Remove trailing numeric size (+ optional Birkenstock width): " - 39N", " - EU 42"
+    .replace(/\s*-\s*(EU\s*)?\d+(?:\.\d+)?[NRMW]?\s*$/i, "")
     // Remove trailing composite letter sizes: " - L/XL", " - S/M", " - 2XL/3XL"
     .replace(/\s*-\s*[A-Z0-9]+(?:\/[A-Z0-9]+)+\s*$/i, "")
     // Remove trailing letter size: " - L", " - XL", " - One Size", " - OS"
@@ -262,10 +362,10 @@ function skuBaseFromShopifySKU(sku: string | null): string | null {
   // Composite letter sizes first: -L/XL, -S/M, -2XL/3XL (must precede single -L/-XL)
   // Letter sizes: -XXS, -XS, -S, -M, -L, -XL, -XXL, -XXXL (case insensitive)
   // One Size: -OS, -O/S, -ONE SIZE
-  // Numeric sizes: -37.5, -42, -36 2/3, -EU 36 2/3
+  // Numeric sizes: -37.5, -42, -36 2/3, -39N (Birkenstock width), -EU 36 2/3
   // Guarded to 1-2 leading digits to avoid stripping SKU color codes like "-011".
   const sizePattern =
-    /-(?:[A-Z0-9]+(?:\/[A-Z0-9]+)+|XXXL|XXL|XL|XXS|XS|L|M|S|OS|O\/S|ONE\s*SIZE|EU\s*[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?|[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?)$/i;
+    /-(?:[A-Z0-9]+(?:\/[A-Z0-9]+)+|XXXL|XXL|XL|XXS|XS|L|M|S|OS|O\/S|ONE\s*SIZE|EU\s*[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?[NRMW]?|[1-9]\d?(?:[.,]\d+)?(?:\s+\d+\/\d+)?[NRMW]?)$/i;
   
   const baseSku = trimmed.replace(sizePattern, "");
   
@@ -558,25 +658,26 @@ export function matchShopifyToSupplier(
   supplierOrders: NormalizedSupplierOrder[],
   usedSupplierNumbers: Set<string> = new Set()
 ): MatchResult {
-  // Check exclusions
-  const isExcluded = EXCLUDED_SKUS.includes(shopifyItem.sku || "");
+  const inStockEssential = resolveInStockEssential(shopifyItem.sku, shopifyItem.title);
   const isLiquidation = isLiquidationShopifyTitle(shopifyItem.title);
 
-  if (isExcluded) {
-    console.log(`[AUTO] Essential Hoodie in stock → auto 42 CHF (SKU ${shopifyItem.sku})`);
+  if (inStockEssential) {
+    console.log(
+      `[AUTO] ${inStockEssential.label} → auto ${inStockEssential.costChf} CHF (SKU ${shopifyItem.sku || "n/a"})`
+    );
     const supplierOrderNumber = `ESS-${shopifyItem.orderName.replace("#", "")}`;
     const syntheticSupplier: NormalizedSupplierOrder = {
       chainId: "",
       orderId: supplierOrderNumber,
       supplierOrderNumber,
       purchaseDate: shopifyItem.createdAt,
-      offerAmount: 42,
-      totalTTC: 42,
+      offerAmount: inStockEssential.costChf,
+      totalTTC: inStockEssential.costChf,
       productTitle: shopifyItem.title,
       skuKey: shopifyItem.sku || "",
       sizeEU: shopifyItem.sizeEU || null,
       statusKey: "ESSENTIAL_STOCK",
-      statusTitle: "Essential Hoodie (in stock)",
+      statusTitle: inStockEssential.label,
       currencyCode: shopifyItem.currencyCode || "CHF",
       estimatedDeliveryDate: null,
       productVariantId: undefined,
@@ -587,7 +688,7 @@ export function matchShopifyToSupplier(
       supplierOrder: syntheticSupplier,
       score: 999,
       confidence: "high",
-      reasons: ["Essential Hoodie (auto 42 CHF)", "In-stock SKU list"],
+      reasons: [inStockEssential.matchReason, "In-stock Essentials list"],
       timeDiffHours: 0,
       overThreshold: true,
     };

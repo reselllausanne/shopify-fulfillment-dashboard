@@ -20,8 +20,11 @@ import {
 } from "@/galaxus/edi/config";
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
+import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
+import { countCriticalGtinIssues } from "@/galaxus/exports/feedValidation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
 
 type UploadedFile = {
   name: string;
@@ -73,22 +76,6 @@ function buildFeedFilename(
   if (type === "stock") return `StockData_${safeProvider}${suffix}.csv`;
   if (type === "specifications") return `SpecificationData_${safeProvider}${suffix}.csv`;
   return `ProductData_${safeProvider}${suffix}.csv`;
-}
-
-function countCriticalGtinIssues(report: any): number {
-  const grouped = [
-    ...(report?.grouped?.master ?? []),
-    ...(report?.grouped?.stock ?? []),
-    ...(report?.grouped?.specs ?? []),
-  ];
-  return grouped.reduce((sum: number, issue: any) => {
-    const message = String(issue?.message ?? "").toLowerCase();
-    const isCritical =
-      message.includes("gtin is empty") ||
-      message.includes("gtin is invalid") ||
-      message.includes("wrong check digit");
-    return isCritical ? sum + Number(issue?.count ?? 0) : sum;
-  }, 0);
 }
 
 export async function POST(request: Request) {
@@ -144,6 +131,7 @@ export async function POST(request: Request) {
       effectiveType === "specs" ||
       effectiveType === "specifications" ||
       effectiveType === "master-specs";
+    const useSinglePassMasterSpecs = effectiveType === "master-specs";
     auditId = (await (prisma as any).galaxusJobRun.create({
       data: {
         jobName: "feeds-upload",
@@ -155,55 +143,96 @@ export async function POST(request: Request) {
       },
     }))?.id ?? null;
 
-    const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
-      needsMaster ? runGalaxusExportGET(masterUrl) : Promise.resolve(null),
-      needsStock ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
-      needsOffer ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
-      needsSpecs ? runGalaxusExportGET(specsUrl) : Promise.resolve(null),
-    ]);
+    let masterCsv = "";
+    let stockCsv = "";
+    let offerCsv = "";
+    let specsCsv = "";
+    let masterCount: number | null = null;
+    let stockCount: number | null = null;
+    let offerCount: number | null = null;
+    let specsCount: number | null = null;
+    let report: any = null;
 
-    if (masterRes && !masterRes.ok) {
-      const body = await masterRes.text().catch(() => "");
-      throw new Error(`Master export failed: ${masterRes.status} ${masterRes.statusText} ${body}`);
-    }
-    if (stockRes && !stockRes.ok) {
-      const body = await stockRes.text().catch(() => "");
-      throw new Error(`Stock export failed: ${stockRes.status} ${stockRes.statusText} ${body}`);
-    }
-    if (offerRes && !offerRes.ok) {
-      const body = await offerRes.text().catch(() => "");
-      throw new Error(`Offer export failed: ${offerRes.status} ${offerRes.statusText} ${body}`);
-    }
-    if (specsRes && !specsRes.ok) {
-      const body = await specsRes.text().catch(() => "");
-      throw new Error(`Specifications export failed: ${specsRes.status} ${specsRes.statusText} ${body}`);
+    if (useSinglePassMasterSpecs) {
+      const providerKeys = providerKeysRaw
+        .split(/[\n,]+/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const combined = await buildMasterSpecsFeedExport({
+        supplier: supplier?.trim() || null,
+        limit,
+        providerKeys,
+      });
+      masterCsv = combined.masterCsv;
+      specsCsv = combined.specsCsv;
+      masterCount = combined.masterCount;
+      specsCount = combined.specsCount;
+      report = combined.report;
+    } else {
+      const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
+        needsMaster ? runGalaxusExportGET(masterUrl) : Promise.resolve(null),
+        needsStock ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
+        needsOffer ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
+        needsSpecs ? runGalaxusExportGET(specsUrl) : Promise.resolve(null),
+      ]);
+
+      if (masterRes && !masterRes.ok) {
+        const body = await masterRes.text().catch(() => "");
+        throw new Error(`Master export failed: ${masterRes.status} ${masterRes.statusText} ${body}`);
+      }
+      if (stockRes && !stockRes.ok) {
+        const body = await stockRes.text().catch(() => "");
+        throw new Error(`Stock export failed: ${stockRes.status} ${stockRes.statusText} ${body}`);
+      }
+      if (offerRes && !offerRes.ok) {
+        const body = await offerRes.text().catch(() => "");
+        throw new Error(`Offer export failed: ${offerRes.status} ${offerRes.statusText} ${body}`);
+      }
+      if (specsRes && !specsRes.ok) {
+        const body = await specsRes.text().catch(() => "");
+        throw new Error(`Specifications export failed: ${specsRes.status} ${specsRes.statusText} ${body}`);
+      }
+
+      [masterCsv, stockCsv, offerCsv, specsCsv] = await Promise.all([
+        masterRes ? masterRes.text() : Promise.resolve(""),
+        stockRes ? stockRes.text() : Promise.resolve(""),
+        offerRes ? offerRes.text() : Promise.resolve(""),
+        specsRes ? specsRes.text() : Promise.resolve(""),
+      ]);
+
+      masterCount = masterRes ? countCsvRows(masterCsv) : null;
+      stockCount = stockRes ? countCsvRows(stockCsv) : null;
+      offerCount = offerRes ? countCsvRows(offerCsv) : null;
+      specsCount = specsRes ? countCsvRows(specsCsv) : null;
+
+      const shouldRunValidation = needsMaster || needsStock || needsSpecs;
+      const validationScope = needsStock
+        ? "all"
+        : needsMaster && needsSpecs
+          ? "master-specs"
+          : needsMaster
+            ? "master"
+            : "specs";
+      const validationUrl = `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}&scope=${validationScope}`;
+      const validationRes = shouldRunValidation ? await runGalaxusExportGET(validationUrl).catch(() => null) : null;
+      const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
+      report = validationData?.report ?? null;
     }
 
-    const [masterCsv, stockCsv, offerCsv, specsCsv] = await Promise.all([
-      masterRes ? masterRes.text() : Promise.resolve(""),
-      stockRes ? stockRes.text() : Promise.resolve(""),
-      offerRes ? offerRes.text() : Promise.resolve(""),
-      specsRes ? specsRes.text() : Promise.resolve(""),
-    ]);
-
-    const masterCount = masterRes ? countCsvRows(masterCsv) : null;
-    const stockCount = stockRes ? countCsvRows(stockCsv) : null;
-    const offerCount = offerRes ? countCsvRows(offerCsv) : null;
-    const specsCount = specsRes ? countCsvRows(specsCsv) : null;
-
-    const shouldRunValidation = needsMaster || needsStock || needsSpecs;
-    const validationScope = needsStock ? "all" : needsMaster && needsSpecs ? "master-specs" : needsMaster ? "master" : "specs";
-    const validationUrl = `${origin}/api/galaxus/export/check-all?${limit ? "limit=" + limit : "all=1"}${supplierParam}${limitParam}&scope=${validationScope}`;
-    const validationRes = shouldRunValidation ? await runGalaxusExportGET(validationUrl).catch(() => null) : null;
-    const validationData = validationRes ? await validationRes.json().catch(() => null) : null;
-    const report = validationData?.report ?? null;
     const totalIssues =
       (report?.summary?.master?.totalIssues ?? 0) +
       (report?.summary?.stock?.totalIssues ?? 0) +
       (report?.summary?.specs?.totalIssues ?? 0);
-    const criticalGtinIssues = shouldRunValidation ? countCriticalGtinIssues(report) : 0;
-    const mustBlockForCriticalGtin = shouldRunValidation && criticalGtinIssues > 0;
-    if (mustBlockForCriticalGtin || (shouldRunValidation && !force && totalIssues > 0)) {
+    const criticalGtinIssues =
+      useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs
+        ? countCriticalGtinIssues(report)
+        : 0;
+    const mustBlockForCriticalGtin =
+      (useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs) && criticalGtinIssues > 0;
+    if (
+      mustBlockForCriticalGtin ||
+      ((useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs) && !force && totalIssues > 0)
+    ) {
       const blockedManifests = [];
       if (needsMaster && masterCsv) {
         blockedManifests.push({

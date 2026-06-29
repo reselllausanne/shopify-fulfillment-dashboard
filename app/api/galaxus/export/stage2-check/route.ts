@@ -4,6 +4,7 @@ import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
+import { resolveGalaxusProductCategoryPath } from "@/galaxus/exports/productClassification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -123,18 +124,14 @@ function buildProductTitle(
   return truncate(base, 100);
 }
 
-function buildProductCategory(payload: KickDbPayload | null): string {
-  if (!payload) return "";
-  const breadcrumb = payload.breadcrumbs
-    ?.map((item) => sanitizeText(item.value ?? ""))
-    .filter(Boolean);
-  if (breadcrumb && breadcrumb.length) {
-    return truncate(breadcrumb.join(" > "), 200);
-  }
-  const category = sanitizeText(payload.category ?? "");
-  const secondary = sanitizeText(payload.secondary_category ?? "");
-  if (category && secondary) return truncate(`${category} > ${secondary}`, 200);
-  return truncate(category || sanitizeText(payload.product_type ?? ""), 200);
+function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
+  return resolveGalaxusProductCategoryPath({
+    title: fallbackTitle ?? null,
+    category: payload?.category ?? null,
+    secondaryCategory: payload?.secondary_category ?? null,
+    productType: payload?.product_type ?? null,
+    breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+  });
 }
 
 function isAsciiPrintable(value: string): boolean {
@@ -224,6 +221,7 @@ export async function GET(request: Request) {
           title: product?.name ?? undefined,
           brand: product?.brand ?? undefined,
           sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
+          description: product?.description ?? undefined,
         } as KickDbPayload)
       : null;
     const gtin = String(candidate?.gtin ?? mapping?.gtin ?? supplierVariant?.gtin ?? "").trim();
@@ -242,7 +240,7 @@ export async function GET(request: Request) {
       supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null,
       supplierVariantAny?.supplierProductName ?? supplierVariantAny?.productName ?? null
     );
-    const category = buildProductCategory(payload) || "Sneakers";
+    const category = buildProductCategory(payload, title);
     const images = pickGalaxusProductImageList(supplierVariant ?? {});
     const weightRaw = supplierVariantAny?.weightGrams ?? 1000;
     const weight = weightRaw === null || weightRaw === undefined ? NaN : Number(weightRaw);

@@ -3,7 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import {
-  EXCLUDED_SKUS,
+  isInStockEssentialLine,
   isLiquidationShopifyTitle,
   isShopifyFinancialRefunded,
 } from "@/app/utils/matching";
@@ -51,7 +51,7 @@ function convertToShopTimezone(utcTimestamp: string): string {
 }
 
 function isExcludedLine(sku: string | null, title: string) {
-  if (sku && EXCLUDED_SKUS.includes(sku)) return true;
+  if (isInStockEssentialLine(sku, title)) return true;
   if (isLiquidationShopifyTitle(title)) return true;
   return false;
 }

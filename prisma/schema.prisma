@@ -1008,6 +1008,8 @@ model SupplierVariant {
   manualUpdatedAt   DateTime?
   leadTimeDays      Int?
   deliveryType      String?
+  /// Galaxus `SuggestedRetailPriceInclVat_CHF` — recomputed whenever STX price sync runs.
+  suggestedRetailPriceInclVat Decimal? @db.Decimal(10, 2)
   lastSyncAt        DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -1195,6 +1197,8 @@ model VariantMapping {
   kickdbVariantId  String?
   gtin             String?
   providerKey      String?
+  /// Denormalized prefix from supplierVariantId (stx, ner, the, …) for fast feed filters.
+  supplierKey      String?
   confidenceScore  Decimal? @db.Decimal(5, 2)
   status           String
   createdAt        DateTime @default(now())
@@ -1205,6 +1209,7 @@ model VariantMapping {
   kickdbVariant    KickDBVariant?  @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
 
   @@index([kickdbVariantId])
+  @@index([supplierKey, status])
   @@schema("public")
 }
 
@@ -1463,16 +1468,19 @@ model StxPurchaseUnit {
 }
 
 model StxImportSlug {
-  id         String              @id @default(uuid())
-  createdAt  DateTime            @default(now())
-  importedAt DateTime?
-  input      String
-  slug       String
-  status     StxImportSlugStatus @default(PENDING)
-  lastError  String?
+  id           String              @id @default(uuid())
+  createdAt    DateTime            @default(now())
+  importedAt   DateTime?
+  input        String
+  slug         String
+  status       StxImportSlugStatus @default(PENDING)
+  lastError    String?
+  syncLockedAt DateTime?
+  syncLockedBy String?
 
   @@unique([slug])
   @@index([status, createdAt])
+  @@index([status, syncLockedAt, createdAt])
   @@schema("public")
 }
 

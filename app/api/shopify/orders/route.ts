@@ -7,6 +7,7 @@ import {
   shouldSkipOrderForFulfillmentMatching,
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
 import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
+import { parseShopifyLineItemDelivery } from "@/app/lib/shopifyLineItemDelivery";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,12 @@ type ShopifyLineItem = {
   fraudRiskLevel: string | null;
   fraudRecommendation: string | null;
   fraudSummaryLabel: string;
+  deliveryMode: "express" | "standard" | null;
+  deliveryModeLabel: string | null;
+  deliveryEstimate: string | null;
+  expressAvailable: boolean | null;
+  expressPrice: string | null;
+  variantExpressPrice: string | null;
 };
 
 /**
@@ -135,6 +142,10 @@ query LastOrders($first: Int!, $orderQuery: String) {
               quantity
               fulfillableQuantity
               variantTitle
+              customAttributes {
+                key
+                value
+              }
               variant {
                 media(first: 1) {
                   nodes {
@@ -143,6 +154,12 @@ query LastOrders($first: Int!, $orderQuery: String) {
                       image { url }
                     }
                   }
+                }
+                expressAvailable: metafield(namespace: "custom", key: "express_available") {
+                  value
+                }
+                expressPrice: metafield(namespace: "custom", key: "express_price") {
+                  value
                 }
                 product {
                   featuredMedia {
@@ -393,6 +410,12 @@ export async function POST(req: Request) {
           lineItemImageUrl = li?.variant?.product?.featuredMedia?.image?.url ?? null;
         }
 
+        const deliveryInfo = parseShopifyLineItemDelivery({
+          customAttributes: li.customAttributes ?? [],
+          expressAvailableMetafield: li?.variant?.expressAvailable?.value ?? null,
+          expressPriceMetafield: li?.variant?.expressPrice?.value ?? null,
+        });
+
         lineItems.push({
           shopifyOrderId: orderId,
           orderId,
@@ -419,6 +442,12 @@ export async function POST(req: Request) {
           fraudRiskLevel: riskNorm.fraudRiskLevel,
           fraudRecommendation: riskNorm.fraudRecommendation,
           fraudSummaryLabel: riskNorm.fraudSummaryLabel,
+          deliveryMode: deliveryInfo.deliveryMode,
+          deliveryModeLabel: deliveryInfo.deliveryModeLabel,
+          deliveryEstimate: deliveryInfo.deliveryEstimate,
+          expressAvailable: deliveryInfo.expressAvailable,
+          expressPrice: deliveryInfo.expressPrice,
+          variantExpressPrice: deliveryInfo.variantExpressPrice,
         });
       }
 

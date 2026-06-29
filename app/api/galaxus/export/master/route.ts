@@ -17,6 +17,10 @@ import {
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { attachAvailableStock } from "@/inventory/availableStock";
+import {
+  resolveGalaxusDescription,
+  resolveGalaxusProductCategoryPath,
+} from "@/galaxus/exports/productClassification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,27 +141,14 @@ function buildVariantName(
   return buildProductTitle(payload, fallbackSku, fallbackName);
 }
 
-function buildProductCategory(payload: KickDbPayload | null): string {
-  if (!payload) return "";
-  const breadcrumb = payload.breadcrumbs
-    ?.map((item) => sanitizeText(item.value ?? ""))
-    .filter(Boolean);
-  if (breadcrumb && breadcrumb.length) {
-    return truncate(breadcrumb.join(" > "), 200);
-  }
-  const category = sanitizeText(payload.category ?? "");
-  const secondary = sanitizeText(payload.secondary_category ?? "");
-  if (category && secondary) return truncate(`${category} > ${secondary}`, 200);
-  return truncate(category || sanitizeText(payload.product_type ?? ""), 200);
-}
-
-function cleanDescription(value?: string | null): string {
-  if (!value) return "";
-  let text = value.replace(/<[^>]*>/g, " ");
-  text = text.replace(/https?:\/\/\S+/g, "");
-  text = text.replace(/our team[^.]*\./gi, "");
-  text = sanitizeText(text);
-  return truncate(text, 4000);
+function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
+  return resolveGalaxusProductCategoryPath({
+    title: fallbackTitle ?? null,
+    category: payload?.category ?? null,
+    secondaryCategory: payload?.secondary_category ?? null,
+    productType: payload?.product_type ?? null,
+    breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+  });
 }
 
 function parseNumber(value: unknown): number | null {
@@ -439,7 +430,16 @@ export async function GET(request: Request) {
       : null;
     const title = fallbackTitle;
     const variantName = fallbackTitle;
-    const description = payload?.description ? cleanDescription(payload.description) : "";
+    const category = buildProductCategory(payload, fallbackTitle);
+    const description = resolveGalaxusDescription({
+      description: payload?.description ?? null,
+      title: fallbackTitle,
+      brand: supplierBrand || payload?.brand || product?.brand || null,
+      category: payload?.category ?? null,
+      secondaryCategory: payload?.secondary_category ?? null,
+      productType: payload?.product_type ?? null,
+      breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    });
 
     const manufacturerBase =
       payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
@@ -454,7 +454,7 @@ export async function GET(request: Request) {
       Gtin: resolvedGtin,
       ManufacturerKey: manufacturerKey,
       BrandName: supplierBrand || normalizeBrand(payload?.brand ?? product?.brand ?? ""),
-      ProductCategory: buildProductCategory(payload) || "Sneakers",
+      ProductCategory: category,
       ProductTitle_de: title,
       ProductTitle_en: title,
       ProductTitle_ch: title,

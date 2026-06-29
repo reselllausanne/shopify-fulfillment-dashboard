@@ -4,6 +4,7 @@ import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/k
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
+import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
 import { isStxForceImportSlug, listForceImportStxSupplierVariantIds } from "@/galaxus/stx/forceImportSlugs";
 import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import {
@@ -53,6 +54,7 @@ type ParsedStxRow = {
   images: unknown;
   leadTimeDays: number | null;
   deliveryType: StxDeliveryType;
+  suggestedRetailPriceInclVat: number | null;
 };
 
 const STX_PREFIX = "stx_";
@@ -101,6 +103,30 @@ function pickImages(product: any): string[] | null {
   return images.length > 0 ? Array.from(new Set(images)) : null;
 }
 
+function suggestedRetailFromStxPayload(input: {
+  stxBasePrice: number;
+  payload: any;
+  supplierProductName: string | null;
+  deliveryType: StxDeliveryType;
+}): number | null {
+  return calcSuggestedRetailFromStxOffer({
+    stockxRaw: input.stxBasePrice,
+    productHandle: pickString(input.payload?.slug, input.payload?.url_key, input.payload?.urlKey),
+    productName: input.supplierProductName,
+    deliveryType: input.deliveryType,
+  });
+}
+
+function stxVariantSyncPatch(row: ParsedStxRow) {
+  return {
+    supplierVariantId: row.supplierVariantId,
+    price: row.price,
+    stock: row.stock,
+    deliveryType: row.deliveryType,
+    suggestedRetailPriceInclVat: row.suggestedRetailPriceInclVat,
+  };
+}
+
 function extractRowsFromPayload(payload: any, productId: string) {
   const rows: ParsedStxRow[] = [];
   const variants = Array.isArray(payload?.variants) ? payload.variants : [];
@@ -131,6 +157,12 @@ function extractRowsFromPayload(payload: any, productId: string) {
     const stxBasePrice = Number(selected.price);
     const shippingCHF = resolveStxShippingCHF(payload);
     const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
+    const suggestedRetailPriceInclVat = suggestedRetailFromStxPayload({
+      stxBasePrice,
+      payload,
+      supplierProductName,
+      deliveryType: selected.deliveryType,
+    });
     rows.push({
       supplierVariantId,
       supplierSku: supplierSkuFallback,
@@ -144,6 +176,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
       images,
       leadTimeDays: null,
       deliveryType: selected.deliveryType,
+      suggestedRetailPriceInclVat,
     });
   }
   return rows;
@@ -285,6 +318,12 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
           const stxBasePrice = Number(selected.price);
           const shippingCHF = resolveStxShippingCHF(payload);
           const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
+          const suggestedRetailPriceInclVat = suggestedRetailFromStxPayload({
+            stxBasePrice,
+            payload,
+            supplierProductName,
+            deliveryType: selected.deliveryType,
+          });
           parsedRows.push({
             supplierVariantId,
             supplierSku: supplierSkuFallback,
@@ -298,6 +337,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
             images,
             leadTimeDays: null,
             deliveryType: selected.deliveryType,
+            suggestedRetailPriceInclVat,
           });
         }
       })
@@ -465,12 +505,7 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
   let updated = 0;
   for (const batch of chunkArray(rows, 500)) {
     updated += await bulkUpdateSupplierVariants(
-      batch.map((row) => ({
-        supplierVariantId: row.supplierVariantId,
-        price: row.price,
-        stock: row.stock,
-        deliveryType: row.deliveryType,
-      })),
+      batch.map(stxVariantSyncPatch),
       now,
       { updateGtinWhenProvided: false }
     );
@@ -572,12 +607,7 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
   let updated = 0;
   for (const batch of chunkArray(rows, 500)) {
     updated += await bulkUpdateSupplierVariants(
-      batch.map((r) => ({
-        supplierVariantId: r.supplierVariantId,
-        price: r.price,
-        stock: r.stock,
-        deliveryType: r.deliveryType,
-      })),
+      batch.map(stxVariantSyncPatch),
       now,
       { updateGtinWhenProvided: false }
     );
@@ -700,12 +730,7 @@ export async function refreshStxProductsByKickdbProductIds(
   let updated = 0;
   for (const batch of chunkArray(rows, 500)) {
     updated += await bulkUpdateSupplierVariants(
-      batch.map((row) => ({
-        supplierVariantId: row.supplierVariantId,
-        price: row.price,
-        stock: row.stock,
-        deliveryType: row.deliveryType,
-      })),
+      batch.map(stxVariantSyncPatch),
       now,
       { updateGtinWhenProvided: false }
     );

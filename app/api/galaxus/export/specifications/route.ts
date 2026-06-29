@@ -15,6 +15,7 @@ import {
   trmFeedExclusionsHeaderValue,
 } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import { classifyGalaxusProductKind, isFootwearKind } from "@/galaxus/exports/productClassification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,6 +117,8 @@ export async function GET(request: Request) {
               select: {
                 brand: true,
                 traitsJson: true,
+                name: true,
+                description: true,
               },
             },
           },
@@ -182,19 +185,28 @@ export async function GET(request: Request) {
     const traits = product?.traitsJson ?? null;
 
     let rowsAdded = 0;
-    if (variant?.sizeRaw) {
-      rowsAdded += 2;
+    const kind = classifyGalaxusProductKind({
+      title: variant?.supplierProductName ?? product?.name ?? null,
+      description: product?.description ?? null,
+    });
+    const sizeRaw = String(variant?.sizeRaw ?? "").trim();
+    if (sizeRaw) {
+      const likelyFootwear = isFootwearKind(kind) || /\d/.test(sizeRaw);
+      rowsAdded += 1;
       if (!report) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Schuhgrösse (EU)",
-          SpecificationValue: variant.sizeRaw,
-        });
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Bekleidungsgrösse",
-          SpecificationValue: variant.sizeRaw,
-        });
+        if (likelyFootwear) {
+          rows.push({
+            ProviderKey: providerKey,
+            SpecificationKey: "Schuhgrösse (EU)",
+            SpecificationValue: sizeRaw,
+          });
+        } else {
+          rows.push({
+            ProviderKey: providerKey,
+            SpecificationKey: "Bekleidungsgrösse",
+            SpecificationValue: sizeRaw,
+          });
+        }
       }
     } else {
       specStats.missingTraits.size += 1;

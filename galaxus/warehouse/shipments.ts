@@ -103,6 +103,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
   let shipmentIndex = 0;
   const isDirectDelivery =
     String(options.deliveryType ?? (order as any)?.deliveryType ?? "").toLowerCase() === "direct_delivery";
+  const requiresPhysicalDeliveryNote = Boolean(orderAny.physicalDeliveryNoteRequired);
 
   for (const group of groupedLinesWithStxBuckets) {
     const isStx = group.providerKey === "STX";
@@ -156,7 +157,9 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
         return shipment;
       });
 
-      if (!isDirectDelivery) {
+      let shipmentForList = created;
+      const shouldGenerateDeliveryNote = !isDirectDelivery || requiresPhysicalDeliveryNote;
+      if (shouldGenerateDeliveryNote) {
         const deliveryNotePdf = await renderPdfFromHtml({
           html: renderDeliveryNoteHtml(
             buildDeliveryNoteData(
@@ -181,7 +184,9 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
             storageUrl: deliveryStored.storageUrl,
           },
         });
+      }
 
+      if (!isDirectDelivery) {
         const label = await generateSsccLabelPdf(order, String(packageId), {
           shipmentId: created.dispatchNotificationId ?? created.shipmentId ?? order.galaxusOrderId,
           orderNumbers: [order.orderNumber ?? order.galaxusOrderId].filter(Boolean),
@@ -197,11 +202,9 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
             labelGeneratedAt: new Date(),
           },
         });
-
-        shipments.push(updated);
-      } else {
-        shipments.push(created);
+        shipmentForList = updated;
       }
+      shipments.push(shipmentForList);
       shipmentIndex += 1;
     }
   }

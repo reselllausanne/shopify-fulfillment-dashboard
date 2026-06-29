@@ -5,6 +5,12 @@ import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { toCsv } from "@/galaxus/exports/csv";
+import {
+  classifyGalaxusProductKind,
+  isFootwearKind,
+  resolveGalaxusDescription,
+  resolveGalaxusProductCategoryPath,
+} from "@/galaxus/exports/productClassification";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -149,27 +155,14 @@ function buildVariantName(payload: KickDbPayload | null, fallbackSku?: string | 
   return buildProductTitle(payload, fallbackSku);
 }
 
-function buildProductCategory(payload: KickDbPayload | null): string {
-  if (!payload) return "";
-  const breadcrumb = payload.breadcrumbs
-    ?.map((item) => sanitizeText(item.value ?? ""))
-    .filter(Boolean);
-  if (breadcrumb && breadcrumb.length) {
-    return truncate(breadcrumb.join(" > "), 200);
-  }
-  const category = sanitizeText(payload.category ?? "");
-  const secondary = sanitizeText(payload.secondary_category ?? "");
-  if (category && secondary) return truncate(`${category} > ${secondary}`, 200);
-  return truncate(category || sanitizeText(payload.product_type ?? ""), 200);
-}
-
-function cleanDescription(value?: string | null): string {
-  if (!value) return "";
-  let text = value.replace(/<[^>]*>/g, " ");
-  text = text.replace(/https?:\/\/\S+/g, "");
-  text = text.replace(/our team[^.]*\./gi, "");
-  text = sanitizeText(text);
-  return truncate(text, 4000);
+function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
+  return resolveGalaxusProductCategoryPath({
+    title: fallbackTitle ?? null,
+    category: payload?.category ?? null,
+    secondaryCategory: payload?.secondary_category ?? null,
+    productType: payload?.product_type ?? null,
+    breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+  });
 }
 
 function decimalToString(value: unknown): string {
@@ -238,6 +231,7 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
           title: product?.name ?? undefined,
           brand: product?.brand ?? undefined,
           sku: product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? undefined,
+          description: product?.description ?? undefined,
         } as KickDbPayload)
       : null;
     const providerKey = candidate.providerKey ?? "";
@@ -247,6 +241,16 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
     }
     const title = buildProductTitle(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
     const variantName = buildVariantName(payload, supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? null);
+    const category = buildProductCategory(payload, title);
+    const description = resolveGalaxusDescription({
+      description: payload?.description ?? null,
+      title,
+      brand: payload?.brand ?? product?.brand ?? supplierVariant?.supplierBrand ?? null,
+      category: payload?.category ?? null,
+      secondaryCategory: payload?.secondary_category ?? null,
+      productType: payload?.product_type ?? null,
+      breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    });
 
     const manufacturerBase =
       payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? supplierVariant?.externalSku ?? "";
@@ -262,10 +266,10 @@ function buildMasterRows(candidates: any[]): ExportRow[] {
       Gtin: resolvedGtin,
       ManufacturerKey: manufacturerKey,
       BrandName: normalizeBrand(payload?.brand ?? product?.brand ?? supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? ""),
-      ProductCategory: buildProductCategory(payload) || "Sneakers",
+      ProductCategory: category,
       ProductTitle_de: title,
       VariantName: variantName,
-      LongDescription_de: cleanDescription(payload?.description ?? ""),
+      LongDescription_de: description,
       MainImageUrl: images[0] ?? "",
       ImageUrl_1: images[1] ?? "",
       ImageUrl_2: images[2] ?? "",
@@ -306,11 +310,20 @@ function buildSpecsRows(candidates: any[]): ExportRow[] {
     const providerKey = candidate.providerKey;
     if (!providerKey) continue;
 
-    if (supplierVariant?.sizeRaw) {
+    const sizeRaw = String(supplierVariant?.sizeRaw ?? "").trim();
+    const kind = classifyGalaxusProductKind({
+      title: supplierVariant?.supplierProductName ?? product?.name ?? null,
+      description: product?.description ?? null,
+      category: product?.category ?? null,
+      secondaryCategory: product?.secondary_category ?? null,
+      productType: product?.product_type ?? null,
+    });
+    if (sizeRaw) {
+      const likelyFootwear = isFootwearKind(kind) || /\d/.test(sizeRaw);
       rows.push({
         ProviderKey: providerKey,
-        SpecificationKey: "Size EU",
-        SpecificationValue: supplierVariant.sizeRaw,
+        SpecificationKey: likelyFootwear ? "Schuhgrösse (EU)" : "Bekleidungsgrösse",
+        SpecificationValue: sizeRaw,
       });
     }
     const brand = supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand;

@@ -4,6 +4,12 @@ import { ALTERNATIVE_PARTNER_KEY, isAlternativeProductsPartnerKey } from "@/app/
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
+import {
+  classifyGalaxusProductKind,
+  isFootwearKind,
+  resolveGalaxusDescription,
+  resolveGalaxusProductCategoryPath,
+} from "@/galaxus/exports/productClassification";
 
 type ExportRow = Record<string, string>;
 
@@ -82,14 +88,6 @@ function buildManufacturerKey(base: string, gtin?: string | null, fallbackKey?: 
     return suffix;
   }
   return `${cleanedBase.slice(0, maxBaseLen)}-${suffix}`;
-}
-
-function cleanDescription(value?: string | null): string {
-  if (!value) return "";
-  let text = value.replace(/<[^>]*>/g, " ");
-  text = text.replace(/https?:\/\/\S+/g, "");
-  text = sanitizeText(text);
-  return truncate(text, 4000);
 }
 
 function toIsoDate(value: Date): string {
@@ -256,17 +254,28 @@ export function buildGalaxusAlternativeMasterRows(
   }
   return products.map((product) => {
     const manufacturerBase = product.externalKey || product.title || product.brand;
+    const category = resolveGalaxusProductCategoryPath({
+      title: product.title,
+      description: product.description,
+      category: product.category,
+    });
+    const description = resolveGalaxusDescription({
+      description: product.description,
+      title: product.title,
+      brand: product.brand,
+      category: product.category,
+    });
     const row: ExportRow = {
       ProviderKey: product.providerKey,
       Gtin: product.gtin,
       ManufacturerKey: buildManufacturerKey(manufacturerBase, product.gtin, product.providerKey),
       BrandName: product.brand,
-      ProductCategory: product.category || "Sneakers",
+      ProductCategory: category,
       ProductTitle_de: product.title,
       ProductTitle_en: product.title,
       ProductTitle_ch: product.title,
       VariantName: product.variantName || product.title,
-      LongDescription_de: cleanDescription(product.description),
+      LongDescription_de: description,
       MainImageUrl: product.mainImageUrl,
     };
     if (params.includeWeight) {
@@ -338,17 +347,25 @@ export function buildGalaxusAlternativeSpecRows(products: AlternativeProductReco
   for (const product of products) {
     const providerKey = product.providerKey;
     if (!providerKey) continue;
+    const kind = classifyGalaxusProductKind({
+      title: product.title,
+      description: product.description,
+      category: product.category,
+    });
     if (product.size) {
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Schuhgrösse (EU)",
-        SpecificationValue: product.size,
-      });
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: "Bekleidungsgrösse",
-        SpecificationValue: product.size,
-      });
+      if (isFootwearKind(kind)) {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Schuhgrösse (EU)",
+          SpecificationValue: product.size,
+        });
+      } else {
+        rows.push({
+          ProviderKey: providerKey,
+          SpecificationKey: "Bekleidungsgrösse",
+          SpecificationValue: product.size,
+        });
+      }
     }
     if (product.brand) {
       rows.push({

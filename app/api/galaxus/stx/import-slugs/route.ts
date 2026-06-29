@@ -1,26 +1,21 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/app/lib/prisma";
-import { normalizeStxImportInput } from "@/galaxus/stx/importProduct";
+import {
+  bulkInsertStxImportSlugs,
+  dedupeSlugRows,
+  getStxImportSlugCounts,
+} from "@/galaxus/stx/importSlugsBulk";
 import { toCsv } from "@/galaxus/exports/csv";
+import { prisma } from "@/app/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 function extractLines(input: string): string[] {
   return input
     .split(/\r?\n/g)
     .map((line) => line.trim())
     .filter((line) => Boolean(line));
-}
-
-async function getCounts() {
-  const prismaAny = prisma as any;
-  const [pending, imported, error] = await Promise.all([
-    prismaAny.stxImportSlug.count({ where: { status: "PENDING" } }),
-    prismaAny.stxImportSlug.count({ where: { status: "IMPORTED" } }),
-    prismaAny.stxImportSlug.count({ where: { status: "ERROR" } }),
-  ]);
-  return { pending, imported, error };
 }
 
 export async function GET(request: Request) {
@@ -51,7 +46,7 @@ export async function GET(request: Request) {
         },
       });
     }
-    const counts = await getCounts();
+    const counts = await getStxImportSlugCounts();
     return NextResponse.json({ ok: true, counts });
   } catch (error: any) {
     return NextResponse.json(
@@ -73,32 +68,28 @@ export async function POST(request: Request) {
       );
     }
 
-    const normalized = lines
-      .map((line) => ({ input: line, slug: normalizeStxImportInput(line) }))
-      .filter((row) => Boolean(row.slug));
-
-    if (normalized.length === 0) {
+    const rows = dedupeSlugRows(lines);
+    if (rows.length === 0) {
       return NextResponse.json(
         { ok: false, error: "No valid slugs/URLs found." },
         { status: 400 }
       );
     }
 
-    const prismaAny = prisma as any;
-    for (const row of normalized) {
-      await prismaAny.stxImportSlug.upsert({
-        where: { slug: row.slug },
-        create: {
-          input: row.input,
-          slug: row.slug,
-          status: "PENDING",
-        },
-        update: {},
-      });
-    }
+    const insertedNew = await bulkInsertStxImportSlugs(rows);
+    const counts = await getStxImportSlugCounts();
 
-    const counts = await getCounts();
-    return NextResponse.json({ ok: true, counts, inserted: normalized.length });
+    return NextResponse.json({
+      ok: true,
+      counts,
+      stats: {
+        linesReceived: lines.length,
+        uniqueSlugs: rows.length,
+        duplicateLinesInPaste: Math.max(0, lines.length - rows.length),
+        insertedNew,
+        skippedExisting: Math.max(0, rows.length - insertedNew),
+      },
+    });
   } catch (error: any) {
     console.error("[GALAXUS][STX][IMPORT-SLUGS] Failed:", error);
     return NextResponse.json(

@@ -14,6 +14,8 @@ type FeedRunResult = {
   error?: string;
 };
 
+const STALE_FEED_RUN_MS = 4 * 60 * 60 * 1000;
+
 async function callFeedUpload(origin: string, scope: FeedScope, manual: boolean) {
   const type =
     scope === "full"
@@ -27,33 +29,14 @@ async function callFeedUpload(origin: string, scope: FeedScope, manual: boolean)
             : "offer-stock";
   const manualParam = manual ? "&manual=1" : "";
   const url = `${origin}/api/galaxus/feeds/upload?type=${type}${manualParam}`;
-  try {
-    const res = await fetch(url, {
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.ok) {
-      throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
-    }
-    return data;
-  } catch (networkErr: any) {
-    // VPS/proxy setups can fail self-HTTP calls (DNS/TLS/loopback restrictions).
-    // Fallback to direct in-process route invocation to keep manual/cron feed pushes working.
-    try {
-      const routeModule = await import("@/app/api/galaxus/feeds/upload/route");
-      const req = new Request(url, { method: "POST" });
-      const res = await routeModule.POST(req);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
-      }
-      return data;
-    } catch (fallbackErr: any) {
-      const netMsg = networkErr?.message ? `network=${String(networkErr.message)}` : "network=unknown";
-      const fbMsg = fallbackErr?.message ? `fallback=${String(fallbackErr.message)}` : "fallback=unknown";
-      throw new Error(`Feed upload failed (${netMsg}; ${fbMsg})`);
-    }
+  const routeModule = await import("@/app/api/galaxus/feeds/upload/route");
+  const req = new Request(url, { method: "POST" });
+  const res = await routeModule.POST(req);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
   }
+  return data;
 }
 
 async function collectManifestIds(runId: string) {
@@ -64,49 +47,63 @@ async function collectManifestIds(runId: string) {
   return rows.map((row: any) => row.id);
 }
 
-export async function runFeedPipeline(params: {
+export async function reconcileStaleFeedRuns(maxAgeMs = STALE_FEED_RUN_MS) {
+  const cutoff = new Date(Date.now() - maxAgeMs);
+  await (prisma as any).galaxusFeedRun.updateMany({
+    where: { finishedAt: null, startedAt: { lt: cutoff } },
+    data: {
+      finishedAt: new Date(),
+      success: false,
+      errorMessage: "Stale feed run timed out",
+    },
+  });
+}
+
+export async function getActiveFeedRun() {
+  await reconcileStaleFeedRuns();
+  return (prisma as any).galaxusFeedRun.findFirst({
+    where: { finishedAt: null },
+    orderBy: { startedAt: "desc" },
+  });
+}
+
+async function executeFeedRun(params: {
+  feedRunId: string;
+  runId: string;
   origin: string;
   scope: FeedScope;
   triggerSource?: FeedTriggerSource;
 }): Promise<FeedRunResult> {
-  const { origin, scope, triggerSource } = params;
-  const startedAt = new Date();
-  let runId: string = randomUUID();
+  const { feedRunId, origin, scope, triggerSource } = params;
+  let effectiveRunId = params.runId;
   let counts: Record<string, number | null> | undefined;
   let uploaded: Array<{ name: string; path: string; size: number }> | undefined;
   let error: string | undefined;
-  const feedRun = await (prisma as any).galaxusFeedRun.create({
-    data: {
-      runId,
-      scope,
-      triggerSource: triggerSource ?? null,
-      startedAt,
-      finishedAt: null,
-      success: false,
-      errorMessage: null,
-      countsJson: null,
-      manifestIds: [],
-    },
-  });
 
   if (GALAXUS_FEED_UPLOADS_DISABLED) {
     error = "Feed uploads are disabled";
   } else {
     try {
       const data = await callFeedUpload(origin, scope, triggerSource === "manual");
-      runId = String(data?.runId ?? runId);
       counts = data?.counts ?? undefined;
       uploaded = Array.isArray(data?.uploaded) ? data.uploaded : undefined;
+      if (data?.runId) {
+        await (prisma as any).galaxusFeedRun.update({
+          where: { id: feedRunId },
+          data: { runId: String(data.runId) },
+        });
+        effectiveRunId = String(data.runId);
+      }
     } catch (err: any) {
       error = err?.message ?? "Feed upload failed";
     }
   }
 
-  const manifestIds = await collectManifestIds(runId);
+  const manifestIds = await collectManifestIds(effectiveRunId);
   await (prisma as any).galaxusFeedRun.update({
-    where: { id: feedRun.id },
+    where: { id: feedRunId },
     data: {
-      runId,
+      runId: effectiveRunId,
       finishedAt: new Date(),
       success: !error,
       errorMessage: error ?? null,
@@ -117,13 +114,92 @@ export async function runFeedPipeline(params: {
 
   return {
     ok: !error,
-    runId,
+    runId: effectiveRunId,
     scope,
     triggerSource,
     counts,
     uploaded,
     error,
   };
+}
+
+export async function runFeedPipeline(params: {
+  origin: string;
+  scope: FeedScope;
+  triggerSource?: FeedTriggerSource;
+}): Promise<FeedRunResult> {
+  const { origin, scope, triggerSource } = params;
+  const runId = randomUUID();
+  const feedRun = await (prisma as any).galaxusFeedRun.create({
+    data: {
+      runId,
+      scope,
+      triggerSource: triggerSource ?? null,
+      startedAt: new Date(),
+      finishedAt: null,
+      success: false,
+      errorMessage: null,
+      countsJson: null,
+      manifestIds: [],
+    },
+  });
+  return executeFeedRun({
+    feedRunId: feedRun.id,
+    runId,
+    origin,
+    scope,
+    triggerSource,
+  });
+}
+
+export async function startFeedPushAsync(params: {
+  origin: string;
+  scope: FeedScope;
+  triggerSource?: FeedTriggerSource;
+}): Promise<{ ok: boolean; accepted?: boolean; runId?: string; error?: string; status?: number }> {
+  const locked = await withAdvisoryLock("galaxus:feed-push", async () => {
+    const active = await getActiveFeedRun();
+    if (active) {
+      return {
+        ok: false,
+        error: "A feed push is already running",
+        runId: active.runId,
+        status: 409,
+      };
+    }
+
+    const runId = randomUUID();
+    const feedRun = await (prisma as any).galaxusFeedRun.create({
+      data: {
+        runId,
+        scope: params.scope,
+        triggerSource: params.triggerSource ?? null,
+        startedAt: new Date(),
+        finishedAt: null,
+        success: false,
+        errorMessage: null,
+        countsJson: null,
+        manifestIds: [],
+      },
+    });
+
+    void executeFeedRun({
+      feedRunId: feedRun.id,
+      runId,
+      origin: params.origin,
+      scope: params.scope,
+      triggerSource: params.triggerSource,
+    }).catch((err) => {
+      console.error("[GALAXUS][FEED][ASYNC] Background push failed:", err);
+    });
+
+    return { ok: true, accepted: true, runId };
+  });
+
+  if (!locked.locked) {
+    return { ok: false, error: "Feed push lock busy — try again", status: 409 };
+  }
+  return locked.result;
 }
 
 export async function requestFeedPush(params: {

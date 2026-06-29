@@ -1,6 +1,6 @@
 import React from "react";
 import type { MatchResult, ShopifyLineItem } from "@/app/utils/matching";
-import { isShopifyFinancialRefunded, isLiquidationShopifyTitle } from "@/app/utils/matching";
+import { isShopifyFinancialRefunded, isLiquidationShopifyTitle, resolveInStockEssential } from "@/app/utils/matching";
 import { shopifyFraudUiTone } from "@/app/lib/shopifyOrderRisk";
 import type { PricingResult, OrderNode } from "@/app/types";
 
@@ -97,7 +97,9 @@ export default function OrderMatchingSection({
             const match = result.bestMatch;
             const isRefunded = isShopifyFinancialRefunded(shopify.displayFinancialStatus);
             const isLiquidation = isLiquidationShopifyTitle(shopify.title);
-            const isEssentialHoodie = false; // Already handled upstream; keep UI minimal here
+            const isInStockEssential = Boolean(
+              resolveInStockEssential(shopify.sku, shopify.title)
+            );
             const fraudTone = shopifyFraudUiTone({
               fraudRiskLevel: shopify.fraudRiskLevel ?? null,
               fraudRecommendation: shopify.fraudRecommendation ?? null,
@@ -116,7 +118,7 @@ export default function OrderMatchingSection({
                     ? "border-amber-400 bg-amber-50 ring-1 ring-amber-200"
                     : isLiquidation
                     ? "border-purple-300 bg-purple-50"
-                    : isEssentialHoodie
+                    : isInStockEssential
                     ? "border-indigo-300 bg-indigo-50"
                     : match?.overThreshold
                     ? "border-yellow-300 bg-yellow-50"
@@ -185,6 +187,34 @@ export default function OrderMatchingSection({
                           <span className="font-medium">Customer:</span> {shopify.customerName}
                         </p>
                       )}
+                      <p>
+                        <span className="font-medium">Livraison:</span>{" "}
+                        {shopify.deliveryMode ? (
+                          <>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-xs font-semibold ${
+                                shopify.deliveryMode === "express"
+                                  ? "bg-orange-200 text-orange-900"
+                                  : "bg-slate-200 text-slate-800"
+                              }`}
+                            >
+                              {shopify.deliveryModeLabel || shopify.deliveryMode}
+                            </span>
+                            {shopify.deliveryEstimate && (
+                              <span className="ml-1 text-gray-600">({shopify.deliveryEstimate})</span>
+                            )}
+                            {shopify.expressPrice && shopify.deliveryMode === "express" && (
+                              <span className="ml-1 text-gray-600">· {shopify.expressPrice}</span>
+                            )}
+                          </>
+                        ) : shopify.expressAvailable ? (
+                          <span className="text-gray-500">
+                            Standard (express dispo: {shopify.variantExpressPrice ?? "—"})
+                          </span>
+                        ) : (
+                          <span className="text-gray-500">—</span>
+                        )}
+                      </p>
                       <p>
                         <span className="font-medium">Product:</span> {shopify.title}
                       </p>

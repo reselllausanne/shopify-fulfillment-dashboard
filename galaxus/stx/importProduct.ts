@@ -10,6 +10,7 @@ import {
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
+import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
 import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
 import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 
@@ -32,6 +33,23 @@ type ImportProductSummary = {
   image: string | null;
 };
 
+export type StxImportDiagnostics = {
+  kickdbFetchOk: boolean;
+  kickdbHttpStatus?: number | null;
+  kickdbError?: string | null;
+  variantsTotal: number;
+  variantsParsed: number;
+  variantsEligible: number;
+  forceImport: boolean;
+  skipReasons: {
+    missingVariantId: number;
+    noUsablePrice: number;
+    invalidGtin: number;
+    missingImages: number;
+  };
+  samplePriceRows?: string[];
+};
+
 export type StxImportResult = {
   ok: boolean;
   productSummary: ImportProductSummary;
@@ -39,6 +57,7 @@ export type StxImportResult = {
   eligibleVariantsCount: number;
   warnings: string[];
   errors: string[];
+  diagnostics: StxImportDiagnostics;
   variantsPreview: ImportPreviewVariant[];
 };
 
@@ -55,6 +74,7 @@ type ParsedVariantRow = {
   images: unknown;
   leadTimeDays: number | null;
   deliveryType: StxDeliveryType;
+  suggestedRetailPriceInclVat: number | null;
   kickdbVariantExternalId: string;
   sizeUs: string | null;
   sizeEu: string | null;
@@ -109,6 +129,89 @@ export function normalizeStxImportInput(input: string): string {
   } catch {
     return value;
   }
+}
+
+export function emptyDiagnostics(overrides: Partial<StxImportDiagnostics> = {}): StxImportDiagnostics {
+  return {
+    kickdbFetchOk: false,
+    kickdbHttpStatus: null,
+    kickdbError: null,
+    variantsTotal: 0,
+    variantsParsed: 0,
+    variantsEligible: 0,
+    forceImport: false,
+    skipReasons: {
+      missingVariantId: 0,
+      noUsablePrice: 0,
+      invalidGtin: 0,
+      missingImages: 0,
+    },
+    samplePriceRows: [],
+    ...overrides,
+  };
+}
+
+function summarizePriceRows(prices: unknown, limit = 4): string {
+  const list = Array.isArray(prices) ? prices : [];
+  return list
+    .slice(0, limit)
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      const type = String(item?.type ?? "?");
+      const price = item?.price ?? "?";
+      const asks = item?.asks ?? "?";
+      return `${type}:${price}/${asks}asks`;
+    })
+    .join("; ");
+}
+
+function formatImportFailureSummary(diagnostics: StxImportDiagnostics): string {
+  const parts = [
+    `variants ${diagnostics.variantsParsed}/${diagnostics.variantsTotal} parsed`,
+    `eligible ${diagnostics.variantsEligible}`,
+  ];
+  const skips = diagnostics.skipReasons;
+  if (skips.noUsablePrice > 0) parts.push(`${skips.noUsablePrice} no express/usable price`);
+  if (skips.invalidGtin > 0) parts.push(`${skips.invalidGtin} invalid/missing GTIN`);
+  if (skips.missingImages > 0) parts.push(`${skips.missingImages} missing images`);
+  if (skips.missingVariantId > 0) parts.push(`${skips.missingVariantId} missing variant id`);
+  if (diagnostics.forceImport) parts.push("force-import slug");
+  return parts.join(" · ");
+}
+
+function failedImportResult(input: {
+  input: string;
+  normalizedInput: string;
+  productSummary: Partial<ImportProductSummary>;
+  warnings: string[];
+  errors: string[];
+  diagnostics: StxImportDiagnostics;
+  eligibleVariantsCount?: number;
+  variantsPreview?: ImportPreviewVariant[];
+}): StxImportResult {
+  const errors = [...input.errors];
+  if (errors.length === 0) errors.push("STX import failed.");
+  errors.unshift(`Summary: ${formatImportFailureSummary(input.diagnostics)}`);
+
+  return {
+    ok: false,
+    productSummary: {
+      input: input.input,
+      normalizedInput: input.normalizedInput,
+      kickdbProductId: input.productSummary.kickdbProductId ?? null,
+      slug: input.productSummary.slug ?? null,
+      styleId: input.productSummary.styleId ?? null,
+      name: input.productSummary.name ?? null,
+      brand: input.productSummary.brand ?? null,
+      image: input.productSummary.image ?? null,
+    },
+    importedVariantsCount: 0,
+    eligibleVariantsCount: input.eligibleVariantsCount ?? 0,
+    warnings: input.warnings,
+    errors,
+    diagnostics: input.diagnostics,
+    variantsPreview: input.variantsPreview ?? [],
+  };
 }
 
 function parseDateValue(value: string | null): Date | null {
@@ -166,30 +269,44 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
   const warnings: string[] = [];
   const errors: string[] = [];
   const normalizedInput = normalizeStxImportInput(input);
+  const diagnostics = emptyDiagnostics();
 
   if (!normalizedInput) {
-    return {
-      ok: false,
-      productSummary: {
-        input,
-        normalizedInput,
-        kickdbProductId: null,
-        slug: null,
-        styleId: null,
-        name: null,
-        brand: null,
-        image: null,
-      },
-      importedVariantsCount: 0,
-      eligibleVariantsCount: 0,
+    return failedImportResult({
+      input,
+      normalizedInput,
+      productSummary: {},
       warnings,
       errors: ["Input is required (slug, URL, or product id)."],
-      variantsPreview: [],
-    };
+      diagnostics,
+    });
   }
 
-  const response = await fetchStockxProductByIdOrSlugRaw(normalizedInput);
-  const product = response.product as any;
+  let product: any;
+  try {
+    const response = await fetchStockxProductByIdOrSlugRaw(normalizedInput);
+    product = response.product as any;
+    diagnostics.kickdbFetchOk = true;
+  } catch (error: any) {
+    const message = String(error?.message ?? "KickDB fetch failed");
+    const statusMatch = message.match(/KickDB request failed \((\d+)\)/i);
+    diagnostics.kickdbFetchOk = false;
+    diagnostics.kickdbHttpStatus = statusMatch ? Number(statusMatch[1]) : null;
+    diagnostics.kickdbError = message;
+    return failedImportResult({
+      input,
+      normalizedInput,
+      productSummary: {},
+      warnings,
+      errors: [
+        diagnostics.kickdbHttpStatus === 404
+          ? `KickDB: product not found for "${normalizedInput}" (404). Check slug/URL.`
+          : message,
+      ],
+      diagnostics,
+    });
+  }
+
   const kickdbProductId = pickString(product?.id, normalizedInput);
   const slug = pickString(product?.slug, product?.url_key, product?.urlKey);
   const styleId = pickString(product?.sku, product?.style_id, product?.styleId);
@@ -210,45 +327,44 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
   warnings.push(...regionCheck.warnings);
   errors.push(...regionCheck.errors);
   if (regionCheck.blocked) {
-    return {
-      ok: false,
-      productSummary: {
-        input,
-        normalizedInput,
-        kickdbProductId,
-        slug,
-        styleId,
-        name,
-        brand,
-        image,
-      },
-      importedVariantsCount: 0,
-      eligibleVariantsCount: 0,
+    return failedImportResult({
+      input,
+      normalizedInput,
+      productSummary: { kickdbProductId, slug, styleId, name, brand, image },
       warnings,
       errors,
-      variantsPreview: [],
-    };
+      diagnostics,
+    });
   }
 
   const variants = Array.isArray(product?.variants) ? product.variants : [];
+  diagnostics.variantsTotal = variants.length;
   const supplierSkuFallback = pickString(styleId, product?.sku, slug, product?.id) ?? `stx_${normalizedInput}`;
   const forceImport = isStxForceImportSlug(slug ?? normalizedInput);
+  diagnostics.forceImport = forceImport;
   const parsedRows: ParsedVariantRow[] = [];
   let eligibleVariantsCount = 0;
 
   for (const variant of variants) {
     const variantId = pickString(variant?.id);
+    const sizeLabel = pickSizeRawEuFirst(variant) ?? pickString(variant?.size) ?? "?";
     if (!variantId) {
-      warnings.push("Skipped one variant because id is missing.");
+      diagnostics.skipReasons.missingVariantId += 1;
+      warnings.push(`Skipped size ${sizeLabel}: missing variant id.`);
       continue;
     }
 
     const selected = selectStxOfferForImport(variant?.prices, { forceImport });
     if (!selected) {
+      diagnostics.skipReasons.noUsablePrice += 1;
+      const priceHint = summarizePriceRows(variant?.prices);
+      if (!diagnostics.samplePriceRows?.includes(priceHint) && diagnostics.samplePriceRows!.length < 3) {
+        diagnostics.samplePriceRows!.push(`size ${sizeLabel}: ${priceHint || "no price rows"}`);
+      }
       warnings.push(
         forceImport
-          ? `Variant ${variantId}: no usable price found (force-import slug).`
-          : `Variant ${variantId}: no express price found (standard-only or invalid).`
+          ? `Size ${sizeLabel} (${variantId}): no usable price. Prices: ${priceHint || "none"}.`
+          : `Size ${sizeLabel} (${variantId}): no express price (need express_standard/expedited). Prices: ${priceHint || "none"}.`
       );
       continue;
     }
@@ -258,11 +374,13 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     const gtinRaw = pickString(extractVariantGtin(variant));
     const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
     if (!gtin) {
-      warnings.push(`Variant ${variantId}: missing/invalid GTIN (skipped).`);
+      diagnostics.skipReasons.invalidGtin += 1;
+      warnings.push(`Size ${sizeLabel} (${variantId}): missing/invalid GTIN (got ${gtinRaw ?? "none"}).`);
       continue;
     }
     if (!images || images.length === 0) {
-      warnings.push(`Variant ${variantId}: missing product images (skipped).`);
+      diagnostics.skipReasons.missingImages += 1;
+      warnings.push(`Size ${sizeLabel} (${variantId}): missing product images.`);
       continue;
     }
     const providerKey = buildProviderKey(gtin, supplierVariantId);
@@ -270,6 +388,12 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     const stxBasePrice = Number(selected.price);
     const shippingCHF = resolveStxShippingCHF(product);
     const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
+    const suggestedRetailPriceInclVat = calcSuggestedRetailFromStxOffer({
+      stockxRaw: stxBasePrice,
+      productHandle: slug,
+      productName: name,
+      deliveryType: selected.deliveryType,
+    });
 
     parsedRows.push({
       supplierVariantId,
@@ -284,6 +408,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
       images,
       leadTimeDays: null,
       deliveryType: selected.deliveryType,
+      suggestedRetailPriceInclVat,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -291,29 +416,26 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     });
   }
 
+  diagnostics.variantsParsed = parsedRows.length;
+  diagnostics.variantsEligible = eligibleVariantsCount;
+
   if (parsedRows.length === 0) {
     errors.push("No importable variants were found on this product.");
   }
   if (!forceImport && eligibleVariantsCount === 0) {
-    errors.push("No eligible express variants found");
+    errors.push(
+      "No eligible express variants (need express_standard or express_expedited with price>0 and asks≥2)."
+    );
   }
   if (errors.length > 0) {
-    return {
-      ok: false,
-      productSummary: {
-        input,
-        normalizedInput,
-        kickdbProductId,
-        slug,
-        styleId,
-        name,
-        brand,
-        image,
-      },
-      importedVariantsCount: 0,
-      eligibleVariantsCount,
+    return failedImportResult({
+      input,
+      normalizedInput,
+      productSummary: { kickdbProductId, slug, styleId, name, brand, image },
       warnings,
       errors,
+      diagnostics,
+      eligibleVariantsCount,
       variantsPreview: parsedRows.slice(0, 5).map((row) => ({
         supplierVariantId: row.supplierVariantId,
         size: row.sizeRaw,
@@ -321,12 +443,14 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
         price: row.price,
         stock: row.stock,
       })),
-    };
+    });
   }
 
   const now = new Date();
+  let rows = parsedRows;
+  try {
   const remappedRowsResult = await remapRowsToExistingProviderKeyGtin(parsedRows);
-  const rows = remappedRowsResult.rows;
+  rows = remappedRowsResult.rows;
 
   const retailPriceRaw = pickTraitValue(traits, ["retail price", "rrp", "msrp"]);
   const releaseDateRaw = pickTraitValue(traits, ["release date"]);
@@ -434,6 +558,25 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     doNotDowngradeFromMatched: true,
     onlySetPendingIfMissing: true,
   });
+  } catch (error: any) {
+    const message = String(error?.message ?? "Database write failed");
+    return failedImportResult({
+      input,
+      normalizedInput,
+      productSummary: { kickdbProductId, slug, styleId, name, brand, image },
+      warnings,
+      errors: [`Database error while saving import: ${message}`],
+      diagnostics,
+      eligibleVariantsCount,
+      variantsPreview: parsedRows.slice(0, 5).map((row) => ({
+        supplierVariantId: row.supplierVariantId,
+        size: row.sizeRaw,
+        deliveryType: row.deliveryType,
+        price: row.price,
+        stock: row.stock,
+      })),
+    });
+  }
 
   return {
     ok: true,
@@ -451,6 +594,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
     eligibleVariantsCount,
     warnings,
     errors: [],
+    diagnostics,
     variantsPreview: rows.slice(0, 5).map((row) => ({
       supplierVariantId: row.supplierVariantId,
       size: row.sizeRaw,

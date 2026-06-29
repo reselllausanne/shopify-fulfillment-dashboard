@@ -6,6 +6,7 @@ import {
   shouldSkipOrderForFulfillmentMatching,
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
 import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
+import { parseShopifyLineItemDelivery } from "@/app/lib/shopifyLineItemDelivery";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,18 @@ query OrderByName($first: Int!, $query: String!) {
               quantity
               fulfillableQuantity
               variantTitle
+              customAttributes {
+                key
+                value
+              }
+              variant {
+                expressAvailable: metafield(namespace: "custom", key: "express_available") {
+                  value
+                }
+                expressPrice: metafield(namespace: "custom", key: "express_price") {
+                  value
+                }
+              }
               originalUnitPriceSet { shopMoney { amount currencyCode } }
               discountedTotalSet { shopMoney { amount currencyCode } }
             }
@@ -100,6 +113,12 @@ export async function POST(req: Request) {
       const variantTitle = li.variantTitle ?? null;
       const sizeEU = extractEUSize(variantTitle) ?? extractEUSize(li.title);
 
+      const deliveryInfo = parseShopifyLineItemDelivery({
+        customAttributes: li.customAttributes ?? [],
+        expressAvailableMetafield: li?.variant?.expressAvailable?.value ?? null,
+        expressPriceMetafield: li?.variant?.expressPrice?.value ?? null,
+      });
+
       return {
         shopifyOrderId: node.id,
         orderId: node.id,
@@ -120,6 +139,12 @@ export async function POST(req: Request) {
         fraudRiskLevel: riskNorm.fraudRiskLevel,
         fraudRecommendation: riskNorm.fraudRecommendation,
         fraudSummaryLabel: riskNorm.fraudSummaryLabel,
+        deliveryMode: deliveryInfo.deliveryMode,
+        deliveryModeLabel: deliveryInfo.deliveryModeLabel,
+        deliveryEstimate: deliveryInfo.deliveryEstimate,
+        expressAvailable: deliveryInfo.expressAvailable,
+        expressPrice: deliveryInfo.expressPrice,
+        variantExpressPrice: deliveryInfo.variantExpressPrice,
       };
     });
 

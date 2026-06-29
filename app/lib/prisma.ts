@@ -12,9 +12,10 @@ declare global {
 
 const globalForPrisma = globalThis as typeof globalThis & { prisma?: PrismaClient };
 
-function createPrismaClient() {
+function createPrismaClient(url?: string) {
   return new PrismaClient({
-    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
+    ...(url ? { datasources: { db: { url } } } : {}),
+    log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 }
 
@@ -66,8 +67,32 @@ function resolvePrismaClient(): PrismaClient {
   return globalForPrisma.prisma;
 }
 
-const prisma = resolvePrismaClient();
+declare global {
+  // eslint-disable-next-line no-var
+  var prismaDirect: PrismaClient | undefined;
+}
 
-export { prisma };
+const globalForPrismaDirect = globalThis as typeof globalThis & { prismaDirect?: PrismaClient };
+
+/** Session-mode Postgres for long feed exports (avoids pooler disconnect mid-job). */
+function resolvePrismaDirectClient(): PrismaClient {
+  const directUrl = process.env.DIRECT_URL?.trim();
+  if (!directUrl) {
+    return resolvePrismaClient();
+  }
+  if (process.env.NODE_ENV !== "production" && globalForPrismaDirect.prismaDirect) {
+    return globalForPrismaDirect.prismaDirect;
+  }
+  const client = createPrismaClient(directUrl);
+  if (process.env.NODE_ENV !== "production") {
+    globalForPrismaDirect.prismaDirect = client;
+  }
+  return client;
+}
+
+const prisma = resolvePrismaClient();
+const prismaDirect = resolvePrismaDirectClient();
+
+export { prisma, prismaDirect };
 
 export {};

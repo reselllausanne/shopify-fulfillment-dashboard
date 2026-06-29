@@ -56,6 +56,12 @@ export function extractEUSize(input?: string | null): string | null {
       return `EU ${plainNumberMatch[1]}`;
     }
   }
+
+  // Birkenstock / narrow-regular-wide suffix: "39N", "40R", "41M"
+  const widthSizeMatch = input.trim().match(/^([0-9]{1,2}(?:\.[0-9])?)([NRMW])$/i);
+  if (widthSizeMatch?.[1]) {
+    return `EU ${widthSizeMatch[1]}${widthSizeMatch[2].toUpperCase()}`;
+  }
   
   return null;
 }

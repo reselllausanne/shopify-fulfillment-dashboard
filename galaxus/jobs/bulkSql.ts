@@ -76,6 +76,12 @@ function jsonb(value: unknown) {
   return Prisma.sql`${JSON.stringify(value)}::jsonb`;
 }
 
+function numericOrNull(value: number | null | undefined, type: "numeric" | "int") {
+  return value === null || value === undefined
+    ? Prisma.sql`NULL::${Prisma.raw(type)}`
+    : Prisma.sql`${value}::${Prisma.raw(type)}`;
+}
+
 export async function bulkInsertSupplierVariants(
   rows: Array<{
     supplierVariantId: string;
@@ -91,6 +97,7 @@ export async function bulkInsertSupplierVariants(
     leadTimeDays: number | null;
     deliveryType?: string | null;
     gtin?: string | null;
+    suggestedRetailPriceInclVat?: number | null;
   }>,
   now: Date
 ): Promise<number> {
@@ -113,6 +120,7 @@ export async function bulkInsertSupplierVariants(
       ${jsonb(r.images)},
       ${r.leadTimeDays},
       ${r.deliveryType ?? null},
+      ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")},
       ${now},
       ${now},
       ${now}
@@ -136,6 +144,7 @@ export async function bulkInsertSupplierVariants(
         "images",
         "leadTimeDays",
         "deliveryType",
+        "suggestedRetailPriceInclVat",
         "lastSyncAt",
         "createdAt",
         "updatedAt"
@@ -147,6 +156,30 @@ export async function bulkInsertSupplierVariants(
     SELECT COUNT(*)::int AS "count" FROM ins;
   `;
 
+  const result = await prisma.$queryRaw<Array<{ count: number }>>(query);
+  return result?.[0]?.count ?? 0;
+}
+
+export async function bulkUpdateSuggestedRetailPrices(
+  rows: Array<{ supplierVariantId: string; suggestedRetailPriceInclVat: number }>,
+  now: Date
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const values = rows.map((r) =>
+    Prisma.sql`(${r.supplierVariantId}, ${r.suggestedRetailPriceInclVat})`
+  );
+  const query = Prisma.sql`
+    WITH upd AS (
+      UPDATE "public"."SupplierVariant" AS sv
+      SET
+        "suggestedRetailPriceInclVat" = v."suggestedRetailPriceInclVat",
+        "updatedAt" = ${now}
+      FROM (VALUES ${Prisma.join(values)}) AS v("supplierVariantId", "suggestedRetailPriceInclVat")
+      WHERE sv."supplierVariantId" = v."supplierVariantId"
+      RETURNING 1
+    )
+    SELECT COUNT(*)::int AS "count" FROM upd;
+  `;
   const result = await prisma.$queryRaw<Array<{ count: number }>>(query);
   return result?.[0]?.count ?? 0;
 }
@@ -359,16 +392,13 @@ export async function bulkUpdateSupplierVariants(
     gtin?: string | null;
     supplierGender?: string | null;
     supplierColorway?: string | null;
+    suggestedRetailPriceInclVat?: number | null;
   }>,
   now: Date,
   options?: { updateGtinWhenProvided?: boolean }
 ): Promise<number> {
   if (rows.length === 0) return 0;
   const updateGtin = options?.updateGtinWhenProvided !== false;
-  const numericOrNull = (value: number | null | undefined, type: "numeric" | "int") =>
-    value === null || value === undefined
-      ? Prisma.sql`NULL::${Prisma.raw(type)}`
-      : Prisma.sql`${value}::${Prisma.raw(type)}`;
   const values = rows.map((r) => {
     const gtin = updateGtin ? (r.gtin ?? null) : null;
     return Prisma.sql`(
@@ -386,7 +416,8 @@ export async function bulkUpdateSupplierVariants(
       ${numericOrNull(r.leadTimeDays, "int")},
       ${r.deliveryType ?? null},
       ${r.supplierGender ?? null},
-      ${r.supplierColorway ?? null}
+      ${r.supplierColorway ?? null},
+      ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")}
     )`;
   });
 
@@ -406,7 +437,8 @@ export async function bulkUpdateSupplierVariants(
       "leadTimeDays",
       "deliveryType",
       "supplierGender",
-      "supplierColorway"
+      "supplierColorway",
+      "suggestedRetailPriceInclVat"
     ) AS (
       VALUES ${Prisma.join(values)}
     ),
@@ -433,6 +465,7 @@ export async function bulkUpdateSupplierVariants(
         "deliveryType" = COALESCE(vals."deliveryType", t."deliveryType"),
         "supplierGender" = COALESCE(vals."supplierGender", t."supplierGender"),
         "supplierColorway" = COALESCE(vals."supplierColorway", t."supplierColorway"),
+        "suggestedRetailPriceInclVat" = COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat"),
         "gtin" = CASE
           WHEN vals."gtin" IS NULL THEN t."gtin"
           WHEN t."gtin" IS DISTINCT FROM vals."gtin"
@@ -459,6 +492,7 @@ export async function bulkUpdateSupplierVariants(
             t."deliveryType" IS DISTINCT FROM COALESCE(vals."deliveryType", t."deliveryType") OR
             t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
             t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
+            t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
             (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
             (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL)
           )
@@ -481,6 +515,7 @@ export async function bulkUpdateSupplierVariants(
           t."deliveryType" IS DISTINCT FROM COALESCE(vals."deliveryType", t."deliveryType") OR
           t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
           t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
+          t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
           (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
           (vals."providerKey" IS NOT NULL AND t."providerKey" IS DISTINCT FROM vals."providerKey") OR
           (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { importStxProductByInput } from "@/galaxus/stx/importProduct";
+import { emptyDiagnostics, importStxProductByInput } from "@/galaxus/stx/importProduct";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +36,7 @@ export async function POST(request: Request) {
         eligibleVariantsCount: 0,
         warnings: [],
         errors: [error?.message ?? "STX import failed"],
+        diagnostics: emptyDiagnostics(),
       },
       { status: 500 }
     );

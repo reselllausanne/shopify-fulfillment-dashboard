@@ -551,7 +551,7 @@ export default function DatabaseAutoSync({
                                     <strong>Liquidation (%):</strong> Set manual cost to your buy price (e.g., 80)
                                   </li>
                                   <li>
-                                    <strong>Essential Hoodie:</strong> Auto 42 CHF cost (or override manually)
+                                    <strong>In-stock Essentials:</strong> Hoodie 42 CHF, tee/short 20 CHF (or override manually)
                                   </li>
                                   <li>
                                     <strong>Dashboard:</strong> Will show adjusted margin immediately

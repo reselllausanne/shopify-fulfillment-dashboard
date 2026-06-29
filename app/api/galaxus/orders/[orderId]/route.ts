@@ -472,6 +472,8 @@ export async function GET(
         carrierFinal: shipment.carrierFinal ?? null,
         delrStatus: shipment.delrStatus ?? null,
         delrSentAt: shipment.delrSentAt ?? null,
+        deliveryNotePdfUrl: shipment.deliveryNotePdfUrl ?? null,
+        shippingLabelPdfUrl: shipment.shippingLabelPdfUrl ?? null,
       }));
       return NextResponse.json({
         ok: true,
@@ -489,6 +491,7 @@ export async function GET(
           recipientCity: orderRow.recipientCity ?? null,
           recipientCountry: orderRow.recipientCountry ?? null,
           recipientCountryCode: orderRow.recipientCountryCode ?? null,
+          physicalDeliveryNoteRequired: Boolean(orderRow.physicalDeliveryNoteRequired),
           ordrSentAt: orderRow.ordrSentAt ?? null,
           ordrStatus: orderRow.ordrStatus ?? null,
           invoiceStatus: Boolean(invoiceFile),

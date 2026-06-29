@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import { fetchOrderIdByName, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { requestSwissPostLabel } from "@/lib/swissPost";
+import { shouldForceSwissPostSignature } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
@@ -208,13 +209,6 @@ function normalizePostalCity(address: any) {
   return { zip: "", city: rawCity };
 }
 
-function isPowerpayBilling(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>> | null) {
-  const gateways = orderInfo?.paymentGatewayNames ?? [];
-  return gateways.some((gateway) =>
-    gateway.toLowerCase().includes("pay by invoice / pay later (with powerpay)".toLowerCase())
-  );
-}
-
 type SwissPostRecipient = {
   name1?: string | null;
   firstName?: string | null;
@@ -311,7 +305,7 @@ function buildSwissPostPayload(
   const shippingOption = activeShippingLine
     ? SHIPPING_LINE_TO_SWISSPOST_MAP[activeShippingLine.title]
     : null;
-  const forceSignature = isPowerpayBilling(orderInfo);
+  const forceSignature = shouldForceSwissPostSignature(orderInfo);
   const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
     .split(",")
     .map((value: string) => value.trim())

@@ -162,6 +162,13 @@ export default function GalaxusDirectDeliveryPage() {
     const matches = Array.isArray(selectedOrder?.stockxMatches) ? selectedOrder.stockxMatches : [];
     return lines.length > 0 && matches.length >= lines.length;
   }, [selectedOrder]);
+  const packingSlipUrl = useMemo(() => {
+    const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
+    const withSlip = shipments.find(
+      (shipment: any) => String(shipment?.deliveryNotePdfUrl ?? "").trim().length > 0
+    );
+    return withSlip?.deliveryNotePdfUrl ?? null;
+  }, [selectedOrder]);
 
   const buildLineTitle = (line: any) =>
     line.productName || line.description || line.supplierPid || "—";
@@ -582,6 +589,16 @@ export default function GalaxusDirectDeliveryPage() {
                         >
                           Create Manual Entry (Full)
                         </button>
+                        {selectedOrder?.physicalDeliveryNoteRequired && packingSlipUrl ? (
+                          <a
+                            href={packingSlipUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="px-2 py-1 bg-amber-600 text-white rounded mr-2"
+                          >
+                            Print packing slip
+                          </a>
+                        ) : null}
                         <button
                           onClick={() => void generateDirectSwissPostLabel()}
                           disabled={orderFulfilled}

@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { runOpsTick } from "@/galaxus/ops/tick";
-import { runFeedPipeline } from "@/galaxus/ops/feedPipeline";
+import { startFeedPushAsync } from "@/galaxus/ops/feedPipeline";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import { syncShopifyCatalog } from "@/shopify/catalog/sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const ASYNC_PUSH_ACTIONS = new Set([
+  "push-stock-price",
+  "push-stock",
+  "push-price",
+  "push-full",
+  "push-master-specs",
+]);
 
 export async function POST(request: Request) {
   try {
@@ -70,26 +79,35 @@ export async function POST(request: Request) {
       );
     }
 
-    if (action === "push-stock-price") {
-      const res = await runFeedPipeline({ origin, scope: "stock-price", triggerSource: "manual" });
-      return NextResponse.json({ ok: res.ok, result: res });
-    }
-    if (action === "push-stock") {
-      const res = await runFeedPipeline({ origin, scope: "stock", triggerSource: "manual" });
-      return NextResponse.json({ ok: res.ok, result: res });
-    }
-    if (action === "push-price") {
-      const res = await runFeedPipeline({ origin, scope: "price", triggerSource: "manual" });
-      return NextResponse.json({ ok: res.ok, result: res });
-    }
+    const pushScope =
+      action === "push-stock-price"
+        ? "stock-price"
+        : action === "push-stock"
+          ? "stock"
+          : action === "push-price"
+            ? "price"
+            : action === "push-full"
+              ? "full"
+              : action === "push-master-specs"
+                ? "master-specs"
+                : null;
 
-    if (action === "push-full") {
-      const res = await runFeedPipeline({ origin, scope: "full", triggerSource: "manual" });
-      return NextResponse.json({ ok: res.ok, result: res });
-    }
-    if (action === "push-master-specs") {
-      const res = await runFeedPipeline({ origin, scope: "master-specs", triggerSource: "manual" });
-      return NextResponse.json({ ok: res.ok, result: res });
+    if (pushScope && ASYNC_PUSH_ACTIONS.has(action)) {
+      const started = await startFeedPushAsync({
+        origin,
+        scope: pushScope,
+        triggerSource: "manual",
+      });
+      if (!started.ok) {
+        return NextResponse.json(
+          { ok: false, error: started.error ?? "Feed push rejected", runId: started.runId ?? null },
+          { status: started.status ?? 409 }
+        );
+      }
+      return NextResponse.json(
+        { ok: true, accepted: true, runId: started.runId, scope: pushScope },
+        { status: 202 }
+      );
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });

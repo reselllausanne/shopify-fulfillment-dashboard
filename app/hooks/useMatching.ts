@@ -4,7 +4,7 @@ import {
   type NormalizedSupplierOrder,
   type ShopifyLineItem,
   type MatchResult,
-  EXCLUDED_SKUS,
+  resolveInStockEssential,
   isShopifyFinancialRefunded,
   isLiquidationShopifyTitle,
 } from "@/app/utils/matching";
@@ -830,22 +830,25 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       return;
     }
     const isLiquidation = isLiquidationShopifyTitle(shopifyItem.title);
-    const isEssentialHoodie = shopifyItem.sku && EXCLUDED_SKUS.includes(shopifyItem.sku);
+    const inStockEssential = resolveInStockEssential(shopifyItem.sku, shopifyItem.title);
 
     let supplierCost: number;
-    if (isEssentialHoodie) {
+    if (inStockEssential) {
       const autoConfirm = confirm(
-        `💰 Essential Hoodie Detected!\n\n` +
+        `💰 ${inStockEssential.label} Detected!\n\n` +
           `Product: ${shopifyItem.title}\n` +
-          `SKU: ${shopifyItem.sku}\n\n` +
-          `Auto-apply 42 CHF supplier cost?\n\n` +
-          `Click OK to auto-apply 42 CHF\n` +
+          `SKU: ${shopifyItem.sku || "N/A"}\n\n` +
+          `Auto-apply ${inStockEssential.costChf} CHF supplier cost?\n\n` +
+          `Click OK to auto-apply ${inStockEssential.costChf} CHF\n` +
           `Click Cancel to enter custom cost`
       );
       if (autoConfirm) {
-        supplierCost = 42;
+        supplierCost = inStockEssential.costChf;
       } else {
-        const customInput = prompt(`Enter custom supplier cost for ${shopifyItem.title}:`, "42");
+        const customInput = prompt(
+          `Enter custom supplier cost for ${shopifyItem.title}:`,
+          String(inStockEssential.costChf)
+        );
         if (!customInput) return;
         supplierCost = parseFloat(customInput);
         if (isNaN(supplierCost) || supplierCost < 0) {
@@ -884,7 +887,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       `✅ Mark as "MANUAL_COST" (no Supplier link)\n` +
       `❌ NOT appear in fulfillment queue\n` +
       `${isLiquidation ? "✅ Track liquidation sale\n" : ""}` +
-      `${isEssentialHoodie ? "✅ Track Essential Hoodie with 42 CHF cost\n" : ""}`;
+      `${inStockEssential ? `✅ Track ${inStockEssential.label} with ${inStockEssential.costChf} CHF cost\n` : ""}`;
 
     if (!confirm(confirmMessage)) return;
 
@@ -915,8 +918,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         matchReasons: [
           isLiquidation
             ? "Liquidation order (% in title)"
-            : isEssentialHoodie
-            ? "Essential Hoodie (auto 42 CHF)"
+            : inStockEssential
+            ? inStockEssential.matchReason
             : "Manual cost entry",
         ],
         timeDiffHours: 0,
@@ -1119,7 +1122,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         const rawStockxOrder = supplierOrder;
         let resolvedSupplier = supplierOrder;
 
-        // Fallback for synthetic Essential Hoodie (not in loaded orders)
+        // Fallback for synthetic in-stock Essentials (not in loaded orders)
         if (!resolvedSupplier) {
           const matchResult = matchResults.find((r) => r.shopifyItem.lineItemId === lineItemId);
           const synthetic = matchResult?.bestMatch?.supplierOrder;
@@ -1131,7 +1134,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         if (!resolvedSupplier) {
           alert(
             `⚠️ Supplier order ${supplierOrderNumber} not found in loaded orders.\n\n` +
-              `If this is an Essential Hoodie auto (ESS-*), the synthetic order should be used.`
+              `If this is an in-stock Essentials auto (ESS-*), the synthetic order should be used.`
           );
           return;
         }

@@ -1,5 +1,9 @@
 import { prisma } from "@/app/lib/prisma";
 import { applyInventoryOrderLine } from "./applyOrderLines";
+import {
+  loadInventoryDeltasBySupplierVariantId,
+  resolveInventoryAvailableStock,
+} from "./availableStock";
 import type { ApplyInventoryOrderLineResult, InventoryChannel } from "./types";
 
 type BackfillSummary = {
@@ -184,4 +188,65 @@ export async function backfillInventoryLedger(options?: {
     limitPerChannel,
     channels,
   };
+}
+
+/** Align THE `SupplierVariant.stock` with inventory ledger (fixes UI/feed drift). */
+export async function reconcileTheCatalogStockFromLedger(options?: {
+  limit?: number;
+  dryRun?: boolean;
+}): Promise<{ scanned: number; adjusted: number; samples: string[] }> {
+  const limitRaw = Number(options?.limit ?? 5000);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(Math.trunc(limitRaw), 1), 50000)
+    : 5000;
+  const dryRun = Boolean(options?.dryRun);
+
+  const variants = await prisma.supplierVariant.findMany({
+    where: {
+      supplierVariantId: { startsWith: "the_", mode: "insensitive" },
+      stock: { gt: 0 },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: limit,
+    select: {
+      supplierVariantId: true,
+      stock: true,
+      manualLock: true,
+      manualStock: true,
+    },
+  });
+
+  const deltas = await loadInventoryDeltasBySupplierVariantId(
+    variants.map((row) => row.supplierVariantId)
+  );
+  const samples: string[] = [];
+  let adjusted = 0;
+
+  for (const variant of variants) {
+    const delta = deltas.get(variant.supplierVariantId) ?? 0;
+    const available = resolveInventoryAvailableStock(variant, delta);
+    const current = Math.max(0, Math.round(Number(variant.stock ?? 0)));
+    if (available === current) continue;
+
+    samples.push(`${variant.supplierVariantId}: ${current} → ${available}`);
+    if (dryRun) {
+      adjusted += 1;
+      continue;
+    }
+
+    await prisma.supplierVariant.update({
+      where: { supplierVariantId: variant.supplierVariantId },
+      data: {
+        stock: available,
+        ...(variant.manualLock && variant.manualStock != null
+          ? { manualStock: available }
+          : {}),
+        lastSyncAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+    adjusted += 1;
+  }
+
+  return { scanned: variants.length, adjusted, samples: samples.slice(0, 50) };
 }

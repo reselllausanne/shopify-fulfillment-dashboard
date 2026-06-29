@@ -60,3 +60,20 @@ services:
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped
+
+  worker-stx-import-slugs:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - WORKER_JOB_TYPE=stx-import-slugs-sync
+      - WORKER_POLL_MS=${WORKER_POLL_MS:-2000}
+      - WORKER_GROUP_LIMIT=${WORKER_GROUP_LIMIT:-6}
+      - WORKER_STALE_MS=${WORKER_STALE_MS:-900000}
+      - WORKER_HEARTBEAT_MS=${WORKER_HEARTBEAT_MS:-60000}
+      - STX_IMPORT_SYNC_CONCURRENCY=${STX_IMPORT_SYNC_CONCURRENCY:-6}
+      - STX_IMPORT_SYNC_BATCH_SIZE=${STX_IMPORT_SYNC_BATCH_SIZE:-120}
+    command: ["npx", "tsx", "scripts/workers/stxImportSlugsWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped

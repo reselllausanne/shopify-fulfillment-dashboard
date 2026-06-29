@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { backfillInventoryLedger } from "@/inventory/backfill";
+import { backfillInventoryLedger, reconcileTheCatalogStockFromLedger } from "@/inventory/backfill";
 import { prisma } from "@/app/lib/prisma";
 
 export const runtime = "nodejs";
@@ -32,6 +32,13 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
+    if (body?.reconcileTheStock === true) {
+      const result = await reconcileTheCatalogStockFromLedger({
+        limit: Number(body?.limit ?? 5000),
+        dryRun: Boolean(body?.dryRun),
+      });
+      return NextResponse.json({ ok: true, mode: "reconcile-the-stock", result });
+    }
     const limitPerChannel = Number(body?.limitPerChannel ?? body?.limit ?? 500);
     const dryRun = Boolean(body?.dryRun);
     const result = await backfillInventoryLedger({ limitPerChannel, dryRun });

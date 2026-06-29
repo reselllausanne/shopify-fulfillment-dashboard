@@ -8,12 +8,19 @@ type TrmFeedExclusionReason =
   | "ENRICHMENT_PENDING"
   | "KICKDB_NOT_FOUND";
 
-type TrmFeedExclusionStats = Record<TrmFeedExclusionReason, number>;
+export type TrmFeedExclusionStats = Record<TrmFeedExclusionReason, number>;
 
 function normalizeSupplierKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function buildSupplierKeyFilter(keys: string[]) {
+  const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
+  if (normalized.length === 0) return null;
+  return { supplierKey: { in: normalized } };
+}
+
+/** Legacy join filter — kept for rows missing supplierKey backfill. */
 function buildSupplierIdFilter(keys: string[]) {
   const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
   if (normalized.length === 0) return null;
@@ -24,11 +31,21 @@ function buildSupplierIdFilter(keys: string[]) {
   return or.length > 0 ? { OR: or } : null;
 }
 
+function buildSupplierScopeFilter(keys: string[]) {
+  const byKey = buildSupplierKeyFilter(keys);
+  const byId = buildSupplierIdFilter(keys);
+  if (byKey && byId) {
+    return { OR: [byKey, byId] };
+  }
+  return byKey || byId;
+}
+
 /** Excludes supplier id prefixes from Galaxus feed scope (NOT … OR …). */
 function buildSupplierBlocklistFilter(keys: string[]) {
   const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
   if (normalized.length === 0) return null;
   const or = normalized.flatMap((key) => [
+    { supplierKey: key },
     { supplierVariant: { supplierVariantId: { startsWith: `${key}:`, mode: "insensitive" } } },
     { supplierVariant: { supplierVariantId: { startsWith: `${key}_`, mode: "insensitive" } } },
   ]);
@@ -40,8 +57,8 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
   const allowlistKeys = GALAXUS_FEED_SUPPLIER_ALLOWLIST.split(",")
     .map(normalizeSupplierKey)
     .filter(Boolean);
-  const allowlistFilter = buildSupplierIdFilter(allowlistKeys);
-  const supplierFilter = normalizedSupplier ? buildSupplierIdFilter([normalizedSupplier]) : null;
+  const allowlistFilter = buildSupplierScopeFilter(allowlistKeys);
+  const supplierFilter = normalizedSupplier ? buildSupplierScopeFilter([normalizedSupplier]) : null;
   const combinedSupplierFilter =
     allowlistFilter && supplierFilter
       ? { AND: [allowlistFilter, supplierFilter] }
@@ -66,6 +83,7 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
     ? {
         OR: [
           eligibleWhere,
+          { supplierKey: "trm" },
           { supplierVariant: { supplierVariantId: { startsWith: "trm:", mode: "insensitive" } } },
         ],
       }

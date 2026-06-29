@@ -4,7 +4,8 @@ import { OFFERS_HEADERS } from "./templates";
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   decathlonOfferListPriceFromManualLockedPrice,
-  readDecathlonMaxListPriceChf,
+  isDecathlonStxListableBuy,
+  readDecathlonStxMaxListPriceChf,
   resolveDecathlonBuyNow,
 } from "./pricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
@@ -75,6 +76,7 @@ function resolvePrice(
     return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
   }
   if (!buyNow || buyNow <= 0) return null;
+  if (supplierKey === "stx" && !isDecathlonStxListableBuy(buyNow)) return null;
   const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(buyNow, supplierKey);
   if (!base || base <= 0) return null;
   return applyPricingPolicy(base);
@@ -147,6 +149,24 @@ export function buildOfferCsv(
 
     const price = resolvePrice(candidate, partnerKeysLower);
     if (!price) {
+      const supplierKey = extractSupplierKey(candidate);
+      const buyNow = resolveDecathlonBuyNow({
+        buyNowStockx: parseDecimal(variant?.price),
+        manualOverride: parseDecimal(variant?.manualPrice),
+        manualLock: Boolean(variant?.manualLock),
+      });
+      if (supplierKey === "stx" && buyNow && buyNow > 0 && !isDecathlonStxListableBuy(buyNow)) {
+        const maxSell = readDecathlonStxMaxListPriceChf();
+        recordDecathlonExclusion(summary, {
+          reason: "PRICE_TOO_HIGH",
+          message: `STX complete buy ${buyNow.toFixed(2)} CHF exceeds safe max at ${maxSell} CHF sell tier`,
+          fileType: "offers",
+          providerKey: candidate.providerKey,
+          supplierVariantId: variant?.supplierVariantId ?? null,
+          gtin: candidate.gtin,
+        });
+        continue;
+      }
       recordDecathlonExclusion(summary, {
         reason: "MISSING_PRICE",
         message: "Missing buy now price",
@@ -172,7 +192,7 @@ export function buildOfferCsv(
     const supplierKey = extractSupplierKey(candidate);
     const isStxOffer = supplierKey === "stx";
     if (isStxOffer && Number.isFinite(priceValue)) {
-      const maxListPrice = readDecathlonMaxListPriceChf();
+      const maxListPrice = readDecathlonStxMaxListPriceChf();
       if (priceValue > maxListPrice) {
         recordDecathlonExclusion(summary, {
           reason: "PRICE_TOO_HIGH",

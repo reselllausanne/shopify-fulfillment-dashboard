@@ -19,6 +19,9 @@ import {
 } from "@/galaxus/exports/trmExport";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
+import {
+  calcSuggestedRetailFromStoredStxBuyPrice,
+} from "@/galaxus/pricing/suggestedSellPrice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -135,13 +138,18 @@ export async function GET(request: Request) {
             manualLock: true,
             updatedAt: true,
             deliveryType: true,
+            suggestedRetailPriceInclVat: true,
+            supplierProductName: true,
           },
         },
         kickdbVariant: {
           select: {
+            sizeEu: true,
+            sizeUs: true,
             product: {
               select: {
-                retailPrice: true,
+                urlKey: true,
+                name: true,
               },
             },
           },
@@ -242,14 +250,37 @@ export async function GET(request: Request) {
       continue;
     }
     const price = Number.isFinite(priceValue) && priceValue > 0 ? priceValue.toFixed(2) : "";
-    const rrp = parseNumber(product?.retailPrice);
-    const rrpAdjusted = rrp ? (rrp + 30).toFixed(2) : "";
+    const supplierVariantId = String(variant?.supplierVariantId ?? "");
+    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
+    const deliveryType = String(variant?.deliveryType ?? "");
+    const kickdbProduct = product ?? candidate?.kickdbVariant?.product ?? null;
+    const productHandle = String(kickdbProduct?.urlKey ?? "").trim();
+    const productName = String(
+      kickdbProduct?.name ?? variant?.supplierProductName ?? ""
+    ).trim();
+
+    let suggestedRetailPriceInclVat = "";
+    if (isStx) {
+      const storedSuggested = parseNumber(variant?.suggestedRetailPriceInclVat);
+      const computed =
+        storedSuggested !== null && storedSuggested > 0
+          ? storedSuggested
+          : calcSuggestedRetailFromStoredStxBuyPrice({
+              storedBuyPriceChf: Number(variant?.price ?? 0),
+              productHandle,
+              productName,
+              deliveryType,
+            });
+      if (computed !== null && computed > 0) {
+        suggestedRetailPriceInclVat = String(computed);
+      }
+    }
+
     if (!providerKey || !price) {
       if (!providerKey) skippedMissingProviderKey += 1;
       continue;
     }
 
-    const supplierVariantId = String(variant?.supplierVariantId ?? "");
     const availableStock = supplierVariantId
       ? stockBySupplierVariantId.get(supplierVariantId)
       : undefined;
@@ -260,8 +291,6 @@ export async function GET(request: Request) {
         : manualLock && manualStock !== null
           ? manualStock
           : baseStock;
-    const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
-    const deliveryType = String(variant?.deliveryType ?? "");
     const effectiveStock = isStx && deliveryType.startsWith("express_")
       ? publishStxStockFromAsks(rawStock)
       : isStx
@@ -283,7 +312,7 @@ export async function GET(request: Request) {
     rows.push({
       ProviderKey: providerKey,
       [priceHeader]: price,
-      SuggestedRetailPriceInclVat_CHF: rrpAdjusted,
+      SuggestedRetailPriceInclVat_CHF: suggestedRetailPriceInclVat,
       VatRatePercentage: vatRate ? String(vatRate * 100) : "8.1",
     });
   }

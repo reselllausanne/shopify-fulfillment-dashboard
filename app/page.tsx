@@ -1236,7 +1236,7 @@ export default function Home() {
               </button>
             </div>
             <p className="mt-1 text-xs text-orange-800">
-              Fulfillable lines without a DB match. Excludes liquidation and in-stock hoodies.
+              Fulfillable lines without a DB match. Excludes liquidation and in-stock Essentials.
             </p>
             {unlinkedAlertError && (
               <p className="mt-2 text-xs text-red-700">Failed to load: {unlinkedAlertError}</p>

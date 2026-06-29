@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { toCsv } from "@/galaxus/exports/csv";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { validateGtin } from "@/app/lib/normalize";
+import { withMappingSupplierKey } from "@/galaxus/exports/supplierKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -279,18 +280,21 @@ export async function POST(request: Request) {
             }
             const updated = await (tx as any).variantMapping.update({
               where: { id: existing.id },
-              data,
+              data: withMappingSupplierKey({
+                ...data,
+                supplierVariantId: mappingSupplierVariantId || existing.supplierVariantId,
+              }),
             });
             output.push({ ok: true, item: updated });
           } else {
             const created = await (tx as any).variantMapping.create({
-              data: {
+              data: withMappingSupplierKey({
                 supplierVariantId: mappingSupplierVariantId || null,
                 gtin: normalizedGtin ?? null,
                 providerKey: computedProviderKey ?? null,
                 status: statusValue ?? "PENDING_GTIN",
                 kickdbVariantId: entry.kickdbVariantId ?? null,
-              },
+              }),
             });
             output.push({ ok: true, item: created });
           }

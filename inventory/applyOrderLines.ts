@@ -1,4 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
+import {
+  applyTheCatalogStockDeltaInTx,
+  isTheSupplierVariantId,
+} from "@/galaxus/warehouse/theCatalogStock";
 import { resolveSupplierVariantForInventoryLine } from "./resolveSupplierVariant";
 import type {
   ApplyInventoryOrderLineInput,
@@ -140,6 +144,15 @@ export async function applyInventoryOrderLine(
             status: "PENDING",
           },
         });
+      }
+
+      if (isTheSupplierVariantId(resolvedVariant.supplierVariantId)) {
+        await applyTheCatalogStockDeltaInTx(
+          txAny,
+          resolvedVariant.supplierVariantId,
+          quantityDelta,
+          `${channel}:${externalLineId}`
+        );
       }
 
       return {

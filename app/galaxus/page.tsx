@@ -214,6 +214,22 @@ type StxImportResult = {
   eligibleVariantsCount: number;
   warnings: string[];
   errors: string[];
+  diagnostics?: {
+    kickdbFetchOk?: boolean;
+    kickdbHttpStatus?: number | null;
+    kickdbError?: string | null;
+    variantsTotal?: number;
+    variantsParsed?: number;
+    variantsEligible?: number;
+    forceImport?: boolean;
+    skipReasons?: {
+      missingVariantId?: number;
+      noUsablePrice?: number;
+      invalidGtin?: number;
+      missingImages?: number;
+    };
+    samplePriceRows?: string[];
+  };
   variantsPreview?: Array<{
     supplierVariantId: string;
     size: string | null;
@@ -295,6 +311,25 @@ export function GalaxusWarehouseDashboard() {
     pending: number;
     imported: number;
     error: number;
+  } | null>(null);
+  const [stxSlugSaveProgress, setStxSlugSaveProgress] = useState<{
+    doneLines: number;
+    totalLines: number;
+    batch: number;
+    batches: number;
+  } | null>(null);
+  const [stxSlugSyncProgress, setStxSlugSyncProgress] = useState<{
+    pending: number;
+    processedThisRun: number;
+    importedThisRun: number;
+    erroredThisRun: number;
+  } | null>(null);
+  const [stxSlugLastSaveStats, setStxSlugLastSaveStats] = useState<{
+    linesReceived: number;
+    uniqueSlugs: number;
+    duplicateLinesInPaste: number;
+    insertedNew: number;
+    skippedExisting: number;
   } | null>(null);
   const [forceShipmentDocs, setForceShipmentDocs] = useState<Record<string, boolean>>({});
   const [stxManualVariantId, setStxManualVariantId] = useState<string>("");
@@ -615,6 +650,39 @@ export function GalaxusWarehouseDashboard() {
         body: JSON.stringify({ action, ...extra }),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 202 && data?.accepted) {
+        setOpsLog(JSON.stringify({ accepted: true, runId: data.runId, scope: data.scope }, null, 2));
+        const startedAt = Date.now();
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          const statusRes = await fetch("/api/galaxus/ops/status", { cache: "no-store" });
+          const status = await statusRes.json().catch(() => ({}));
+          if (status?.ok) setOpsStatus(status);
+          const running = Boolean(status?.feeds?.running);
+          if (!running) {
+            const scopeKey =
+              action === "push-master-specs"
+                ? "lastMasterSpecs"
+                : action === "push-stock"
+                  ? "lastStockPrice"
+                  : action === "push-price"
+                    ? "lastStockPrice"
+                    : action === "push-full"
+                      ? "lastFull"
+                      : "lastStockPrice";
+            const lastRun = status?.feeds?.[scopeKey];
+            if (lastRun?.success === false && lastRun?.errorMessage) {
+              throw new Error(lastRun.errorMessage);
+            }
+            break;
+          }
+          if (Date.now() - startedAt > 60 * 60 * 1000) {
+            throw new Error("Feed push still running after 1 hour — check ops status");
+          }
+        }
+        await loadOpsStatus();
+        return;
+      }
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Ops action failed");
       setOpsLog(JSON.stringify(data, null, 2));
       await loadOpsStatus();
@@ -737,36 +805,95 @@ export function GalaxusWarehouseDashboard() {
       const data = (await response.json()) as StxImportResult;
       setStxImportResult(data);
       if (!response.ok || !data.ok) {
-        throw new Error(data.errors?.[0] ?? "STX import failed");
+        const detail = [
+          ...(data.errors ?? []),
+          data.diagnostics?.kickdbError ? `KickDB: ${data.diagnostics.kickdbError}` : null,
+          data.diagnostics?.samplePriceRows?.length
+            ? `Sample prices: ${data.diagnostics.samplePriceRows.join(" · ")}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        setError(detail || "STX import failed");
+        return;
       }
+      setError(null);
       await loadVariantStats();
     } catch (err: any) {
-      setError(err.message);
+      setError(err?.message ?? "STX import failed");
     } finally {
       setBusy(null);
     }
   };
 
   const saveStxSlugs = async () => {
-    if (!stxSlugInput.trim()) {
+    const raw = stxSlugInput.trim();
+    if (!raw) {
       setError("Paste at least one slug or URL.");
       return;
     }
+
+    const lines = raw
+      .split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const chunkSize = 2000;
+    const batches: string[][] = [];
+    for (let i = 0; i < lines.length; i += chunkSize) {
+      batches.push(lines.slice(i, i + chunkSize));
+    }
+
     setBusy("stx-slug-save");
     setError(null);
+    setStxSlugLastSaveStats(null);
+
+    const totals = {
+      linesReceived: 0,
+      uniqueSlugs: 0,
+      duplicateLinesInPaste: 0,
+      insertedNew: 0,
+      skippedExisting: 0,
+    };
+
     try {
-      const response = await fetch("/api/galaxus/stx/import-slugs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: stxSlugInput }),
+      for (let i = 0; i < batches.length; i += 1) {
+        const batch = batches[i];
+        setStxSlugSaveProgress({
+          doneLines: i * chunkSize,
+          totalLines: lines.length,
+          batch: i + 1,
+          batches: batches.length,
+        });
+
+        const response = await fetch("/api/galaxus/stx/import-slugs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: batch.join("\n") }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error ?? "Failed to save slugs");
+
+        const stats = data.stats ?? {};
+        totals.linesReceived += Number(stats.linesReceived ?? batch.length);
+        totals.uniqueSlugs += Number(stats.uniqueSlugs ?? 0);
+        totals.duplicateLinesInPaste += Number(stats.duplicateLinesInPaste ?? 0);
+        totals.insertedNew += Number(stats.insertedNew ?? 0);
+        totals.skippedExisting += Number(stats.skippedExisting ?? 0);
+        setStxSlugCounts(data.counts ?? null);
+      }
+
+      setStxSlugSaveProgress({
+        doneLines: lines.length,
+        totalLines: lines.length,
+        batch: batches.length,
+        batches: batches.length,
       });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error ?? "Failed to save slugs");
-      setStxSlugCounts(data.counts ?? null);
+      setStxSlugLastSaveStats(totals);
       setStxSlugInput("");
     } catch (err: any) {
       setError(err.message);
     } finally {
+      setStxSlugSaveProgress(null);
       setBusy(null);
     }
   };
@@ -774,22 +901,72 @@ export function GalaxusWarehouseDashboard() {
   const syncStxSlugs = async (limit: number, busyKey: string) => {
     setBusy(busyKey);
     setError(null);
+    setStxSlugSyncProgress(null);
     try {
       const response = await fetch("/api/galaxus/stx/import-slugs/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit }),
+        body: JSON.stringify({ enqueue: false, limit }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error ?? "STX slug sync failed");
       setStxSlugCounts(data.counts ?? null);
-      setOpsLog(JSON.stringify({ stxSlugSync: data, limit }, null, 2));
+      setStxSlugSyncProgress({
+        pending: Number(data.counts?.pending ?? 0),
+        processedThisRun: Number(data.processed ?? 0),
+        importedThisRun: Number(data.imported ?? 0),
+        erroredThisRun: Number(data.errored ?? 0),
+      });
+      setOpsLog(
+        JSON.stringify(
+          {
+            processed: data.processed,
+            imported: data.imported,
+            errored: data.errored,
+            errorSummary: data.errorSummary,
+            hint: data.hint,
+            counts: data.counts,
+          },
+          null,
+          2
+        )
+      );
       await loadVariantStats();
     } catch (err: any) {
       setError(err.message);
     } finally {
       setBusy(null);
     }
+  };
+
+  const startBackgroundStxSlugSync = async () => {
+    setBusy("stx-slug-sync-bg");
+    setError(null);
+    try {
+      const response = await fetch("/api/galaxus/stx/import-slugs/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enqueue: true,
+          workerJobs: 6,
+          concurrency: 6,
+          batchSize: 120,
+          autoDrain: true,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error ?? data.message ?? "Background STX sync failed");
+      setStxSlugCounts(data.counts ?? null);
+      setOpsLog(JSON.stringify({ stxSlugSyncBackground: data }, null, 2));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const syncAllPendingStxSlugs = async () => {
+    await startBackgroundStxSlugSync();
   };
 
   const reEnrichNotFound = async () => {
@@ -2056,7 +2233,13 @@ export function GalaxusWarehouseDashboard() {
                   <div>
                     Imported variants: {stxImportResult.importedVariantsCount} · Eligible variants:{" "}
                     {stxImportResult.eligibleVariantsCount}
+                    {stxImportResult.diagnostics?.variantsTotal != null
+                      ? ` · KickDB variants: ${stxImportResult.diagnostics.variantsTotal}`
+                      : ""}
                   </div>
+                  {stxImportResult.productSummary?.normalizedInput ? (
+                    <div>Normalized input: {stxImportResult.productSummary.normalizedInput}</div>
+                  ) : null}
                   {stxImportResult.productSummary?.name ? (
                     <div>
                       Product: {stxImportResult.productSummary.name}
@@ -2065,11 +2248,27 @@ export function GalaxusWarehouseDashboard() {
                         : ""}
                     </div>
                   ) : null}
+                  {stxImportResult.diagnostics?.skipReasons ? (
+                    <div>
+                      Skip counts: no price {stxImportResult.diagnostics.skipReasons.noUsablePrice ?? 0}
+                      {" · "}
+                      GTIN {stxImportResult.diagnostics.skipReasons.invalidGtin ?? 0}
+                      {" · "}
+                      images {stxImportResult.diagnostics.skipReasons.missingImages ?? 0}
+                    </div>
+                  ) : null}
+                  {stxImportResult.diagnostics?.samplePriceRows?.length ? (
+                    <div>Sample KickDB prices: {stxImportResult.diagnostics.samplePriceRows.join(" · ")}</div>
+                  ) : null}
                   {stxImportResult.warnings?.length ? (
-                    <div>Warnings: {stxImportResult.warnings.join(" | ")}</div>
+                    <div className="max-h-32 overflow-auto whitespace-pre-wrap border rounded p-2 bg-amber-50 text-amber-950">
+                      {stxImportResult.warnings.join("\n")}
+                    </div>
                   ) : null}
                   {stxImportResult.errors?.length ? (
-                    <div className="text-red-600">Errors: {stxImportResult.errors.join(" | ")}</div>
+                    <div className="max-h-32 overflow-auto whitespace-pre-wrap border rounded p-2 bg-red-50 text-red-700">
+                      {stxImportResult.errors.join("\n")}
+                    </div>
                   ) : null}
                   {stxImportResult.variantsPreview?.length ? (
                     <div className="overflow-auto border rounded">
@@ -2131,11 +2330,46 @@ export function GalaxusWarehouseDashboard() {
                 >
                   {busy === "stx-slug-sync-1000" ? "Syncing…" : "Sync next 1000 STX slugs"}
                 </button>
+                <button
+                  className="px-3 py-2 rounded bg-indigo-950 text-white disabled:opacity-50"
+                  onClick={() => void startBackgroundStxSlugSync()}
+                  disabled={busy !== null}
+                >
+                  {busy === "stx-slug-sync-bg" ? "Queueing…" : "Background sync (6×6 parallel)"}
+                </button>
+                <a
+                  href="/api/galaxus/stx/import-slugs?download=1"
+                  className="px-3 py-2 rounded bg-gray-100 text-sm"
+                >
+                  Download queue CSV
+                </a>
                 <span className="text-xs text-gray-500">
                   Pending: {stxSlugCounts?.pending ?? "—"} · Imported: {stxSlugCounts?.imported ?? "—"} · Error:{" "}
                   {stxSlugCounts?.error ?? "—"}
                 </span>
               </div>
+              {stxSlugSaveProgress ? (
+                <div className="text-xs text-gray-600">
+                  Saving batch {stxSlugSaveProgress.batch}/{stxSlugSaveProgress.batches} · lines{" "}
+                  {stxSlugSaveProgress.doneLines}/{stxSlugSaveProgress.totalLines}
+                </div>
+              ) : null}
+              {stxSlugLastSaveStats ? (
+                <div className="text-xs text-gray-600">
+                  Last save: {stxSlugLastSaveStats.linesReceived} lines pasted · {stxSlugLastSaveStats.uniqueSlugs}{" "}
+                  unique slugs · {stxSlugLastSaveStats.insertedNew} new queue rows ·{" "}
+                  {stxSlugLastSaveStats.skippedExisting} already in queue ·{" "}
+                  {stxSlugLastSaveStats.duplicateLinesInPaste} duplicate lines removed
+                </div>
+              ) : null}
+              {stxSlugSyncProgress ? (
+                <div className="text-xs text-gray-600">
+                  Sync progress: {stxSlugSyncProgress.pending} pending left · {stxSlugSyncProgress.processedThisRun}{" "}
+                  processed this run · {stxSlugSyncProgress.importedThisRun} imported · {stxSlugSyncProgress.erroredThisRun}{" "}
+                  errors
+                  {stxSlugSyncProgress.erroredThisRun > 0 ? " · see Network tab for details" : ""}
+                </div>
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <input

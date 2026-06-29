@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { listJobDefinitions } from "./jobDefinitions";
+import { reconcileStaleFeedRuns } from "./feedPipeline";
 import type { OpsJobKey } from "./types";
 
 async function getLatestJobRun(jobKey: OpsJobKey) {
@@ -25,6 +26,7 @@ async function getLatestFeedRun(scope: string) {
 
 export async function getOpsStatus() {
   const now = new Date();
+  await reconcileStaleFeedRuns();
   const defs = await listJobDefinitions();
   const jobs = await Promise.all(
     defs.map(async (def: any) => {
@@ -43,9 +45,11 @@ export async function getOpsStatus() {
     })
   );
 
-  const [lastStockPrice, lastFull, lastMaster, lastOffer, lastStock, lastSpecs] = await Promise.all([
+  const [lastStockPrice, lastFull, lastMasterSpecs, lastMaster, lastOffer, lastStock, lastSpecs] =
+    await Promise.all([
     getLatestFeedRun("stock-price"),
     getLatestFeedRun("full"),
+    getLatestFeedRun("master-specs"),
     getLatestManifest("master"),
     getLatestManifest("offer"),
     getLatestManifest("stock"),
@@ -102,6 +106,7 @@ export async function getOpsStatus() {
       runningFeed,
       lastStockPrice,
       lastFull,
+      lastMasterSpecs,
       lastManifests: {
         master: lastMaster,
         offer: lastOffer,

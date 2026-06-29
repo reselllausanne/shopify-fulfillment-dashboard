@@ -78,6 +78,71 @@ function normalizePostalCode(value: unknown): string | null {
   return raw.replace(/^CH[\s-]*/i, "").trim();
 }
 
+function normalizeSwissPostText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeStreetForSwissPost(baseStreet: unknown, extraStreet?: unknown): string {
+  const base = normalizeSwissPostText(baseStreet);
+  const extra = normalizeSwissPostText(extraStreet);
+  let street = base;
+
+  if (!street && extra) {
+    street = extra;
+  }
+
+  // Some marketplaces append department/notes after a comma. Swiss Post street pattern rejects this.
+  if (street.includes(",")) {
+    street = street.split(",")[0]?.trim() ?? street;
+  }
+
+  if (!/\d/.test(street) && extra && /\d/.test(extra)) {
+    street = `${street} ${extra}`.trim();
+  }
+
+  street = street
+    .replace(/[^\p{L}\p{N}\s.\-/'’]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return street;
+}
+
+function buildSwissPostRecipient(
+  values: {
+    name?: unknown;
+    address1?: unknown;
+    address2?: unknown;
+    postalCode?: unknown;
+    city?: unknown;
+    countryCodeOrName?: unknown;
+    email?: unknown;
+  }
+) {
+  const country = normalizeCountryCode(values.countryCodeOrName) ?? "CH";
+  const zip = normalizePostalCode(values.postalCode) ?? "";
+  const name1 = normalizeSwissPostText(values.name) || "";
+  const baseStreet = normalizeSwissPostText(values.address1);
+  const extraStreet = normalizeSwissPostText(values.address2);
+  const street = sanitizeStreetForSwissPost(baseStreet, extraStreet);
+  const name2 = extraStreet && extraStreet !== street ? extraStreet : null;
+
+  return {
+    name1,
+    firstName: null,
+    name2,
+    street,
+    zip,
+    city: normalizeSwissPostText(values.city) || "",
+    country,
+    phone: null,
+    email: normalizeSwissPostText(values.email) || null,
+  };
+}
+
 function buildRecipient(order: any) {
   const hasRecipient =
     Boolean(order.recipientName) ||
@@ -86,43 +151,25 @@ function buildRecipient(order: any) {
     Boolean(order.recipientCity) ||
     Boolean(order.recipientCountry);
   if (hasRecipient) {
-    const country = normalizeCountryCode(order.recipientCountryCode ?? order.recipientCountry) ?? "CH";
-    const zip = normalizePostalCode(order.recipientPostalCode) ?? "";
-    const baseStreet = order.recipientAddress1 ?? "";
-    const extraStreet = order.recipientAddress2 ? String(order.recipientAddress2).trim() : "";
-    const street = extraStreet && !baseStreet.includes(extraStreet)
-      ? `${baseStreet}, ${extraStreet}`
-      : baseStreet;
-    return {
-      name1: order.recipientName ?? "",
-      firstName: null,
-      name2: null,
-      street,
-      zip,
-      city: order.recipientCity ?? "",
-      country,
-      phone: null,
+    return buildSwissPostRecipient({
+      name: order.recipientName,
+      address1: order.recipientAddress1,
+      address2: order.recipientAddress2,
+      postalCode: order.recipientPostalCode,
+      city: order.recipientCity,
+      countryCodeOrName: order.recipientCountryCode ?? order.recipientCountry,
       email: order.recipientEmail ?? order.customerEmail ?? null,
-    };
+    });
   }
-  const country = normalizeCountryCode(order.customerCountryCode ?? order.customerCountry) ?? "CH";
-  const zip = normalizePostalCode(order.customerPostalCode) ?? "";
-  const baseStreet = order.customerAddress1 ?? "";
-  const extraStreet = order.customerAddress2 ? String(order.customerAddress2).trim() : "";
-  const street = extraStreet && !baseStreet.includes(extraStreet)
-    ? `${baseStreet}, ${extraStreet}`
-    : baseStreet;
-  return {
-    name1: order.customerName ?? "",
-    firstName: null,
-    name2: null,
-    street,
-    zip,
-    city: order.customerCity ?? "",
-    country,
-    phone: null,
+  return buildSwissPostRecipient({
+    name: order.customerName,
+    address1: order.customerAddress1,
+    address2: order.customerAddress2,
+    postalCode: order.customerPostalCode,
+    city: order.customerCity,
+    countryCodeOrName: order.customerCountryCode ?? order.customerCountry,
     email: order.customerEmail ?? null,
-  };
+  });
 }
 
 function buildSwissPostPayload(order: any, trackingNumber: string) {

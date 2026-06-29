@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { EXCLUDED_SKUS, isLiquidationShopifyTitle } from "@/app/utils/matching";
+import { isInStockEssentialLine, isLiquidationShopifyTitle } from "@/app/utils/matching";
 
 export const runtime = "nodejs";
 
@@ -43,7 +43,7 @@ export async function GET() {
     const filtered = items.filter((item: any) => {
       const sku = item.shopifySku ?? null;
       const title = item.shopifyProductTitle || "";
-      if (sku && EXCLUDED_SKUS.includes(sku)) return false;
+      if (isInStockEssentialLine(sku, title)) return false;
       if (isLiquidationShopifyTitle(title)) return false;
       const createdAt = item.shopifyCreatedAt ? new Date(item.shopifyCreatedAt) : null;
       if (createdAt && createdAt < cutoff) return false;

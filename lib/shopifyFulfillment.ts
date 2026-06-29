@@ -69,6 +69,10 @@ type OrderShippingInfo = {
   } | null;
   lineItems: { nodes: OrderLineItemSummary[] };
   shippingLines?: ShippingLineInfo[];
+  orderTotal?: {
+    amount: string;
+    currencyCode: string;
+  };
 };
 
 type OrderFulfillmentMap = {
@@ -189,6 +193,12 @@ query OrderShippingInfo($orderId: ID!) {
     phone
     customerLocale
     paymentGatewayNames
+    currentTotalPriceSet {
+      shopMoney {
+        amount
+        currencyCode
+      }
+    }
     shippingAddress {
       firstName
       lastName
@@ -598,6 +608,12 @@ type OrderShippingGraphQLResponse = {
   order:
     | (OrderShippingInfo & {
         paymentGatewayNames?: string[];
+        currentTotalPriceSet?: {
+          shopMoney?: {
+            amount?: string;
+            currencyCode?: string;
+          };
+        };
         shippingLines?: {
           edges?: Array<{
             node?: {
@@ -653,9 +669,16 @@ export async function fetchOrderShippingInfo(orderId: string) {
       isRemoved: Boolean(node.isRemoved),
     }));
 
+  const shopMoney = order.currentTotalPriceSet?.shopMoney;
+  const orderTotal =
+    shopMoney?.amount != null && shopMoney.currencyCode
+      ? { amount: shopMoney.amount, currencyCode: shopMoney.currencyCode }
+      : undefined;
+
   return {
     ...order,
     shippingLines,
+    orderTotal,
   };
 }
 
