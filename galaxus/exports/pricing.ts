@@ -15,8 +15,9 @@ export type PricingOverrides = {
   vatRate?: number | null;
 };
 
-const DEFAULT_SHIPPING = 6;
-const DEFAULT_TARGET_MARGIN = 0.08;
+/** Outbound bulk ship per pair (STX Galaxus feed). StockX inbound ship is already in variant.price. */
+const DEFAULT_SHIPPING = 2;
+const DEFAULT_TARGET_MARGIN = 0.12;
 const DEFAULT_BUFFER = 0;
 const DEFAULT_ROUND_TO = 0.05;
 const DEFAULT_VAT_RATE = 0.081;
@@ -112,7 +113,7 @@ export function isStxGalaxusSupplierKey(supplierKey: string | null | undefined):
 }
 
 /**
- * STX feed margin: optional explicit override, else default target + adjustment (default −1 pp).
+ * STX feed margin: optional explicit override, else default target (+ optional env adjustment).
  * NER/THE/partners use other rules — not this helper.
  */
 export function resolveGalaxusTargetNetMarginForSupplier(
@@ -128,7 +129,7 @@ export function resolveGalaxusTargetNetMarginForSupplier(
     if (isValidTargetMargin(explicit)) return explicit;
   }
 
-  const adjustment = readNumberEnv(STX_MARGIN_ADJUSTMENT_KEYS, -0.01);
+  const adjustment = readNumberEnv(STX_MARGIN_ADJUSTMENT_KEYS, 0);
   const adjusted = base + adjustment;
   if (!isValidTargetMargin(adjusted)) return base;
   return adjusted;
@@ -137,7 +138,7 @@ export function resolveGalaxusTargetNetMarginForSupplier(
 /**
  * Galaxus retail feed: `ner` and `the` (THE / THE_) = sell ex VAT equals partner buy (0% margin).
  * Other partner keys = +10% on buy ex VAT.
- * STX uses env net-margin rules with {@link resolveGalaxusTargetNetMarginForSupplier} (−1 pp by default).
+ * STX: (buy + outbound ship) / (1 − target net margin), default 12% + 2 CHF ship.
  */
 export function resolveGalaxusSellExVatForChannel(
   buyPriceExVatCHF: number,
