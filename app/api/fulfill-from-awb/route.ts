@@ -14,7 +14,7 @@ import {
   orderHasTrackingNumber,
 } from "@/lib/shopifyFulfillment";
 import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
-import { shouldForceSwissPostSignature } from "@/lib/swissPostShipping";
+import { pickLineDeliveryMode, resolveSwissPostPrzl, shouldSkipSwissPostLabelForLiquidation } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
@@ -221,6 +221,7 @@ type OrderMatchSelection = {
   id: string;
   shopifyOrderId: string;
   shopifyOrderName: string | null;
+  shopifyLineItemId: string | null;
   shopifySku: string | null;
   shopifyProductTitle: string | null;
   shopifySizeEU: string | null;
@@ -237,16 +238,6 @@ type SwissPostRecipient = {
   country?: string | null;
   phone?: string | null;
   email?: string | null;
-};
-
-type SwissPostShippingOption = {
-  serviceCodes: string[];
-  signatureRequired: boolean;
-};
-
-const SHIPPING_LINE_TO_SWISSPOST_MAP: Record<string, SwissPostShippingOption> = {
-  "Livraison Offerte": { serviceCodes: ["ECO"], signatureRequired: false },
-  "Sous signature": { serviceCodes: ["SI", "ECO"], signatureRequired: true },
 };
 
 const getActiveShippingLine = (
@@ -345,7 +336,8 @@ function swissPostLanguageFromOrderLocale(
 function buildSwissPostPayload(
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>,
   awb: string,
-  frankingLicenseOverride?: string
+  frankingLicenseOverride?: string,
+  preferredLineItemIds: Array<string | null | undefined> = []
 ) {
   const language = swissPostLanguageFromOrderLocale(orderInfo?.customerLocale);
   const frankingLicense =
@@ -379,23 +371,11 @@ function buildSwissPostPayload(
   };
 
   const recipient = toRecipient(orderInfo);
-  const activeShippingLine = getActiveShippingLine(orderInfo);
-  const shippingOption = activeShippingLine
-    ? SHIPPING_LINE_TO_SWISSPOST_MAP[activeShippingLine.title]
-    : null;
-  const forceSignature = shouldForceSwissPostSignature(orderInfo);
-  const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
-    .split(",")
-    .map((value: string) => value.trim())
-    .filter(Boolean);
-  const przlValues = shippingOption?.serviceCodes?.length
-    ? shippingOption.serviceCodes
-    : basePrzlValues.length
-    ? basePrzlValues
-    : ["ECO"];
-  if (forceSignature && !przlValues.includes("SI")) {
-    przlValues.unshift("SI");
-  }
+  const deliveryMode = pickLineDeliveryMode(orderInfo, preferredLineItemIds);
+  const przlResolution = resolveSwissPostPrzl({ orderInfo, deliveryMode });
+  console.log("[SWISS POST] przl resolution", przlResolution, {
+    shippingLine: getActiveShippingLine(orderInfo)?.title ?? null,
+  });
 
   return {
     language,
@@ -415,7 +395,7 @@ function buildSwissPostPayload(
       )}`,
       recipient,
       attributes: {
-        przl: przlValues,
+        przl: przlResolution.przl,
       },
       notification: recipient.email
         ? [
@@ -514,6 +494,7 @@ export async function POST(req: NextRequest) {
         id: true,
         shopifyOrderId: true,
         shopifyOrderName: true,
+        shopifyLineItemId: true,
         shopifySku: true,
         shopifyProductTitle: true,
         shopifySizeEU: true,
@@ -674,8 +655,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const liquidationSkip = shouldSkipSwissPostLabelForLiquidation(
+      matches.map((m) => m.shopifyProductTitle)
+    );
+    if (liquidationSkip) {
+      warnings.push("Liquidation product (% title) — Swiss Post auto-label skipped.");
+    }
+
     const shouldCallSwissPost =
-      swissPostEnabled || process.env.SWISS_POST_ENABLE === "1";
+      !liquidationSkip && (swissPostEnabled || process.env.SWISS_POST_ENABLE === "1");
 
     let swissPostResult: Awaited<ReturnType<typeof requestSwissPostLabel>> | null = null;
     let swissPostLabelId: string | null = null;
@@ -689,10 +677,11 @@ export async function POST(req: NextRequest) {
 
     if (shouldCallSwissPost && process.env.SWISS_POST_LABEL_ENDPOINT) {
       try {
+        const preferredLineItemIds = matches.map((m) => m.shopifyLineItemId);
         const payload =
           swissPostPayload && typeof swissPostPayload === "object"
             ? swissPostPayload
-            : buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense);
+            : buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense, preferredLineItemIds);
         console.log("[SWISS POST] payload", payload);
         const swissRes = await withContext("requestSwissPostLabel", () =>
           requestSwissPostLabel(payload)

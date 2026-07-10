@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import { fetchOrderIdByName, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { requestSwissPostLabel } from "@/lib/swissPost";
-import { shouldForceSwissPostSignature } from "@/lib/swissPostShipping";
+import { pickLineDeliveryMode, resolveSwissPostPrzl, shouldSkipSwissPostLabelForLiquidation } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
@@ -153,14 +153,16 @@ function extractLabelPayload(response: any) {
   };
 }
 
-type SwissPostShippingOption = {
-  serviceCodes: string[];
-  signatureRequired: boolean;
-};
-
-const SHIPPING_LINE_TO_SWISSPOST_MAP: Record<string, SwissPostShippingOption> = {
-  "Livraison Offerte": { serviceCodes: ["ECO"], signatureRequired: false },
-  "Sous signature": { serviceCodes: ["SI", "ECO"], signatureRequired: true },
+type SwissPostRecipient = {
+  name1?: string | null;
+  firstName?: string | null;
+  name2?: string | null;
+  street?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  country?: string | null;
+  phone?: string | null;
+  email?: string | null;
 };
 
 const getActiveShippingLine = (
@@ -262,16 +264,14 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
 function buildSwissPostPayload(
   orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>,
   awb: string,
-  frankingLicenseOverride?: string
+  frankingLicenseOverride?: string,
+  preferredLineItemIds: Array<string | null | undefined> = []
 ) {
   const language = process.env.SWISS_POST_LANGUAGE || "DE";
   const frankingLicense =
     String(frankingLicenseOverride || "").trim() ||
     String(process.env.SWISS_POST_FRANKING_LICENSE || "").trim();
   const ppFranking = process.env.SWISS_POST_PP_FRANKING === "1";
-  const customerSystem = process.env.SWISS_POST_CUSTOMER_SYSTEM || null;
-  const sendingID = process.env.SWISS_POST_SENDING_ID || "";
-  const imageFileType = process.env.SWISS_POST_IMAGE_FILE_TYPE || "PNG";
   const imageResolution = Number(process.env.SWISS_POST_IMAGE_RESOLUTION || 300);
   const notificationServiceCode = Number(process.env.SWISS_POST_NOTIFICATION_SERVICE || 0);
   const allowedNotifications = [1, 2, 4, 32, 64, 128, 256];
@@ -298,30 +298,15 @@ function buildSwissPostPayload(
   };
 
   const recipient = toRecipient(orderInfo);
-  const today = new Date();
-  const dispatchDate = today.toISOString().slice(0, 10);
-  const dispatchTime = today.toTimeString().slice(0, 8);
-  const activeShippingLine = getActiveShippingLine(orderInfo);
-  const shippingOption = activeShippingLine
-    ? SHIPPING_LINE_TO_SWISSPOST_MAP[activeShippingLine.title]
-    : null;
-  const forceSignature = shouldForceSwissPostSignature(orderInfo);
-  const basePrzlValues = (process.env.SWISS_POST_PRZL || "ECO")
-    .split(",")
-    .map((value: string) => value.trim())
-    .filter(Boolean);
-  const przlValues = shippingOption?.serviceCodes?.length
-    ? shippingOption.serviceCodes
-    : basePrzlValues.length
-    ? basePrzlValues
-    : ["ECO"];
-  if (forceSignature && !przlValues.includes("SI")) {
-    przlValues.unshift("SI");
-  }
+  const deliveryMode = pickLineDeliveryMode(orderInfo, preferredLineItemIds);
+  const przlResolution = resolveSwissPostPrzl({ orderInfo, deliveryMode });
   const attributesPayload = {
-    przl: przlValues,
+    przl: przlResolution.przl,
   };
 
+  console.log("[SWISS POST] przl resolution", przlResolution, {
+    shippingLine: getActiveShippingLine(orderInfo)?.title ?? null,
+  });
   console.log("[SWISS POST] attributes payload", attributesPayload);
 
   return {
@@ -381,11 +366,24 @@ export async function POST(req: NextRequest) {
       select: {
         shopifyOrderId: true,
         shopifyOrderName: true,
+        shopifyLineItemId: true,
+        shopifyProductTitle: true,
       },
     });
 
     if (matches.length === 0) {
       return NextResponse.json({ ok: false, error: "AWB not found" }, { status: 404 });
+    }
+
+    if (shouldSkipSwissPostLabelForLiquidation(matches.map((m) => m.shopifyProductTitle))) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Liquidation product (% title) — Swiss Post auto-label skipped",
+          awb,
+        },
+        { status: 409 }
+      );
     }
 
     let shopifyOrderId = matches[0]?.shopifyOrderId || "";
@@ -401,7 +399,12 @@ export async function POST(req: NextRequest) {
     }
 
     const orderInfo = await fetchOrderShippingInfo(shopifyOrderId);
-    const payload = buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense);
+    const payload = buildSwissPostPayload(
+      orderInfo,
+      awb,
+      selectedFrankingLicense,
+      matches.map((m) => m.shopifyLineItemId)
+    );
     console.log("[SWISS POST] payload", payload);
 
     const swissRes = await requestSwissPostLabel(payload);

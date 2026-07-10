@@ -1,4 +1,8 @@
 import { extractEUSize, shopifyGraphQL } from "@/lib/shopifyAdmin";
+import {
+  mergeLineItemCustomAttributes,
+  parseShopifyLineItemDelivery,
+} from "@/app/lib/shopifyLineItemDelivery";
 
 type DbFulfillmentItem = {
   sku?: string | null;
@@ -34,6 +38,9 @@ type OrderLineItemSummary = {
   quantity: number;
   variantId?: string | null;
   variantSku?: string | null;
+  /** From line/group custom attrs `_delivery` / `Mode d'expédition` (⚡ Express badge). */
+  deliveryMode?: "express" | "standard" | null;
+  deliveryModeLabel?: string | null;
 };
 
 type ShippingLineInfo = {
@@ -236,6 +243,16 @@ query OrderShippingInfo($orderId: ID!) {
         quantity
         sku
         variantTitle
+        customAttributes {
+          key
+          value
+        }
+        lineItemGroup {
+          customAttributes {
+            key
+            value
+          }
+        }
         variant {
           id
           sku
@@ -675,8 +692,38 @@ export async function fetchOrderShippingInfo(orderId: string) {
       ? { amount: shopMoney.amount, currencyCode: shopMoney.currencyCode }
       : undefined;
 
+  const rawLineNodes = (order.lineItems?.nodes ?? []) as Array<
+    OrderLineItemSummary & {
+      customAttributes?: Array<{ key: string; value: string | null }> | null;
+      lineItemGroup?: {
+        customAttributes?: Array<{ key: string; value: string | null }> | null;
+      } | null;
+    }
+  >;
+  const lineItems = {
+    nodes: rawLineNodes.map((li) => {
+      const deliveryInfo = parseShopifyLineItemDelivery({
+        customAttributes: mergeLineItemCustomAttributes(
+          li.customAttributes ?? [],
+          li.lineItemGroup?.customAttributes ?? []
+        ),
+      });
+      const {
+        customAttributes: _customAttributes,
+        lineItemGroup: _lineItemGroup,
+        ...rest
+      } = li;
+      return {
+        ...rest,
+        deliveryMode: deliveryInfo.deliveryMode,
+        deliveryModeLabel: deliveryInfo.deliveryModeLabel,
+      };
+    }),
+  };
+
   return {
     ...order,
+    lineItems,
     shippingLines,
     orderTotal,
   };

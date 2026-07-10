@@ -13,6 +13,21 @@ export type ShopifyLineItemDeliveryInfo = {
 
 type CustomAttribute = { key: string; value: string | null };
 
+/** Shopify stores checkout delivery props on lineItemGroup, not always on the line item itself. */
+export function mergeLineItemCustomAttributes(
+  lineItemAttrs: CustomAttribute[] | null | undefined,
+  lineItemGroupAttrs: CustomAttribute[] | null | undefined
+): CustomAttribute[] {
+  const merged = new Map<string, CustomAttribute>();
+  for (const attr of lineItemGroupAttrs ?? []) {
+    if (attr?.key) merged.set(attr.key, attr);
+  }
+  for (const attr of lineItemAttrs ?? []) {
+    if (attr?.key) merged.set(attr.key, attr);
+  }
+  return Array.from(merged.values());
+}
+
 function attrValue(attrs: CustomAttribute[] | null | undefined, key: string): string | null {
   const found = (attrs ?? []).find((a) => a.key === key);
   const value = found?.value;
@@ -34,11 +49,25 @@ function parseExpressPriceMetafield(raw: string | null | undefined): string | nu
   if (!raw) return null;
   const trimmed = String(raw).trim();
   if (!trimmed) return null;
+
+  if (/^\d+$/.test(trimmed)) {
+    const cents = Number(trimmed);
+    if (Number.isFinite(cents) && cents > 0) {
+      return `CHF ${(cents / 100).toFixed(2)}`;
+    }
+  }
+
   try {
-    const parsed = JSON.parse(trimmed) as { amount?: string | number; currency_code?: string };
-    const amount = parsed?.amount;
+    const parsed = JSON.parse(trimmed) as
+      | { amount?: string | number; currency_code?: string }
+      | number;
+    if (typeof parsed === "number" && Number.isFinite(parsed) && parsed > 0) {
+      return `CHF ${(parsed / 100).toFixed(2)}`;
+    }
+    const amount = parsed && typeof parsed === "object" ? parsed.amount : null;
     if (amount == null || amount === "") return null;
-    const currency = parsed?.currency_code ?? "CHF";
+    const currency =
+      parsed && typeof parsed === "object" ? parsed.currency_code ?? "CHF" : "CHF";
     return `${currency} ${Number(amount).toFixed(2)}`;
   } catch {
     return trimmed;
