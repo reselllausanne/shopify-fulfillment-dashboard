@@ -211,18 +211,6 @@ function normalizePostalCity(address: any) {
   return { zip: "", city: rawCity };
 }
 
-type SwissPostRecipient = {
-  name1?: string | null;
-  firstName?: string | null;
-  name2?: string | null;
-  street?: string | null;
-  zip?: string | null;
-  city?: string | null;
-  country?: string | null;
-  phone?: string | null;
-  email?: string | null;
-};
-
 const normalizeAwb = (code?: string | null) => {
   if (!code) return "";
   const trimmed = String(code).trim();
