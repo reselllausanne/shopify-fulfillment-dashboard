@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { href: "/partners/dashboard", label: "Dashboard" },
   { href: "/partners/catalog", label: "Catalog" },
   { href: "/partners/orders", label: "Orders" },
+  { href: "/partners/invoices", label: "Invoices" },
 ];
 
 export default function PartnerLayout({ children }: { children: React.ReactNode }) {

@@ -1088,6 +1088,7 @@ export async function POST(
         trackingNumber: swissPostLabelId,
         shippedAt: new Date(),
         labelGeneratedAt: new Date(),
+        ...(scope === "partner" && partnerKey ? { partnerKey } : {}),
       },
     });
     await tryPersistMiraklShipmentId(shipment.id, miraklShipmentId);

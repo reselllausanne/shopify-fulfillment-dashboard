@@ -58,6 +58,7 @@ export default function PartnerDashboardPage() {
   const [ordersToProcessCount, setOrdersToProcessCount] = useState<number | null>(null);
   const [totalSaleFeedChf, setTotalSaleFeedChf] = useState<number | null>(null);
   const [totalGalaxusSaleChf, setTotalGalaxusSaleChf] = useState<number | null>(null);
+  const [postLabelCount, setPostLabelCount] = useState<number | null>(null);
   const router = useRouter();
   const lastEnrichEnsureMs = useRef(0);
 
@@ -91,18 +92,22 @@ export default function PartnerDashboardPage() {
 
   const loadShippedSales = async () => {
     try {
-      const [decRes, galRes] = await Promise.all([
+      const [decRes, galRes, labelRes] = await Promise.all([
         fetch("/api/partners/decathlon-shipped-stats", { cache: "no-store" }),
         fetch("/api/partners/galaxus-shipped-stats", { cache: "no-store" }),
+        fetch("/api/partners/label-stats", { cache: "no-store" }),
       ]);
       const decData = await decRes.json().catch(() => ({}));
       const galData = await galRes.json().catch(() => ({}));
+      const labelData = await labelRes.json().catch(() => ({}));
       const decRaw = decRes.ok && decData.ok ? Number(decData.totalSaleFeedChf ?? 0) : 0;
       const galRaw = galRes.ok && galData.ok ? Number(galData.totalSaleFeedChf ?? 0) : 0;
       const decValue = Number.isFinite(decRaw) ? decRaw : 0;
       const galValue = Number.isFinite(galRaw) ? galRaw : 0;
       setTotalSaleFeedChf(decValue + galValue);
       setTotalGalaxusSaleChf(galValue);
+      const labels = labelRes.ok && labelData.ok ? Number(labelData.postLabelCount ?? 0) : null;
+      setPostLabelCount(labels != null && Number.isFinite(labels) ? labels : null);
     } catch {
       // silent
     }
@@ -320,7 +325,7 @@ export default function PartnerDashboardPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
         <button
           className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/orders")}
@@ -330,14 +335,36 @@ export default function PartnerDashboardPage() {
             {ordersToProcessCount == null ? "—" : ordersToProcessCount}
           </div>
         </button>
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center">
-          <div className="text-xs font-medium text-slate-500">Sales (Decathlon + Galaxus)</div>
-          <div className="text-3xl font-semibold text-slate-900 tabular-nums tracking-tight">
-            {totalSaleFeedChf == null ? "—" : `CHF ${totalSaleFeedChf.toFixed(2)}`}
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center gap-3">
+          <div>
+            <div className="text-xs font-medium text-slate-500">Sales (Decathlon + Galaxus)</div>
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <div className="text-3xl font-semibold text-slate-900 tabular-nums tracking-tight">
+                {totalSaleFeedChf == null ? "—" : `CHF ${totalSaleFeedChf.toFixed(2)}`}
+              </div>
+              <button
+                type="button"
+                className="rounded-full bg-[#55b3f3] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-950 hover:brightness-105"
+                onClick={() => router.push("/partners/invoices")}
+              >
+                Invoice
+              </button>
+            </div>
+            {totalGalaxusSaleChf != null ? (
+              <div className="mt-1 text-xs text-slate-500">Galaxus: CHF {totalGalaxusSaleChf.toFixed(2)}</div>
+            ) : null}
+            <p className="mt-2 text-[11px] leading-snug text-slate-500">
+              Galaxus sell prices already account for the <strong>2% fast-payment</strong> fee Digitech /
+              Galaxus deducts.
+            </p>
           </div>
-          {totalGalaxusSaleChf != null ? (
-            <div className="mt-1 text-xs text-slate-500">Galaxus: CHF {totalGalaxusSaleChf.toFixed(2)}</div>
-          ) : null}
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center">
+          <div className="text-sm font-medium text-slate-500">Swiss Post labels</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900 tabular-nums">
+            {postLabelCount == null ? "—" : postLabelCount}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">Generated from partner ship (Decathlon)</div>
         </div>
       </div>
 

@@ -247,11 +247,30 @@ model ShopifyFulfillmentRecord {
   swissPostBarcode  String?
   swissPostStatus   String?
   swissPostResponse Json?
+  actorRole         String?
+  scanSessionKey    String?
+  scanStartedAt     DateTime?
+  scanCompletedAt   DateTime?
+  labelGeneratedAt  DateTime?
+  stockxDeliveredAt DateTime?
+  stockxDeliveredMilestoneKey String?
+  stockxDeliveredLagMinutes   Int?
+  requestStartedAt  DateTime?
+  requestCompletedAt DateTime?
+  requestDurationMs Int?
+  scanToLabelSeconds Int?
+  scanToFulfillmentSeconds Int?
+  stockxDeliveredToScanMinutes Int?
+  stockxDeliveredToFulfillmentMinutes Int?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@index([shopifyOrderId])
   @@index([trackingNumber])
+  @@index([scanSessionKey])
+  @@index([labelGeneratedAt])
+  @@index([stockxDeliveredAt])
+  @@index([requestStartedAt])
   @@unique([shopifyOrderId, trackingNumber])
   @@schema("public")
 }
@@ -1752,6 +1771,8 @@ model DecathlonShipment {
   trackingNumber String?
   shippedAt      DateTime?
   labelGeneratedAt DateTime?
+  /// Partner key when Swiss Post label was generated from the partner portal (scope=partner).
+  partnerKey     String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -1761,6 +1782,7 @@ model DecathlonShipment {
 
   @@index([orderId])
   @@index([miraklShipmentId])
+  @@index([partnerKey])
   @@schema("public")
 }
 
@@ -1838,6 +1860,59 @@ model DecathlonReturnLine {
   @@index([returnId])
   @@index([orderLineId])
   @@index([offerSku])
+  @@schema("public")
+}
+
+/// Staff return-receipt workflow (scan → receive → refund → close). Separate from DecathlonReturn restock sync.
+model MarketplaceReturn {
+  id                   String    @id @default(uuid())
+  platform             String    @default("decathlon")
+  externalReturnId     String
+  externalOrderId      String
+  externalOrderLineId  String?
+  productId            String?
+  productTitle         String?
+  sku                  String?
+  returnLabelNumber    String?
+  returnAmount         Decimal   @db.Decimal(12, 2)
+  currency             String    @default("CHF")
+  returnReasonCode     String?
+  returnReasonLabel    String?
+  miraklStatus         String?
+  localStatus          String    @default("pending_receipt")
+  /// pending | receive_done | refund_done | close_done — drives idempotent retry
+  processStep          String    @default("pending")
+  syncedAt             DateTime?
+  receivedAt           DateTime?
+  completedAt          DateTime?
+  failureMessage       String?
+  staffNote            String?
+  quantity             Int       @default(1)
+  apiSource            String?
+  receiveActionId      String?
+  refundIdsJson        Json?
+  closeActionId        String?
+  auditLogJson         Json?
+  rawJson              Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@unique([platform, externalReturnId])
+  @@index([platform, returnLabelNumber])
+  @@index([localStatus])
+  @@index([externalOrderId])
+  @@map("marketplace_returns")
+  @@schema("public")
+}
+
+model MarketplaceReturnSyncCursor {
+  id                   String    @id @default(uuid())
+  platform             String    @unique
+  lastSuccessfulSyncAt DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@map("marketplace_return_sync_cursors")
   @@schema("public")
 }
 
