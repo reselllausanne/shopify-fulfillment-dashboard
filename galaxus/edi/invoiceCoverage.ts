@@ -86,6 +86,29 @@ function orderedQty(line: GalaxusOrderLine): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function originalLineNetAmount(line: GalaxusOrderLine): number {
+  const fromLine = Number(line.lineNetAmount);
+  if (Number.isFinite(fromLine) && fromLine > 0) return fromLine;
+  const fromPriceLine = Number((line as { priceLineAmount?: unknown }).priceLineAmount);
+  if (Number.isFinite(fromPriceLine) && fromPriceLine > 0) return fromPriceLine;
+  return 0;
+}
+
+/** Net line total for a partial invoice quantity (unit price first, else prorate stored line net). */
+export function invoiceLineNetAmount(line: GalaxusOrderLine, invoiceQty: number): number {
+  const qty = Math.max(0, invoiceQty);
+  const unitNetPrice = Number(line.unitNetPrice);
+  if (Number.isFinite(unitNetPrice) && unitNetPrice > 0) {
+    return Number((unitNetPrice * qty).toFixed(2));
+  }
+  const ordered = orderedQty(line);
+  const originalLineNet = originalLineNetAmount(line);
+  if (ordered > 0 && originalLineNet > 0) {
+    return Number(((originalLineNet / ordered) * qty).toFixed(2));
+  }
+  return originalLineNet;
+}
+
 export type InvoiceLineProgress = {
   /** Order lines where invoiced quantity ≥ ordered quantity */
   linesFullyInvoiced: number;
@@ -221,11 +244,7 @@ export function prepareOutgoingInvoiceLines(
     const explicit =
       explicitRaw != null && Number.isFinite(Number(explicitRaw)) ? Math.max(0, Number(explicitRaw)) : null;
     const qty = explicit ?? (remaining > 0 ? remaining : ordered);
-    const unitNetPrice = Number(line.unitNetPrice);
-    const lineNetAmount =
-      Number.isFinite(unitNetPrice) && unitNetPrice > 0
-        ? Number((unitNetPrice * qty).toFixed(2))
-        : Number(line.lineNetAmount);
+    const lineNetAmount = invoiceLineNetAmount(line, qty);
     return { ...line, quantity: qty, lineNetAmount } as unknown as GalaxusOrderLine;
   });
 }

@@ -131,6 +131,20 @@ function lineNetFromOrderLine(line: Record<string, unknown>): number {
   return NaN;
 }
 
+function lineNetForInvoiceQty(line: Record<string, unknown>, invoiceQty: number): number {
+  const qty = Math.max(0, invoiceQty);
+  const unitNet = unitNetFromLine(line);
+  if (Number.isFinite(unitNet) && unitNet > 0) {
+    return Number((unitNet * qty).toFixed(2));
+  }
+  const ordered = num(line.quantity);
+  const fullLineNet = lineNetFromOrderLine(line);
+  if (Number.isFinite(ordered) && ordered > 0 && Number.isFinite(fullLineNet)) {
+    return Number(((fullLineNet / ordered) * qty).toFixed(2));
+  }
+  return fullLineNet;
+}
+
 function formatMoney(value: unknown, currencyCode?: string | null): string {
   const n = num(value);
   if (!Number.isFinite(n)) return "—";
@@ -863,12 +877,8 @@ export default function GalaxusInvoicesPage() {
                     const partiallyInvoiced = !fullyInvoiced && invoicedQty > 0;
                     const selected = selectedLines[lid];
                     const unitStr = formatMoney(line.unitNetPrice, currencyCode);
-                    const unitNet = unitNetFromLine(line);
                     const previewQty = selected?.quantity ?? remainingQty;
-                    const previewLineNet =
-                      selected && Number.isFinite(unitNet)
-                        ? Number((unitNet * previewQty).toFixed(2))
-                        : lineNetFromOrderLine(line);
+                    const previewLineNet = lineNetForInvoiceQty(line, previewQty);
                     const lineNetStr = formatMoney(previewLineNet, currencyCode);
                     return (
                       <tr
