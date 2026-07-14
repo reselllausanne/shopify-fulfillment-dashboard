@@ -105,6 +105,16 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
+function clampQty(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+type SelectedInvoiceLine = {
+  lineId: string;
+  quantity: number;
+};
+
 /** Net unit price from order line (Prisma Decimal serializes as string in JSON). */
 function unitNetFromLine(line: Record<string, unknown>): number {
   return num(line.unitNetPrice);
@@ -177,7 +187,7 @@ export default function GalaxusInvoicesPage() {
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [orderDetail, setOrderDetail] = useState<Record<string, unknown> | null>(null);
   const [orderDetailLoading, setOrderDetailLoading] = useState(false);
-  const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
+  const [selectedLines, setSelectedLines] = useState<Record<string, SelectedInvoiceLine>>({});
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -265,7 +275,7 @@ export default function GalaxusInvoicesPage() {
   const loadOrderDetail = useCallback(async (internalOrderId: string) => {
     if (!internalOrderId) {
       setOrderDetail(null);
-      setSelectedLineIds(new Set());
+      setSelectedLines({});
       setInvoiceCoverage({});
       return;
     }
@@ -278,12 +288,20 @@ export default function GalaxusInvoicesPage() {
       const order = data.order as Record<string, unknown>;
       setOrderDetail(order);
       const lines = getLinesFromOrder(order);
-      const ids = lines.map((l) => String(l.id ?? "")).filter(Boolean);
-      setSelectedLineIds(new Set(ids));
+      const nextSelected: Record<string, SelectedInvoiceLine> = {};
+      for (const line of lines) {
+        const id = String(line.id ?? "").trim();
+        if (!id) continue;
+        const ordered = num(line.quantity);
+        const orderedSafe = Number.isFinite(ordered) ? ordered : 0;
+        if (orderedSafe <= 0) continue;
+        nextSelected[id] = { lineId: id, quantity: orderedSafe };
+      }
+      setSelectedLines(nextSelected);
       void loadInvoiceCoverage(internalOrderId);
     } catch (err: unknown) {
       setOrderDetail(null);
-      setSelectedLineIds(new Set());
+      setSelectedLines({});
       setInvoiceCoverage({});
       setError(err instanceof Error ? err.message : "Failed to load order");
     } finally {
@@ -326,52 +344,95 @@ export default function GalaxusInvoicesPage() {
     return invoiced >= ordered;
   };
 
-  const toggleLine = (lineId: string, checked: boolean) => {
-    setSelectedLineIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(lineId);
-      else next.delete(lineId);
+  const lineRemainingQty = (line: Record<string, unknown>): number => {
+    const ordered = lineOrderedQty(line);
+    const invoiced = lineInvoicedQty(line);
+    return Math.max(0, ordered - invoiced);
+  };
+
+  const toggleLine = (lineId: string, checked: boolean, remainingQty: number) => {
+    setSelectedLines((prev) => {
+      const next = { ...prev };
+      if (!checked) {
+        delete next[lineId];
+        return next;
+      }
+      const maxQty = Math.max(1, remainingQty);
+      const qty = clampQty(Math.max(1, remainingQty), 1, maxQty);
+      next[lineId] = { lineId, quantity: qty };
       return next;
+    });
+  };
+
+  const updateLineQuantity = (lineId: string, maxQty: number, raw: string) => {
+    setSelectedLines((prev) => {
+      const entry = prev[lineId];
+      if (!entry) return prev;
+      const nextQty = clampQty(Number(raw), 1, Math.max(1, maxQty));
+      return { ...prev, [lineId]: { ...entry, quantity: nextQty } };
     });
   };
 
   const selectAllLines = () => {
-    const ids = lines
-      .filter((l) => !isLineFullyInvoiced(l))
-      .map((l) => String(l.id ?? ""))
-      .filter(Boolean);
-    setSelectedLineIds(new Set(ids));
+    const next: Record<string, SelectedInvoiceLine> = {};
+    for (const line of lines) {
+      if (isLineFullyInvoiced(line)) continue;
+      const id = String(line.id ?? "").trim();
+      if (!id) continue;
+      const remaining = lineRemainingQty(line);
+      if (remaining <= 0) continue;
+      next[id] = { lineId: id, quantity: remaining };
+    }
+    setSelectedLines(next);
   };
 
   const selectNoLines = () => {
-    setSelectedLineIds(new Set());
+    setSelectedLines({});
   };
 
   useEffect(() => {
-    if (selectedLineIds.size === 0) return;
-    setSelectedLineIds((prev) => {
-      const next = new Set<string>();
-      for (const id of prev) {
+    if (Object.keys(selectedLines).length === 0) return;
+    setSelectedLines((prev) => {
+      const next: Record<string, SelectedInvoiceLine> = {};
+      for (const [id, entry] of Object.entries(prev)) {
         const line = lineById.get(id);
         if (!line) continue;
         if (isLineFullyInvoiced(line)) continue;
-        next.add(id);
+        const remaining = lineRemainingQty(line);
+        if (remaining <= 0) continue;
+        next[id] = {
+          lineId: id,
+          quantity: clampQty(entry.quantity, 1, Math.max(1, remaining)),
+        };
       }
       return next;
     });
-  }, [invoiceCoverage, lineById, selectedLineIds.size]);
+  }, [invoiceCoverage, lineById]);
 
   const galaxusOrderId = orderDetail ? String(orderDetail.galaxusOrderId ?? "") : "";
   const deliveryType = orderDetail ? String(orderDetail.deliveryType ?? "") : "";
   const currencyCode = orderDetail ? String(orderDetail.currencyCode ?? "CHF") : "CHF";
 
-  const lineIdsParam = useMemo(() => Array.from(selectedLineIds).join(","), [selectedLineIds]);
+  const selectedLineIds = useMemo(() => Object.keys(selectedLines), [selectedLines]);
+  const lineQuantities = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const [id, entry] of Object.entries(selectedLines)) {
+      if (entry.quantity > 0) out[id] = entry.quantity;
+    }
+    return out;
+  }, [selectedLines]);
+  const lineIdsParam = useMemo(() => selectedLineIds.join(","), [selectedLineIds]);
+  const lineQtyParam = useMemo(() => {
+    return Object.entries(lineQuantities)
+      .map(([id, qty]) => `${id}:${qty}`)
+      .join(",");
+  }, [lineQuantities]);
   const fullyInvoicedCount = useMemo(
     () => lines.filter((line) => isLineFullyInvoiced(line)).length,
     [lines, invoiceCoverage]
   );
 
-  const canBuildInvo = Boolean(selectedOrderId && orderDetail && selectedLineIds.size > 0);
+  const canBuildInvo = Boolean(selectedOrderId && orderDetail && selectedLineIds.length > 0);
 
   const standardInvoicePdfHref = useMemo(() => {
     if (!canBuildInvo || !selectedOrderId) return null;
@@ -379,13 +440,14 @@ export default function GalaxusInvoicesPage() {
       standardDeliveryCharge !== "" && Number.isFinite(Number(standardDeliveryCharge))
         ? `&deliveryCharge=${Number(standardDeliveryCharge)}`
         : "";
+    const qtyPart = lineQtyParam ? `&lineQty=${encodeURIComponent(lineQtyParam)}` : "";
     return `/api/galaxus/edi/invoice-pdf?orderId=${encodeURIComponent(
       selectedOrderId
-    )}&lineIds=${encodeURIComponent(lineIdsParam)}${dc}`;
-  }, [canBuildInvo, selectedOrderId, lineIdsParam, standardDeliveryCharge]);
+    )}&lineIds=${encodeURIComponent(lineIdsParam)}${qtyPart}${dc}`;
+  }, [canBuildInvo, selectedOrderId, lineIdsParam, lineQtyParam, standardDeliveryCharge]);
 
   const sendInvoice = async () => {
-    if (!selectedOrderId || !orderDetail || selectedLineIds.size === 0) {
+    if (!selectedOrderId || !orderDetail || selectedLineIds.length === 0) {
       setError("Select an order and at least one product line.");
       return;
     }
@@ -400,7 +462,8 @@ export default function GalaxusInvoicesPage() {
           orderId: selectedOrderId,
           types: ["INVO"],
           force: true,
-          lineIds: Array.from(selectedLineIds),
+          lineIds: selectedLineIds,
+          lineQuantities,
           deliveryCharge:
             standardDeliveryCharge === "" || !Number.isFinite(Number(standardDeliveryCharge))
               ? undefined
@@ -410,6 +473,7 @@ export default function GalaxusInvoicesPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error((data as { error?: string })?.error ?? "INVO send failed");
       setResult(JSON.stringify(data, null, 2));
+      void loadInvoiceCoverage(selectedOrderId);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "INVO send failed");
     } finally {
@@ -658,8 +722,9 @@ export default function GalaxusInvoicesPage() {
             Galaxus id or <strong>order #</strong> (<code className="text-xs bg-white px-1 rounded">orderNumber</code>).
           </li>
           <li>
-            After you select an order, we load its <strong>lines</strong>. Check the products to include on the invoice;
-            the XML is built only from those line ids.
+            After you select an order, we load its <strong>lines</strong>. Check products to include and set{" "}
+            <strong>Inv. qty</strong> when you need less than the full ordered quantity (e.g. Galaxus reduced the order
+            but your DB still shows the old qty).
           </li>
           <li>
             <strong>Download invoice (PDF)</strong> is a printable preview for your checks (same lines + optional
@@ -754,7 +819,7 @@ export default function GalaxusInvoicesPage() {
                 Select none
               </button>
               <span className="text-xs text-gray-500">
-                {selectedLineIds.size} of {lines.length} selected
+                {selectedLineIds.length} of {lines.length} selected
               </span>
               {coverageLoading ? (
                 <span className="text-xs text-gray-500">Checking invoice history…</span>
@@ -776,7 +841,8 @@ export default function GalaxusInvoicesPage() {
                     <th className="px-2 py-2 text-left">Size</th>
                     <th className="px-2 py-2 text-left">SKU</th>
                     <th className="px-2 py-2 text-left font-mono">GTIN</th>
-                    <th className="px-2 py-2 text-right">Qty</th>
+                    <th className="px-2 py-2 text-right">Ordered</th>
+                    <th className="px-2 py-2 text-right">Inv. qty</th>
                     <th className="px-2 py-2 text-right">Unit net</th>
                     <th className="px-2 py-2 text-right">Line net</th>
                   </tr>
@@ -790,12 +856,20 @@ export default function GalaxusInvoicesPage() {
                     const sku = displaySku(line);
                     const gtin = String(line.gtin ?? "").trim() || "—";
                     const qty = line.quantity ?? "—";
-                    const unitStr = formatMoney(line.unitNetPrice, currencyCode);
-                    const lineNetStr = formatMoney(lineNetFromOrderLine(line), currencyCode);
                     const orderedQty = lineOrderedQty(line);
                     const invoicedQty = lineInvoicedQty(line);
+                    const remainingQty = lineRemainingQty(line);
                     const fullyInvoiced = isLineFullyInvoiced(line);
                     const partiallyInvoiced = !fullyInvoiced && invoicedQty > 0;
+                    const selected = selectedLines[lid];
+                    const unitStr = formatMoney(line.unitNetPrice, currencyCode);
+                    const unitNet = unitNetFromLine(line);
+                    const previewQty = selected?.quantity ?? remainingQty;
+                    const previewLineNet =
+                      selected && Number.isFinite(unitNet)
+                        ? Number((unitNet * previewQty).toFixed(2))
+                        : lineNetFromOrderLine(line);
+                    const lineNetStr = formatMoney(previewLineNet, currencyCode);
                     return (
                       <tr
                         key={lid || String(lineNumber)}
@@ -804,9 +878,9 @@ export default function GalaxusInvoicesPage() {
                         <td className="px-2 py-1.5">
                           <input
                             type="checkbox"
-                            checked={lid ? selectedLineIds.has(lid) : false}
-                            onChange={(e) => lid && toggleLine(lid, e.target.checked)}
-                            disabled={busy || !lid || fullyInvoiced}
+                            checked={Boolean(selected)}
+                            onChange={(e) => lid && toggleLine(lid, e.target.checked, remainingQty)}
+                            disabled={busy || !lid || fullyInvoiced || remainingQty <= 0}
                           />
                         </td>
                         <td className="px-2 py-1.5 align-top">{String(lineNumber)}</td>
@@ -832,6 +906,21 @@ export default function GalaxusInvoicesPage() {
                         <td className="px-2 py-1.5 align-top font-mono text-[11px] text-gray-800">{sku}</td>
                         <td className="px-2 py-1.5 align-top font-mono text-[11px]">{gtin}</td>
                         <td className="px-2 py-1.5 text-right align-top">{String(qty)}</td>
+                        <td className="px-2 py-1.5 text-right align-top">
+                          {selected ? (
+                            <input
+                              type="number"
+                              min={1}
+                              max={Math.max(1, remainingQty)}
+                              className="w-16 border rounded px-1 py-0.5 text-xs text-right"
+                              value={selected.quantity}
+                              onChange={(e) => updateLineQuantity(lid, remainingQty, e.target.value)}
+                              disabled={busy}
+                            />
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </td>
                         <td className="px-2 py-1.5 text-right align-top tabular-nums">{unitStr}</td>
                         <td className="px-2 py-1.5 text-right align-top tabular-nums">{lineNetStr}</td>
                       </tr>

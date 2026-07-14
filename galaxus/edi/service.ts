@@ -18,6 +18,7 @@ import {
   assertCustomInvoiceAllowed,
   assertOutgoingInvoiceAllowed,
   getInvoicedQuantitiesByOrderLineId,
+  prepareOutgoingInvoiceLines,
 } from "./invoiceCoverage";
 import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder, resolveSupplierVariant } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
@@ -209,6 +210,7 @@ export async function sendOutgoingEdi(options: {
   ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS";
   force?: boolean;
   lineIds?: string[];
+  lineQuantities?: Record<string, number>;
   deliveryCharge?: number | null;
 }): Promise<OutgoingResult[]> {
   assertSftpConfig();
@@ -230,9 +232,15 @@ export async function sendOutgoingEdi(options: {
   const shipment = order.shipments[0] ?? null;
   const lineIds =
     Array.isArray(options.lineIds) && options.lineIds.length > 0
-      ? new Set(options.lineIds.map((id) => String(id)))
+      ? options.lineIds.map((id) => String(id))
       : null;
-  const invoiceLines = lineIds ? order.lines.filter((line) => lineIds.has(String(line.id))) : order.lines;
+  const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+  const invoiceLines = prepareOutgoingInvoiceLines(
+    order.lines,
+    lineIds,
+    options.lineQuantities,
+    invoicedSoFar
+  );
   const results: OutgoingResult[] = [];
   const runId = randomUUID();
   const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_OUT_DIR}`;
@@ -364,7 +372,6 @@ export async function sendOutgoingEdi(options: {
           }
           if (type === "INVO") {
             try {
-              const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
               assertOutgoingInvoiceAllowed(order.lines, invoiceLines, invoicedSoFar);
             } catch (coverageErr: any) {
               results.push({
@@ -458,6 +465,7 @@ export async function buildOutgoingEdiXml(options: {
   type: Exclude<EdiDocType, "DELR" | "ORDP" | "CANP">;
   force?: boolean;
   lineIds?: string[];
+  lineQuantities?: Record<string, number>;
   deliveryCharge?: number | null;
 }): Promise<{ filename: string; content: string }> {
   const order =
@@ -480,14 +488,19 @@ export async function buildOutgoingEdiXml(options: {
   }
   const lineIds =
     Array.isArray(options.lineIds) && options.lineIds.length > 0
-      ? new Set(options.lineIds.map((id) => String(id)))
+      ? options.lineIds.map((id) => String(id))
       : null;
-  const invoiceLines = lineIds ? order.lines.filter((line) => lineIds.has(String(line.id))) : order.lines;
+  const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+  const invoiceLines = prepareOutgoingInvoiceLines(
+    order.lines,
+    lineIds,
+    options.lineQuantities,
+    invoicedSoFar
+  );
   if (options.type === "INVO" && invoiceLines.length === 0) {
     throw new Error("No invoice lines selected");
   }
   if (options.type === "INVO") {
-    const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
     assertOutgoingInvoiceAllowed(order.lines, invoiceLines, invoicedSoFar);
   }
   const edi = await buildOutgoingXml(

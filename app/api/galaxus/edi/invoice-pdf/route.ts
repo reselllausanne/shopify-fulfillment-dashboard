@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { DocumentService } from "@/galaxus/documents/DocumentService";
+import { parseLineQuantitiesParam } from "@/galaxus/edi/invoiceCoverage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export async function GET(request: Request) {
           .map((s) => s.trim())
           .filter(Boolean)
       : undefined;
+    const lineQuantities = parseLineQuantitiesParam(searchParams.get("lineQty"));
     const dcRaw = (searchParams.get("deliveryCharge") ?? "").trim();
     const deliveryCharge =
       dcRaw && Number.isFinite(Number(dcRaw)) ? Number(dcRaw) : undefined;
@@ -27,6 +29,7 @@ export async function GET(request: Request) {
     const pdf = await service.generateInvoicePdfForSelectedLines({
       orderId,
       lineIds,
+      lineQuantities,
       deliveryCharge,
     });
 

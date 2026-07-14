@@ -6,6 +6,7 @@ import {
   sendCustomInvoice,
   buildCustomInvoicePreview,
 } from "@/galaxus/edi/service";
+import { parseLineQuantitiesParam } from "@/galaxus/edi/invoiceCoverage";
 import type { EdiDocType } from "@/galaxus/edi/filenames";
 
 export const runtime = "nodejs";
@@ -33,6 +34,7 @@ export async function GET(request: Request) {
           .map((value) => value.trim())
           .filter(Boolean)
       : undefined;
+    const lineQuantities = parseLineQuantitiesParam(searchParams.get("lineQty"));
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
     }
@@ -40,7 +42,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid type" }, { status: 400 });
     }
 
-    const edi = await buildOutgoingEdiXml({ orderId, type, force, lineIds, deliveryCharge });
+    const edi = await buildOutgoingEdiXml({ orderId, type, force, lineIds, lineQuantities, deliveryCharge });
     return new NextResponse(edi.content, {
       headers: {
         "Content-Type": "application/xml; charset=utf-8",
@@ -118,6 +120,15 @@ export async function POST(request: Request) {
       lineIdsRaw && lineIdsRaw.length > 0
         ? lineIdsRaw.map((value: any) => String(value)).filter((value: string) => value.trim().length > 0)
         : undefined;
+    const lineQuantitiesRaw = body?.lineQuantities;
+    const lineQuantities =
+      lineQuantitiesRaw && typeof lineQuantitiesRaw === "object" && !Array.isArray(lineQuantitiesRaw)
+        ? Object.fromEntries(
+            Object.entries(lineQuantitiesRaw as Record<string, unknown>)
+              .map(([id, qty]) => [String(id), Number(qty)] as const)
+              .filter(([id, qty]) => id.trim().length > 0 && Number.isFinite(qty) && qty > 0)
+          )
+        : undefined;
     const ordrMode =
       body?.ordrMode === "WITH_ARRIVAL_DATES" || body?.ordrMode === "WITHOUT_POSITIONS"
         ? (body.ordrMode as "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS")
@@ -125,7 +136,7 @@ export async function POST(request: Request) {
     if (!orderId) {
       return NextResponse.json({ ok: false, error: "orderId is required" }, { status: 400 });
     }
-    const results = await sendOutgoingEdi({ orderId, types, ordrMode, force, lineIds, deliveryCharge });
+    const results = await sendOutgoingEdi({ orderId, types, ordrMode, force, lineIds, lineQuantities, deliveryCharge });
     return NextResponse.json({ ok: true, results });
   } catch (error: any) {
     console.error("[GALAXUS][EDI][SEND] Failed:", error);

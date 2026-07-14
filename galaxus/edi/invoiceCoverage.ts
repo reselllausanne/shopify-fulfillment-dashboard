@@ -163,22 +163,30 @@ export async function getInvoiceLineProgressByOrderIds(orderIds: string[]): Prom
 
 /**
  * Block invoice send if any line would exceed ordered quantity or is already fully invoiced.
+ * `invoiceLines[].quantity` is the quantity to send on this invoice (may be less than the order line qty).
  */
 export function assertOutgoingInvoiceAllowed(
   orderLines: GalaxusOrderLine[],
   invoiceLines: GalaxusOrderLine[],
   invoicedSoFar: Map<string, number>
 ): void {
+  const orderLineById = new Map(orderLines.map((l) => [l.id, l]));
   const allowedIds = new Set(orderLines.map((l) => l.id));
   for (const inv of invoiceLines) {
     if (!allowedIds.has(inv.id)) {
       throw new Error(`Invoice references unknown order line id ${inv.id}.`);
     }
-    const ordered = orderedQty(inv);
+    const orig = orderLineById.get(inv.id)!;
+    const ordered = orderedQty(orig);
     const already = invoicedSoFar.get(inv.id) ?? 0;
     const sendQty = orderedQty(inv);
     if (ordered <= 0) {
       throw new Error(`Order line ${inv.lineNumber} has no order quantity.`);
+    }
+    if (sendQty <= 0) {
+      throw new Error(
+        `Order line ${inv.lineNumber} (${inv.productName}): invoice quantity must be at least 1.`
+      );
     }
     if (already >= ordered) {
       throw new Error(
@@ -191,6 +199,58 @@ export function assertOutgoingInvoiceAllowed(
       );
     }
   }
+}
+
+/** Apply selected line ids and optional per-line invoice quantities (defaults to not-yet-invoiced remainder). */
+export function prepareOutgoingInvoiceLines(
+  orderLines: GalaxusOrderLine[],
+  selectedLineIds: string[] | null | undefined,
+  lineQuantities: Record<string, number> | null | undefined,
+  invoicedSoFar: Map<string, number>
+): GalaxusOrderLine[] {
+  const selected =
+    selectedLineIds && selectedLineIds.length > 0
+      ? orderLines.filter((l) => selectedLineIds.includes(String(l.id)))
+      : [...orderLines];
+
+  return selected.map((line) => {
+    const ordered = orderedQty(line);
+    const already = invoicedSoFar.get(line.id) ?? 0;
+    const remaining = Math.max(0, ordered - already);
+    const explicitRaw = lineQuantities?.[line.id];
+    const explicit =
+      explicitRaw != null && Number.isFinite(Number(explicitRaw)) ? Math.max(0, Number(explicitRaw)) : null;
+    const qty = explicit ?? (remaining > 0 ? remaining : ordered);
+    const unitNetPrice = Number(line.unitNetPrice);
+    const lineNetAmount =
+      Number.isFinite(unitNetPrice) && unitNetPrice > 0
+        ? Number((unitNetPrice * qty).toFixed(2))
+        : Number(line.lineNetAmount);
+    return { ...line, quantity: qty, lineNetAmount } as unknown as GalaxusOrderLine;
+  });
+}
+
+export function parseLineQuantitiesParam(raw: string | undefined | null): Record<string, number> | undefined {
+  const trimmed = String(raw ?? "").trim();
+  if (!trimmed) return undefined;
+  const out: Record<string, number> = {};
+  for (const part of trimmed.split(",")) {
+    const sep = part.indexOf(":");
+    if (sep <= 0) continue;
+    const id = part.slice(0, sep).trim();
+    const qty = Number(part.slice(sep + 1));
+    if (!id || !Number.isFinite(qty) || qty <= 0) continue;
+    out[id] = qty;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function serializeLineQuantitiesParam(lineQuantities: Record<string, number> | undefined): string {
+  if (!lineQuantities) return "";
+  return Object.entries(lineQuantities)
+    .filter(([, qty]) => Number.isFinite(qty) && qty > 0)
+    .map(([id, qty]) => `${id}:${qty}`)
+    .join(",");
 }
 
 export type CustomInvoiceLineLike = {

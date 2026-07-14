@@ -2,6 +2,10 @@ import type { GalaxusOrder, GalaxusOrderLine } from "@prisma/client";
 import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import {
+  getInvoicedQuantitiesByOrderLineId,
+  prepareOutgoingInvoiceLines,
+} from "@/galaxus/edi/invoiceCoverage";
+import {
   GALAXUS_BUYER_ADDRESS1,
   GALAXUS_BUYER_ADDRESS2,
   GALAXUS_BUYER_CITY,
@@ -223,6 +227,7 @@ export class DocumentService {
   async generateInvoicePdfForSelectedLines(options: {
     orderId: string;
     lineIds?: string[] | null;
+    lineQuantities?: Record<string, number> | null;
     deliveryCharge?: number | null;
   }): Promise<Buffer> {
     const order =
@@ -237,11 +242,13 @@ export class DocumentService {
     if (!order) {
       throw new Error(`Order not found: ${options.orderId}`);
     }
-    let dbLines = [...order.lines];
-    if (options.lineIds && options.lineIds.length > 0) {
-      const set = new Set(options.lineIds.map(String));
-      dbLines = dbLines.filter((l) => set.has(l.id));
-    }
+    const invoicedSoFar = await getInvoicedQuantitiesByOrderLineId(order.id, order.lines);
+    const dbLines = prepareOutgoingInvoiceLines(
+      order.lines,
+      options.lineIds && options.lineIds.length > 0 ? options.lineIds.map(String) : null,
+      options.lineQuantities ?? undefined,
+      invoicedSoFar
+    );
     if (dbLines.length === 0) {
       throw new Error("No order lines selected for invoice PDF");
     }
