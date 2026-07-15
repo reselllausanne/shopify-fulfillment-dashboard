@@ -4,10 +4,16 @@ import { OFFERS_HEADERS } from "./templates";
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   decathlonOfferListPriceFromManualLockedPrice,
-  isDecathlonStxListableBuy,
   readDecathlonStxMaxListPriceChf,
   resolveDecathlonBuyNow,
 } from "./pricing";
+import {
+  extractDecathlonOfferSupplierKey,
+  decathlonStxListPriceContextFromCandidate,
+  isDecathlonStxOfferDelisted,
+  resolveDecathlonStxOfferBuyNow,
+  resolveDecathlonStxOfferStock,
+} from "./stxOfferPolicy";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
 
 const DECATHLON_DEFAULT_OFFER_STATE = "11";
@@ -27,20 +33,20 @@ function parseIntSafe(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function resolveEffectiveStock(candidate: DecathlonExportCandidate): number | null {
+function resolveEffectiveStock(
+  candidate: DecathlonExportCandidate,
+  listPriceTtc: number | null
+): number | null {
   const variant = candidate.variant ?? {};
+  const supplierKey = extractDecathlonOfferSupplierKey(candidate);
+  if (supplierKey === "gld" || supplierKey === "trm") return 0;
+  if (supplierKey === "stx") {
+    return resolveDecathlonStxOfferStock(candidate, listPriceTtc);
+  }
   const manualLock = Boolean(variant?.manualLock);
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock) ?? 0;
-  const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
-  const supplierKey = extractSupplierKey(candidate);
-  if (supplierKey === "gld" || supplierKey === "trm") return 0;
-  const supplierVariantId = String(variant?.supplierVariantId ?? "");
-  const isStx = supplierVariantId.startsWith("stx_") || candidate.providerKey.startsWith("STX_");
-  const deliveryType = String(variant?.deliveryType ?? "");
-  const stxEligible =
-    isStx && deliveryType.startsWith("express_") && Number.isFinite(rawStock) && rawStock >= 2;
-  return isStx ? (stxEligible ? 1 : 0) : rawStock;
+  return manualLock && manualStock !== null ? manualStock : baseStock;
 }
 
 function resolvePrice(
@@ -66,7 +72,7 @@ function resolvePrice(
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualPrice = parseDecimal(variant?.manualPrice);
-  const supplierKey = extractSupplierKey(candidate);
+  const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const buyNow = resolveDecathlonBuyNow({
     buyNowStockx: parseDecimal(variant?.price),
     manualOverride: manualPrice,
@@ -76,19 +82,18 @@ function resolvePrice(
     return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
   }
   if (!buyNow || buyNow <= 0) return null;
-  if (supplierKey === "stx" && !isDecathlonStxListableBuy(buyNow)) return null;
-  const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(buyNow, supplierKey);
+  const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(
+    buyNow,
+    supplierKey,
+    undefined,
+    supplierKey === "stx" ? decathlonStxListPriceContextFromCandidate(candidate) : undefined
+  );
   if (!base || base <= 0) return null;
   return applyPricingPolicy(base);
 }
 
 function extractSupplierKey(candidate: DecathlonExportCandidate): string | null {
-  const supplierVariantId = String(candidate?.variant?.supplierVariantId ?? "").trim();
-  const providerKey = String(candidate?.providerKey ?? "").trim();
-  const raw = supplierVariantId || providerKey;
-  if (!raw) return null;
-  const rawKey = raw.includes(":") ? raw.split(":")[0] : raw.includes("_") ? raw.split("_")[0] : raw;
-  return rawKey ? rawKey.toLowerCase() : null;
+  return extractDecathlonOfferSupplierKey(candidate);
 }
 
 export function resolveOfferLogisticClass(candidate: DecathlonExportCandidate): string {
@@ -148,18 +153,18 @@ export function buildOfferCsv(
     const variant = candidate.variant ?? {};
 
     const price = resolvePrice(candidate, partnerKeysLower);
+    const supplierKey = extractSupplierKey(candidate);
+    const buyNow = resolveDecathlonStxOfferBuyNow(candidate);
+    const listPriceTtc = price != null ? Number(price) : null;
+    const stxDelisted =
+      supplierKey === "stx" &&
+      isDecathlonStxOfferDelisted({ supplierKey, buyNow, listPriceTtc });
+
     if (!price) {
-      const supplierKey = extractSupplierKey(candidate);
-      const buyNow = resolveDecathlonBuyNow({
-        buyNowStockx: parseDecimal(variant?.price),
-        manualOverride: parseDecimal(variant?.manualPrice),
-        manualLock: Boolean(variant?.manualLock),
-      });
-      if (supplierKey === "stx" && buyNow && buyNow > 0 && !isDecathlonStxListableBuy(buyNow)) {
-        const maxSell = readDecathlonStxMaxListPriceChf();
+      if (supplierKey === "stx" && buyNow && buyNow > 0) {
         recordDecathlonExclusion(summary, {
           reason: "PRICE_TOO_HIGH",
-          message: `STX complete buy ${buyNow.toFixed(2)} CHF exceeds safe max at ${maxSell} CHF sell tier`,
+          message: `STX list exceeds ${readDecathlonStxMaxListPriceChf()} CHF cap (website margin)`,
           fileType: "offers",
           providerKey: candidate.providerKey,
           supplierVariantId: variant?.supplierVariantId ?? null,
@@ -189,25 +194,32 @@ export function buildOfferCsv(
       });
       continue;
     }
-    const supplierKey = extractSupplierKey(candidate);
     const isStxOffer = supplierKey === "stx";
-    if (isStxOffer && Number.isFinite(priceValue)) {
+    if (isStxOffer && Number.isFinite(priceValue) && stxDelisted) {
       const maxListPrice = readDecathlonStxMaxListPriceChf();
-      if (priceValue > maxListPrice) {
-        recordDecathlonExclusion(summary, {
-          reason: "PRICE_TOO_HIGH",
-          message: `STX list price ${priceValue.toFixed(2)} CHF exceeds max ${maxListPrice} CHF`,
-          fileType: "offers",
-          providerKey: candidate.providerKey,
-          supplierVariantId: variant?.supplierVariantId ?? null,
-          gtin: candidate.gtin,
-        });
-        continue;
-      }
+      recordDecathlonExclusion(summary, {
+        reason: "PRICE_TOO_HIGH",
+        message: `STX list price ${priceValue.toFixed(2)} CHF exceeds max ${maxListPrice} CHF (offer quantity set to 0)`,
+        fileType: "offers",
+        providerKey: candidate.providerKey,
+        supplierVariantId: variant?.supplierVariantId ?? null,
+        gtin: candidate.gtin,
+      });
     }
 
-    const effectiveStock = resolveEffectiveStock(candidate);
-    if (effectiveStock === null || !Number.isFinite(effectiveStock) || effectiveStock <= 0) {
+    const effectiveStock = resolveEffectiveStock(candidate, listPriceTtc);
+    if (effectiveStock === null || !Number.isFinite(effectiveStock) || effectiveStock < 0) {
+      recordDecathlonExclusion(summary, {
+        reason: "MISSING_STOCK",
+        message: "No exportable stock",
+        fileType: "offers",
+        providerKey: candidate.providerKey,
+        supplierVariantId: variant?.supplierVariantId ?? null,
+        gtin: candidate.gtin,
+      });
+      continue;
+    }
+    if (effectiveStock === 0 && !stxDelisted) {
       recordDecathlonExclusion(summary, {
         reason: "MISSING_STOCK",
         message: "No exportable stock",

@@ -9,8 +9,16 @@ import type { DecathlonExclusionSummary, DecathlonExportCandidate } from "@/deca
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   decathlonOfferListPriceFromManualLockedPrice,
+  readDecathlonStxMaxListPriceChf,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
+import {
+  extractDecathlonOfferSupplierKey,
+  decathlonStxListPriceContextFromCandidate,
+  isDecathlonStxOfferDelisted,
+  resolveDecathlonStxOfferBuyNow,
+  resolveDecathlonStxOfferStock,
+} from "@/decathlon/exports/stxOfferPolicy";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
@@ -48,18 +56,22 @@ function parseIntSafe(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function resolveEffectiveStock(candidate: DecathlonExportCandidate): number | null {
+export function resolveEffectiveStock(
+  candidate: DecathlonExportCandidate,
+  listPriceTtc: number | null = null
+): number | null {
   const variant = candidate.variant ?? {};
-  const manualLock = Boolean(variant?.manualLock);
-  const manualStock = parseIntSafe(variant?.manualStock);
-  const baseStock = parseIntSafe(variant?.stock);
-  const supplierVariantId = String(variant?.supplierVariantId ?? "");
-  const providerKey = String(candidate.providerKey ?? "");
-  const supplierKeyPrefix =
-    (supplierVariantId.split(/[:_]/)[0] || providerKey.split(/[:_]/)[0] || "").toUpperCase();
+  const supplierKey = extractDecathlonOfferSupplierKey(candidate);
+  const supplierKeyPrefix = (supplierKey ?? "").toUpperCase();
   if (supplierKeyPrefix === "GLD" || supplierKeyPrefix === "TRM") {
     return 0;
   }
+  if (supplierKey === "stx") {
+    return resolveDecathlonStxOfferStock(candidate, listPriceTtc);
+  }
+  const manualLock = Boolean(variant?.manualLock);
+  const manualStock = parseIntSafe(variant?.manualStock);
+  const baseStock = parseIntSafe(variant?.stock);
   if (manualLock && manualStock !== null) {
     return Math.max(0, manualStock);
   }
@@ -68,12 +80,7 @@ export function resolveEffectiveStock(candidate: DecathlonExportCandidate): numb
 }
 
 function extractDecathlonSupplierKey(candidate: DecathlonExportCandidate): string | null {
-  const supplierVariantId = String(candidate?.variant?.supplierVariantId ?? "").trim();
-  const providerKey = String(candidate?.providerKey ?? "").trim();
-  const raw = supplierVariantId || providerKey;
-  if (!raw) return null;
-  const rawKey = raw.includes(":") ? raw.split(":")[0] : raw.includes("_") ? raw.split("_")[0] : raw;
-  return rawKey ? rawKey.toLowerCase() : null;
+  return extractDecathlonOfferSupplierKey(candidate);
 }
 
 export function resolveEffectivePrice(
@@ -109,7 +116,12 @@ export function resolveEffectivePrice(
     return applyPricingPolicy(decathlonOfferListPriceFromManualLockedPrice(manualPrice));
   }
   if (!buyNow || buyNow <= 0) return null;
-  const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(buyNow, supplierKey);
+  const base = computeDecathlonOfferListPriceFromBuyNowForSupplier(
+    buyNow,
+    supplierKey,
+    undefined,
+    supplierKey === "stx" ? decathlonStxListPriceContextFromCandidate(candidate) : undefined
+  );
   if (!base || base <= 0) return null;
   return applyPricingPolicy(base);
 }
@@ -148,7 +160,15 @@ export function computeDecathlonDeltasFromCandidates(
     string,
     { providerKey: string; lastStock: number | null; lastPrice: unknown; offerCreatedAt: Date | null }
   >,
-  params?: { includeAll?: boolean; limitApplied?: number; partnerKeysLower?: Set<string> }
+  params?: {
+    includeAll?: boolean;
+    limitApplied?: number;
+    partnerKeysLower?: Set<string>;
+    /** When true, emit STO01 stock=0 even if offerCreatedAt is missing (sale-driven delist). */
+    includeZeroStockWithoutOffer?: boolean;
+    /** Always emit a stock update for these offer SKUs at current qty. */
+    forceStockProviderKeys?: Set<string>;
+  }
 ) {
   const newOffers: DecathlonSyncRow[] = [];
   const stockUpdates: DecathlonSyncRow[] = [];
@@ -157,6 +177,7 @@ export function computeDecathlonDeltasFromCandidates(
 
   let skippedMissingPrice = 0;
   let skippedMissingStock = 0;
+  let stxDelistedZeroStock = 0;
 
   const exclusions = createDecathlonExclusionSummary();
   for (const candidate of candidates) {
@@ -172,13 +193,29 @@ export function computeDecathlonDeltasFromCandidates(
     });
     const sync = syncByKey.get(canonicalProviderKey) ?? syncByKey.get(rawProviderKey);
 
+    const supplierKey = extractDecathlonSupplierKey(candidate);
+    const buyNow = resolveDecathlonStxOfferBuyNow(candidate);
     const price = resolveEffectivePrice(candidate, partnerKeysLower);
-    const stock = resolveEffectiveStock(candidate);
-    if (price === null) {
+    const listPriceTtc = price != null ? Number(price) : null;
+    const stxDelisted =
+      supplierKey === "stx" &&
+      isDecathlonStxOfferDelisted({ supplierKey, buyNow, listPriceTtc });
+    const stock = resolveEffectiveStock(candidate, listPriceTtc);
+    const syncPrice = price ?? normalizePrice(sync?.lastPrice ?? null);
+
+    if (price === null && !stxDelisted) {
       skippedMissingPrice += 1;
       recordDecathlonExclusion(exclusions, {
         reason: "MISSING_PRICE",
         message: "Missing price for sync",
+        providerKey: canonicalProviderKey,
+        supplierVariantId,
+        gtin,
+      });
+    } else if (stxDelisted) {
+      recordDecathlonExclusion(exclusions, {
+        reason: "PRICE_TOO_HIGH",
+        message: `STX list exceeds ${readDecathlonStxMaxListPriceChf()} CHF cap; stock set to 0`,
         providerKey: canonicalProviderKey,
         supplierVariantId,
         gtin,
@@ -200,28 +237,55 @@ export function computeDecathlonDeltasFromCandidates(
       gtin,
       offerSku: canonicalProviderKey,
       supplierVariantId,
-      price,
+      price: syncPrice,
       stock,
     };
 
+    if (stxDelisted && stock === 0) {
+      stxDelistedZeroStock += 1;
+    }
+
+    const forceStock =
+      params?.forceStockProviderKeys?.has(canonicalProviderKey) ||
+      params?.forceStockProviderKeys?.has(rawProviderKey);
+
     if (params?.includeAll || !sync?.offerCreatedAt) {
-      if (price !== null && stock !== null) {
-        newOffers.push(row);
+      if (stxDelisted) {
+        // Still clear Mirakl qty when STX is delisted and we have no offerCreatedAt row.
+        if (
+          stock !== null &&
+          stock <= 0 &&
+          (params?.includeZeroStockWithoutOffer || forceStock)
+        ) {
+          stockUpdates.push(row);
+        }
+        continue;
+      }
+      if (price !== null && stock !== null && stock > 0) {
+        newOffers.push({ ...row, price, stock });
+      } else if (
+        stock !== null &&
+        stock <= 0 &&
+        (params?.includeZeroStockWithoutOffer || forceStock)
+      ) {
+        stockUpdates.push(row);
+      } else if (forceStock && stock !== null) {
+        stockUpdates.push(row);
       }
       continue;
     }
 
     if (stock !== null) {
       const lastStock = sync?.lastStock ?? null;
-      if (lastStock === null || lastStock !== stock) {
+      if (forceStock || lastStock === null || lastStock !== stock) {
         stockUpdates.push(row);
       }
     }
 
-    if (price !== null) {
+    if (price !== null && !stxDelisted) {
       const lastPrice = normalizePrice(sync?.lastPrice ?? null);
       if (lastPrice === null || lastPrice !== price) {
-        priceUpdates.push(row);
+        priceUpdates.push({ ...row, price });
       }
     }
   }
@@ -234,6 +298,7 @@ export function computeDecathlonDeltasFromCandidates(
     priceUpdates: priceUpdates.length,
     skippedMissingPrice,
     skippedMissingStock,
+    stxDelistedZeroStock,
   } as DecathlonDeltaResult["summary"];
 
   if (params?.limitApplied) {
@@ -247,11 +312,16 @@ export async function buildDecathlonDeltas(params?: {
   limit?: number;
   includeAll?: boolean;
   providerKeys?: string[];
+  /** Always emit a stock row for these SKUs at current qty (even if offerCreatedAt missing). */
+  ensureProviderKeys?: string[];
 }): Promise<DecathlonDeltaResult> {
   const exclusions = createDecathlonExclusionSummary();
   const { candidates, scanned } = await loadDecathlonCandidates(exclusions);
   const providerKeysFilter = new Set(
     (params?.providerKeys ?? []).map((value) => String(value).trim()).filter(Boolean)
+  );
+  const ensureProviderKeys = new Set(
+    (params?.ensureProviderKeys ?? []).map((value) => String(value).trim()).filter(Boolean)
   );
   const scopedCandidates =
     providerKeysFilter.size > 0
@@ -270,6 +340,7 @@ export async function buildDecathlonDeltas(params?: {
     if (raw) providerKeySet.add(raw);
     if (canon) providerKeySet.add(canon);
   }
+  for (const key of ensureProviderKeys) providerKeySet.add(key);
   const providerKeys = [...providerKeySet];
   const syncRows: Array<{
     providerKey: string;
@@ -293,6 +364,9 @@ export async function buildDecathlonDeltas(params?: {
     limitApplied:
       params?.limit && Number.isFinite(params.limit) && params.limit > 0 ? Math.floor(params.limit) : undefined,
     partnerKeysLower: decathlonPartnerKeysLower,
+    // Scoped sync only: broad zero-stock without offer. Full sync uses forceStockProviderKeys instead.
+    includeZeroStockWithoutOffer: providerKeysFilter.size > 0,
+    forceStockProviderKeys: ensureProviderKeys.size > 0 ? ensureProviderKeys : undefined,
   });
 
   const summary = {

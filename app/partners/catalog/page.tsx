@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { calcSuggestedRetailFromStoredStxBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import { PartnerProductDataModal } from "./PartnerProductDataModal";
 
 type CatalogItem = {
@@ -176,12 +177,20 @@ function preflightDecathlon(item: CatalogItem): PreflightResult {
   const svId = String(item.supplierVariantId ?? "").toLowerCase();
   const isStx = svId.startsWith("stx_");
   if (isStx && price > 0) {
-    // Approx sell price with 20% margin on buy + ~5 CHF fulfilment / 0.95 retained
-    const approxSell = (price * 1.20 + 5) / 0.95;
-    if (approxSell > 250) {
+    const approxSell = calcSuggestedRetailFromStoredStxBuyPrice({
+      storedBuyPriceChf: price,
+      productName: item.supplierProductName ?? null,
+      deliveryType: item.deliveryType ?? null,
+    });
+    if (approxSell != null && approxSell > 400) {
       issues.push({
         field: "Price cap",
-        message: `Estimated sell price ~${approxSell.toFixed(0)} CHF exceeds 250 CHF Decathlon cap`,
+        message: `Estimated sell price ~${approxSell.toFixed(0)} CHF exceeds 400 CHF Decathlon cap`,
+      });
+    } else if (approxSell == null) {
+      issues.push({
+        field: "Price cap",
+        message: "Estimated sell price exceeds 400 CHF Decathlon cap",
       });
     }
   }

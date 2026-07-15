@@ -2,6 +2,7 @@ import {
   decathlonEstimatedPayoutFromSellTtc,
   decathlonEstimatedPayoutRate,
 } from "@/decathlon/orders/margin";
+import { calcSuggestedRetailFromStoredStxBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 
 export const DECATHLON_COMMISSION_RATE = 0.17;
 export const DECATHLON_VAT_RATE = 0.081;
@@ -33,12 +34,12 @@ export const DECATHLON_MARGIN_RULE_ADD_PP = 0;
  */
 export const DECATHLON_STX_MARGIN_BUMP_PP = 0;
 
-/** STX Decathlon export: margin on buy (default 20% = base 15% + 5pp). Override: `DECATHLON_STX_MARGIN_ON_BUY`. */
-export const DEFAULT_DECATHLON_STX_MARGIN_ON_BUY = 0.2;
-/** Max Mirakl list TTC for STX (ceiling only). Default 250 CHF. */
-export const DECATHLON_STX_MAX_LIST_PRICE_CHF = 250;
+/** @deprecated STX uses website-aligned {@link calcSuggestedRetailFromStoredStxBuyPrice}. */
+export const DEFAULT_DECATHLON_STX_MARGIN_ON_BUY = 0.35;
+/** Max Mirakl list TTC for STX (ceiling only). Default 400 CHF. */
+export const DECATHLON_STX_MAX_LIST_PRICE_CHF = 400;
 
-/** One Decathlon STX sell tier: safe gross margin → max complete buy (pair + STX fees + ship + import). */
+/** One Decathlon STX sell tier: safe pocket target (after payout fees) per gross band. */
 export type DecathlonStxMarginTier = {
   sellTtc: number;
   minGrossMarginChf: number;
@@ -69,8 +70,8 @@ export const DECATHLON_STX_MARGIN_TIERS: DecathlonStxMarginTier[] = [
   { sellTtc: 240, minGrossMarginChf: 80, maxBuyMinChf: 160, safeGrossMarginChf: 95, maxBuySafeChf: 145 },
   { sellTtc: 250, minGrossMarginChf: 80, maxBuyMinChf: 170, safeGrossMarginChf: 95, maxBuySafeChf: 155 },
 ];
-/** Max Mirakl list TTC for ALL products (ceiling). Default 250 CHF. Override: DECATHLON_MAX_LIST_PRICE_CHF. */
-export const DECATHLON_MAX_LIST_PRICE_CHF = 250;
+/** Max Mirakl list TTC for ALL products (ceiling). Default 400 CHF. Override: DECATHLON_MAX_LIST_PRICE_CHF. */
+export const DECATHLON_MAX_LIST_PRICE_CHF = 400;
 /** Target net CHF per gross sale on (buy + fulfil), after modeled returns. Default 5%. */
 export const DECATHLON_STX_TARGET_NET_ON_CASH = 0.05;
 /** Modeled return rate on gross STX sales (e.g. 42/240 ≈ 0.175). */
@@ -240,9 +241,9 @@ export function readDecathlonStxMaxListPriceChf(): number {
 }
 
 /**
- * Lowest sell tier where complete buy fits **safe** max and sell ≤ STX cap (default 250 CHF).
+ * Lowest gross tier where table `maxBuySafeChf` fits (pre-fee band lookup).
  */
-export function resolveDecathlonStxSellTierForBuy(
+export function resolveDecathlonStxGrossTierForBuy(
   buyNow: number,
   maxSellTtc: number = readDecathlonStxMaxListPriceChf()
 ): DecathlonStxMarginTier | null {
@@ -253,6 +254,64 @@ export function resolveDecathlonStxSellTierForBuy(
     if (buyNow <= tier.maxBuySafeChf + 1e-9) return tier;
   }
   return null;
+}
+
+/**
+ * Min Mirakl list TTC so payout − buy − fulfil ≥ safe pocket (after Decathlon fees).
+ * `list = (buy + fulfil + safePocketChf) / retainedRate`
+ */
+export function computeDecathlonStxMinSellForSafePocket(
+  buyNow: number,
+  safePocketChf: number,
+  fixedCost: number = DECATHLON_FIXED_COST_CHF
+): number | null {
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+  if (!Number.isFinite(safePocketChf) || safePocketChf < 0) return null;
+  const retainedRate = computeDecathlonRetainedRate({});
+  if (!Number.isFinite(retainedRate) || retainedRate <= 0) return null;
+  const raw = (buyNow + fixedCost + safePocketChf) / retainedRate;
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+/** Lowest tier sell ≥ minSell and ≤ cap. */
+export function snapDecathlonStxSellToTier(
+  minSellTtc: number,
+  maxSellTtc: number = readDecathlonStxMaxListPriceChf()
+): DecathlonStxMarginTier | null {
+  if (!Number.isFinite(minSellTtc) || minSellTtc <= 0) return null;
+  if (!Number.isFinite(maxSellTtc) || maxSellTtc <= 0) return null;
+  for (const tier of DECATHLON_STX_MARGIN_TIERS) {
+    if (tier.sellTtc > maxSellTtc) break;
+    if (tier.sellTtc + 1e-9 >= minSellTtc) return tier;
+  }
+  return null;
+}
+
+/** Pocket after Decathlon payout − buy − fulfil at a list TTC (same retained rate as list gross-up). */
+export function computeDecathlonStxPocketAfterFees(
+  sellTtc: number,
+  buyNow: number,
+  fixedCost: number = DECATHLON_FIXED_COST_CHF
+): number | null {
+  const retainedRate = computeDecathlonRetainedRate({});
+  if (!Number.isFinite(retainedRate) || retainedRate <= 0) return null;
+  if (!Number.isFinite(sellTtc) || sellTtc <= 0) return null;
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+  return sellTtc * retainedRate - buyNow - fixedCost;
+}
+
+/**
+ * Fee-aware STX tier: table band by max buy, then gross-up safe pocket for Mirakl fees.
+ */
+export function resolveDecathlonStxSellTierForBuy(
+  buyNow: number,
+  maxSellTtc: number = readDecathlonStxMaxListPriceChf()
+): DecathlonStxMarginTier | null {
+  const grossTier = resolveDecathlonStxGrossTierForBuy(buyNow, maxSellTtc);
+  if (!grossTier) return null;
+  const minSell = computeDecathlonStxMinSellForSafePocket(buyNow, grossTier.safeGrossMarginChf);
+  if (minSell == null) return null;
+  return snapDecathlonStxSellToTier(minSell, maxSellTtc);
 }
 
 export function readDecathlonMaxListPriceChf(): number {
@@ -369,18 +428,25 @@ export type DecathlonStxPricingGuide = {
   listableUnderCap: true;
 };
 
-/** Break-even + recommended list for one STX buy (tier table, safe column). */
-export function computeDecathlonStxPricingGuide(buyNow: number): DecathlonStxPricingGuide | null {
-  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
+export type DecathlonStxListPriceContext = {
+  productHandle?: string | null;
+  productName?: string | null;
+  deliveryType?: string | null;
+};
 
-  const tier = resolveDecathlonStxSellTierForBuy(buyNow);
-  if (!tier) return null;
+/** Break-even + recommended list for one STX buy (website margin bands, cap 400). */
+export function computeDecathlonStxPricingGuide(
+  buyNow: number,
+  context?: DecathlonStxListPriceContext
+): DecathlonStxPricingGuide | null {
+  if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
 
   const breakEvenSellTtc = computeDecathlonStxMinSellForKeptBreakeven(
     buyNow,
     DECATHLON_FIXED_COST_CHF
   );
-  const recommendedListTtc = roundToIncrement(tier.sellTtc, DECATHLON_PRICE_ROUND_TO);
+  const recommendedListTtc = computeDecathlonStxOfferListPrice(buyNow, undefined, context);
+  if (recommendedListTtc == null) return null;
 
   return {
     buyNow,
@@ -392,22 +458,34 @@ export function computeDecathlonStxPricingGuide(buyNow: number): DecathlonStxPri
   };
 }
 
-export function isDecathlonStxListableBuy(buyNow: number): boolean {
-  return resolveDecathlonStxSellTierForBuy(buyNow) != null;
+export function isDecathlonStxListableBuy(
+  buyNow: number,
+  context?: DecathlonStxListPriceContext
+): boolean {
+  return computeDecathlonStxOfferListPrice(buyNow, undefined, context) != null;
 }
 
 /**
- * STX Mirakl list TTC from tier table (safe max buy per sell tier, cap 250 CHF).
- * Returns null when complete buy exceeds safe max at every tier ≤ cap.
+ * STX Mirakl list TTC: same formula as website / Shopify suggested retail
+ * ({@link calcSuggestedRetailFromStoredStxBuyPrice}). Excluded when list exceeds cap (default 400 CHF).
  */
 export function computeDecathlonStxOfferListPrice(
   buyNow: number,
-  _overrides?: DecathlonSalePriceOverrides
+  overrides?: DecathlonSalePriceOverrides,
+  context?: DecathlonStxListPriceContext
 ): number | null {
+  void overrides;
   if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
-  const tier = resolveDecathlonStxSellTierForBuy(buyNow);
-  if (!tier) return null;
-  return roundToIncrement(tier.sellTtc, DECATHLON_PRICE_ROUND_TO);
+  const websiteList = calcSuggestedRetailFromStoredStxBuyPrice({
+    storedBuyPriceChf: buyNow,
+    productHandle: context?.productHandle,
+    productName: context?.productName,
+    deliveryType: context?.deliveryType,
+  });
+  if (websiteList == null || websiteList <= 0) return null;
+  const list = roundToIncrement(websiteList, DECATHLON_PRICE_ROUND_TO);
+  if (list > readDecathlonStxMaxListPriceChf()) return null;
+  return list;
 }
 
 /**
@@ -541,7 +619,8 @@ export function computeDecathlonOfferListPriceFromBuyNow(
 export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
   buyNow: number,
   supplierKey: string | null,
-  overrides?: DecathlonSalePriceOverrides
+  overrides?: DecathlonSalePriceOverrides,
+  stxContext?: DecathlonStxListPriceContext
 ): number | null {
   const sk = supplierKey?.toLowerCase() ?? "";
   if (sk === DECATHLON_NER_SUPPLIER_KEY) {
@@ -551,7 +630,7 @@ export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
     return computeDecathlonOfferListPriceFromLossFraction(buyNow, overrides);
   }
   if (sk === DECATHLON_STX_SUPPLIER_KEY) {
-    return computeDecathlonStxOfferListPrice(buyNow, overrides);
+    return computeDecathlonStxOfferListPrice(buyNow, overrides, stxContext);
   }
   return computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
 }
