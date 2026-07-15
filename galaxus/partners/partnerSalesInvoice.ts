@@ -101,42 +101,13 @@ export async function buildPartnerSalesInvoice(options: {
   if (!isYmd(options.date)) throw new Error("date must be YYYY-MM-DD");
 
   const { start, endExclusive } = zurichDayBounds(options.date);
-  const pkLower = partnerKey.toLowerCase();
 
-  const mappedGtinRows = await (prisma as any).variantMapping.findMany({
-    where: {
-      OR: [
-        { providerKey: { startsWith: `${partnerKey}_`, mode: "insensitive" } },
-        { supplierVariantId: { startsWith: `${pkLower}:`, mode: "insensitive" } },
-        { supplierVariantId: { startsWith: `${pkLower}_`, mode: "insensitive" } },
-      ],
-    },
-    select: { gtin: true },
-  });
-  const mappedGtins = Array.from(
-    new Set(
-      mappedGtinRows
-        .map((row: { gtin?: string | null }) => clean(row?.gtin))
-        .filter(Boolean)
-    )
-  ) as string[];
-
-  const lineScopeOr: Array<Record<string, unknown>> = [
-    { providerKey: { startsWith: `${partnerKey}_`, mode: "insensitive" } },
-    { supplierPid: { equals: partnerKey, mode: "insensitive" } },
-    { supplierSku: { startsWith: `${partnerKey}_`, mode: "insensitive" } },
-    { supplierVariantId: { startsWith: `${pkLower}:`, mode: "insensitive" } },
-    { supplierVariantId: { startsWith: `${pkLower}_`, mode: "insensitive" } },
-  ];
-  if (mappedGtins.length > 0) {
-    lineScopeOr.push({ gtin: { in: mappedGtins } });
-  }
-
+  // Day-scoped load only. Do NOT pass partner catalog GTINs via `IN (...)` —
+  // NER mappings alone exceed Postgres bind limits (~32k).
   const orders = await prisma.galaxusOrder.findMany({
     where: {
       orderDate: { gte: start, lt: endExclusive },
       cancelledAt: null,
-      lines: { some: { OR: lineScopeOr as any } },
     },
     orderBy: [{ orderDate: "asc" }, { galaxusOrderId: "asc" }],
     include: {
@@ -150,7 +121,6 @@ export async function buildPartnerSalesInvoice(options: {
     collectGtinsFromLines(orders.flatMap((o) => o.lines)),
     partnerKey
   );
-  for (const gtin of mappedGtins) partnerGtins.add(gtin);
 
   const rows: PartnerSalesInvoiceRow[] = [];
   let currency = "CHF";
