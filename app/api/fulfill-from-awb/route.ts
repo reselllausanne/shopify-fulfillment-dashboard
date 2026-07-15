@@ -462,6 +462,7 @@ export async function POST(req: NextRequest) {
     const staffRole = await getStaffRoleFromRequest(req);
     const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const awb = normalizeAwb(body?.awb ?? body?.code);
+    const requestedShopifyLineItemId = String(body?.shopifyLineItemId ?? "").trim() || null;
     const trackingCompany = body?.trackingCompany ? String(body.trackingCompany).trim() : null;
     const trackingUrlFromBody = body?.trackingUrl ? String(body.trackingUrl).trim() : null;
     const notifyCustomer = Boolean(body?.notifyCustomer ?? false);
@@ -509,8 +510,36 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let selectedMatches = matches;
+    if (requestedShopifyLineItemId) {
+      selectedMatches = matches.filter((match) => match.shopifyLineItemId === requestedShopifyLineItemId);
+      if (selectedMatches.length === 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "INVALID" as FulfillStatus,
+            awb,
+            error: "Requested line item does not match scanned AWB",
+            requestedShopifyLineItemId,
+          },
+          { status: 409 }
+        );
+      }
+    } else if (matches.length > 1) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "INVALID" as FulfillStatus,
+          awb,
+          error: "AWB matches multiple line items; rescan from Scan page to select one line item",
+          lineItemIds: matches.map((match) => match.shopifyLineItemId).filter(Boolean),
+        },
+        { status: 409 }
+      );
+    }
+
     const uniqueOrderIds = Array.from(
-      new Set(matches.map((m: OrderMatchSelection) => m.shopifyOrderId).filter(Boolean))
+      new Set(selectedMatches.map((m: OrderMatchSelection) => m.shopifyOrderId).filter(Boolean))
     );
 
     if (uniqueOrderIds.length > 1) {
@@ -527,8 +556,8 @@ export async function POST(req: NextRequest) {
     }
 
     let shopifyOrderId = uniqueOrderIds[0] || "";
-    const shopifyOrderName = matches[0]?.shopifyOrderName || null;
-    let trackingUrl = trackingUrlFromBody || matches[0]?.stockxTrackingUrl || null;
+    const shopifyOrderName = selectedMatches[0]?.shopifyOrderName || null;
+    let trackingUrl = trackingUrlFromBody || selectedMatches[0]?.stockxTrackingUrl || null;
 
     if (!shopifyOrderId && shopifyOrderName) {
       const found = await fetchOrderIdByName(shopifyOrderName);
@@ -561,7 +590,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const dbItems = matches.map((m: OrderMatchSelection) => ({
+    const dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
       sku: m.shopifySku ?? null,
       title: m.shopifyProductTitle ?? null,
       sizeEU: m.shopifySizeEU ?? null,
@@ -603,9 +632,6 @@ export async function POST(req: NextRequest) {
     if (allowAlreadyFulfilled && allRemainingLineItems.length > 0) {
       lineItemsByFulfillmentOrder = allRemainingLineItems;
       warnings.push("Force fulfill: fulfilling all remaining line items for this order.");
-    } else if (lineItemsByFulfillmentOrder.length === 0 && allRemainingLineItems.length > 0) {
-      lineItemsByFulfillmentOrder = allRemainingLineItems;
-      warnings.push("Fallback applied: fulfilling all remaining line items for this order.");
     }
 
     let skipShopifyFulfillment = false;
@@ -656,7 +682,7 @@ export async function POST(req: NextRequest) {
     }
 
     const liquidationSkip = shouldSkipSwissPostLabelForLiquidation(
-      matches.map((m) => m.shopifyProductTitle)
+      selectedMatches.map((m) => m.shopifyProductTitle)
     );
     if (liquidationSkip) {
       warnings.push("Liquidation product (% title) — Swiss Post auto-label skipped.");
@@ -677,7 +703,7 @@ export async function POST(req: NextRequest) {
 
     if (shouldCallSwissPost && process.env.SWISS_POST_LABEL_ENDPOINT) {
       try {
-        const preferredLineItemIds = matches.map((m) => m.shopifyLineItemId);
+        const preferredLineItemIds = selectedMatches.map((m) => m.shopifyLineItemId);
         const payload =
           swissPostPayload && typeof swissPostPayload === "object"
             ? swissPostPayload

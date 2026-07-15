@@ -71,6 +71,11 @@ type ScanResult = {
     orderId: string | null;
     orderDbId: string | null;
     orderNumber?: string | null;
+    deliveryType?: string | null;
+    isDirectDelivery?: boolean;
+    allLinked?: boolean | null;
+    alreadyFulfilled?: boolean;
+    trackingNumber?: string | null;
   } | null;
   inboundHome?: {
     routeId: string;
@@ -143,10 +148,31 @@ const ENABLE_AUTO_HOME_RETURN = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_AUTO_HOME_RETURN,
   true
 );
+const ENABLE_AUTO_GALAXUS_DIRECT_LABEL = resolveClientFlag(
+  process.env.NEXT_PUBLIC_SCAN_AUTO_GALAXUS_DIRECT_LABEL,
+  true
+);
 const ENABLE_BROWSER_PRINT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
   true
 );
+const SCAN_SESSION_STORAGE_KEY = "scan.fulfillment.session.key.v1";
+
+const ensureScanSessionKey = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const existing = String(window.localStorage.getItem(SCAN_SESSION_STORAGE_KEY) || "").trim();
+    if (existing) return existing;
+    const next =
+      typeof window.crypto?.randomUUID === "function"
+        ? window.crypto.randomUUID()
+        : `scan-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(SCAN_SESSION_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return null;
+  }
+};
 
 const toBlobFromBase64 = (base64: string, mimeType: string) => {
   const cleaned = String(base64 || "").replace(/\s+/g, "");
@@ -247,6 +273,7 @@ export default function ScanPage() {
   const [fulfillResult, setFulfillResult] = useState<FulfillResponse | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [scanSessionKey, setScanSessionKey] = useState<string | null>(null);
   const [awbList, setAwbList] = useState<AwbListItem[]>([]);
   const [awbFilter, setAwbFilter] = useState("");
   const canceledStates = useMemo(
@@ -256,6 +283,10 @@ export default function ScanPage() {
 
   useEffect(() => {
     focusInput();
+  }, []);
+
+  useEffect(() => {
+    setScanSessionKey(ensureScanSessionKey());
   }, []);
 
   useEffect(() => {
@@ -345,6 +376,55 @@ export default function ScanPage() {
   const galaxusOrderRef = (g: NonNullable<ScanResult["galaxus"]>) =>
     String(g.orderNumber || g.orderId || g.orderDbId || "").trim() || "—";
 
+  const shouldAutoGalaxusDirectLabel = (scan: ScanResult) => {
+    const g = scan.galaxus;
+    if (!g?.isDirectDelivery) return false;
+    if (g.allLinked === false) return false;
+    return true;
+  };
+
+  const runGalaxusDirectLabelFromScan = async (scan: ScanResult) => {
+    if (!scan.galaxus?.orderDbId && !scan.awb) return;
+    setFulfillLoading(true);
+    setFulfillResult(null);
+    try {
+      const res = await fetch("/api/scan-galaxus-direct-label", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          awb: scan.awb,
+          orderDbId: scan.galaxus?.orderDbId ?? null,
+          includeLabelData: true,
+          allowReprint: true,
+        }),
+      });
+      const data: FulfillResponse & {
+        orderNumber?: string | null;
+        galaxusOrderId?: string | null;
+        status?: string;
+        trackingNumber?: string | null;
+        error?: string;
+      } = await res.json();
+      setFulfillResult(data);
+      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      if (res.ok && data.ok && data.labelData?.base64) {
+        const opened = browserPrintEnabled
+          ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+          : openLabelPreview(data.labelData);
+        if (!opened) {
+          window.alert("Swiss Post label generated but popup blocked. Allow popups, then scan again.");
+        }
+      } else if (!res.ok || !data.ok) {
+        window.alert(data.error || "Galaxus Swiss Post label failed");
+      }
+    } catch (err: any) {
+      setFulfillResult({ ok: false, error: err?.message || "Network error" });
+      window.alert(err?.message || "Galaxus label network error");
+    } finally {
+      setFulfillLoading(false);
+    }
+  };
+
   const resolveDecathlonOrderRef = (match: ScanResult["decathlon"]) =>
     match?.orderId || match?.orderDbId || "";
 
@@ -412,9 +492,21 @@ export default function ScanPage() {
     }
     if (scan.galaxus) {
       const ref = galaxusOrderRef(scan.galaxus);
-      window.alert(
-        `Galaxus — order ${ref}\nAWB is stored on GalaxusStockxMatch (marketplace).\nNo Shopify label / fulfill on this page.`
-      );
+      if (scan.galaxus.isDirectDelivery) {
+        if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && shouldAutoGalaxusDirectLabel(scan)) {
+          await runGalaxusDirectLabelFromScan(scan);
+        } else if (scan.galaxus.allLinked === false) {
+          window.alert(
+            `Galaxus direct delivery ${ref}\nAWB linked but order not fully linked yet — link all lines first.`
+          );
+        } else if (!ENABLE_AUTO_GALAXUS_DIRECT_LABEL) {
+          window.alert(`Galaxus direct delivery ${ref}\nAuto label disabled — use Direct Delivery page.`);
+        }
+      } else {
+        window.alert(
+          `Galaxus — order ${ref}\nAWB is stored on GalaxusStockxMatch (marketplace).\nNo Shopify label / fulfill on this page.`
+        );
+      }
     }
     if (scan.decathlon) {
       if (!scan.galaxus) {
@@ -472,7 +564,10 @@ export default function ScanPage() {
       await handleChannelActions(data);
 
       if (ENABLE_AUTO_FULFILLMENT && data.ok && data.match && !data.galaxus && !data.inboundHome) {
-        await runFulfillFromScan(data);
+        await runFulfillFromScan(data, {
+          scanStartedAt: new Date(startedAt).toISOString(),
+          scanCompletedAt: new Date(finishedAt).toISOString(),
+        });
       }
     } catch (err: any) {
       setResult({
@@ -533,7 +628,7 @@ export default function ScanPage() {
 
   const runFulfillFromScan = async (
     scan: ScanResult,
-    options?: { allowAlreadyFulfilled?: boolean }
+    options?: { allowAlreadyFulfilled?: boolean; scanStartedAt?: string; scanCompletedAt?: string }
   ) => {
     if (!scan?.awb || !scan?.match || scan.galaxus) return;
     const allowAlreadyFulfilled = Boolean(options?.allowAlreadyFulfilled);
@@ -546,8 +641,12 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
+          shopifyLineItemId: scan.match?.shopifyLineItemId || null,
           includeLabelData: true,
           allowAlreadyFulfilled,
+          scanSessionKey,
+          scanStartedAt: options?.scanStartedAt ?? null,
+          scanCompletedAt: options?.scanCompletedAt ?? null,
         }),
       });
       const data: FulfillResponse = await res.json();
@@ -692,18 +791,56 @@ export default function ScanPage() {
             )}
             {result.galaxus && (
               <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-950">
-                <div className="font-semibold text-teal-900">Galaxus marketplace</div>
+                <div className="font-semibold text-teal-900">
+                  Galaxus {result.galaxus.isDirectDelivery ? "direct delivery" : "marketplace"}
+                </div>
                 <p className="text-sm mt-1">
-                  Order ref: <span className="font-mono">{galaxusOrderRef(result.galaxus)}</span> — AWB linked on{" "}
-                  <code className="text-xs bg-teal-100 px-1 rounded">GalaxusStockxMatch</code>. No Shopify label step
-                  here.
+                  Order ref: <span className="font-mono">{galaxusOrderRef(result.galaxus)}</span>
+                  {result.galaxus.isDirectDelivery ? (
+                    <>
+                      {" "}
+                      ·{" "}
+                      {result.galaxus.allLinked === false
+                        ? "Not fully linked"
+                        : result.galaxus.alreadyFulfilled
+                          ? "Fulfilled"
+                          : "Linked"}
+                      {result.galaxus.trackingNumber ? (
+                        <>
+                          {" "}
+                          · Post <span className="font-mono">{result.galaxus.trackingNumber}</span>
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <> — AWB linked on <code className="text-xs bg-teal-100 px-1 rounded">GalaxusStockxMatch</code>. No Shopify label step here.</>
+                  )}
                 </p>
-                <a
-                  href="/galaxus/warehouse"
-                  className="mt-2 inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
-                >
-                  Open Galaxus warehouse →
-                </a>
+                {result.galaxus.isDirectDelivery ? (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void runGalaxusDirectLabelFromScan(result)}
+                      disabled={fulfillLoading || result.galaxus.allLinked === false}
+                      className="px-3 py-1.5 rounded bg-teal-800 text-white text-sm disabled:opacity-50"
+                    >
+                      {fulfillLoading ? "Generating…" : "Generate Swiss Post label"}
+                    </button>
+                    <a
+                      href="/galaxus/direct-delivery"
+                      className="px-3 py-1.5 rounded bg-teal-100 text-teal-900 text-sm font-medium hover:bg-teal-200"
+                    >
+                      Open Direct Delivery →
+                    </a>
+                  </div>
+                ) : (
+                  <a
+                    href="/galaxus/warehouse"
+                    className="mt-2 inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
+                  >
+                    Open Galaxus warehouse →
+                  </a>
+                )}
               </div>
             )}
             {result.error && (
