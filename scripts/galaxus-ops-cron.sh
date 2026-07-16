@@ -64,11 +64,17 @@ wait_feed_idle() {
   local deadline=$((SECONDS + WAIT_SEC))
   while (( SECONDS < deadline )); do
     local active
+    # Close runs older than 90m (redeploy kills in-flight jobs without DB cleanup).
     active="$(
       docker compose -f /opt/resell/docker-compose.yml exec -T web node -e '
 const {PrismaClient}=require("@prisma/client");
 const p=new PrismaClient();
 (async()=>{
+  const cutoff=new Date(Date.now()-90*60*1000);
+  await p.galaxusFeedRun.updateMany({
+    where:{finishedAt:null,startedAt:{lt:cutoff}},
+    data:{finishedAt:new Date(),success:false,errorMessage:"Stale feed run timed out (cron)"},
+  });
   const n=await p.galaxusFeedRun.count({where:{finishedAt:null}});
   process.stdout.write(String(n));
   await p.$disconnect();
@@ -81,8 +87,8 @@ const p=new PrismaClient();
     log "waiting feed idle (active=$active)"
     sleep 30
   done
-  log "ERROR: timed out waiting for feed idle after ${WAIT_SEC}s"
-  return 1
+  log "WARN: timed out waiting for feed idle after ${WAIT_SEC}s; continuing"
+  return 0
 }
 
 # Ops status exposes feeds.imageSyncRunning (job run startedAt == finishedAt while active).
@@ -93,7 +99,7 @@ wait_image_sync_idle() {
     running="$(
       curl -sS --max-time 30 "$BASE_URL/api/galaxus/ops/status" 2>/dev/null \
         | python3 -c 'import json,sys; d=json.load(sys.stdin); print("1" if d.get("feeds",{}).get("imageSyncRunning") else "0")' \
-        2>/dev/null || echo 1
+        2>/dev/null || echo 0
     )"
     if [[ "$running" == "0" ]]; then
       return 0
@@ -101,8 +107,8 @@ wait_image_sync_idle() {
     log "waiting image-sync idle"
     sleep 30
   done
-  log "ERROR: timed out waiting for image-sync after ${WAIT_SEC}s"
-  return 1
+  log "WARN: timed out waiting for image-sync after ${WAIT_SEC}s; continuing feeds"
+  return 0
 }
 
 run_push() {

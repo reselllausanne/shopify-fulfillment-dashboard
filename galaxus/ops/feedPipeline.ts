@@ -14,7 +14,8 @@ type FeedRunResult = {
   error?: string;
 };
 
-const STALE_FEED_RUN_MS = 4 * 60 * 60 * 1000;
+/** After container kill/redeploy, finishedAt stays null — keep short so night cron recovers. */
+const STALE_FEED_RUN_MS = 90 * 60 * 1000;
 
 /** Triggers that may upload even when GALAXUS_FEED_UPLOADS_MANUAL_ONLY is on. */
 function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
