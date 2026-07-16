@@ -74,7 +74,13 @@ describe("buildGalaxusSizeSpecRow", () => {
     ).toBeNull();
   });
 
-  it("strips EU prefix from footwear sizes", () => {
-    expect(formatGalaxusSizeSpecValue("EU 43 1/3", true)).toBe("43 1/3");
+  it("strips EU prefix and converts adidas fractional footwear sizes", () => {
+    expect(formatGalaxusSizeSpecValue("EU 43 1/3", true)).toBe("43");
+    expect(formatGalaxusSizeSpecValue("EU 38 2/3", true)).toBe("38.5");
+  });
+
+  it("leaves decimal and whole footwear sizes unchanged", () => {
+    expect(formatGalaxusSizeSpecValue("EU 42.5", true)).toBe("42.5");
+    expect(formatGalaxusSizeSpecValue("EU 42", true)).toBe("42");
   });
 });
