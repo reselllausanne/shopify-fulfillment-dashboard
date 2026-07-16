@@ -62,6 +62,8 @@ export type OpsTickOptions = {
   only?: string[];
   /** `price` = KickDB fetch + bulk price/stock update (default). `full` = runStxSync (inserts + mappings + cleanup). */
   stxRefreshMode?: "price" | "full";
+  /** `full` = loop image batches until backlog empty. Default = single 2000-row batch. */
+  imageSyncMode?: "batch" | "full";
   partnerKey?: string;
 };
 
@@ -79,10 +81,13 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
     return runOpsJob(jobKey, async () => runEdiInPipeline());
   }
   if (jobKey === "image-sync") {
+    const full = tickOptions?.imageSyncMode === "full";
     return runOpsJob(jobKey, async () =>
       runImageSync({
         limit: 2000,
         concurrency: 8,
+        supplierKeys: ["stx", "the"],
+        ...(full ? { full: true } : {}),
       })
     );
   }
