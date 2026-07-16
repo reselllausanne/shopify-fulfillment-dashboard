@@ -11,12 +11,20 @@ export async function getLatestImageSyncJobRun() {
   });
 }
 
+/** Stale threshold: crash/restart can leave finishedAt == startedAt forever. */
+const IMAGE_SYNC_STALE_MS = 2 * 60 * 60 * 1000;
+
 /** Job run rows are created with finishedAt = startedAt until the handler completes. */
 export function isImageSyncJobRunning(
   run: { startedAt: Date | string; finishedAt: Date | string } | null | undefined
 ): boolean {
   if (!run?.startedAt || !run?.finishedAt) return false;
-  return new Date(run.finishedAt).getTime() <= new Date(run.startedAt).getTime();
+  const startedMs = new Date(run.startedAt).getTime();
+  const finishedMs = new Date(run.finishedAt).getTime();
+  if (finishedMs > startedMs) return false;
+  // Still "open" but too old → treat as not running so cron/UI can recover.
+  if (Date.now() - startedMs > IMAGE_SYNC_STALE_MS) return false;
+  return true;
 }
 
 export async function startImageSyncFullAsync(): Promise<{
