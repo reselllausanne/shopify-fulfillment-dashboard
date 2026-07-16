@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   galaxusShipmentHasTrackingSignal,
   isGalaxusShipmentDispatchConfirmed,
@@ -36,6 +36,13 @@ type SupplierVariant = {
   partnerKeyResolved?: string | null;
   partnerDisplayName?: string | null;
   kickdbProductName?: string | null;
+  /** Lowest other-supplier DB price for same GTIN (excludes this supplier prefix). */
+  referenceMinPriceChf?: number | null;
+  referenceOfferCount?: number | null;
+  /** our price − others min; positive = above competition. */
+  referencePriceDiffChf?: number | null;
+  /** true if no cheaper other-supplier offer (or no others). */
+  isCheapestInDb?: boolean | null;
 };
 
 type MappingRow = {
@@ -279,6 +286,7 @@ export function GalaxusWarehouseDashboard() {
   const [previewTotal, setPreviewTotal] = useState<number | null>(null);
   const [dbItems, setDbItems] = useState<SupplierVariant[]>([]);
   const [dbNextOffset, setDbNextOffset] = useState<number | null>(null);
+  const [dbSupplierKey, setDbSupplierKey] = useState<string>("");
   const [dbMappings, setDbMappings] = useState<MappingRow[]>([]);
   const [dbMappingsNextOffset, setDbMappingsNextOffset] = useState<number | null>(null);
   const [enrichResults, setEnrichResults] = useState<EnrichResult[]>([]);
@@ -651,33 +659,61 @@ export function GalaxusWarehouseDashboard() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 202 && data?.accepted) {
-        setOpsLog(JSON.stringify({ accepted: true, runId: data.runId, scope: data.scope }, null, 2));
+        setOpsLog(
+          JSON.stringify(
+            action === "image-sync"
+              ? { accepted: true, imageMode: data.imageMode ?? "full" }
+              : { accepted: true, runId: data.runId, scope: data.scope },
+            null,
+            2
+          )
+        );
         const startedAt = Date.now();
         while (true) {
           await new Promise((resolve) => setTimeout(resolve, 5000));
           const statusRes = await fetch("/api/galaxus/ops/status", { cache: "no-store" });
           const status = await statusRes.json().catch(() => ({}));
           if (status?.ok) setOpsStatus(status);
-          const running = Boolean(status?.feeds?.running);
-          if (!running) {
-            const scopeKey =
-              action === "push-master-specs"
-                ? "lastMasterSpecs"
-                : action === "push-stock"
-                  ? "lastStockPrice"
-                  : action === "push-price"
-                    ? "lastStockPrice"
-                    : action === "push-full"
-                      ? "lastFull"
-                      : "lastStockPrice";
-            const lastRun = status?.feeds?.[scopeKey];
-            if (lastRun?.success === false && lastRun?.errorMessage) {
-              throw new Error(lastRun.errorMessage);
+
+          if (action === "image-sync") {
+            const running = Boolean(status?.feeds?.imageSyncRunning);
+            if (!running) {
+              const lastRun = status?.feeds?.latestImageSyncRun;
+              if (lastRun?.success === false && lastRun?.errorMessage) {
+                throw new Error(lastRun.errorMessage);
+              }
+              if (lastRun?.resultJson) {
+                setOpsLog(JSON.stringify(lastRun.resultJson, null, 2));
+              }
+              break;
             }
-            break;
+          } else {
+            const running = Boolean(status?.feeds?.running);
+            if (!running) {
+              const scopeKey =
+                action === "push-master-specs"
+                  ? "lastMasterSpecs"
+                  : action === "push-stock"
+                    ? "lastStockPrice"
+                    : action === "push-price"
+                      ? "lastStockPrice"
+                      : action === "push-full"
+                        ? "lastFull"
+                        : "lastStockPrice";
+              const lastRun = status?.feeds?.[scopeKey];
+              if (lastRun?.success === false && lastRun?.errorMessage) {
+                throw new Error(lastRun.errorMessage);
+              }
+              break;
+            }
           }
+
           if (Date.now() - startedAt > 60 * 60 * 1000) {
-            throw new Error("Feed push still running after 1 hour — check ops status");
+            throw new Error(
+              action === "image-sync"
+                ? "Image sync still running after 1 hour — check ops status"
+                : "Feed push still running after 1 hour — check ops status"
+            );
           }
         }
         await loadOpsStatus();
@@ -1026,16 +1062,21 @@ export function GalaxusWarehouseDashboard() {
     }
   };
 
-  const loadDb = async (offset = 0) => {
+  const loadDb = async (offset = 0, supplierKeyOverride?: string) => {
     setBusy("db");
     setError(null);
+    const supplierKey =
+      supplierKeyOverride !== undefined ? supplierKeyOverride : dbSupplierKey;
+    if (supplierKeyOverride !== undefined) setDbSupplierKey(supplierKeyOverride);
     try {
-      const response = await fetch(
-        `/api/galaxus/supplier/variants?limit=${batchLimit}&offset=${offset}`,
-        {
-          cache: "no-store",
-        }
-      );
+      const params = new URLSearchParams({
+        limit: String(batchLimit),
+        offset: String(offset),
+      });
+      if (supplierKey.trim()) params.set("supplierKey", supplierKey.trim());
+      const response = await fetch(`/api/galaxus/supplier/variants?${params.toString()}`, {
+        cache: "no-store",
+      });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Load DB failed");
       setDbItems(data.items ?? []);
@@ -2071,10 +2112,10 @@ export function GalaxusWarehouseDashboard() {
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-indigo-700 text-white disabled:opacity-50"
-                  onClick={() => runOpsAction("image-sync")}
+                  onClick={() => runOpsAction("image-sync", { imageMode: "full" })}
                   disabled={opsBusy !== null}
                 >
-                  {opsBusy === "ops-image-sync" ? "Syncing…" : "Run image sync now"}
+                  {opsBusy === "ops-image-sync" ? "Syncing all images…" : "Run full image sync"}
                 </button>
               </div>
               <details className="rounded border bg-gray-50 p-2">
@@ -2487,7 +2528,27 @@ export function GalaxusWarehouseDashboard() {
           </div>
 
       <div className="space-y-2">
-        <div className="text-sm font-medium">DB Variants</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="text-sm font-medium">DB Variants</div>
+          <button
+            className="px-3 py-1.5 rounded bg-gray-200 text-black text-xs disabled:opacity-50"
+            onClick={() => loadDb(0, "")}
+            disabled={busy !== null}
+          >
+            {busy === "db" && !dbSupplierKey ? "Loading…" : "Load all"}
+          </button>
+          <button
+            className="px-3 py-1.5 rounded bg-emerald-800 text-white text-xs disabled:opacity-50"
+            onClick={() => loadDb(0, "ner")}
+            disabled={busy !== null}
+            title="NER rows + others-min price vs same GTIN (partner-style concurrence check)"
+          >
+            {busy === "db" && dbSupplierKey === "ner" ? "Loading…" : "Load NER + price vs DB"}
+          </button>
+          <span className="text-[11px] text-gray-500">
+            Others min = cheapest non-same-supplier offer for GTIN. Diff = our − others.
+          </span>
+        </div>
         <div className="overflow-auto border rounded">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
@@ -2498,13 +2559,48 @@ export function GalaxusWarehouseDashboard() {
                 <th className="px-2 py-1 text-left">SKU</th>
                 <th className="px-2 py-1 text-left">ProviderKey</th>
                 <th className="px-2 py-1 text-left">Size</th>
-                <th className="px-2 py-1 text-right">Price</th>
+                <th className="px-2 py-1 text-right">Price / vs DB</th>
                 <th className="px-2 py-1 text-right">Stock</th>
                 <th className="px-2 py-1 text-left">Updated</th>
               </tr>
             </thead>
             <tbody>
-              {dbItems.map((item) => (
+              {dbItems.map((item) => {
+                const ref = item.referenceMinPriceChf;
+                const diff = item.referencePriceDiffChf;
+                const count = item.referenceOfferCount ?? 0;
+                let vsDb: ReactNode = (
+                  <div className="text-[10px] text-gray-400">No other GTIN offer</div>
+                );
+                if (ref != null && Number.isFinite(ref)) {
+                  if (diff == null || !Number.isFinite(diff) || Math.abs(diff) < 0.01) {
+                    vsDb = (
+                      <div className="text-[10px] text-emerald-800">
+                        Cheapest (others min {ref.toFixed(2)}
+                        {count > 0 ? ` · ${count}` : ""})
+                      </div>
+                    );
+                  } else if (diff > 0) {
+                    vsDb = (
+                      <div className="text-[10px] text-amber-800">
+                        +{diff.toFixed(2)} above min {ref.toFixed(2)}
+                        {count > 0 ? ` (${count})` : ""}
+                      </div>
+                    );
+                  } else {
+                    vsDb = (
+                      <div className="text-[10px] text-emerald-800">
+                        {diff.toFixed(2)} below min {ref.toFixed(2)}
+                        {count > 0 ? ` (${count})` : ""}
+                      </div>
+                    );
+                  }
+                } else if (item.isCheapestInDb) {
+                  vsDb = (
+                    <div className="text-[10px] text-emerald-800">No competition in DB</div>
+                  );
+                }
+                return (
                 <tr key={item.supplierVariantId} className="border-t">
                   <td className="px-2 py-1">{item.supplierVariantId}</td>
                   <td className="px-2 py-1 text-gray-800">
@@ -2516,7 +2612,10 @@ export function GalaxusWarehouseDashboard() {
                   <td className="px-2 py-1">{item.supplierSku}</td>
                   <td className="px-2 py-1">{item.providerKey ?? ""}</td>
                   <td className="px-2 py-1">{item.sizeRaw ?? ""}</td>
-                  <td className="px-2 py-1 text-right">{item.price}</td>
+                  <td className="px-2 py-1 text-right">
+                    <div className="tabular-nums">{item.price}</div>
+                    {vsDb}
+                  </td>
                   <td className="px-2 py-1 text-right">
                     {Number(item.stock) > 0 ? (
                       <span className="inline-flex flex-col items-end leading-tight">
@@ -2534,7 +2633,8 @@ export function GalaxusWarehouseDashboard() {
                   </td>
                   <td className="px-2 py-1">{new Date(item.updatedAt).toLocaleString()}</td>
                 </tr>
-              ))}
+                );
+              })}
               {dbItems.length === 0 && (
                 <tr>
                   <td className="px-2 py-3 text-gray-500" colSpan={9}>

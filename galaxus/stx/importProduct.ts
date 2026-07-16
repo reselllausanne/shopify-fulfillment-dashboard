@@ -13,6 +13,7 @@ import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
 import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
 import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
 import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
+import { STX_MIN_ASKS_FOR_LISTING, isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
 
 type ImportPreviewVariant = {
   supplierVariantId: string;
@@ -368,7 +369,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
       );
       continue;
     }
-    if (forceImport || selected.asks >= 2) eligibleVariantsCount += 1;
+    if (isStxListingEligibleAsks(selected.asks)) eligibleVariantsCount += 1;
 
     const supplierVariantId = `stx_${variantId}`;
     const gtinRaw = pickString(extractVariantGtin(variant));
@@ -424,7 +425,7 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
   }
   if (!forceImport && eligibleVariantsCount === 0) {
     errors.push(
-      "No eligible express variants (need express_standard or express_expedited with price>0 and asks≥2)."
+      `No eligible express variants (need express_standard or express_expedited with price>0 and asks≥${STX_MIN_ASKS_FOR_LISTING}).`
     );
   }
   if (errors.length > 0) {

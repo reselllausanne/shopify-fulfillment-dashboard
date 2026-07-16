@@ -23,9 +23,19 @@ export function resolveBaseStock(variant: SupplierVariantLike): number {
 
 export function resolveInventoryAvailableStock(variant: SupplierVariantLike, delta = 0): number {
   const base = resolveBaseStock(variant);
+  // THE warehouse stock is decremented on SALE in SupplierVariant.stock — do not re-apply ledger.
+  const id = String(variant?.supplierVariantId ?? "")
+    .trim()
+    .toLowerCase();
+  if (id.startsWith("the_") || id.startsWith("the:")) {
+    return base;
+  }
   const sum = base + (Number.isFinite(delta) ? Math.trunc(delta) : 0);
   return Math.max(0, sum);
 }
+
+/** Postgres prepared-statement bind limit is 32767 — chunk large IN lists. */
+const INVENTORY_DELTA_CHUNK_SIZE = 5000;
 
 export async function loadInventoryDeltasBySupplierVariantId(
   supplierVariantIds: string[]
@@ -40,16 +50,19 @@ export async function loadInventoryDeltasBySupplierVariantId(
   }
 
   try {
-    const rows = await prismaAny.inventoryEvent.groupBy({
-      by: ["supplierVariantId"],
-      where: { supplierVariantId: { in: ids } },
-      _sum: { quantityDelta: true },
-    });
-    for (const row of rows ?? []) {
-      const id = String(row?.supplierVariantId ?? "").trim();
-      if (!id) continue;
-      const delta = Number(row?._sum?.quantityDelta ?? 0);
-      map.set(id, Number.isFinite(delta) ? Math.trunc(delta) : 0);
+    for (let offset = 0; offset < ids.length; offset += INVENTORY_DELTA_CHUNK_SIZE) {
+      const chunk = ids.slice(offset, offset + INVENTORY_DELTA_CHUNK_SIZE);
+      const rows = await prismaAny.inventoryEvent.groupBy({
+        by: ["supplierVariantId"],
+        where: { supplierVariantId: { in: chunk } },
+        _sum: { quantityDelta: true },
+      });
+      for (const row of rows ?? []) {
+        const id = String(row?.supplierVariantId ?? "").trim();
+        if (!id) continue;
+        const delta = Number(row?._sum?.quantityDelta ?? 0);
+        map.set(id, Number.isFinite(delta) ? Math.trunc(delta) : 0);
+      }
     }
     return map;
   } catch (error: any) {
@@ -57,8 +70,10 @@ export async function loadInventoryDeltasBySupplierVariantId(
     if (
       message.includes("inventoryEvent") ||
       message.includes("relation") ||
-      message.includes("does not exist")
+      message.includes("does not exist") ||
+      message.includes("too many bind variables")
     ) {
+      console.warn("[inventory][availableStock] delta load failed — using base stock only", message.slice(0, 200));
       return map;
     }
     throw error;

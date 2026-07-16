@@ -17,6 +17,7 @@ import {
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { attachAvailableStock } from "@/inventory/availableStock";
+import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import {
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
@@ -143,7 +144,8 @@ function buildVariantName(
 
 function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
   return resolveGalaxusProductCategoryPath({
-    title: fallbackTitle ?? null,
+    title: fallbackTitle ?? payload?.title ?? null,
+    description: payload?.description ?? null,
     category: payload?.category ?? null,
     secondaryCategory: payload?.secondary_category ?? null,
     productType: payload?.product_type ?? null,
@@ -164,14 +166,6 @@ function parseNumber(value: unknown): number | null {
     }
   }
   return null;
-}
-
-function publishStxStockFromAsks(asks: number): number {
-  if (!Number.isFinite(asks) || asks < 2) return 0;
-  if (asks <= 5) return 2;
-  if (asks <= 10) return 5;
-  if (asks <= 20) return 8;
-  return 12;
 }
 
 function dedupeCandidatesByProviderKey(candidates: any[]) {

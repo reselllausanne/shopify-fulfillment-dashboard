@@ -11,12 +11,12 @@ import {
   countCriticalGtinIssues,
 } from "@/galaxus/exports/feedValidation";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
+import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import {
-  classifyGalaxusProductKind,
-  isFootwearKind,
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
+import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 import { attachAvailableStock } from "@/inventory/availableStock";
 
 type ExportRow = Record<string, string>;
@@ -61,7 +61,8 @@ function buildManufacturerKey(base: string, gtin: string | null, fallbackKey?: s
 
 function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
   return resolveGalaxusProductCategoryPath({
-    title: fallbackTitle ?? null,
+    title: fallbackTitle ?? payload?.title ?? null,
+    description: payload?.description ?? null,
     category: payload?.category ?? null,
     secondaryCategory: payload?.secondary_category ?? null,
     productType: payload?.product_type ?? null,
@@ -80,14 +81,6 @@ function parseNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
-}
-
-function publishStxStockFromAsks(asks: number): number {
-  if (!Number.isFinite(asks) || asks < 2) return 0;
-  if (asks <= 5) return 2;
-  if (asks <= 10) return 5;
-  if (asks <= 20) return 8;
-  return 12;
 }
 
 function pickTrait(traits: any, keys: string[]) {
@@ -226,18 +219,17 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
     const providerKey = candidate.providerKey;
     if (!providerKey) continue;
     const traits = product?.traitsJson ?? null;
-    const kind = classifyGalaxusProductKind({
-      title: variant?.supplierProductName ?? product?.name ?? null,
-      description: product?.description ?? null,
+    const sizeSpecRow = buildGalaxusSizeSpecRow({
+      providerKey,
+      sizeRaw: variant?.sizeRaw ?? null,
+      sizeNormalized: variant?.sizeNormalized ?? null,
+      supplierTitle: variant?.supplierProductName ?? null,
+      supplierSku: variant?.supplierSku ?? null,
+      kickdbTitle: product?.name ?? null,
+      kickdbDescription: product?.description ?? null,
     });
-    const sizeRaw = String(variant?.sizeRaw ?? "").trim();
-    if (sizeRaw) {
-      const likelyFootwear = isFootwearKind(kind) || /\d/.test(sizeRaw);
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: likelyFootwear ? "Schuhgrösse (EU)" : "Bekleidungsgrösse",
-        SpecificationValue: sizeRaw,
-      });
+    if (sizeSpecRow) {
+      rows.push(sizeSpecRow);
     }
     const supplierBrand = variant?.supplierBrand ?? null;
     if (supplierBrand || product?.brand) {

@@ -2,16 +2,20 @@ import { prisma } from "@/app/lib/prisma";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { hostSupplierImage } from "@/galaxus/images/imageHosting";
 
-type ImageSyncStatus = "PENDING" | "SYNCED" | "FAILED";
+type ImageSyncStatus = "PENDING" | "SYNCED" | "FAILED" | "NO_SOURCE";
 
 type ImageSyncOptions = {
   supplierVariantId?: string;
+  /** Restrict batch sync to these supplier prefixes (stx, ner, the, …). Ignored when supplierVariantId is set. */
+  supplierKeys?: string[];
   limit?: number;
   concurrency?: number;
   force?: boolean;
+  /** Process batches until the backlog is empty (or a batch returns zero rows). */
+  full?: boolean;
 };
 
-type ImageSyncResult = {
+type ImageSyncBatchResult = {
   processed: number;
   synced: number;
   failed: number;
@@ -26,6 +30,65 @@ type ImageSyncResult = {
   }>;
   durationMs: number;
 };
+
+type ImageSyncResult = ImageSyncBatchResult & {
+  batches?: number;
+  complete?: boolean;
+};
+
+const DEFAULT_SUPPLIER_KEYS = ["stx", "the"] as const;
+
+export function buildImageSyncBacklogWhere(options?: {
+  supplierKeys?: string[];
+  supplierVariantId?: string;
+}) {
+  if (options?.supplierVariantId) {
+    return { supplierVariantId: options.supplierVariantId };
+  }
+
+  const supplierKeys =
+    options?.supplierKeys && options.supplierKeys.length > 0
+      ? options.supplierKeys
+      : [...DEFAULT_SUPPLIER_KEYS];
+
+  return {
+    AND: [
+      {
+        OR: [
+          { hostedImageUrl: null },
+          { imageSyncStatus: { in: ["PENDING", "FAILED"] } },
+          { hostedImageUrl: { endsWith: ".avif" } },
+          { hostedImageUrl: { endsWith: ".webp" } },
+          { hostedImageUrl: { endsWith: ".gif" } },
+        ],
+      },
+      // Permanently unhostable — exclude NO_SOURCE only. Do NOT use NOT equals:
+      // SQL `<> 'NO_SOURCE'` drops NULL status rows (3k+ stuck outside backlog).
+      {
+        OR: [{ imageSyncStatus: null }, { imageSyncStatus: { not: "NO_SOURCE" } }],
+      },
+      {
+        OR: supplierKeys.flatMap((key) => {
+          const normalized = String(key).trim().toLowerCase();
+          if (!normalized) return [];
+          return [
+            { supplierVariantId: { startsWith: `${normalized}:`, mode: "insensitive" as const } },
+            { supplierVariantId: { startsWith: `${normalized}_`, mode: "insensitive" as const } },
+          ];
+        }),
+      },
+    ],
+  };
+}
+
+export async function countImageSyncBacklog(options?: {
+  supplierKeys?: string[];
+  supplierVariantId?: string;
+}): Promise<number> {
+  return prisma.supplierVariant.count({
+    where: buildImageSyncBacklogWhere(options),
+  });
+}
 
 function pathnameLower(url: string): string {
   try {
@@ -126,26 +189,136 @@ async function updateVariantImageState(
 }
 
 export async function runImageSync(options: ImageSyncOptions = {}): Promise<ImageSyncResult> {
+  if (options.full && !options.supplierVariantId) {
+    return runImageSyncFull(options);
+  }
+  return runImageSyncBatch(options);
+}
+
+async function markPermanentNoSourceRows(supplierKeys?: string[]): Promise<number> {
+  const keys =
+    supplierKeys && supplierKeys.length > 0 ? supplierKeys : [...DEFAULT_SUPPLIER_KEYS];
+  const orIds = keys.flatMap((key) => {
+    const normalized = String(key).trim().toLowerCase();
+    if (!normalized) return [];
+    return [
+      { supplierVariantId: { startsWith: `${normalized}:`, mode: "insensitive" as const } },
+      { supplierVariantId: { startsWith: `${normalized}_`, mode: "insensitive" as const } },
+    ];
+  });
+  if (orIds.length === 0) return 0;
+  const result = await prisma.supplierVariant.updateMany({
+    where: {
+      AND: [
+        { OR: orIds },
+        { imageSyncStatus: "FAILED" },
+        { imageSyncError: { contains: "No source image URL", mode: "insensitive" } },
+      ],
+    },
+    data: {
+      imageSyncStatus: "NO_SOURCE",
+    },
+  });
+  return result.count;
+}
+
+async function runImageSyncFull(options: ImageSyncOptions): Promise<ImageSyncResult> {
+  const startedAt = Date.now();
+  const batchSize = Math.max(1, options.limit ?? 2000);
+  const concurrency = Math.max(1, options.concurrency ?? 8);
+  const supplierKeys = options.supplierKeys;
+  const force = Boolean(options.force);
+
+  const markedNoSource = await markPermanentNoSourceRows(supplierKeys);
+  if (markedNoSource > 0) {
+    console.info("[galaxus][image-sync][full] marked permanent NO_SOURCE", { markedNoSource });
+  }
+
+  const initialBacklog = await countImageSyncBacklog({ supplierKeys });
+  console.info("[galaxus][image-sync][full] starting", {
+    initialBacklog,
+    batchSize,
+    concurrency,
+    supplierKeys: supplierKeys ?? DEFAULT_SUPPLIER_KEYS,
+  });
+
+  let batches = 0;
+  let lastProcessed = batchSize;
+  const totals: ImageSyncBatchResult = {
+    processed: 0,
+    synced: 0,
+    failed: 0,
+    skipped: 0,
+    updatedSource: 0,
+    items: [],
+    durationMs: 0,
+  };
+
+  while (lastProcessed > 0) {
+    const batch = await runImageSyncBatch({
+      supplierKeys,
+      limit: batchSize,
+      concurrency,
+      force,
+    });
+    batches += 1;
+    lastProcessed = batch.processed;
+    totals.processed += batch.processed;
+    totals.synced += batch.synced;
+    totals.failed += batch.failed;
+    totals.skipped += batch.skipped;
+    totals.updatedSource += batch.updatedSource;
+    if (batch.items.length > 0 && totals.items.length < 50) {
+      totals.items.push(...batch.items.slice(0, Math.max(0, 50 - totals.items.length)));
+    }
+
+    // Counting every batch doubles read load during full runs.
+    // Sample periodically and always on tail batches.
+    const shouldCountRemaining = batch.processed < batchSize || batches % 5 === 0;
+    const remaining = shouldCountRemaining ? await countImageSyncBacklog({ supplierKeys }) : null;
+    console.info("[galaxus][image-sync][full] batch", {
+      batch: batches,
+      processed: batch.processed,
+      synced: batch.synced,
+      failed: batch.failed,
+      skipped: batch.skipped,
+      ...(remaining === null ? {} : { remaining }),
+    });
+
+    // No progress (all failed / no-source) → stop; otherwise infinite loop on same 18 rows.
+    if (batch.processed > 0 && batch.synced === 0 && batch.skipped === 0) {
+      console.warn("[galaxus][image-sync][full] stopping — no progress this batch", {
+        failed: batch.failed,
+        remaining,
+      });
+      break;
+    }
+    if (remaining === 0) break;
+  }
+
+  const remaining = await countImageSyncBacklog({ supplierKeys });
+  totals.durationMs = Date.now() - startedAt;
+  return {
+    ...totals,
+    batches,
+    complete: remaining === 0,
+  };
+}
+
+async function runImageSyncBatch(options: ImageSyncOptions = {}): Promise<ImageSyncBatchResult> {
   const startedAt = Date.now();
   const limit = Math.max(1, options.limit ?? 50);
   const concurrency = Math.max(1, options.concurrency ?? 5);
   const force = Boolean(options.force);
 
-  const where = options.supplierVariantId
-    ? { supplierVariantId: options.supplierVariantId }
-    : {
-        OR: [
-          { hostedImageUrl: null },
-          { imageSyncStatus: { in: ["PENDING", "FAILED"] } },
-          { hostedImageUrl: { endsWith: ".avif" } },
-          { hostedImageUrl: { endsWith: ".webp" } },
-          { hostedImageUrl: { endsWith: ".gif" } },
-        ],
-      };
+  const where = buildImageSyncBacklogWhere({
+    supplierVariantId: options.supplierVariantId,
+    supplierKeys: options.supplierKeys,
+  });
 
   const rows = await prisma.supplierVariant.findMany({
     where,
-    orderBy: { updatedAt: "desc" },
+    orderBy: [{ stock: "desc" }, { updatedAt: "desc" }],
     take: options.supplierVariantId ? 1 : limit,
     select: {
       supplierVariantId: true,
@@ -174,7 +347,7 @@ export async function runImageSync(options: ImageSyncOptions = {}): Promise<Imag
         if (!source) {
           failed += 1;
           await updateVariantImageState(supplierVariantId, {
-            imageSyncStatus: "FAILED",
+            imageSyncStatus: "NO_SOURCE",
             imageSyncError: "No source image URL available",
             imageLastSyncedAt: new Date(),
           });

@@ -73,7 +73,7 @@ export function selectStxActiveOffer(prices: unknown): SelectedStxOffer | null {
 
 /**
  * Express-first offer selection. When `forceImport` is true, falls back to any valid
- * price row (e.g. standard-only) and ensures asks ≥ 2 so Galaxus stock export can list.
+ * price row (e.g. standard-only) so import can proceed when express rows are absent.
  */
 export function selectStxOfferForImport(
   prices: unknown,
@@ -114,6 +114,6 @@ export function selectStxOfferForImport(
   return {
     deliveryType: winner.deliveryType,
     price: winner.price,
-    asks: Math.max(winner.asks, 2),
+    asks: winner.asks,
   };
 }

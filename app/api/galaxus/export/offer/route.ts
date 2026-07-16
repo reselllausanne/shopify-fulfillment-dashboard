@@ -22,6 +22,7 @@ import { classifyProductPricingKind, computeChannelVariantPrice } from "@/invent
 import {
   calcSuggestedRetailFromStoredStxBuyPrice,
 } from "@/galaxus/pricing/suggestedSellPrice";
+import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,14 +48,6 @@ function parseNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
-}
-
-function publishStxStockFromAsks(asks: number): number {
-  if (!Number.isFinite(asks) || asks < 2) return 0;
-  if (asks <= 5) return 2;
-  if (asks <= 10) return 5;
-  if (asks <= 20) return 8;
-  return 12;
 }
 
 export async function GET(request: Request) {

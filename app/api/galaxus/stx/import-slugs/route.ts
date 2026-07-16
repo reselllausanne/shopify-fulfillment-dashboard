@@ -4,6 +4,7 @@ import {
   dedupeSlugRows,
   getStxImportSlugCounts,
 } from "@/galaxus/stx/importSlugsBulk";
+import { listStxImportSlugsForAsksThresholdRetry } from "@/galaxus/stx/importSlugRetry";
 import { toCsv } from "@/galaxus/exports/csv";
 import { prisma } from "@/app/lib/prisma";
 
@@ -22,6 +23,25 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const download = searchParams.get("download") === "1";
+    const downloadRetry = searchParams.get("download") === "asks-threshold-retry";
+    if (downloadRetry) {
+      const rows = await listStxImportSlugsForAsksThresholdRetry(50_000);
+      const headers = ["slug", "input", "lastError"];
+      const csvRows = rows.map((row) => ({
+        slug: row.slug,
+        input: row.input,
+        lastError: row.lastError ?? "",
+      }));
+      const csv = toCsv(headers, csvRows);
+      const filename = `stx-asks-threshold-retry-${Date.now()}.csv`;
+      return new NextResponse(csv, {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "X-Total-Rows": rows.length.toString(),
+        },
+      });
+    }
     if (download) {
       const prismaAny = prisma as any;
       const rows = await prismaAny.stxImportSlug.findMany({

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runOpsTick } from "@/galaxus/ops/tick";
 import { startFeedPushAsync } from "@/galaxus/ops/feedPipeline";
+import { startImageSyncFullAsync } from "@/galaxus/ops/imageSyncPush";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import { syncShopifyCatalog } from "@/shopify/catalog/sync";
 
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as {
       action?: string;
       stxMode?: string;
+      imageMode?: string;
       partnerKey?: string;
     };
     const action = String(body?.action ?? "").trim().toLowerCase();
@@ -68,8 +70,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, data });
     }
     if (action === "image-sync") {
-      const data = await runOpsTick(origin, { force: true, only: ["image-sync"] });
-      return NextResponse.json({ ok: true, data });
+      const imageMode = String(body?.imageMode ?? "full").toLowerCase() === "batch" ? "batch" : "full";
+      if (imageMode === "full") {
+        const started = await startImageSyncFullAsync();
+        if (!started.ok) {
+          return NextResponse.json(
+            { ok: false, error: started.error ?? "Image sync rejected" },
+            { status: started.status ?? 409 }
+          );
+        }
+        return NextResponse.json(
+          { ok: true, accepted: true, imageMode: "full" },
+          { status: 202 }
+        );
+      }
+      const data = await runOpsTick(origin, {
+        force: true,
+        only: ["image-sync"],
+        imageSyncMode: "batch",
+      });
+      return NextResponse.json({ ok: true, data, imageMode: "batch" });
     }
 
     if (action.startsWith("push-") && GALAXUS_FEED_UPLOADS_DISABLED) {

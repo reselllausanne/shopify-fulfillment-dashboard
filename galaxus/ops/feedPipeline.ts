@@ -16,7 +16,29 @@ type FeedRunResult = {
 
 const STALE_FEED_RUN_MS = 4 * 60 * 60 * 1000;
 
-async function callFeedUpload(origin: string, scope: FeedScope, manual: boolean) {
+/** Triggers that may upload even when GALAXUS_FEED_UPLOADS_MANUAL_ONLY is on. */
+function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
+  return (
+    triggerSource === "manual" ||
+    triggerSource === "manual-pricing" ||
+    triggerSource === "order-ingest" ||
+    triggerSource === "admin" ||
+    triggerSource === "partner-admin" ||
+    triggerSource === "partner-order-fulfilled" ||
+    triggerSource === "partner-shipment-fulfilled" ||
+    triggerSource === "decathlon-partner-ship" ||
+    triggerSource === "decathlon-partner-ship-reconciled" ||
+    triggerSource === "partner-sync" ||
+    triggerSource === "inventory-sync"
+  );
+}
+
+async function callFeedUpload(
+  origin: string,
+  scope: FeedScope,
+  manual: boolean,
+  providerKeys?: string[]
+) {
   const type =
     scope === "full"
       ? "all"
@@ -28,7 +50,11 @@ async function callFeedUpload(origin: string, scope: FeedScope, manual: boolean)
             ? "offer"
             : "offer-stock";
   const manualParam = manual ? "&manual=1" : "";
-  const url = `${origin}/api/galaxus/feeds/upload?type=${type}${manualParam}`;
+  const keysParam =
+    providerKeys && providerKeys.length > 0
+      ? `&providerKeys=${encodeURIComponent(providerKeys.join(","))}`
+      : "";
+  const url = `${origin}/api/galaxus/feeds/upload?type=${type}${manualParam}${keysParam}`;
   const routeModule = await import("@/app/api/galaxus/feeds/upload/route");
   const req = new Request(url, { method: "POST" });
   const res = await routeModule.POST(req);
@@ -73,8 +99,9 @@ async function executeFeedRun(params: {
   origin: string;
   scope: FeedScope;
   triggerSource?: FeedTriggerSource;
+  providerKeys?: string[];
 }): Promise<FeedRunResult> {
-  const { feedRunId, origin, scope, triggerSource } = params;
+  const { feedRunId, origin, scope, triggerSource, providerKeys } = params;
   let effectiveRunId = params.runId;
   let counts: Record<string, number | null> | undefined;
   let uploaded: Array<{ name: string; path: string; size: number }> | undefined;
@@ -84,7 +111,12 @@ async function executeFeedRun(params: {
     error = "Feed uploads are disabled";
   } else {
     try {
-      const data = await callFeedUpload(origin, scope, triggerSource === "manual");
+      const data = await callFeedUpload(
+        origin,
+        scope,
+        feedTriggerAllowsUpload(triggerSource),
+        providerKeys
+      );
       counts = data?.counts ?? undefined;
       uploaded = Array.isArray(data?.uploaded) ? data.uploaded : undefined;
       if (data?.runId) {
@@ -127,8 +159,9 @@ export async function runFeedPipeline(params: {
   origin: string;
   scope: FeedScope;
   triggerSource?: FeedTriggerSource;
+  providerKeys?: string[];
 }): Promise<FeedRunResult> {
-  const { origin, scope, triggerSource } = params;
+  const { origin, scope, triggerSource, providerKeys } = params;
   const runId = randomUUID();
   const feedRun = await (prisma as any).galaxusFeedRun.create({
     data: {
@@ -149,6 +182,7 @@ export async function runFeedPipeline(params: {
     origin,
     scope,
     triggerSource,
+    providerKeys,
   });
 }
 
@@ -202,13 +236,34 @@ export async function startFeedPushAsync(params: {
   return locked.result;
 }
 
+/**
+ * Partner catalog edits used to call this with scope=full + runNow in the same HTTP
+ * request. That path dynamic-imports the SFTP upload route mid-request and dies with
+ * "cannot be imported from a Client Component module" in ~300ms.
+ *
+ * Partner/admin side-effects → async stock-price push (same path as manual ops buttons).
+ */
 export async function requestFeedPush(params: {
   origin: string;
   scope: FeedScope;
   triggerSource: FeedTriggerSource;
   runNow?: boolean;
 }) {
-  const { origin, scope, triggerSource, runNow = true } = params;
+  const { origin, triggerSource, runNow = true } = params;
+  const isPartnerSideEffect =
+    triggerSource === "partner-admin" ||
+    triggerSource === "partner-order-fulfilled" ||
+    triggerSource === "partner-shipment-fulfilled" ||
+    triggerSource === "partner-sync";
+
+  // Heavy full catalog rebuild must not run inline on partner API requests.
+  const scope: FeedScope =
+    isPartnerSideEffect && params.scope === "full" ? "stock-price" : params.scope;
+
+  if (runNow && isPartnerSideEffect) {
+    return startFeedPushAsync({ origin, scope, triggerSource });
+  }
+
   const prismaAny = prisma as any;
   const existing = await prismaAny.galaxusFeedTrigger.findFirst({
     where: { scope, status: "PENDING" },

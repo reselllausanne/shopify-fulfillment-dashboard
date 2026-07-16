@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { enqueueJob } from "@/galaxus/jobs/queue";
 import { getStxImportSlugCounts } from "@/galaxus/stx/importSlugsBulk";
+import {
+  countStxImportSlugsForAsksThresholdRetry,
+  resetStxImportSlugsForAsksThresholdRetry,
+} from "@/galaxus/stx/importSlugRetry";
 import { runStxImportSlugsSyncBatch } from "@/galaxus/stx/importSlugsSyncJob";
 import { prisma } from "@/app/lib/prisma";
 
@@ -16,6 +20,8 @@ export async function POST(request: Request) {
     const enqueue = body?.enqueue === true || body?.background === true;
     const all = Boolean(body?.all);
     const autoDrain = body?.autoDrain !== false;
+    const retryAsksThreshold = Boolean(body?.retryAsksThreshold);
+    const resetOnly = Boolean(body?.resetOnly);
     const workerJobs = Math.min(Math.max(Number(body?.workerJobs ?? body?.workers ?? 1), 1), 12);
     const concurrency = Math.min(Math.max(Number(body?.concurrency ?? 6), 1), 20);
     const batchSize = Math.min(Math.max(Number(body?.batchSize ?? 120), 1), 500);
@@ -23,6 +29,25 @@ export async function POST(request: Request) {
     const inlineLimit = all
       ? batchSize
       : Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 50, 1), 1000);
+
+    let retryEligible = 0;
+    let resetForRetry = 0;
+    if (retryAsksThreshold) {
+      retryEligible = await countStxImportSlugsForAsksThresholdRetry();
+      resetForRetry = await resetStxImportSlugsForAsksThresholdRetry();
+      if (resetOnly) {
+        const counts = await getStxImportSlugCounts();
+        return NextResponse.json({
+          ok: true,
+          mode: "reset-only",
+          retryAsksThreshold: true,
+          retryEligible,
+          resetForRetry,
+          counts,
+          hint: "Matching ERROR slugs moved to PENDING. Run sync with retryAsksThreshold omitted or enqueue:true to import.",
+        });
+      }
+    }
 
     if (enqueue) {
       const prismaAny = prisma as any;
@@ -60,6 +85,9 @@ export async function POST(request: Request) {
         jobsEnqueued: jobs.length,
         jobIds: jobs.map((job) => job.id),
         config: { batchSize, concurrency, autoDrain, workerJobs },
+        retryAsksThreshold,
+        retryEligible,
+        resetForRetry,
         counts,
         etaHint:
           counts.pending > 0
@@ -77,6 +105,9 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       mode: "inline",
+      retryAsksThreshold,
+      retryEligible,
+      resetForRetry,
       processed: result.claimed,
       imported: result.imported,
       errored: result.errored,
@@ -86,7 +117,7 @@ export async function POST(request: Request) {
       errorSamples: result.errorSamples,
       hint:
         result.errored > 0 && (result.errorSummary.no_express_price ?? 0) > 0
-          ? "Most failures: KickDB has no express_standard/express_expedited asks (only standard or empty). STX import requires express + asks≥2."
+          ? "Most failures: KickDB has no express_standard/express_expedited asks (only standard or empty). STX import requires express + asks≥1."
           : result.errorSummary.db_missing_suggested_retail_column
             ? "DB missing suggestedRetailPriceInclVat column — run migration in Supabase SQL editor."
             : null,
@@ -103,7 +134,8 @@ export async function POST(request: Request) {
 export async function GET() {
   try {
     const prismaAny = prisma as any;
-    const [counts, pendingJobs, runningJobs, recentJobs] = await Promise.all([
+    const [counts, pendingJobs, runningJobs, recentJobs, asksThresholdRetryEligible] =
+      await Promise.all([
       getStxImportSlugCounts(),
       prismaAny.galaxusJobQueue.count({ where: { jobType: JOB_TYPE, status: "PENDING" } }),
       prismaAny.galaxusJobQueue.count({ where: { jobType: JOB_TYPE, status: "RUNNING" } }),
@@ -120,11 +152,13 @@ export async function GET() {
           updatedAt: true,
         },
       }),
+      countStxImportSlugsForAsksThresholdRetry(),
     ]);
 
     return NextResponse.json({
       ok: true,
       counts,
+      asksThresholdRetryEligible,
       queue: { pendingJobs, runningJobs, recentJobs },
     });
   } catch (error: any) {

@@ -16,6 +16,7 @@ import {
 } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { attachAvailableStock } from "@/inventory/availableStock";
+import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,14 +54,6 @@ function businessDaysBetween(start: Date, end: Date): number {
     cursor.setDate(cursor.getDate() + 1);
   }
   return Math.max(0, count - 1);
-}
-
-function publishStxStockFromAsks(asks: number): number {
-  if (!Number.isFinite(asks) || asks < 2) return 0;
-  if (asks <= 5) return 2;
-  if (asks <= 10) return 5;
-  if (asks <= 20) return 8;
-  return 12;
 }
 
 export async function GET(request: Request) {
