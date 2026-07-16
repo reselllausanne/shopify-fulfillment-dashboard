@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { randomUUID } from "crypto";
+import { after } from "next/server";
 import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import type { FeedScope, FeedTriggerSource } from "./types";
@@ -218,14 +219,17 @@ export async function startFeedPushAsync(params: {
       },
     });
 
-    void executeFeedRun({
-      feedRunId: feedRun.id,
-      runId,
-      origin: params.origin,
-      scope: params.scope,
-      triggerSource: params.triggerSource,
-    }).catch((err) => {
-      console.error("[GALAXUS][FEED][ASYNC] Background push failed:", err);
+    // Keep work alive after the 202 response (Next can drop bare void promises).
+    after(() => {
+      void executeFeedRun({
+        feedRunId: feedRun.id,
+        runId,
+        origin: params.origin,
+        scope: params.scope,
+        triggerSource: params.triggerSource,
+      }).catch((err) => {
+        console.error("[GALAXUS][FEED][ASYNC] Background push failed:", err);
+      });
     });
 
     return { ok: true, accepted: true, runId };
