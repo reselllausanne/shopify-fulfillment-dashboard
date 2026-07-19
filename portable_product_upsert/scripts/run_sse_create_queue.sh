@@ -10,6 +10,7 @@ ROOT="/opt/shopify-automation"
 LOCK="/tmp/sse_create_queue.lock"
 LOG="${ROOT}/logs/sse_create_queue.log"
 PYTHON="${ROOT}/venv/bin/python3"
+[[ -f "${ROOT}/.env.sse" ]] && set -a && source "${ROOT}/.env.sse" && set +a
 API="${RESELL_API_BASE:-http://127.0.0.1:3000}"
 AUTH_HEADER=""
 [[ -n "${KICKDB_INTERNAL_TOKEN:-}" ]] && AUTH_HEADER="-H x-internal-token:${KICKDB_INTERNAL_TOKEN}"
