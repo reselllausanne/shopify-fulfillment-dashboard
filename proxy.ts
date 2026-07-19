@@ -33,9 +33,13 @@ function isShopifyInstallRequest(pathname: string, searchParams: URLSearchParams
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
   "/login",
+  "/returns",
   "/auth",
   "/api/auth",
   "/api/auth/login",
+  "/api/shopify/returns/request",
+  "/api/shopify/returns/returnable",
+  "/api/shopify/returns/label",
   "/api/galaxus",
   "/api/galaxus/ops",
   "/api/galaxus/feeds",
@@ -51,10 +55,15 @@ const PUBLIC_PATHS = [
 // Paths that the logistics team CAN access
 const LOGISTICS_ALLOWED_PATHS = [
   "/scan",
+  "/decathlon/returns",
+  "/api/decathlon/returns/receipt",
   "/api/scan-awb",
   "/api/fulfill-from-awb",
+  "/api/logistics/fulfillment-stats",
   "/api/swiss-post/label-from-awb",
   "/api/shopify/order-by-name", // Used by scanner search
+  "/api/shopify/returns/requested",
+  "/api/shopify/returns/accept",
   "/api/notifications/goat-tracking",
 ];
 

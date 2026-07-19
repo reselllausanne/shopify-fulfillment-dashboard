@@ -1,4 +1,4 @@
-const DEFAULT_SHOPIFY_API_VERSION = "2026-01";
+const DEFAULT_SHOPIFY_API_VERSION = "2026-07";
 
 const SHOP_ENV_KEYS = ["SHOP_NAME_SHOPIFY", "SHOPIFY_SHOP_DOMAIN"] as const;
 const TOKEN_ENV_KEYS = ["ACCESS_TOKEN_SHOPIFY", "SHOPIFY_ADMIN_ACCESS_TOKEN"] as const;
@@ -6,6 +6,12 @@ const VERSION_ENV_KEYS = ["API_VERSION_SHOPIFY", "SHOPIFY_API_VERSION"] as const
 
 export const REQUIRED_SHOPIFY_ADMIN_SCOPES = [
   "read_orders",
+  "read_returns",
+  "read_fulfillments",
+  "write_returns",
+  "write_store_credit_account_transactions",
+  "read_store_credit_account_transactions",
+  "read_store_credit_accounts",
   "read_products",
   "write_products",
   "read_inventory",

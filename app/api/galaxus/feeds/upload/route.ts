@@ -21,7 +21,7 @@ import {
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
-import { countCriticalGtinIssues } from "@/galaxus/exports/feedValidation";
+import { countCriticalGtinIssues, collectCriticalGtinProviderKeys, filterCsvByProviderKeys } from "@/galaxus/exports/feedValidation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 900;
@@ -227,11 +227,37 @@ export async function POST(request: Request) {
       useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs
         ? countCriticalGtinIssues(report)
         : 0;
-    const mustBlockForCriticalGtin =
-      (useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs) && criticalGtinIssues > 0;
+    const blockedProviderKeys = collectCriticalGtinProviderKeys(report ?? {});
+    const omittedByFeed: Record<string, number> = {};
+    if (blockedProviderKeys.size > 0) {
+      const masterFiltered = filterCsvByProviderKeys(masterCsv, blockedProviderKeys);
+      masterCsv = masterFiltered.filteredCsv;
+      omittedByFeed.master = masterFiltered.omittedRows;
+      const stockFiltered = filterCsvByProviderKeys(stockCsv, blockedProviderKeys);
+      stockCsv = stockFiltered.filteredCsv;
+      omittedByFeed.stock = stockFiltered.omittedRows;
+      const offerFiltered = filterCsvByProviderKeys(offerCsv, blockedProviderKeys);
+      offerCsv = offerFiltered.filteredCsv;
+      omittedByFeed.offer = offerFiltered.omittedRows;
+      const specsFiltered = filterCsvByProviderKeys(specsCsv, blockedProviderKeys);
+      specsCsv = specsFiltered.filteredCsv;
+      omittedByFeed.specs = specsFiltered.omittedRows;
+      masterCount = masterCount != null ? Math.max(0, masterCount - (omittedByFeed.master ?? 0)) : null;
+      stockCount = stockCount != null ? Math.max(0, stockCount - (omittedByFeed.stock ?? 0)) : null;
+      offerCount = offerCount != null ? Math.max(0, offerCount - (omittedByFeed.offer ?? 0)) : null;
+      specsCount = specsCount != null ? Math.max(0, specsCount - (omittedByFeed.specs ?? 0)) : null;
+      console.info("[GALAXUS][FEEDS][UPLOAD] Omitted critical-GTIN rows", {
+        blockedProviderKeys: Array.from(blockedProviderKeys),
+        omittedByFeed,
+      });
+    }
+    const totalOmitted = Object.values(omittedByFeed).reduce((sum, value) => sum + value, 0);
     if (
-      mustBlockForCriticalGtin ||
-      ((useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs) && !force && totalIssues > 0)
+      (useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs) &&
+      !force &&
+      totalIssues > 0 &&
+      totalOmitted === 0 &&
+      criticalGtinIssues === 0
     ) {
       const blockedManifests = [];
       if (needsMaster && masterCsv) {
@@ -274,8 +300,10 @@ export async function POST(request: Request) {
             destination: null,
             uploadStatus: "blocked",
             responseJson: {
-              error: mustBlockForCriticalGtin ? "critical_gtin_validation_failed" : "validation_failed",
+              error: "validation_failed",
               criticalGtinIssues,
+              omittedByFeed,
+              blockedProviderKeys: Array.from(blockedProviderKeys),
             },
             validationIssuesJson: report ?? undefined,
           },
@@ -287,21 +315,19 @@ export async function POST(request: Request) {
           data: {
             finishedAt: new Date(),
             success: false,
-            errorMessage: mustBlockForCriticalGtin
-              ? "Critical GTIN validation failed"
-              : "Validation failed",
-            resultJson: { validation: report, criticalGtinIssues },
+            errorMessage: "Validation failed",
+            resultJson: { validation: report, criticalGtinIssues, omittedByFeed },
           },
         });
       }
       return NextResponse.json(
         {
           ok: false,
-          error: mustBlockForCriticalGtin
-            ? "Critical GTIN validation failed. Missing/invalid GTIN rows can never be sent."
-            : "Validation failed. Fix issues or pass force=1.",
+          error: "Validation failed. Fix remaining issues or pass force=1.",
           report,
           criticalGtinIssues,
+          omittedByFeed,
+          blockedProviderKeys: Array.from(blockedProviderKeys),
         },
         { status: 409 }
       );
@@ -422,7 +448,7 @@ export async function POST(request: Request) {
           storagePointer: entry.path,
           destination,
           uploadStatus: "uploaded",
-          responseJson: { filename: entry.name, size: entry.size },
+          responseJson: { filename: entry.name, size: entry.size, omittedRows: omittedByFeed[entry.exportType] ?? 0 },
           validationIssuesJson: report ?? undefined,
         },
       });
@@ -455,6 +481,8 @@ export async function POST(request: Request) {
         offer: offerCount,
         specs: specsCount,
       },
+      omittedByFeed,
+      blockedProviderKeys: Array.from(blockedProviderKeys),
       validation: report ?? null,
     };
     if (auditId) {
