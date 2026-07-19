@@ -263,6 +263,7 @@ def stream_once(api_key, topics, q, min_interval, last_event_id):
         return False
 
     log("SSE connected. Streaming...")
+    connected = True
     last_stats = time.time()
     try:
         for event_id, _event_name, data in parse_sse_stream(response):
@@ -286,8 +287,11 @@ def stream_once(api_key, topics, q, min_interval, last_event_id):
                 log(f"stats: {snapshot} queue={q.qsize()}")
                 last_stats = time.time()
     except Exception as e:
+        # Mid-stream breaks on a quiet stream are normal (Cloudflare idle
+        # timeout ~100s). A successful connect counts as OK so the reconnect
+        # loop doesn't back off exponentially and miss event bursts.
         log(f"SSE stream error: {e}")
-        return False
+        return connected
     finally:
         response.close()
     return True
