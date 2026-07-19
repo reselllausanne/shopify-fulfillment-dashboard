@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends \
         xvfb fluxbox x11vnc novnc websockify \
+        python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dev deps for build (Tailwind/PostCSS live in devDependencies)
@@ -28,6 +29,10 @@ RUN mkdir -p /ms-playwright \
     && npx playwright install --with-deps chromium
 
 COPY . .
+
+# Python deps for the product-upsert bridge (portable_product_upsert).
+# bookworm is PEP 668 externally-managed -> --break-system-packages for system install.
+RUN pip3 install --break-system-packages --no-cache-dir -r portable_product_upsert/requirements.txt
 
 RUN npm run build
 
