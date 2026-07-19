@@ -1046,15 +1046,16 @@ def updates_only_generator():
             pos += 1
         lap += 1
 
-def process_single_url_enhanced(url, action_type, shopify_products, skip_creates_on_limit=False):
+def process_single_url_enhanced(url, action_type, shopify_products, skip_creates_on_limit=False, prefetched=None):
     """Process a single URL for create or update with enhanced error handling
     
     Args:
         skip_creates_on_limit: If True and creation limit is hit, defer the URL instead of raising
+        prefetched: optional raw KicksDB product record (DB buffer rawJson); skips the KicksDB fetch
     """
     try:
         # Fetch and process the product data
-        product_data = process_url(url, 0)
+        product_data = process_url(url, 0, prefetched=prefetched)
         if not product_data:
             fetch_err = stockXAPI.last_fetch_error or "no_data"
             print(f"[WARNING] No valid product data for {url} (stockx={fetch_err})")
@@ -2366,14 +2367,26 @@ def derive_color_pattern(colorway):
     return primary or raw
 
 
-def process_url(url, thread_id=0):
+def process_url(url, thread_id=0, prefetched=None):
+    """Fetch + parse one product.
+
+    prefetched: optional raw KicksDB product record (the `data` object of the
+    API response, e.g. KickDBProduct.rawJson from the DB buffer). When given,
+    the KicksDB HTTP call is skipped and parsing runs on the provided payload
+    exactly as if it had just been fetched. When None (default), behavior is
+    byte-identical to before: fetch via stockXAPI.getOne.
+    """
     thread_api_products = {}
     try:
         print(f"[Thread {thread_id}] Processing URL: {url}")
-        api_slug = url.strip().split("/")[-1].split("?")[0]
-        if api_slug != url.strip():
-            print(f"[Thread {thread_id}] Using Kicks API slug (query/path normalized): {api_slug}")
-        out = stockXAPI.getOne(api_slug)
+        if prefetched is not None:
+            print(f"[Thread {thread_id}] Using prefetched payload (no KicksDB call)")
+            out = {"data": prefetched}
+        else:
+            api_slug = url.strip().split("/")[-1].split("?")[0]
+            if api_slug != url.strip():
+                print(f"[Thread {thread_id}] Using Kicks API slug (query/path normalized): {api_slug}")
+            out = stockXAPI.getOne(api_slug)
         if not out:
             print(f"[Thread {thread_id}] No data received for {url}")
             return {}
