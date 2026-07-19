@@ -59,7 +59,11 @@ function buildManufacturerKey(base: string, gtin: string | null, fallbackKey?: s
   return `${cleanedBase.slice(0, maxBaseLen)}-${suffix}`;
 }
 
-function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
+function buildProductCategory(
+  payload: KickDbPayload | null,
+  fallbackTitle?: string | null,
+  brand?: string | null
+): string {
   return resolveGalaxusProductCategoryPath({
     title: fallbackTitle ?? payload?.title ?? null,
     description: payload?.description ?? null,
@@ -67,6 +71,7 @@ function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: str
     secondaryCategory: payload?.secondary_category ?? null,
     productType: payload?.product_type ?? null,
     breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    brand: brand ?? payload?.brand ?? null,
   });
 }
 
@@ -170,7 +175,7 @@ function buildMasterRowsFromCandidates(
           } as KickDbPayload)
         : null;
     const title = fallbackTitle;
-    const category = buildProductCategory(payload, fallbackTitle);
+    const category = buildProductCategory(payload, fallbackTitle, supplierBrand || payload?.brand || product?.brand || null);
     const description = resolveGalaxusDescription({
       description: payload?.description ?? null,
       title: fallbackTitle,

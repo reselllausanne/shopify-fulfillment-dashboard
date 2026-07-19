@@ -258,6 +258,7 @@ export function buildGalaxusAlternativeMasterRows(
       title: product.title,
       description: product.description,
       category: product.category,
+      brand: product.brand,
     });
     const description = resolveGalaxusDescription({
       description: product.description,
