@@ -94,16 +94,32 @@ def upsert_and_mark(db_api, payload, shopify_product_id, handle):
     if not kickdb_product_id:
         return False, "payload_missing_id"
 
-    r = requests.post(f"{db_api}/api/kickdb/upsert", json=payload,
-                      headers=_auth_headers(), timeout=60)
+    def _post(path, body, timeout):
+        last_err = None
+        for attempt in range(4):
+            try:
+                return requests.post(f"{db_api}{path}", json=body,
+                                     headers=_auth_headers(), timeout=timeout)
+            except requests.exceptions.RequestException as exc:
+                last_err = exc
+                time.sleep(2 ** attempt)
+        raise last_err
+
+    try:
+        r = _post("/api/kickdb/upsert", payload, 60)
+    except requests.exceptions.RequestException as exc:
+        return False, f"upsert_conn:{exc.__class__.__name__}"
     if r.status_code != 200 or not r.json().get("ok"):
         return False, f"upsert_failed:{r.status_code}:{r.text[:150]}"
 
-    r = requests.post(f"{db_api}/api/kickdb/mark-synced", json={
-        "kickdbProductId": kickdb_product_id,
-        "shopifyProductId": shopify_product_id,
-        "shopifyHandle": handle,
-    }, headers=_auth_headers(), timeout=30)
+    try:
+        r = _post("/api/kickdb/mark-synced", {
+            "kickdbProductId": kickdb_product_id,
+            "shopifyProductId": shopify_product_id,
+            "shopifyHandle": handle,
+        }, 30)
+    except requests.exceptions.RequestException as exc:
+        return False, f"mark_conn:{exc.__class__.__name__}"
     if r.status_code != 200:
         return False, f"mark_failed:{r.status_code}"
     return True, kickdb_product_id
@@ -149,7 +165,17 @@ def main():
             break
         processed += 1
 
-        out = stockXAPI.getOne(handle)
+        try:
+            out = stockXAPI.getOne(handle)
+        except Exception as exc:
+            print(f"[ERR] {handle}: getOne crashed: {exc}")
+            review[handle] = f"getone_exc:{exc.__class__.__name__}"
+            append_review(handle, review[handle])
+            progress["review"] = review
+            save_progress(progress)
+            miss_count += 1
+            time.sleep(args.delay)
+            continue
         resolved_via = "handle"
         if not out or not out.get("data"):
             style_id = extract_style_id(product)
