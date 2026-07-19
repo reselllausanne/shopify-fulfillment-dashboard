@@ -1183,8 +1183,38 @@ model KickDBProduct {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  variants        KickDBVariant[]
+  /// Byte-exact KicksDB API response (same shape as stockXAPI.getOne `data`).
+  /// Single source of truth for Shopify + marketplace consumers; parsed with their own logic.
+  rawJson         Json?
+  /// When rawJson was fetched from KicksDB (SSE listener, sweeper, or bootstrap).
+  rawFetchedAt    DateTime?
 
+  variants        KickDBVariant[]
+  shopifySync     ShopifySyncState?
+
+  @@index([rawFetchedAt])
+  @@schema("public")
+}
+
+/// Shopify sync workflow state — separate from product data so marketplace flows never touch it.
+/// One row per KickDB product that is (or should become) a Shopify product. Starts empty; filled
+/// by the bootstrap job and by /api/kickdb/mark-synced after each successful Shopify push.
+model ShopifySyncState {
+  id               String    @id @default(uuid())
+  kickdbProductId  String    @unique
+  shopifyProductId String?
+  shopifyHandle    String?
+  /// pending | synced | error | create_candidate
+  syncStatus       String    @default("pending")
+  shopifySyncedAt  DateTime?
+  priorityScore    Int       @default(0)
+  lastError        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  product          KickDBProduct @relation(fields: [kickdbProductId], references: [kickdbProductId], onDelete: Cascade)
+
+  @@index([syncStatus, updatedAt])
   @@schema("public")
 }
 

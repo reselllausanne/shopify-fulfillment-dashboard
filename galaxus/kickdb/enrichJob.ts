@@ -12,6 +12,15 @@ import { Prisma } from "@prisma/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { shouldFetchKickDb } from "@/galaxus/kickdb/cache";
 import { normalizeSize, validateGtin } from "@/app/lib/normalize";
+import {
+  pickString,
+  extractBrand,
+  extractImageUrl,
+  pickTraitValue,
+  parseDateValue,
+  collectVariantSizes,
+  pickPersistedKickdbSizes,
+} from "@/galaxus/kickdb/extract";
 
 const GOLDEN_CATALOG_TTL_MS = 5 * 60 * 1000;
 let goldenCatalogCache: { loadedAt: number; byVariantId: Map<string, string> } | null = null;
@@ -110,21 +119,6 @@ function summarizeVariantSizes(variants: any[] = []) {
   return values.filter((value) => typeof value === "string");
 }
 
-function collectVariantSizes(variant: any): Array<{ type: string; size: string }> {
-  const sizes: Array<{ type: string; size: string }> = [];
-  if (variant?.size_eu) sizes.push({ type: "eu", size: String(variant.size_eu) });
-  if (variant?.size_us) sizes.push({ type: "us", size: String(variant.size_us) });
-  if (variant?.size) sizes.push({ type: "raw", size: String(variant.size) });
-  if (Array.isArray(variant?.sizes)) {
-    for (const entry of variant.sizes) {
-      if (entry?.size) {
-        sizes.push({ type: String(entry?.type ?? "raw").toLowerCase(), size: String(entry.size) });
-      }
-    }
-  }
-  return sizes;
-}
-
 function normalizeSizeForCompare(value?: string | null): string | null {
   const normalized = normalizeSize(value ?? null);
   if (!normalized) return null;
@@ -168,85 +162,6 @@ function pickBestVariant(candidates: any[], sizeRaw: string | null): any | null 
       return a.id.localeCompare(b.id);
     });
   return scored[0]?.variant ?? null;
-}
-
-function pickString(...values: Array<unknown>) {
-  for (const v of values) {
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return null;
-}
-
-/** Fill `KickDBVariant.sizeEu` / `sizeUs` from API, including `sizes[]` when top-level fields are empty. */
-function pickPersistedKickdbSizes(matchedVariant: any): { sizeEu: string | null; sizeUs: string | null } {
-  let sizeEu = pickString(matchedVariant?.size_eu);
-  let sizeUs = pickString(matchedVariant?.size_us);
-  if ((!sizeEu || !sizeUs) && matchedVariant && typeof matchedVariant === "object") {
-    for (const { type, size } of collectVariantSizes(matchedVariant)) {
-      const t = type.toLowerCase();
-      if (!sizeEu && t === "eu") sizeEu = pickString(size);
-      if (!sizeUs && (t === "us m" || t === "us w" || t === "us" || t === "usm" || t === "usw")) {
-        sizeUs = pickString(size);
-      }
-    }
-  }
-  const st = String(matchedVariant?.size_type ?? "").toLowerCase();
-  const rawSize = pickString(matchedVariant?.size);
-  if (rawSize) {
-    if (!sizeEu && st.includes("eu")) sizeEu = rawSize;
-    if (!sizeUs && st.includes("us")) sizeUs = rawSize;
-  }
-  return { sizeEu, sizeUs };
-}
-
-function extractBrand(productRecord: any): string | null {
-  const direct = pickString(productRecord?.brand, productRecord?.manufacturer, productRecord?.make);
-  if (direct) return direct;
-  const traits = productRecord?.traits;
-  if (Array.isArray(traits)) {
-    for (const t of traits) {
-      const key = pickString(t?.key, t?.name, t?.trait, t?.type)?.toLowerCase();
-      if (key && ["brand", "manufacturer"].includes(key)) {
-        const value = pickString(t?.value, t?.label, t?.text);
-        if (value) return value;
-      }
-    }
-  }
-  if (traits && typeof traits === "object") {
-    return pickString(traits.brand, traits.Brand, traits.manufacturer, traits.Manufacturer);
-  }
-  return null;
-}
-
-function extractImageUrl(productRecord: any): string | null {
-  return pickString(
-    productRecord?.image,
-    productRecord?.image_url,
-    productRecord?.imageUrl,
-    productRecord?.media?.image,
-    productRecord?.media?.imageUrl
-  );
-}
-
-function pickTraitValue(traits: unknown, keys: string[]): string | null {
-  if (!traits) return null;
-  const list = Array.isArray(traits) ? traits : (traits as any)?.traits ?? traits;
-  const traitArray = Array.isArray(list) ? list : [];
-  const lowerKeys = keys.map((key) => key.toLowerCase());
-  for (const entry of traitArray) {
-    const entryKey = pickString(entry?.key, entry?.name, entry?.trait, entry?.type)?.toLowerCase() ?? "";
-    if (!entryKey) continue;
-    if (lowerKeys.some((key) => entryKey.includes(key))) {
-      return pickString(entry?.value, entry?.label, entry?.text, entry?.displayValue);
-    }
-  }
-  return null;
-}
-
-function parseDateValue(value: string | null): Date | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function normalizeSkuForCompare(value: unknown): string {
