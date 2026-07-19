@@ -48,20 +48,34 @@ export async function GET() {
     /* scrape_runs may not exist yet — stats still work from the catalog */
   }
 
+  // One indexed query for all shops: VariantMapping.supplierKey is indexed and
+  // the join to SupplierVariant uses the unique supplierVariantId index. Avoids
+  // the seq scan that `supplierVariantId LIKE 'key_%'` caused on ~280k rows.
+  const statsByShop = new Map<string, { withGtin: number; inStock: number }>();
+  try {
+    const keys = shops.map((s) => s.key);
+    const rows = await prismaAny.$queryRaw<
+      Array<{ key: string; with_gtin: number; in_stock: number }>
+    >`
+      SELECT vm."supplierKey" AS key,
+             COUNT(*)::int AS with_gtin,
+             COUNT(*) FILTER (WHERE sv.stock > 0)::int AS in_stock
+      FROM "VariantMapping" vm
+      LEFT JOIN "SupplierVariant" sv ON sv."supplierVariantId" = vm."supplierVariantId"
+      WHERE vm."supplierKey" = ANY(${keys})
+      GROUP BY vm."supplierKey"`;
+    for (const r of rows) {
+      statsByShop.set(r.key, { withGtin: Number(r.with_gtin), inStock: Number(r.in_stock) });
+    }
+  } catch {
+    /* stats stay at 0 if the query fails */
+  }
+
   const shopsOut = await Promise.all(
     shops.map(async (shop) => {
-      let withGtin = 0;
-      let inStock = 0;
-      try {
-        [withGtin, inStock] = await Promise.all([
-          prismaAny.variantMapping.count({ where: { supplierKey: shop.key } }),
-          prismaAny.supplierVariant.count({
-            where: { supplierVariantId: { startsWith: `${shop.key}_` }, stock: { gt: 0 } },
-          }),
-        ]);
-      } catch {
-        /* ignore */
-      }
+      const stat = statsByShop.get(shop.key) || { withGtin: 0, inStock: 0 };
+      const withGtin = stat.withGtin;
+      const inStock = stat.inStock;
       const lastRun = lastRunByShop.get(shop.key) || null;
       return {
         key: shop.key,
