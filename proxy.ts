@@ -44,6 +44,9 @@ const PUBLIC_PATHS = [
   "/api/galaxus/ops",
   "/api/galaxus/feeds",
   "/api/galaxus/export",
+  // Internal machine-to-machine buffer routes (SSE listener/consumer/bootstrap).
+  // Own shared-secret gate via KICKDB_INTERNAL_TOKEN (app/api/kickdb/auth.ts).
+  "/api/kickdb",
   "/api/tracking/token",
   "/_next",
   "/static",
