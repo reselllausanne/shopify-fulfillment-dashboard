@@ -6,6 +6,7 @@ ROOT="/opt/shopify-automation"
 LOCK="/tmp/sse_sweeper.lock"
 LOG="${ROOT}/logs/sse_sweeper.log"
 PYTHON="${ROOT}/venv/bin/python3"
+[[ -f "${ROOT}/.env.sse" ]] && set -a && source "${ROOT}/.env.sse" && set +a
 
 mkdir -p "${ROOT}/logs"
 exec 9>"${LOCK}"
