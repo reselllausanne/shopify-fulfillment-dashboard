@@ -108,7 +108,8 @@ type EligibleRecord = {
   available: boolean;
 };
 
-function collectEligible(shop: ScraperShop, product: any, productJs: any, into: Map<string, EligibleRecord>) {
+function collectEligibleRecords(shop: ScraperShop, product: any, productJs: any): EligibleRecord[] {
+  const out: EligibleRecord[] = [];
   const title = product?.title || "";
   const brand = product?.vendor || "";
   const jsById = new Map<string, any>();
@@ -133,7 +134,7 @@ function collectEligible(shop: ScraperShop, product: any, productJs: any, into: 
     const providerKey = buildProviderKey(gtin, supplierVariantId);
     if (!providerKey) continue;
 
-    const record: EligibleRecord = {
+    out.push({
       gtin,
       supplierVariantId,
       providerKey,
@@ -143,13 +144,9 @@ function collectEligible(shop: ScraperShop, product: any, productJs: any, into: 
       supplierProductName: fullTitle || null,
       sourceImageUrl: pickImage(imgSource, jsV.id ? jsV : variant) || null,
       available,
-    };
-    const existing = into.get(gtin);
-    // keep lowest priced; prefer available
-    if (!existing || record.price < existing.price || (record.available && !existing.available)) {
-      into.set(gtin, record);
-    }
+    });
   }
+  return out;
 }
 
 async function runPool<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
@@ -218,14 +215,31 @@ async function updateRun(runId: number, fields: Record<string, unknown>) {
 /** Full scrape of one shop → writes eligible (GTIN) variants into the main catalog. */
 export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?: number): Promise<void> {
   const prismaAny = prisma as any;
+  // Incremental counters — flushed to the run row periodically so progress is
+  // visible live and a crash/restart never loses more than the last batch.
+  let processed = 0;
+  let jsErrors = 0;
+  let wrote = 0;
+  let lastFlushAt = 0;
+  const FLUSH_EVERY = 50; // products between run-row progress flushes
+  const seenGtins = new Set<string>();
+
+  const flushProgress = async () => {
+    await updateRun(runId, {
+      with_gtin: seenGtins.size,
+      variants_upserted: wrote,
+      errors: jsErrors,
+    });
+  };
+
   try {
     const listed = await listProducts(shop.baseUrl, maxProducts);
     await updateRun(runId, { products_listed: listed.length });
 
-    const eligible = new Map<string, EligibleRecord>();
-    let jsErrors = 0;
     const handles = listed.filter((p) => p?.handle);
 
+    // Enrich + write per product. Upserts are idempotent (keyed by supplierVariantId),
+    // so writing as we go is safe and survives crashes with partial data committed.
     await runPool(handles, JS_CONCURRENCY, async (product) => {
       let js: any = null;
       try {
@@ -233,68 +247,73 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
       } catch {
         jsErrors++;
       }
-      collectEligible(shop, product, js, eligible);
-    });
-
-    const records = Array.from(eligible.values());
-    await updateRun(runId, { with_gtin: records.length, errors: jsErrors });
-
-    const now = new Date();
-    let wrote = 0;
-    await runPool(records, WRITE_CONCURRENCY, async (r) => {
-      const stock = r.available ? DEFAULT_STOCK : 0;
-      await prismaAny.supplierVariant.upsert({
-        where: { supplierVariantId: r.supplierVariantId },
-        create: {
-          supplierVariantId: r.supplierVariantId,
-          supplierSku: r.supplierSku,
-          providerKey: r.providerKey,
-          gtin: r.gtin,
-          price: r.price,
-          stock,
-          supplierBrand: r.supplierBrand,
-          supplierProductName: r.supplierProductName,
-          sourceImageUrl: r.sourceImageUrl,
-          lastSyncAt: now,
-        },
-        update: {
-          supplierSku: r.supplierSku,
-          providerKey: r.providerKey,
-          gtin: r.gtin,
-          price: r.price,
-          stock,
-          supplierBrand: r.supplierBrand,
-          supplierProductName: r.supplierProductName,
-          sourceImageUrl: r.sourceImageUrl,
-          lastSyncAt: now,
-        },
-      });
-      await prismaAny.variantMapping.upsert({
-        where: { supplierVariantId: r.supplierVariantId },
-        create: {
-          supplierVariantId: r.supplierVariantId,
-          gtin: r.gtin,
-          providerKey: r.providerKey,
-          supplierKey: shop.key,
-          status: "SUPPLIER_GTIN",
-        },
-        update: {
-          gtin: r.gtin,
-          providerKey: r.providerKey,
-          supplierKey: shop.key,
-          status: "SUPPLIER_GTIN",
-        },
-      });
-      wrote++;
+      const productRecords = collectEligibleRecords(shop, product, js);
+      const now = new Date();
+      for (const r of productRecords) {
+        seenGtins.add(r.gtin);
+        const stock = r.available ? DEFAULT_STOCK : 0;
+        try {
+          await prismaAny.supplierVariant.upsert({
+            where: { supplierVariantId: r.supplierVariantId },
+            create: {
+              supplierVariantId: r.supplierVariantId,
+              supplierSku: r.supplierSku,
+              providerKey: r.providerKey,
+              gtin: r.gtin,
+              price: r.price,
+              stock,
+              supplierBrand: r.supplierBrand,
+              supplierProductName: r.supplierProductName,
+              sourceImageUrl: r.sourceImageUrl,
+              lastSyncAt: now,
+            },
+            update: {
+              supplierSku: r.supplierSku,
+              providerKey: r.providerKey,
+              gtin: r.gtin,
+              price: r.price,
+              stock,
+              supplierBrand: r.supplierBrand,
+              supplierProductName: r.supplierProductName,
+              sourceImageUrl: r.sourceImageUrl,
+              lastSyncAt: now,
+            },
+          });
+          await prismaAny.variantMapping.upsert({
+            where: { supplierVariantId: r.supplierVariantId },
+            create: {
+              supplierVariantId: r.supplierVariantId,
+              gtin: r.gtin,
+              providerKey: r.providerKey,
+              supplierKey: shop.key,
+              status: "SUPPLIER_GTIN",
+            },
+            update: {
+              gtin: r.gtin,
+              providerKey: r.providerKey,
+              supplierKey: shop.key,
+              status: "SUPPLIER_GTIN",
+            },
+          });
+          wrote++;
+        } catch {
+          /* best-effort per-variant; don't kill the run */
+        }
+      }
+      processed++;
+      if (processed - lastFlushAt >= FLUSH_EVERY) {
+        lastFlushAt = processed;
+        await flushProgress();
+      }
     });
 
     await updateRun(runId, {
       status: "ok",
       finished_at: new Date(),
       variants_upserted: wrote,
-      with_gtin: records.length,
+      with_gtin: seenGtins.size,
       errors: jsErrors,
-      message: `listed=${listed.length} wrote=${wrote} js_errors=${jsErrors}`,
+      message: `listed=${listed.length} processed=${processed} wrote=${wrote} js_errors=${jsErrors}`,
     });
   } catch (err: any) {
     await updateRun(runId, {

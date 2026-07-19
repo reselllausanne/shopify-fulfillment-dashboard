@@ -57,9 +57,12 @@ export default function ScraperPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const inFlightRef = useRef(false);
 
   const load = useCallback(async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/scraper/overview", { cache: "no-store" });
@@ -70,29 +73,14 @@ export default function ScraperPage() {
       setError(e?.message || "Failed to load");
     } finally {
       setLoading(false);
+      inFlightRef.current = false;
     }
   }, []);
 
+  // Load once on mount. No auto-polling — use the Refresh button.
   useEffect(() => {
     load();
   }, [load]);
-
-  // Auto-poll while any shop is scraping.
-  useEffect(() => {
-    const running = (ov?.totals?.running ?? 0) > 0;
-    if (running && !pollRef.current) {
-      pollRef.current = setInterval(load, 5000);
-    } else if (!running && pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [ov?.totals?.running, load]);
 
   const scrape = useCallback(
     async (shopKey?: string) => {
