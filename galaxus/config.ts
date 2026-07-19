@@ -95,6 +95,7 @@ export const GALAXUS_BUYER_ADDRESS2 = null;
 export const GALAXUS_BUYER_POSTAL_CODE = "CH-8005";
 export const GALAXUS_BUYER_CITY = "Zürich";
 export const GALAXUS_BUYER_COUNTRY = "Switzerland";
+export const GALAXUS_BUYER_VAT_ID = "CHE-109.049.266 MWST";
 
 // Fixed receiver address required for SSCC labels.
 export const GALAXUS_SSCC_RECIPIENT_NAME =

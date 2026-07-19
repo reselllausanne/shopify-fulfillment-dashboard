@@ -15,7 +15,7 @@ function getLabelFileExtension(format?: string) {
   return "pdf";
 }
 
-function extractLabelPayload(response: any) {
+export function extractLabelPayload(response: any) {
   if (!response) return null;
   const item = Array.isArray(response.item) ? response.item[0] : response.item;
   if (!item) return null;
@@ -111,6 +111,43 @@ function sanitizeStreetForSwissPost(baseStreet: unknown, extraStreet?: unknown):
   return street;
 }
 
+function looksLikeBusinessName(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return [
+    " ag",
+    " gmbh",
+    " sa",
+    " sarl",
+    " ltd",
+    " llc",
+    " inc",
+    " company",
+    " shop",
+    " digitec",
+    " galaxus",
+  ].some((needle) => normalized.includes(needle));
+}
+
+function splitSwissPostName(rawName: string) {
+  const cleaned = normalizeSwissPostText(rawName);
+  if (!cleaned) {
+    return { firstName: null as string | null, name1: "" };
+  }
+  if (looksLikeBusinessName(cleaned)) {
+    return { firstName: null as string | null, name1: cleaned };
+  }
+  const parts = cleaned.split(" ").filter(Boolean);
+  if (parts.length < 2) {
+    return { firstName: null as string | null, name1: cleaned };
+  }
+  const firstName = parts[0];
+  const name1 = parts.slice(1).join(" ").trim();
+  if (!name1) {
+    return { firstName: null as string | null, name1: cleaned };
+  }
+  return { firstName, name1 };
+}
+
 function buildSwissPostRecipient(
   values: {
     name?: unknown;
@@ -120,25 +157,29 @@ function buildSwissPostRecipient(
     city?: unknown;
     countryCodeOrName?: unknown;
     email?: unknown;
+    phone?: unknown;
+    contactName?: unknown;
   }
 ) {
   const country = normalizeCountryCode(values.countryCodeOrName) ?? "CH";
   const zip = normalizePostalCode(values.postalCode) ?? "";
-  const name1 = normalizeSwissPostText(values.name) || "";
+  const rawName = normalizeSwissPostText(values.name) || "";
+  const parsedName = splitSwissPostName(rawName);
   const baseStreet = normalizeSwissPostText(values.address1);
   const extraStreet = normalizeSwissPostText(values.address2);
   const street = sanitizeStreetForSwissPost(baseStreet, extraStreet);
-  const name2 = extraStreet && extraStreet !== street ? extraStreet : null;
+  const contactName = normalizeSwissPostText(values.contactName);
+  const name2 = contactName || (extraStreet && extraStreet !== street ? extraStreet : null);
 
   return {
-    name1,
-    firstName: null,
+    name1: parsedName.name1 || rawName,
+    firstName: parsedName.firstName,
     name2,
     street,
     zip,
     city: normalizeSwissPostText(values.city) || "",
     country,
-    phone: null,
+    phone: normalizeSwissPostText(values.phone) || null,
     email: normalizeSwissPostText(values.email) || null,
   };
 }
@@ -159,6 +200,8 @@ function buildRecipient(order: any) {
       city: order.recipientCity,
       countryCodeOrName: order.recipientCountryCode ?? order.recipientCountry,
       email: order.recipientEmail ?? order.customerEmail ?? null,
+      phone: order.recipientPhone ?? null,
+      contactName: order.referencePerson ?? null,
     });
   }
   return buildSwissPostRecipient({
@@ -169,6 +212,8 @@ function buildRecipient(order: any) {
     city: order.customerCity,
     countryCodeOrName: order.customerCountryCode ?? order.customerCountry,
     email: order.customerEmail ?? null,
+    phone: order.recipientPhone ?? null,
+    contactName: order.referencePerson ?? null,
   });
 }
 

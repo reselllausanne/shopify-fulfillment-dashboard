@@ -14,9 +14,16 @@ describe("pickGalaxusProductImageList", () => {
     expect(list[0]).not.toContain(".avif");
   });
 
-  it("uses hosted when it is the only raster URL", () => {
-    const hosted = "https://cdn.example.com/only.jpg";
-    expect(pickGalaxusProductImageList({ images: [], hostedImageUrl: hosted })[0]).toBe(hosted);
+  it("prefers synced hosted jpeg over StockX webp in images JSON", () => {
+    const stockx =
+      "https://images.stockx.com/images/x.jpg?w=500&fm=webp";
+    const hosted = "https://storage.example.com/the_1/main-v1.jpg";
+    const list = pickGalaxusProductImageList({
+      images: [stockx],
+      hostedImageUrl: hosted,
+      imageSyncStatus: "SYNCED",
+    });
+    expect(list[0]).toBe(hosted);
   });
 });
 

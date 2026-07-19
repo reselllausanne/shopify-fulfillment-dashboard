@@ -27,16 +27,21 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json().catch(() => ({}));
     const stockxOrderNumber = String(body?.stockxOrderNumber ?? "").trim();
+    const shopifyOrderName = String(body?.shopifyOrderName ?? "").trim();
     const stockxAwb = String(body?.stockxAwb ?? "").trim() || null;
     const stockxTrackingUrl = String(body?.stockxTrackingUrl ?? "").trim() || null;
     const notes = String(body?.notes ?? "").trim() || null;
 
-    if (!stockxOrderNumber) {
-      return NextResponse.json({ ok: false, error: "Missing stockxOrderNumber" }, { status: 400 });
+    if (!stockxOrderNumber && !shopifyOrderName) {
+      return NextResponse.json(
+        { ok: false, error: "Missing stockxOrderNumber or shopifyOrderName" },
+        { status: 400 }
+      );
     }
 
     const route = await upsertStockxInboundHomeRoute({
-      stockxOrderNumber,
+      stockxOrderNumber: stockxOrderNumber || null,
+      shopifyOrderName: shopifyOrderName || null,
       stockxAwb,
       stockxTrackingUrl,
       notes,

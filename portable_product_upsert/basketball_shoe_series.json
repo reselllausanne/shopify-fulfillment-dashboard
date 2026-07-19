@@ -1,0 +1,171 @@
+{
+  "shopify_category_gid": "gid://shopify/TaxonomyCategory/sg-1-3-5",
+  "shopify_category_path": "Sporting Goods > Athletics > Basketball > Basketball Shoes",
+  "context_keywords": [
+    "basketball",
+    "court shoe",
+    "court",
+    "hoop",
+    "performance basketball",
+    "player edition",
+    "pe "
+  ],
+  "hard_exclude_terms": [
+    "jersey",
+    "backpack",
+    "bag",
+    "funko",
+    "figure",
+    "hobby box",
+    "topps",
+    "trading card",
+    "basketball toy",
+    "basketball toys",
+    "hoop",
+    "backboard",
+    "net",
+    "rim",
+    "t-shirt",
+    "tshirt",
+    "hoodie",
+    "shorts",
+    "sock",
+    "collectible",
+    "arcade",
+    "shooting aid",
+    "dribble goggle",
+    "baseball jersey",
+    "baseball s/s",
+    "warm-up figure"
+  ],
+  "brands": {
+    "nike": {
+      "aliases": ["nike"],
+      "series": [
+        {"id": "lebron", "patterns": ["lebron", "lebron witness", "lebron nxxt", "lebron xx", "lebron 2"]},
+        {"id": "kd", "patterns": ["\\bkd\\b", "kd 1", "kd 2", "kd 3", "kd 4", "kd 5", "kd 6", "kd 7", "kd 8", "kd 9", "kd 10", "kd 11", "kd 12", "kd 13", "kd 14", "kd 15", "kd 16", "kd 17", "kevin durant"]},
+        {"id": "kobe", "patterns": ["kobe", "mamba", "protro kobe", "kobe protro", "kobe 4", "kobe 5", "kobe 6", "kobe 7", "kobe 8", "kobe 9", "kobe 11", "kobe protro"]},
+        {"id": "kyrie", "patterns": ["kyrie", "kyrie 1", "kyrie 2", "kyrie 3", "kyrie 4", "kyrie 5", "kyrie 6", "kyrie 7", "kyrie 8", "kyrie infinity", "kyrie low"]},
+        {"id": "pg", "patterns": ["\\bpg 1\\b", "\\bpg 2\\b", "\\bpg 3\\b", "\\bpg 4\\b", "\\bpg 5\\b", "\\bpg 6\\b", "paul george", "pg signature"]},
+        {"id": "zoom_freak", "patterns": ["zoom freak", "freak 1", "freak 2", "freak 3", "freak 4", "freak 5", "freak 6", "giannis"]},
+        {"id": "gt_cut", "patterns": ["gt cut", "gt-cut", "gt jump", "gt-jump", "gt hustle", "gt-hustle", "gt cut cross", "gt cut academy"]},
+        {"id": "air_max_penny", "patterns": ["air max penny", "penny 1", "penny 2", "penny 3", "penny 4", "penny 5", "penny hardaway"]},
+        {"id": "hyperdunk", "patterns": ["hyperdunk", "hyper dunk"]},
+        {"id": "air_force_max", "patterns": ["air force max", "force max"]},
+        {"id": "zoom_rize", "patterns": ["zoom rize", "rize 2"]},
+        {"id": "cosmic_unity", "patterns": ["cosmic unity", "cosmic unity 2", "cosmic unity 3"]},
+        {"id": "foamposite", "patterns": ["foamposite", "foampo"]},
+        {"id": "ja", "patterns": ["\\bja 1\\b", "\\bja 2\\b", "\\bja1\\b", "\\bja2\\b", "ja morant"]},
+        {"id": "book", "patterns": ["book 1", "book 2", "book 3", "devin booker"]},
+        {"id": "tatum", "patterns": ["tatum 1", "tatum 2", "tatum 3", "jayson tatum"]}
+      ]
+    },
+    "adidas": {
+      "aliases": ["adidas"],
+      "series": [
+        {"id": "harden", "patterns": ["harden", "harden vol", "harden volume"]},
+        {"id": "dame", "patterns": ["\\bdame\\b", "dame 1", "dame 2", "dame 3", "dame 4", "dame 5", "dame 6", "dame 7", "dame 8", "dame 9", "damian lillard"]},
+        {"id": "ae1", "patterns": ["\\bae 1\\b", "ae 1 low", "ae1", "anthony edwards"]},
+        {"id": "trae", "patterns": ["trae young", "trae 1", "trae 2", "trae 3", "trae unlimited"]},
+        {"id": "crazy_byw", "patterns": ["crazy byw", "crazy explosive", "crazy 1", "crazy 2", "crazy 3"]},
+        {"id": "pro_bounce", "patterns": ["pro bounce", "pro-bounce"]},
+        {"id": "d_rose", "patterns": ["d rose", "d-rose", "rose 1", "rose 2", "rose 3", "rose 4", "rose 5", "rose 6", "rose 7", "rose 8", "rose 9", "rose 10", "rose 11", "derrick rose"]},
+        {"id": "marquee_boost", "patterns": ["marquee boost"]},
+        {"id": "exhibit", "patterns": ["exhibit a", "exhibit b", "exhibit 2000"]},
+        {"id": "ownthegame", "patterns": ["ownthegame", "own the game"]},
+        {"id": "qntm", "patterns": ["qntm", "quantum"]}
+      ]
+    },
+    "new_balance": {
+      "aliases": ["new balance", "new-balance"],
+      "series": [
+        {"id": "two_wxy", "patterns": ["two wxy", "two-wxy", "2wxy", "wxy v"]},
+        {"id": "kawhi", "patterns": ["kawhi", "kawhi 1", "kawhi 2", "kawhi 3", "kawhi 4", "kawhi four"]},
+        {"id": "coco_cg1", "patterns": ["coco cg1", "coco cg 1", "coco gauff"]}
+      ]
+    },
+    "puma": {
+      "aliases": ["puma"],
+      "series": [
+        {"id": "clyde", "patterns": ["clyde all-pro", "clyde all pro", "clyde pro", "\\bclyde\\b"]},
+        {"id": "mb", "patterns": ["\\bmb\\.0", "\\bmb0", "mb\\.01", "mb\\.02", "mb\\.03", "mb\\.04", "mb 01", "mb 02", "mb 03", "mb 04", "lamelo", "la melo"]},
+        {"id": "stewie", "patterns": ["stewie", "breanna stewart"]},
+        {"id": "scoot", "patterns": ["scoot zero", "scoot zeros", "scoot 1", "scoot z"]},
+        {"id": "playmaker", "patterns": ["playmaker pro", "playmaker"]}
+      ]
+    },
+    "under_armour": {
+      "aliases": ["under armour", "under-armour", "ua "],
+      "series": [
+        {"id": "curry", "patterns": ["curry", "curry flow", "curry 1", "curry 2", "curry 3", "curry 4", "curry 5", "curry 6", "curry 7", "curry 8", "curry 9", "curry 10", "curry 11", "curry 12", "curry 13"]},
+        {"id": "embiid", "patterns": ["embiid", "embiid 1", "embiid 2"]},
+        {"id": "anatomix", "patterns": ["anatomix spawn", "anatomix"]},
+        {"id": "spawn", "patterns": ["spawn 1", "spawn 2", "spawn 3", "spawn 4", "spawn 5", "ua spawn"]},
+        {"id": "hovr_havoc", "patterns": ["hovr havoc", "havoc 2", "havoc 3", "havoc 4", "havoc 5", "havoc 6"]}
+      ]
+    },
+    "reebok": {
+      "aliases": ["reebok"],
+      "series": [
+        {"id": "question", "patterns": ["question mid", "question low", "the question", "allen iverson question", "\\bquestion\\b"]},
+        {"id": "answer", "patterns": ["answer 1", "answer 2", "answer 3", "answer 4", "answer 5", "the answer"]},
+        {"id": "shaqnosis", "patterns": ["shaqnosis"]},
+        {"id": "kamikaze", "patterns": ["kamikaze", "kamikaze 2"]},
+        {"id": "pump_omni", "patterns": ["pump omni zone", "omni zone"]}
+      ]
+    },
+    "converse": {
+      "aliases": ["converse"],
+      "series": [
+        {"id": "all_star_pro_bb", "patterns": ["all star pro bb", "pro bb", "all-star pro bb"]},
+        {"id": "g4", "patterns": ["converse g4", "\\bg4\\b", "giannis g4"]}
+      ]
+    },
+    "li_ning": {
+      "aliases": ["li-ning", "li ning", "lining"],
+      "series": [
+        {"id": "wow", "patterns": ["way of wade", "wow 1", "wow 2", "wow 3", "wow 4", "wow 5", "wow 6", "wow 7", "wow 8", "wow 9", "wow 10", "wow 11", "wade"]},
+        {"id": "sonic", "patterns": ["sonic 1", "sonic 2", "sonic 3", "sonic 4", "sonic 5", "sonic 6", "sonic 7", "sonic 8", "sonic 9", "sonic 10", "sonic 11", "li-ning sonic", "li ning sonic"]},
+        {"id": "speed", "patterns": ["li-ning speed", "li ning speed", "speed ultra"]},
+        {"id": "bucks", "patterns": ["li-ning bucks", "li ning bucks"]}
+      ]
+    },
+    "peak": {
+      "aliases": ["peak"],
+      "series": [
+        {"id": "tony_parker", "patterns": ["tony parker", "tp 1", "tp1", "tp 2", "tp 3", "tp 4", "tp 5", "tp 6", "tp 7", "tp 9"]},
+        {"id": "lou_williams", "patterns": ["lou williams", "louwill", "big 3"]},
+        {"id": "wiggins", "patterns": ["andrew wiggins", "wiggins peak", "peak wiggins"]}
+      ]
+    },
+    "anta": {
+      "aliases": ["anta"],
+      "series": [
+        {"id": "kt", "patterns": ["\\bkt 1\\b", "\\bkt 2\\b", "\\bkt 3\\b", "\\bkt 4\\b", "\\bkt 5\\b", "\\bkt 6\\b", "\\bkt 7\\b", "\\bkt 8\\b", "\\bkt 9\\b", "\\bkt 10\\b", "klay thompson", "kt low", "kt mid", "kt high"]},
+        {"id": "hayward", "patterns": ["gordon hayward", "hayward 1", "hayward 2", "hayward 3", "hayward 4"]}
+      ]
+    },
+    "361": {
+      "aliases": ["361", "361°"],
+      "series": [
+        {"id": "sensation", "patterns": ["361 sensation", "sensation 1", "sensation 2", "sensation 3", "sensation 4", "sensation 5"]},
+        {"id": "spire", "patterns": ["361 spire", "spire 2", "spire 3", "spire 4", "spire 5"]}
+      ]
+    },
+    "and1": {
+      "aliases": ["and1", "and 1"],
+      "series": [
+        {"id": "tai_chi", "patterns": ["tai chi", "taichi"]},
+        {"id": "rocket", "patterns": ["rocket 1", "rocket 2", "rocket 3", "rocket 4", "and1 rocket"]}
+      ]
+    },
+    "other": {
+      "aliases": ["starbury", "k1x", "brandblack", "spalding"],
+      "series": [
+        {"id": "starbury", "patterns": ["starbury"]},
+        {"id": "k1x", "patterns": ["k1x", "hardwood"]},
+        {"id": "brandblack", "patterns": ["brandblack", "rare metal", "future legend"]}
+      ]
+    }
+  }
+}

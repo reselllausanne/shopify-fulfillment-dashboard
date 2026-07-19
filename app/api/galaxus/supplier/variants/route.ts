@@ -1,38 +1,111 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
+import { attachGtinReferenceMinPrices } from "@/galaxus/supplier/gtinReferenceMinPrice";
 import { enrichSupplierVariantsForListing } from "@/galaxus/supplier/supplierVariantListExtras";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function isIdentifierQuery(value: string): boolean {
+  return /^[A-Za-z0-9:_-]+$/.test(value);
+}
+
+function parseSupplierKeyFilter(input: string): string | null {
+  const trimmed = String(input ?? "").trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.replace(/[:_]+$/g, "");
+  if (!cleaned) return null;
+  if (/^[A-Za-z0-9]{2,20}$/.test(cleaned)) return cleaned.toLowerCase();
+  return null;
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Number(searchParams.get("limit") ?? "50"), 500);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
   const q = (searchParams.get("q") ?? "").trim();
+  const supplierKeyParam = parseSupplierKeyFilter(searchParams.get("supplierKey") ?? "");
 
   const where: Record<string, unknown> = {};
-  if (q) {
-    where.OR = [
-      { supplierVariantId: { contains: q, mode: "insensitive" } },
-      { providerKey: { contains: q, mode: "insensitive" } },
-      { gtin: { contains: q, mode: "insensitive" } },
-      { supplierSku: { contains: q, mode: "insensitive" } },
-      { supplierProductName: { contains: q, mode: "insensitive" } },
+  let fuzzyFallbackWhere: Record<string, unknown> | null = null;
+  if (supplierKeyParam) {
+    where.AND = [
+      {
+        OR: [
+          { supplierVariantId: { startsWith: `${supplierKeyParam}:`, mode: "insensitive" } },
+          { supplierVariantId: { startsWith: `${supplierKeyParam}_`, mode: "insensitive" } },
+          { providerKey: { startsWith: `${supplierKeyParam.toUpperCase()}_`, mode: "insensitive" } },
+        ],
+      },
     ];
   }
+  if (q) {
+    if (isIdentifierQuery(q)) {
+      const upper = q.toUpperCase();
+      const lower = q.toLowerCase();
+      const idOr = [
+        { supplierVariantId: q },
+        { supplierVariantId: lower },
+        { supplierVariantId: upper },
+        { providerKey: q },
+        { providerKey: lower },
+        { providerKey: upper },
+        { gtin: q },
+        { supplierSku: q },
+      ];
+      if (Array.isArray(where.AND)) {
+        where.AND = [...where.AND, { OR: idOr }];
+      } else {
+        where.OR = idOr;
+      }
 
-  const items = await prisma.supplierVariant.findMany({
+      // Keep fuzzy fallback for rare cases where users paste partial middle tokens.
+      fuzzyFallbackWhere = {
+        OR: [
+          { supplierVariantId: { contains: q, mode: "insensitive" } },
+          { providerKey: { contains: q, mode: "insensitive" } },
+          { gtin: { contains: q, mode: "insensitive" } },
+          { supplierSku: { contains: q, mode: "insensitive" } },
+        ],
+      };
+    } else if (q.length >= 3) {
+      const nameOr = [
+        { supplierProductName: { contains: q, mode: "insensitive" } },
+        { supplierBrand: { contains: q, mode: "insensitive" } },
+      ];
+      if (Array.isArray(where.AND)) {
+        where.AND = [...where.AND, { OR: nameOr }];
+      } else {
+        where.OR = nameOr;
+      }
+    }
+  }
+
+  let items = await prisma.supplierVariant.findMany({
     where,
     orderBy: { updatedAt: "desc" },
     take: limit,
     skip: offset,
   });
 
+  if (q && items.length === 0 && offset === 0 && fuzzyFallbackWhere) {
+    const fuzzyWhere =
+      supplierKeyParam && Array.isArray(where.AND)
+        ? { AND: [where.AND[0], fuzzyFallbackWhere] }
+        : fuzzyFallbackWhere;
+    items = await prisma.supplierVariant.findMany({
+      where: fuzzyWhere,
+      orderBy: { updatedAt: "desc" },
+      take: limit,
+      skip: offset,
+    });
+  }
+
   const enriched = await enrichSupplierVariantsForListing(prisma, items);
+  const withRef = await attachGtinReferenceMinPrices(prisma, enriched);
   const nextOffset = items.length === limit ? offset + limit : null;
-  return NextResponse.json({ ok: true, items: enriched, nextOffset });
+  return NextResponse.json({ ok: true, items: withRef, nextOffset });
 }
 
 type UpdatePayload = {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isTheWarehouseGalaxusLine } from "./theCatalogStock";
+import { isTheSupplierVariantId, isTheWarehouseGalaxusLine } from "./theCatalogStock";
 
 describe("isTheWarehouseGalaxusLine", () => {
   it("detects THE warehouse lines from providerKey", () => {
@@ -19,5 +19,19 @@ describe("isTheWarehouseGalaxusLine", () => {
         providerKey: "STX_7612345678901",
       })
     ).toBe(false);
+  });
+});
+
+describe("isTheSupplierVariantId", () => {
+  it("accepts the: and the_ catalog ids", () => {
+    expect(isTheSupplierVariantId("the:IM4002-100-40")).toBe(true);
+    expect(isTheSupplierVariantId("THE:IM4002-100-40")).toBe(true);
+    expect(isTheSupplierVariantId("the_legacy")).toBe(true);
+  });
+
+  it("rejects partner/stx ids", () => {
+    expect(isTheSupplierVariantId("ner:IM4002-100-40")).toBe(false);
+    expect(isTheSupplierVariantId("stx_abc")).toBe(false);
+    expect(isTheSupplierVariantId(null)).toBe(false);
   });
 });

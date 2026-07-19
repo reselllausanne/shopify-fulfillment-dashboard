@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { decathlonLinePayoutPreferMirakl, decathlonMiraklSellTotal } from "@/decathlon/orders/margin";
 
 type OrderListItem = {
@@ -68,27 +68,41 @@ export default function PartnerOrdersPage() {
   const [markingGalaxus, setMarkingGalaxus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
+  const [productSearchInput, setProductSearchInput] = useState("");
+  const [productSearch, setProductSearch] = useState("");
 
-  const loadOrders = async () => {
+  useEffect(() => {
+    const t = setTimeout(() => setProductSearch(productSearchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [productSearchInput]);
+
+  const loadOrders = useCallback(async () => {
     setLoadingOrders(true);
     setError(null);
     try {
-      const res = await fetch(`/api/decathlon/orders?limit=50&view=${leftTab}&scope=partner`, {
+      const qs = new URLSearchParams({
+        limit: "100",
+        view: leftTab,
+        scope: "partner",
+      });
+      if (productSearch) qs.set("product", productSearch);
+      const res = await fetch(`/api/decathlon/orders?${qs.toString()}`, {
         cache: "no-store",
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
       const items: OrderListItem[] = data.items || [];
       setOrders(items);
-      if (!selectedOrderId && items[0]?.id) {
-        setSelectedOrderId(items[0].id);
-      }
+      setSelectedOrderId((prev) => {
+        if (prev && items.some((o) => o.id === prev)) return prev;
+        return items[0]?.id ?? null;
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
       setLoadingOrders(false);
     }
-  };
+  }, [leftTab, productSearch]);
 
   const loadGalaxusOrders = async () => {
     setLoadingGalaxusOrders(true);
@@ -141,12 +155,14 @@ export default function PartnerOrdersPage() {
 
   useEffect(() => {
     loadOrders();
-  }, [leftTab]);
+  }, [loadOrders]);
 
   useEffect(() => {
     if (selectedOrderId) {
       setSelectedOrder(null);
       loadOrderDetail(selectedOrderId);
+    } else {
+      setSelectedOrder(null);
     }
   }, [selectedOrderId]);
 
@@ -352,6 +368,22 @@ export default function PartnerOrdersPage() {
               Fulfilled
             </button>
           </div>
+          <label className="block mb-2">
+            <span className="sr-only">Search orders</span>
+            <input
+              type="search"
+              enterKeyHint="search"
+              placeholder="Search name, SKU, order ID…"
+              value={productSearchInput}
+              onChange={(e) => setProductSearchInput(e.target.value)}
+              className="w-full border border-slate-200 rounded px-2 py-1.5 text-sm"
+            />
+          </label>
+          {productSearch ? (
+            <div className="text-[11px] text-slate-500 mb-2">
+              Filter: “{productSearch}” · {loadingOrders ? "…" : `${ordersByTab.length} order(s)`}
+            </div>
+          ) : null}
           <div className="space-y-2 max-h-[500px] overflow-auto">
             {ordersByTab.map((order) => {
               const totalUnits = order.totalUnits ?? 0;

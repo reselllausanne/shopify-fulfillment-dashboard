@@ -109,8 +109,10 @@ export type DecathlonPartnerFulfilledTotals = {
   fulfilledOrderCount: number;
   /** Sum of line quantities on partner-scoped lines for those orders. */
   fulfilledPartnerLineUnits: number;
-  /** NER: sum of Mirakl line payout per order line; others: sum of Mirakl sell (ligne) from DB. */
+  /** Legacy metric kept for compatibility (NER: payout; others: sell). */
   totalChf: number;
+  /** Exact Mirakl sell TTC (line total) for all partners. */
+  totalSellChf: number;
   /** NER only: scoped lines missing Mirakl totals on fulfilled orders */
   miraklPayoutLineMisses: number;
   /** Feed/catalog buy price × shipped units on fulfilled orders (all partners). */
@@ -149,6 +151,7 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
   let fulfilledOrderCount = 0;
   let fulfilledPartnerLineUnits = 0;
   let totalChf = 0;
+  let totalSellChf = 0;
   let miraklPayoutLineMisses = 0;
 
   const fulfilledMetricLines: any[] = [];
@@ -166,17 +169,19 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
       if (!Number.isFinite(qty) || qty <= 0) continue;
       fulfilledPartnerLineUnits += qty;
 
+      const sell = decathlonMiraklSellTotal({
+        lineTotal: line.lineTotal,
+        unitPrice: line.unitPrice,
+        quantity: line.quantity,
+      });
+      if (sell != null) totalSellChf += sell;
+
       if (pk === "NER") {
         const p = decathlonMiraklSellerPayoutLineTotal(line.rawJson);
         if (p != null) totalChf += p;
         else miraklPayoutLineMisses += 1;
       } else {
-        const s = decathlonMiraklSellTotal({
-          lineTotal: line.lineTotal,
-          unitPrice: line.unitPrice,
-          quantity: line.quantity,
-        });
-        if (s != null) totalChf += s;
+        if (sell != null) totalChf += sell;
       }
     }
   }
@@ -208,6 +213,7 @@ export async function computeDecathlonPartnerFulfilledOrderStats(
     fulfilledOrderCount,
     fulfilledPartnerLineUnits,
     totalChf,
+    totalSellChf,
     miraklPayoutLineMisses: pk === "NER" ? miraklPayoutLineMisses : 0,
     partnerCatalogShippedChf,
     shippedLineCount,

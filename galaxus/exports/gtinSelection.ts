@@ -38,7 +38,12 @@ function isAbsoluteUrl(value: string) {
   }
 }
 
-function hasPrimaryImage(variant?: { images?: unknown; sourceImageUrl?: string | null; hostedImageUrl?: string | null } | null): boolean {
+function hasPrimaryImage(variant?: {
+  images?: unknown;
+  sourceImageUrl?: string | null;
+  hostedImageUrl?: string | null;
+  imageSyncStatus?: string | null;
+} | null): boolean {
   return pickGalaxusProductImageList(variant ?? {}).length > 0;
 }
 

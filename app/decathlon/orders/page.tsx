@@ -957,11 +957,11 @@ export default function DecathlonOrdersPage() {
             </button>
           </div>
           <label className="block mt-2">
-            <span className="sr-only">Search by product name</span>
+            <span className="sr-only">Search orders</span>
             <input
               type="search"
               enterKeyHint="search"
-              placeholder="Search product name…"
+              placeholder="Search name, SKU, order ID…"
               value={productSearchInput}
               onChange={(e) => setProductSearchInput(e.target.value)}
               className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"

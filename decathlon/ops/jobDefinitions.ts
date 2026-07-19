@@ -12,6 +12,8 @@ export const DEFAULT_DECATHLON_JOBS: Array<{
   { jobKey: "decathlon-stock-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
   { jobKey: "decathlon-price-sync", intervalMs: 1 * HOUR_MS, enabled: true },
   { jobKey: "decathlon-offer-sync", intervalMs: 24 * HOUR_MS, enabled: true },
+  /** Daily active Decathlon return sync for receipt/refund workflow. */
+  { jobKey: "decathlon-return-sync", intervalMs: 24 * HOUR_MS, enabled: true },
 ];
 
 export async function ensureDecathlonJobDefinitions() {

@@ -184,6 +184,35 @@ function clampQty(value: number, min: number, max: number): number {
   return v;
 }
 
+const HIDDEN_ORDER_NUMBERS: ReadonlySet<string> = new Set([
+  "188755928",
+  "188479132",
+  "187964097",
+  "187007638",
+  "186269657",
+  "184834445",
+  "183918475",
+  "183785441",
+  "183281823",
+  "183202146",
+  "182956892",
+  "182803759",
+  "182457653",
+  "181909463",
+  "181601849",
+  "181239882",
+  "181100460",
+  "180774081",
+]);
+
+function isHiddenOrder(order: { orderNumber?: string | null; galaxusOrderId?: string | null }): boolean {
+  const num = String(order.orderNumber ?? "").trim();
+  if (num && HIDDEN_ORDER_NUMBERS.has(num)) return true;
+  const gid = String(order.galaxusOrderId ?? "").trim();
+  if (gid && HIDDEN_ORDER_NUMBERS.has(gid)) return true;
+  return false;
+}
+
 function normalizeGtinKey(value: string): string {
   const digits = value.replace(/\D/g, "");
   if (!digits) return "";
@@ -240,6 +269,7 @@ export default function GalaxusWarehouseShipmentsPage() {
       const items = Array.isArray(data.items) ? data.items : [];
       const filtered = items.filter((item: any) => {
         if (isDirectDelivery(item)) return false;
+        if (isHiddenOrder(item)) return false;
         const totalLines = Number(item?._count?.lines ?? 0);
         if (!Number.isFinite(totalLines) || totalLines <= 0) return false;
         const openLines = item?.warehouseOpenLineCount;
@@ -371,7 +401,7 @@ export default function GalaxusWarehouseShipmentsPage() {
         const reserved = coverage?.reserved ?? 0;
         return Math.max(0, ordered - shipped - reserved) > 0;
       });
-    const filtered = eligibleOrders.filter(hasRemaining);
+    const filtered = eligibleOrders.filter((order) => !isHiddenOrder(order) && hasRemaining(order));
     const anchor = filtered.find((order) => order.id === selectedOrderId);
     const others = filtered.filter((order) => order.id !== selectedOrderId);
     return anchor ? [anchor, ...others] : filtered;

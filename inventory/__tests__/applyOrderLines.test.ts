@@ -10,9 +10,25 @@ vi.mock("@/inventory/resolveSupplierVariant", () => ({
   resolveSupplierVariantForInventoryLine: vi.fn(),
 }));
 
+vi.mock("@/inventory/theSaleChannelSync", () => ({
+  scheduleTheSaleChannelSync: vi.fn(),
+}));
+
+vi.mock("@/galaxus/warehouse/theCatalogStock", async () => {
+  const actual = await vi.importActual<typeof import("@/galaxus/warehouse/theCatalogStock")>(
+    "@/galaxus/warehouse/theCatalogStock"
+  );
+  return {
+    ...actual,
+    applyTheCatalogStockDeltaInTx: vi.fn().mockResolvedValue(true),
+  };
+});
+
 import { prisma } from "@/app/lib/prisma";
 import { resolveSupplierVariantForInventoryLine } from "@/inventory/resolveSupplierVariant";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
+import { scheduleTheSaleChannelSync } from "@/inventory/theSaleChannelSync";
+import { applyTheCatalogStockDeltaInTx } from "@/galaxus/warehouse/theCatalogStock";
 
 const mockedPrisma = prisma as unknown as {
   $transaction: ReturnType<typeof vi.fn>;
@@ -133,5 +149,49 @@ describe("applyInventoryOrderLine", () => {
 
     expect(firstCall.quantityDelta).toBe(-2);
     expect(secondCall.quantityDelta).toBe(3);
+  });
+
+  it("decrements THE catalog stock and schedules channel sync on sale", async () => {
+    mockedResolver.mockResolvedValue({
+      supplierVariantId: "the:IM4002-100-40",
+      providerKey: "THE_198726522040",
+      gtin: "198726522040",
+    });
+
+    const tx = {
+      orderLineSyncState: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        update: vi.fn(),
+        create: vi.fn().mockResolvedValue({ id: "sync-the" }),
+      },
+      inventoryEvent: {
+        create: vi.fn().mockResolvedValue({ id: "evt-the" }),
+      },
+      channelListingState: {
+        upsert: vi.fn().mockResolvedValue({ id: "listing-the" }),
+      },
+    };
+
+    mockedPrisma.$transaction.mockImplementation(async (handler: any) => handler(tx));
+
+    const result = await applyInventoryOrderLine({
+      channel: "GALAXUS",
+      externalOrderId: "195400913",
+      externalLineId: "GALAXUS:195400913:5",
+      quantity: 1,
+      providerKey: "THE_198726522040",
+      eventType: "SALE",
+    });
+
+    expect(result.applied).toBe(true);
+    expect(applyTheCatalogStockDeltaInTx).toHaveBeenCalledWith(
+      tx,
+      "the:IM4002-100-40",
+      -1,
+      "GALAXUS:GALAXUS:195400913:5"
+    );
+    expect(scheduleTheSaleChannelSync).toHaveBeenCalledWith({
+      providerKeys: ["THE_198726522040"],
+    });
   });
 });

@@ -1,0 +1,2 @@
+provider_key,supplier_variant_id,gtin,supplier_price_chf,stock_to_push,delivery_days_min,delivery_days_max,recommendation,checked_at,reason
+NER_6976413750242,ner_beatbot-iskim-ultra-prcssf01-eu-g,6976413750242,999.00,1,15,25,GO_PUSH,2026-07-02T14:10:43.040Z,

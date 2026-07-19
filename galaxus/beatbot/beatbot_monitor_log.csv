@@ -1,0 +1,5 @@
+checked_at,source_price_eur,source_status,source_shipping_text,galaxus_price_chf,galaxus_seller,landed_safe_chf,target_supplier_price_chf,estimated_margin_safe_chf,stock_to_push,recommendation,alerts
+2026-07-02T14:03:56.932Z,578.00,preorder,Pre-order: Estimated shipping from July 20th.,1299.00,augusta-pool.ch,607.07,999.00,391.93,1,GO_PUSH,
+2026-07-02T14:05:10.742Z,578.00,preorder,Pre-order: Estimated shipping from July 20th.,1299.00,augusta-pool.ch,607.07,999.00,391.93,1,GO_PUSH,
+2026-07-02T14:08:23.121Z,578.00,preorder,Pre-order: Estimated shipping from July 20th.,1299.00,augusta-pool.ch,607.07,999.00,391.93,1,GO_PUSH,
+2026-07-02T14:10:43.041Z,578.00,preorder,Pre-order: Estimated shipping from July 20th.,1299.00,augusta-pool.ch,607.07,999.00,391.93,1,GO_PUSH,

@@ -73,7 +73,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, result });
     }
     if (action === "stock-sync") {
-      const result = await runDecathlonStockSync({ limit });
+      const result = await runDecathlonStockSync({ limit, providerKeys });
       return NextResponse.json({ ok: true, result });
     }
     if (action === "price-sync") {
@@ -104,6 +104,11 @@ export async function POST(request: Request) {
         checkLatestImportStatus("PRI01"),
       ]);
       return NextResponse.json({ ok: true, results: { p41, of01, sto01, pri01 } });
+    }
+    if (action === "return-sync") {
+      const { syncMarketplaceReturns } = await import("@/decathlon/returns/receipt/sync");
+      const result = await syncMarketplaceReturns();
+      return NextResponse.json({ ok: result.ok, result });
     }
 
     return NextResponse.json({ ok: false, error: "Unknown action" }, { status: 400 });

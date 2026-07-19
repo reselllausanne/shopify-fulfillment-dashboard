@@ -16,7 +16,8 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "prisma:deploy": "prisma migrate deploy && prisma generate"
+    "prisma:deploy": "prisma migrate deploy && prisma generate",
+    "returns:sync": "tsx scripts/sync-decathlon-returns.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -26,6 +27,7 @@
     "@prisma/client": "^6.19.1",
     "@supabase/supabase-js": "^2.93.3",
     "@types/bwip-js": "^3.2.3",
+    "@zxing/library": "^0.23.0",
     "bwip-js": "^4.8.0",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
@@ -47,6 +49,7 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/ssh2": "^1.15.5",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",

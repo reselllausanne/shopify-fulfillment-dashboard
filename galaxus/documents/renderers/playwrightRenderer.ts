@@ -10,6 +10,7 @@ type RenderOptions = {
   marginRight?: string;
   marginBottom?: string;
   marginLeft?: string;
+  preferCssPageSize?: boolean;
 };
 
 export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer> {
@@ -35,6 +36,7 @@ export async function renderPdfFromHtml(options: RenderOptions): Promise<Buffer>
       width: options.width,
       height: options.height,
       printBackground: true,
+      preferCSSPageSize: options.preferCssPageSize ?? false,
       displayHeaderFooter: options.showPageNumbers ?? false,
       headerTemplate: "<div></div>",
       footerTemplate,

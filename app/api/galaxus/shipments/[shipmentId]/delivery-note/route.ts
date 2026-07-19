@@ -14,8 +14,11 @@ export async function GET(
     const { shipmentId } = await params;
     const { searchParams } = new URL(request.url);
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
+    const formatParam = (searchParams.get("format") ?? "").toLowerCase();
+    const forceDeliveryNoteFormat =
+      formatParam === "direct" ? "direct" : formatParam === "warehouse" ? "warehouse" : undefined;
 
-    if (!force) {
+    if (!force && !forceDeliveryNoteFormat) {
       const existing = await prisma.document.findFirst({
         where: { shipmentId, type: DocumentType.DELIVERY_NOTE },
         orderBy: { version: "desc" },
@@ -33,6 +36,7 @@ export async function GET(
     const documents = await service.generateForShipment({
       shipmentId,
       types: [DocumentType.DELIVERY_NOTE],
+      forceDeliveryNoteFormat,
     });
     const created = documents.find((doc) => doc.type === DocumentType.DELIVERY_NOTE) ?? documents[0];
     if (!created) {

@@ -10,9 +10,11 @@ import { packOrderLines } from "./packing";
 import { buildProviderKey, extractProviderKeyFromOrderKey, normalizeProviderKey, resolveSupplierCode } from "@/galaxus/supplier/providerKey";
 import { accumulateBestCandidates } from "@/galaxus/exports/gtinSelection";
 import { renderDeliveryNoteHtml } from "@/galaxus/documents/templates/deliveryNote";
+import { renderDirectDeliveryNoteHtml } from "@/galaxus/documents/templates/directDeliveryNote";
 import { renderPdfFromHtml } from "@/galaxus/documents/renderers/playwrightRenderer";
 import type { DeliveryNoteData, DeliveryNoteOrderGroup, OrderLine } from "@/galaxus/documents/types";
 import {
+  GALAXUS_BUYER_VAT_ID,
   GALAXUS_SUPPLIER_ADDRESS_LINES,
   GALAXUS_SUPPLIER_EMAIL,
   GALAXUS_SUPPLIER_NAME,
@@ -160,19 +162,33 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
       let shipmentForList = created;
       const shouldGenerateDeliveryNote = !isDirectDelivery || requiresPhysicalDeliveryNote;
       if (shouldGenerateDeliveryNote) {
-        const deliveryNotePdf = await renderPdfFromHtml({
-          html: renderDeliveryNoteHtml(
-            buildDeliveryNoteData(
-              orderAny,
-              packed[index].items,
-              created.dispatchNotificationId,
-              created.incoterms,
-              created.shipmentId
-            )
-          ),
-          format: "A4",
-          showPageNumbers: true,
-        });
+        const deliveryNoteData = buildDeliveryNoteData(
+          orderAny,
+          packed[index].items,
+          created.dispatchNotificationId,
+          created.incoterms,
+          created.shipmentId
+        );
+        const deliveryNotePdf = await renderPdfFromHtml(
+          isDirectDelivery
+            ? {
+                html: renderDirectDeliveryNoteHtml(deliveryNoteData),
+                format: "A4",
+                showPageNumbers: false,
+                width: "8.268333in",
+                height: "11.693333in",
+                marginTop: "0",
+                marginRight: "0",
+                marginBottom: "0",
+                marginLeft: "0",
+                preferCssPageSize: true,
+              }
+            : {
+                html: renderDeliveryNoteHtml(deliveryNoteData),
+                format: "A4",
+                showPageNumbers: true,
+              }
+        );
         const deliveryKey = `galaxus/${order.galaxusOrderId}/delivery_note/${created.id}.pdf`;
         const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
         await prismaAny.document.create({
@@ -396,13 +412,34 @@ export async function createManualShipmentsForOrder(
       return shipment;
     });
 
-    const deliveryNotePdf = await renderPdfFromHtml({
-      html: renderDeliveryNoteHtml(
-        buildDeliveryNoteData(orderAny, pack.items, created.dispatchNotificationId, created.incoterms, created.shipmentId)
-      ),
-      format: "A4",
-      showPageNumbers: true,
-    });
+    const deliveryNoteData = buildDeliveryNoteData(
+      orderAny,
+      pack.items,
+      created.dispatchNotificationId,
+      created.incoterms,
+      created.shipmentId
+    );
+    const isDirect = String(orderAny.deliveryType ?? "").toLowerCase() === "direct_delivery";
+    const deliveryNotePdf = await renderPdfFromHtml(
+      isDirect
+        ? {
+            html: renderDirectDeliveryNoteHtml(deliveryNoteData),
+            format: "A4",
+            showPageNumbers: false,
+            width: "8.268333in",
+            height: "11.693333in",
+            marginTop: "0",
+            marginRight: "0",
+            marginBottom: "0",
+            marginLeft: "0",
+            preferCssPageSize: true,
+          }
+        : {
+            html: renderDeliveryNoteHtml(deliveryNoteData),
+            format: "A4",
+            showPageNumbers: true,
+          }
+    );
     const deliveryKey = `galaxus/${order.galaxusOrderId}/delivery_note/${created.id}.pdf`;
     const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
     await prismaAny.document.create({
@@ -482,8 +519,12 @@ function buildCompositeDeliveryNoteData(
       const lineNetAmount = unitNetPrice * item.quantity;
       return {
         lineNumber: line.lineNumber,
-        articleNumber: providerKey,
-        description: line.productName ?? "Item",
+        articleNumber: line.buyerPid ?? "",
+        description:
+          String(line.productName ?? "").trim().toLowerCase() === "item" &&
+          String(line.description ?? "").trim()
+            ? String(line.description).trim()
+            : line.productName ?? "Item",
         size: line.size ?? null,
         gtin: line.gtin ?? null,
         providerKey,
@@ -552,8 +593,13 @@ function buildCompositeDeliveryNoteData(
     },
     orderReference: anchor.orderNumber ?? anchor.galaxusOrderId,
     referencePerson: anchor.referencePerson ?? null,
-    yourReference: anchor.yourReference ?? null,
-    buyerPhone: anchor.deliveryType === "direct_delivery" ? null : anchor.recipientPhone ?? null,
+    yourReference: anchor.endCustomerOrderReference ?? null,
+    endCustomerOrderReference: anchor.endCustomerOrderReference ?? null,
+    buyerPhone: anchor.recipientPhone ?? null,
+    buyerCountryCode: anchor.recipientCountryCode ?? null,
+    buyerPostalBox: null,
+    buyerVatId: GALAXUS_BUYER_VAT_ID,
+    deliveryOption: "Shipping",
     afterSalesHandling: anchor.afterSalesHandling ?? false,
     legalNotice: null,
     groups,
@@ -811,19 +857,34 @@ export async function createCompositeWarehouseShipment(
     return shipment;
   });
 
-  const deliveryNotePdf = await renderPdfFromHtml({
-    html: renderDeliveryNoteHtml(
-      buildCompositeDeliveryNoteData(
-        anchor,
-        packed,
-        created.dispatchNotificationId,
-        created.incoterms,
-        created.shipmentId
-      )
-    ),
-    format: "A4",
-    showPageNumbers: true,
-  });
+  const compositeDeliveryData = buildCompositeDeliveryNoteData(
+    anchor,
+    packed,
+    created.dispatchNotificationId,
+    created.incoterms,
+    created.shipmentId
+  );
+  const isAnchorDirect = String(anchor.deliveryType ?? "").toLowerCase() === "direct_delivery";
+  const deliveryNotePdf = await renderPdfFromHtml(
+    isAnchorDirect
+      ? {
+          html: renderDirectDeliveryNoteHtml(compositeDeliveryData),
+          format: "A4",
+          showPageNumbers: false,
+          width: "8.268333in",
+          height: "11.693333in",
+          marginTop: "0",
+          marginRight: "0",
+          marginBottom: "0",
+          marginLeft: "0",
+          preferCssPageSize: true,
+        }
+      : {
+          html: renderDeliveryNoteHtml(compositeDeliveryData),
+          format: "A4",
+          showPageNumbers: true,
+        }
+  );
   const deliveryKey = `galaxus/${anchor.galaxusOrderId}/delivery_note/${created.id}.pdf`;
   const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
   await prismaAny.document.create({
@@ -1172,8 +1233,12 @@ function buildDeliveryNoteData(
     const lineNetAmount = unitNetPrice * item.quantity;
     return {
       lineNumber: line.lineNumber,
-      articleNumber: providerKey,
-      description: line.productName ?? "Item",
+      articleNumber: line.buyerPid ?? "",
+      description:
+        String(line.productName ?? "").trim().toLowerCase() === "item" &&
+        String(line.description ?? "").trim()
+          ? String(line.description).trim()
+          : line.productName ?? "Item",
       size: line.size ?? null,
       gtin: line.gtin ?? null,
       providerKey,
@@ -1242,8 +1307,13 @@ function buildDeliveryNoteData(
     },
     orderReference: order.orderNumber ?? order.galaxusOrderId,
     referencePerson: order.referencePerson ?? null,
-    yourReference: order.yourReference ?? null,
-    buyerPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
+    yourReference: order.endCustomerOrderReference ?? null,
+    endCustomerOrderReference: order.endCustomerOrderReference ?? null,
+    buyerPhone: order.recipientPhone ?? null,
+    buyerCountryCode: order.recipientCountryCode ?? null,
+    buyerPostalBox: null,
+    buyerVatId: GALAXUS_BUYER_VAT_ID,
+    deliveryOption: "Shipping",
     afterSalesHandling: order.afterSalesHandling ?? false,
     legalNotice: null,
     groups: [group],

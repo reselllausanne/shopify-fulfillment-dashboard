@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       supplierVariantId,
       limit,
       ...(concurrency ? { concurrency } : {}),
+      ...(supplierVariantId ? {} : { supplierKeys: ["stx", "the"] }),
       force: true,
     });
     return NextResponse.json({ ok: true, result });

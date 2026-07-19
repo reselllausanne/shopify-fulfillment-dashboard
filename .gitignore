@@ -63,9 +63,30 @@ terminals/
 .data/*session*.json
 .data/*token*.json
 
+# python
+__pycache__/
+*.pyc
+
 # StockX credentials
 stockx-cookies.json
 stockx-*.json
 debug/
 .env
 .env
+
+# local browser profiles / session data
+.data/
+
+# generated artifacts (PDFs, labels, delivery notes)
+artifacts/
+
+# data dumps (spec sheets, order XML)
+*.xlsx
+GORDP_*.xml
+galaxus/GORDP_*.xml
+
+# python runtime logs
+logs.jsonl
+
+# stray host file from bad scp/ssh
+77.42.74.184

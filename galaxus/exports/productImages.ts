@@ -106,15 +106,35 @@ export function scoreGalaxusImageUrl(url: string): number {
   return s;
 }
 
-/** Best first, up to 9 (MainImage + ImageUrl_1..8). Query-normalized for CDNs that serve WebP via `fm=`. */
+/** Best first, up to 9 (MainImage + ImageUrl_1..8). Prefer hosted JPEG when synced; else images/source. */
 export function pickGalaxusProductImageList(variant: {
   images?: unknown;
   sourceImageUrl?: string | null;
   hostedImageUrl?: string | null;
+  imageSyncStatus?: string | null;
 }): string[] {
   const raw = collectVariantImageUrls(variant);
   if (raw.length === 0) return [];
-  const indexed = raw.map((url, idx) => ({ url, idx, score: scoreGalaxusImageUrl(url) }));
+
+  const hosted = typeof variant?.hostedImageUrl === "string" ? variant.hostedImageUrl.trim() : "";
+  const synced = String(variant?.imageSyncStatus ?? "").toUpperCase() === "SYNCED";
+  const preferHosted =
+    synced &&
+    hosted &&
+    (() => {
+      try {
+        const p = new URL(hosted).pathname.toLowerCase();
+        return p.endsWith(".jpg") || p.endsWith(".jpeg");
+      } catch {
+        return hosted.toLowerCase().includes(".jpg");
+      }
+    })();
+
+  const indexed = raw.map((url, idx) => {
+    let score = scoreGalaxusImageUrl(url);
+    if (preferHosted && url === hosted) score += 500;
+    return { url, idx, score };
+  });
   indexed.sort((a, b) => b.score - a.score || a.idx - b.idx);
   const normalized = indexed.map((x) => normalizeDecathlonImageUrl(x.url));
   const out: string[] = [];

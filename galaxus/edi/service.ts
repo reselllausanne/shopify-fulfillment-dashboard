@@ -828,7 +828,16 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
   const data = parser.parse(xml) as any;
   const root = data.ORDER ?? data;
   const orderId = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_ID"]) ?? fallbackOrderId;
-  const orderNumber = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_NUMBER"]) ?? null;
+  const customerOrderReference = findValueByPath(root, [
+    "ORDER_HEADER",
+    "ORDER_INFO",
+    "CUSTOMER_ORDER_REFERENCE",
+    "ORDER_ID",
+  ]);
+  const orderNumber =
+    findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_NUMBER"]) ??
+    customerOrderReference ??
+    null;
   const supplierOrderId = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "SUPPLIER_ORDER_ID"]) ?? null;
   const orderDateValue =
     findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_DATE"]) ?? new Date().toISOString();
@@ -847,11 +856,15 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
   const supplierIdRef = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "ORDER_PARTIES_REFERENCE", "SUPPLIER_IDREF"]);
   const customerType = findUdxValue(root, "UDX.DG.CUSTOMER_TYPE");
   const deliveryType = findUdxValue(root, "UDX.DG.DELIVERY_TYPE");
+  const isDirectDelivery = String(deliveryType ?? "").toLowerCase() === "direct_delivery";
   const isCollectiveOrder = parseBoolean(findUdxValue(root, "UDX.DG.IS_COLLECTIVE_ORDER"));
   const physicalDeliveryNoteRequired = parseBoolean(findUdxValue(root, "UDX.DG.PHYSICAL_DELIVERY_NOTE_REQUIRED"));
   const saturdayDeliveryAllowed = parseBoolean(findUdxValue(root, "UDX.DG.SATURDAY_DELIVERY_ALLOWED"));
   const endCustomerOrderReference = findUdxValue(root, "UDX.DG.END_CUSTOMER_ORDER_REFERENCE");
-  const customerOrderReference = findValueByPath(root, ["ORDER_HEADER", "ORDER_INFO", "CUSTOMER_ORDER_REFERENCE", "ORDER_ID"]);
+  const recipientName = selectRecipientName(delivery, isDirectDelivery);
+  const recipientAddress2 = selectRecipientAddress2(delivery, recipientName, isDirectDelivery);
+  const deliveryContactReference =
+    compactNonEmpty([delivery?.contactFirstName, delivery?.contactName]).join(" ") || undefined;
 
   const lines = extractLines(root);
   if (lines.length === 0) {
@@ -876,27 +889,27 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
     customerCountryCode: buyer?.countryCode ?? undefined,
     customerEmail: buyer?.email ?? undefined,
     customerVatId: buyer?.vatId ?? undefined,
-    recipientName: delivery?.name ?? undefined,
+    recipientName,
     recipientAddress1: delivery?.street ?? undefined,
-    recipientAddress2:
-      delivery?.street2 ??
-      (delivery as any)?.department ??
-      undefined,
+    recipientAddress2,
     recipientPostalCode: delivery?.postalCode ?? undefined,
     recipientCity: delivery?.city ?? undefined,
     recipientCountry: delivery?.country ?? undefined,
     recipientCountryCode: delivery?.countryCode ?? undefined,
     recipientEmail: delivery?.email ?? undefined,
-    recipientPhone: deliveryType === "direct_delivery" ? undefined : delivery?.phone ?? undefined,
-    referencePerson: findValue(data, "REFERENCE_PERSON") ?? undefined,
-    yourReference: findValue(data, "YOUR_REFERENCE") ?? undefined,
+    recipientPhone: delivery?.phone ?? undefined,
+    referencePerson: findValue(data, "REFERENCE_PERSON") ?? deliveryContactReference,
+    yourReference:
+      findValue(data, "YOUR_REFERENCE") ??
+      endCustomerOrderReference ??
+      undefined,
     afterSalesHandling: Boolean(findValue(data, "AFTER_SALES_HANDLING") ?? false),
     customerType: customerType ?? undefined,
     deliveryType: deliveryType ?? undefined,
     isCollectiveOrder: isCollectiveOrder ?? undefined,
     physicalDeliveryNoteRequired: physicalDeliveryNoteRequired ?? undefined,
     saturdayDeliveryAllowed: saturdayDeliveryAllowed ?? undefined,
-    endCustomerOrderReference: endCustomerOrderReference ?? customerOrderReference ?? undefined,
+    endCustomerOrderReference: endCustomerOrderReference ?? undefined,
     buyerIdRef: buyerIdRef ?? undefined,
     supplierIdRef: supplierIdRef ?? undefined,
     buyerPartyId: buyer?.partyIds?.buyer_specific ?? undefined,
@@ -906,6 +919,34 @@ export function parseOrderFromXml(xml: string, fallbackOrderId: string) {
     marketplacePartyId: marketplace?.partyIds?.marketplace_specific ?? undefined,
     lines,
   };
+}
+
+function compactNonEmpty(values: Array<unknown>): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (!text) continue;
+    if (!out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
+function selectRecipientName(delivery: any, isDirectDelivery: boolean): string | undefined {
+  void isDirectDelivery;
+  const fallback = String(delivery?.companyName ?? delivery?.name ?? "").trim();
+  return fallback || undefined;
+}
+
+function selectRecipientAddress2(
+  delivery: any,
+  recipientName: string | undefined,
+  isDirectDelivery: boolean
+): string | undefined {
+  void recipientName;
+  void isDirectDelivery;
+  const values = compactNonEmpty([delivery?.name2, delivery?.department, delivery?.street2]);
+  const combined = values.join(", ").trim();
+  return combined || undefined;
 }
 
 async function recordCancelRequest(orderRef: string, xml: string) {
@@ -963,9 +1004,18 @@ function extractLines(data: any) {
       orderUnit: orderUnit ?? undefined,
       supplierSku: supplierPid ?? buyerPid ?? undefined,
       supplierVariantId: undefined,
-      productName: getNestedValue(item, ["DESCRIPTION_SHORT"]) ?? "Item",
-      description: getNestedValue(item, ["DESCRIPTION_LONG"]) ?? undefined,
-      size: getNestedValue(item, ["SIZE"]) ?? undefined,
+      productName:
+        getNestedValue(item, ["PRODUCT_ID", "DESCRIPTION_SHORT"]) ??
+        getNestedValue(item, ["DESCRIPTION_SHORT"]) ??
+        "Item",
+      description:
+        getNestedValue(item, ["PRODUCT_ID", "DESCRIPTION_LONG"]) ??
+        getNestedValue(item, ["DESCRIPTION_LONG"]) ??
+        undefined,
+      size:
+        getNestedValue(item, ["PRODUCT_ID", "SIZE"]) ??
+        getNestedValue(item, ["SIZE"]) ??
+        undefined,
       gtin: internationalPid ?? undefined,
       providerKey: supplierPid ?? undefined,
       quantity: Number(getNestedValue(item, ["QUANTITY"]) ?? 1),
@@ -1053,13 +1103,17 @@ function findParty(data: any, role: string) {
 
       const address = party.ADDRESS ?? {};
       const contact = address.CONTACT_DETAILS ?? {};
-      const name = extractText(address.NAME) ?? [contact.FIRST_NAME, contact.CONTACT_NAME].filter(Boolean).join(" ") ?? null;
+      const contactFirstName = extractText(contact.FIRST_NAME) ?? null;
+      const contactName = extractText(contact.CONTACT_NAME) ?? null;
+      const name = extractText(address.NAME) ?? [contactFirstName, contactName].filter(Boolean).join(" ") ?? null;
       const name2 = extractText(address.NAME2) ?? null;
       const department = extractText((address as any).DEPARTMENT) ?? null;
-      const combinedName = name2 ? [name, name2].filter(Boolean).join(", ") : name;
-
       return {
-        name: combinedName,
+        name,
+        name2,
+        companyName: extractText(address.NAME) ?? null,
+        contactFirstName,
+        contactName,
         street: extractText(address.STREET) ?? null,
         street2: extractText(address.STREET2) ?? null,
         department,

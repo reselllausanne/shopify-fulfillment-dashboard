@@ -1,6 +1,7 @@
 import { GALAXUS_FEED_SUPPLIER_ALLOWLIST, GALAXUS_FEED_SUPPLIER_BLOCKLIST } from "@/galaxus/config";
 
 const FEED_ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
+const ENABLE_LEGACY_SUPPLIER_ID_FILTER = process.env.GALAXUS_FEED_LEGACY_SUPPLIER_ID_FILTER === "1";
 
 type TrmFeedExclusionReason =
   | "MISSING_GTIN"
@@ -33,6 +34,9 @@ function buildSupplierIdFilter(keys: string[]) {
 
 function buildSupplierScopeFilter(keys: string[]) {
   const byKey = buildSupplierKeyFilter(keys);
+  if (!ENABLE_LEGACY_SUPPLIER_ID_FILTER) {
+    return byKey;
+  }
   const byId = buildSupplierIdFilter(keys);
   if (byKey && byId) {
     return { OR: [byKey, byId] };
@@ -44,6 +48,9 @@ function buildSupplierScopeFilter(keys: string[]) {
 function buildSupplierBlocklistFilter(keys: string[]) {
   const normalized = keys.map(normalizeSupplierKey).filter(Boolean);
   if (normalized.length === 0) return null;
+  if (!ENABLE_LEGACY_SUPPLIER_ID_FILTER) {
+    return { NOT: { supplierKey: { in: normalized } } };
+  }
   const or = normalized.flatMap((key) => [
     { supplierKey: key },
     { supplierVariant: { supplierVariantId: { startsWith: `${key}:`, mode: "insensitive" } } },
@@ -77,14 +84,16 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
 
   const eligibleWhere = {
     status: { in: FEED_ELIGIBLE_MAPPING_STATUSES as unknown as string[] },
-    OR: [{ gtin: { not: null } }, { supplierVariant: { gtin: { not: null } } }],
+    gtin: { not: null },
   };
   const statusFilter = includeTrmDiagnostics
     ? {
         OR: [
           eligibleWhere,
           { supplierKey: "trm" },
-          { supplierVariant: { supplierVariantId: { startsWith: "trm:", mode: "insensitive" } } },
+          ...(ENABLE_LEGACY_SUPPLIER_ID_FILTER
+            ? [{ supplierVariant: { supplierVariantId: { startsWith: "trm:", mode: "insensitive" } } }]
+            : []),
         ],
       }
     : eligibleWhere;

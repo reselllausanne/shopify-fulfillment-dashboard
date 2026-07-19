@@ -801,9 +801,17 @@ export async function runOf01Import(params?: {
   });
 }
 
-export async function runSto01Import(params?: { limit?: number }) {
+export async function runSto01Import(params?: {
+  limit?: number;
+  providerKeys?: string[];
+  ensureProviderKeys?: string[];
+}) {
   const limit = params?.limit ?? (DECATHLON_MIRAKL_TEST_MODE ? DECATHLON_MIRAKL_TEST_LIMIT : undefined);
-  const delta = await buildDecathlonDeltas({ limit });
+  const delta = await buildDecathlonDeltas({
+    limit,
+    providerKeys: params?.providerKeys,
+    ensureProviderKeys: params?.ensureProviderKeys,
+  });
   const rows = delta.stockUpdates.map((row) => ({
     offerSku: row.offerSku,
     quantity: row.stock ?? 0,
@@ -819,6 +827,8 @@ export async function runSto01Import(params?: { limit?: number }) {
       delta: delta.summary,
       exclusions: delta.exclusions?.totals ?? null,
       testMode: DECATHLON_MIRAKL_TEST_MODE,
+      providerKeys: params?.providerKeys?.length ? params.providerKeys : null,
+      ensureProviderKeys: params?.ensureProviderKeys?.length ? params.ensureProviderKeys : null,
     },
   });
 }

@@ -19,6 +19,11 @@ import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
 } from "@/app/lib/staffAuth";
+import {
+  buildFulfillmentTimingFields,
+  parseOptionalDate,
+  resolveStockxDeliveredForMatches,
+} from "@/lib/fulfillmentTiming";
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -435,6 +440,7 @@ const normalizeAwb = (code?: string | null) => {
 };
 
 export async function POST(req: NextRequest) {
+  const requestStartedAt = new Date();
   try {
     const withContext = async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
       try {
@@ -470,6 +476,9 @@ export async function POST(req: NextRequest) {
     const swissPostPayload = body?.swissPostPayload ?? null;
     const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
+    const scanSessionKey = String(body?.scanSessionKey ?? "").trim() || null;
+    const scanStartedAt = parseOptionalDate(body?.scanStartedAt);
+    const scanCompletedAt = parseOptionalDate(body?.scanCompletedAt);
     const roleAllowsBrowserPrint =
       isBrowserPrintAllowedForRole(staffRole) || allowAlreadyFulfilled;
     const roleAllowsServerAutoPrint = isServerAutoPrintAllowedForRole(staffRole);
@@ -698,6 +707,7 @@ export async function POST(req: NextRequest) {
     let labelFilePath: string | null = null;
     let printJobResult: PrintJobResult | null = null;
     let labelData: LabelDataPayload | null = null;
+    let labelGeneratedAt: Date | null = null;
     let trackingNumberForFulfillment = awb;
     let trackingCompanyForFulfillment = trackingCompany || "Swiss Post";
 
@@ -728,6 +738,7 @@ export async function POST(req: NextRequest) {
           );
         }
         swissPostResult = swissRes;
+        labelGeneratedAt = new Date();
         const itemData = Array.isArray(swissRes.data?.item)
           ? swissRes.data.item[0]
           : swissRes.data?.item || null;
@@ -917,8 +928,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const record = await prisma.shopifyFulfillmentRecord.create({
-      data: {
+    const requestCompletedAt = new Date();
+    const stockxDelivered = await withContext("resolveStockxDelivered", () =>
+      resolveStockxDeliveredForMatches(selectedMatches.map((m) => m.id))
+    );
+    const timingFields = buildFulfillmentTimingFields({
+      actorRole: staffRole,
+      scanSessionKey,
+      scanStartedAt,
+      scanCompletedAt,
+      requestStartedAt,
+      requestCompletedAt,
+      labelGeneratedAt,
+      stockxDeliveredAt: stockxDelivered.stockxDeliveredAt,
+      stockxDeliveredMilestoneKey: stockxDelivered.stockxDeliveredMilestoneKey,
+    });
+
+    const record = await prisma.shopifyFulfillmentRecord.upsert({
+      where: {
+        shopifyOrderId_trackingNumber: {
+          shopifyOrderId,
+          trackingNumber: trackingNumberForFulfillment,
+        },
+      },
+      create: {
         shopifyOrderId,
         shopifyOrderName: map.order.name,
         trackingNumber: trackingNumberForFulfillment,
@@ -930,10 +963,22 @@ export async function POST(req: NextRequest) {
         swissPostLabelId,
         swissPostBarcode,
         swissPostResponse: swissPostResult?.data || null,
+        ...timingFields,
+      },
+      update: {
+        shopifyOrderName: map.order.name,
+        trackingUrl,
+        trackingCompany: trackingCompanyForFulfillment,
+        status: fulfillment.status,
+        sourceAwb: awb,
+        swissPostStatus,
+        swissPostLabelId,
+        swissPostBarcode,
+        swissPostResponse: swissPostResult?.data || null,
+        ...timingFields,
       },
     });
 
-    
     return NextResponse.json(
       {
         ok: true,
@@ -953,6 +998,12 @@ export async function POST(req: NextRequest) {
         browserPrintConfig,
         warnings,
         swissPost: shouldCallSwissPost ? "attempted" : "skipped",
+        timing: {
+          scanToLabelSeconds: record.scanToLabelSeconds,
+          scanToFulfillmentSeconds: record.scanToFulfillmentSeconds,
+          stockxDeliveredToFulfillmentMinutes: record.stockxDeliveredToFulfillmentMinutes,
+          requestDurationMs: record.requestDurationMs,
+        },
       },
       { status: 200 }
     );

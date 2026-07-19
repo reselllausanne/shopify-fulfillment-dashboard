@@ -1,0 +1,22 @@
+FOLDER: portable_product_upsert/
+
+DONE ON THIS STORE ALREADY:
+- Metafield definition created:
+  custom.price_locked (boolean) on ProductVariant
+  id: gid://shopify/MetafieldDefinition/309267595650
+
+OTHER CODEBASE STEPS:
+1. Copy this whole folder into the other project
+2. Copy .env from THIS codebase into the folder:
+     cp "/Users/theomanzinali/Downloads/test code/.env" ./portable_product_upsert/.env
+3. pip install -r requirements.txt
+4. python3 setup_and_verify.py
+   (recreates metafield if missing; smoke checks API)
+5. Plug in:
+
+     from product_upsert_api import upsert_product, lock_price, mark_sold, set_variant_price
+     upsert_product("slug-or-sku-or-gtin")
+     lock_price(barcode="...")
+     mark_sold(barcode="...")
+
+Public API file: product_upsert_api.py

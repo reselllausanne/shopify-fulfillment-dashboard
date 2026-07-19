@@ -31,8 +31,17 @@ export async function runDecathlonOfferOnlySync(params?: {
   });
 }
 
-export async function runDecathlonStockSync(params?: { limit?: number }) {
-  return runSto01Import({ limit: params?.limit });
+export async function runDecathlonStockSync(params?: {
+  limit?: number;
+  providerKeys?: string[];
+  /** Always include these offer SKUs in STO01 at current stock (full sync + sold-out THE). */
+  ensureProviderKeys?: string[];
+}) {
+  return runSto01Import({
+    limit: params?.limit,
+    providerKeys: params?.providerKeys,
+    ensureProviderKeys: params?.ensureProviderKeys,
+  });
 }
 
 export async function runDecathlonPriceSync(params?: { limit?: number }) {

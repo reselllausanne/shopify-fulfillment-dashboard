@@ -72,6 +72,22 @@ export function isLiquidationShopifyTitle(title: string | null | undefined): boo
   return isLiquidationProductTitle(title);
 }
 
+/** Shopify add-on (Route / Navidium etc.) — not a resell product line. */
+export function isPackageProtectionShopifyLine(
+  title: string | null | undefined,
+  sku?: string | null
+): boolean {
+  const t = String(title ?? "").trim().toLowerCase();
+  const s = String(sku ?? "").trim().toLowerCase();
+  if (!t && !s) return false;
+  if (t.includes("protection de colis")) return true;
+  if (t.includes("protection colis")) return true;
+  if (t.includes("package protection")) return true;
+  if (t.includes("shipping protection")) return true;
+  if (s.includes("protection") && s.includes("colis")) return true;
+  return false;
+}
+
 export interface MatchCandidate {
   supplierOrder: NormalizedSupplierOrder;
   score: number;

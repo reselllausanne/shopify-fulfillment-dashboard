@@ -52,25 +52,36 @@ export async function GET(request: NextRequest) {
     }
 
     if (productSearch.length > 0) {
-      const byLineName = {
-        lines: {
-          some: {
-            OR: [
-              { productTitle: { contains: productSearch, mode: "insensitive" } },
-              { description: { contains: productSearch, mode: "insensitive" } },
-            ],
+      const bySearch = {
+        OR: [
+          { orderId: { contains: productSearch, mode: "insensitive" } },
+          { orderNumber: { contains: productSearch, mode: "insensitive" } },
+          { customerName: { contains: productSearch, mode: "insensitive" } },
+          { recipientName: { contains: productSearch, mode: "insensitive" } },
+          {
+            lines: {
+              some: {
+                OR: [
+                  { productTitle: { contains: productSearch, mode: "insensitive" } },
+                  { description: { contains: productSearch, mode: "insensitive" } },
+                  { offerSku: { contains: productSearch, mode: "insensitive" } },
+                  { productSku: { contains: productSearch, mode: "insensitive" } },
+                  { supplierSku: { contains: productSearch, mode: "insensitive" } },
+                ],
+              },
+            },
           },
-        },
+        ],
       };
       if (Array.isArray(where.AND)) {
-        where = { ...where, AND: [...where.AND, byLineName] };
+        where = { ...where, AND: [...where.AND, bySearch] };
       } else {
         const keys = Object.keys(where);
         if (keys.length === 0) {
-          where = byLineName;
+          where = bySearch;
         } else {
           const prior = { ...where };
-          where = { AND: [prior, byLineName] };
+          where = { AND: [prior, bySearch] };
         }
       }
     }

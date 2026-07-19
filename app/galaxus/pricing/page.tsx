@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   resolveDecathlonBuyNow,
@@ -37,7 +37,51 @@ type PricingVariantRow = {
   galaxusPriceExVat?: number | null;
   galaxusPriceIncVat?: number | null;
   updatedAt: string;
+  /** Lowest other-supplier DB buy for same GTIN. */
+  referenceMinPriceChf?: number | null;
+  referenceOfferCount?: number | null;
+  referencePriceDiffChf?: number | null;
+  isCheapestInDb?: boolean | null;
 };
+
+function DbPriceVsHint(props: {
+  referenceMinPriceChf?: number | null;
+  referenceOfferCount?: number | null;
+  referencePriceDiffChf?: number | null;
+  isCheapestInDb?: boolean | null;
+}): ReactNode {
+  const ref = props.referenceMinPriceChf;
+  const diff = props.referencePriceDiffChf;
+  const count = props.referenceOfferCount ?? 0;
+  if (ref != null && Number.isFinite(ref)) {
+    if (diff == null || !Number.isFinite(diff) || Math.abs(diff) < 0.01) {
+      return (
+        <div className="text-[10px] leading-tight text-emerald-800">
+          Cheapest (others {ref.toFixed(2)}
+          {count > 0 ? ` · ${count}` : ""})
+        </div>
+      );
+    }
+    if (diff > 0) {
+      return (
+        <div className="text-[10px] leading-tight text-amber-800">
+          +{diff.toFixed(2)} above min {ref.toFixed(2)}
+          {count > 0 ? ` (${count})` : ""}
+        </div>
+      );
+    }
+    return (
+      <div className="text-[10px] leading-tight text-emerald-800">
+        {diff.toFixed(2)} below min {ref.toFixed(2)}
+        {count > 0 ? ` (${count})` : ""}
+      </div>
+    );
+  }
+  if (props.isCheapestInDb) {
+    return <div className="text-[10px] leading-tight text-emerald-800">No competition in DB</div>;
+  }
+  return null;
+}
 
 type PricingEdit = {
   manualPrice?: string;
@@ -592,8 +636,18 @@ export default function GalaxusCatalogPage() {
                   <th className="px-2 py-2 text-left">GTIN</th>
                   <th className="px-2 py-2 text-left">Product</th>
                   <th className="px-2 py-2 text-left">Size</th>
-                  <th className="px-2 py-2 text-right">Base Price</th>
-                  <th className="px-2 py-2 text-right">Galaxus Price (inc VAT)</th>
+                  <th
+                    className="px-2 py-2 text-right"
+                    title="DB buy vs lowest other-supplier price for same GTIN"
+                  >
+                    Base Price / vs DB
+                  </th>
+                  <th
+                    className="px-2 py-2 text-right"
+                    title="Same as feed PurchasePriceExclVat_CHF — what Galaxus pays (ex VAT)"
+                  >
+                    Galaxus Sell (ex VAT)
+                  </th>
                   <th className="px-2 py-2 text-right">Decathlon Sell Price</th>
                   <th className="px-2 py-2 text-right">Base Stock</th>
                   <th
@@ -620,7 +674,7 @@ export default function GalaxusCatalogPage() {
                   const leadTimeValue = edit.leadTimeDays ?? normalizeNumber(item.leadTimeDays ?? "");
                   const sizeLabel = item.sizeNormalized ?? item.sizeRaw ?? "-";
                   const galaxusPriceValue =
-                    typeof item.galaxusPriceIncVat === "number" ? item.galaxusPriceIncVat : null;
+                    typeof item.galaxusPriceExVat === "number" ? item.galaxusPriceExVat : null;
                   const buyNowStockx = parseNumericValue(item.price);
                   const manualOverride = parseNumericValue(manualPriceValue);
                   const decathlonBuyNow = resolveDecathlonBuyNow({
@@ -653,7 +707,15 @@ export default function GalaxusCatalogPage() {
                       <td className="px-2 py-1 font-mono">{item.gtin ?? "-"}</td>
                       <td className="px-2 py-1">{item.supplierProductName ?? item.supplierSku}</td>
                       <td className="px-2 py-1">{sizeLabel}</td>
-                      <td className="px-2 py-1 text-right">{normalizeNumber(item.price)}</td>
+                      <td className="px-2 py-1 text-right">
+                        <div className="tabular-nums">{normalizeNumber(item.price)}</div>
+                        <DbPriceVsHint
+                          referenceMinPriceChf={item.referenceMinPriceChf}
+                          referenceOfferCount={item.referenceOfferCount}
+                          referencePriceDiffChf={item.referencePriceDiffChf}
+                          isCheapestInDb={item.isCheapestInDb}
+                        />
+                      </td>
                       <td className="px-2 py-1 text-right">
                         {galaxusPriceValue !== null ? galaxusPriceValue.toFixed(2) : "-"}
                       </td>

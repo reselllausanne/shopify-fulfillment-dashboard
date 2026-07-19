@@ -1,5 +1,6 @@
 import React from "react";
 import type { MatchResult, ShopifyLineItem } from "@/app/utils/matching";
+import { formatShopifyDeliveryModeLabel } from "@/app/lib/shopifyLineItemDelivery";
 import { isShopifyFinancialRefunded, isLiquidationShopifyTitle, resolveInStockEssential } from "@/app/utils/matching";
 import { shopifyFraudUiTone } from "@/app/lib/shopifyOrderRisk";
 import type { PricingResult, OrderNode } from "@/app/types";
@@ -105,6 +106,10 @@ export default function OrderMatchingSection({
               fraudRecommendation: shopify.fraudRecommendation ?? null,
             });
             const fraudLabel = shopify.fraudSummaryLabel || "Fraud: —";
+            const isExpressDelivery = shopify.deliveryMode === "express";
+            const deliveryBadgeLabel =
+              shopify.deliveryModeLabel ||
+              formatShopifyDeliveryModeLabel(shopify.deliveryMode ?? null);
 
             return (
               <div
@@ -131,7 +136,29 @@ export default function OrderMatchingSection({
               >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <h3 className="font-semibold text-sm text-gray-700 mb-2">📦 Shopify Order: {shopify.orderName}</h3>
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <h3 className="font-semibold text-sm text-gray-700">📦 Shopify Order: {shopify.orderName}</h3>
+                      {shopify.deliveryMode ? (
+                        <span
+                          className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wide ${
+                            isExpressDelivery
+                              ? "bg-orange-500 text-white"
+                              : "bg-slate-500 text-white"
+                          }`}
+                          title={
+                            shopify.deliveryEstimate
+                              ? `${deliveryBadgeLabel} · ${shopify.deliveryEstimate}`
+                              : deliveryBadgeLabel
+                          }
+                        >
+                          {isExpressDelivery ? "⚡ Express" : "Standard"}
+                        </span>
+                      ) : shopify.expressAvailable ? (
+                        <span className="px-2 py-1 rounded text-xs font-semibold bg-slate-200 text-slate-700">
+                          Standard (express option)
+                        </span>
+                      ) : null}
+                    </div>
                     {isRefunded && (
                       <p className="text-xs font-semibold text-red-700 mb-2">
                         Refunded — matching and metafield save are disabled for this line.
@@ -237,6 +264,19 @@ export default function OrderMatchingSection({
                     {match ? (
                       <>
                         <h3 className="font-semibold text-sm text-gray-700 mb-2">🎯 Suggested Supplier Match</h3>
+                        {shopify.deliveryMode && (
+                          <p className="mb-2">
+                            <span
+                              className={`inline-block px-2 py-1 rounded text-xs font-bold ${
+                                isExpressDelivery
+                                  ? "bg-orange-100 text-orange-900 border border-orange-300"
+                                  : "bg-slate-100 text-slate-800 border border-slate-300"
+                              }`}
+                            >
+                              Acheter StockX {isExpressDelivery ? "Express" : "Standard"}
+                            </span>
+                          </p>
+                        )}
                         <div className="text-xs space-y-1">
                           <p>
                             <span className="font-medium">Order:</span>{" "}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +61,12 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const rows = matches.map((m: (typeof matches)[number]) => {
+    const rows = matches
+      .filter(
+        (m: (typeof matches)[number]) =>
+          !isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku)
+      )
+      .map((m: (typeof matches)[number]) => {
       const baseRevenue =
         toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
       const returnFeePercent = toNumberSafe(m.returnFeePercent, 0);

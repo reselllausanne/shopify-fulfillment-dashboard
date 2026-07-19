@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { findStockxInboundHomeRouteByCode } from "@/app/lib/stockxInboundHomeRoutes";
+import { findStockxInboundHomeRouteByCode, findStockxInboundHomeRouteByShopifyOrderName } from "@/app/lib/stockxInboundHomeRoutes";
 import { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
+import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const inboundHomeRoute = await findStockxInboundHomeRouteByCode(rawClean || awb);
+    let inboundHomeRoute = await findStockxInboundHomeRouteByCode(rawClean || awb);
 
     // Look for a match by AWB / StockX order # / tracking URL.
     const [match, decathlonMatch, galaxusMatch] = await Promise.all([
@@ -247,11 +248,24 @@ export async function POST(req: NextRequest) {
               id: true,
               galaxusOrderId: true,
               orderNumber: true,
+              deliveryType: true,
+              shipments: {
+                select: {
+                  id: true,
+                  delrSentAt: true,
+                  delrStatus: true,
+                  trackingNumber: true,
+                },
+              },
             },
           },
         },
       }),
     ]);
+
+    if (!inboundHomeRoute && match?.shopifyOrderName) {
+      inboundHomeRoute = await findStockxInboundHomeRouteByShopifyOrderName(match.shopifyOrderName);
+    }
 
     const hasAnyMatch = Boolean(match || decathlonMatch || galaxusMatch || inboundHomeRoute);
     const status: ScanStatus = hasAnyMatch ? "FOUND" : "NOT_FOUND";
@@ -299,6 +313,31 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    let galaxusPayload: Record<string, unknown> | null = null;
+    if (galaxusMatch) {
+      const galaxusOrder = galaxusMatch.order;
+      const linkStatus = galaxusOrder?.id
+        ? await getStxLinkStatusForOrder(galaxusOrder.id).catch(() => null)
+        : null;
+      const shipments = galaxusOrder?.shipments ?? [];
+      const alreadyFulfilled = shipments.some(
+        (s) => Boolean(s.delrSentAt) || String(s.delrStatus ?? "").toUpperCase() === "UPLOADED"
+      );
+      const deliveryType = String(galaxusOrder?.deliveryType ?? "").toLowerCase();
+      galaxusPayload = {
+        matchId: galaxusMatch.id,
+        orderId: galaxusOrder?.galaxusOrderId ?? null,
+        orderDbId: galaxusOrder?.id ?? galaxusMatch.galaxusOrderId ?? null,
+        orderNumber: galaxusOrder?.orderNumber ?? null,
+        deliveryType: galaxusOrder?.deliveryType ?? null,
+        isDirectDelivery: deliveryType === "direct_delivery",
+        allLinked: linkStatus?.allLinked ?? null,
+        alreadyFulfilled,
+        trackingNumber:
+          shipments.find((s) => String(s.trackingNumber ?? "").trim())?.trackingNumber ?? null,
+      };
+    }
+
     const response = {
       ok: hasAnyMatch,
       status,
@@ -316,14 +355,7 @@ export async function POST(req: NextRequest) {
             quantity: Number(decathlonMatch.decathlonQuantity ?? 0) || 0,
           }
         : null,
-      galaxus: galaxusMatch
-        ? {
-            matchId: galaxusMatch.id,
-            orderId: galaxusMatch.order?.galaxusOrderId ?? null,
-            orderDbId: galaxusMatch.order?.id ?? galaxusMatch.galaxusOrderId ?? null,
-            orderNumber: galaxusMatch.order?.orderNumber ?? null,
-          }
-        : null,
+      galaxus: galaxusPayload,
       inboundHome: inboundHomeRoute
         ? {
             routeId: inboundHomeRoute.id,

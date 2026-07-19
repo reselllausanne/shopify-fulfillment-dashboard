@@ -6,7 +6,10 @@ import {
   shouldSkipOrderForFulfillmentMatching,
 } from "@/app/lib/shopifyOrderFulfillmentFilters";
 import { normalizeOrderRisk } from "@/app/lib/shopifyOrderRisk";
-import { parseShopifyLineItemDelivery } from "@/app/lib/shopifyLineItemDelivery";
+import {
+  mergeLineItemCustomAttributes,
+  parseShopifyLineItemDelivery,
+} from "@/app/lib/shopifyLineItemDelivery";
 
 export const runtime = "nodejs";
 
@@ -40,6 +43,12 @@ query OrderByName($first: Int!, $query: String!) {
               customAttributes {
                 key
                 value
+              }
+              lineItemGroup {
+                customAttributes {
+                  key
+                  value
+                }
               }
               variant {
                 expressAvailable: metafield(namespace: "custom", key: "express_available") {
@@ -114,7 +123,10 @@ export async function POST(req: Request) {
       const sizeEU = extractEUSize(variantTitle) ?? extractEUSize(li.title);
 
       const deliveryInfo = parseShopifyLineItemDelivery({
-        customAttributes: li.customAttributes ?? [],
+        customAttributes: mergeLineItemCustomAttributes(
+          li.customAttributes ?? [],
+          li.lineItemGroup?.customAttributes ?? []
+        ),
         expressAvailableMetafield: li?.variant?.expressAvailable?.value ?? null,
         expressPriceMetafield: li?.variant?.expressPrice?.value ?? null,
       });

@@ -30,6 +30,10 @@ export type OrderLine = {
   gtin?: string | null;
   providerKey?: string | null;
   sku?: string | null;
+  height?: string | null;
+  width?: string | null;
+  length?: string | null;
+  weight?: string | null;
   quantity: number;
   vatRate: number;
   unitNetPrice: number;
@@ -80,7 +84,12 @@ export type DeliveryNoteData = {
   orderReference?: string | null;
   referencePerson?: string | null;
   yourReference?: string | null;
+  endCustomerOrderReference?: string | null;
   buyerPhone?: string | null;
+  buyerCountryCode?: string | null;
+  buyerPostalBox?: string | null;
+  buyerVatId?: string | null;
+  deliveryOption?: string | null;
   afterSalesHandling?: boolean;
   legalNotice?: string | null;
   groups: DeliveryNoteOrderGroup[];

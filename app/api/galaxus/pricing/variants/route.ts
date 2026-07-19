@@ -5,6 +5,7 @@ import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { getDefaultPricing, resolveGalaxusSellExVatForChannel, resolvePricingOverrides } from "@/galaxus/exports/pricing";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { attachGtinReferenceMinPrices } from "@/galaxus/supplier/gtinReferenceMinPrice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -141,8 +142,10 @@ export async function GET(request: Request) {
     };
   });
 
+  const withRef = await attachGtinReferenceMinPrices(prisma, enriched);
+
   const nextOffset = items.length === limit ? offset + limit : null;
-  return NextResponse.json({ ok: true, items: enriched, nextOffset });
+  return NextResponse.json({ ok: true, items: withRef, nextOffset });
 }
 
 type UpdatePayload = {

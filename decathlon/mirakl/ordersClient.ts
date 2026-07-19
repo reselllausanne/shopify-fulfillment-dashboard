@@ -163,5 +163,82 @@ export function buildDecathlonOrdersClient() {
       fetchJson(buildUrl(auth.baseUrl, "/api/orders/documents", params), auth),
     downloadDocuments: (params?: Record<string, string | number | boolean>) =>
       fetchBinary(buildUrl(auth.baseUrl, "/api/orders/documents/download", params), auth),
+
+    /**
+     * Connect v2 — mark return received.
+     * Docs: PUT /v2/orders/returns/{return_id}/receive → 202 { action_id }
+     */
+    receiveReturnV2: (returnId: string) =>
+      putJson<{ action_id?: string; tracking_id?: string }>(
+        buildUrl(auth.baseUrl, `/v2/orders/returns/${encodeURIComponent(returnId)}/receive`),
+        auth,
+        {}
+      ),
+
+    /**
+     * Connect v2 — close return after refund/compliance.
+     * Docs: PUT /v2/orders/returns/{return_id}/close → 202 { action_id }
+     */
+    closeReturnV2: (returnId: string) =>
+      putJson<{ action_id?: string; tracking_id?: string }>(
+        buildUrl(auth.baseUrl, `/v2/orders/returns/${encodeURIComponent(returnId)}/close`),
+        auth,
+        {}
+      ),
+
+    /**
+     * MMP RT25 — mark returns received (batch).
+     * Docs: PUT /api/returns/receive
+     */
+    receiveReturnsRt25: (returnIds: string[]) =>
+      putJson<{
+        return_errors?: Array<{ id?: string; message?: string }>;
+        return_success?: Array<{ id: string }>;
+      }>(buildUrl(auth.baseUrl, "/api/returns/receive"), auth, {
+        returns: returnIds.map((id) => ({ id })),
+      }),
+
+    /**
+     * MMP RT27 — close returns (batch).
+     * Docs: PUT /api/returns/close
+     */
+    closeReturnsRt27: (returnIds: string[]) =>
+      putJson<{
+        return_errors?: Array<{ id?: string; message?: string }>;
+        return_success?: Array<{ id: string }>;
+      }>(buildUrl(auth.baseUrl, "/api/returns/close"), auth, {
+        returns: returnIds.map((id) => ({ id })),
+      }),
+
+    /**
+     * MMP OR28 — line-level refunds (marketplace). Not MMS SOR28.
+     * Docs: PUT /api/orders/refund
+     */
+    refundOrderLines: (payload: {
+      order_tax_mode?: "TAX_INCLUDED" | "TAX_EXCLUDED";
+      refunds: Array<{
+        order_line_id: string;
+        amount: number;
+        shipping_amount: number;
+        reason_code: string;
+        quantity?: number;
+        currency_iso_code?: string;
+        taxes?: Array<{ amount: number; code: string }>;
+        shipping_taxes?: Array<{ amount: number; code: string }>;
+      }>;
+    }) =>
+      putJson<{
+        order_tax_mode?: string;
+        refunds?: Array<{
+          refund_id?: string;
+          order_refund_id?: string;
+          order_line_id?: string;
+          amount?: number;
+        }>;
+      }>(buildUrl(auth.baseUrl, "/api/orders/refund"), auth, payload),
+
+    /** RE01 — list reason codes (refund/return/cancel). */
+    listReasons: (params?: Record<string, string | number | boolean>) =>
+      fetchJson(buildUrl(auth.baseUrl, "/api/reasons", params), auth),
   };
 }

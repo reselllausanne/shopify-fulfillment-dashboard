@@ -4,6 +4,7 @@ services:
     env_file:
       - .env
     environment:
+      - NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=6144}
       - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
       - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
       - VNC_PASSWORD=${VNC_PASSWORD:-change-me-now}
@@ -74,6 +75,18 @@ services:
       - STX_IMPORT_SYNC_CONCURRENCY=${STX_IMPORT_SYNC_CONCURRENCY:-6}
       - STX_IMPORT_SYNC_BATCH_SIZE=${STX_IMPORT_SYNC_BATCH_SIZE:-120}
     command: ["npx", "tsx", "scripts/workers/stxImportSlugsWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
+  worker-shopify-sold-check:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - SHOPIFY_SOLD_CHECK_INTERVAL_MS=${SHOPIFY_SOLD_CHECK_INTERVAL_MS:-172800000}
+      - SHOPIFY_SOLD_CHECK_INITIAL_DELAY_MS=${SHOPIFY_SOLD_CHECK_INITIAL_DELAY_MS:-60000}
+    command: ["npx", "tsx", "scripts/workers/shopifySoldCheckWorker.ts"]
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped

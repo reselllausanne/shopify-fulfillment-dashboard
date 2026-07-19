@@ -258,6 +258,12 @@ async function listReturnsPaged(
   return returns.slice(0, maxTotal);
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function pickLineAmount(line: any): number | null {
   const raw =
     line?.line_price ??
@@ -266,9 +272,26 @@ function pickLineAmount(line: any): number | null {
     line?.unit_price ??
     line?.unitPrice ??
     null;
-  if (raw === null || raw === undefined) return null;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : null;
+  return toFiniteNumber(raw);
+}
+
+/**
+ * Mirakl exact sell amount (line TTC).
+ * Falls back to `unitPrice × quantity` when line total is absent.
+ */
+function pickLineTotalAmount(line: any, quantity: number): number | null {
+  const explicit =
+    toFiniteNumber(line?.line_total) ??
+    toFiniteNumber(line?.lineTotal) ??
+    toFiniteNumber(line?.total_price) ??
+    toFiniteNumber(line?.totalPrice) ??
+    toFiniteNumber(line?.total_amount) ??
+    toFiniteNumber(line?.totalAmount);
+  if (explicit != null) return explicit;
+  const unit = pickLineAmount(line);
+  if (unit == null) return null;
+  const qty = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+  return unit * qty;
 }
 
 function pickOrderAmount(order: any): number | null {
@@ -704,6 +727,7 @@ export async function POST(request: Request) {
             resolvedLinePartnerKey && partnerKeys.has(resolvedLinePartnerKey)
               ? resolvedLinePartnerKey
               : null;
+          const resolvedQuantity = Number.isFinite(quantity) ? quantity : 1;
           const updateData = {
             orderId: orderRow.id,
             lineNumber: line?.line_number ?? line?.lineNumber ?? null,
@@ -715,9 +739,9 @@ export async function POST(request: Request) {
             gtin: resolvedGtin,
             providerKey: line?.provider_key ?? line?.providerKey ?? null,
             supplierSku: line?.supplier_sku ?? line?.supplierSku ?? null,
-            quantity: Number.isFinite(quantity) ? quantity : 1,
+            quantity: resolvedQuantity,
             unitPrice: pickLineAmount(line),
-            lineTotal: line?.line_total ?? line?.lineTotal ?? null,
+            lineTotal: pickLineTotalAmount(line, resolvedQuantity),
             currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
             rawJson: line ?? null,
             ...(linePartnerKey ? { partnerKey: linePartnerKey } : {}),
@@ -738,9 +762,9 @@ export async function POST(request: Request) {
               providerKey: line?.provider_key ?? line?.providerKey ?? null,
               supplierSku: line?.supplier_sku ?? line?.supplierSku ?? null,
               partnerKey: linePartnerKey,
-              quantity: Number.isFinite(quantity) ? quantity : 1,
+              quantity: resolvedQuantity,
               unitPrice: pickLineAmount(line),
-              lineTotal: line?.line_total ?? line?.lineTotal ?? null,
+              lineTotal: pickLineTotalAmount(line, resolvedQuantity),
               currencyCode: String(order?.currency_code ?? order?.currency ?? "CHF"),
               rawJson: line ?? null,
             },

@@ -4,7 +4,9 @@ import { resolveDecathlonReturnOfferSku } from "@/decathlon/returns/resolveRetur
 import {
   applyReturnRestock,
   extractGtinFromOfferSku,
+  stxOfferSkuToTheCatalogOfferSku,
 } from "@/decathlon/returns/theRestockFromReturnLine";
+import { scheduleTheRestockChannelSync } from "@/inventory/theSaleChannelSync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +17,7 @@ function normalizeOfferSku(value: unknown): string | null {
   return text.toUpperCase();
 }
 
-export async function POST(_request: Request, { params }: { params: Promise<{ lineId: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ lineId: string }> }) {
   try {
     const { lineId } = await params;
     if (!lineId?.trim()) {
@@ -100,6 +102,23 @@ export async function POST(_request: Request, { params }: { params: Promise<{ li
         restockSupplierVariantId: restockResult.supplierVariantId ?? null,
       },
     });
+
+    // Relist across channels (Decathlon STO01 + Galaxus feed) and put the
+    // returned pair on SALE on Shopify at Bussigny (create product if missing).
+    const restockedProviderKey =
+      restockResult.supplierVariantId ??
+      (providerKey ? stxOfferSkuToTheCatalogOfferSku(providerKey) : null);
+    const restockGtin =
+      gtin ?? extractGtinFromOfferSku(restockResult.supplierVariantId ?? null);
+    if (restockedProviderKey) {
+      scheduleTheRestockChannelSync({
+        providerKeys: [restockedProviderKey],
+        gtin: restockGtin ?? null,
+        salePrice: restockResult.newPrice ?? null,
+        quantity: Number(row.quantity ?? 1) || 1,
+        origin: new URL(request.url).origin,
+      });
+    }
 
     return NextResponse.json({
       ok: true,

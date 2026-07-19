@@ -19,10 +19,12 @@ export async function GET(req: NextRequest) {
       ok: true,
       variant: key === "NER" ? "ner" : "partner",
       currency: data.currency,
-      totalSaleFeedChf: data.partnerCatalogShippedChf,
+      totalSaleFeedChf: data.totalSellChf,
       shippedLineCount: data.shippedLineCount,
       fulfilledOrderCount: data.fulfilledOrderCount,
       fulfilledPartnerLineUnits: data.fulfilledPartnerLineUnits,
+      totalSellChf: data.totalSellChf,
+      legacyPayoutOrSellChf: data.totalChf,
     });
   } catch (error: any) {
     return NextResponse.json(

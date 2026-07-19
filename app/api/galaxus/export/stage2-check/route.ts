@@ -126,7 +126,8 @@ function buildProductTitle(
 
 function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
   return resolveGalaxusProductCategoryPath({
-    title: fallbackTitle ?? null,
+    title: fallbackTitle ?? payload?.title ?? null,
+    description: payload?.description ?? null,
     category: payload?.category ?? null,
     secondaryCategory: payload?.secondary_category ?? null,
     productType: payload?.product_type ?? null,

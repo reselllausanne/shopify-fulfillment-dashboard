@@ -1298,7 +1298,7 @@ export default function Home() {
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <h2 className="text-lg font-semibold mb-2">Shopify Order Fetch Test</h2>
           <p className="text-sm text-gray-600 mb-3">
-            API version in use: <strong>2026-01</strong>
+            API version in use: <strong>2026-07</strong>
           </p>
           <div className="flex flex-wrap gap-2 mb-3">
             <input

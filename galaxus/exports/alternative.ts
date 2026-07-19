@@ -6,10 +6,10 @@ import { buildFeedMappingsWhere } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import {
   classifyGalaxusProductKind,
-  isFootwearKind,
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
+import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 
 type ExportRow = Record<string, string>;
 
@@ -347,25 +347,16 @@ export function buildGalaxusAlternativeSpecRows(products: AlternativeProductReco
   for (const product of products) {
     const providerKey = product.providerKey;
     if (!providerKey) continue;
-    const kind = classifyGalaxusProductKind({
-      title: product.title,
-      description: product.description,
-      category: product.category,
+    const sizeSpecRow = buildGalaxusSizeSpecRow({
+      providerKey,
+      sizeRaw: product.size ?? null,
+      supplierTitle: product.title ?? null,
+      supplierSku: product.externalKey ?? null,
+      kickdbTitle: product.title ?? null,
+      kickdbDescription: product.description ?? null,
     });
-    if (product.size) {
-      if (isFootwearKind(kind)) {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Schuhgrösse (EU)",
-          SpecificationValue: product.size,
-        });
-      } else {
-        rows.push({
-          ProviderKey: providerKey,
-          SpecificationKey: "Bekleidungsgrösse",
-          SpecificationValue: product.size,
-        });
-      }
+    if (sizeSpecRow) {
+      rows.push(sizeSpecRow);
     }
     if (product.brand) {
       rows.push({

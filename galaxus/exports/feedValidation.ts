@@ -382,3 +382,51 @@ export function countCriticalGtinIssues(report: {
     return isCritical ? sum + Number(issue?.count ?? 0) : sum;
   }, 0);
 }
+
+const CRITICAL_GTIN_MESSAGE_PATTERNS = [
+  "gtin is empty",
+  "gtin is invalid",
+  "wrong check digit",
+];
+
+export function collectCriticalGtinProviderKeys(report: {
+  issues?: { master?: FeedValidationIssue[]; specs?: FeedValidationIssue[] };
+}): Set<string> {
+  const blocked = new Set<string>();
+  const all = [...(report?.issues?.master ?? []), ...(report?.issues?.specs ?? [])];
+  for (const issue of all) {
+    const message = String(issue?.message ?? "").toLowerCase();
+    if (!CRITICAL_GTIN_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern))) continue;
+    const providerKey = String(issue?.providerKey ?? "").trim();
+    if (providerKey) blocked.add(providerKey);
+  }
+  return blocked;
+}
+
+/** Drop CSV rows whose first column (ProviderKey) is in the blocked set. Preserves header. */
+export function filterCsvByProviderKeys(csv: string, blockedKeys: Set<string>): {
+  filteredCsv: string;
+  omittedRows: number;
+} {
+  if (!csv || blockedKeys.size === 0) return { filteredCsv: csv ?? "", omittedRows: 0 };
+  const lines = csv.split("\n");
+  if (lines.length === 0) return { filteredCsv: csv, omittedRows: 0 };
+  const out: string[] = [lines[0]];
+  let omitted = 0;
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line === "") {
+      out.push(line);
+      continue;
+    }
+    const commaIdx = line.indexOf(",");
+    const firstCol = commaIdx === -1 ? line : line.slice(0, commaIdx);
+    const unquoted = firstCol.replace(/^"|"$/g, "").trim();
+    if (blockedKeys.has(unquoted)) {
+      omitted += 1;
+      continue;
+    }
+    out.push(line);
+  }
+  return { filteredCsv: out.join("\n"), omittedRows: omitted };
+}

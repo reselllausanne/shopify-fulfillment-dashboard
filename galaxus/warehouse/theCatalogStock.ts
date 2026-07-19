@@ -29,20 +29,30 @@ export async function resolveTheSupplierVariantForGalaxusLine(
   line: GalaxusLineStockInput
 ): Promise<string | null> {
   const svId = String(line.supplierVariantId ?? "").trim();
-  if (svId.toLowerCase().startsWith("the_")) return svId;
+  if (isTheSupplierVariantId(svId)) return svId;
 
   const gtin = String(line.gtin ?? "").trim();
   const offerSku = resolveGalaxusLineOfferSupplierSku(line);
+  const theVariantIdFilter = {
+    OR: [
+      { supplierVariantId: { startsWith: "the_", mode: "insensitive" as const } },
+      { supplierVariantId: { startsWith: "the:", mode: "insensitive" as const } },
+    ],
+  };
 
   if (offerSku && isTheWarehouseSupplierSku(offerSku)) {
     const byOffer = await tx.supplierVariant.findFirst({
       where: {
-        OR: [
-          { providerKey: offerSku },
-          { supplierSku: offerSku },
-          ...(gtin && validateGtin(gtin) ? [{ providerKey: `THE_${gtin}` }, { gtin }] : []),
+        AND: [
+          theVariantIdFilter,
+          {
+            OR: [
+              { providerKey: offerSku },
+              { supplierSku: offerSku },
+              ...(gtin && validateGtin(gtin) ? [{ providerKey: `THE_${gtin}` }, { gtin }] : []),
+            ],
+          },
         ],
-        supplierVariantId: { startsWith: "the_", mode: "insensitive" },
       },
       orderBy: { stock: "desc" },
     });
@@ -52,8 +62,7 @@ export async function resolveTheSupplierVariantForGalaxusLine(
   if (gtin && validateGtin(gtin)) {
     const byGtin = await tx.supplierVariant.findFirst({
       where: {
-        gtin,
-        supplierVariantId: { startsWith: "the_", mode: "insensitive" },
+        AND: [theVariantIdFilter, { gtin }],
       },
       orderBy: { stock: "desc" },
     });
@@ -63,11 +72,12 @@ export async function resolveTheSupplierVariantForGalaxusLine(
   return null;
 }
 
+/** Catalog row ids: `the:sku-size` (partner style) or legacy `the_…`. */
 export function isTheSupplierVariantId(supplierVariantId: string | null | undefined): boolean {
-  return String(supplierVariantId ?? "")
+  const id = String(supplierVariantId ?? "")
     .trim()
-    .toLowerCase()
-    .startsWith("the_");
+    .toLowerCase();
+  return id.startsWith("the_") || id.startsWith("the:");
 }
 
 /**

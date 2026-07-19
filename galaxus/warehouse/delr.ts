@@ -57,6 +57,29 @@ function normalizePostalCode(value: any): string | null {
   return raw.replace(/^CH[\s-]*/i, "").trim();
 }
 
+function compactNonEmpty(values: Array<unknown>): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (!text) continue;
+    if (!out.includes(text)) out.push(text);
+  }
+  return out;
+}
+
+function selectRecipientName(delivery: any, isDirectDelivery: boolean): string | null {
+  void isDirectDelivery;
+  const fallback = String(delivery?.companyName ?? delivery?.name ?? "").trim();
+  return fallback || null;
+}
+
+function selectRecipientAddress2(delivery: any, recipientName: string | null, isDirectDelivery: boolean): string | null {
+  void recipientName;
+  void isDirectDelivery;
+  const values = compactNonEmpty([delivery?.name2, delivery?.department, delivery?.street2]);
+  return values.join(", ").trim() || null;
+}
+
 function findDeliveryParty(root: any) {
   const partiesNode =
     root?.ORDER_HEADER?.ORDER_INFO?.PARTIES?.PARTY ?? root?.PARTIES?.PARTY ?? null;
@@ -67,16 +90,21 @@ function findDeliveryParty(root: any) {
     const role = String(roleAttr || roleNode).toLowerCase().trim();
     if (role !== "delivery") continue;
     const address = party?.ADDRESS ?? {};
+    const contact = address?.CONTACT_DETAILS ?? {};
     const delivery = {
       name: extractText(address.NAME) ?? null,
+      companyName: extractText(address.NAME) ?? null,
       name2: extractText(address.NAME2) ?? null,
       department: extractText(address.DEPARTMENT) ?? null,
       street: extractText(address.STREET) ?? null,
       street2: extractText(address.STREET2) ?? null,
+      contactFirstName: extractText(contact.FIRST_NAME) ?? null,
+      contactName: extractText(contact.CONTACT_NAME) ?? null,
       postalCode: normalizePostalCode(address.ZIP),
       city: extractText(address.CITY) ?? null,
       country: extractText(address.COUNTRY) ?? null,
       countryCode: extractText(address.COUNTRY_CODED) ?? extractText(address.COUNTRY_CODE) ?? null,
+      phone: extractText(address.PHONE) ?? null,
     };
     if (!delivery.street || !delivery.postalCode || !delivery.city) return null;
     return delivery;
@@ -105,17 +133,24 @@ async function refreshOrderRecipientFromOrdp(order: any) {
   const root = data?.ORDER ?? data;
   const delivery = findDeliveryParty(root);
   if (!delivery) return order;
+  const isDirectDelivery = String(order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
+  const recipientName = selectRecipientName(delivery, isDirectDelivery);
+  const recipientAddress2 = selectRecipientAddress2(delivery, recipientName, isDirectDelivery);
+  const referencePerson =
+    compactNonEmpty([delivery.contactFirstName, delivery.contactName]).join(" ") || null;
 
-  const recipientAddress2 =
-    delivery.street2 ?? delivery.department ?? delivery.name2 ?? null;
+  const currentName = String(order?.recipientName ?? "").trim();
   const currentStreet = String(order?.recipientAddress1 ?? "").trim();
   const currentZip = String(order?.recipientPostalCode ?? "").trim();
   const currentCity = String(order?.recipientCity ?? "").trim();
   if (
+    currentName === String(recipientName ?? "").trim() &&
     currentStreet === delivery.street &&
     currentZip === delivery.postalCode &&
     currentCity === delivery.city &&
-    String(order?.recipientAddress2 ?? "").trim() === String(recipientAddress2 ?? "").trim()
+    String(order?.recipientAddress2 ?? "").trim() === String(recipientAddress2 ?? "").trim() &&
+    String(order?.referencePerson ?? "").trim() === String(referencePerson ?? "").trim() &&
+    String(order?.recipientPhone ?? "").trim() === String(delivery.phone ?? "").trim()
   ) {
     return order;
   }
@@ -123,13 +158,15 @@ async function refreshOrderRecipientFromOrdp(order: any) {
   return prisma.galaxusOrder.update({
     where: { id: order.id },
     data: {
-      recipientName: delivery.name ?? "Digitec Galaxus AG",
+      recipientName: recipientName ?? delivery.name ?? "Digitec Galaxus AG",
       recipientAddress1: delivery.street,
       recipientAddress2,
       recipientPostalCode: delivery.postalCode,
       recipientCity: delivery.city,
       recipientCountry: delivery.country ?? "Schweiz",
       recipientCountryCode: delivery.countryCode ?? "CH",
+      recipientPhone: delivery.phone,
+      referencePerson,
     },
   });
 }

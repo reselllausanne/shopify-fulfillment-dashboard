@@ -7,10 +7,10 @@ import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { toCsv } from "@/galaxus/exports/csv";
 import {
   classifyGalaxusProductKind,
-  isFootwearKind,
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
+import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -157,7 +157,8 @@ function buildVariantName(payload: KickDbPayload | null, fallbackSku?: string | 
 
 function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
   return resolveGalaxusProductCategoryPath({
-    title: fallbackTitle ?? null,
+    title: fallbackTitle ?? payload?.title ?? null,
+    description: payload?.description ?? null,
     category: payload?.category ?? null,
     secondaryCategory: payload?.secondary_category ?? null,
     productType: payload?.product_type ?? null,
@@ -310,21 +311,17 @@ function buildSpecsRows(candidates: any[]): ExportRow[] {
     const providerKey = candidate.providerKey;
     if (!providerKey) continue;
 
-    const sizeRaw = String(supplierVariant?.sizeRaw ?? "").trim();
-    const kind = classifyGalaxusProductKind({
-      title: supplierVariant?.supplierProductName ?? product?.name ?? null,
-      description: product?.description ?? null,
-      category: product?.category ?? null,
-      secondaryCategory: product?.secondary_category ?? null,
-      productType: product?.product_type ?? null,
+    const sizeSpecRow = buildGalaxusSizeSpecRow({
+      providerKey,
+      sizeRaw: supplierVariant?.sizeRaw ?? null,
+      sizeNormalized: supplierVariant?.sizeNormalized ?? null,
+      supplierTitle: supplierVariant?.supplierProductName ?? null,
+      supplierSku: supplierVariant?.supplierSku ?? null,
+      kickdbTitle: product?.name ?? null,
+      kickdbDescription: product?.description ?? null,
     });
-    if (sizeRaw) {
-      const likelyFootwear = isFootwearKind(kind) || /\d/.test(sizeRaw);
-      rows.push({
-        ProviderKey: providerKey,
-        SpecificationKey: likelyFootwear ? "Schuhgrösse (EU)" : "Bekleidungsgrösse",
-        SpecificationValue: sizeRaw,
-      });
+    if (sizeSpecRow) {
+      rows.push(sizeSpecRow);
     }
     const brand = supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand;
     if (brand) {

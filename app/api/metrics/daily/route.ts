@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 import { decathlonGrossLineAmount } from "@/decathlon/orders/margin";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isStockxMatchLinked } from "@/galaxus/stx/allocateGalaxusStxCost";
@@ -70,6 +71,8 @@ export async function GET(req: NextRequest) {
         select: {
           shopifyOrderId: true,
           shopifyOrderName: true,
+          shopifyProductTitle: true,
+          shopifySku: true,
           shopifyTotalPrice: true,
           manualRevenueAdjustment: true,
           supplierCost: true,
@@ -171,6 +174,10 @@ export async function GET(req: NextRequest) {
     };
 
     for (const m of matches) {
+      if (isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku)) {
+        continue;
+      }
+
       const sellDateRaw = m.shopifyCreatedAt;
       const cost = toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
       const baseRevenue =

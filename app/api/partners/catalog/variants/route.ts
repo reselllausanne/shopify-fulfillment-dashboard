@@ -6,6 +6,7 @@ import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
 import { GALAXUS_FEED_SUPPLIER_BLOCKLIST } from "@/galaxus/config";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { enrichSupplierVariantsForListing } from "@/galaxus/supplier/supplierVariantListExtras";
+import { loadGtinReferenceMinPrices } from "@/galaxus/supplier/gtinReferenceMinPrice";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import {
   partnerCatalogVariantWhere,
@@ -214,28 +215,7 @@ export async function GET(req: NextRequest) {
     ),
   ];
 
-  const refByGtin = new Map<string, { min: number; count: number }>();
-  if (gtins.length > 0) {
-    const idPrefixPattern = `${partnerKeyLower}:%`;
-    const idUnderscoreRe = `^${partnerKeyLower}_`;
-    const rows = await prisma.$queryRaw<Array<{ gtin: string; min_price: unknown; cnt: bigint }>>(
-      Prisma.sql`
-        SELECT sv."gtin", MIN(sv."price") AS min_price, COUNT(*)::bigint AS cnt
-        FROM "public"."SupplierVariant" sv
-        WHERE sv."gtin" IN (${Prisma.join(gtins)})
-          AND NOT (sv."supplierVariantId" ILIKE ${idPrefixPattern})
-          AND sv."supplierVariantId" !~* ${idUnderscoreRe}
-        GROUP BY sv."gtin"
-      `
-    );
-    for (const r of rows) {
-      const g = String(r.gtin ?? "").trim();
-      const v = Number(r.min_price);
-      if (validateGtin(g) && Number.isFinite(v)) {
-        refByGtin.set(g, { min: v, count: Number(r.cnt) });
-      }
-    }
-  }
+  const refByGtin = await loadGtinReferenceMinPrices(prisma, gtins, partnerKeyLower);
 
   const mappedWithRef = mapped.map((item) => {
     const g = item.gtin ? String(item.gtin).trim() : "";

@@ -29,6 +29,7 @@ export const FEED_MAPPING_INCLUDE = {
       images: true,
       hostedImageUrl: true,
       sourceImageUrl: true,
+      imageSyncStatus: true,
       manualPrice: true,
       manualStock: true,
       manualLock: true,

@@ -706,6 +706,12 @@ export default function ScanPage() {
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2">
           <a
+            href="/scan/stats"
+            className="px-3 py-1 text-sm bg-emerald-100 text-emerald-900 rounded hover:bg-emerald-200 transition-colors"
+          >
+            Timing
+          </a>
+          <a
             href="https://admin.shopify.com/store/resell-lausanne"
             target="_blank"
             rel="noopener noreferrer"

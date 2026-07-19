@@ -50,7 +50,7 @@ export function resolveSwissPostPrzl(input: {
   const przl = forceSignature ? ["SI", baseProduct] : [baseProduct];
 
   const parts: string[] = [];
-  parts.push(isExpress ? "express→PRI" : "standard→ECO");
+  parts.push(isExpress ? "A-Post→PRI" : "standard→ECO");
   if (forceSignature) {
     if (isPowerpayBilling(input.orderInfo)) parts.push("facture→SI");
     else if (isHighValueSignatureOrder(input.orderInfo)) parts.push("high-value→SI");
@@ -75,26 +75,59 @@ export function shouldSkipSwissPostLabelForLiquidation(
   return cleaned.every((title) => isLiquidationProductTitle(title));
 }
 
+function deliveryModeFromShippingLineTitle(
+  orderInfo: OrderShippingInfo | null
+): ShopifyDeliveryMode | null {
+  const title = orderInfo?.shippingLines?.find((line) => !line.isRemoved)?.title ?? "";
+  const lower = title.trim().toLowerCase();
+  if (!lower) return null;
+  if (
+    lower.includes("express") ||
+    lower.includes("a-post") ||
+    lower.includes("a post") ||
+    lower.includes("apost") ||
+    lower.includes("priority") ||
+    lower.includes("priorit")
+  ) {
+    return "express";
+  }
+  if (
+    lower.includes("standard") ||
+    lower.includes("economy") ||
+    lower.includes("eco") ||
+    lower.includes("normale") ||
+    lower.includes("normal")
+  ) {
+    return "standard";
+  }
+  return null;
+}
+
 export function pickLineDeliveryMode(
   orderInfo: OrderShippingInfo | null,
   preferredLineItemIds: Array<string | null | undefined> = []
 ): ShopifyDeliveryMode | null {
   const nodes = orderInfo?.lineItems?.nodes ?? [];
-  if (nodes.length === 0) return null;
-
   const preferred = new Set(
     preferredLineItemIds.map((id) => String(id ?? "").trim()).filter(Boolean)
   );
-  if (preferred.size > 0) {
+
+  if (nodes.length > 0 && preferred.size > 0) {
     for (const node of nodes) {
       if (!preferred.has(node.id)) continue;
       if (node.deliveryMode) return node.deliveryMode;
     }
+    const shippingMode = deliveryModeFromShippingLineTitle(orderInfo);
+    return shippingMode;
   }
 
-  const express = nodes.find((n) => n.deliveryMode === "express");
-  if (express) return "express";
-  const standard = nodes.find((n) => n.deliveryMode === "standard");
-  if (standard) return "standard";
-  return null;
+  const expressLine = nodes.find((n) => n.deliveryMode === "express");
+  if (expressLine) return "express";
+
+  const shippingMode = deliveryModeFromShippingLineTitle(orderInfo);
+  if (shippingMode === "express") return "express";
+
+  const standardLine = nodes.find((n) => n.deliveryMode === "standard");
+  if (standardLine) return "standard";
+  return shippingMode;
 }

@@ -3,12 +3,26 @@ import {
   applyTheCatalogStockDeltaInTx,
   isTheSupplierVariantId,
 } from "@/galaxus/warehouse/theCatalogStock";
+import { isTheWarehouseSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
 import { resolveSupplierVariantForInventoryLine } from "./resolveSupplierVariant";
+import { scheduleTheSaleChannelSync } from "./theSaleChannelSync";
 import type {
   ApplyInventoryOrderLineInput,
   ApplyInventoryOrderLineResult,
   InventoryEventKind,
 } from "./types";
+
+type ApplyInventoryOrderLineOptions = {
+  /** When false, caller batches channel sync (see applyInventoryOrderLines). Default true. */
+  syncChannels?: boolean;
+};
+
+function shouldScheduleTheSaleSync(result: ApplyInventoryOrderLineResult): boolean {
+  if (!result.applied) return false;
+  if ((result.quantityDelta ?? 0) >= 0) return false;
+  if (!isTheSupplierVariantId(result.supplierVariantId)) return false;
+  return isTheWarehouseSupplierSku(result.providerKey);
+}
 
 function normalizePositiveQuantity(quantity: number): number | null {
   if (!Number.isFinite(quantity)) return null;
@@ -22,7 +36,8 @@ function resolveQuantityDelta(eventType: InventoryEventKind, quantity: number): 
 }
 
 export async function applyInventoryOrderLine(
-  input: ApplyInventoryOrderLineInput
+  input: ApplyInventoryOrderLineInput,
+  options?: ApplyInventoryOrderLineOptions
 ): Promise<ApplyInventoryOrderLineResult> {
   const externalLineId = String(input.externalLineId ?? "").trim();
   if (!externalLineId) {
@@ -166,6 +181,10 @@ export async function applyInventoryOrderLine(
       };
     });
 
+    if (options?.syncChannels !== false && shouldScheduleTheSaleSync(result)) {
+      scheduleTheSaleChannelSync({ providerKeys: [result.providerKey] });
+    }
+
     return result;
   } catch (error: any) {
     const message = String(error?.message ?? "");
@@ -187,9 +206,16 @@ export async function applyInventoryOrderLines(
   lines: ApplyInventoryOrderLineInput[]
 ): Promise<ApplyInventoryOrderLineResult[]> {
   const results: ApplyInventoryOrderLineResult[] = [];
+  const theSaleKeys: string[] = [];
   for (const line of lines) {
-    const result = await applyInventoryOrderLine(line);
+    const result = await applyInventoryOrderLine(line, { syncChannels: false });
     results.push(result);
+    if (shouldScheduleTheSaleSync(result) && result.providerKey) {
+      theSaleKeys.push(result.providerKey);
+    }
+  }
+  if (theSaleKeys.length > 0) {
+    scheduleTheSaleChannelSync({ providerKeys: theSaleKeys });
   }
   return results;
 }

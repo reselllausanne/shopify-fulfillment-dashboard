@@ -3,6 +3,7 @@ import { runDecathlonOpsJob } from "./jobRunner";
 import { listDecathlonJobDefinitions, updateDecathlonJobDefinition } from "./jobDefinitions";
 import type { DecathlonOpsJobKey } from "./types";
 import { runDecathlonOfferSync, runDecathlonPriceSync, runDecathlonStockSync } from "@/decathlon/mirakl/sync";
+import { syncMarketplaceReturns } from "@/decathlon/returns/receipt/sync";
 
 type TickJobResult = {
   due: boolean;
@@ -27,6 +28,9 @@ async function executeJob(jobKey: DecathlonOpsJobKey) {
   }
   if (jobKey === "decathlon-price-sync") {
     return runDecathlonOpsJob(jobKey, async () => runDecathlonPriceSync());
+  }
+  if (jobKey === "decathlon-return-sync") {
+    return runDecathlonOpsJob(jobKey, async () => syncMarketplaceReturns());
   }
   throw new Error(`Unknown jobKey ${jobKey}`);
 }

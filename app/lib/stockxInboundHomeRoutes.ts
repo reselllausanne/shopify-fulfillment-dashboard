@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 export type StockxInboundHomeRoute = {
   id: string;
   stockxOrderNumber: string;
+  /** When StockX # unknown yet, scan can still route via matched Shopify order name. */
+  shopifyOrderName?: string | null;
   stockxAwb: string | null;
   stockxTrackingUrl: string | null;
   notes: string | null;
@@ -25,6 +27,13 @@ function normalizeOrderNumber(value: string | null | undefined): string {
     .trim()
     .replace(/^#+/, "")
     .toUpperCase();
+}
+
+function normalizeShopifyOrderName(value: string | null | undefined): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return "";
+  const digits = trimmed.replace(/^#+/, "");
+  return digits ? `#${digits}` : "";
 }
 
 function normalizeAwb(value: string | null | undefined): string {
@@ -68,13 +77,17 @@ export async function listStockxInboundHomeRoutes(): Promise<StockxInboundHomeRo
 }
 
 export async function upsertStockxInboundHomeRoute(input: {
-  stockxOrderNumber: string;
+  stockxOrderNumber?: string | null;
+  shopifyOrderName?: string | null;
   stockxAwb?: string | null;
   stockxTrackingUrl?: string | null;
   notes?: string | null;
 }): Promise<StockxInboundHomeRoute> {
   const orderNumber = normalizeOrderNumber(input.stockxOrderNumber);
-  if (!orderNumber) throw new Error("Missing stockxOrderNumber");
+  const shopifyOrderName = normalizeShopifyOrderName(input.shopifyOrderName);
+  if (!orderNumber && !shopifyOrderName) {
+    throw new Error("Missing stockxOrderNumber or shopifyOrderName");
+  }
 
   const awb = normalizeAwb(input.stockxAwb) || null;
   const trackingUrl = String(input.stockxTrackingUrl ?? "").trim() || null;
@@ -82,17 +95,24 @@ export async function upsertStockxInboundHomeRoute(input: {
   const now = new Date().toISOString();
 
   const store = await readStore();
-  const existingIdx = store.routes.findIndex(
-    (route) => normalizeOrderNumber(route.stockxOrderNumber) === orderNumber
-  );
+  const existingIdx = store.routes.findIndex((route) => {
+    if (orderNumber && normalizeOrderNumber(route.stockxOrderNumber) === orderNumber) return true;
+    if (shopifyOrderName && normalizeShopifyOrderName(route.shopifyOrderName) === shopifyOrderName) {
+      return true;
+    }
+    return false;
+  });
+
+  const existing = existingIdx >= 0 ? store.routes[existingIdx] : null;
 
   const next: StockxInboundHomeRoute = {
-    id: existingIdx >= 0 ? store.routes[existingIdx].id : randomUUID(),
-    stockxOrderNumber: orderNumber,
+    id: existing?.id ?? randomUUID(),
+    stockxOrderNumber: orderNumber || existing?.stockxOrderNumber || "",
+    shopifyOrderName: shopifyOrderName || existing?.shopifyOrderName || null,
     stockxAwb: awb,
     stockxTrackingUrl: trackingUrl,
     notes,
-    createdAt: existingIdx >= 0 ? store.routes[existingIdx].createdAt : now,
+    createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
 
@@ -123,4 +143,21 @@ export async function findStockxInboundHomeRouteByCode(
   return null;
 }
 
-export { normalizeAwb as normalizeInboundHomeAwb, normalizeScanCode as normalizeInboundHomeScanCode };
+export async function findStockxInboundHomeRouteByShopifyOrderName(
+  shopifyOrderName: string | null | undefined
+): Promise<StockxInboundHomeRoute | null> {
+  const normalized = normalizeShopifyOrderName(shopifyOrderName);
+  if (!normalized) return null;
+
+  const store = await readStore();
+  for (const route of store.routes) {
+    if (normalizeShopifyOrderName(route.shopifyOrderName) === normalized) return route;
+  }
+  return null;
+}
+
+export {
+  normalizeAwb as normalizeInboundHomeAwb,
+  normalizeScanCode as normalizeInboundHomeScanCode,
+  normalizeShopifyOrderName as normalizeInboundHomeShopifyOrderName,
+};
