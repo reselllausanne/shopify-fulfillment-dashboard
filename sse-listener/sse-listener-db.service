@@ -1,0 +1,17 @@
+[Unit]
+Description=KicksDB SSE listener (DB buffer mode)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sse-listener
+Environment=KICKSDB_API_KEY=sd_kRbsuYh7brcMNR5BermZnUhufKUNBnuA
+# Set once go-live security is enabled (matches web .env):
+# Environment=KICKDB_INTERNAL_TOKEN=...
+ExecStart=/usr/bin/python3 /opt/sse-listener/sse_db_listener.py --topics price:stockx:ch --upsert-url http://127.0.0.1:3000/api/kickdb/upsert
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
