@@ -25,6 +25,32 @@ import {
 const GOLDEN_CATALOG_TTL_MS = 5 * 60 * 1000;
 let goldenCatalogCache: { loadedAt: number; byVariantId: Map<string, string> } | null = null;
 
+const RAW_BUFFER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * DB-first product fetch: if the SSE buffer already holds a raw KicksDB
+ * payload (<24h old) for this product, use it — zero KicksDB calls.
+ * Falls back to null (caller does the live fetch) on miss or stale.
+ */
+async function readFreshRawFromBuffer(idOrSlug: string): Promise<any | null> {
+  const key = String(idOrSlug ?? "").trim();
+  if (!key) return null;
+  try {
+    const cutoff = new Date(Date.now() - RAW_BUFFER_MAX_AGE_MS);
+    const rows = await prisma.$queryRaw<Array<{ rawJson: unknown }>>(Prisma.sql`
+      SELECT "rawJson"
+      FROM "public"."KickDBProduct"
+      WHERE ("kickdbProductId" = ${key} OR "urlKey" = ${key.toLowerCase()})
+        AND "rawJson" IS NOT NULL
+        AND "rawFetchedAt" >= ${cutoff}
+      LIMIT 1
+    `);
+    return rows[0]?.rawJson ?? null;
+  } catch {
+    return null;
+  }
+}
+
 type KickdbEnrichOptions = {
   limit?: number;
   offset?: number;
@@ -661,9 +687,12 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
 
     let productResponse: any;
     try {
-      productResponse = raw
-        ? await fetchStockxProductByIdOrSlugRaw(productIdOrSlug)
-        : await fetchStockxProductByIdOrSlug(productIdOrSlug);
+      const buffered = raw ? null : await readFreshRawFromBuffer(productIdOrSlug);
+      productResponse = buffered
+        ? buffered
+        : raw
+          ? await fetchStockxProductByIdOrSlugRaw(productIdOrSlug)
+          : await fetchStockxProductByIdOrSlug(productIdOrSlug);
     } catch (error: any) {
       const message = error?.message ?? "KickDB product fetch failed";
       results.push({
