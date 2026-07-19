@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AppNav from "@/app/components/AppNav";
 
 export const metadata: Metadata = {
   title: "Supplier Order Management",
@@ -13,7 +14,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <AppNav />
+        {children}
+      </body>
     </html>
   );
 }
