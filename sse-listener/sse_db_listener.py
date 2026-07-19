@@ -245,12 +245,18 @@ def stream_once(api_key, topics, q, min_interval, last_event_id):
         headers["Last-Event-ID"] = last_event_id
 
     log(f"Connecting SSE: topics={topics!r} last_event_id={last_event_id!r}")
-    response = requests.get(
-        os.environ.get("KICKSDB_SSE_URL", DEFAULT_SSE_URL),
-        headers=headers,
-        stream=True,
-        timeout=(30, 90),
-    )
+    try:
+        # Read timeout generous (600s): the stream can be quiet between events;
+        # a dead connection is still detected within 10 min and reconnected.
+        response = requests.get(
+            os.environ.get("KICKSDB_SSE_URL", DEFAULT_SSE_URL),
+            headers=headers,
+            stream=True,
+            timeout=(30, 600),
+        )
+    except Exception as e:
+        log(f"SSE connect error: {e}")
+        return False
     if response.status_code != 200:
         log(f"SSE HTTP {response.status_code}: {response.text[:200]}")
         response.close()
