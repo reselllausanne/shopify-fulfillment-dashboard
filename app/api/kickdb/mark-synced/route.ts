@@ -39,19 +39,22 @@ export async function POST(req: Request) {
   const now = new Date();
 
   try {
+    // shopifySyncedAt records the last push ATTEMPT (success or error) so a
+    // failing product leaves the fresh queue until a new SSE event bumps
+    // rawFetchedAt — prevents an infinite retry loop on permanent skips.
     await prisma.$executeRaw`
       INSERT INTO "public"."ShopifySyncState" (
         "id", "kickdbProductId", "shopifyProductId", "shopifyHandle",
         "syncStatus", "shopifySyncedAt", "lastError", "createdAt", "updatedAt"
       ) VALUES (
         gen_random_uuid(), ${kickdbProductId}, ${shopifyProductId}, ${shopifyHandle},
-        ${syncStatus}, ${isError ? null : now}, ${lastError}, ${now}, ${now}
+        ${syncStatus}, ${now}, ${lastError}, ${now}, ${now}
       )
       ON CONFLICT ("kickdbProductId") DO UPDATE SET
         "shopifyProductId" = COALESCE(EXCLUDED."shopifyProductId", "ShopifySyncState"."shopifyProductId"),
         "shopifyHandle"    = COALESCE(EXCLUDED."shopifyHandle", "ShopifySyncState"."shopifyHandle"),
         "syncStatus"       = EXCLUDED."syncStatus",
-        "shopifySyncedAt"  = COALESCE(EXCLUDED."shopifySyncedAt", "ShopifySyncState"."shopifySyncedAt"),
+        "shopifySyncedAt"  = EXCLUDED."shopifySyncedAt",
         "lastError"        = EXCLUDED."lastError",
         "updatedAt"        = EXCLUDED."updatedAt"
     `;
