@@ -227,6 +227,11 @@ export default function PartnerOrdersPage() {
     return rows;
   }, [selectedOrder]);
 
+  const hasLabelDocument = useMemo(() => {
+    const docs: any[] = Array.isArray(selectedOrder?.documents) ? selectedOrder.documents : [];
+    return docs.some((d) => String(d?.type ?? "").toUpperCase() === "LABEL");
+  }, [selectedOrder]);
+
   const downloadPdf = async (url: string, fallbackName: string) => {
     const res = await fetch(url, { method: "GET", cache: "no-store" });
     if (!res.ok) {
@@ -237,11 +242,19 @@ export default function PartnerOrdersPage() {
     const rawName = res.headers.get("content-disposition")?.split("filename=")?.[1] ?? "";
     const filename = rawName.replace(/^['"]|['"]$/g, "") || fallbackName;
     const urlObj = URL.createObjectURL(blob);
+    // Anchor must be in the DOM for Safari/Firefox to honor the click; revoke after a
+    // delay so the browser has time to start the download (immediate revoke cancels it).
     const link = document.createElement("a");
     link.href = urlObj;
     link.download = filename;
+    link.rel = "noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(urlObj);
+    setTimeout(() => {
+      link.remove();
+      URL.revokeObjectURL(urlObj);
+    }, 10000);
   };
 
   const generatePackingSlip = async () => {
@@ -265,6 +278,16 @@ export default function PartnerOrdersPage() {
     );
   };
 
+  const downloadLabelManual = async () => {
+    if (!selectedOrderId) return;
+    setError(null);
+    try {
+      await downloadLabel();
+    } catch (err: any) {
+      setError(err?.message ?? "Label download failed");
+    }
+  };
+
   const shipOrder = async () => {
     if (!selectedOrderId) return;
     setError(null);
@@ -280,8 +303,8 @@ export default function PartnerOrdersPage() {
           const msg = String(labelErr?.message ?? labelErr);
           setError(
             msg.toLowerCase().includes("failed to fetch")
-              ? "Label download failed (network). Check that the app is reachable and try “Refresh orders”, or open the label from Mirakl."
-              : `Ship saved but label download failed: ${msg}`
+              ? "Label created but auto-download failed (network). Use the “Download label” button to retry."
+              : `Label created but auto-download failed. Use the “Download label” button to retry (${msg}).`
           );
         }
       } else if (data.reconciled) {
@@ -421,6 +444,15 @@ export default function PartnerOrdersPage() {
             >
               Download packing slip
             </button>
+            {hasLabelDocument ? (
+              <button
+                onClick={downloadLabelManual}
+                disabled={!selectedOrderId}
+                className="px-3 py-1.5 bg-slate-100 rounded text-xs"
+              >
+                Download label
+              </button>
+            ) : null}
             <button
               onClick={shipOrder}
               disabled={!selectedOrderId}
