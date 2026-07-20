@@ -43,6 +43,15 @@ type LevelNode = {
   } | null;
 };
 
+type LocationLevelsResponse = {
+  location: {
+    inventoryLevels: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      edges: Array<{ node: LevelNode }>;
+    };
+  } | null;
+};
+
 type SeenRow = {
   shopifyVariantId: string;
   inventoryItemId: string;
@@ -62,14 +71,13 @@ async function pageLocationLevels(
   let capped = false;
 
   while (true) {
-    const { data, errors } = await shopifyGraphQL<{
-      location: {
-        inventoryLevels: {
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          edges: Array<{ node: LevelNode }>;
-        };
-      } | null;
-    }>(LOCATION_LEVELS_QUERY, { loc: location.id, cur: cursor });
+    const response: { data: LocationLevelsResponse; errors?: Array<{ message: string }> } =
+      await shopifyGraphQL<LocationLevelsResponse>(LOCATION_LEVELS_QUERY, {
+        loc: location.id,
+        cur: cursor,
+      });
+    const data = response.data;
+    const errors = response.errors;
 
     if (errors?.length) {
       throw new Error(`location levels (${location.name}) failed: ${errors.map((e) => e.message).join("; ")}`);
