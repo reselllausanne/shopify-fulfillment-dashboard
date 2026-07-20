@@ -335,8 +335,13 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
   if (!res.ok || !res.body) throw new Error(`bulk download failed: HTTP ${res.status}`);
 
   // Stream JSONL line-by-line. Parent (variant) lines precede their child
-  // inventory-level lines, so a running map resolves each level to its variant.
-  const invItemToVariant = new Map<string, { variantId: string; sku: string | null; gtin: string | null }>();
+  // inventory-level lines. In bulk exports an inventory-level's __parentId is
+  // the ProductVariant id (the inline `inventoryItem` is NOT a separate node),
+  // so we key the map by variant id.
+  const variantById = new Map<
+    string,
+    { variantId: string; inventoryItemId: string; sku: string | null; gtin: string | null }
+  >();
   const seenByLocation = new Map<string, Set<string>>();
   for (const l of PHYSICAL_LOCATIONS) seenByLocation.set(l.id, new Set());
 
@@ -355,20 +360,22 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
     } catch {
       return;
     }
-    // Variant line: has a ProductVariant id and inline inventoryItem.
+    // Variant line: has a ProductVariant id and inline inventoryItem. Index by
+    // BOTH ids so an inventory-level's __parentId resolves whether Shopify sets
+    // it to the variant id or the inventoryItem id.
     if (typeof obj.id === "string" && obj.id.includes("/ProductVariant/")) {
       variantsSeen += 1;
-      const invItemId = obj.inventoryItem?.id;
-      if (invItemId) {
-        invItemToVariant.set(invItemId, {
-          variantId: obj.id,
-          sku: obj.sku ?? null,
-          gtin: obj.barcode ?? null,
-        });
-      }
+      const info = {
+        variantId: obj.id,
+        inventoryItemId: obj.inventoryItem?.id ?? "",
+        sku: obj.sku ?? null,
+        gtin: obj.barcode ?? null,
+      };
+      variantById.set(obj.id, info);
+      if (info.inventoryItemId) variantById.set(info.inventoryItemId, info);
       return;
     }
-    // Inventory-level line: has __parentId (= inventoryItem id) + location.
+    // Inventory-level line: __parentId = ProductVariant id, plus location.
     if (obj.__parentId && obj.location?.id) {
       const locId = obj.location.id;
       if (!physicalIds.has(locId)) return;
@@ -376,12 +383,12 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
         ? obj.quantities.find((q: any) => q.name === "available")?.quantity ?? 0
         : 0;
       if (available <= 0) return;
-      const variant = invItemToVariant.get(obj.__parentId);
+      const variant = variantById.get(obj.__parentId);
       if (!variant) return;
       const location = PHYSICAL_LOCATIONS.find((l) => l.id === locId)!;
       await upsertRow(location, {
         shopifyVariantId: variant.variantId,
-        inventoryItemId: obj.__parentId,
+        inventoryItemId: variant.inventoryItemId,
         sku: variant.sku,
         gtin: variant.gtin,
         available,
