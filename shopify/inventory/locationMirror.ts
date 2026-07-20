@@ -12,12 +12,17 @@ import { PHYSICAL_LOCATIONS, type LocationConfig } from "@/shopify/inventory/loc
  * Discovers stock entered any way (admin transfer, POS page, scanner).
  */
 
+// Page size kept small: physical locations carry many qty-0 activated levels
+// (main.py activates every secondary location on variant create), and a large
+// `first` inflates the GraphQL query cost and trips Shopify throttling.
+const LEVELS_PAGE_SIZE = 100;
+
 const LOCATION_LEVELS_QUERY = /* GraphQL */ `
-query LocationLevels($loc: ID!, $cur: String) {
+query LocationLevels($loc: ID!, $cur: String, $n: Int!) {
   location(id: $loc) {
     id
     name
-    inventoryLevels(first: 250, after: $cur) {
+    inventoryLevels(first: $n, after: $cur) {
       pageInfo { hasNextPage endCursor }
       edges {
         node {
@@ -33,6 +38,17 @@ query LocationLevels($loc: ID!, $cur: String) {
   }
 }
 `;
+
+function isThrottled(errors?: Array<{ message: string; extensions?: any }>): boolean {
+  if (!errors?.length) return false;
+  return errors.some(
+    (e) =>
+      e?.extensions?.code === "THROTTLED" ||
+      /throttl/i.test(e?.message ?? "")
+  );
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 type LevelNode = {
   quantities: Array<{ name: string; quantity: number }> | null;
@@ -69,15 +85,28 @@ async function pageLocationLevels(
   let cursor: string | null = null;
   let pages = 0;
   let capped = false;
+  let throttleRetries = 0;
 
   while (true) {
-    const response: { data: LocationLevelsResponse; errors?: Array<{ message: string }> } =
+    const response: { data: LocationLevelsResponse; errors?: Array<{ message: string; extensions?: any }> } =
       await shopifyGraphQL<LocationLevelsResponse>(LOCATION_LEVELS_QUERY, {
         loc: location.id,
         cur: cursor,
+        n: LEVELS_PAGE_SIZE,
       });
     const data = response.data;
     const errors = response.errors;
+
+    if (isThrottled(errors)) {
+      // Back off and retry the SAME cursor; don't advance or error out.
+      throttleRetries += 1;
+      if (throttleRetries > 12) {
+        throw new Error(`location levels (${location.name}) throttled repeatedly; giving up`);
+      }
+      await sleep(Math.min(2000 * throttleRetries, 15000));
+      continue;
+    }
+    throttleRetries = 0;
 
     if (errors?.length) {
       throw new Error(`location levels (${location.name}) failed: ${errors.map((e) => e.message).join("; ")}`);
@@ -128,8 +157,10 @@ export async function syncAllLocations(options: {
   locations?: LocationConfig[];
 } = {}): Promise<{ ok: boolean; locations: LocationSyncResult[]; ms: number }> {
   const startedAt = Date.now();
-  const maxPages = options.maxPagesPerLocation ?? 2000;
-  const delayMs = options.delayMs ?? 150;
+  const maxPages = options.maxPagesPerLocation ?? 4000;
+  // Conservative default: keeps the GraphQL cost bucket from emptying while
+  // paging through many qty-0 levels on physical locations.
+  const delayMs = options.delayMs ?? 700;
   // Physical locations only by default: dropship (online) qty already lives in
   // SupplierVariant, and paging ~18k online rows every run is wasteful.
   const targetLocations = options.locations ?? PHYSICAL_LOCATIONS;
