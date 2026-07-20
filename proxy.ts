@@ -47,6 +47,8 @@ const PUBLIC_PATHS = [
   // Internal machine-to-machine buffer routes (SSE listener/consumer/bootstrap).
   // Own shared-secret gate via KICKDB_INTERNAL_TOKEN (app/api/kickdb/auth.ts).
   "/api/kickdb",
+  // Shopify per-location inventory mirror (cron). Same shared-secret gate.
+  "/api/inventory/locations",
   "/api/tracking/token",
   "/_next",
   "/static",

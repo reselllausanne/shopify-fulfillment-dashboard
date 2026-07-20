@@ -26,14 +26,14 @@ model StockXToken {
 model ShopifyOrder {
   shopifyOrderId      String    @id
   orderName           String
-  createdAt           DateTime  // Shopify sell date
-  totalSalesChf       Decimal   @db.Decimal(10, 2)  // Gross sales
+  createdAt           DateTime // Shopify sell date
+  totalSalesChf       Decimal   @db.Decimal(10, 2) // Gross sales
   currencyCode        String    @default("CHF")
   financialStatus     String?
-  paymentGatewayNames String[] @default([])
+  paymentGatewayNames String[]  @default([])
   cancelledAt         DateTime?
   refundedAmountChf   Decimal?  @db.Decimal(10, 2)
-  netSalesChf         Decimal?  @db.Decimal(10, 2)  // totalSales - refunded
+  netSalesChf         Decimal?  @db.Decimal(10, 2) // totalSales - refunded
   updatedAt           DateTime  @updatedAt
   syncedAt            DateTime  @default(now())
 
@@ -66,85 +66,85 @@ enum StxImportSlugStatus {
 }
 
 model OrderMatch {
-  id                      String   @id @default(uuid())
-  
+  id String @id @default(uuid())
+
   // Shopify identifiers
-  shopifyOrderId          String
-  shopifyOrderName        String
-  shopifyLineItemId       String   @unique
-  shopifyProductTitle     String
-  shopifySku              String?
-  shopifySizeEU           String?
-  shopifyTotalPrice       Decimal  @db.Decimal(10, 2)
-  shopifyCurrencyCode     String   @default("CHF")
-  shopifyCreatedAt        DateTime?
-  shopifyCustomerEmail    String?
+  shopifyOrderId           String
+  shopifyOrderName         String
+  shopifyLineItemId        String    @unique
+  shopifyProductTitle      String
+  shopifySku               String?
+  shopifySizeEU            String?
+  shopifyTotalPrice        Decimal   @db.Decimal(10, 2)
+  shopifyCurrencyCode      String    @default("CHF")
+  shopifyCreatedAt         DateTime?
+  shopifyCustomerEmail     String?
   shopifyCustomerFirstName String?
   shopifyCustomerLastName  String?
-  shopifyLineItemImageUrl String?
-  
-  // Supplier identifiers (supports StockX, manual, other)
-  supplierSource          SupplierSource @default(STOCKX)
-  stockxOrderNumber       String         // Can be used for manual ref too
-  stockxChainId           String?        // StockX long chainId (e.g. "14826275139352606543")
-  stockxOrderId           String?        // StockX orderId (often = orderNumber)
-  stockxProductName       String
-  stockxSizeEU            String?
-  stockxSkuKey            String?
-  stockxPurchaseDate      DateTime?      // Also: supplierPurchaseDate
-  
-  // Match metadata
-  matchConfidence         String
-  matchScore              Decimal  @db.Decimal(5, 2)
-  matchType               String
-  matchReasons            String
-  timeDiffHours           Decimal? @db.Decimal(10, 2)
-  
-  // StockX status & tracking
-  stockxStatus              String
-  stockxTrackingUrl         String?        // Tracking URL from shipping.shipment
-  stockxAwb                 String?        // Air Waybill / tracking number (extracted from trackingUrl)
-  stockxEstimatedDelivery   DateTime?      // Estimated delivery date (start)
-  stockxLatestEstimatedDelivery DateTime?  // Latest estimated delivery date (end)
-  stockxCheckoutType        String?
-  stockxStates              Json?
-  stockxStatesHash          String?
-  stockxStatesUpdatedAt     DateTime?
+  shopifyLineItemImageUrl  String?
 
-  lastMilestoneKey          String?
-  lastMilestoneAt           DateTime?
+  // Supplier identifiers (supports StockX, manual, other)
+  supplierSource     SupplierSource @default(STOCKX)
+  stockxOrderNumber  String // Can be used for manual ref too
+  stockxChainId      String? // StockX long chainId (e.g. "14826275139352606543")
+  stockxOrderId      String? // StockX orderId (often = orderNumber)
+  stockxProductName  String
+  stockxSizeEU       String?
+  stockxSkuKey       String?
+  stockxPurchaseDate DateTime? // Also: supplierPurchaseDate
+
+  // Match metadata
+  matchConfidence String
+  matchScore      Decimal  @db.Decimal(5, 2)
+  matchType       String
+  matchReasons    String
+  timeDiffHours   Decimal? @db.Decimal(10, 2)
+
+  // StockX status & tracking
+  stockxStatus                  String
+  stockxTrackingUrl             String? // Tracking URL from shipping.shipment
+  stockxAwb                     String? // Air Waybill / tracking number (extracted from trackingUrl)
+  stockxEstimatedDelivery       DateTime? // Estimated delivery date (start)
+  stockxLatestEstimatedDelivery DateTime? // Latest estimated delivery date (end)
+  stockxCheckoutType            String?
+  stockxStates                  Json?
+  stockxStatesHash              String?
+  stockxStatesUpdatedAt         DateTime?
+
+  lastMilestoneKey String?
+  lastMilestoneAt  DateTime?
 
   /// Opaque token for public customer tracking (/track/[token]); no expiry.
-  customerTrackingToken   String?  @unique
+  customerTrackingToken String? @unique
 
-  stockxStatusEvents        StockXStatusEvent[]
-  
+  stockxStatusEvents StockXStatusEvent[]
+
   // Shopify metafields sync status
-  shopifyMetafieldsSynced Boolean  @default(false)
+  shopifyMetafieldsSynced Boolean   @default(false)
   shopifyMetafieldsSetAt  DateTime?
-  
+
   // Financial data
-  supplierCost            Decimal  @db.Decimal(10, 2)
-  marginAmount            Decimal  @db.Decimal(10, 2)
-  marginPercent           Decimal  @db.Decimal(5, 2)
+  supplierCost  Decimal @db.Decimal(10, 2)
+  marginAmount  Decimal @db.Decimal(10, 2)
+  marginPercent Decimal @db.Decimal(5, 2)
 
   // Returns handling
-  returnReason            ReturnReason?
-  returnFeePercent        Decimal? @db.Decimal(5, 2)
-  returnFeeAmountChf      Decimal? @db.Decimal(10, 2)
-  returnAppliedAt         DateTime?
-  returnedStockValueChf   Decimal? @db.Decimal(10, 2)
-  
+  returnReason          ReturnReason?
+  returnFeePercent      Decimal?      @db.Decimal(5, 2)
+  returnFeeAmountChf    Decimal?      @db.Decimal(10, 2)
+  returnAppliedAt       DateTime?
+  returnedStockValueChf Decimal?      @db.Decimal(10, 2)
+
   // Manual overrides
   manualCostOverride      Decimal? @db.Decimal(10, 2)
   manualCaseStatus        String?
   manualRevenueAdjustment Decimal? @db.Decimal(10, 2)
   manualNote              String?
-  
+
   // Timestamps
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([shopifyOrderId])
   @@index([stockxOrderNumber])
   @@index([shopifyMetafieldsSynced])
@@ -153,55 +153,55 @@ model OrderMatch {
 }
 
 model GalaxusStockxMatch {
-  id                 String   @id @default(uuid())
+  id String @id @default(uuid())
 
-  galaxusOrderId     String
-  galaxusOrderRef    String?
-  galaxusOrderDate   DateTime?
-  galaxusOrderLineId String
-  unitIndex          Int      @default(0)
-  galaxusLineNumber  Int?
-  galaxusProductName String
-  galaxusDescription String?
-  galaxusSize        String?
-  galaxusGtin        String?
-  galaxusProviderKey String?
-  galaxusSupplierSku String?
-  galaxusQuantity    Int
-  galaxusUnitNetPrice Decimal @db.Decimal(10, 2)
-  galaxusLineNetAmount Decimal @db.Decimal(10, 2)
-  galaxusVatRate     Decimal @db.Decimal(5, 2)
-  galaxusCurrencyCode String   @default("CHF")
+  galaxusOrderId       String
+  galaxusOrderRef      String?
+  galaxusOrderDate     DateTime?
+  galaxusOrderLineId   String
+  unitIndex            Int       @default(0)
+  galaxusLineNumber    Int?
+  galaxusProductName   String
+  galaxusDescription   String?
+  galaxusSize          String?
+  galaxusGtin          String?
+  galaxusProviderKey   String?
+  galaxusSupplierSku   String?
+  galaxusQuantity      Int
+  galaxusUnitNetPrice  Decimal   @db.Decimal(10, 2)
+  galaxusLineNetAmount Decimal   @db.Decimal(10, 2)
+  galaxusVatRate       Decimal   @db.Decimal(5, 2)
+  galaxusCurrencyCode  String    @default("CHF")
 
-  stockxChainId      String?
-  stockxOrderId      String?
-  stockxOrderNumber  String
-  stockxVariantId    String?
-  stockxProductName  String?
-  stockxSkuKey       String?
-  stockxSizeEU       String?
-  stockxPurchaseDate DateTime?
-  stockxAmount       Decimal? @db.Decimal(10, 2)
-  stockxCurrencyCode String?
-  stockxStatus       String?
-  stockxEstimatedDelivery DateTime?
+  stockxChainId                 String?
+  stockxOrderId                 String?
+  stockxOrderNumber             String
+  stockxVariantId               String?
+  stockxProductName             String?
+  stockxSkuKey                  String?
+  stockxSizeEU                  String?
+  stockxPurchaseDate            DateTime?
+  stockxAmount                  Decimal?  @db.Decimal(10, 2)
+  stockxCurrencyCode            String?
+  stockxStatus                  String?
+  stockxEstimatedDelivery       DateTime?
   stockxLatestEstimatedDelivery DateTime?
-  stockxAwb          String?
-  stockxTrackingUrl  String?
-  stockxCheckoutType String?
-  stockxStates       Json?
+  stockxAwb                     String?
+  stockxTrackingUrl             String?
+  stockxCheckoutType            String?
+  stockxStates                  Json?
 
-  matchConfidence    String?
-  matchScore         Decimal? @db.Decimal(5, 2)
-  matchType          String?
-  matchReasons       String?
-  timeDiffHours      Decimal? @db.Decimal(10, 2)
+  matchConfidence String?
+  matchScore      Decimal? @db.Decimal(5, 2)
+  matchType       String?
+  matchReasons    String?
+  timeDiffHours   Decimal? @db.Decimal(10, 2)
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  order              GalaxusOrder     @relation(fields: [galaxusOrderId], references: [id], onDelete: Cascade)
-  orderLine          GalaxusOrderLine @relation(fields: [galaxusOrderLineId], references: [id], onDelete: Cascade)
+  order     GalaxusOrder     @relation(fields: [galaxusOrderId], references: [id], onDelete: Cascade)
+  orderLine GalaxusOrderLine @relation(fields: [galaxusOrderLineId], references: [id], onDelete: Cascade)
 
   @@unique([galaxusOrderLineId, unitIndex])
   @@index([galaxusOrderId])
@@ -220,58 +220,57 @@ model StockXStatusEvent {
 
   // Email delivery state (for reliable + deduped notifications)
   emailTo         String?
-  emailProvider   String?  // e.g. "postmark"
-  emailProviderId String?  // provider message id
+  emailProvider   String? // e.g. "postmark"
+  emailProviderId String? // provider message id
   emailedAt       DateTime?
   emailError      String?
 
-  orderMatch     OrderMatch @relation(fields: [orderMatchId], references: [id], onDelete: Cascade)
+  orderMatch OrderMatch @relation(fields: [orderMatchId], references: [id], onDelete: Cascade)
 
   @@unique([orderMatchId, milestoneKey])
   @@index([orderMatchId])
   @@schema("public")
 }
 
-
 model ShopifyFulfillmentRecord {
-  id              String   @id @default(uuid())
-  shopifyOrderId  String
-  shopifyOrderName String?
-  trackingNumber  String
-  trackingUrl     String?
-  trackingCompany String?
-  status          String?
-  sourceAwb       String?
-  swissPostLabelId  String?
-  swissPostLabelUrl String?
-  swissPostBarcode  String?
-  swissPostStatus   String?
-  swissPostResponse Json?
-  actorRole         String?
-  scanSessionKey    String?
-  scanStartedAt     DateTime?
-  scanCompletedAt   DateTime?
-  labelGeneratedAt  DateTime?
-  stockxDeliveredAt DateTime?
-  stockxDeliveredMilestoneKey String?
-  stockxDeliveredLagMinutes   Int?
-  requestStartedAt  DateTime?
-  requestCompletedAt DateTime?
-  requestDurationMs Int?
-  scanToLabelSeconds Int?
-  scanToFulfillmentSeconds Int?
-  stockxDeliveredToScanMinutes Int?
+  id                                  String    @id @default(uuid())
+  shopifyOrderId                      String
+  shopifyOrderName                    String?
+  trackingNumber                      String
+  trackingUrl                         String?
+  trackingCompany                     String?
+  status                              String?
+  sourceAwb                           String?
+  swissPostLabelId                    String?
+  swissPostLabelUrl                   String?
+  swissPostBarcode                    String?
+  swissPostStatus                     String?
+  swissPostResponse                   Json?
+  actorRole                           String?
+  scanSessionKey                      String?
+  scanStartedAt                       DateTime?
+  scanCompletedAt                     DateTime?
+  labelGeneratedAt                    DateTime?
+  stockxDeliveredAt                   DateTime?
+  stockxDeliveredMilestoneKey         String?
+  stockxDeliveredLagMinutes           Int?
+  requestStartedAt                    DateTime?
+  requestCompletedAt                  DateTime?
+  requestDurationMs                   Int?
+  scanToLabelSeconds                  Int?
+  scanToFulfillmentSeconds            Int?
+  stockxDeliveredToScanMinutes        Int?
   stockxDeliveredToFulfillmentMinutes Int?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt                           DateTime  @default(now())
+  updatedAt                           DateTime  @updatedAt
 
+  @@unique([shopifyOrderId, trackingNumber])
   @@index([shopifyOrderId])
   @@index([trackingNumber])
   @@index([scanSessionKey])
   @@index([labelGeneratedAt])
   @@index([stockxDeliveredAt])
   @@index([requestStartedAt])
-  @@unique([shopifyOrderId, trackingNumber])
   @@schema("public")
 }
 
@@ -297,11 +296,11 @@ enum ExpenseType {
 }
 
 model ExpenseCategory {
-  id        String        @id @default(uuid())
-  name      String        @unique
-  type      ExpenseType   @default(PERSONAL)
-  createdAt DateTime      @default(now())
-  
+  id        String      @id @default(uuid())
+  name      String      @unique
+  type      ExpenseType @default(PERSONAL)
+  createdAt DateTime    @default(now())
+
   expenses            PersonalExpense[]
   recurringExpenses   RecurringExpense[]
   manualFinanceEvents ManualFinanceEvent[]
@@ -316,28 +315,28 @@ model PaymentAccount {
   last4     String?
   currency  String   @default("CHF")
   createdAt DateTime @default(now())
-  
-  expenses  PersonalExpense[]
+
+  expenses          PersonalExpense[]
   recurringExpenses RecurringExpense[]
 
   @@schema("public")
 }
 
 model PersonalExpense {
-  id           String         @id @default(uuid())
+  id           String   @id @default(uuid())
   date         DateTime
-  amount       Decimal        @db.Decimal(10, 2)
-  currencyCode String         @default("CHF")
+  amount       Decimal  @db.Decimal(10, 2)
+  currencyCode String   @default("CHF")
   categoryId   String
   accountId    String
   note         String?
-  isBusiness   Boolean        @default(false)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  
-  category     ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  account      PaymentAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
-  
+  isBusiness   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  category ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  account  PaymentAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
   @@index([date])
   @@index([categoryId])
   @@index([accountId])
@@ -352,45 +351,45 @@ model DailyAdSpend {
   notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
+
   @@schema("public")
 }
 
 model MonthlyVariableCosts {
-  monthKey              String   @id
-  year                  Int
-  month                 Int
-  postageShippingCostChf Decimal @db.Decimal(10, 2)
-  fulfillmentCostChf    Decimal  @db.Decimal(10, 2)
-  notes                 String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
-  
+  monthKey               String   @id
+  year                   Int
+  month                  Int
+  postageShippingCostChf Decimal  @db.Decimal(10, 2)
+  fulfillmentCostChf     Decimal  @db.Decimal(10, 2)
+  notes                  String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
   @@unique([year, month])
   @@schema("public")
 }
 
 model RecurringExpense {
-  id           String   @id @default(uuid())
-  name         String
-  amount       Decimal  @db.Decimal(10, 2)
-  currencyCode String   @default("CHF")
-  categoryId   String
-  accountId    String
-  isBusiness   Boolean  @default(false)
-  dayOfMonth   Int      @default(1)
-  intervalMonths Int    @default(1) // 1=monthly, 3=quarterly, etc.
-  startDate    DateTime @default(now())
-  endDate      DateTime?
-  nextRunDate  DateTime
-  lastRunAt    DateTime?
-  active       Boolean  @default(true)
-  note         String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id             String    @id @default(uuid())
+  name           String
+  amount         Decimal   @db.Decimal(10, 2)
+  currencyCode   String    @default("CHF")
+  categoryId     String
+  accountId      String
+  isBusiness     Boolean   @default(false)
+  dayOfMonth     Int       @default(1)
+  intervalMonths Int       @default(1) // 1=monthly, 3=quarterly, etc.
+  startDate      DateTime  @default(now())
+  endDate        DateTime?
+  nextRunDate    DateTime
+  lastRunAt      DateTime?
+  active         Boolean   @default(true)
+  note           String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  category     ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  account      PaymentAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  category ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  account  PaymentAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
 
   @@index([nextRunDate])
   @@index([active])
@@ -625,42 +624,42 @@ enum ReconciliationStatus {
 }
 
 model ShopifyPayout {
-  id               String   @id
-  issuedAt         DateTime
-  status           String
-  transactionType  String?
-  netAmount        Decimal  @db.Decimal(10, 2)
-  currencyCode     String   @default("CHF")
-  summaryJson      Json?
-  rawJson          Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id              String   @id
+  issuedAt        DateTime
+  status          String
+  transactionType String?
+  netAmount       Decimal  @db.Decimal(10, 2)
+  currencyCode    String   @default("CHF")
+  summaryJson     Json?
+  rawJson         Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([issuedAt])
   @@schema("public")
 }
 
 model CashFlowConfig {
-  id               String   @id @default(uuid())
-  initialBalanceChf Decimal @db.Decimal(12, 2)
-  currencyCode     String   @default("CHF")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default(uuid())
+  initialBalanceChf Decimal  @db.Decimal(12, 2)
+  currencyCode      String   @default("CHF")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@schema("public")
 }
 
 model CashInRule {
-  id             String           @id @default(uuid())
+  id             String             @id @default(uuid())
   channel        MarketplaceChannel
   paymentMethod  String?
   delayType      CashInDelayType
-  delayValueDays Decimal?         @db.Decimal(5, 2)
-  priority       Int              @default(100)
-  active         Boolean          @default(true)
+  delayValueDays Decimal?           @db.Decimal(5, 2)
+  priority       Int                @default(100)
+  active         Boolean            @default(true)
   notes          String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   @@index([channel, paymentMethod])
   @@index([active, priority])
@@ -668,19 +667,19 @@ model CashInRule {
 }
 
 model CashOutRule {
-  id          String        @id @default(uuid())
-  category    CashOutCategory
-  cadence     CashOutCadence
-  amountChf   Decimal?      @db.Decimal(10, 2)
-  dayOfWeek   Int?
-  dayOfMonth  Int?
-  offsetDays  Int?          // for shifting COGS outflow relative to order date
-  startDate   DateTime?
-  endDate     DateTime?
-  active      Boolean       @default(true)
-  notes       String?
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id         String          @id @default(uuid())
+  category   CashOutCategory
+  cadence    CashOutCadence
+  amountChf  Decimal?        @db.Decimal(10, 2)
+  dayOfWeek  Int?
+  dayOfMonth Int?
+  offsetDays Int? // for shifting COGS outflow relative to order date
+  startDate  DateTime?
+  endDate    DateTime?
+  active     Boolean         @default(true)
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
 
   @@index([category, active])
   @@schema("public")
@@ -703,17 +702,17 @@ model CashLedgerDaily {
 }
 
 model ForecastAssumption {
-  id                  String          @id @default(uuid())
+  id                  String             @id @default(uuid())
   channel             MarketplaceChannel
-  mode                ForecastMode    @default(HYBRID)
-  expectedDailySales  Decimal         @db.Decimal(12, 2) @default(0)
+  mode                ForecastMode       @default(HYBRID)
+  expectedDailySales  Decimal            @default(0) @db.Decimal(12, 2)
   expectedDailyOrders Int?
-  growthRatePct       Decimal?        @db.Decimal(5, 2)
-  payoutDelayDays     Decimal?        @db.Decimal(5, 2)
-  commissionRatePct   Decimal?        @db.Decimal(5, 2)
-  refundRatePct       Decimal?        @db.Decimal(5, 2)
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  growthRatePct       Decimal?           @db.Decimal(5, 2)
+  payoutDelayDays     Decimal?           @db.Decimal(5, 2)
+  commissionRatePct   Decimal?           @db.Decimal(5, 2)
+  refundRatePct       Decimal?           @db.Decimal(5, 2)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
   @@unique([channel])
   @@schema("public")
@@ -731,10 +730,10 @@ model BankAccount {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
-  imports           BankStatementImport[]
-  transactions      BankTransaction[]
-  balanceSnapshots  BankBalanceSnapshot[]
-  manualEvents      ManualFinanceEvent[]
+  imports          BankStatementImport[]
+  transactions     BankTransaction[]
+  balanceSnapshots BankBalanceSnapshot[]
+  manualEvents     ManualFinanceEvent[]
 
   @@schema("public")
 }
@@ -750,8 +749,8 @@ model BankStatementImport {
   importedAt     DateTime         @default(now())
   metadataJson   Json?
 
-  bankAccount    BankAccount      @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
-  transactions   BankTransaction[]
+  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
 
   @@unique([bankAccountId, fileHash])
   @@index([bankAccountId, importedAt])
@@ -759,29 +758,29 @@ model BankStatementImport {
 }
 
 model BankTransaction {
-  id               String          @id @default(uuid())
-  bankAccountId    String
+  id                String           @id @default(uuid())
+  bankAccountId     String
   statementImportId String?
-  externalId       String?
-  bookingDate      DateTime
-  valueDate        DateTime?
-  amount           Decimal         @db.Decimal(12, 2)
-  currencyCode     String          @default("CHF")
-  direction        FinanceDirection
-  counterpartyName String?
-  counterpartyIban String?
-  reference        String?
-  remittanceInfo   String?
-  transactionType  String?
-  fingerprint      String
-  rawJson          Json?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  externalId        String?
+  bookingDate       DateTime
+  valueDate         DateTime?
+  amount            Decimal          @db.Decimal(12, 2)
+  currencyCode      String           @default("CHF")
+  direction         FinanceDirection
+  counterpartyName  String?
+  counterpartyIban  String?
+  reference         String?
+  remittanceInfo    String?
+  transactionType   String?
+  fingerprint       String
+  rawJson           Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
-  bankAccount      BankAccount     @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
-  statementImport  BankStatementImport? @relation(fields: [statementImportId], references: [id], onDelete: SetNull)
-  reconciliations  BankReconciliationLink[]
-  expectedCashEvents ExpectedCashEvent[] @relation("ExpectedCashActualized")
+  bankAccount        BankAccount              @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  statementImport    BankStatementImport?     @relation(fields: [statementImportId], references: [id], onDelete: SetNull)
+  reconciliations    BankReconciliationLink[]
+  expectedCashEvents ExpectedCashEvent[]      @relation("ExpectedCashActualized")
 
   @@unique([bankAccountId, fingerprint])
   @@index([bankAccountId, bookingDate])
@@ -790,16 +789,16 @@ model BankTransaction {
 }
 
 model BankBalanceSnapshot {
-  id            String      @id @default(uuid())
+  id            String   @id @default(uuid())
   bankAccountId String
   snapshotDate  DateTime
-  balance       Decimal     @db.Decimal(12, 2)
-  currencyCode  String      @default("CHF")
+  balance       Decimal  @db.Decimal(12, 2)
+  currencyCode  String   @default("CHF")
   note          String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  bankAccount   BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
 
   @@unique([bankAccountId, snapshotDate])
   @@index([bankAccountId, snapshotDate])
@@ -807,24 +806,24 @@ model BankBalanceSnapshot {
 }
 
 model ManualFinanceEvent {
-  id               String             @id @default(uuid())
-  eventDate        DateTime
-  amount           Decimal            @db.Decimal(12, 2)
-  currencyCode     String             @default("CHF")
-  direction        FinanceDirection
-  category         FinanceCategory    @default(OTHER)
-  description      String?
+  id                String                @id @default(uuid())
+  eventDate         DateTime
+  amount            Decimal               @db.Decimal(12, 2)
+  currencyCode      String                @default("CHF")
+  direction         FinanceDirection
+  category          FinanceCategory       @default(OTHER)
+  description       String?
   expenseCategoryId String?
-  bankAccountId    String?
-  sourceType       ManualEventSourceType @default(MANUAL)
-  sourceId         String?
-  metadataJson     Json?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  bankAccountId     String?
+  sourceType        ManualEventSourceType @default(MANUAL)
+  sourceId          String?
+  metadataJson      Json?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 
-  expenseCategory  ExpenseCategory?   @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
-  bankAccount      BankAccount?       @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
-  operatingEvents  OperatingEvent[]   @relation("ManualFinanceOperatingEvents")
+  expenseCategory    ExpenseCategory?    @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  bankAccount        BankAccount?        @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  operatingEvents    OperatingEvent[]    @relation("ManualFinanceOperatingEvents")
   expectedCashEvents ExpectedCashEvent[] @relation("ManualFinanceExpectedCashEvents")
 
   @@unique([sourceType, sourceId, eventDate])
@@ -834,25 +833,25 @@ model ManualFinanceEvent {
 }
 
 model OperatingEvent {
-  id           String                @id @default(uuid())
-  eventKey     String                @unique
+  id           String                 @id @default(uuid())
+  eventKey     String                 @unique
   eventDate    DateTime
   channel      MarketplaceChannel?
   eventType    OperatingEventType
   direction    OperatingDirection
   category     OperatingEventCategory
   subcategory  String?
-  amount       Decimal               @db.Decimal(12, 2)
-  currencyCode String                @default("CHF")
+  amount       Decimal                @db.Decimal(12, 2)
+  currencyCode String                 @default("CHF")
   description  String?
 
-  sourceType    OperatingSourceType
-  sourceRecordId String?
-  sourceLineId  String?
-  sourceTable   String?
+  sourceType      OperatingSourceType
+  sourceRecordId  String?
+  sourceLineId    String?
+  sourceTable     String?
   sourceReference String?
-  paymentMethod String?
-  materializedAt DateTime            @default(now())
+  paymentMethod   String?
+  materializedAt  DateTime            @default(now())
 
   orderId          String?
   orderLineId      String?
@@ -870,8 +869,8 @@ model OperatingEvent {
   metadataJson Json?
 
   manualFinanceEventId String?
-  createdAt            DateTime      @default(now())
-  updatedAt            DateTime      @updatedAt
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   manualFinanceEvent ManualFinanceEvent? @relation("ManualFinanceOperatingEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
   expectedCashEvents ExpectedCashEvent[] @relation("OperatingExpectedCash")
@@ -884,37 +883,37 @@ model OperatingEvent {
 }
 
 model ExpectedCashEvent {
-  id             String                @id @default(uuid())
+  id               String              @id @default(uuid())
   expectedEventKey String              @unique
-  expectedDate   DateTime
-  amount         Decimal               @db.Decimal(12, 2)
-  currencyCode   String                @default("CHF")
-  direction      FinanceDirection
-  category       FinanceCategory       @default(OTHER)
-  subcategory    String?
-  description    String?
-  channel        MarketplaceChannel?
-  paymentMethod  String?
+  expectedDate     DateTime
+  amount           Decimal             @db.Decimal(12, 2)
+  currencyCode     String              @default("CHF")
+  direction        FinanceDirection
+  category         FinanceCategory     @default(OTHER)
+  subcategory      String?
+  description      String?
+  channel          MarketplaceChannel?
+  paymentMethod    String?
 
-  sourceType       ExpectedCashSourceType
-  sourceRuleId     String?
-  derivationMethod ExpectedCashDerivationMethod
+  sourceType        ExpectedCashSourceType
+  sourceRuleId      String?
+  derivationMethod  ExpectedCashDerivationMethod
   derivationVersion String?
 
-  operatingEventId           String?
-  manualFinanceEventId       String?
-  isActualized               Boolean              @default(false)
+  operatingEventId              String?
+  manualFinanceEventId          String?
+  isActualized                  Boolean            @default(false)
   actualizedByBankTransactionId String?
-  status                     ExpectedCashStatus   @default(PENDING)
-  confidence                 ConfidenceLevel      @default(MEDIUM)
-  notes                      String?
-  metadataJson               Json?
-  createdAt                  DateTime             @default(now())
-  updatedAt                  DateTime             @updatedAt
+  status                        ExpectedCashStatus @default(PENDING)
+  confidence                    ConfidenceLevel    @default(MEDIUM)
+  notes                         String?
+  metadataJson                  Json?
+  createdAt                     DateTime           @default(now())
+  updatedAt                     DateTime           @updatedAt
 
-  operatingEvent        OperatingEvent?     @relation("OperatingExpectedCash", fields: [operatingEventId], references: [id], onDelete: SetNull)
-  manualFinanceEvent    ManualFinanceEvent? @relation("ManualFinanceExpectedCashEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
-  actualizedByBankTransaction BankTransaction? @relation("ExpectedCashActualized", fields: [actualizedByBankTransactionId], references: [id], onDelete: SetNull)
+  operatingEvent              OperatingEvent?     @relation("OperatingExpectedCash", fields: [operatingEventId], references: [id], onDelete: SetNull)
+  manualFinanceEvent          ManualFinanceEvent? @relation("ManualFinanceExpectedCashEvents", fields: [manualFinanceEventId], references: [id], onDelete: SetNull)
+  actualizedByBankTransaction BankTransaction?    @relation("ExpectedCashActualized", fields: [actualizedByBankTransactionId], references: [id], onDelete: SetNull)
 
   @@index([expectedDate])
   @@index([channel])
@@ -924,18 +923,18 @@ model ExpectedCashEvent {
 }
 
 model BankReconciliationLink {
-  id               String                 @id @default(uuid())
+  id                String                   @id @default(uuid())
   bankTransactionId String
-  linkedType       ReconciliationLinkedType
-  linkedId         String
-  status           ReconciliationStatus   @default(MATCHED)
-  matchedAmount    Decimal?               @db.Decimal(12, 2)
-  confidence       Int?
-  notes            String?
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  linkedType        ReconciliationLinkedType
+  linkedId          String
+  status            ReconciliationStatus     @default(MATCHED)
+  matchedAmount     Decimal?                 @db.Decimal(12, 2)
+  confidence        Int?
+  notes             String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
 
-  bankTransaction  BankTransaction        @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction @relation(fields: [bankTransactionId], references: [id], onDelete: Cascade)
 
   @@index([linkedType, linkedId])
   @@index([status])
@@ -943,16 +942,16 @@ model BankReconciliationLink {
 }
 
 model MarketplaceCashAssumption {
-  id           String             @id @default(uuid())
-  channel      MarketplaceChannel
-  lagDays      Int                @default(2)
-  feePercent   Decimal?           @db.Decimal(5, 2)
-  feeFlatChf   Decimal?           @db.Decimal(10, 2)
-  activeFrom   DateTime           @default(now())
-  activeTo     DateTime?
-  notes        String?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  id         String             @id @default(uuid())
+  channel    MarketplaceChannel
+  lagDays    Int                @default(2)
+  feePercent Decimal?           @db.Decimal(5, 2)
+  feeFlatChf Decimal?           @db.Decimal(10, 2)
+  activeFrom DateTime           @default(now())
+  activeTo   DateTime?
+  notes      String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
 
   @@index([channel, activeFrom])
   @@schema("public")
@@ -997,71 +996,71 @@ enum ShipmentDelrStatus {
 }
 
 model SupplierVariant {
-  id                String   @id @default(uuid())
-  supplierVariantId String   @unique
-  supplierSku       String
-  providerKey       String?
-  gtin              String?
-  price             Decimal  @db.Decimal(10, 2)
-  stock             Int
-  sizeRaw           String?
-  sizeNormalized    String?
-  supplierBrand     String?
-  supplierProductName String?
+  id                          String    @id @default(uuid())
+  supplierVariantId           String    @unique
+  supplierSku                 String
+  providerKey                 String?
+  gtin                        String?
+  price                       Decimal   @db.Decimal(10, 2)
+  stock                       Int
+  sizeRaw                     String?
+  sizeNormalized              String?
+  supplierBrand               String?
+  supplierProductName         String?
   /// When KickDB is absent: feeds Decathlon `Genre` / Galaxus "Target group" (e.g. men, women, unisex).
-  supplierGender    String?
+  supplierGender              String?
   /// When KickDB is absent: feeds Decathlon `Couleur` / Galaxus "Color" (e.g. Cement / Black).
-  supplierColorway  String?
-  weightGrams       Int?
-  images            Json?
-  sourceImageUrl    String?
-  hostedImageUrl    String?
-  imageSyncStatus   String?
-  imageVersion      Int      @default(1)
-  imageLastSyncedAt DateTime?
-  imageSyncError    String?
-  manualPrice       Decimal? @db.Decimal(10, 2)
-  manualStock       Int?
-  manualLock        Boolean  @default(false)
-  manualNote        String?
-  manualUpdatedAt   DateTime?
-  leadTimeDays      Int?
-  deliveryType      String?
+  supplierColorway            String?
+  weightGrams                 Int?
+  images                      Json?
+  sourceImageUrl              String?
+  hostedImageUrl              String?
+  imageSyncStatus             String?
+  imageVersion                Int       @default(1)
+  imageLastSyncedAt           DateTime?
+  imageSyncError              String?
+  manualPrice                 Decimal?  @db.Decimal(10, 2)
+  manualStock                 Int?
+  manualLock                  Boolean   @default(false)
+  manualNote                  String?
+  manualUpdatedAt             DateTime?
+  leadTimeDays                Int?
+  deliveryType                String?
   /// Galaxus `SuggestedRetailPriceInclVat_CHF` — recomputed whenever STX price sync runs.
-  suggestedRetailPriceInclVat Decimal? @db.Decimal(10, 2)
-  lastSyncAt        DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  suggestedRetailPriceInclVat Decimal?  @db.Decimal(10, 2)
+  lastSyncAt                  DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   mappings          VariantMapping[]
   inventoryEvents   InventoryEvent[]
   channelListings   ChannelListingState[]
   orderLineSyncRows OrderLineSyncState[]
 
+  @@unique([providerKey, gtin])
   @@index([providerKey])
   @@index([gtin])
-  @@unique([providerKey, gtin])
   @@index([supplierSku])
   @@schema("public")
 }
 
 model InventoryEvent {
-  id               String             @id @default(uuid())
-  eventType        InventoryEventType @default(SALE)
-  channel          MarketplaceChannel
-  externalOrderId  String?
-  externalLineId   String?
+  id                String             @id @default(uuid())
+  eventType         InventoryEventType @default(SALE)
+  channel           MarketplaceChannel
+  externalOrderId   String?
+  externalLineId    String?
   supplierVariantId String
-  providerKey      String?
-  quantityDelta    Int
-  occurredAt       DateTime
-  processedAt      DateTime?
-  idempotencyKey   String?            @unique
-  payloadJson      Json?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  providerKey       String?
+  quantityDelta     Int
+  occurredAt        DateTime
+  processedAt       DateTime?
+  idempotencyKey    String?            @unique
+  payloadJson       Json?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  supplierVariant  SupplierVariant    @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  supplierVariant   SupplierVariant      @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
   orderLineSyncRows OrderLineSyncState[]
 
   @@index([supplierVariantId, occurredAt])
@@ -1071,27 +1070,27 @@ model InventoryEvent {
 }
 
 model ChannelListingState {
-  id                     String             @id @default(uuid())
-  channel                MarketplaceChannel
-  providerKey            String
-  supplierVariantId      String?
-  gtin                   String?
-  externalProductId      String?
-  externalVariantId      String?
+  id                      String             @id @default(uuid())
+  channel                 MarketplaceChannel
+  providerKey             String
+  supplierVariantId       String?
+  gtin                    String?
+  externalProductId       String?
+  externalVariantId       String?
   externalInventoryItemId String?
-  externalLocationId     String?
-  lastPushedStock        Int?
-  lastPushedPrice        Decimal?           @db.Decimal(10, 2)
-  lastSyncedAt           DateTime?
-  status                 String             @default("PENDING")
-  lastError              String?
-  soldOutAt              DateTime?
-  archivedAt             DateTime?
-  metadataJson           Json?
-  createdAt              DateTime           @default(now())
-  updatedAt              DateTime           @updatedAt
+  externalLocationId      String?
+  lastPushedStock         Int?
+  lastPushedPrice         Decimal?           @db.Decimal(10, 2)
+  lastSyncedAt            DateTime?
+  status                  String             @default("PENDING")
+  lastError               String?
+  soldOutAt               DateTime?
+  archivedAt              DateTime?
+  metadataJson            Json?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 
-  supplierVariant        SupplierVariant?   @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: SetNull)
+  supplierVariant SupplierVariant? @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: SetNull)
 
   @@unique([channel, providerKey])
   @@index([supplierVariantId])
@@ -1101,23 +1100,23 @@ model ChannelListingState {
 }
 
 model OrderLineSyncState {
-  id               String             @id @default(uuid())
-  channel          MarketplaceChannel
-  externalOrderId  String?
-  externalLineId   String
+  id                String             @id @default(uuid())
+  channel           MarketplaceChannel
+  externalOrderId   String?
+  externalLineId    String
   supplierVariantId String
-  providerKey      String?
-  quantity         Int
-  eventType        InventoryEventType @default(SALE)
-  eventId          String?
-  firstSeenAt      DateTime           @default(now())
-  lastSeenAt       DateTime           @default(now())
-  payloadJson      Json?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  providerKey       String?
+  quantity          Int
+  eventType         InventoryEventType @default(SALE)
+  eventId           String?
+  firstSeenAt       DateTime           @default(now())
+  lastSeenAt        DateTime           @default(now())
+  payloadJson       Json?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  supplierVariant  SupplierVariant    @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
-  inventoryEvent   InventoryEvent?    @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  supplierVariant SupplierVariant @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  inventoryEvent  InventoryEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   @@unique([channel, externalLineId])
   @@index([supplierVariantId, channel])
@@ -1126,16 +1125,16 @@ model OrderLineSyncState {
 }
 
 model InventorySyncRun {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   jobKey      String
-  dryRun      Boolean  @default(false)
-  status      String   @default("RUNNING")
-  startedAt   DateTime @default(now())
+  dryRun      Boolean   @default(false)
+  status      String    @default("RUNNING")
+  startedAt   DateTime  @default(now())
   finishedAt  DateTime?
   summaryJson Json?
   error       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   reconcileDrifts InventoryReconcileDrift[]
 
@@ -1145,18 +1144,18 @@ model InventorySyncRun {
 }
 
 model InventoryReconcileDrift {
-  id               String   @id @default(uuid())
-  runId            String
-  channel          MarketplaceChannel
-  providerKey      String
+  id                String             @id @default(uuid())
+  runId             String
+  channel           MarketplaceChannel
+  providerKey       String
   supplierVariantId String?
-  listingStock     Int?
-  dbAvailableStock Int?
-  delta            Int?
-  status           String?
-  createdAt        DateTime @default(now())
+  listingStock      Int?
+  dbAvailableStock  Int?
+  delta             Int?
+  status            String?
+  createdAt         DateTime           @default(now())
 
-  run              InventorySyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run InventorySyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId])
   @@index([channel, providerKey])
@@ -1164,33 +1163,33 @@ model InventoryReconcileDrift {
 }
 
 model KickDBProduct {
-  id              String   @id @default(uuid())
-  kickdbProductId String   @unique
-  urlKey          String?
-  styleId         String?
-  name            String?
-  brand           String?
-  imageUrl        String?
-  traitsJson      Json?
-  description     String?
-  gender          String?
-  colorway        String?
+  id                   String    @id @default(uuid())
+  kickdbProductId      String    @unique
+  urlKey               String?
+  styleId              String?
+  name                 String?
+  brand                String?
+  imageUrl             String?
+  traitsJson           Json?
+  description          String?
+  gender               String?
+  colorway             String?
   countryOfManufacture String?
-  releaseDate     DateTime?
-  retailPrice     Float?
-  lastFetchedAt   DateTime?
-  notFound        Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  releaseDate          DateTime?
+  retailPrice          Float?
+  lastFetchedAt        DateTime?
+  notFound             Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   /// Byte-exact KicksDB API response (same shape as stockXAPI.getOne `data`).
   /// Single source of truth for Shopify + marketplace consumers; parsed with their own logic.
-  rawJson         Json?
+  rawJson      Json?
   /// When rawJson was fetched from KicksDB (SSE listener, sweeper, or bootstrap).
-  rawFetchedAt    DateTime?
+  rawFetchedAt DateTime?
 
-  variants        KickDBVariant[]
-  shopifySync     ShopifySyncState?
+  variants    KickDBVariant[]
+  shopifySync ShopifySyncState?
 
   @@index([rawFetchedAt])
   @@schema("public")
@@ -1212,15 +1211,47 @@ model ShopifySyncState {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  product          KickDBProduct @relation(fields: [kickdbProductId], references: [kickdbProductId], onDelete: Cascade)
+  product KickDBProduct @relation(fields: [kickdbProductId], references: [kickdbProductId], onDelete: Cascade)
 
   @@index([syncStatus, updatedAt])
   @@schema("public")
 }
 
+/// Mirror of Shopify per-location inventory. Shopify is the master for PHYSICAL
+/// stock (Bussigny / shops); this table makes that per-location truth visible to
+/// the DB/marketplace side so feeds can compute effective availability
+/// (Σ physical + dropship) and know WHICH location holds a unit when a sale
+/// lands on any channel. `sourceType`: 'physical' (warehouse/shops) | 'online'
+/// (Chemin de Bas-de-Plan = StockX dropship). One row per (variant, location);
+/// only stocked rows are kept (available > 0), plus rows zeroed on sell-out.
+model ShopifyVariantLocationStock {
+  id               String   @id @default(uuid())
+  shopifyVariantId String
+  inventoryItemId  String
+  sku              String?
+  gtin             String?
+  locationId       String
+  locationName     String
+  /// 'physical' | 'online'
+  sourceType       String
+  /// Lower = sold first. Bussigny=1, Antica=2, THE LAB (Bienne)=3, dropship=99.
+  priority         Int      @default(99)
+  available        Int      @default(0)
+  lastSeenAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shopifyVariantId, locationId])
+  @@index([locationId, available])
+  @@index([sku])
+  @@index([gtin])
+  @@index([sourceType, available])
+  @@schema("public")
+}
+
 model KickDBVariant {
-  id              String   @id @default(uuid())
-  kickdbVariantId String   @unique
+  id              String    @id @default(uuid())
+  kickdbVariantId String    @unique
   productId       String
   sizeUs          String?
   sizeEu          String?
@@ -1228,34 +1259,34 @@ model KickDBVariant {
   ean             String?
   providerKey     String?
   lastFetchedAt   DateTime?
-  notFound        Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  notFound        Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  product         KickDBProduct  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  mappings        VariantMapping[]
+  product  KickDBProduct    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  mappings VariantMapping[]
 
   @@index([productId])
   @@schema("public")
 }
 
 model VariantMapping {
-  id               String   @id @default(uuid())
+  id                String   @id @default(uuid())
   supplierVariantId String?  @unique
-  partnerVariantId String?  @unique
-  kickdbVariantId  String?
-  gtin             String?
-  providerKey      String?
+  partnerVariantId  String?  @unique
+  kickdbVariantId   String?
+  gtin              String?
+  providerKey       String?
   /// Denormalized prefix from supplierVariantId (stx, ner, the, …) for fast feed filters.
-  supplierKey      String?
-  confidenceScore  Decimal? @db.Decimal(5, 2)
-  status           String
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  supplierKey       String?
+  confidenceScore   Decimal? @db.Decimal(5, 2)
+  status            String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  supplierVariant  SupplierVariant? @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
-  partnerVariant   PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: Cascade)
-  kickdbVariant    KickDBVariant?  @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
+  supplierVariant SupplierVariant? @relation(fields: [supplierVariantId], references: [supplierVariantId], onDelete: Cascade)
+  partnerVariant  PartnerVariant?  @relation(fields: [partnerVariantId], references: [id], onDelete: Cascade)
+  kickdbVariant   KickDBVariant?   @relation(fields: [kickdbVariantId], references: [id], onDelete: SetNull)
 
   @@index([kickdbVariantId])
   @@index([supplierKey, status])
@@ -1263,33 +1294,33 @@ model VariantMapping {
 }
 
 model Partner {
-  id               String   @id @default(uuid())
-  key              String   @unique
-  name             String
-  active           Boolean  @default(true)
-  contactEmail     String?
-  contactName      String?
-  priorityRank     Int?
+  id                  String  @id @default(uuid())
+  key                 String  @unique
+  name                String
+  active              Boolean @default(true)
+  contactEmail        String?
+  contactName         String?
+  priorityRank        Int?
   /// Default lead time (days) for Galaxus supplier ORDR when variant `leadTimeDays` is null.
   defaultLeadTimeDays Int?
 
   // Pricing overrides (null = use defaults)
-  targetMargin     Decimal? @db.Decimal(5, 4)
-  shippingPerPair  Decimal? @db.Decimal(10, 2)
-  bufferPerPair    Decimal? @db.Decimal(10, 2)
-  roundTo          Decimal? @db.Decimal(10, 4)
-  vatRate          Decimal? @db.Decimal(5, 4)
+  targetMargin    Decimal? @db.Decimal(5, 4)
+  shippingPerPair Decimal? @db.Decimal(10, 2)
+  bufferPerPair   Decimal? @db.Decimal(10, 2)
+  roundTo         Decimal? @db.Decimal(10, 4)
+  vatRate         Decimal? @db.Decimal(5, 4)
 
-  users            PartnerUser[]
-  variants         PartnerVariant[]
-  uploads          PartnerUpload[]
-  uploadRows       PartnerUploadRow[]
+  users                     PartnerUser[]
+  variants                  PartnerVariant[]
+  uploads                   PartnerUpload[]
+  uploadRows                PartnerUploadRow[]
   alternativeProductUploads AlternativeProductUpload[]
-  alternativeProducts AlternativeProduct[]
-  orders           PartnerOrder[]
+  alternativeProducts       AlternativeProduct[]
+  orders                    PartnerOrder[]
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@schema("public")
 }
@@ -1303,7 +1334,7 @@ model PartnerUser {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  partner Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
 
   @@index([partnerId])
   @@schema("public")
@@ -1321,8 +1352,8 @@ model PartnerUpload {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  rows         PartnerUploadRow[]
+  partner Partner            @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  rows    PartnerUploadRow[]
 
   @@index([partnerId])
   @@schema("public")
@@ -1347,8 +1378,8 @@ model PartnerUploadRow {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  upload             PartnerUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
-  partner            Partner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  upload  PartnerUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  partner Partner?       @relation(fields: [partnerId], references: [id], onDelete: SetNull)
 
   @@index([uploadId])
   @@index([partnerId])
@@ -1371,48 +1402,48 @@ model AlternativeProductUpload {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  partner      Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  products     AlternativeProduct[]
+  partner  Partner              @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  products AlternativeProduct[]
 
   @@index([partnerId])
   @@schema("public")
 }
 
 model AlternativeProduct {
-  id                     String   @id @default(uuid())
-  partnerId              String
-  uploadId               String?
-  externalKey            String
-  gtin                   String
-  providerKey            String
-  brand                  String
-  title                  String
-  variantName            String?
-  description            String
-  category               String
-  size                   String
-  mainImageUrl           String
-  extraImageUrls         Json?
-  color                  String?
-  gender                 String?
-  material               String?
-  stock                  Int
-  priceExVat             Decimal  @db.Decimal(10, 2)
-  vatRate                Decimal  @db.Decimal(5, 4)
-  currency               String   @default("CHF")
-  leadTimeDays           Int?
-  specsJson              Json?
-  decathlonLogisticClass String?
+  id                      String    @id @default(uuid())
+  partnerId               String
+  uploadId                String?
+  externalKey             String
+  gtin                    String
+  providerKey             String
+  brand                   String
+  title                   String
+  variantName             String?
+  description             String
+  category                String
+  size                    String
+  mainImageUrl            String
+  extraImageUrls          Json?
+  color                   String?
+  gender                  String?
+  material                String?
+  stock                   Int
+  priceExVat              Decimal   @db.Decimal(10, 2)
+  vatRate                 Decimal   @db.Decimal(5, 4)
+  currency                String    @default("CHF")
+  leadTimeDays            Int?
+  specsJson               Json?
+  decathlonLogisticClass  String?
   decathlonLeadTimeToShip Int?
-  exportEnabled          Boolean  @default(true)
-  status                 String   @default("ACTIVE")
-  validationErrorsJson   Json?
-  archivedAt             DateTime?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  exportEnabled           Boolean   @default(true)
+  status                  String    @default("ACTIVE")
+  validationErrorsJson    Json?
+  archivedAt              DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
-  partner                Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  upload                 AlternativeProductUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+  partner Partner                   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  upload  AlternativeProductUpload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
 
   @@index([partnerId])
   @@index([uploadId])
@@ -1423,23 +1454,23 @@ model AlternativeProduct {
 }
 
 model PartnerVariant {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   partnerId        String
   partnerVariantId String
   externalSku      String?
   sizeRaw          String?
-  price            Decimal? @db.Decimal(10, 2)
+  price            Decimal?  @db.Decimal(10, 2)
   stock            Int?
   images           Json?
   productName      String?
   brand            String?
   gtin             String?
   lastSyncAt       DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  partner          Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  mapping          VariantMapping?
+  partner           Partner            @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  mapping           VariantMapping?
   partnerOrderLines PartnerOrderLine[]
 
   @@unique([partnerId, partnerVariantId])
@@ -1448,20 +1479,20 @@ model PartnerVariant {
 }
 
 model PartnerOrder {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   partnerId      String
   galaxusOrderId String
-  status         String   @default("PENDING")
+  status         String    @default("PENDING")
   sentAt         DateTime?
   confirmedAt    DateTime?
   trackingNumber String?
   trackingUrl    String?
   labelUrl       String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  partner        Partner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  lines          PartnerOrderLine[]
+  partner Partner            @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  lines   PartnerOrderLine[]
 
   @@unique([partnerId, galaxusOrderId])
   @@index([partnerId])
@@ -1469,18 +1500,18 @@ model PartnerOrder {
 }
 
 model PartnerOrderLine {
-  id              String   @id @default(uuid())
-  partnerOrderId  String
-  partnerVariantId String?
+  id                String   @id @default(uuid())
+  partnerOrderId    String
+  partnerVariantId  String?
   /// Matched catalog row when the order was assigned (used to decrement stock on fulfill).
   supplierVariantId String?
-  gtin            String?
-  quantity        Int      @default(1)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  gtin              String?
+  quantity          Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  partnerOrder    PartnerOrder @relation(fields: [partnerOrderId], references: [id], onDelete: Cascade)
-  partnerVariant  PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: SetNull)
+  partnerOrder   PartnerOrder    @relation(fields: [partnerOrderId], references: [id], onDelete: Cascade)
+  partnerVariant PartnerVariant? @relation(fields: [partnerVariantId], references: [id], onDelete: SetNull)
 
   @@index([partnerOrderId])
   @@index([supplierVariantId])
@@ -1488,26 +1519,26 @@ model PartnerOrderLine {
 }
 
 model StxPurchaseUnit {
-  id                String   @id @default(uuid())
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  galaxusOrderId    String
-  gtin              String
-  supplierVariantId String
-  stockxOrderId     String?  @unique
-  stockxOrderNumber String?
+  id                    String    @id @default(uuid())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  galaxusOrderId        String
+  gtin                  String
+  supplierVariantId     String
+  stockxOrderId         String?   @unique
+  stockxOrderNumber     String?
   /// StockX buy order payment settled amount (from API), for margin vs Galaxus line net.
-  stockxSettledAmount   Decimal? @db.Decimal(12, 2)
+  stockxSettledAmount   Decimal?  @db.Decimal(12, 2)
   stockxSettledCurrency String?
-  awb               String?
-  etaMin            DateTime?
-  etaMax            DateTime?
-  checkoutType      String?
-  manualTrackingRaw String?
-  manualNote        String?
-  manualSetAt       DateTime?
-  cancelledAt       DateTime?
-  cancelledReason   String?
+  awb                   String?
+  etaMin                DateTime?
+  etaMax                DateTime?
+  checkoutType          String?
+  manualTrackingRaw     String?
+  manualNote            String?
+  manualSetAt           DateTime?
+  cancelledAt           DateTime?
+  cancelledReason       String?
 
   @@index([galaxusOrderId])
   @@index([gtin])
@@ -1534,70 +1565,70 @@ model StxImportSlug {
 }
 
 model GalaxusOrder {
-  id                  String   @id @default(uuid())
-  galaxusOrderId      String   @unique
-  orderNumber         String?
-  orderDate           DateTime
-  generationDate      DateTime?
-  language            String?
-  deliveryDate        DateTime?
-  currencyCode        String   @default("CHF")
-  customerName        String
-  customerAddress1    String
-  customerAddress2    String?
-  customerPostalCode  String
-  customerCity        String
-  customerCountry     String
-  customerCountryCode String?
-  customerEmail       String?
-  customerVatId       String?
-  recipientName       String?
-  recipientAddress1   String?
-  recipientAddress2   String?
-  recipientPostalCode String?
-  recipientCity       String?
-  recipientCountry    String?
-  recipientCountryCode String?
-  recipientEmail      String?
-  recipientPhone      String?
-  referencePerson     String?
-  yourReference       String?
-  afterSalesHandling  Boolean  @default(false)
-  customerType        String?
-  deliveryType        String?
-  isCollectiveOrder   Boolean?
-  physicalDeliveryNoteRequired Boolean? @default(false)
-  saturdayDeliveryAllowed Boolean?
-  endCustomerOrderReference String?
-  buyerIdRef          String?
-  supplierIdRef       String?
-  supplierOrderId     String?
-  ordrSentAt          DateTime?
-  ordrMode            String?
-  ingestedAt          DateTime?
-  ordrStatus          String?
-  ordrLastAttemptAt   DateTime?
-  ordrLastError       String?
-  archivedAt          DateTime?
-  cancelledAt         DateTime?
-  cancelReason        String?
-  buyerPartyId        String?
-  buyerPartyGln       String?
-  supplierPartyId     String?
-  deliveryPartyId     String?
-  marketplacePartyId  String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                           String    @id @default(uuid())
+  galaxusOrderId               String    @unique
+  orderNumber                  String?
+  orderDate                    DateTime
+  generationDate               DateTime?
+  language                     String?
+  deliveryDate                 DateTime?
+  currencyCode                 String    @default("CHF")
+  customerName                 String
+  customerAddress1             String
+  customerAddress2             String?
+  customerPostalCode           String
+  customerCity                 String
+  customerCountry              String
+  customerCountryCode          String?
+  customerEmail                String?
+  customerVatId                String?
+  recipientName                String?
+  recipientAddress1            String?
+  recipientAddress2            String?
+  recipientPostalCode          String?
+  recipientCity                String?
+  recipientCountry             String?
+  recipientCountryCode         String?
+  recipientEmail               String?
+  recipientPhone               String?
+  referencePerson              String?
+  yourReference                String?
+  afterSalesHandling           Boolean   @default(false)
+  customerType                 String?
+  deliveryType                 String?
+  isCollectiveOrder            Boolean?
+  physicalDeliveryNoteRequired Boolean?  @default(false)
+  saturdayDeliveryAllowed      Boolean?
+  endCustomerOrderReference    String?
+  buyerIdRef                   String?
+  supplierIdRef                String?
+  supplierOrderId              String?
+  ordrSentAt                   DateTime?
+  ordrMode                     String?
+  ingestedAt                   DateTime?
+  ordrStatus                   String?
+  ordrLastAttemptAt            DateTime?
+  ordrLastError                String?
+  archivedAt                   DateTime?
+  cancelledAt                  DateTime?
+  cancelReason                 String?
+  buyerPartyId                 String?
+  buyerPartyGln                String?
+  supplierPartyId              String?
+  deliveryPartyId              String?
+  marketplacePartyId           String?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
 
-  lines               GalaxusOrderLine[]
-  documents           Document[]
-  shipments           Shipment[]
-  shipmentItems       ShipmentItem[]
-  supplierOrders      SupplierOrder[]
-  statusEvents        OrderStatusEvent[]
-  ediFiles            GalaxusEdiFile[]
-  routingIssues       OrderRoutingIssue[]
-  stockxMatches       GalaxusStockxMatch[]
+  lines          GalaxusOrderLine[]
+  documents      Document[]
+  shipments      Shipment[]
+  shipmentItems  ShipmentItem[]
+  supplierOrders SupplierOrder[]
+  statusEvents   OrderStatusEvent[]
+  ediFiles       GalaxusEdiFile[]
+  routingIssues  OrderRoutingIssue[]
+  stockxMatches  GalaxusStockxMatch[]
 
   @@index([orderDate])
   @@index([archivedAt])
@@ -1606,19 +1637,19 @@ model GalaxusOrder {
 }
 
 model OrderRoutingIssue {
-  id            String   @id @default(uuid())
-  orderId       String?
-  orderLineId   String   @unique
+  id             String   @id @default(uuid())
+  orderId        String?
+  orderLineId    String   @unique
   galaxusOrderId String?
-  gtin          String?
-  providerKey   String?
-  status        String
-  rule          String?
-  payloadJson   Json?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  gtin           String?
+  providerKey    String?
+  status         String
+  rule           String?
+  payloadJson    Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  order         GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  order GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([status])
@@ -1627,79 +1658,79 @@ model OrderRoutingIssue {
 }
 
 model GalaxusOrderLine {
-  id              String   @id @default(uuid())
-  orderId         String
-  lineNumber      Int
-  supplierPid     String?
-  buyerPid        String?
-  orderUnit       String?
-  supplierSku     String?
-  supplierVariantId String?
-  productName     String
-  description     String?
-  size            String?
-  gtin            String?
-  providerKey     String?
-  quantity        Int
-  qtyConfirmed    Int?
-  vatRate         Decimal  @db.Decimal(5, 2)
-  taxAmountPerUnit Decimal? @db.Decimal(10, 2)
-  unitNetPrice    Decimal  @db.Decimal(10, 2)
-  lineNetAmount   Decimal  @db.Decimal(10, 2)
-  priceLineAmount Decimal? @db.Decimal(10, 2)
-  arrivalDateStart DateTime?
-  arrivalDateEnd   DateTime?
-  currencyCode    String   @default("CHF")
+  id                       String    @id @default(uuid())
+  orderId                  String
+  lineNumber               Int
+  supplierPid              String?
+  buyerPid                 String?
+  orderUnit                String?
+  supplierSku              String?
+  supplierVariantId        String?
+  productName              String
+  description              String?
+  size                     String?
+  gtin                     String?
+  providerKey              String?
+  quantity                 Int
+  qtyConfirmed             Int?
+  vatRate                  Decimal   @db.Decimal(5, 2)
+  taxAmountPerUnit         Decimal?  @db.Decimal(10, 2)
+  unitNetPrice             Decimal   @db.Decimal(10, 2)
+  lineNetAmount            Decimal   @db.Decimal(10, 2)
+  priceLineAmount          Decimal?  @db.Decimal(10, 2)
+  arrivalDateStart         DateTime?
+  arrivalDateEnd           DateTime?
+  currencyCode             String    @default("CHF")
   /// Operator marked this line shipped in warehouse UI (independent of Galaxus DELR).
   warehouseMarkedShippedAt DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  order           GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  stockxMatches   GalaxusStockxMatch[]
+  order         GalaxusOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockxMatches GalaxusStockxMatch[]
 
   @@index([orderId])
   @@schema("public")
 }
 
 model DecathlonOrder {
-  id                  String   @id @default(uuid())
-  orderId             String   @unique
-  orderNumber         String?
-  orderDate           DateTime
-  orderState          String?
-  partnerKey          String?
-  currencyCode        String   @default("CHF")
-  totalPrice          Decimal? @db.Decimal(10, 2)
-  shippingPrice       Decimal? @db.Decimal(10, 2)
-  customerName        String?
-  customerEmail       String?
-  customerPhone       String?
-  customerAddress1    String?
-  customerAddress2    String?
-  customerPostalCode  String?
-  customerCity        String?
-  customerCountry     String?
-  customerCountryCode String?
-  recipientName       String?
-  recipientEmail      String?
-  recipientPhone      String?
-  recipientAddress1   String?
-  recipientAddress2   String?
-  recipientPostalCode String?
-  recipientCity       String?
-  recipientCountry    String?
-  recipientCountryCode String?
-  recipientAddressLocked Boolean @default(false)
-  rawJson             Json?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  orderId                String   @unique
+  orderNumber            String?
+  orderDate              DateTime
+  orderState             String?
+  partnerKey             String?
+  currencyCode           String   @default("CHF")
+  totalPrice             Decimal? @db.Decimal(10, 2)
+  shippingPrice          Decimal? @db.Decimal(10, 2)
+  customerName           String?
+  customerEmail          String?
+  customerPhone          String?
+  customerAddress1       String?
+  customerAddress2       String?
+  customerPostalCode     String?
+  customerCity           String?
+  customerCountry        String?
+  customerCountryCode    String?
+  recipientName          String?
+  recipientEmail         String?
+  recipientPhone         String?
+  recipientAddress1      String?
+  recipientAddress2      String?
+  recipientPostalCode    String?
+  recipientCity          String?
+  recipientCountry       String?
+  recipientCountryCode   String?
+  recipientAddressLocked Boolean  @default(false)
+  rawJson                Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
-  lines               DecathlonOrderLine[]
-  documents           DecathlonOrderDocument[]
-  returns             DecathlonReturn[]
-  shipments           DecathlonShipment[]
-  stockxMatches       DecathlonStockxMatch[]
+  lines         DecathlonOrderLine[]
+  documents     DecathlonOrderDocument[]
+  returns       DecathlonReturn[]
+  shipments     DecathlonShipment[]
+  stockxMatches DecathlonStockxMatch[]
 
   @@index([orderDate])
   @@index([orderState])
@@ -1708,31 +1739,31 @@ model DecathlonOrder {
 }
 
 model DecathlonOrderLine {
-  id              String   @id @default(uuid())
-  orderId         String
-  orderLineId     String   @unique
-  lineNumber      Int?
-  offerSku        String?
-  productSku      String?
-  productTitle    String?
-  description     String?
-  size            String?
-  gtin            String?
-  providerKey     String?
-  supplierSku     String?
-  partnerKey      String?
-  quantity        Int
-  unitPrice       Decimal? @db.Decimal(10, 2)
-  lineTotal       Decimal? @db.Decimal(10, 2)
-  currencyCode    String?  @default("CHF")
-  rawJson         Json?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id           String   @id @default(uuid())
+  orderId      String
+  orderLineId  String   @unique
+  lineNumber   Int?
+  offerSku     String?
+  productSku   String?
+  productTitle String?
+  description  String?
+  size         String?
+  gtin         String?
+  providerKey  String?
+  supplierSku  String?
+  partnerKey   String?
+  quantity     Int
+  unitPrice    Decimal? @db.Decimal(10, 2)
+  lineTotal    Decimal? @db.Decimal(10, 2)
+  currencyCode String?  @default("CHF")
+  rawJson      Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  order           DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  stockxMatch     DecathlonStockxMatch?
-  returnLines     DecathlonReturnLine[]
-  shipmentLines   DecathlonShipmentLine[]
+  order         DecathlonOrder          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  stockxMatch   DecathlonStockxMatch?
+  returnLines   DecathlonReturnLine[]
+  shipmentLines DecathlonShipmentLine[]
 
   @@index([orderId])
   @@index([offerSku])
@@ -1741,49 +1772,49 @@ model DecathlonOrderLine {
 }
 
 model DecathlonStockxMatch {
-  id                 String   @id @default(uuid())
-  decathlonOrderId   String
-  decathlonOrderLineId String  @unique
-  decathlonOrderDate DateTime?
-  decathlonLineNumber Int?
-  decathlonProductName String?
-  decathlonDescription String?
-  decathlonSize       String?
-  decathlonGtin       String?
-  decathlonProviderKey String?
-  decathlonSupplierSku String?
-  decathlonQuantity   Int
-  decathlonUnitNetPrice Decimal? @db.Decimal(10, 2)
-  decathlonLineNetAmount Decimal? @db.Decimal(10, 2)
-  decathlonVatRate    Decimal? @db.Decimal(5, 2)
-  decathlonCurrencyCode String? @default("CHF")
-  stockxChainId      String?
-  stockxOrderId      String?
-  stockxOrderNumber  String
-  stockxVariantId    String?
-  stockxProductName  String?
-  stockxSkuKey       String?
-  stockxSizeEU       String?
-  stockxPurchaseDate DateTime?
-  stockxAmount       Decimal? @db.Decimal(10, 2)
-  stockxCurrencyCode String?
-  stockxStatus       String?
-  stockxEstimatedDelivery DateTime?
+  id                            String    @id @default(uuid())
+  decathlonOrderId              String
+  decathlonOrderLineId          String    @unique
+  decathlonOrderDate            DateTime?
+  decathlonLineNumber           Int?
+  decathlonProductName          String?
+  decathlonDescription          String?
+  decathlonSize                 String?
+  decathlonGtin                 String?
+  decathlonProviderKey          String?
+  decathlonSupplierSku          String?
+  decathlonQuantity             Int
+  decathlonUnitNetPrice         Decimal?  @db.Decimal(10, 2)
+  decathlonLineNetAmount        Decimal?  @db.Decimal(10, 2)
+  decathlonVatRate              Decimal?  @db.Decimal(5, 2)
+  decathlonCurrencyCode         String?   @default("CHF")
+  stockxChainId                 String?
+  stockxOrderId                 String?
+  stockxOrderNumber             String
+  stockxVariantId               String?
+  stockxProductName             String?
+  stockxSkuKey                  String?
+  stockxSizeEU                  String?
+  stockxPurchaseDate            DateTime?
+  stockxAmount                  Decimal?  @db.Decimal(10, 2)
+  stockxCurrencyCode            String?
+  stockxStatus                  String?
+  stockxEstimatedDelivery       DateTime?
   stockxLatestEstimatedDelivery DateTime?
-  stockxAwb          String?
-  stockxTrackingUrl  String?
-  stockxCheckoutType String?
-  stockxStates       Json?
-  matchConfidence    String?
-  matchScore         Decimal? @db.Decimal(5, 2)
-  matchType          String?
-  matchReasons       String?
-  timeDiffHours      Decimal? @db.Decimal(10, 2)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  stockxAwb                     String?
+  stockxTrackingUrl             String?
+  stockxCheckoutType            String?
+  stockxStates                  Json?
+  matchConfidence               String?
+  matchScore                    Decimal?  @db.Decimal(5, 2)
+  matchType                     String?
+  matchReasons                  String?
+  timeDiffHours                 Decimal?  @db.Decimal(10, 2)
+  createdAt                     DateTime  @default(now())
+  updatedAt                     DateTime  @updatedAt
 
-  order              DecathlonOrder     @relation(fields: [decathlonOrderId], references: [id], onDelete: Cascade)
-  line               DecathlonOrderLine @relation(fields: [decathlonOrderLineId], references: [id], onDelete: Cascade)
+  order DecathlonOrder     @relation(fields: [decathlonOrderId], references: [id], onDelete: Cascade)
+  line  DecathlonOrderLine @relation(fields: [decathlonOrderLineId], references: [id], onDelete: Cascade)
 
   @@index([decathlonOrderId])
   @@index([stockxOrderNumber])
@@ -1792,23 +1823,23 @@ model DecathlonStockxMatch {
 }
 
 model DecathlonShipment {
-  id             String   @id @default(uuid())
-  orderId        String
+  id               String    @id @default(uuid())
+  orderId          String
   /// Mirakl MMP shipment id returned by ST01 (POST /api/shipments); used to pick the right OR72/OR73 packing slip.
   miraklShipmentId String?
-  carrierRaw     String?
-  carrierFinal   String?
-  trackingNumber String?
-  shippedAt      DateTime?
+  carrierRaw       String?
+  carrierFinal     String?
+  trackingNumber   String?
+  shippedAt        DateTime?
   labelGeneratedAt DateTime?
   /// Partner key when Swiss Post label was generated from the partner portal (scope=partner).
-  partnerKey     String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  partnerKey       String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  order          DecathlonOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  documents      DecathlonOrderDocument[]
-  lines          DecathlonShipmentLine[]
+  order     DecathlonOrder           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  documents DecathlonOrderDocument[]
+  lines     DecathlonShipmentLine[]
 
   @@index([orderId])
   @@index([miraklShipmentId])
@@ -1824,8 +1855,8 @@ model DecathlonShipmentLine {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  shipment    DecathlonShipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  orderLine   DecathlonOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
+  shipment  DecathlonShipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  orderLine DecathlonOrderLine @relation(fields: [orderLineId], references: [id], onDelete: Cascade)
 
   @@index([shipmentId])
   @@index([orderLineId])
@@ -1833,18 +1864,18 @@ model DecathlonShipmentLine {
 }
 
 model DecathlonOrderDocument {
-  id               String   @id @default(uuid())
+  id               String       @id @default(uuid())
   orderId          String?
   shipmentId       String?
   type             DocumentType
-  version          Int      @default(1)
+  version          Int          @default(1)
   storageUrl       String
   checksum         String?
   miraklDocumentId String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime     @default(now())
 
-  order            DecathlonOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  shipment         DecathlonShipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  order    DecathlonOrder?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment DecathlonShipment? @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([shipmentId])
@@ -1852,16 +1883,16 @@ model DecathlonOrderDocument {
 }
 
 model DecathlonReturn {
-  id          String   @id @default(uuid())
-  returnId    String   @unique
-  orderId     String?
-  status      String?
-  rawJson     Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid())
+  returnId  String   @unique
+  orderId   String?
+  status    String?
+  rawJson   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  order       DecathlonOrder? @relation(fields: [orderId], references: [orderId], onDelete: SetNull)
-  lines       DecathlonReturnLine[]
+  order DecathlonOrder?       @relation(fields: [orderId], references: [orderId], onDelete: SetNull)
+  lines DecathlonReturnLine[]
 
   @@index([orderId])
   @@index([status])
@@ -1869,21 +1900,21 @@ model DecathlonReturn {
 }
 
 model DecathlonReturnLine {
-  id            String   @id @default(uuid())
-  returnId      String
-  orderLineId   String?
-  offerSku      String?
-  productId     String?
-  quantity      Int
-  unitPrice     Decimal? @db.Decimal(10, 2)
-  returnPrice   Decimal? @db.Decimal(10, 2)
-  currencyCode  String? @default("CHF")
-  restockAppliedAt DateTime?
+  id                       String    @id @default(uuid())
+  returnId                 String
+  orderLineId              String?
+  offerSku                 String?
+  productId                String?
+  quantity                 Int
+  unitPrice                Decimal?  @db.Decimal(10, 2)
+  returnPrice              Decimal?  @db.Decimal(10, 2)
+  currencyCode             String?   @default("CHF")
+  restockAppliedAt         DateTime?
   restockSupplierVariantId String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
-  decathlonReturn DecathlonReturn @relation(fields: [returnId], references: [returnId], onDelete: Cascade)
+  decathlonReturn DecathlonReturn     @relation(fields: [returnId], references: [returnId], onDelete: Cascade)
   orderLine       DecathlonOrderLine? @relation(fields: [orderLineId], references: [orderLineId], onDelete: SetNull)
 
   @@unique([returnId, orderLineId, productId])
@@ -1895,37 +1926,37 @@ model DecathlonReturnLine {
 
 /// Staff return-receipt workflow (scan → receive → refund → close). Separate from DecathlonReturn restock sync.
 model MarketplaceReturn {
-  id                   String    @id @default(uuid())
-  platform             String    @default("decathlon")
-  externalReturnId     String
-  externalOrderId      String
-  externalOrderLineId  String?
-  productId            String?
-  productTitle         String?
-  sku                  String?
-  returnLabelNumber    String?
-  returnAmount         Decimal   @db.Decimal(12, 2)
-  currency             String    @default("CHF")
-  returnReasonCode     String?
-  returnReasonLabel    String?
-  miraklStatus         String?
-  localStatus          String    @default("pending_receipt")
+  id                  String    @id @default(uuid())
+  platform            String    @default("decathlon")
+  externalReturnId    String
+  externalOrderId     String
+  externalOrderLineId String?
+  productId           String?
+  productTitle        String?
+  sku                 String?
+  returnLabelNumber   String?
+  returnAmount        Decimal   @db.Decimal(12, 2)
+  currency            String    @default("CHF")
+  returnReasonCode    String?
+  returnReasonLabel   String?
+  miraklStatus        String?
+  localStatus         String    @default("pending_receipt")
   /// pending | receive_done | refund_done | close_done — drives idempotent retry
-  processStep          String    @default("pending")
-  syncedAt             DateTime?
-  receivedAt           DateTime?
-  completedAt          DateTime?
-  failureMessage       String?
-  staffNote            String?
-  quantity             Int       @default(1)
-  apiSource            String?
-  receiveActionId      String?
-  refundIdsJson        Json?
-  closeActionId        String?
-  auditLogJson         Json?
-  rawJson              Json?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  processStep         String    @default("pending")
+  syncedAt            DateTime?
+  receivedAt          DateTime?
+  completedAt         DateTime?
+  failureMessage      String?
+  staffNote           String?
+  quantity            Int       @default(1)
+  apiSource           String?
+  receiveActionId     String?
+  refundIdsJson       Json?
+  closeActionId       String?
+  auditLogJson        Json?
+  rawJson             Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@unique([platform, externalReturnId])
   @@index([platform, returnLabelNumber])
@@ -1947,57 +1978,57 @@ model MarketplaceReturnSyncCursor {
 }
 
 model SupplierOrder {
-  id                String   @id @default(uuid())
-  supplierOrderRef  String   @unique
-  orderId           String?
-  shipmentId        String?
-  status            String
-  payloadJson       Json?
-  confirmedAt       DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id               String    @id @default(uuid())
+  supplierOrderRef String    @unique
+  orderId          String?
+  shipmentId       String?
+  status           String
+  payloadJson      Json?
+  confirmedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  order             GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  shipment          Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  order    GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
-  @@index([orderId])
   @@unique([shipmentId])
+  @@index([orderId])
   @@schema("public")
 }
 
 model Shipment {
-  id             String   @id @default(uuid())
-  orderId        String?
-  providerKey    String?
-  supplierOrderRef String?
-  status         String?
-  shipmentId     String   @unique
-  dispatchNotificationId String? @unique @map("deliveryNoteNumber")
-  dispatchNotificationCreatedAt DateTime? @map("deliveryNoteCreatedAt")
-  incoterms      String?
-  packageId      String?  @unique @map("sscc")
-  deliveryType   String?
-  carrierRaw     String?
-  carrierFinal   String?
-  trackingNumber String?
-  manualOrderRef String?
-  manualEtaMin   DateTime?
-  manualEtaMax   DateTime?
-  manualNote     String?
-  packageType    ShipmentPackageType @default(PARCEL)
-  shippedAt      DateTime?
-  galaxusShippedAt DateTime?
-  delrFileName   String?
-  delrSentAt     DateTime?
-  delrStatus     ShipmentDelrStatus?
-  delrError      String?
-  labelZpl       String?
-  labelPdfUrl    String?
-  labelGeneratedAt DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                            String              @id @default(uuid())
+  orderId                       String?
+  providerKey                   String?
+  supplierOrderRef              String?
+  status                        String?
+  shipmentId                    String              @unique
+  dispatchNotificationId        String?             @unique @map("deliveryNoteNumber")
+  dispatchNotificationCreatedAt DateTime?           @map("deliveryNoteCreatedAt")
+  incoterms                     String?
+  packageId                     String?             @unique @map("sscc")
+  deliveryType                  String?
+  carrierRaw                    String?
+  carrierFinal                  String?
+  trackingNumber                String?
+  manualOrderRef                String?
+  manualEtaMin                  DateTime?
+  manualEtaMax                  DateTime?
+  manualNote                    String?
+  packageType                   ShipmentPackageType @default(PARCEL)
+  shippedAt                     DateTime?
+  galaxusShippedAt              DateTime?
+  delrFileName                  String?
+  delrSentAt                    DateTime?
+  delrStatus                    ShipmentDelrStatus?
+  delrError                     String?
+  labelZpl                      String?
+  labelPdfUrl                   String?
+  labelGeneratedAt              DateTime?
+  createdAt                     DateTime            @default(now())
+  updatedAt                     DateTime            @updatedAt
 
-  order          GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  order          GalaxusOrder?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
   documents      Document[]
   items          ShipmentItem[]
   supplierOrders SupplierOrder[]
@@ -2009,19 +2040,19 @@ model Shipment {
 }
 
 model ShipmentItem {
-  id          String   @id @default(uuid())
-  shipmentId  String
-  orderId     String?
-  supplierPid String
-  gtin14      String
-  buyerPid    String?
-  quantity    Int
-  manualBoughtQty Int @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(uuid())
+  shipmentId      String
+  orderId         String?
+  supplierPid     String
+  gtin14          String
+  buyerPid        String?
+  quantity        Int
+  manualBoughtQty Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  shipment    Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  order       GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  order    GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([shipmentId])
   @@index([orderId])
@@ -2037,31 +2068,31 @@ model GalaxusSsccCounter {
 }
 
 model OrderStatusEvent {
-  id         String   @id @default(uuid())
-  orderId    String
-  source     String
-  type       String
+  id          String   @id @default(uuid())
+  orderId     String
+  source      String
+  type        String
   payloadJson Json?
-  createdAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
 
-  order      GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order GalaxusOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
   @@schema("public")
 }
 
 model Document {
-  id         String   @id @default(uuid())
+  id         String       @id @default(uuid())
   orderId    String?
   shipmentId String?
   type       DocumentType
-  version    Int      @default(1)
+  version    Int          @default(1)
   storageUrl String
   checksum   String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime     @default(now())
 
-  order      GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  shipment   Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  order    GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([shipmentId])
@@ -2104,42 +2135,42 @@ model GalaxusEdiFile {
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
-  order        GalaxusOrder?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
-  shipment     Shipment?           @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
+  order    GalaxusOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  shipment Shipment?     @relation(fields: [shipmentId], references: [id], onDelete: SetNull)
 
+  @@unique([shipmentId, direction, docType])
   @@index([direction, docType])
   @@index([orderRef])
   @@index([shipmentId])
-  @@unique([shipmentId, direction, docType])
   @@schema("public")
 }
 
 model GalaxusJobDefinition {
-  id         String   @id @default(uuid())
-  jobKey     String   @unique
+  id         String    @id @default(uuid())
+  jobKey     String    @unique
   intervalMs Int
-  enabled    Boolean  @default(true)
+  enabled    Boolean   @default(true)
   lastRunAt  DateTime?
   nextRunAt  DateTime?
   lastError  String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   @@schema("public")
 }
 
 model GalaxusFeedRun {
-  id              String   @id @default(uuid())
-  runId           String
-  scope           String
-  triggerSource   String?
-  startedAt       DateTime
-  finishedAt      DateTime?
-  success         Boolean  @default(false)
-  errorMessage    String?
-  countsJson      Json?
-  manifestIds     String[]
-  createdAt       DateTime @default(now())
+  id            String    @id @default(uuid())
+  runId         String
+  scope         String
+  triggerSource String?
+  startedAt     DateTime
+  finishedAt    DateTime?
+  success       Boolean   @default(false)
+  errorMessage  String?
+  countsJson    Json?
+  manifestIds   String[]
+  createdAt     DateTime  @default(now())
 
   @@index([runId])
   @@index([scope, startedAt])
@@ -2147,13 +2178,13 @@ model GalaxusFeedRun {
 }
 
 model GalaxusFeedTrigger {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   scope         String
   triggerSource String?
-  requestedAt   DateTime @default(now())
+  requestedAt   DateTime  @default(now())
   consumedAt    DateTime?
-  status        String   @default("PENDING")
-  createdAt     DateTime @default(now())
+  status        String    @default("PENDING")
+  createdAt     DateTime  @default(now())
 
   @@index([scope, requestedAt])
   @@index([status])
@@ -2178,22 +2209,22 @@ model GalaxusJobRun {
 }
 
 model GalaxusJobQueue {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   jobType      String
-  status       String   @default("PENDING")
+  status       String    @default("PENDING")
   groupKey     String?
   payloadJson  Json?
   resultJson   Json?
-  priority     Int      @default(0)
-  attempts     Int      @default(0)
-  maxAttempts  Int      @default(5)
+  priority     Int       @default(0)
+  attempts     Int       @default(0)
+  maxAttempts  Int       @default(5)
   lockedAt     DateTime?
   lockedBy     String?
   startedAt    DateTime?
   finishedAt   DateTime?
   errorMessage String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([jobType, status, priority, createdAt])
   @@index([status])
@@ -2202,18 +2233,18 @@ model GalaxusJobQueue {
 }
 
 model GalaxusExportManifest {
-  id                    String   @id @default(uuid())
-  runId                 String
-  exportType            String
-  supplierKeys          String[]
-  productCount          Int
-  checksum              String?
-  storagePointer        String?
-  destination           String?
-  uploadStatus          String
-  responseJson          Json?
-  validationIssuesJson  Json?
-  createdAt             DateTime @default(now())
+  id                   String   @id @default(uuid())
+  runId                String
+  exportType           String
+  supplierKeys         String[]
+  productCount         Int
+  checksum             String?
+  storagePointer       String?
+  destination          String?
+  uploadStatus         String
+  responseJson         Json?
+  validationIssuesJson Json?
+  createdAt            DateTime @default(now())
 
   @@index([runId])
   @@index([exportType])
@@ -2221,17 +2252,17 @@ model GalaxusExportManifest {
 }
 
 model DecathlonExportRun {
-  id             String   @id @default(uuid())
-  runId          String   @unique
+  id             String    @id @default(uuid())
+  runId          String    @unique
   startedAt      DateTime
   finishedAt     DateTime?
-  success        Boolean  @default(false)
+  success        Boolean   @default(false)
   errorMessage   String?
   countsJson     Json?
   exclusionsJson Json?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime  @default(now())
 
-  files          DecathlonExportFile[]
+  files DecathlonExportFile[]
 
   @@index([startedAt])
   @@schema("public")
@@ -2248,7 +2279,7 @@ model DecathlonExportFile {
   sizeBytes  Int?
   createdAt  DateTime @default(now())
 
-  exportRun  DecathlonExportRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
+  exportRun DecathlonExportRun @relation(fields: [runId], references: [runId], onDelete: Cascade)
 
   @@index([runId])
   @@index([fileType])
@@ -2284,22 +2315,22 @@ enum DecathlonImportStatus {
 }
 
 model DecathlonOfferSync {
-  id                String   @id @default(uuid())
-  providerKey       String   @unique
-  supplierVariantId String?
-  gtin              String?
-  productStatus     String?
+  id                     String    @id @default(uuid())
+  providerKey            String    @unique
+  supplierVariantId      String?
+  gtin                   String?
+  productStatus          String?
   productStatusCheckedAt DateTime?
-  lastProductSyncAt DateTime?
-  lastStock         Int?
-  lastPrice         Decimal? @db.Decimal(10, 2)
-  lastStockSyncedAt DateTime?
-  lastPriceSyncedAt DateTime?
-  offerCreatedAt    DateTime?
-  lastOfferSyncAt   DateTime?
-  lastError         String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  lastProductSyncAt      DateTime?
+  lastStock              Int?
+  lastPrice              Decimal?  @db.Decimal(10, 2)
+  lastStockSyncedAt      DateTime?
+  lastPriceSyncedAt      DateTime?
+  offerCreatedAt         DateTime?
+  lastOfferSyncAt        DateTime?
+  lastError              String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   @@index([supplierVariantId])
   @@schema("public")
