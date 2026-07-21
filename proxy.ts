@@ -51,6 +51,8 @@ const PUBLIC_PATHS = [
   "/api/inventory/locations",
   // Phase 2 resolver dry-run diff. Same shared-secret gate.
   "/api/inventory/physical-diff",
+  // Phase 4 convergence trigger (15-min cron). Same shared-secret gate.
+  "/api/inventory/convergence",
   "/api/tracking/token",
   "/_next",
   "/static",
