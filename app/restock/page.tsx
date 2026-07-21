@@ -59,7 +59,7 @@ type ApplyResult = {
   db?: { ok: boolean; importedVariantsCount?: number; errors?: string[] };
   variantChoices?: VariantChoice[];
   error?: string;
-  warnings: string[];
+  warnings?: string[];
 };
 
 type LocationOption = { id: string; name: string; priority: number };
@@ -386,9 +386,9 @@ export default function RestockScanPage() {
                 : `échec — ${applyResult.db.errors?.join("; ") ?? ""}`}
             </div>
           )}
-          {applyResult.warnings.length > 0 && (
+          {(applyResult.warnings?.length ?? 0) > 0 && (
             <ul className="mt-2 list-inside list-disc text-xs text-amber-800">
-              {applyResult.warnings.map((w, i) => (
+              {(applyResult.warnings ?? []).map((w, i) => (
                 <li key={i}>{w}</li>
               ))}
             </ul>
