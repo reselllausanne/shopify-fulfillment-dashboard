@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { checkSharedSecret } from "@/app/api/kickdb/auth";
 import { importStxProductByInput } from "@/galaxus/stx/importProduct";
 import { convergeVariant } from "@/shopify/inventory/convergence";
+import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,7 +117,10 @@ export async function POST(req: Request) {
   const startedAt = Date.now();
   try {
     const orphans = await loadOrphans();
-    const matched = orphans.filter((o) => o.status === "matched" && o.kickdbSlug);
+    const manualOnly = orphans.filter((o) => isManualOnlyGtin(o.gtin));
+    const matched = orphans.filter(
+      (o) => o.status === "matched" && o.kickdbSlug && !isManualOnlyGtin(o.gtin)
+    );
     const unmatched = orphans.filter((o) => o.status === "unmatched");
 
     const results: Array<{
@@ -184,6 +188,7 @@ export async function POST(req: Request) {
         attempted: matched.length,
         distinctSlugs: slugsSeen.size,
         skippedPrivateLabel: unmatched.length,
+        skippedManualOnly: manualOnly.length,
         ms: Date.now() - startedAt,
       },
       results,
@@ -191,6 +196,12 @@ export async function POST(req: Request) {
         gtin: o.gtin,
         physicalQty: o.physicalQty,
         location: o.preferredLocation,
+      })),
+      skippedManualOnly: manualOnly.map((o) => ({
+        gtin: o.gtin,
+        physicalQty: o.physicalQty,
+        location: o.preferredLocation,
+        reason: "manual_only_gtin",
       })),
     });
   } catch (e: any) {

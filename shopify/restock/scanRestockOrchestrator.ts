@@ -16,6 +16,7 @@ import {
 } from "@/shopify/restock/shopifyRestockInventory";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
+import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
 
 /**
  * Case 3 orchestrator — physical stock scan (GTIN).
@@ -613,6 +614,14 @@ export async function applyScanRestock(input: {
   // B.1 — DB upsert for Galaxus/Decathlon export (THE_ row). Independent of
   // whether the product exists on Shopify. Non-fatal; skipped without a slug.
   async function runDbImport(): Promise<ApplyScanResult["db"]> {
+    // Manual-only GTINs (wrong KickDB match / Shopify-only stock) must never
+    // get an STX supplier row.
+    if (isManualOnlyGtin(gtin)) {
+      warnings.push(
+        `Import DB ignoré: GTIN ${gtin} est manuel-only (pas de StockX / marketplace auto).`
+      );
+      return { ok: true, importedVariantsCount: 0, errors: [], warnings: ["manual_only_gtin"] };
+    }
     if (!slug) {
       warnings.push(
         `Import DB (Galaxus/Decathlon) ignoré: slug non résolu (${slugResolveError ?? "inconnu"})`
