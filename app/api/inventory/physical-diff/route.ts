@@ -46,17 +46,28 @@ export async function GET(req: Request) {
 
     const physical = await loadPhysicalMirrorStockByGtin(gtins);
 
-    const suppliers = await prisma.$queryRaw<
-      Array<{ gtin: string; supplierKey: string; supplierVariantId: string; providerKey: string | null; stock: number | null }>
+    const suppliersRaw = await prisma.$queryRaw<
+      Array<{ gtin: string; supplierVariantId: string; providerKey: string | null; stock: number | null }>
     >`
-      SELECT sv."gtin" AS gtin, sv."supplierKey" AS "supplierKey",
-             sv."supplierVariantId" AS "supplierVariantId", sv."providerKey" AS "providerKey",
+      SELECT sv."gtin" AS gtin,
+             sv."supplierVariantId" AS "supplierVariantId",
+             sv."providerKey" AS "providerKey",
              sv."stock" AS stock
       FROM "public"."SupplierVariant" sv
       WHERE sv."gtin" = ANY(${gtins}::text[])
     `;
 
-    const byGtin = new Map<string, Array<(typeof suppliers)[number]>>();
+    // Supplier "key" is derived from supplierVariantId prefix (stx_, the_, ner_, ...).
+    const deriveKey = (id: string): string => {
+      const s = String(id ?? "").toLowerCase();
+      const idx = s.indexOf("_");
+      return idx > 0 ? s.slice(0, idx) : s;
+    };
+
+    type SupplierRow = (typeof suppliersRaw)[number] & { key: string };
+    const suppliers: SupplierRow[] = suppliersRaw.map((s) => ({ ...s, key: deriveKey(s.supplierVariantId) }));
+
+    const byGtin = new Map<string, SupplierRow[]>();
     for (const s of suppliers) {
       const arr = byGtin.get(s.gtin) ?? [];
       arr.push(s);
@@ -68,18 +79,18 @@ export async function GET(req: Request) {
 
     const rows = gtins.map((gtin) => {
       const p = physical.get(gtin);
-      const suppliers = byGtin.get(gtin) ?? [];
-      const supplierKeys = new Set(suppliers.map((s) => (s.supplierKey ?? "").toLowerCase()));
+      const supplierList = byGtin.get(gtin) ?? [];
+      const supplierKeys = new Set(supplierList.map((s) => s.key));
       const hasStx = supplierKeys.has("stx");
       const hasThe = supplierKeys.has("the");
-      if (suppliers.length > 0) withSupplier += 1;
+      if (supplierList.length > 0) withSupplier += 1;
       if (hasStx && hasThe) collisions += 1;
       return {
         gtin,
         physicalQty: p?.qty ?? 0,
         preferredLocation: p?.preferredLocationName ?? null,
-        suppliers: suppliers.map((s) => ({
-          key: s.supplierKey,
+        suppliers: supplierList.map((s) => ({
+          key: s.key,
           providerKey: s.providerKey,
           supplierVariantId: s.supplierVariantId,
           stock: s.stock,
