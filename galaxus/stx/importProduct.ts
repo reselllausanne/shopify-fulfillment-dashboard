@@ -266,7 +266,10 @@ function runRegionHook(
   return { blocked, warnings, errors };
 }
 
-export async function importStxProductByInput(input: string): Promise<StxImportResult> {
+export async function importStxProductByInput(
+  input: string,
+  options: { forceImport?: boolean } = {}
+): Promise<StxImportResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
   const normalizedInput = normalizeStxImportInput(input);
@@ -341,7 +344,11 @@ export async function importStxProductByInput(input: string): Promise<StxImportR
   const variants = Array.isArray(product?.variants) ? product.variants : [];
   diagnostics.variantsTotal = variants.length;
   const supplierSkuFallback = pickString(styleId, product?.sku, slug, product?.id) ?? `stx_${normalizedInput}`;
-  const forceImport = isStxForceImportSlug(slug ?? normalizedInput);
+  // Runtime override (options.forceImport) wins over the static allowlist so
+  // Phase 4 orphan reconciliation can pull in non-express variants that have
+  // real physical stock on Shopify — we need a supplier row for the resolver
+  // to attach qty to.
+  const forceImport = options.forceImport === true || isStxForceImportSlug(slug ?? normalizedInput);
   diagnostics.forceImport = forceImport;
   const parsedRows: ParsedVariantRow[] = [];
   let eligibleVariantsCount = 0;
