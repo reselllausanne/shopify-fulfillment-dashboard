@@ -1,5 +1,7 @@
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { prisma } from "@/app/lib/prisma";
 import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
+import { getLocationConfig } from "@/shopify/inventory/locationConfig";
 import {
   resolveProviderKeyForGtin,
   upsertShopifyListingState,
@@ -22,7 +24,17 @@ import {
 type ShopifyUserError = {
   field?: string[] | null;
   message: string;
+  code?: string | null;
 };
+
+function isAlreadyActivatedError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("already activated") ||
+    m.includes("already stocked") ||
+    m.includes("inventory has already been activated")
+  );
+}
 
 const LOCATIONS_LIST_QUERY = /* GraphQL */ `
 query RestockLocations($first: Int!) {
@@ -56,21 +68,28 @@ query RestockVariantDetail($id: ID!) {
 }
 `;
 
-// Admin API 2026-04+: inventory mutations require @idempotent(key: ...).
+// Admin API 2026-04+ / 2026-07:
+// - inventory* mutations require @idempotent(key: ...)
+// - InventoryChangeInput.changeFromQuantity is mandatory (int OR explicit null)
 const INVENTORY_ADJUST_MUTATION = /* GraphQL */ `
 mutation RestockInventoryAdjust($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
   inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
+    inventoryAdjustmentGroup {
+      reason
+      changes { name delta }
+    }
     userErrors {
       field
       message
+      code
     }
   }
 }
 `;
 
 const INVENTORY_ACTIVATE_MUTATION = /* GraphQL */ `
-mutation RestockInventoryActivate($inventoryItemId: ID!, $locationId: ID!, $idempotencyKey: String!) {
-  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) @idempotent(key: $idempotencyKey) {
+mutation RestockInventoryActivate($inventoryItemId: ID!, $locationId: ID!, $available: Int, $idempotencyKey: String!) {
+  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, available: $available) @idempotent(key: $idempotencyKey) {
     inventoryLevel {
       id
     }
@@ -324,41 +343,88 @@ export async function findShopifyVariantByGtin(gtin: string): Promise<{
   return { match: detail, ambiguous: rows.length > 1, rawMatches };
 }
 
-/** Add (not set) quantity at a location — repeated scans accumulate stock. */
+/**
+ * Add (not set) quantity at a location — repeated scans accumulate stock.
+ *
+ * API 2026-07: every change MUST include changeFromQuantity (int or null).
+ * We read current available and pass it (CAS). On STALE, re-read + retry once.
+ * Falls back to changeFromQuantity: null only if level missing after activate.
+ */
 export async function adjustInventoryAtLocation(input: {
   inventoryItemId: string;
   locationId: string;
   delta: number;
 }): Promise<void> {
-  const { data, errors } = await shopifyGraphQL<{
-    inventoryAdjustQuantities: { userErrors: ShopifyUserError[] };
-  }>(INVENTORY_ADJUST_MUTATION, {
-    input: {
-      name: "available",
-      reason: "received",
-      changes: [
-        {
-          inventoryItemId: input.inventoryItemId,
-          locationId: input.locationId,
-          delta: Math.trunc(input.delta),
-        },
-      ],
-    },
-    idempotencyKey: crypto.randomUUID(),
-  });
-  if (errors?.length) {
-    throw new Error(
-      `Shopify inventoryAdjustQuantities failed: ${errors.map((e) => e.message).join("; ")}`
+  const delta = Math.trunc(input.delta);
+  if (delta === 0) return;
+
+  let attempt = 0;
+  let lastError: Error | null = null;
+  while (attempt < 2) {
+    attempt += 1;
+    const current = await getInventoryAvailableAtLocation({
+      inventoryItemId: input.inventoryItemId,
+      locationId: input.locationId,
+    });
+    // Explicit null when level absent (activate should have created it).
+    const changeFromQuantity = current == null ? null : current;
+
+    const { data, errors } = await shopifyGraphQL<{
+      inventoryAdjustQuantities: { userErrors: ShopifyUserError[] };
+    }>(INVENTORY_ADJUST_MUTATION, {
+      input: {
+        name: "available",
+        reason: "received",
+        referenceDocumentUri: `gid://resell-lausanne/RestockScan/${Date.now()}`,
+        changes: [
+          {
+            inventoryItemId: input.inventoryItemId,
+            locationId: input.locationId,
+            delta,
+            changeFromQuantity,
+          },
+        ],
+      },
+      idempotencyKey: crypto.randomUUID(),
+    });
+    if (errors?.length) {
+      lastError = new Error(
+        `Shopify inventoryAdjustQuantities failed: ${errors.map((e) => e.message).join("; ")}`
+      );
+      break;
+    }
+    const userErrors = data?.inventoryAdjustQuantities?.userErrors ?? [];
+    if (userErrors.length === 0) return;
+
+    const stale = userErrors.some(
+      (e) =>
+        String(e.code ?? "").toUpperCase() === "CHANGE_FROM_QUANTITY_STALE" ||
+        e.message.toLowerCase().includes("changefromquantity")
     );
+    if (stale && attempt < 2) continue;
+    lastError = new Error(
+      `inventoryAdjustQuantities failed: ${userErrors.map((e) => e.message).join("; ")}`
+    );
+    break;
   }
-  assertNoUserErrors(data?.inventoryAdjustQuantities?.userErrors, "inventoryAdjustQuantities");
+  throw lastError ?? new Error("inventoryAdjustQuantities failed");
 }
 
-/** Stock the inventory item at a location (required before inventorySetQuantities). Idempotent. */
+/**
+ * Activate inventory item at a location (creates InventoryLevel at qty 0).
+ * Idempotent: "already activated" is treated as success.
+ */
 export async function activateInventoryAtLocation(input: {
   inventoryItemId: string;
   locationId: string;
 }): Promise<void> {
+  // Already active? Skip mutation.
+  const existing = await getInventoryAvailableAtLocation({
+    inventoryItemId: input.inventoryItemId,
+    locationId: input.locationId,
+  });
+  if (existing != null) return;
+
   const { data, errors } = await shopifyGraphQL<{
     inventoryActivate: {
       inventoryLevel: { id: string } | null;
@@ -367,12 +433,20 @@ export async function activateInventoryAtLocation(input: {
   }>(INVENTORY_ACTIVATE_MUTATION, {
     inventoryItemId: input.inventoryItemId,
     locationId: input.locationId,
+    available: 0,
     idempotencyKey: crypto.randomUUID(),
   });
   if (errors?.length) {
-    throw new Error(`Shopify inventoryActivate failed: ${errors.map((e) => e.message).join("; ")}`);
+    const msg = errors.map((e) => e.message).join("; ");
+    if (isAlreadyActivatedError(msg)) return;
+    throw new Error(`Shopify inventoryActivate failed: ${msg}`);
   }
-  assertNoUserErrors(data?.inventoryActivate?.userErrors, "inventoryActivate");
+  const userErrors = data?.inventoryActivate?.userErrors ?? [];
+  if (userErrors.length) {
+    const msg = userErrors.map((e) => e.message).join("; ");
+    if (isAlreadyActivatedError(msg)) return;
+    throw new Error(`inventoryActivate failed: ${msg}`);
+  }
 }
 
 /** Overwrite a variant barcode (e.g. physical box GTIN differs from KickDB data). */
@@ -565,6 +639,50 @@ export async function restockShopifyVariantByGtin(input: {
       delta: quantity,
     });
     actions.push(`added +${quantity} stock at ${locationId}`);
+
+    // Write mirror immediately so convergence / marketplace feeds don't wait
+    // for the 30-min bulk sync cron.
+    try {
+      const availableNow =
+        (await getInventoryAvailableAtLocation({
+          inventoryItemId: match.inventoryItemId,
+          locationId,
+        })) ?? quantity;
+      const locCfg = getLocationConfig(locationId);
+      await prisma.shopifyVariantLocationStock.upsert({
+        where: {
+          shopifyVariantId_locationId: {
+            shopifyVariantId: match.variantId,
+            locationId,
+          },
+        },
+        create: {
+          shopifyVariantId: match.variantId,
+          inventoryItemId: match.inventoryItemId,
+          sku: match.sku,
+          gtin,
+          locationId,
+          locationName: locCfg?.name ?? locationName ?? locationId,
+          sourceType: locCfg?.sourceType ?? "physical",
+          priority: locCfg?.priority ?? 99,
+          available: availableNow,
+          lastSeenAt: new Date(),
+        },
+        update: {
+          inventoryItemId: match.inventoryItemId,
+          sku: match.sku,
+          gtin,
+          locationName: locCfg?.name ?? locationName ?? locationId,
+          sourceType: locCfg?.sourceType ?? "physical",
+          priority: locCfg?.priority ?? 99,
+          available: availableNow,
+          lastSeenAt: new Date(),
+        },
+      });
+      actions.push(`mirror updated: available=${availableNow} at ${locCfg?.name ?? locationId}`);
+    } catch (err: any) {
+      warnings.push(`Mirror update failed (cron will catch up): ${err?.message ?? err}`);
+    }
   }
 
   if (salePrice != null) {

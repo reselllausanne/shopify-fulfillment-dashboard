@@ -17,6 +17,28 @@ import {
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
 import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
+import { convergeVariant } from "@/shopify/inventory/convergence";
+
+/** After a real (non-dry-run) physical restock: lock liquidation state immediately. */
+async function runPostRestockConvergence(
+  gtin: string,
+  dryRun: boolean | undefined,
+  warnings: string[]
+): Promise<void> {
+  if (dryRun || isManualOnlyGtin(gtin)) return;
+  try {
+    // Mirror may lag — convergeVariant reads ShopifyVariantLocationStock.
+    // Force a single-GTIN convergence; if mirror still 0, next cron retries.
+    const conv = await convergeVariant(gtin);
+    if (conv.changed) {
+      warnings.push(`Convergence: ${conv.changes.join("; ")}`);
+    } else if (conv.warnings.length) {
+      warnings.push(...conv.warnings.map((w) => `Convergence: ${w}`));
+    }
+  } catch (err: any) {
+    warnings.push(`Convergence post-restock failed: ${err?.message ?? err}`);
+  }
+}
 
 /**
  * Case 3 orchestrator — physical stock scan (GTIN).
@@ -573,12 +595,14 @@ export async function applyScanRestock(input: {
       locationId: input.locationId ?? null,
     });
     if (restock.found) {
+      const outWarnings = [...warnings, ...restock.warnings];
+      await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
       return {
         ok: true,
         status: "restocked",
         gtin,
         shopify: { created: false, productId: restock.variant?.productId ?? null, restock },
-        warnings: [...warnings, ...restock.warnings],
+        warnings: outWarnings,
       };
     }
     return {
@@ -661,13 +685,15 @@ export async function applyScanRestock(input: {
   });
   if (existing.found) {
     const dbExisting = await runDbImport();
+    const outWarnings = [...warnings, ...existing.warnings];
+    await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
     return {
       ok: true,
       status: "restocked",
       gtin,
       shopify: { created: false, productId: existing.variant?.productId ?? null, restock: existing },
       db: dbExisting,
-      warnings: [...warnings, ...existing.warnings],
+      warnings: outWarnings,
     };
   }
 
@@ -707,6 +733,8 @@ export async function applyScanRestock(input: {
     locationId: input.locationId ?? null,
   });
   if (restock.found) {
+    const outWarnings = [...warnings, ...restock.warnings];
+    await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
     return {
       ok: true,
       status: "created-restocked",
@@ -714,7 +742,7 @@ export async function applyScanRestock(input: {
       slug,
       shopify: { created: created.action === "create", productId: created.productId, restock },
       db,
-      warnings: [...warnings, ...restock.warnings],
+      warnings: outWarnings,
     };
   }
 

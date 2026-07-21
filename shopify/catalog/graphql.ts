@@ -308,6 +308,8 @@ export async function setInventoryQuantity(input: {
   locationId: string;
   quantity: number;
 }) {
+  // API 2026-07: changeFromQuantity is mandatory on each quantity row
+  // (int or explicit null). null + ignoreCompareQuantity skips CAS.
   const payload = {
     name: "available",
     reason: "correction",
@@ -317,6 +319,7 @@ export async function setInventoryQuantity(input: {
         inventoryItemId: input.inventoryItemId,
         locationId: input.locationId,
         quantity: Math.max(0, Math.trunc(input.quantity)),
+        changeFromQuantity: null,
       },
     ],
   };
