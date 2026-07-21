@@ -15,6 +15,10 @@ import {
   resolveDecathlonStxOfferStock,
 } from "./stxOfferPolicy";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
+import {
+  mergePhysicalWithDropship,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
 
 const DECATHLON_DEFAULT_OFFER_STATE = "11";
 const DECATHLON_MAX_OFFER_PRICE = 10000;
@@ -35,18 +39,30 @@ function parseIntSafe(value: unknown): number | null {
 
 function resolveEffectiveStock(
   candidate: DecathlonExportCandidate,
-  listPriceTtc: number | null
+  listPriceTtc: number | null,
+  physicalQty: number = 0
 ): number | null {
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
+  const extra = Math.max(0, Math.floor(physicalQty));
   if (supplierKey === "gld" || supplierKey === "trm") return 0;
   if (supplierKey === "stx") {
-    return resolveDecathlonStxOfferStock(candidate, listPriceTtc);
+    const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
+    if (extra > 0) {
+      const dropshipDelisted = stx === 0;
+      return mergePhysicalWithDropship({
+        dropshipStock: stx,
+        physicalQty: extra,
+        dropshipDelisted,
+      }).finalStock;
+    }
+    return stx;
   }
   const manualLock = Boolean(variant?.manualLock);
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock) ?? 0;
-  return manualLock && manualStock !== null ? manualStock : baseStock;
+  const supplierStock = manualLock && manualStock !== null ? manualStock : baseStock;
+  return supplierStock + extra;
 }
 
 function resolvePrice(
@@ -145,7 +161,9 @@ export function resolveOfferDescription(): "" {
 export function buildOfferCsv(
   candidates: DecathlonExportCandidate[],
   summary: DecathlonExclusionSummary,
-  partnerKeysLower: Set<string> = new Set()
+  partnerKeysLower: Set<string> = new Set(),
+  /** Phase 2 — per-gtin physical mirror qty. Caller preloads; omit to disable. */
+  physicalByGtin: PhysicalStockMap = new Map()
 ): DecathlonExportFilePayload {
   const rows = [];
 
@@ -156,9 +174,12 @@ export function buildOfferCsv(
     const supplierKey = extractSupplierKey(candidate);
     const buyNow = resolveDecathlonStxOfferBuyNow(candidate);
     const listPriceTtc = price != null ? Number(price) : null;
-    const stxDelisted =
+    const physicalQty = physicalByGtin.get(String(candidate.gtin ?? "").trim())?.qty ?? 0;
+    const rawStxDelisted =
       supplierKey === "stx" &&
       isDecathlonStxOfferDelisted({ supplierKey, buyNow, listPriceTtc });
+    // Phase 2 — physical stock overrides STX delist for this row.
+    const stxDelisted = rawStxDelisted && physicalQty <= 0;
 
     if (!price) {
       if (supplierKey === "stx" && buyNow && buyNow > 0) {
@@ -207,7 +228,7 @@ export function buildOfferCsv(
       });
     }
 
-    const effectiveStock = resolveEffectiveStock(candidate, listPriceTtc);
+    const effectiveStock = resolveEffectiveStock(candidate, listPriceTtc, physicalQty);
     if (effectiveStock === null || !Number.isFinite(effectiveStock) || effectiveStock < 0) {
       recordDecathlonExclusion(summary, {
         reason: "MISSING_STOCK",

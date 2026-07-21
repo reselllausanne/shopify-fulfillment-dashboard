@@ -49,6 +49,8 @@ const PUBLIC_PATHS = [
   "/api/kickdb",
   // Shopify per-location inventory mirror (cron). Same shared-secret gate.
   "/api/inventory/locations",
+  // Phase 2 resolver dry-run diff. Same shared-secret gate.
+  "/api/inventory/physical-diff",
   "/api/tracking/token",
   "/_next",
   "/static",

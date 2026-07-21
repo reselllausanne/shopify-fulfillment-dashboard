@@ -22,6 +22,12 @@ import {
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
+import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+  mergePhysicalWithDropship,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
 
 export type DecathlonSyncRow = {
   providerKey: string;
@@ -58,25 +64,43 @@ function parseIntSafe(value: unknown): number | null {
 
 export function resolveEffectiveStock(
   candidate: DecathlonExportCandidate,
-  listPriceTtc: number | null = null
+  listPriceTtc: number | null = null,
+  opts?: { physicalQty?: number }
 ): number | null {
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const supplierKeyPrefix = (supplierKey ?? "").toUpperCase();
+  const physicalQty = Math.max(0, Math.floor(opts?.physicalQty ?? 0));
+
+  // GLD/TRM stay hard-blocked even with physical present (business rule).
   if (supplierKeyPrefix === "GLD" || supplierKeyPrefix === "TRM") {
     return 0;
   }
+
   if (supplierKey === "stx") {
-    return resolveDecathlonStxOfferStock(candidate, listPriceTtc);
+    const stxStock = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
+    if (physicalQty > 0) {
+      // Delist detection: STX price cap or non-express forced stxStock to 0.
+      const dropshipDelisted = stxStock === 0;
+      return mergePhysicalWithDropship({
+        dropshipStock: stxStock,
+        physicalQty,
+        dropshipDelisted,
+      }).finalStock;
+    }
+    return stxStock;
   }
+
   const manualLock = Boolean(variant?.manualLock);
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock);
-  if (manualLock && manualStock !== null) {
-    return Math.max(0, manualStock);
-  }
-  if (baseStock === null) return null;
-  return Math.max(0, baseStock);
+  const supplierStock = manualLock && manualStock !== null
+    ? Math.max(0, manualStock)
+    : baseStock === null
+      ? null
+      : Math.max(0, baseStock);
+  if (supplierStock === null && physicalQty === 0) return null;
+  return (supplierStock ?? 0) + physicalQty;
 }
 
 function extractDecathlonSupplierKey(candidate: DecathlonExportCandidate): string | null {
@@ -168,6 +192,8 @@ export function computeDecathlonDeltasFromCandidates(
     includeZeroStockWithoutOffer?: boolean;
     /** Always emit a stock update for these offer SKUs at current qty. */
     forceStockProviderKeys?: Set<string>;
+    /** Phase 2 — per-gtin physical mirror qty. Empty map ⇒ no merge. */
+    physicalByGtin?: PhysicalStockMap;
   }
 ) {
   const newOffers: DecathlonSyncRow[] = [];
@@ -197,10 +223,16 @@ export function computeDecathlonDeltasFromCandidates(
     const buyNow = resolveDecathlonStxOfferBuyNow(candidate);
     const price = resolveEffectivePrice(candidate, partnerKeysLower);
     const listPriceTtc = price != null ? Number(price) : null;
-    const stxDelisted =
+    const rawStxDelisted =
       supplierKey === "stx" &&
       isDecathlonStxOfferDelisted({ supplierKey, buyNow, listPriceTtc });
-    const stock = resolveEffectiveStock(candidate, listPriceTtc);
+    const physicalQty = params?.physicalByGtin?.get(gtin)?.qty ?? 0;
+    const stock = resolveEffectiveStock(candidate, listPriceTtc, { physicalQty });
+    // Phase 2 override: when physical rescues an STX-delisted offer, treat it as
+    // a live offer for the rest of this loop so it flows into newOffers/updates
+    // instead of the delisted branch (which forces stock=0).
+    const stxDelisted =
+      rawStxDelisted && !(physicalQty > 0 && stock !== null && stock > 0);
     const syncPrice = price ?? normalizePrice(sync?.lastPrice ?? null);
 
     if (price === null && !stxDelisted) {
@@ -359,6 +391,17 @@ export async function buildDecathlonDeltas(params?: {
   const syncByKey = new Map(syncRows.map((row) => [row.providerKey, row]));
 
   const decathlonPartnerKeysLower = await loadPartnerKeysLowerFromDb();
+
+  // Phase 2 — physical mirror preload (flag-gated). Skipped when disabled so
+  // full deltas keep their current DB cost.
+  let physicalByGtin: PhysicalStockMap | undefined;
+  if (isPhysicalMergeEnabled()) {
+    const gtins = limited
+      .map((c) => String(c.gtin ?? "").trim())
+      .filter((g) => g.length > 0);
+    physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+  }
+
   const computed = computeDecathlonDeltasFromCandidates(limited, syncByKey, {
     includeAll: params?.includeAll,
     limitApplied:
@@ -367,6 +410,7 @@ export async function buildDecathlonDeltas(params?: {
     // Scoped sync only: broad zero-stock without offer. Full sync uses forceStockProviderKeys instead.
     includeZeroStockWithoutOffer: providerKeysFilter.size > 0,
     forceStockProviderKeys: ensureProviderKeys.size > 0 ? ensureProviderKeys : undefined,
+    physicalByGtin,
   });
 
   const summary = {

@@ -3,6 +3,10 @@ import { toCsv } from "@/galaxus/exports/csv";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { randomUUID, createHash } from "crypto";
 import { buildOfferCsv } from "./offerCsv";
+import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+} from "@/shopify/inventory/physicalAvailability";
 import { buildProductCsv } from "./productCsv";
 import { createDecathlonExclusionSummary, loadDecathlonCandidates } from "./mapping";
 import { buildDecathlonAlternativeFiles } from "./alternative";
@@ -54,7 +58,20 @@ export async function generateDecathlonExport(params?: {
       limit && Number.isFinite(limit) && limit > 0 ? candidates.slice(0, limit) : candidates;
     const decathlonPartnerKeysLower = await loadPartnerKeysLowerFromDb();
     const productFile = buildProductCsv(slicedCandidates, summary);
-    const offerFile = buildOfferCsv(slicedCandidates, summary, decathlonPartnerKeysLower);
+    // Phase 2 — preload physical mirror qty per GTIN (flag-gated).
+    const physicalByGtin = isPhysicalMergeEnabled()
+      ? await loadPhysicalMirrorStockByGtin(
+          slicedCandidates
+            .map((c) => String(c.gtin ?? "").trim())
+            .filter((g) => g.length > 0)
+        )
+      : new Map();
+    const offerFile = buildOfferCsv(
+      slicedCandidates,
+      summary,
+      decathlonPartnerKeysLower,
+      physicalByGtin
+    );
     const normalProductRows = productFile.rows;
     const normalOfferRows = offerFile.rows;
 

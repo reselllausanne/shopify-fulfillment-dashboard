@@ -17,6 +17,12 @@ import {
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
+import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+  mergePhysicalWithDropship,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -265,6 +271,18 @@ export async function GET(request: Request) {
       .filter((variant: any) => Boolean(variant))
   );
 
+  // Phase 2 — physical mirror merge (flag-gated). Preload physical qty per GTIN
+  // once so the row loop stays O(1) per candidate. When the flag is off we
+  // skip the DB roundtrip entirely (zero-cost when disabled).
+  const mergePhysical = isPhysicalMergeEnabled();
+  let physicalByGtin: PhysicalStockMap = new Map();
+  if (mergePhysical) {
+    const gtins = exportCandidates
+      .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
+      .filter((g: string) => g.length > 0);
+    physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+  }
+
   exportCandidates.forEach((candidate) => {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
@@ -291,11 +309,26 @@ export async function GET(request: Request) {
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
-    const stock = isStx && deliveryType.startsWith("express_")
+    const dropshipDelisted = isStx && !deliveryType.startsWith("express_");
+    const dropshipStock = isStx && deliveryType.startsWith("express_")
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0
         : rawStock;
+
+    let stock = dropshipStock;
+    if (mergePhysical) {
+      const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
+      const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
+      if (physical && physical.qty > 0) {
+        const merged = mergePhysicalWithDropship({
+          dropshipStock,
+          physicalQty: physical.qty,
+          dropshipDelisted,
+        });
+        stock = merged.finalStock;
+      }
+    }
 
     if (!Number.isFinite(stock) || stock < 0) {
       return;

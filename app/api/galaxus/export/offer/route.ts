@@ -23,6 +23,12 @@ import {
   calcSuggestedRetailFromStoredStxBuyPrice,
 } from "@/galaxus/pricing/suggestedSellPrice";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
+import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+  mergePhysicalWithDropship,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -200,6 +206,19 @@ export async function GET(request: Request) {
       .map((candidate: any) => candidate?.variant)
       .filter((variant: any) => Boolean(variant))
   );
+
+  // Phase 2 — physical mirror merge (flag-gated). Keeps parity with the stock
+  // feed so offer rows aren't skipped by the qty>0 gate when only physical
+  // stock exists.
+  const mergePhysical = isPhysicalMergeEnabled();
+  let physicalByGtin: PhysicalStockMap = new Map();
+  if (mergePhysical) {
+    const gtins = exportCandidates
+      .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
+      .filter((g: string) => g.length > 0);
+    physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+  }
+
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const variant = candidate.variant as any;
@@ -284,11 +303,25 @@ export async function GET(request: Request) {
         : manualLock && manualStock !== null
           ? manualStock
           : baseStock;
-    const effectiveStock = isStx && deliveryType.startsWith("express_")
+    const dropshipDelisted = isStx && !deliveryType.startsWith("express_");
+    const dropshipStock = isStx && deliveryType.startsWith("express_")
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0
         : rawStock;
+    let effectiveStock = dropshipStock;
+    if (mergePhysical) {
+      const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
+      const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
+      if (physical && physical.qty > 0) {
+        const merged = mergePhysicalWithDropship({
+          dropshipStock,
+          physicalQty: physical.qty,
+          dropshipDelisted,
+        });
+        effectiveStock = merged.finalStock;
+      }
+    }
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) {
       continue;
     }
