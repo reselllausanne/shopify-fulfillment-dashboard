@@ -486,6 +486,8 @@ export async function applyScanRestock(input: {
   confirmVariantId?: string | null;
   salePrice?: number | null;
   dryRun?: boolean;
+  /** Preferred physical Shopify location id; validated against locationConfig. */
+  locationId?: string | null;
 }): Promise<ApplyScanResult> {
   const gtin = cleanGtin(input.gtin);
   const warnings: string[] = [];
@@ -540,6 +542,7 @@ export async function applyScanRestock(input: {
         quantity: input.quantity,
         salePrice: input.salePrice ?? null,
         dryRun: input.dryRun ?? false,
+        locationId: input.locationId ?? null,
       });
       return {
         ok: restock.found,
@@ -566,6 +569,7 @@ export async function applyScanRestock(input: {
       quantity: input.quantity,
       salePrice: input.salePrice ?? null,
       dryRun: input.dryRun ?? false,
+      locationId: input.locationId ?? null,
     });
     if (restock.found) {
       return {
@@ -640,6 +644,7 @@ export async function applyScanRestock(input: {
     quantity: input.quantity,
     salePrice: input.salePrice ?? null,
     dryRun: input.dryRun ?? false,
+    locationId: input.locationId ?? null,
   });
   if (existing.found) {
     const dbExisting = await runDbImport();
@@ -686,6 +691,7 @@ export async function applyScanRestock(input: {
     quantity: input.quantity,
     salePrice: input.salePrice ?? null,
     dryRun: input.dryRun ?? false,
+    locationId: input.locationId ?? null,
   });
   if (restock.found) {
     return {

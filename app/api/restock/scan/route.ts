@@ -51,6 +51,7 @@ export async function POST(request: Request) {
           : null,
       salePrice: salePriceRaw != null && Number.isFinite(salePriceRaw) ? salePriceRaw : null,
       dryRun: body?.dryRun === true,
+      locationId: typeof body?.locationId === "string" && body.locationId.trim() ? body.locationId.trim() : null,
     });
 
     return NextResponse.json(result, { status: result.ok || result.status === "size-confirmation-required" ? 200 : 400 });

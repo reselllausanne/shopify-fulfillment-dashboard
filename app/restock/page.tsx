@@ -62,6 +62,10 @@ type ApplyResult = {
   warnings: string[];
 };
 
+type LocationOption = { id: string; name: string; priority: number };
+
+const LOCATION_STORAGE_KEY = "restock.locationId";
+
 export default function RestockScanPage() {
   const [gtin, setGtin] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -72,11 +76,43 @@ export default function RestockScanPage() {
   const [pendingIdentifier, setPendingIdentifier] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [locations, setLocations] = useState<LocationOption[]>([]);
+  const [locationId, setLocationId] = useState<string>("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  // Load physical locations + restore previous choice (persists per browser so a
+  // scanner user doesn't reselect after each session).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/restock/locations");
+        const data = await res.json();
+        if (cancelled || !data?.ok) return;
+        const list: LocationOption[] = data.locations ?? [];
+        setLocations(list);
+        const saved = typeof window !== "undefined" ? window.localStorage.getItem(LOCATION_STORAGE_KEY) : null;
+        const initial = saved && list.some((l) => l.id === saved) ? saved : list[0]?.id ?? "";
+        setLocationId(initial);
+      } catch {
+        // silent — falls back to server default (Bussigny)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function pickLocation(id: string) {
+    setLocationId(id);
+    if (typeof window !== "undefined") window.localStorage.setItem(LOCATION_STORAGE_KEY, id);
+  }
+
+  const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? "Bussigny";
 
   function resetAll() {
     setLookup(null);
@@ -114,7 +150,12 @@ export default function RestockScanPage() {
       const res = await fetch("/api/restock/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gtin: gtin.trim(), quantity, ...body }),
+        body: JSON.stringify({
+          gtin: gtin.trim(),
+          quantity,
+          locationId: locationId || undefined,
+          ...body,
+        }),
       });
       const data = (await res.json()) as ApplyResult;
       setApplyResult(data);
@@ -140,8 +181,30 @@ export default function RestockScanPage() {
     <div className="mx-auto max-w-2xl px-4 py-8">
       <h1 className="text-2xl font-bold">Restock — Scan produit</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Scanner le GTIN (barcode boîte). Stock ajouté à Warehouse Bussigny.
+        Scanner le GTIN (barcode boîte). Stock ajouté à <strong>{currentLocationName}</strong>.
       </p>
+
+      {locations.length > 0 && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {locations.map((loc) => {
+            const active = loc.id === locationId;
+            return (
+              <button
+                key={loc.id}
+                type="button"
+                onClick={() => pickLocation(loc.id)}
+                className={`rounded-sm border px-3 py-1.5 text-sm font-medium transition ${
+                  active
+                    ? "border-black bg-black text-white"
+                    : "border-gray-300 bg-white text-gray-700 hover:border-black"
+                }`}
+              >
+                {loc.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mt-6 flex gap-2">
         <input
@@ -196,7 +259,7 @@ export default function RestockScanPage() {
             disabled={!!busy}
             className="mt-3 rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            Ajouter {quantity} en stock à Bussigny
+            Ajouter {quantity} en stock à {currentLocationName}
           </button>
         </div>
       )}
@@ -233,7 +296,7 @@ export default function RestockScanPage() {
             disabled={!!busy}
             className="mt-3 rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            Créer le produit + stock Bussigny
+            Créer le produit + stock {currentLocationName}
           </button>
         </div>
       )}
@@ -305,8 +368,8 @@ export default function RestockScanPage() {
           <div className={`text-sm font-semibold ${doneOk ? "text-green-900" : "text-red-900"}`}>
             {doneOk
               ? applyResult.status === "created-restocked"
-                ? "Produit créé + stock ajouté à Bussigny"
-                : "Stock ajouté à Bussigny"
+                ? `Produit créé + stock ajouté à ${currentLocationName}`
+                : `Stock ajouté à ${currentLocationName}`
               : `Échec: ${applyResult.error ?? "inconnu"}`}
           </div>
           {applyResult.shopify?.restock?.variant && (

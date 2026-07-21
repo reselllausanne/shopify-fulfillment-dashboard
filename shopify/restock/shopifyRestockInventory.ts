@@ -130,6 +130,7 @@ let cachedBussignyLocationId: string | null = null;
 /**
  * Resolve the "in stock warehouse Bussigny" location id.
  * Priority: explicit env var, then case-insensitive name match on live locations.
+ * Kept for backward compat; new code should use `resolvePhysicalLocationId`.
  */
 export async function resolveBussignyLocationId(options: { force?: boolean } = {}): Promise<{
   locationId: string | null;
@@ -160,6 +161,43 @@ export async function resolveBussignyLocationId(options: { force?: boolean } = {
   }
 
   return { locationId: null, source: "not-found", candidates: nodes };
+}
+
+/**
+ * Resolve a valid PHYSICAL Shopify location id for the scan-in flow.
+ *
+ * Order:
+ *   1. Explicit `preferredId` — must match one of the configured physical
+ *      locations (Bussigny/Antica/Bienne). Rejected otherwise so a bad UI
+ *      selection can't accidentally write to the dropship (online) location.
+ *   2. Fall back to Bussigny via `resolveBussignyLocationId` (existing behavior).
+ */
+export async function resolvePhysicalLocationId(preferredId?: string | null): Promise<{
+  locationId: string | null;
+  source: "explicit" | "env" | "name-match" | "not-found" | "invalid";
+  name?: string | null;
+  candidates?: Array<{ id: string; name: string }>;
+}> {
+  // Lazy import avoids a top-level cycle: locationConfig -> physicalAvailability path.
+  const { PHYSICAL_LOCATIONS, getLocationConfig } = await import("@/shopify/inventory/locationConfig");
+
+  if (preferredId && preferredId.trim()) {
+    const cfg = getLocationConfig(preferredId.trim());
+    if (cfg && cfg.sourceType === "physical") {
+      return { locationId: cfg.id, source: "explicit", name: cfg.name };
+    }
+    // Given but not a known physical location — reject to avoid writing to
+    // dropship or an unknown id.
+    return {
+      locationId: null,
+      source: "invalid",
+      candidates: PHYSICAL_LOCATIONS.map((l) => ({ id: l.id, name: l.name })),
+    };
+  }
+
+  const fallback = await resolveBussignyLocationId();
+  const nameFromCfg = fallback.locationId ? getLocationConfig(fallback.locationId)?.name : null;
+  return { ...fallback, name: nameFromCfg ?? null };
 }
 
 const INVENTORY_LEVEL_QUERY = /* GraphQL */ `
@@ -410,6 +448,8 @@ export async function restockShopifyVariantByGtin(input: {
   quantity: number;
   salePrice?: number | null;
   dryRun?: boolean;
+  /** Preferred physical location id. Falls back to Bussigny when absent/invalid. */
+  locationId?: string | null;
 }): Promise<RestockShopifyResult> {
   const dryRun = input.dryRun ?? isRestockDryRun();
   const gtin = String(input.gtin ?? "").trim();
@@ -439,13 +479,17 @@ export async function restockShopifyVariantByGtin(input: {
     );
   }
 
-  const { locationId, source, candidates } = await resolveBussignyLocationId();
+  const { locationId, source, candidates, name: locationName } = await resolvePhysicalLocationId(
+    input.locationId
+  );
   if (!locationId) {
-    warnings.push(
-      `Bussigny location not found (set SHOPIFY_BUSSIGNY_LOCATION_ID). Locations: ${
-        candidates?.map((c) => c.name).join(", ") ?? "none"
-      }`
-    );
+    const hint =
+      source === "invalid"
+        ? `Location "${input.locationId}" is not a known physical location. Valid: ${
+            candidates?.map((c) => `${c.name} (${c.id})`).join(", ") ?? "none"
+          }`
+        : `Location not found. Candidates: ${candidates?.map((c) => c.name).join(", ") ?? "none"}`;
+    warnings.push(hint);
     return {
       found: true,
       dryRun,
@@ -457,7 +501,7 @@ export async function restockShopifyVariantByGtin(input: {
       warnings,
     };
   }
-  actions.push(`location resolved via ${source}: ${locationId}`);
+  actions.push(`location resolved via ${source}: ${locationName ?? locationId}`);
 
   const quantity = Math.max(0, Math.trunc(input.quantity));
   const salePrice = input.salePrice != null ? Number(input.salePrice) : null;
