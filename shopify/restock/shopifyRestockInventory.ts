@@ -56,9 +56,10 @@ query RestockVariantDetail($id: ID!) {
 }
 `;
 
+// Admin API 2026-04+: inventory mutations require @idempotent(key: ...).
 const INVENTORY_ADJUST_MUTATION = /* GraphQL */ `
-mutation RestockInventoryAdjust($input: InventoryAdjustQuantitiesInput!) {
-  inventoryAdjustQuantities(input: $input) {
+mutation RestockInventoryAdjust($input: InventoryAdjustQuantitiesInput!, $idempotencyKey: String!) {
+  inventoryAdjustQuantities(input: $input) @idempotent(key: $idempotencyKey) {
     userErrors {
       field
       message
@@ -68,8 +69,8 @@ mutation RestockInventoryAdjust($input: InventoryAdjustQuantitiesInput!) {
 `;
 
 const INVENTORY_ACTIVATE_MUTATION = /* GraphQL */ `
-mutation RestockInventoryActivate($inventoryItemId: ID!, $locationId: ID!) {
-  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+mutation RestockInventoryActivate($inventoryItemId: ID!, $locationId: ID!, $idempotencyKey: String!) {
+  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) @idempotent(key: $idempotencyKey) {
     inventoryLevel {
       id
     }
@@ -343,6 +344,7 @@ export async function adjustInventoryAtLocation(input: {
         },
       ],
     },
+    idempotencyKey: crypto.randomUUID(),
   });
   if (errors?.length) {
     throw new Error(
@@ -365,6 +367,7 @@ export async function activateInventoryAtLocation(input: {
   }>(INVENTORY_ACTIVATE_MUTATION, {
     inventoryItemId: input.inventoryItemId,
     locationId: input.locationId,
+    idempotencyKey: crypto.randomUUID(),
   });
   if (errors?.length) {
     throw new Error(`Shopify inventoryActivate failed: ${errors.map((e) => e.message).join("; ")}`);

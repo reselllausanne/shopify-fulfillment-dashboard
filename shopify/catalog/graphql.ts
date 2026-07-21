@@ -80,8 +80,8 @@ mutation ProductVariantsBulkUpdatePricing($productId: ID!, $variants: [ProductVa
 `;
 
 const INVENTORY_SET_QUANTITIES_MUTATION = /* GraphQL */ `
-mutation InventorySetQuantities($input: InventorySetQuantitiesInput!) {
-  inventorySetQuantities(input: $input) {
+mutation InventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+  inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
     userErrors {
       field
       message
@@ -325,7 +325,10 @@ export async function setInventoryQuantity(input: {
     inventorySetQuantities: {
       userErrors: ShopifyUserError[];
     };
-  }>(INVENTORY_SET_QUANTITIES_MUTATION, { input: payload });
+  }>(INVENTORY_SET_QUANTITIES_MUTATION, {
+    input: payload,
+    idempotencyKey: crypto.randomUUID(),
+  });
   if (errors?.length) {
     throw new Error(`Shopify inventorySetQuantities failed: ${errors.map((e) => e.message).join("; ")}`);
   }
