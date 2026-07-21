@@ -11,7 +11,8 @@ export async function GET(_request: Request, { params }: Params) {
     const { key } = await params;
     const file = await readShopifyReturnLabelFile(key);
     const filename = String(key || "return-label.pdf");
-    return new NextResponse(file.content, {
+    const body = new Uint8Array(file.content);
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "content-type": file.mimeType,

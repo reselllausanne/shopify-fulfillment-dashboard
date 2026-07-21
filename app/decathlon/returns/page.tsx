@@ -13,6 +13,7 @@ type ReceiptReturn = {
   productTitle: string | null;
   sku: string | null;
   returnLabelNumber: string | null;
+  labelKey?: string | null;
   returnAmount: number | null;
   currency: string;
   returnReasonCode: string | null;
@@ -667,7 +668,20 @@ export default function DecathlonReturnsReceiptPage() {
               </div>
               <div className="mt-1 text-xs text-slate-500">
                 Label {row.returnLabelNumber ?? "n/a"}
-                {row.returnLabelUrl ? (
+                {row.labelKey ? (
+                  <>
+                    {" · "}
+                    <a
+                      href={`/api/shopify/returns/label/${encodeURIComponent(row.labelKey)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-700 underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      download label
+                    </a>
+                  </>
+                ) : row.returnLabelUrl ? (
                   <>
                     {" · "}
                     <a

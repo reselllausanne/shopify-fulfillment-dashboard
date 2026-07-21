@@ -3,8 +3,10 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { buildSwissPostPayloadToHome, extractSwissPostLabelPayload } from "@/lib/swissPostHomeLabel";
 import { requestSwissPostLabel } from "@/lib/swissPost";
+import { createS3Storage } from "@/galaxus/storage/s3Storage";
 
 const DEFAULT_LABEL_DIR = path.join(process.cwd(), ".data", "shopify-return-labels");
+const LABEL_STORAGE_PREFIX = "return-labels";
 
 function normalizeBaseUrl(value: string) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -42,14 +44,54 @@ export function resolveShopifyReturnLabelPath(labelKey: string) {
 }
 
 export async function readShopifyReturnLabelFile(labelKey: string) {
-  const filePath = resolveShopifyReturnLabelPath(labelKey);
+  const cleanKey = sanitizeLabelKey(labelKey);
+  if (!cleanKey) {
+    throw new Error("Invalid label key");
+  }
+  const extension = path.extname(cleanKey).replace(/^\./, "") || "pdf";
+  const mimeType = extensionToMimeType(extension);
+
+  // Primary: fetch from Supabase via the stored s3 URL (durable, survives container rebuilds).
+  try {
+    const storageUrl = await resolveLabelStorageUrl(cleanKey);
+    if (storageUrl) {
+      const storage = createS3Storage();
+      const { content } = await storage.getPdf(storageUrl);
+      return { content, filePath: storageUrl, mimeType };
+    }
+  } catch (supabaseError) {
+    console.warn("[RETURN_LABEL] Supabase fetch failed, falling back to local disk", {
+      labelKey: cleanKey,
+      error: supabaseError instanceof Error ? supabaseError.message : supabaseError,
+    });
+  }
+
+  // Fallback: local filesystem (labels generated before the Supabase migration).
+  const filePath = resolveShopifyReturnLabelPath(cleanKey);
   const content = await fs.readFile(filePath);
-  const extension = path.extname(filePath).replace(/^\./, "") || "pdf";
   return {
     content,
     filePath,
-    mimeType: extensionToMimeType(extension),
+    mimeType,
   };
+}
+
+/**
+ * Look up the s3 storage URL for a label key from the DB.
+ * Returns null when the label was generated before the Supabase migration
+ * (so the caller falls back to the local filesystem).
+ */
+async function resolveLabelStorageUrl(labelKey: string): Promise<string | null> {
+  try {
+    const { prisma } = await import("@/app/lib/prisma");
+    const row = await (prisma as any).marketplaceReturn.findFirst({
+      where: { labelKey },
+      select: { labelStorageUrl: true },
+    });
+    return row?.labelStorageUrl ?? null;
+  } catch {
+    return null;
+  }
 }
 
 type GenerateShopifyReturnLabelInput = {
@@ -89,15 +131,34 @@ export async function generateShopifyReturnLabel(input: GenerateShopifyReturnLab
 
   const key = `${crypto.randomUUID().replace(/-/g, "")}.${labelPayload.extension}`;
   const labelKey = sanitizeLabelKey(key);
+  const labelBuffer = Buffer.from(labelPayload.base64, "base64");
+
+  // Primary store: Supabase (private bucket, return-labels/ prefix). Durable across
+  // container rebuilds and gives a single source of truth for the download URL.
+  let labelStorageUrl: string | null = null;
+  try {
+    const storage = createS3Storage();
+    const s3Key = `${LABEL_STORAGE_PREFIX}/${labelKey}`;
+    const stored = await storage.uploadPdf(s3Key, labelBuffer);
+    labelStorageUrl = stored.storageUrl;
+  } catch (supabaseError) {
+    console.error("[RETURN_LABEL] Supabase upload failed, falling back to local disk", {
+      labelKey,
+      error: supabaseError instanceof Error ? supabaseError.message : supabaseError,
+    });
+  }
+
+  // Fallback store: local filesystem (so the flow still works if Supabase is unavailable).
   const filePath = resolveShopifyReturnLabelPath(labelKey);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, Buffer.from(labelPayload.base64, "base64"));
+  await fs.writeFile(filePath, labelBuffer);
 
   const labelPublicUrl = `${baseUrl}/api/shopify/returns/label/${encodeURIComponent(labelKey)}`;
   const trackingNumber = labelPayload.identCode || null;
   return {
     labelKey,
     labelPublicUrl,
+    labelStorageUrl,
     trackingNumber,
     trackingUrl: resolveTrackingUrl(trackingNumber),
     filePath,

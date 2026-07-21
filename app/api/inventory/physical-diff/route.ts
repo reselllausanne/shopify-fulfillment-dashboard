@@ -57,11 +57,17 @@ export async function GET(req: Request) {
       WHERE sv."gtin" = ANY(${gtins}::text[])
     `;
 
-    // Supplier "key" is derived from supplierVariantId prefix (stx_, the_, ner_, ...).
+    // Supplier "key" is derived from the supplierVariantId prefix. Format is
+    // `<key>_<rest>` for STX/NER/... and `<key>:<rest>` for THE clothing rows
+    // (e.g. `the:T-SHIRTESS-M`). Split on the first `_` or `:` — whichever
+    // comes first.
     const deriveKey = (id: string): string => {
       const s = String(id ?? "").toLowerCase();
-      const idx = s.indexOf("_");
-      return idx > 0 ? s.slice(0, idx) : s;
+      const u = s.indexOf("_");
+      const c = s.indexOf(":");
+      const positives = [u, c].filter((n) => n > 0);
+      if (positives.length === 0) return s;
+      return s.slice(0, Math.min(...positives));
     };
 
     type SupplierRow = (typeof suppliersRaw)[number] & { key: string };

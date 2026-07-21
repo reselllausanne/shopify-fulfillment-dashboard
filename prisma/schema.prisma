@@ -1935,6 +1935,10 @@ model MarketplaceReturn {
   productTitle        String?
   sku                 String?
   returnLabelNumber   String?
+  /// UUID key identifying the return label file in Supabase storage (return-labels/ prefix). Used to build the download URL.
+  labelKey            String?
+  /// S3 storage URL (s3://bucket/key) for the return label in Supabase. Used by the API route to fetch the file.
+  labelStorageUrl     String?
   returnAmount        Decimal   @db.Decimal(12, 2)
   currency            String    @default("CHF")
   returnReasonCode    String?

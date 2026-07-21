@@ -29,6 +29,7 @@ function serializeReturn(row: any) {
     productTitle: row.productTitle,
     sku: row.sku,
     returnLabelNumber: row.returnLabelNumber,
+    labelKey: row.labelKey ?? null,
     returnAmount: row.returnAmount != null ? Number(row.returnAmount) : null,
     currency: row.currency,
     returnReasonCode: row.returnReasonCode,

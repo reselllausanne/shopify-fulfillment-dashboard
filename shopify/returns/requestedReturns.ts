@@ -1072,6 +1072,8 @@ export async function acceptRequestedShopifyReturn(
           : firstLine.title,
       sku: firstLine.sku,
       returnLabelNumber: label.trackingNumber,
+      labelKey: label.labelKey,
+      labelStorageUrl: label.labelStorageUrl,
       returnAmount,
       currency,
       returnReasonCode,
@@ -1084,8 +1086,7 @@ export async function acceptRequestedShopifyReturn(
         (sum: number, line: RequestedShopifyReturnLine) => sum + line.quantity,
         0
       ),
-      apiSource: "shopify-admin-request-accept",
-      rawJson: {
+      apiSource: "shopify-admin-request-accept",      rawJson: {
         order: {
           id: order?.id || approvedReturn.order?.id || null,
           name: order?.name || approvedReturn.order?.name || null,
@@ -1139,6 +1140,8 @@ export async function acceptRequestedShopifyReturn(
           : firstLine.title,
       sku: firstLine.sku,
       returnLabelNumber: label.trackingNumber,
+      labelKey: label.labelKey,
+      labelStorageUrl: label.labelStorageUrl,
       returnAmount,
       currency,
       returnReasonCode,
@@ -1151,8 +1154,7 @@ export async function acceptRequestedShopifyReturn(
         (sum: number, line: RequestedShopifyReturnLine) => sum + line.quantity,
         0
       ),
-      apiSource: "shopify-admin-request-accept",
-      rawJson: {
+      apiSource: "shopify-admin-request-accept",      rawJson: {
         order: {
           id: order?.id || approvedReturn.order?.id || null,
           name: order?.name || approvedReturn.order?.name || null,
