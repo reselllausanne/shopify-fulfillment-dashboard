@@ -53,6 +53,8 @@ const PUBLIC_PATHS = [
   "/api/inventory/physical-diff",
   // Phase 4 convergence trigger (15-min cron). Same shared-secret gate.
   "/api/inventory/convergence",
+  // Phase 4 orphan reconciliation (physical stock without STX row).
+  "/api/inventory/reconcile-orphans",
   "/api/tracking/token",
   "/_next",
   "/static",
