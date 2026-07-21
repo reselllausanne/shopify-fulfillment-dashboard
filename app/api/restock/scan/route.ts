@@ -58,7 +58,12 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error("[RESTOCK][SCAN][POST]", error);
     return NextResponse.json(
-      { ok: false, status: "error", error: error?.message ?? "Scan restock failed" },
+      {
+        ok: false,
+        status: "error",
+        error: error?.message ?? "Scan restock failed",
+        warnings: [],
+      },
       { status: 500 }
     );
   }
