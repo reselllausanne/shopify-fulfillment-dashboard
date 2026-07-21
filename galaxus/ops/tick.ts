@@ -4,7 +4,7 @@ import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { runEdiInPipeline } from "./orderPipeline";
-import { runImageSync } from "@/galaxus/jobs/imageSync";
+import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";
@@ -86,7 +86,7 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
       runImageSync({
         limit: 2000,
         concurrency: 8,
-        supplierKeys: ["stx", "the"],
+        supplierKeys: resolveImageSyncSupplierKeys(),
         ...(full ? { full: true } : {}),
       })
     );

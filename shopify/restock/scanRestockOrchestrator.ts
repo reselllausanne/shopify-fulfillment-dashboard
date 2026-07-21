@@ -620,7 +620,11 @@ export async function applyScanRestock(input: {
       return { ok: false, errors: [`slug_unresolved: ${slugResolveError ?? "unknown"}`] };
     }
     try {
-      const imported = await importStxProductByInput(slug);
+      // Scan intake always force-imports: if the operator physically has the
+      // item on the shelf, we want a supplier row so marketplace feeds can
+      // publish it, regardless of the express-price filter (clothing, niche
+      // sizes, low-ask variants — all valid to sell when we own stock).
+      const imported = await importStxProductByInput(slug, { forceImport: true });
       if (!imported.ok) {
         warnings.push(
           `Import DB (Galaxus/Decathlon) échoué: ${imported.errors.join("; ") || "raison inconnue"}`

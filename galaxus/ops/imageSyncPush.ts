@@ -1,6 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { after } from "next/server";
-import { runImageSync } from "@/galaxus/jobs/imageSync";
+import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { runOpsJob } from "./jobRunner";
 
 const JOB_NAME = "ops-image-sync";
@@ -45,7 +45,7 @@ export async function startImageSyncFullAsync(): Promise<{
         full: true,
         limit: 2000,
         concurrency: 8,
-        supplierKeys: ["stx", "the"],
+        supplierKeys: resolveImageSyncSupplierKeys(),
       })
     ).catch((err) => {
       console.error("[GALAXUS][IMAGE-SYNC][ASYNC] Background sync failed:", err);

@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { scraperQuery } from "@/app/lib/scraperDb";
 import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 const USER_AGENT =
@@ -10,6 +11,25 @@ const JS_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_JS_WORKERS || 3));
 const REQUEST_DELAY_MS = Number(process.env.SCRAPER_REQUEST_DELAY_MS || 120);
 const DEFAULT_STOCK = Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5));
 const WRITE_CONCURRENCY = 10;
+const IMAGE_SYNC_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_IMAGE_SYNC_CONCURRENCY || 5));
+
+type ExistingVariantImage = {
+  sourceImageUrl: string | null;
+  hostedImageUrl: string | null;
+  imageSyncStatus: string | null;
+};
+
+type ExistingVariantRow = ExistingVariantImage & { supplierVariantId: string };
+
+function needsImageHosting(
+  existing: ExistingVariantImage | undefined,
+  sourceImageUrl: string | null
+): boolean {
+  if (!sourceImageUrl) return false;
+  if (!existing) return true;
+  const prevSource = String(existing.sourceImageUrl ?? "").trim();
+  return prevSource !== sourceImageUrl.trim();
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -223,6 +243,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
   let lastFlushAt = 0;
   const FLUSH_EVERY = 50; // products between run-row progress flushes
   const seenGtins = new Set<string>();
+  const imageSyncQueue = new Set<string>();
 
   const flushProgress = async () => {
     await updateRun(runId, {
@@ -238,6 +259,26 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
 
     const handles = listed.filter((p) => p?.handle);
 
+    const existingRows = (await prismaAny.supplierVariant.findMany({
+      where: { supplierVariantId: { startsWith: `${shop.key}_` } },
+      select: {
+        supplierVariantId: true,
+        sourceImageUrl: true,
+        hostedImageUrl: true,
+        imageSyncStatus: true,
+      },
+    })) as ExistingVariantRow[];
+    const existingById = new Map<string, ExistingVariantImage>(
+      existingRows.map((row) => [
+        row.supplierVariantId,
+        {
+          sourceImageUrl: row.sourceImageUrl ?? null,
+          hostedImageUrl: row.hostedImageUrl ?? null,
+          imageSyncStatus: row.imageSyncStatus ?? null,
+        },
+      ])
+    );
+
     // Enrich + write per product. Upserts are idempotent (keyed by supplierVariantId),
     // so writing as we go is safe and survives crashes with partial data committed.
     await runPool(handles, JS_CONCURRENCY, async (product) => {
@@ -252,6 +293,8 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
       for (const r of productRecords) {
         seenGtins.add(r.gtin);
         const stock = r.available ? DEFAULT_STOCK : 0;
+        const existing = existingById.get(r.supplierVariantId);
+        const queueImage = needsImageHosting(existing, r.sourceImageUrl);
         try {
           await prismaAny.supplierVariant.upsert({
             where: { supplierVariantId: r.supplierVariantId },
@@ -265,6 +308,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               supplierBrand: r.supplierBrand,
               supplierProductName: r.supplierProductName,
               sourceImageUrl: r.sourceImageUrl,
+              imageSyncStatus: r.sourceImageUrl ? "PENDING" : null,
               lastSyncAt: now,
             },
             update: {
@@ -276,6 +320,13 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               supplierBrand: r.supplierBrand,
               supplierProductName: r.supplierProductName,
               sourceImageUrl: r.sourceImageUrl,
+              ...(queueImage
+                ? {
+                    imageSyncStatus: "PENDING",
+                    imageSyncError: null,
+                    hostedImageUrl: null,
+                  }
+                : {}),
               lastSyncAt: now,
             },
           });
@@ -295,6 +346,12 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               status: "SUPPLIER_GTIN",
             },
           });
+          existingById.set(r.supplierVariantId, {
+            sourceImageUrl: r.sourceImageUrl,
+            hostedImageUrl: queueImage ? null : existing?.hostedImageUrl ?? null,
+            imageSyncStatus: queueImage ? "PENDING" : existing?.imageSyncStatus ?? null,
+          });
+          if (queueImage) imageSyncQueue.add(r.supplierVariantId);
           wrote++;
         } catch {
           /* best-effort per-variant; don't kill the run */
@@ -307,13 +364,35 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
       }
     });
 
+    let imageSynced = 0;
+    let imageFailed = 0;
+    if (imageSyncQueue.size > 0) {
+      const imageResult = await runImageSync({
+        supplierVariantIds: [...imageSyncQueue],
+        limit: imageSyncQueue.size,
+        concurrency: IMAGE_SYNC_CONCURRENCY,
+      });
+      imageSynced = imageResult.synced;
+      imageFailed = imageResult.failed;
+    }
+
+    // Backfill any remaining hosted-image backlog for this shop without blocking the run row.
+    void runImageSync({
+      supplierKeys: [shop.key],
+      full: true,
+      limit: 500,
+      concurrency: 8,
+    }).catch((e) => {
+      console.error(`[SCRAPER] ${shop.key} image backfill failed:`, e?.message || e);
+    });
+
     await updateRun(runId, {
       status: "ok",
       finished_at: new Date(),
       variants_upserted: wrote,
       with_gtin: seenGtins.size,
       errors: jsErrors,
-      message: `listed=${listed.length} processed=${processed} wrote=${wrote} js_errors=${jsErrors}`,
+      message: `listed=${listed.length} processed=${processed} wrote=${wrote} js_errors=${jsErrors} images_queued=${imageSyncQueue.size} images_synced=${imageSynced} images_failed=${imageFailed}`,
     });
   } catch (err: any) {
     await updateRun(runId, {

@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { parseScraperShops } from "@/app/lib/scraperShops";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { hostSupplierImage } from "@/galaxus/images/imageHosting";
 
@@ -6,6 +7,8 @@ type ImageSyncStatus = "PENDING" | "SYNCED" | "FAILED" | "NO_SOURCE";
 
 type ImageSyncOptions = {
   supplierVariantId?: string;
+  /** Explicit variant ids (e.g. newly scraped rows). Takes precedence over supplierKeys. */
+  supplierVariantIds?: string[];
   /** Restrict batch sync to these supplier prefixes (stx, ner, the, …). Ignored when supplierVariantId is set. */
   supplierKeys?: string[];
   limit?: number;
@@ -38,10 +41,29 @@ type ImageSyncResult = ImageSyncBatchResult & {
 
 const DEFAULT_SUPPLIER_KEYS = ["stx", "the"] as const;
 
+/** STX/THE plus any configured SCRAPER_SHOPS keys (e.g. wel). */
+export function resolveImageSyncSupplierKeys(extra?: string[]): string[] {
+  const keys = new Set<string>([...DEFAULT_SUPPLIER_KEYS]);
+  for (const shop of parseScraperShops()) keys.add(shop.key);
+  for (const raw of extra ?? []) {
+    const k = String(raw).trim().toLowerCase();
+    if (k) keys.add(k);
+  }
+  return [...keys];
+}
+
 export function buildImageSyncBacklogWhere(options?: {
   supplierKeys?: string[];
   supplierVariantId?: string;
+  supplierVariantIds?: string[];
 }) {
+  const explicitIds = (options?.supplierVariantIds ?? [])
+    .map((id) => String(id).trim())
+    .filter(Boolean);
+  if (explicitIds.length > 0) {
+    return { supplierVariantId: { in: explicitIds } };
+  }
+
   if (options?.supplierVariantId) {
     return { supplierVariantId: options.supplierVariantId };
   }
@@ -313,13 +335,18 @@ async function runImageSyncBatch(options: ImageSyncOptions = {}): Promise<ImageS
 
   const where = buildImageSyncBacklogWhere({
     supplierVariantId: options.supplierVariantId,
+    supplierVariantIds: options.supplierVariantIds,
     supplierKeys: options.supplierKeys,
   });
 
   const rows = await prisma.supplierVariant.findMany({
     where,
     orderBy: [{ stock: "desc" }, { updatedAt: "desc" }],
-    take: options.supplierVariantId ? 1 : limit,
+    take: options.supplierVariantId
+      ? 1
+      : options.supplierVariantIds?.length
+        ? Math.min(limit, options.supplierVariantIds.length)
+        : limit,
     select: {
       supplierVariantId: true,
       images: true,
