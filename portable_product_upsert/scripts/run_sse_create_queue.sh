@@ -25,6 +25,6 @@ cd "${ROOT}"
 {
   echo "=== $(date -Is) create queue run ==="
   "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked \
-    --limit 40 --max-create-variants 900
+    --limit 500 --max-create-variants 900
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1

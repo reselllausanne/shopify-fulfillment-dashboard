@@ -35,6 +35,33 @@ from shopifyAPI_GQL import get_all_products, RateLimitException
 DB_API_DEFAULT = os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3000")
 CATALOG_CACHE_FILE = Path(__file__).resolve().parent / ".shopify_catalog_cache.json"
 CATALOG_CACHE_TTL_SEC = 3600  # refetching 20k products every 15-min cron run is pointless
+VARIANT_BUDGET_FILE = Path(__file__).resolve().parent / "logs" / "variant_create_budget.json"
+
+
+def _today_iso():
+    import datetime
+    return datetime.date.today().isoformat()
+
+
+def load_variant_budget(cap):
+    """Daily variant-creation tally (persists across cron runs same UTC day)."""
+    try:
+        if VARIANT_BUDGET_FILE.exists():
+            with open(VARIANT_BUDGET_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("date") == _today_iso():
+                return int(data.get("used", 0)), int(data.get("cap", cap))
+    except Exception as e:
+        print(f"[WARNING] variant budget read failed: {e}")
+    return 0, cap
+
+
+def save_variant_budget(used, cap):
+    VARIANT_BUDGET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(VARIANT_BUDGET_FILE) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"date": _today_iso(), "used": used, "cap": cap}, f)
+    os.replace(tmp, VARIANT_BUDGET_FILE)
 
 
 def _auth_headers():
@@ -138,6 +165,15 @@ def main():
 
     action = "create" if args.status in ("create_candidate", "untracked") else "update"
     processed = success = 0
+    variants_created = 0
+    budget_skipped = 0
+    variant_budget_used, variant_budget_cap = load_variant_budget(args.max_create_variants)
+    if action == "create":
+        remaining = max(0, variant_budget_cap - variant_budget_used)
+        print(
+            f"[INFO] Variant create budget: used={variant_budget_used}/{variant_budget_cap} "
+            f"remaining={remaining} (product limit={args.limit}, budget is the hard stop)"
+        )
 
     for row in fresh:
         kickdb_product_id = row.get("kickdbProductId")
@@ -149,19 +185,49 @@ def main():
             continue
 
         slug = (raw.get("slug") or row.get("urlKey") or kickdb_product_id or "").strip()
+
+        if action == "create":
+            remaining = variant_budget_cap - variant_budget_used
+            if remaining <= 0:
+                print(f"[BUDGET] Daily cap reached ({variant_budget_used}/{variant_budget_cap}) — stopping create run")
+                break
+            planned = main_mod.estimate_create_variant_count(slug, prefetched=raw)
+            if planned <= 0:
+                print(f"[SKIP] {slug}: 0 plannable variants")
+                mark_synced(args.db_api, kickdb_product_id, error="zero_plannable_variants")
+                processed += 1
+                continue
+            if planned > remaining:
+                print(
+                    f"[BUDGET] Skip {slug}: needs {planned} variants, only {remaining} left "
+                    f"({variant_budget_used}/{variant_budget_cap}) — try smaller product next"
+                )
+                budget_skipped += 1
+                continue
+
         print(f"\n[INFO] [{processed + 1}/{len(fresh)}] {action}: {slug}")
         try:
-            ok = main_mod.process_single_url_enhanced(
+            result = main_mod.process_single_url_enhanced(
                 slug, action, shopify_products,
                 skip_creates_on_limit=True,
                 prefetched=raw,
             )
-            if ok:
+            created_n = result if isinstance(result, int) and result > 0 else 0
+            if created_n > 0 or result is True:
                 success += 1
+                if created_n > 0:
+                    variant_budget_used += created_n
+                    variants_created += created_n
+                    save_variant_budget(variant_budget_used, variant_budget_cap)
+                    print(
+                        f"[BUDGET] +{created_n} variants → {variant_budget_used}/{variant_budget_cap} "
+                        f"({variant_budget_cap - variant_budget_used} left today)"
+                    )
                 mark_synced(args.db_api, kickdb_product_id, shopify_handle=slug)
                 print(f"[OK] synced + marked: {slug}")
+            elif result is None:
+                print(f"[DEFER] variant limit hit mid-create: {slug}")
             else:
-                # Not pushed (skipped/filtered by main.py) — record so it doesn't loop forever.
                 mark_synced(args.db_api, kickdb_product_id, error="main_py_returned_false")
                 print(f"[SKIP] not synced: {slug}")
         except RateLimitException:
@@ -175,7 +241,14 @@ def main():
         if args.test_mode and processed >= 10:
             break
 
-    print(f"\n[DONE] processed={processed} success={success}")
+    if action == "create":
+        print(
+            f"\n[BUDGET SUMMARY] variants_created_this_run={variants_created} "
+            f"daily_total={variant_budget_used}/{variant_budget_cap} "
+            f"budget_skipped={budget_skipped}"
+        )
+
+    print(f"\n[DONE] processed={processed} success={success} variants_created={variants_created}")
     return 0
 
 

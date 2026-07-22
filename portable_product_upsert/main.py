@@ -242,6 +242,34 @@ def filter_variants(variants, for_create=False):
         filtered.append(variant)
     return filtered
 
+
+def estimate_create_variant_count(url, prefetched=None):
+    """
+    Planned variant count for a create (price>0, qty>0, deduped by size title).
+    Used by main_from_db.py to stay under the daily Shopify variant-creation cap
+    without stopping at a fixed product count.
+    """
+    try:
+        product_data = process_url(url, 0, prefetched=prefetched)
+    except Exception:
+        return 0
+    if not product_data:
+        return 0
+    total = 0
+    for _title, product_info in product_data.items():
+        if not isinstance(product_info, dict):
+            continue
+        variants = filter_variants(product_info.get("variants") or [], for_create=True)
+        seen_titles = set()
+        for v in variants:
+            t = str(v.get("size") or v.get("title") or "").strip()
+            if not t or t in seen_titles:
+                continue
+            seen_titles.add(t)
+            total += 1
+    return total
+
+
 def backoff_sleep(attempt, retry_after=None):
     """Sleep with exponential backoff or use Shopify's Retry-After header"""
     import time, random
@@ -1115,7 +1143,7 @@ def process_single_url_enhanced(url, action_type, shopify_products, skip_creates
             if not product_info.get("variants"):
                 print(f"[WARNING] No valid variants for {title}, skipping")
                 log_event(url, action_type, "skipped", reason="no_valid_variants")
-                continue
+                return False
             
             if existing_product:
                 # CRITICAL FIX: If product exists, ALWAYS update it (even if action was "create")
@@ -1138,7 +1166,10 @@ def process_single_url_enhanced(url, action_type, shopify_products, skip_creates
                 # Product doesn't exist
                 if action_type == "create":
                     try:
-                        return create_product_enhanced(url, title, product_info)
+                        created = create_product_enhanced(url, title, product_info)
+                        if isinstance(created, int) and created > 0:
+                            return created
+                        return False
                     except RateLimitException as e:
                         # Check if this is variant creation limit
                         if "variant creation limit" in str(e).lower() or "daily limit" in str(e).lower():
@@ -1163,7 +1194,7 @@ def process_single_url_enhanced(url, action_type, shopify_products, skip_creates
         log_event(url, action_type, "error", reason=str(e))
         return False
     
-    return True
+    return False
 
 def _sync_listing_enrichment(product_id, title, product_info, force_seo=False):
     """SEO meta + image alt text. Idempotent unless force_seo=True."""
@@ -1336,7 +1367,7 @@ def create_product_enhanced(url, title, product_info):
                     "enrichment": enrichment,
                 },
             )
-            return True
+            return len(created_variants)
             
         except RateLimitException as e:
             # Save partial state - product created but variants incomplete
