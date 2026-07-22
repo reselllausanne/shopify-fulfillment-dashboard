@@ -683,6 +683,36 @@ export async function getReturnableItemsForOrder(input: {
   };
 }
 
+/**
+ * Admin variant: look up returnable line items by order number only (no email,
+ * no public API key). Used by the staff/admin return-opening form so the operator
+ * can pick which line items to return when an order has multiple products.
+ */
+export async function getReturnableItemsForOrderAdmin(input: {
+  orderNumber: string;
+}): Promise<ReturnableItemsResult> {
+  const orderNumber = normalizeOrderNumber(String(input.orderNumber ?? ""));
+  if (!orderNumber) {
+    throw new ShopifyReturnRequestError("VALIDATION_ERROR", "Missing orderNumber", 400);
+  }
+  const order = await findOrderByNumberAndEmail(orderNumber, null);
+  const lines = await listReturnableLineItems(order.id);
+  return {
+    success: true,
+    orderId: order.id,
+    orderName: order.name,
+    items: lines.map((line) => ({
+      fulfillmentLineItemId: line.fulfillmentLineItemId,
+      lineItemId: line.lineItemId,
+      sku: line.sku,
+      title: line.title,
+      quantity: line.quantity,
+      unitAmount: line.unitAmount,
+      currencyCode: line.currencyCode,
+    })),
+  };
+}
+
 export async function createAndOpenReturnFromFormData(
   input: ShopifyReturnRequestInput,
   options: { publicBaseUrl?: string } = {}

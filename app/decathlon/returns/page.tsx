@@ -69,6 +69,19 @@ type ShopifyCreateForm = {
   details: string;
 };
 
+type ReturnableLineItem = {
+  fulfillmentLineItemId: string;
+  lineItemId: string | null;
+  sku: string | null;
+  title: string | null;
+  quantity: number;
+  unitAmount: number | null;
+  currencyCode: string | null;
+  // UI-only selection state
+  selected: boolean;
+  returnQty: number;
+};
+
 export default function DecathlonReturnsReceiptPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<ReturnsTab>("decathlon");
@@ -98,6 +111,9 @@ export default function DecathlonReturnsReceiptPage() {
     reason: "OTHER",
     details: "",
   });
+  const [returnableItems, setReturnableItems] = useState<ReturnableLineItem[]>([]);
+  const [loadingReturnable, setLoadingReturnable] = useState(false);
+  const [returnableError, setReturnableError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
 
   const focusScan = useCallback(() => {
@@ -332,14 +348,97 @@ export default function DecathlonReturnsReceiptPage() {
     }
   };
 
-  const submitShopifyReturn = async (event: FormEvent) => {
-    event.preventDefault();
-    setSubmittingShopify(true);
+  const loadReturnableItems = async () => {
+    const orderNumber = shopifyForm.orderNumber.trim();
+    if (!orderNumber) {
+      setReturnableError("Enter an order number first.");
+      return;
+    }
+    setLoadingReturnable(true);
+    setReturnableError(null);
+    setReturnableItems([]);
     try {
-      const res = await fetch("/api/shopify/returns/request", {
+      const res = await fetch("/api/shopify/returns/admin/returnable", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(shopifyForm),
+        body: JSON.stringify({ orderNumber }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.message ?? data?.error ?? "Failed to load returnable items");
+      }
+      const items: ReturnableLineItem[] = (data.items ?? []).map((it: any) => ({
+        fulfillmentLineItemId: it.fulfillmentLineItemId,
+        lineItemId: it.lineItemId ?? null,
+        sku: it.sku ?? null,
+        title: it.title ?? null,
+        quantity: Number(it.quantity ?? 0),
+        unitAmount: it.unitAmount != null ? Number(it.unitAmount) : null,
+        currencyCode: it.currencyCode ?? null,
+        selected: true,
+        returnQty: Number(it.quantity ?? 0),
+      }));
+      setReturnableItems(items);
+      if (items.length === 0) {
+        setReturnableError("No returnable items found for this order.");
+      }
+    } catch (error: any) {
+      setReturnableError(error?.message ?? "Failed to load returnable items");
+    } finally {
+      setLoadingReturnable(false);
+    }
+  };
+
+  const toggleReturnableItem = (fulfillmentLineItemId: string, checked: boolean) => {
+    setReturnableItems((prev) =>
+      prev.map((it) =>
+        it.fulfillmentLineItemId === fulfillmentLineItemId
+          ? { ...it, selected: checked, returnQty: checked ? it.quantity : 0 }
+          : it
+      )
+    );
+  };
+
+  const setReturnableQty = (fulfillmentLineItemId: string, qty: number) => {
+    setReturnableItems((prev) =>
+      prev.map((it) =>
+        it.fulfillmentLineItemId === fulfillmentLineItemId
+          ? { ...it, returnQty: Math.max(0, Math.min(qty, it.quantity)) }
+          : it
+      )
+    );
+  };
+
+  const submitShopifyReturn = async (event: FormEvent) => {
+    event.preventDefault();
+    const orderNumber = shopifyForm.orderNumber.trim();
+    if (!orderNumber) {
+      showToast("err", "Enter an order number.");
+      return;
+    }
+    // If items are loaded, require at least one selected. If not loaded, fall back
+    // to "return all" (legacy behavior) by sending no items array.
+    const selectedItems = returnableItems
+      .filter((it) => it.selected && it.returnQty > 0)
+      .map((it) => ({
+        fulfillmentLineItemId: it.fulfillmentLineItemId,
+        quantity: it.returnQty,
+      }));
+    if (returnableItems.length > 0 && selectedItems.length === 0) {
+      showToast("err", "Select at least one item to return.");
+      return;
+    }
+    setSubmittingShopify(true);
+    try {
+      const res = await fetch("/api/shopify/returns/admin/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orderNumber,
+          reason: shopifyForm.reason,
+          details: shopifyForm.details,
+          items: selectedItems.length > 0 ? selectedItems : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data?.success) {
@@ -351,6 +450,7 @@ export default function DecathlonReturnsReceiptPage() {
         reason: "OTHER",
         details: "",
       });
+      setReturnableItems([]);
       await loadShopifyPending();
     } catch (error: any) {
       showToast("err", error?.message ?? "Shopify return request failed");
@@ -590,16 +690,80 @@ export default function DecathlonReturnsReceiptPage() {
         <div className="grid gap-3 md:grid-cols-1">
           <label className="text-sm">
             <span className="mb-1 block text-slate-600">Order number</span>
-            <input
-              value={shopifyForm.orderNumber}
-              onChange={(e) =>
-                setShopifyForm((prev) => ({ ...prev, orderNumber: e.target.value }))
-              }
-              placeholder="#1234"
-              className="w-full rounded-md border border-slate-300 px-3 py-2"
-            />
+            <div className="flex gap-2">
+              <input
+                value={shopifyForm.orderNumber}
+                onChange={(e) => {
+                  setShopifyForm((prev) => ({ ...prev, orderNumber: e.target.value }));
+                  setReturnableItems([]);
+                  setReturnableError(null);
+                }}
+                placeholder="#1234"
+                className="flex-1 rounded-md border border-slate-300 px-3 py-2"
+              />
+              <button
+                type="button"
+                onClick={loadReturnableItems}
+                disabled={loadingReturnable || !shopifyForm.orderNumber.trim()}
+                className="shrink-0 rounded-md border border-slate-300 bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+              >
+                {loadingReturnable ? "Loading…" : "Load items"}
+              </button>
+            </div>
           </label>
         </div>
+        {returnableError && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {returnableError}
+          </div>
+        )}
+        {returnableItems.length > 0 && (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div className="mb-2 text-sm font-medium text-slate-700">
+              Select items to return ({returnableItems.filter((i) => i.selected && i.returnQty > 0).length}/{returnableItems.length} selected)
+            </div>
+            <ul className="space-y-2">
+              {returnableItems.map((it) => (
+                <li
+                  key={it.fulfillmentLineItemId}
+                  className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2"
+                >
+                  <input
+                    type="checkbox"
+                    checked={it.selected}
+                    onChange={(e) => toggleReturnableItem(it.fulfillmentLineItemId, e.target.checked)}
+                    className="mt-1 h-4 w-4"
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-slate-800">
+                      {it.title ?? "—"}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      SKU: {it.sku ?? "—"} · available: {it.quantity}
+                      {it.unitAmount != null
+                        ? ` · ${Number(it.unitAmount).toFixed(2)} ${it.currencyCode ?? ""}`
+                        : ""}
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-1 text-xs text-slate-600">
+                    Qty
+                    <input
+                      type="number"
+                      min={0}
+                      max={it.quantity}
+                      value={it.returnQty}
+                      disabled={!it.selected}
+                      onChange={(e) =>
+                        setReturnableQty(it.fulfillmentLineItemId, Number(e.target.value))
+                      }
+                      className="w-16 rounded-md border border-slate-300 px-2 py-1 disabled:opacity-50"
+                    />
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <label className="text-sm">
           <span className="mb-1 block text-slate-600">Reason</span>
           <select
