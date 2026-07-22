@@ -5,6 +5,7 @@ import {
   resolveGalaxusProductCategoryPath,
   type GalaxusProductKind,
 } from "@/galaxus/exports/productClassification";
+import { defaultGalaxusProductKind } from "@/galaxus/exports/galaxusCategoryPaths";
 import { FALLBACK_SIZE_CHARTS } from "@/galaxus/kickdb/sizeCharts";
 
 export const GALAXUS_CLOTHING_SIZE_KEY = "Clothing size";
@@ -19,6 +20,8 @@ type ExportClassificationInput = {
   productType?: string | null;
   brand?: string | null;
   sizeRaw?: string | null;
+  supplierKey?: string | null;
+  supplierProductType?: string | null;
 };
 
 function sanitizeText(value?: string | null): string {
@@ -32,6 +35,9 @@ function resolveExportKind(input: ExportClassificationInput): GalaxusProductKind
     breadcrumbAliases: input.breadcrumbAliases ?? null,
     productType: input.productType ?? null,
     brand: input.brand ?? null,
+    supplierKey: input.supplierKey ?? null,
+    supplierProductType: input.supplierProductType ?? null,
+    title: input.supplierTitle ?? input.kickdbTitle ?? null,
   });
   if (structuredKind !== "unknown") return structuredKind;
 
@@ -42,6 +48,8 @@ function resolveExportKind(input: ExportClassificationInput): GalaxusProductKind
     title: supplierTitle,
     category: supplierSku || null,
     brand: input.brand ?? null,
+    supplierKey: input.supplierKey ?? null,
+    supplierProductType: input.supplierProductType ?? null,
   });
   if (supplierKind !== "unknown") return supplierKind;
 
@@ -50,13 +58,17 @@ function resolveExportKind(input: ExportClassificationInput): GalaxusProductKind
     title: input.kickdbTitle ?? null,
     description: input.kickdbDescription ?? null,
     brand: input.brand ?? null,
+    supplierKey: input.supplierKey ?? null,
   });
   if (kickdbKind !== "unknown") return kickdbKind;
 
   // 4. sizeRaw heuristic (numeric EU = footwear, alpha = apparel).
   return (
-    classifyGalaxusProductKind({ sizeRaw: input.sizeRaw ?? null, brand: input.brand ?? null }) ??
-    "unknown"
+    classifyGalaxusProductKind({
+      sizeRaw: input.sizeRaw ?? null,
+      brand: input.brand ?? null,
+      supplierKey: input.supplierKey ?? null,
+    }) ?? defaultGalaxusProductKind(input.supplierKey)
   );
 }
 
@@ -72,6 +84,8 @@ export function resolveGalaxusExportClassification(
     productType: input.productType ?? null,
     brand: input.brand ?? null,
     sizeRaw: input.sizeRaw ?? null,
+    supplierKey: input.supplierKey ?? null,
+    supplierProductType: input.supplierProductType ?? null,
   });
 
   return {
@@ -146,6 +160,8 @@ export function buildGalaxusSizeSpecRow(input: {
   breadcrumbAliases?: string[] | null;
   productType?: string | null;
   brand?: string | null;
+  supplierKey?: string | null;
+  supplierProductType?: string | null;
 }): { ProviderKey: string; SpecificationKey: string; SpecificationValue: string } | null {
   const providerKey = String(input.providerKey ?? "").trim();
   if (!providerKey) return null;
@@ -159,6 +175,8 @@ export function buildGalaxusSizeSpecRow(input: {
     productType: input.productType,
     brand: input.brand,
     sizeRaw: input.sizeRaw ?? input.sizeNormalized ?? null,
+    supplierKey: input.supplierKey,
+    supplierProductType: input.supplierProductType,
   });
   if (!requiresSizeSpec) return null;
 

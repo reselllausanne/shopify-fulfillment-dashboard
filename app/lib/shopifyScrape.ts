@@ -124,6 +124,7 @@ type EligibleRecord = {
   supplierSku: string;
   supplierBrand: string | null;
   supplierProductName: string | null;
+  supplierProductType: string | null;
   sourceImageUrl: string | null;
   available: boolean;
 };
@@ -132,6 +133,7 @@ function collectEligibleRecords(shop: ScraperShop, product: any, productJs: any)
   const out: EligibleRecord[] = [];
   const title = product?.title || "";
   const brand = product?.vendor || "";
+  const productType = String(product?.product_type ?? "").trim() || null;
   const jsById = new Map<string, any>();
   for (const v of productJs?.variants || []) jsById.set(String(v?.id), v);
   const imgSource = productJs && Object.keys(productJs).length ? productJs : product;
@@ -162,6 +164,7 @@ function collectEligibleRecords(shop: ScraperShop, product: any, productJs: any)
       supplierSku: sku || gtin,
       supplierBrand: brand || null,
       supplierProductName: fullTitle || null,
+      supplierProductType: productType,
       sourceImageUrl: pickImage(imgSource, jsV.id ? jsV : variant) || null,
       available,
     });
@@ -307,6 +310,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               stock,
               supplierBrand: r.supplierBrand,
               supplierProductName: r.supplierProductName,
+              supplierProductType: r.supplierProductType,
               sourceImageUrl: r.sourceImageUrl,
               imageSyncStatus: r.sourceImageUrl ? "PENDING" : null,
               lastSyncAt: now,
@@ -319,6 +323,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               stock,
               supplierBrand: r.supplierBrand,
               supplierProductName: r.supplierProductName,
+              supplierProductType: r.supplierProductType,
               sourceImageUrl: r.sourceImageUrl,
               ...(queueImage
                 ? {

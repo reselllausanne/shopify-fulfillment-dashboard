@@ -23,6 +23,7 @@ export const FEED_MAPPING_INCLUDE = {
       sizeNormalized: true,
       supplierBrand: true,
       supplierProductName: true,
+      supplierProductType: true,
       supplierGender: true,
       supplierColorway: true,
       weightGrams: true,

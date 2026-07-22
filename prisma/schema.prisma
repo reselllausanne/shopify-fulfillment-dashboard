@@ -1007,6 +1007,8 @@ model SupplierVariant {
   sizeNormalized              String?
   supplierBrand               String?
   supplierProductName         String?
+  /// WellPlayed Shopify product_type (Board Games, Card Games, …) — WEL category signal.
+  supplierProductType         String?
   /// When KickDB is absent: feeds Decathlon `Genre` / Galaxus "Target group" (e.g. men, women, unisex).
   supplierGender              String?
   /// When KickDB is absent: feeds Decathlon `Couleur` / Galaxus "Color" (e.g. Cement / Black).
