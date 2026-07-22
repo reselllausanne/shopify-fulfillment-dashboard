@@ -617,6 +617,7 @@ export async function applyScanRestock(input: {
         salePrice: input.salePrice ?? null,
         dryRun: input.dryRun ?? false,
         locationId: input.locationId ?? null,
+        requireExplicitLocation: true,
       });
       return {
         ok: restock.found,
@@ -644,6 +645,7 @@ export async function applyScanRestock(input: {
       salePrice: input.salePrice ?? null,
       dryRun: input.dryRun ?? false,
       locationId: input.locationId ?? null,
+      requireExplicitLocation: true,
     });
     if (restock.found) {
       const outWarnings = [...warnings, ...restock.warnings];
@@ -735,6 +737,7 @@ export async function applyScanRestock(input: {
     salePrice: input.salePrice ?? null,
     dryRun: input.dryRun ?? false,
     locationId: input.locationId ?? null,
+    requireExplicitLocation: true,
   });
   if (existing.found) {
     const dbExisting = await runDbImport();
@@ -784,6 +787,7 @@ export async function applyScanRestock(input: {
     salePrice: input.salePrice ?? null,
     dryRun: input.dryRun ?? false,
     locationId: input.locationId ?? null,
+    requireExplicitLocation: true,
   });
   if (restock.found) {
     const outWarnings = [...warnings, ...restock.warnings];

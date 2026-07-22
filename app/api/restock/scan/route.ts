@@ -40,6 +40,20 @@ export async function POST(request: Request) {
     const quantityRaw = Number(body?.quantity ?? 1);
     const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.trunc(quantityRaw) : 1;
     const salePriceRaw = body?.salePrice != null ? Number(body.salePrice) : null;
+    const locationId =
+      typeof body?.locationId === "string" && body.locationId.trim() ? body.locationId.trim() : null;
+    if (!locationId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "error",
+          error:
+            "locationId required — select Warehouse Bussigny / Antica Bottegas / THE LAB before restock",
+          warnings: [],
+        },
+        { status: 400 }
+      );
+    }
 
     const result = await applyScanRestock({
       gtin,
@@ -51,7 +65,7 @@ export async function POST(request: Request) {
           : null,
       salePrice: salePriceRaw != null && Number.isFinite(salePriceRaw) ? salePriceRaw : null,
       dryRun: body?.dryRun === true,
-      locationId: typeof body?.locationId === "string" && body.locationId.trim() ? body.locationId.trim() : null,
+      locationId,
     });
 
     return NextResponse.json(result, { status: result.ok || result.status === "size-confirmation-required" ? 200 : 400 });

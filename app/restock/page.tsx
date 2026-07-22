@@ -112,7 +112,8 @@ export default function RestockScanPage() {
     if (typeof window !== "undefined") window.localStorage.setItem(LOCATION_STORAGE_KEY, id);
   }
 
-  const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? "Bussigny";
+  const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? null;
+  const locationReady = Boolean(locationId && currentLocationName);
 
   function resetAll() {
     setLookup(null);
@@ -144,6 +145,10 @@ export default function RestockScanPage() {
   }
 
   async function runApply(body: Record<string, unknown>, busyLabel: string) {
+    if (!locationId) {
+      setError("Choisir un emplacement (Bussigny / Antica / THE LAB) avant restock");
+      return;
+    }
     setBusy(busyLabel);
     setError(null);
     try {
@@ -151,10 +156,11 @@ export default function RestockScanPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...body,
           gtin: gtin.trim(),
           quantity,
-          locationId: locationId || undefined,
-          ...body,
+          // locationId LAST — never let body overwrite the picker selection
+          locationId,
         }),
       });
       const data = (await res.json()) as ApplyResult;
@@ -181,7 +187,8 @@ export default function RestockScanPage() {
     <div className="mx-auto max-w-2xl px-4 py-8">
       <h1 className="text-2xl font-bold">Restock — Scan produit</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Scanner le GTIN (barcode boîte). Stock ajouté à <strong>{currentLocationName}</strong>.
+        Scanner le GTIN (barcode boîte). Stock ajouté uniquement à{" "}
+        <strong>{currentLocationName ?? "…choisir emplacement…"}</strong>.
       </p>
 
       {locations.length > 0 && (
@@ -256,10 +263,10 @@ export default function RestockScanPage() {
           </div>
           <button
             onClick={() => runApply({}, "Restock…")}
-            disabled={!!busy}
+            disabled={!!busy || !locationReady}
             className="mt-3 rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            Ajouter {quantity} en stock à {currentLocationName}
+            Ajouter {quantity} en stock à {currentLocationName ?? "…"}
           </button>
         </div>
       )}
@@ -293,10 +300,10 @@ export default function RestockScanPage() {
           </div>
           <button
             onClick={() => runApply({ identifier: lookup.slug }, "Création + restock…")}
-            disabled={!!busy}
+            disabled={!!busy || !locationReady}
             className="mt-3 rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            Créer le produit + stock {currentLocationName}
+            Créer le produit + stock {currentLocationName ?? "…"}
           </button>
         </div>
       )}
@@ -319,7 +326,7 @@ export default function RestockScanPage() {
             />
             <button
               onClick={() => runApply({ identifier: manualId.trim() }, "Création + restock…")}
-              disabled={!!busy || !manualId.trim()}
+              disabled={!!busy || !manualId.trim() || !locationReady}
               className="rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
             >
               Créer + restock

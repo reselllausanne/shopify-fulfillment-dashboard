@@ -525,8 +525,13 @@ export async function restockShopifyVariantByGtin(input: {
   quantity: number;
   salePrice?: number | null;
   dryRun?: boolean;
-  /** Preferred physical location id. Falls back to Bussigny when absent/invalid. */
+  /**
+   * Physical location id. Scan UI MUST pass this.
+   * When `requireExplicitLocation` is true (scan API), missing/invalid id
+   * aborts — never silent-fallback to Bussigny (that caused wrong-location writes).
+   */
   locationId?: string | null;
+  requireExplicitLocation?: boolean;
 }): Promise<RestockShopifyResult> {
   const dryRun = input.dryRun ?? isRestockDryRun();
   const gtin = String(input.gtin ?? "").trim();
@@ -559,6 +564,29 @@ export async function restockShopifyVariantByGtin(input: {
   const { locationId, source, candidates, name: locationName } = await resolvePhysicalLocationId(
     input.locationId
   );
+
+  // Scan UI path: hard-fail — never silent-fallback to Bussigny (wrong-location risk).
+  if (input.requireExplicitLocation) {
+    const explicit = String(input.locationId ?? "").trim();
+    if (!explicit) {
+      throw new Error(
+        "locationId required — select Warehouse Bussigny / Antica Bottegas / THE LAB before restock"
+      );
+    }
+    if (!locationId || source === "invalid") {
+      throw new Error(
+        `Invalid locationId "${explicit}". Valid: ${
+          candidates?.map((c) => `${c.name}`).join(", ") ?? "physical locations only"
+        }`
+      );
+    }
+    if (source !== "explicit") {
+      throw new Error(
+        `Refusing restock: location resolved via ${source}, not UI selection (${explicit})`
+      );
+    }
+  }
+
   if (!locationId) {
     const hint =
       source === "invalid"
@@ -629,6 +657,20 @@ export async function restockShopifyVariantByGtin(input: {
   }
 
   if (match.inventoryItemId) {
+    // Snapshot all physical locations BEFORE write — if another location's
+    // available rises after our single-location adjust, reverse ours and abort.
+    const { PHYSICAL_LOCATIONS } = await import("@/shopify/inventory/locationConfig");
+    const beforeByLoc = new Map<string, number | null>();
+    for (const loc of PHYSICAL_LOCATIONS) {
+      beforeByLoc.set(
+        loc.id,
+        await getInventoryAvailableAtLocation({
+          inventoryItemId: match.inventoryItemId,
+          locationId: loc.id,
+        })
+      );
+    }
+
     await activateInventoryAtLocation({
       inventoryItemId: match.inventoryItemId,
       locationId,
@@ -638,7 +680,34 @@ export async function restockShopifyVariantByGtin(input: {
       locationId,
       delta: quantity,
     });
-    actions.push(`added +${quantity} stock at ${locationId}`);
+
+    for (const loc of PHYSICAL_LOCATIONS) {
+      if (loc.id === locationId) continue;
+      const after = await getInventoryAvailableAtLocation({
+        inventoryItemId: match.inventoryItemId,
+        locationId: loc.id,
+      });
+      const before = beforeByLoc.get(loc.id) ?? null;
+      const beforeN = before ?? 0;
+      const afterN = after ?? 0;
+      if (afterN > beforeN) {
+        // Undo our intended write; leave the other location alone (may be POS race).
+        try {
+          await adjustInventoryAtLocation({
+            inventoryItemId: match.inventoryItemId,
+            locationId,
+            delta: -quantity,
+          });
+        } catch {
+          /* best-effort undo */
+        }
+        throw new Error(
+          `Safety abort: stock increased at ${loc.name} (+${afterN - beforeN}) while writing only to ${locationName ?? locationId}. Reverted +${quantity} at target.`
+        );
+      }
+    }
+
+    actions.push(`added +${quantity} stock at ${locationName ?? locationId} only`);
 
     // Write mirror immediately so convergence / marketplace feeds don't wait
     // for the 30-min bulk sync cron. Raw SQL (not prisma model) — HMR-safe.
