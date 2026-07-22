@@ -15,6 +15,7 @@ export type SelectedStxOffer = {
 const EXPRESS_DELIVERY_RANK: Record<StxDeliveryType, number> = {
   express_expedited: 0,
   express_standard: 1,
+  standard: 99,
 };
 
 function toNumber(value: unknown): number | null {
