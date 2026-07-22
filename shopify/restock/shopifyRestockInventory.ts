@@ -1,7 +1,7 @@
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
-import { prisma } from "@/app/lib/prisma";
 import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
+import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import {
   resolveProviderKeyForGtin,
   upsertShopifyListingState,
@@ -641,7 +641,7 @@ export async function restockShopifyVariantByGtin(input: {
     actions.push(`added +${quantity} stock at ${locationId}`);
 
     // Write mirror immediately so convergence / marketplace feeds don't wait
-    // for the 30-min bulk sync cron.
+    // for the 30-min bulk sync cron. Raw SQL (not prisma model) — HMR-safe.
     try {
       const availableNow =
         (await getInventoryAvailableAtLocation({
@@ -649,37 +649,18 @@ export async function restockShopifyVariantByGtin(input: {
           locationId,
         })) ?? quantity;
       const locCfg = getLocationConfig(locationId);
-      await prisma.shopifyVariantLocationStock.upsert({
-        where: {
-          shopifyVariantId_locationId: {
-            shopifyVariantId: match.variantId,
-            locationId,
-          },
-        },
-        create: {
+      if (!locCfg) {
+        warnings.push(`Mirror skip: unknown location ${locationId}`);
+      } else {
+        await upsertLocationStockRow(locCfg, {
           shopifyVariantId: match.variantId,
           inventoryItemId: match.inventoryItemId,
           sku: match.sku,
           gtin,
-          locationId,
-          locationName: locCfg?.name ?? locationName ?? locationId,
-          sourceType: locCfg?.sourceType ?? "physical",
-          priority: locCfg?.priority ?? 99,
           available: availableNow,
-          lastSeenAt: new Date(),
-        },
-        update: {
-          inventoryItemId: match.inventoryItemId,
-          sku: match.sku,
-          gtin,
-          locationName: locCfg?.name ?? locationName ?? locationId,
-          sourceType: locCfg?.sourceType ?? "physical",
-          priority: locCfg?.priority ?? 99,
-          available: availableNow,
-          lastSeenAt: new Date(),
-        },
-      });
-      actions.push(`mirror updated: available=${availableNow} at ${locCfg?.name ?? locationId}`);
+        });
+        actions.push(`mirror updated: available=${availableNow} at ${locCfg.name}`);
+      }
     } catch (err: any) {
       warnings.push(`Mirror update failed (cron will catch up): ${err?.message ?? err}`);
     }

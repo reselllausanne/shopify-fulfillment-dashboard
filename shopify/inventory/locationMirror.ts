@@ -151,7 +151,12 @@ export type LocationSyncResult = {
   capped: boolean;
 };
 
-async function upsertRow(location: LocationConfig, row: SeenRow, now: Date): Promise<void> {
+export async function upsertLocationStockRow(
+  location: LocationConfig,
+  row: SeenRow,
+  now: Date = new Date()
+): Promise<void> {
+  // Raw SQL — survives stale PrismaClient HMR that lacks the generated model.
   await prisma.$executeRaw`
     INSERT INTO "public"."ShopifyVariantLocationStock" (
       "id", "shopifyVariantId", "inventoryItemId", "sku", "gtin",
@@ -173,6 +178,10 @@ async function upsertRow(location: LocationConfig, row: SeenRow, now: Date): Pro
       "lastSeenAt"      = EXCLUDED."lastSeenAt",
       "updatedAt"       = EXCLUDED."updatedAt"
   `;
+}
+
+async function upsertRow(location: LocationConfig, row: SeenRow, now: Date): Promise<void> {
+  await upsertLocationStockRow(location, row, now);
 }
 
 async function zeroOutUnseen(location: LocationConfig, seenIds: string[], now: Date): Promise<number> {

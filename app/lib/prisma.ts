@@ -93,6 +93,7 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
     orderLineSyncState?: unknown;
     inventorySyncRun?: unknown;
     inventoryReconcileDrift?: unknown;
+    shopifyVariantLocationStock?: unknown;
   };
   return Boolean(
     c.decathlonOrder &&
@@ -106,7 +107,8 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
       c.channelListingState &&
       c.orderLineSyncState &&
       c.inventorySyncRun &&
-      c.inventoryReconcileDrift
+      c.inventoryReconcileDrift &&
+      c.shopifyVariantLocationStock
   );
 }
 
