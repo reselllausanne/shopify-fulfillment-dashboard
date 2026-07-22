@@ -2374,6 +2374,36 @@ def get_product_image_urls(product_id):
     return [img["url"] for img in get_product_media_images(product_id)]
 
 
+def delete_product(product_id):
+    """
+    Delete an entire product by id. Used to roll back a create that failed
+    partway (e.g. bulk variant create returned userErrors) so we do not leak
+    orphan products with no variants into the Shopify catalog.
+
+    Returns {"ok": bool, "errors": list}.
+    """
+    if not product_id or not isinstance(product_id, str):
+        return {"ok": False, "errors": ["invalid_product_id"]}
+
+    mutation = """
+    mutation DeleteProduct($input: ProductDeleteInput!) {
+      productDelete(input: $input) {
+        deletedProductId
+        userErrors { field message }
+      }
+    }
+    """
+    try:
+        data = _run_query(mutation, {"input": {"id": product_id}})
+    except Exception as e:
+        return {"ok": False, "errors": [str(e)]}
+    payload = data.get("productDelete", {}) or {}
+    errs = payload.get("userErrors", []) or []
+    if errs:
+        return {"ok": False, "errors": errs}
+    return {"ok": True, "deletedProductId": payload.get("deletedProductId")}
+
+
 def delete_product_media(product_id, media_ids):
     """
     Delete specific media items from a product.

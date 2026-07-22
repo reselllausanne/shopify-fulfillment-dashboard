@@ -17,6 +17,7 @@ from shopifyAPI_GQL import (
     sync_product_handle_to_stockx_slug,
     create_product,
     create_variants_bulk,
+    delete_product,
     add_images_to_product,
     get_product_media_images,
     get_product_variants,
@@ -1264,6 +1265,24 @@ def create_product_enhanced(url, title, product_info):
         
         # Create variants with partial state tracking
         try:
+            # Dedupe variants by size title so bulk create never fails on
+            # "The variant 'X' already exists" (women's sizing frequently maps
+            # multiple US M/W rows to the same rounded EU size). Keep the first
+            # occurrence per title — that's the smallest-index StockX variant,
+            # typically the intended one for the size option.
+            deduped_variants = []
+            seen_titles = set()
+            for _v in product_info["variants"]:
+                _t = str(_v.get("size") or _v.get("title") or "").strip()
+                if not _t:
+                    continue
+                if _t in seen_titles:
+                    print(f"[DEDUPE] Dropping duplicate size '{_t}' before bulk create ({title})")
+                    continue
+                seen_titles.add(_t)
+                deduped_variants.append(_v)
+            if len(deduped_variants) != len(product_info["variants"]):
+                product_info["variants"] = deduped_variants
             all_variant_skus = [v["sku"] for v in product_info["variants"]]
             create_response = create_variants_bulk(product_id, option_id, product_info["variants"])
 
@@ -1334,6 +1353,23 @@ def create_product_enhanced(url, title, product_info):
             raise  # Re-raise to trigger backoff
         except Exception as e:
             print(f"[ERROR] Failed to create variants for {title}: {e}")
+            # Roll back the product shell so we never leave an orphan product
+            # (no variants, no listing) in the Shopify catalog. Skip rollback
+            # on partial-state (429) — that path re-enters via re-run.
+            try:
+                created_variants = get_product_variants(product_id) or []
+            except Exception:
+                created_variants = []
+            if not created_variants:
+                del_res = delete_product(product_id)
+                if del_res.get("ok"):
+                    print(f"[CLEANUP] Deleted orphan product shell {product_id} after failed bulk variant create ({title})")
+                    log_event(url, "create", "error", reason="variant_create_failed_shell_deleted", details={"product_id": product_id, "error": str(e)})
+                else:
+                    print(f"[WARNING] Could not delete orphan product {product_id}: {del_res.get('errors')}")
+                    log_event(url, "create", "error", reason="variant_create_failed_shell_orphan", details={"product_id": product_id, "error": str(e), "cleanup_errors": del_res.get("errors")})
+            else:
+                log_event(url, "create", "error", reason="variant_create_failed_partial", details={"product_id": product_id, "error": str(e), "existing_variants": len(created_variants)})
             return False
                 
     except RateLimitException:

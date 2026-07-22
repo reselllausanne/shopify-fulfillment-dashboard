@@ -51,24 +51,26 @@ export async function GET(req: Request) {
     let rows: Row[];
 
     if (status === "untracked") {
-      // Bypass the sync-state / flag step entirely. Every KickDBProduct without
-      // a ShopifySyncState row is a create candidate — freshest SSE refresh
-      // first so live-priced products land on Shopify before stale ones.
+      // Bypass the sync-state / flag step entirely. Includes:
+      //   - KickDBProducts with NO ShopifySyncState row (never attempted)
+      //   - Previously errored rows (retry after upstream fixes; on success
+      //     mark-synced flips syncStatus to 'synced', on failure the same
+      //     error row is updated in place — no runaway loops).
+      // Freshest SSE refresh first so live-priced products land first.
       rows = await prisma.$queryRaw<Row[]>`
         SELECT
           p."kickdbProductId", p."urlKey", p."styleId", p."name",
           p."rawJson", p."rawFetchedAt",
-          'untracked'::text AS "syncStatus",
-          NULL::text AS "shopifyProductId",
-          NULL::text AS "shopifyHandle",
-          NULL::timestamp AS "shopifySyncedAt",
-          0::int AS "priorityScore"
+          COALESCE(s."syncStatus", 'untracked')::text AS "syncStatus",
+          s."shopifyProductId",
+          s."shopifyHandle",
+          s."shopifySyncedAt",
+          COALESCE(s."priorityScore", 0)::int AS "priorityScore"
         FROM "public"."KickDBProduct" p
+        LEFT JOIN "public"."ShopifySyncState" s
+          ON s."kickdbProductId" = p."kickdbProductId"
         WHERE p."rawJson" IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM "public"."ShopifySyncState" s
-            WHERE s."kickdbProductId" = p."kickdbProductId"
-          )
+          AND (s."kickdbProductId" IS NULL OR s."syncStatus" = 'error')
         ORDER BY p."updatedAt" DESC
         LIMIT ${limit}
       `;
