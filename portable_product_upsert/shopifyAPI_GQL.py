@@ -2684,25 +2684,39 @@ def create_variants_bulk(product_id, option_id, variants):
     # Weight must be set manually in Shopify Admin OR via REST API
     # Future: Consider implementing REST API weight update if needed
     
+    # OPT-IN pre-activation at all physical (secondary) locations.
+    #
+    # Default OFF: mass-activation at qty 0 for every variant pollutes the
+    # ShopifyVariantLocationStock mirror (thousands of qty-0 rows per location),
+    # slows the paginated mirror sync, and inflates GraphQL cost with no upside
+    # — the restock scan flow activates the right physical location on demand
+    # (see shopify/restock/shopifyRestockInventory.ts `activateInventoryAtLocation`).
+    #
+    # Set SHOPIFY_PREACTIVATE_PHYSICAL=1 to restore the old behavior (useful for
+    # bulk retail-transfer prep where shops need the item pre-listed at qty 0).
+    if os.environ.get("SHOPIFY_PREACTIVATE_PHYSICAL", "0").strip() in ("1", "true", "yes", "on"):
+        try:
+            all_locations = get_secondary_location_ids()
+            if all_locations:
+                created_variants = (resp.get("productVariantsBulkCreate") or {}).get("productVariants") or []
+                for created in created_variants:
+                    inv = created.get("inventoryItem") or {}
+                    inv_id = inv.get("id")
+                    if not inv_id:
+                        continue
+                    activation = bulk_toggle_inventory_item_locations(inv_id, all_locations, activate=True)
+                    errs = activation.get("userErrors") or []
+                    if errs:
+                        print(f"[WARNING] inventoryBulkToggleActivation errors for {inv_id}: {errs}")
+                    else:
+                        print(f"[INFO] Activated inventory item at {len(all_locations)} retail location(s): {inv_id}")
+        except Exception as e:
+            print(f"[WARNING] inventory location activation failed: {e}")
+    else:
+        print("[INFO] Skipping mass secondary-location activation (SHOPIFY_PREACTIVATE_PHYSICAL=0). Restock scan will activate on demand.")
+
     # CRITICAL FIX: Delete the default variant that Shopify auto-creates
     # This default variant has no size, price 0, and causes inventory issues
-    try:
-        all_locations = get_secondary_location_ids()
-        if all_locations:
-            created_variants = (resp.get("productVariantsBulkCreate") or {}).get("productVariants") or []
-            for created in created_variants:
-                inv = created.get("inventoryItem") or {}
-                inv_id = inv.get("id")
-                if not inv_id:
-                    continue
-                activation = bulk_toggle_inventory_item_locations(inv_id, all_locations, activate=True)
-                errs = activation.get("userErrors") or []
-                if errs:
-                    print(f"[WARNING] inventoryBulkToggleActivation errors for {inv_id}: {errs}")
-                else:
-                    print(f"[INFO] Activated inventory item at {len(all_locations)} retail location(s): {inv_id}")
-    except Exception as e:
-        print(f"[WARNING] inventory location activation failed: {e}")
 
     print("[INFO] Cleaning up default variant created by Shopify...")
     try:

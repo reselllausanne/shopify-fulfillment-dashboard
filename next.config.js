@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["ssh2", "ssh2-sftp-client"],
+  // Prisma must stay external: Turbopack bundling the query engine causes
+  // intermittent "Response from the Engine was empty" crashes in `next dev`.
+  serverExternalPackages: ["ssh2", "ssh2-sftp-client", "@prisma/client", "prisma"],
   experimental: {
     /**
      * Router clones request bodies for handling; default is 10MB. Partner CSV

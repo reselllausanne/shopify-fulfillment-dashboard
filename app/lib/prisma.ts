@@ -150,7 +150,84 @@ function resolvePrismaDirectClient(): PrismaClient {
   return client;
 }
 
-const prisma = resolvePrismaClient();
+function isDeadEngineError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    /Response from the Engine was empty/i.test(msg) ||
+    /Engine is not yet connected/i.test(msg) ||
+    /Prisma Client could not locate the Query Engine/i.test(msg)
+  );
+}
+
+function resetPrismaClient() {
+  if (globalForPrisma.prisma) {
+    void globalForPrisma.prisma.$disconnect().catch(() => {});
+    globalForPrisma.prisma = undefined;
+  }
+}
+
+/**
+ * Turbopack HMR can kill the Prisma query-engine child process, which then
+ * surfaces as "Response from the Engine was empty". Always resolve the live
+ * singleton, and on dead-engine errors drop it + retry once.
+ */
+function withEngineRecovery(): PrismaClient {
+  return new Proxy({} as PrismaClient, {
+    get(_t, prop) {
+      const client = resolvePrismaClient() as unknown as Record<string | symbol, any>;
+      const value = client[prop];
+      if (typeof prop === "symbol" || prop === "then") return value;
+      if (typeof prop === "string" && prop.startsWith("$")) {
+        return typeof value === "function" ? value.bind(client) : value;
+      }
+      if (!value || typeof value !== "object") return value;
+
+      return new Proxy(value as object, {
+        get(modelTarget, method) {
+          const fn = (modelTarget as Record<string | symbol, any>)[method];
+          if (typeof fn !== "function") return fn;
+          return (...args: unknown[]) => {
+            const invoke = (model: any, name: string | symbol) => {
+              const methodFn = model?.[name];
+              if (typeof methodFn !== "function") {
+                throw new Error(`Prisma method missing: ${String(prop)}.${String(name)}`);
+              }
+              return methodFn.apply(model, args);
+            };
+
+            try {
+              const result = invoke(modelTarget, method);
+              if (result && typeof (result as Promise<unknown>).then === "function") {
+                return (result as Promise<unknown>).catch(async (error: unknown) => {
+                  if (!isDeadEngineError(error)) throw error;
+                  console.warn("[PRISMA] Engine empty — recreating client, retry once", {
+                    model: String(prop),
+                    method: String(method),
+                  });
+                  resetPrismaClient();
+                  const fresh = resolvePrismaClient() as unknown as Record<string, any>;
+                  return invoke(fresh[String(prop)], method);
+                });
+              }
+              return result;
+            } catch (error) {
+              if (!isDeadEngineError(error)) throw error;
+              console.warn("[PRISMA] Engine empty — recreating client, retry once", {
+                model: String(prop),
+                method: String(method),
+              });
+              resetPrismaClient();
+              const fresh = resolvePrismaClient() as unknown as Record<string, any>;
+              return invoke(fresh[String(prop)], method);
+            }
+          };
+        },
+      });
+    },
+  }) as PrismaClient;
+}
+
+const prisma = withEngineRecovery();
 const prismaDirect = resolvePrismaDirectClient();
 
 export { prisma, prismaDirect };

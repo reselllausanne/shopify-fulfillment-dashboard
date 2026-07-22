@@ -61,7 +61,21 @@ from stockx_images import (
 )
 
 # Set True via --full-360 CLI flag (all gallery_360 frames instead of 5 orbit picks).
-FULL_360_MODE = False
+# Also honors env SHOPIFY_CREATE_FULL_360=1 (used by scan create via
+# createProductFullFlow) so scan-created products get the full StockX 360 strip.
+FULL_360_MODE = os.environ.get("SHOPIFY_CREATE_FULL_360", "0").strip() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# On create: how many images to upload from the curated selection.
+# select_stockx_product_images already returns <=5. Default 5 (was 1: hero-only).
+# Override via env SHOPIFY_CREATE_IMAGES_MAX. --full-360 still uploads everything.
+try:
+    CREATE_IMAGES_MAX = max(1, int(os.environ.get("SHOPIFY_CREATE_IMAGES_MAX", "5")))
+except Exception:
+    CREATE_IMAGES_MAX = 5
 # Set True via --full-pass: force SEO/alt refresh + 360 images (categories never change on update).
 FULL_PASS_MODE = False
 # Set True via --no-new-variants: skip creating missing sizes (quota saver). Default: create new
@@ -1205,9 +1219,12 @@ def create_product_enhanced(url, title, product_info):
             print(f"[ERROR] Could not create product shell for {title}")
             return False
         
-        # Hero only on create (unless --full-360); bulk update appends orbit extras
+        # Upload curated set on create (default 5, --full-360 uploads all frames).
+        # Bulk update appends any additional orbit extras beyond this.
         if valid_images:
-            images_to_add = valid_images if FULL_360_MODE else valid_images[:1]
+            images_to_add = (
+                valid_images if FULL_360_MODE else valid_images[:CREATE_IMAGES_MAX]
+            )
             add_images_to_product(product_id, images_to_add)
         
         # Set STANDARD product attributes (best for Google Merchant Center)

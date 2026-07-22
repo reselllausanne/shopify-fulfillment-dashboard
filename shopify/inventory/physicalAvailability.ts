@@ -36,6 +36,17 @@ export type PhysicalStockRow = {
   preferredLocationName: string | null;
 };
 
+export type PhysicalLocationStockRow = {
+  shopifyVariantId: string;
+  inventoryItemId: string;
+  sku: string | null;
+  gtin: string;
+  locationId: string;
+  locationName: string;
+  priority: number;
+  available: number;
+};
+
 export type PhysicalStockMap = Map<string, PhysicalStockRow>;
 
 /**
@@ -82,6 +93,56 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
 export async function getPhysicalStockForGtin(gtin: string): Promise<PhysicalStockRow> {
   const m = await loadPhysicalMirrorStockByGtin([gtin]);
   return m.get(gtin) ?? { qty: 0, preferredLocationId: null, preferredLocationName: null };
+}
+
+/**
+ * Per-location mirror rows for a GTIN, priority order (Bussigny first).
+ * Used by marketplace sale routing to decrement the correct shop.
+ */
+export async function loadPhysicalMirrorLocationRowsByGtin(
+  gtin: string
+): Promise<PhysicalLocationStockRow[]> {
+  const clean = String(gtin ?? "").trim();
+  if (!clean) return [];
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      shopifyVariantId: string;
+      inventoryItemId: string;
+      sku: string | null;
+      gtin: string;
+      locationId: string;
+      locationName: string;
+      priority: number;
+      available: number;
+    }>
+  >`
+    SELECT
+      s."shopifyVariantId",
+      s."inventoryItemId",
+      s."sku",
+      s."gtin",
+      s."locationId",
+      s."locationName",
+      s."priority",
+      s."available"
+    FROM "public"."ShopifyVariantLocationStock" s
+    WHERE s."sourceType" = 'physical'
+      AND s."available"  > 0
+      AND s."gtin"       = ${clean}
+    ORDER BY s."priority" ASC, s."available" DESC
+  `;
+
+  return rows.map((r) => ({
+    shopifyVariantId: r.shopifyVariantId,
+    inventoryItemId: r.inventoryItemId,
+    sku: r.sku,
+    gtin: r.gtin,
+    locationId: r.locationId,
+    locationName: r.locationName,
+    priority: Number(r.priority ?? 99),
+    available: Number(r.available ?? 0),
+  }));
 }
 
 /**

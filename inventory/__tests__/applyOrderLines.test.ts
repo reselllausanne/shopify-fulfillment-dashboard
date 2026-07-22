@@ -14,6 +14,10 @@ vi.mock("@/inventory/theSaleChannelSync", () => ({
   scheduleTheSaleChannelSync: vi.fn(),
 }));
 
+vi.mock("@/shopify/inventory/marketplacePhysicalSale", () => ({
+  routeMarketplacePhysicalSale: vi.fn().mockResolvedValue({ routed: false, decremented: 0, locations: [], warnings: [] }),
+}));
+
 vi.mock("@/galaxus/warehouse/theCatalogStock", async () => {
   const actual = await vi.importActual<typeof import("@/galaxus/warehouse/theCatalogStock")>(
     "@/galaxus/warehouse/theCatalogStock"
@@ -28,6 +32,7 @@ import { prisma } from "@/app/lib/prisma";
 import { resolveSupplierVariantForInventoryLine } from "@/inventory/resolveSupplierVariant";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
 import { scheduleTheSaleChannelSync } from "@/inventory/theSaleChannelSync";
+import { routeMarketplacePhysicalSale } from "@/shopify/inventory/marketplacePhysicalSale";
 import { applyTheCatalogStockDeltaInTx } from "@/galaxus/warehouse/theCatalogStock";
 
 const mockedPrisma = prisma as unknown as {
@@ -192,6 +197,48 @@ describe("applyInventoryOrderLine", () => {
     );
     expect(scheduleTheSaleChannelSync).toHaveBeenCalledWith({
       providerKeys: ["THE_198726522040"],
+    });
+  });
+
+  it("routes marketplace physical sale after Galaxus sale apply", async () => {
+    mockedResolver.mockResolvedValue({
+      supplierVariantId: "stx_2",
+      providerKey: "STX_456",
+      gtin: "456",
+    });
+
+    const tx = {
+      orderLineSyncState: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        update: vi.fn(),
+        create: vi.fn().mockResolvedValue({ id: "sync-gal" }),
+      },
+      inventoryEvent: {
+        create: vi.fn().mockResolvedValue({ id: "evt-gal" }),
+      },
+      channelListingState: {
+        upsert: vi.fn().mockResolvedValue({ id: "listing-gal" }),
+      },
+    };
+
+    mockedPrisma.$transaction.mockImplementation(async (handler: any) => handler(tx));
+
+    await applyInventoryOrderLine({
+      channel: "GALAXUS",
+      externalOrderId: "G-1",
+      externalLineId: "G-LINE-1",
+      quantity: 1,
+      providerKey: "STX_456",
+      gtin: "456",
+      eventType: "SALE",
+    });
+
+    expect(routeMarketplacePhysicalSale).toHaveBeenCalledWith({
+      channel: "GALAXUS",
+      externalLineId: "G-LINE-1",
+      externalOrderId: "G-1",
+      gtin: "456",
+      quantity: 1,
     });
   });
 });

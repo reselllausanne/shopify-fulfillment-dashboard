@@ -354,6 +354,10 @@ export async function adjustInventoryAtLocation(input: {
   inventoryItemId: string;
   locationId: string;
   delta: number;
+  /** Stable key for marketplace sale hooks; random UUID when omitted. */
+  idempotencyKey?: string;
+  reason?: string;
+  referenceDocumentUri?: string;
 }): Promise<void> {
   const delta = Math.trunc(input.delta);
   if (delta === 0) return;
@@ -374,8 +378,10 @@ export async function adjustInventoryAtLocation(input: {
     }>(INVENTORY_ADJUST_MUTATION, {
       input: {
         name: "available",
-        reason: "received",
-        referenceDocumentUri: `gid://resell-lausanne/RestockScan/${Date.now()}`,
+        reason: input.reason ?? "received",
+        referenceDocumentUri:
+          input.referenceDocumentUri ??
+          `gid://resell-lausanne/RestockScan/${Date.now()}`,
         changes: [
           {
             inventoryItemId: input.inventoryItemId,
@@ -385,7 +391,7 @@ export async function adjustInventoryAtLocation(input: {
           },
         ],
       },
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: input.idempotencyKey ?? crypto.randomUUID(),
     });
     if (errors?.length) {
       lastError = new Error(

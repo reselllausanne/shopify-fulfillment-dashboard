@@ -40,6 +40,8 @@ const PUBLIC_PATHS = [
   "/api/shopify/returns/request",
   "/api/shopify/returns/returnable",
   "/api/shopify/returns/label",
+  // Shopify order webhooks — HMAC-verified (SHOPIFY_API_SECRET).
+  "/api/shopify/webhooks",
   "/api/galaxus",
   "/api/galaxus/ops",
   "/api/galaxus/feeds",

@@ -47,9 +47,15 @@ function resolveEffectiveStock(
   const extra = Math.max(0, Math.floor(physicalQty));
   if (supplierKey === "gld" || supplierKey === "trm") return 0;
   if (supplierKey === "stx") {
-    const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
-    if (extra > 0) {
-      const dropshipDelisted = stx === 0;
+    // Marketplace publish requires TRUE express lane. Non-express (standard
+    // fallback via forceImport) is dropship-delisted; physical stock via the
+    // mirror still wins for liquidation.
+    const deliveryType = String(variant?.deliveryType ?? "").toLowerCase();
+    const isRealExpress = deliveryType.startsWith("express_");
+    const stxRaw = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
+    const stx = isRealExpress ? stxRaw : 0;
+    const dropshipDelisted = stx === 0;
+    if (extra > 0 || dropshipDelisted) {
       return mergePhysicalWithDropship({
         dropshipStock: stx,
         physicalQty: extra,

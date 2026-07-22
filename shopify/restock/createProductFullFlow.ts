@@ -36,7 +36,9 @@ function runPythonCli(
   return new Promise((resolve, reject) => {
     const child = spawn(PYTHON_BIN, ["product_upsert_api.py", ...args], {
       cwd: PACKAGE_DIR,
-      env: process.env,
+      // Force full StockX 360 strip on scan-created products (user preference).
+      // main.py reads SHOPIFY_CREATE_FULL_360 to set FULL_360_MODE.
+      env: { ...process.env, SHOPIFY_CREATE_FULL_360: process.env.SHOPIFY_CREATE_FULL_360 ?? "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

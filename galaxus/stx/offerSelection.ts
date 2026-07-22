@@ -1,4 +1,10 @@
-export type StxDeliveryType = "express_standard" | "express_expedited";
+/**
+ * express_standard / express_expedited — real express lanes (published on marketplaces).
+ * standard — non-express fallback (forceImport only). Marketplace feeds must NOT
+ * publish this as a dropship row; physical (liquidation) stock still routes through
+ * the mirror resolver.
+ */
+export type StxDeliveryType = "express_standard" | "express_expedited" | "standard";
 
 export type SelectedStxOffer = {
   deliveryType: StxDeliveryType;
@@ -96,9 +102,10 @@ export function selectStxOfferForImport(
     const type = String(row?.type ?? "")
       .trim()
       .toLowerCase();
-    const deliveryType: StxDeliveryType = type.includes("expedited")
-      ? "express_expedited"
-      : "express_standard";
+    let deliveryType: StxDeliveryType;
+    if (type.includes("expedited")) deliveryType = "express_expedited";
+    else if (type.startsWith("express")) deliveryType = "express_standard";
+    else deliveryType = "standard";
 
     candidates.push({ deliveryType, price, asks, idx });
   }

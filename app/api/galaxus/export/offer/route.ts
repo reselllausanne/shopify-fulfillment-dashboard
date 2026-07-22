@@ -273,23 +273,18 @@ export async function GET(request: Request) {
 
     let suggestedRetailPriceInclVat = "";
     if (isStx) {
-      // Physical liquidation: same TTC as Shopify (convergence manualPrice).
-      if (manualLock && manualPrice && manualPrice > 0) {
-        suggestedRetailPriceInclVat = manualPrice.toFixed(2);
-      } else {
-        const storedSuggested = parseNumber(variant?.suggestedRetailPriceInclVat);
-        const computed =
-          storedSuggested !== null && storedSuggested > 0
-            ? storedSuggested
-            : calcSuggestedRetailFromStoredStxBuyPrice({
-                storedBuyPriceChf: Number(variant?.price ?? 0),
-                productHandle,
-                productName,
-                deliveryType,
-              });
-        if (computed !== null && computed > 0) {
-          suggestedRetailPriceInclVat = String(computed);
-        }
+      const storedSuggested = parseNumber(variant?.suggestedRetailPriceInclVat);
+      const computed =
+        storedSuggested !== null && storedSuggested > 0
+          ? storedSuggested
+          : calcSuggestedRetailFromStoredStxBuyPrice({
+              storedBuyPriceChf: Number(variant?.price ?? 0),
+              productHandle,
+              productName,
+              deliveryType,
+            });
+      if (computed !== null && computed > 0) {
+        suggestedRetailPriceInclVat = String(computed);
       }
     }
 

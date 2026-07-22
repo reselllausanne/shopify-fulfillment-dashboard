@@ -4,6 +4,7 @@ import {
   isTheSupplierVariantId,
 } from "@/galaxus/warehouse/theCatalogStock";
 import { isTheWarehouseSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
+import { routeMarketplacePhysicalSale } from "@/shopify/inventory/marketplacePhysicalSale";
 import { resolveSupplierVariantForInventoryLine } from "./resolveSupplierVariant";
 import { scheduleTheSaleChannelSync } from "./theSaleChannelSync";
 import type {
@@ -183,6 +184,49 @@ export async function applyInventoryOrderLine(
 
     if (options?.syncChannels !== false && shouldScheduleTheSaleSync(result)) {
       scheduleTheSaleChannelSync({ providerKeys: [result.providerKey] });
+    }
+
+    if (
+      result.applied &&
+      (eventType === "SALE" || eventType === undefined) &&
+      (result.quantityDelta ?? 0) < 0
+    ) {
+      const gtin = String(resolvedVariant.gtin ?? input.gtin ?? "").trim();
+      if (gtin) {
+        try {
+          const route = await routeMarketplacePhysicalSale({
+            channel,
+            externalLineId,
+            externalOrderId,
+            gtin,
+            quantity: quantity,
+          });
+          if (route.warnings.length) {
+            console.warn("[inventory][marketplace-physical-sale]", {
+              channel,
+              externalLineId,
+              gtin,
+              warnings: route.warnings,
+            });
+          }
+          if (route.routed) {
+            console.info("[inventory][marketplace-physical-sale] routed", {
+              channel,
+              externalLineId,
+              gtin,
+              decremented: route.decremented,
+              locations: route.locations,
+            });
+          }
+        } catch (err: any) {
+          console.error("[inventory][marketplace-physical-sale] failed", {
+            channel,
+            externalLineId,
+            gtin,
+            error: err?.message ?? err,
+          });
+        }
+      }
     }
 
     return result;
