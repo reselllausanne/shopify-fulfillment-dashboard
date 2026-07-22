@@ -130,3 +130,62 @@ describe("productClassification extended kinds", () => {
     expect(classifyGalaxusProductKind({ title: "The Brick - Gray" })).toBe("phone");
   });
 });
+
+describe("KickDB breadcrumb-driven classification (resilient)", () => {
+  it("adidas Ultra Boost (not in FOOTWEAR_RE) is sneakers via KickDB breadcrumbs", () => {
+    // Free-text regex misses "Ultra Boost". KickDB breadcrumbs must save it.
+    expect(
+      classifyGalaxusProductKind({
+        title: "adidas Ultra Boost 5.0 DNA White",
+        brand: "Adidas",
+        breadcrumbAliases: ["sneakers", "lifestyle"],
+      })
+    ).toBe("sneakers");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        title: "adidas Ultra Boost 5.0 DNA White",
+        brand: "Adidas",
+        breadcrumbAliases: ["sneakers", "lifestyle"],
+      })
+    ).toContain("Sneakers");
+  });
+
+  it("KickDB product_type=sneakers overrides missing free-text signals", () => {
+    expect(
+      classifyGalaxusProductKind({
+        title: "Some Obscure Model Name",
+        productType: "sneakers",
+      })
+    ).toBe("sneakers");
+  });
+
+  it("KickDB apparel breadcrumb maps to Bekleidung path", () => {
+    const path = resolveGalaxusProductCategoryPath({
+      title: "Some Tee",
+      breadcrumbAliases: ["apparel", "tops", "t-shirts"],
+    });
+    expect(path).toContain("Bekleidung");
+    expect(path).not.toContain("Schuhe");
+  });
+
+  it("numeric EU sizeRaw hints footwear when no other signal", () => {
+    expect(
+      classifyGalaxusProductKind({
+        title: "",
+        sizeRaw: "42",
+      })
+    ).toBe("sneakers");
+  });
+
+  it("Ultra Boost gets Shoe size spec via KickDB breadcrumbs (regression for regex miss)", () => {
+    const row = buildGalaxusSizeSpecRow({
+      providerKey: "STX_TEST",
+      sizeRaw: "EU 42.5",
+      supplierTitle: "adidas Ultra Boost 5.0 DNA White",
+      brand: "Adidas",
+      breadcrumbAliases: ["sneakers", "lifestyle"],
+    });
+    expect(row?.SpecificationKey).toBe("Shoe size (EU)");
+    expect(row?.SpecificationValue).toBe("42.5");
+  });
+});

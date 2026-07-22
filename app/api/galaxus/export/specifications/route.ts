@@ -16,6 +16,7 @@ import {
 } from "@/galaxus/exports/trmExport";
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
+import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -119,6 +120,7 @@ export async function GET(request: Request) {
                 traitsJson: true,
                 name: true,
                 description: true,
+                rawJson: true,
               },
             },
           },
@@ -185,6 +187,7 @@ export async function GET(request: Request) {
     const traits = product?.traitsJson ?? null;
 
     let rowsAdded = 0;
+    const signals = extractKickdbClassificationSignals((product as any)?.rawJson ?? null);
     const sizeSpecRow = buildGalaxusSizeSpecRow({
       providerKey,
       sizeRaw: variant?.sizeRaw ?? null,
@@ -193,6 +196,9 @@ export async function GET(request: Request) {
       supplierSku: variant?.supplierSku ?? null,
       kickdbTitle: product?.name ?? null,
       kickdbDescription: product?.description ?? null,
+      breadcrumbAliases: signals.breadcrumbAliases,
+      productType: signals.productType,
+      brand: variant?.supplierBrand ?? product?.brand ?? null,
     });
     if (sizeSpecRow) {
       rowsAdded += 1;

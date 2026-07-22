@@ -22,9 +22,15 @@ flock -n 9 || exit 0
 cd "${ROOT}"
 {
   echo "=== $(date -Is) create queue run ==="
-  echo "--- sorter ---"
+  echo "--- sorter (sales) ---"
   # shellcheck disable=SC2086
   curl -s -X POST ${AUTH_HEADER} "${API}/api/kickdb/flag-candidates?minSales=3&limit=100"
+  echo
+  echo "--- sorter (activity fallback) ---"
+  # Drain untracked catalog even when sales_count_15_days is empty on rawJson —
+  # rank by KickDBProduct.updatedAt so freshest SSE-touched products create first.
+  # shellcheck disable=SC2086
+  curl -s -X POST ${AUTH_HEADER} "${API}/api/kickdb/flag-candidates?mode=activity&limit=200"
   echo
   echo "--- creates ---"
   "${PYTHON}" main_from_db.py --db-api "${API}" --status create_candidate \

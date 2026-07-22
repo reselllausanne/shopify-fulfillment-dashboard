@@ -42,7 +42,15 @@ type ClassificationInput = {
   secondaryCategory?: string | null;
   productType?: string | null;
   breadcrumbs?: string[] | null;
+  /**
+   * KickDB/StockX breadcrumb aliases ordered by level ASC (level 1 first).
+   * Preferred over free-text signals; enables deterministic mapping to
+   * `GalaxusProductKind` without title regex.
+   */
+  breadcrumbAliases?: string[] | null;
   brand?: string | null;
+  /** Raw supplier size string ("EU 42", "42 2/3", "L", "OS"); numeric-EU hints footwear. */
+  sizeRaw?: string | null;
 };
 
 function sanitizeText(value?: string | null): string {
@@ -108,6 +116,110 @@ const SOCKS_RE = /\b(socks?|no-?show socks)\b/i;
 const TROUSERS_RE = /\b(trousers?|jeans|sweatpants|joggers?|cargo pants|chinos?)\b/i;
 const UNDERWEAR_RE = /\b(boxer|boxer briefs|underwear|briefs|trunks)\b/i;
 
+// StockX/KickDB breadcrumb alias -> Galaxus product kind.
+// Mirrors _TAXONOMY in portable_product_upsert/shopifyAPI_GQL.py so the
+// resilient category tree (level 3 > 2 > 1) drives Galaxus classification
+// deterministically, without depending on title regex.
+const STOCKX_ALIAS_TO_KIND: Record<string, GalaxusProductKind> = {
+  // Footwear
+  sneakers: "sneakers",
+  shoes: "sneakers",
+  footwear: "sneakers",
+  // Apparel - tops
+  "t-shirts": "apparel",
+  tshirts: "apparel",
+  tee: "apparel",
+  hoodies: "apparel",
+  hoodie: "apparel",
+  sweatshirts: "apparel",
+  sweatshirt: "apparel",
+  crewneck: "apparel",
+  shirts: "apparel",
+  shirt: "apparel",
+  polos: "apparel",
+  polo: "apparel",
+  tank: "apparel",
+  tops: "apparel",
+  // Apparel - bottoms
+  pants: "trousers",
+  trousers: "trousers",
+  jeans: "trousers",
+  joggers: "trousers",
+  sweatpants: "trousers",
+  shorts: "shorts",
+  // Apparel - outer / misc
+  outerwear: "apparel",
+  jacket: "apparel",
+  jackets: "apparel",
+  activewear: "apparel",
+  clothing: "apparel",
+  apparel: "apparel",
+  streetwear: "apparel",
+  bottoms: "trousers",
+  // Underwear / socks
+  underwear: "underwear",
+  socks: "socks",
+  sock: "socks",
+  // Accessories
+  accessories: "cap",
+  hats: "cap",
+  hat: "hat",
+  cap: "cap",
+  caps: "cap",
+  beanies: "hat",
+  // Bags
+  bag: "bag",
+  bags: "bag",
+  backpack: "backpack",
+  backpacks: "backpack",
+  wallet: "bag",
+  // Toys / collectibles
+  toys: "lego",
+  collectibles: "tradingcard",
+  lego: "lego",
+  "trading-cards": "tradingcard",
+  "trading cards": "tradingcard",
+  pokemon: "tradingcard",
+};
+
+function normalizeAlias(value?: string | null): string {
+  return sanitizeText(value ?? "").toLowerCase();
+}
+
+/**
+ * Resolve KickDB/StockX breadcrumb aliases -> GalaxusProductKind.
+ * Aliases must be ordered by level ASC (level 1 first). Most-specific
+ * level (highest) is checked first, matching main.py `derive_taxonomy_category`.
+ */
+export function classifyFromBreadcrumbAliases(
+  aliases?: string[] | null
+): GalaxusProductKind | null {
+  if (!Array.isArray(aliases) || aliases.length === 0) return null;
+  for (let i = aliases.length - 1; i >= 0; i -= 1) {
+    const alias = normalizeAlias(aliases[i]);
+    if (!alias) continue;
+    const kind = STOCKX_ALIAS_TO_KIND[alias];
+    if (kind) return kind;
+  }
+  return null;
+}
+
+function classifyFromProductType(value?: string | null): GalaxusProductKind | null {
+  const alias = normalizeAlias(value);
+  if (!alias) return null;
+  return STOCKX_ALIAS_TO_KIND[alias] ?? null;
+}
+
+const NUMERIC_EU_SIZE_RE = /^(?:EU\s+)?\d{1,2}(?:[.,]\d+)?(?:\s+\d\s*\/\s*\d)?$/i;
+
+function classifyFromSizeRaw(sizeRaw?: string | null): GalaxusProductKind | null {
+  const trimmed = String(sizeRaw ?? "").trim();
+  if (!trimmed) return null;
+  if (NUMERIC_EU_SIZE_RE.test(trimmed)) return "sneakers";
+  if (/^(XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL)$/i.test(trimmed)) return "apparel";
+  return null;
+}
+
 // Brands whose StockX catalog is homogeneous (always the same product type).
 // Checked first; safe because these brands never list footwear on StockX.
 const BRAND_CATEGORY: Record<string, GalaxusProductKind> = {
@@ -131,8 +243,19 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   const brand = sanitizeText(input.brand ?? "").toLowerCase();
   if (brand && BRAND_CATEGORY[brand]) return BRAND_CATEGORY[brand];
 
+  // 1. KickDB breadcrumb aliases (most-specific level first).
+  const byBreadcrumb = classifyFromBreadcrumbAliases(input.breadcrumbAliases);
+  if (byBreadcrumb) return byBreadcrumb;
+
+  // 2. KickDB product_type field.
+  const byProductType = classifyFromProductType(input.productType);
+  if (byProductType) return byProductType;
+
   const text = combinedText(input);
-  if (!text) return "unknown";
+  if (!text) {
+    // 3. Size-raw heuristic when no free text at all.
+    return classifyFromSizeRaw(input.sizeRaw) ?? "unknown";
+  }
   if (SHORTS_RE.test(text)) return "shorts";
   if (BACKPACK_RE.test(text)) return "backpack";
   if (BAG_RE.test(text)) return "bag";
@@ -156,7 +279,9 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (PHONE_RE.test(text)) return "phone";
   if (FOOTWEAR_RE.test(text)) return "sneakers";
   if (APPAREL_RE.test(text)) return "apparel";
-  return "unknown";
+
+  // 4. Size-raw heuristic as final fallback.
+  return classifyFromSizeRaw(input.sizeRaw) ?? "unknown";
 }
 
 export function isFootwearKind(kind: GalaxusProductKind): boolean {
@@ -193,17 +318,12 @@ const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   unknown: "Mode > Alles in Mode > Schuhe > Sneakers",
 };
 
+/**
+ * Always maps to a German Galaxus taxonomy path via `classifyGalaxusProductKind`.
+ * Raw StockX breadcrumb strings (English) are NEVER emitted directly, since
+ * Galaxus rejects any category path outside its own tree.
+ */
 export function resolveGalaxusProductCategoryPath(input: ClassificationInput): string {
-  const breadcrumbs = normalizeBreadcrumbs(input.breadcrumbs);
-  if (breadcrumbs.length > 0) return truncate(breadcrumbs.join(" > "), 200);
-
-  const category = sanitizeText(input.category ?? "");
-  const secondary = sanitizeText(input.secondaryCategory ?? "");
-  const productType = sanitizeText(input.productType ?? "");
-  if (category && secondary) return truncate(`${category} > ${secondary}`, 200);
-  if (category) return truncate(category, 200);
-  if (productType) return truncate(productType, 200);
-
   const kind = classifyGalaxusProductKind(input);
   return GALAXUS_CATEGORY_PATHS[kind] ?? GALAXUS_CATEGORY_PATHS.unknown;
 }
@@ -216,6 +336,8 @@ export function resolveGalaxusDescription(input: {
   secondaryCategory?: string | null;
   productType?: string | null;
   breadcrumbs?: string[] | null;
+  breadcrumbAliases?: string[] | null;
+  sizeRaw?: string | null;
 }): string {
   const existing = sanitizeText(stripHtml(input.description ?? ""));
   if (existing) return truncate(existing, 4000);
@@ -229,6 +351,8 @@ export function resolveGalaxusDescription(input: {
     secondaryCategory: input.secondaryCategory,
     productType: input.productType,
     breadcrumbs: input.breadcrumbs,
+    breadcrumbAliases: input.breadcrumbAliases,
+    sizeRaw: input.sizeRaw,
   });
   const subject = title || "Product";
   const prefix = brand ? `${subject} by ${brand}` : subject;

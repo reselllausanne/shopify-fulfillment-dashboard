@@ -46,6 +46,7 @@ export const FEED_MAPPING_INCLUDE = {
           description: true,
           styleId: true,
           traitsJson: true,
+          rawJson: true,
         },
       },
     },

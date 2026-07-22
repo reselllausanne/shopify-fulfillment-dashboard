@@ -15,6 +15,10 @@ type ExportClassificationInput = {
   supplierSku?: string | null;
   kickdbTitle?: string | null;
   kickdbDescription?: string | null;
+  breadcrumbAliases?: string[] | null;
+  productType?: string | null;
+  brand?: string | null;
+  sizeRaw?: string | null;
 };
 
 function sanitizeText(value?: string | null): string {
@@ -23,21 +27,37 @@ function sanitizeText(value?: string | null): string {
 }
 
 function resolveExportKind(input: ExportClassificationInput): GalaxusProductKind {
+  // 1. KickDB structured signals (breadcrumbs/product_type/brand) — deterministic.
+  const structuredKind = classifyGalaxusProductKind({
+    breadcrumbAliases: input.breadcrumbAliases ?? null,
+    productType: input.productType ?? null,
+    brand: input.brand ?? null,
+  });
+  if (structuredKind !== "unknown") return structuredKind;
+
+  // 2. Supplier title regex.
   const supplierTitle = sanitizeText(input.supplierTitle);
   const supplierSku = sanitizeText(input.supplierSku);
   const supplierKind = classifyGalaxusProductKind({
     title: supplierTitle,
     category: supplierSku || null,
+    brand: input.brand ?? null,
   });
   if (supplierKind !== "unknown") return supplierKind;
 
+  // 3. KickDB title/description regex.
   const kickdbKind = classifyGalaxusProductKind({
     title: input.kickdbTitle ?? null,
     description: input.kickdbDescription ?? null,
+    brand: input.brand ?? null,
   });
   if (kickdbKind !== "unknown") return kickdbKind;
 
-  return "unknown";
+  // 4. sizeRaw heuristic (numeric EU = footwear, alpha = apparel).
+  return (
+    classifyGalaxusProductKind({ sizeRaw: input.sizeRaw ?? null, brand: input.brand ?? null }) ??
+    "unknown"
+  );
 }
 
 export function resolveGalaxusExportClassification(
@@ -48,6 +68,10 @@ export function resolveGalaxusExportClassification(
   const categoryPath = resolveGalaxusProductCategoryPath({
     title: supplierTitle || input.kickdbTitle || null,
     description: input.kickdbDescription ?? null,
+    breadcrumbAliases: input.breadcrumbAliases ?? null,
+    productType: input.productType ?? null,
+    brand: input.brand ?? null,
+    sizeRaw: input.sizeRaw ?? null,
   });
 
   return {
@@ -119,6 +143,9 @@ export function buildGalaxusSizeSpecRow(input: {
   supplierSku?: string | null;
   kickdbTitle?: string | null;
   kickdbDescription?: string | null;
+  breadcrumbAliases?: string[] | null;
+  productType?: string | null;
+  brand?: string | null;
 }): { ProviderKey: string; SpecificationKey: string; SpecificationValue: string } | null {
   const providerKey = String(input.providerKey ?? "").trim();
   if (!providerKey) return null;
@@ -128,6 +155,10 @@ export function buildGalaxusSizeSpecRow(input: {
     supplierSku: input.supplierSku,
     kickdbTitle: input.kickdbTitle,
     kickdbDescription: input.kickdbDescription,
+    breadcrumbAliases: input.breadcrumbAliases,
+    productType: input.productType,
+    brand: input.brand,
+    sizeRaw: input.sizeRaw ?? input.sizeNormalized ?? null,
   });
   if (!requiresSizeSpec) return null;
 

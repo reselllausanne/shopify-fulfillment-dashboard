@@ -22,6 +22,7 @@ import {
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
+import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -142,14 +143,27 @@ function buildVariantName(
   return buildProductTitle(payload, fallbackSku, fallbackName);
 }
 
-function buildProductCategory(payload: KickDbPayload | null, fallbackTitle?: string | null): string {
+function buildProductCategory(
+  payload: KickDbPayload | null,
+  fallbackTitle?: string | null,
+  rawJson?: unknown,
+  brand?: string | null,
+  sizeRaw?: string | null
+): string {
+  const signals = extractKickdbClassificationSignals(rawJson);
   return resolveGalaxusProductCategoryPath({
     title: fallbackTitle ?? payload?.title ?? null,
     description: payload?.description ?? null,
-    category: payload?.category ?? null,
-    secondaryCategory: payload?.secondary_category ?? null,
-    productType: payload?.product_type ?? null,
-    breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    category: signals.category ?? payload?.category ?? null,
+    secondaryCategory: signals.secondaryCategory ?? payload?.secondary_category ?? null,
+    productType: signals.productType ?? payload?.product_type ?? null,
+    breadcrumbs:
+      signals.breadcrumbValues.length > 0
+        ? signals.breadcrumbValues
+        : payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    breadcrumbAliases: signals.breadcrumbAliases.length > 0 ? signals.breadcrumbAliases : null,
+    brand: brand ?? payload?.brand ?? null,
+    sizeRaw: sizeRaw ?? null,
   });
 }
 
@@ -285,6 +299,7 @@ export async function GET(request: Request) {
                   brand: true,
                   description: true,
                   styleId: true,
+                  rawJson: true,
                 },
               },
             },
@@ -424,15 +439,29 @@ export async function GET(request: Request) {
       : null;
     const title = fallbackTitle;
     const variantName = fallbackTitle;
-    const category = buildProductCategory(payload, fallbackTitle);
+    const rawKickdbJson = (product as any)?.rawJson ?? null;
+    const brandForClassify = supplierBrand || payload?.brand || product?.brand || null;
+    const category = buildProductCategory(
+      payload,
+      fallbackTitle,
+      rawKickdbJson,
+      brandForClassify,
+      supplierVariant?.sizeRaw ?? null
+    );
+    const signals = extractKickdbClassificationSignals(rawKickdbJson);
     const description = resolveGalaxusDescription({
       description: payload?.description ?? null,
       title: fallbackTitle,
-      brand: supplierBrand || payload?.brand || product?.brand || null,
-      category: payload?.category ?? null,
-      secondaryCategory: payload?.secondary_category ?? null,
-      productType: payload?.product_type ?? null,
-      breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+      brand: brandForClassify,
+      category: signals.category ?? payload?.category ?? null,
+      secondaryCategory: signals.secondaryCategory ?? payload?.secondary_category ?? null,
+      productType: signals.productType ?? payload?.product_type ?? null,
+      breadcrumbs:
+        signals.breadcrumbValues.length > 0
+          ? signals.breadcrumbValues
+          : payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+      breadcrumbAliases: signals.breadcrumbAliases.length > 0 ? signals.breadcrumbAliases : null,
+      sizeRaw: supplierVariant?.sizeRaw ?? null,
     });
 
     const manufacturerBase =

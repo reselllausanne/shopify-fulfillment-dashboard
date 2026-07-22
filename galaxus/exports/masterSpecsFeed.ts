@@ -17,6 +17,7 @@ import {
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
 import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
+import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 import { attachAvailableStock } from "@/inventory/availableStock";
 
 type ExportRow = Record<string, string>;
@@ -62,16 +63,24 @@ function buildManufacturerKey(base: string, gtin: string | null, fallbackKey?: s
 function buildProductCategory(
   payload: KickDbPayload | null,
   fallbackTitle?: string | null,
-  brand?: string | null
+  brand?: string | null,
+  rawJson?: unknown,
+  sizeRaw?: string | null
 ): string {
+  const signals = extractKickdbClassificationSignals(rawJson);
   return resolveGalaxusProductCategoryPath({
     title: fallbackTitle ?? payload?.title ?? null,
     description: payload?.description ?? null,
-    category: payload?.category ?? null,
-    secondaryCategory: payload?.secondary_category ?? null,
-    productType: payload?.product_type ?? null,
-    breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    category: signals.category ?? payload?.category ?? null,
+    secondaryCategory: signals.secondaryCategory ?? payload?.secondary_category ?? null,
+    productType: signals.productType ?? payload?.product_type ?? null,
+    breadcrumbs:
+      signals.breadcrumbValues.length > 0
+        ? signals.breadcrumbValues
+        : payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+    breadcrumbAliases: signals.breadcrumbAliases.length > 0 ? signals.breadcrumbAliases : null,
     brand: brand ?? payload?.brand ?? null,
+    sizeRaw: sizeRaw ?? null,
   });
 }
 
@@ -175,15 +184,28 @@ function buildMasterRowsFromCandidates(
           } as KickDbPayload)
         : null;
     const title = fallbackTitle;
-    const category = buildProductCategory(payload, fallbackTitle, supplierBrand || payload?.brand || product?.brand || null);
+    const rawKickdbJson = (product as any)?.rawJson ?? null;
+    const category = buildProductCategory(
+      payload,
+      fallbackTitle,
+      supplierBrand || payload?.brand || product?.brand || null,
+      rawKickdbJson,
+      supplierVariant?.sizeRaw ?? null
+    );
+    const signals = extractKickdbClassificationSignals(rawKickdbJson);
     const description = resolveGalaxusDescription({
       description: payload?.description ?? null,
       title: fallbackTitle,
       brand: supplierBrand || payload?.brand || product?.brand || null,
-      category: payload?.category ?? null,
-      secondaryCategory: payload?.secondary_category ?? null,
-      productType: payload?.product_type ?? null,
-      breadcrumbs: payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+      category: signals.category ?? payload?.category ?? null,
+      secondaryCategory: signals.secondaryCategory ?? payload?.secondary_category ?? null,
+      productType: signals.productType ?? payload?.product_type ?? null,
+      breadcrumbs:
+        signals.breadcrumbValues.length > 0
+          ? signals.breadcrumbValues
+          : payload?.breadcrumbs?.map((item) => item.value ?? "").filter(Boolean) ?? null,
+      breadcrumbAliases: signals.breadcrumbAliases.length > 0 ? signals.breadcrumbAliases : null,
+      sizeRaw: supplierVariant?.sizeRaw ?? null,
     });
     const manufacturerBase = payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? "";
     const manufacturerKey = buildManufacturerKey(
@@ -224,6 +246,7 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
     const providerKey = candidate.providerKey;
     if (!providerKey) continue;
     const traits = product?.traitsJson ?? null;
+    const specSignals = extractKickdbClassificationSignals((product as any)?.rawJson ?? null);
     const sizeSpecRow = buildGalaxusSizeSpecRow({
       providerKey,
       sizeRaw: variant?.sizeRaw ?? null,
@@ -232,6 +255,9 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
       supplierSku: variant?.supplierSku ?? null,
       kickdbTitle: product?.name ?? null,
       kickdbDescription: product?.description ?? null,
+      breadcrumbAliases: specSignals.breadcrumbAliases,
+      productType: specSignals.productType,
+      brand: variant?.supplierBrand ?? product?.brand ?? null,
     });
     if (sizeSpecRow) {
       rows.push(sizeSpecRow);
