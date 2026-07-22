@@ -66,6 +66,20 @@ type LocationOption = { id: string; name: string; priority: number };
 
 const LOCATION_STORAGE_KEY = "restock.locationId";
 
+const AUTO_MODE_STORAGE_KEY = "restock.autoMode";
+
+type HistoryEntry = {
+  id: string;
+  gtin: string;
+  status: "restocked" | "created-restocked" | "size-confirmation-required" | "error";
+  ok: boolean;
+  title?: string | null;
+  quantity: number;
+  location: string;
+  at: number;
+  warning?: string;
+};
+
 export default function RestockScanPage() {
   const [gtin, setGtin] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -78,6 +92,8 @@ export default function RestockScanPage() {
   const [error, setError] = useState<string | null>(null);
   const [locations, setLocations] = useState<LocationOption[]>([]);
   const [locationId, setLocationId] = useState<string>("");
+  const [autoMode, setAutoMode] = useState<boolean>(false);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -112,6 +128,27 @@ export default function RestockScanPage() {
     if (typeof window !== "undefined") window.localStorage.setItem(LOCATION_STORAGE_KEY, id);
   }
 
+  // Persist mass-scan preference between sessions (scanner user).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem(AUTO_MODE_STORAGE_KEY);
+    if (saved === "1") setAutoMode(true);
+  }, []);
+
+  function toggleAutoMode(next: boolean) {
+    setAutoMode(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(AUTO_MODE_STORAGE_KEY, next ? "1" : "0");
+    }
+  }
+
+  function pushHistory(entry: Omit<HistoryEntry, "id" | "at">) {
+    setHistory((prev) => [
+      { id: Math.random().toString(36).slice(2), at: Date.now(), ...entry },
+      ...prev.slice(0, 19),
+    ]);
+  }
+
   const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? null;
   const locationReady = Boolean(locationId && currentLocationName);
 
@@ -135,7 +172,16 @@ export default function RestockScanPage() {
       if (!data.ok) {
         setError(data.error ?? "Recherche échouée");
       } else {
-        setLookup(data.result as LookupResult);
+        const result = data.result as LookupResult;
+        setLookup(result);
+
+        // Mass-scan flow: if already on Shopify, immediately restock and clear
+        // for the next scan. Anything else (KickDB match / unknown) still needs
+        // manual confirmation because product creation is not idempotent per
+        // scan and we don't want to silently create wrong SKUs.
+        if (autoMode && result.status === "on-shopify" && locationId) {
+          await runApply({}, "Auto restock…", { autoScan: true });
+        }
       }
     } catch (err: any) {
       setError(err?.message ?? "Erreur réseau");
@@ -144,7 +190,11 @@ export default function RestockScanPage() {
     }
   }
 
-  async function runApply(body: Record<string, unknown>, busyLabel: string) {
+  async function runApply(
+    body: Record<string, unknown>,
+    busyLabel: string,
+    options: { autoScan?: boolean } = {}
+  ) {
     if (!locationId) {
       setError("Choisir un emplacement (Bussigny / Antica / THE LAB) avant restock");
       return;
@@ -152,12 +202,14 @@ export default function RestockScanPage() {
     setBusy(busyLabel);
     setError(null);
     try {
+      const scannedGtin = gtin.trim();
+      const currentLoc = currentLocationName ?? "?";
       const res = await fetch("/api/restock/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...body,
-          gtin: gtin.trim(),
+          gtin: scannedGtin,
           quantity,
           // locationId LAST — never let body overwrite the picker selection
           locationId,
@@ -173,6 +225,23 @@ export default function RestockScanPage() {
       }
       if (!data.ok && data.status !== "size-confirmation-required") {
         setError(data.error ?? "Échec");
+      }
+      // Mass-scan flow — record + clear immediately for the next scan.
+      if (options.autoScan) {
+        pushHistory({
+          gtin: scannedGtin,
+          status: (data.status as HistoryEntry["status"]) ?? "error",
+          ok: Boolean(data.ok),
+          title: data.shopify?.restock?.variant?.productTitle ?? null,
+          quantity,
+          location: currentLoc,
+          warning: data.warnings?.[0],
+        });
+        setGtin("");
+        setLookup(null);
+        setApplyResult(null);
+        setError(null);
+        setTimeout(() => inputRef.current?.focus(), 0);
       }
     } catch (err: any) {
       setError(err?.message ?? "Erreur réseau");
@@ -190,6 +259,20 @@ export default function RestockScanPage() {
         Scanner le GTIN (barcode boîte). Stock ajouté uniquement à{" "}
         <strong>{currentLocationName ?? "…choisir emplacement…"}</strong>.
       </p>
+
+      <div className="mt-3 flex items-center gap-2 text-sm">
+        <label className="inline-flex items-center gap-2 select-none">
+          <input
+            type="checkbox"
+            checked={autoMode}
+            onChange={(e) => toggleAutoMode(e.target.checked)}
+            className="h-4 w-4"
+          />
+          <span>
+            Mass-scan (auto-restock si déjà sur Shopify — sinon confirmation manuelle)
+          </span>
+        </label>
+      </div>
 
       {locations.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-2">
@@ -366,6 +449,42 @@ export default function RestockScanPage() {
       )}
 
       {/* Final result */}
+      {/* Mass-scan history */}
+      {autoMode && history.length > 0 && (
+        <div className="mt-6 rounded-sm border border-gray-200 bg-white">
+          <div className="border-b border-gray-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Historique mass-scan (session)
+          </div>
+          <ul className="divide-y divide-gray-100 text-sm">
+            {history.map((h) => (
+              <li
+                key={h.id}
+                className={`flex items-center justify-between px-4 py-2 ${
+                  h.ok ? "" : "bg-red-50"
+                }`}
+              >
+                <div className="flex-1 truncate">
+                  <span className={h.ok ? "text-green-700" : "text-red-700"}>
+                    {h.ok ? "✓" : "✗"}
+                  </span>{" "}
+                  <span className="font-mono text-xs text-gray-500">{h.gtin}</span>{" "}
+                  <span className="text-gray-800">{h.title ?? "(sans titre)"}</span>
+                  <span className="ml-2 text-xs text-gray-500">
+                    +{h.quantity} @ {h.location}
+                  </span>
+                  {h.warning && (
+                    <span className="ml-2 text-xs text-amber-700">⚠ {h.warning}</span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-400">
+                  {new Date(h.at).toLocaleTimeString()}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {applyResult && applyResult.status !== "size-confirmation-required" && (
         <div
           className={`mt-6 rounded-sm border p-4 ${
