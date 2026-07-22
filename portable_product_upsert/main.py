@@ -60,22 +60,32 @@ from stockx_images import (
     should_auto_rebuild_product_images,
 )
 
-# Set True via --full-360 CLI flag (all gallery_360 frames instead of 5 orbit picks).
-# Also honors env SHOPIFY_CREATE_FULL_360=1 (used by scan create via
-# createProductFullFlow) so scan-created products get the full StockX 360 strip.
+# Set True via --full-360 CLI flag (kept for backward compat with scan create).
+# Also honors env SHOPIFY_CREATE_FULL_360=1. In the new default create policy
+# (see INCLUDE_360_ON_CREATE below), the 360 strip is always concatenated after
+# the curated static picks, so FULL_360_MODE no longer changes create behavior.
 FULL_360_MODE = os.environ.get("SHOPIFY_CREATE_FULL_360", "0").strip() in (
     "1",
     "true",
     "yes",
     "on",
 )
-# On create: how many images to upload from the curated selection.
-# select_stockx_product_images already returns <=5. Default 5 (was 1: hero-only).
-# Override via env SHOPIFY_CREATE_IMAGES_MAX. --full-360 still uploads everything.
+# On create: how many static hero/gallery picks to upload before the 360 strip.
+# select_stockx_product_images already returns <=5 orbit-picked frames.
+# Env: SHOPIFY_CREATE_IMAGES_MAX (default 5).
 try:
     CREATE_IMAGES_MAX = max(1, int(os.environ.get("SHOPIFY_CREATE_IMAGES_MAX", "5")))
 except Exception:
     CREATE_IMAGES_MAX = 5
+# When True (default) every newly-created product gets its full gallery_360
+# strip uploaded AFTER the CREATE_IMAGES_MAX statics. Set SHOPIFY_CREATE_INCLUDE_360=0
+# to disable and fall back to statics-only.
+INCLUDE_360_ON_CREATE = os.environ.get("SHOPIFY_CREATE_INCLUDE_360", "1").strip() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 # Set True via --full-pass: force SEO/alt refresh + 360 images (categories never change on update).
 FULL_PASS_MODE = False
 # Set True via --no-new-variants: skip creating missing sizes (quota saver). Default: create new
@@ -1219,13 +1229,12 @@ def create_product_enhanced(url, title, product_info):
             print(f"[ERROR] Could not create product shell for {title}")
             return False
         
-        # Upload curated set on create (default 5, --full-360 uploads all frames).
-        # Bulk update appends any additional orbit extras beyond this.
+        # Upload the full curated list on create: CREATE_IMAGES_MAX statics
+        # (hero + gallery orbit picks) plus the entire gallery_360 strip when
+        # INCLUDE_360_ON_CREATE is on (default). Update path handles later
+        # rebuilds against this same slot count.
         if valid_images:
-            images_to_add = (
-                valid_images if FULL_360_MODE else valid_images[:CREATE_IMAGES_MAX]
-            )
-            add_images_to_product(product_id, images_to_add)
+            add_images_to_product(product_id, valid_images)
         
         # Set STANDARD product attributes (best for Google Merchant Center)
         stockx_raw_data = product_info.get("__raw_vendor__", {})
@@ -2457,11 +2466,23 @@ def process_url(url, thread_id=0, prefetched=None):
     if product_barcode:
         print(f"[Thread {thread_id}] [INFO] Found product identifier: {product_barcode}")
     
-    # Images: full 360 strip when --full-360, else ~5 orbit angles
-    if FULL_360_MODE:
-        images = list_all_gallery_360_urls(product_data) or select_stockx_product_images(product_data)
+    # Images: statics first (Shopify uses index 0 as hero), then the full 360
+    # strip so every create includes the rotation. Static picks are capped at
+    # CREATE_IMAGES_MAX; the 360 frames are appended in order after dedupe.
+    static_picks = select_stockx_product_images(product_data) or []
+    static_picks = list(static_picks)[:CREATE_IMAGES_MAX]
+    if INCLUDE_360_ON_CREATE or FULL_360_MODE:
+        strip_360 = list_all_gallery_360_urls(product_data) or []
     else:
-        images = select_stockx_product_images(product_data)
+        strip_360 = []
+    seen_urls = set()
+    images = []
+    for _u in list(static_picks) + list(strip_360):
+        if _u and _u not in seen_urls:
+            seen_urls.add(_u)
+            images.append(_u)
+    if not images and static_picks:
+        images = list(static_picks)
     
     variants = product_data.get("variants", [])
     
