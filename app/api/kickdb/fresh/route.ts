@@ -15,7 +15,11 @@ export const dynamic = "force-dynamic";
  *
  * status:
  *   pending           (default) known Shopify products needing an update push
- *   create_candidate  products flagged for Shopify creation
+ *   create_candidate  products explicitly flagged for Shopify creation
+ *   untracked         KickDBProducts with NO ShopifySyncState row yet (no flag
+ *                     step required — consumer creates every product it sees,
+ *                     newest KickDB refresh first). mark_synced creates the
+ *                     ShopifySyncState row on success, so re-runs won't loop.
  *
  * Response products carry: kickdbProductId, urlKey, shopify state, rawJson.
  */
@@ -30,40 +34,66 @@ export async function GET(req: Request) {
   const status = (searchParams.get("status") ?? "pending").trim();
 
   try {
-    const rows = await prisma.$queryRaw<
-      Array<{
-        kickdbProductId: string;
-        urlKey: string | null;
-        styleId: string | null;
-        name: string | null;
-        rawJson: unknown;
-        rawFetchedAt: Date | null;
-        syncStatus: string;
-        shopifyProductId: string | null;
-        shopifyHandle: string | null;
-        shopifySyncedAt: Date | null;
-        priorityScore: number;
-      }>
-    >`
-      SELECT
-        p."kickdbProductId", p."urlKey", p."styleId", p."name",
-        p."rawJson", p."rawFetchedAt",
-        s."syncStatus", s."shopifyProductId", s."shopifyHandle",
-        s."shopifySyncedAt", s."priorityScore"
-      FROM "public"."ShopifySyncState" s
-      INNER JOIN "public"."KickDBProduct" p
-        ON p."kickdbProductId" = s."kickdbProductId"
-      WHERE p."rawJson" IS NOT NULL
-        AND (
-          CASE
-            WHEN ${status} = 'create_candidate' THEN s."syncStatus" = 'create_candidate'
-            ELSE s."syncStatus" IN ('pending', 'synced', 'error')
-              AND (s."shopifySyncedAt" IS NULL OR p."rawFetchedAt" > s."shopifySyncedAt")
-          END
-        )
-      ORDER BY s."priorityScore" DESC, p."rawFetchedAt" DESC
-      LIMIT ${limit}
-    `;
+    type Row = {
+      kickdbProductId: string;
+      urlKey: string | null;
+      styleId: string | null;
+      name: string | null;
+      rawJson: unknown;
+      rawFetchedAt: Date | null;
+      syncStatus: string;
+      shopifyProductId: string | null;
+      shopifyHandle: string | null;
+      shopifySyncedAt: Date | null;
+      priorityScore: number;
+    };
+
+    let rows: Row[];
+
+    if (status === "untracked") {
+      // Bypass the sync-state / flag step entirely. Every KickDBProduct without
+      // a ShopifySyncState row is a create candidate — freshest SSE refresh
+      // first so live-priced products land on Shopify before stale ones.
+      rows = await prisma.$queryRaw<Row[]>`
+        SELECT
+          p."kickdbProductId", p."urlKey", p."styleId", p."name",
+          p."rawJson", p."rawFetchedAt",
+          'untracked'::text AS "syncStatus",
+          NULL::text AS "shopifyProductId",
+          NULL::text AS "shopifyHandle",
+          NULL::timestamp AS "shopifySyncedAt",
+          0::int AS "priorityScore"
+        FROM "public"."KickDBProduct" p
+        WHERE p."rawJson" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "public"."ShopifySyncState" s
+            WHERE s."kickdbProductId" = p."kickdbProductId"
+          )
+        ORDER BY p."updatedAt" DESC
+        LIMIT ${limit}
+      `;
+    } else {
+      rows = await prisma.$queryRaw<Row[]>`
+        SELECT
+          p."kickdbProductId", p."urlKey", p."styleId", p."name",
+          p."rawJson", p."rawFetchedAt",
+          s."syncStatus", s."shopifyProductId", s."shopifyHandle",
+          s."shopifySyncedAt", s."priorityScore"
+        FROM "public"."ShopifySyncState" s
+        INNER JOIN "public"."KickDBProduct" p
+          ON p."kickdbProductId" = s."kickdbProductId"
+        WHERE p."rawJson" IS NOT NULL
+          AND (
+            CASE
+              WHEN ${status} = 'create_candidate' THEN s."syncStatus" = 'create_candidate'
+              ELSE s."syncStatus" IN ('pending', 'synced', 'error')
+                AND (s."shopifySyncedAt" IS NULL OR p."rawFetchedAt" > s."shopifySyncedAt")
+            END
+          )
+        ORDER BY s."priorityScore" DESC, p."rawFetchedAt" DESC
+        LIMIT ${limit}
+      `;
+    }
 
     return NextResponse.json({
       ok: true,

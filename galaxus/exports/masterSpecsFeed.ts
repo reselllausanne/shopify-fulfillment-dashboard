@@ -155,8 +155,10 @@ function buildMasterRowsFromCandidates(
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
+    const isPublishableStx =
+      deliveryType.startsWith("express_") || deliveryType === "standard";
     const effectiveStock =
-      isStx && deliveryType.startsWith("express_")
+      isStx && isPublishableStx
         ? publishStxStockFromAsks(rawStock)
         : isStx
           ? 0

@@ -397,7 +397,9 @@ export async function GET(request: Request) {
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
-    const effectiveStock = isStx && deliveryType.startsWith("express_")
+    const isPublishableStx =
+      deliveryType.startsWith("express_") || deliveryType === "standard";
+    const effectiveStock = isStx && isPublishableStx
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0

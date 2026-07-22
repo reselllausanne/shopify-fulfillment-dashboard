@@ -46,24 +46,23 @@ function resolveEffectiveStock(
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const extra = Math.max(0, Math.floor(physicalQty));
   if (supplierKey === "gld" || supplierKey === "trm") return 0;
-  if (supplierKey === "stx") {
-    // Marketplace publish requires TRUE express lane. Non-express (standard
-    // fallback via forceImport) is dropship-delisted; physical stock via the
-    // mirror still wins for liquidation.
-    const deliveryType = String(variant?.deliveryType ?? "").toLowerCase();
-    const isRealExpress = deliveryType.startsWith("express_");
-    const stxRaw = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
-    const stx = isRealExpress ? stxRaw : 0;
-    const dropshipDelisted = stx === 0;
-    if (extra > 0 || dropshipDelisted) {
-      return mergePhysicalWithDropship({
-        dropshipStock: stx,
-        physicalQty: extra,
-        dropshipDelisted,
-      }).finalStock;
-    }
-    return stx;
-  }
+          if (supplierKey === "stx") {
+            // Publish whichever STX offer the selector picked. Express (both
+            // ranks) wins when available; the "standard" fallback is allowed
+            // through so product families without any express asks (LEGO,
+            // low-liquidity apparel) still make it to the feed. Lead time on
+            // the offer row carries the actual delivery estimate.
+            const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
+            if (extra > 0) {
+              const dropshipDelisted = stx === 0;
+              return mergePhysicalWithDropship({
+                dropshipStock: stx,
+                physicalQty: extra,
+                dropshipDelisted,
+              }).finalStock;
+            }
+            return stx;
+          }
   const manualLock = Boolean(variant?.manualLock);
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock) ?? 0;

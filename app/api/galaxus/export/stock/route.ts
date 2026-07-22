@@ -309,8 +309,13 @@ export async function GET(request: Request) {
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
-    const dropshipDelisted = isStx && !deliveryType.startsWith("express_");
-    const dropshipStock = isStx && deliveryType.startsWith("express_")
+    // Any StockX offer that survived selectStxOfferForImport is publishable —
+    // express is preferred by the selector; "standard" is the fallback for
+    // product families with no express asks (LEGO, low-liquidity apparel).
+    const isPublishableStx =
+      deliveryType.startsWith("express_") || deliveryType === "standard";
+    const dropshipDelisted = isStx && !isPublishableStx;
+    const dropshipStock = isStx && isPublishableStx
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0

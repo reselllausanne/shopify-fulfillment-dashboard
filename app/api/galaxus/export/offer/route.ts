@@ -303,8 +303,10 @@ export async function GET(request: Request) {
         : manualLock && manualStock !== null
           ? manualStock
           : baseStock;
-    const dropshipDelisted = isStx && !deliveryType.startsWith("express_");
-    const dropshipStock = isStx && deliveryType.startsWith("express_")
+    const isPublishableStx =
+      deliveryType.startsWith("express_") || deliveryType === "standard";
+    const dropshipDelisted = isStx && !isPublishableStx;
+    const dropshipStock = isStx && isPublishableStx
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0

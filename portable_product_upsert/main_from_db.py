@@ -104,7 +104,16 @@ def main():
     parser = argparse.ArgumentParser(description="Consume fresh products from DB buffer -> Shopify")
     parser.add_argument("--db-api", default=DB_API_DEFAULT)
     parser.add_argument("--limit", type=int, default=50, help="max products per run")
-    parser.add_argument("--status", default="pending", choices=["pending", "create_candidate"])
+    parser.add_argument(
+        "--status",
+        default="pending",
+        choices=["pending", "create_candidate", "untracked"],
+        help=(
+            "pending           = known Shopify products needing update; "
+            "create_candidate  = flagged untracked (legacy path); "
+            "untracked         = every KickDBProduct with no ShopifySyncState row, no flag step required"
+        ),
+    )
     parser.add_argument("--test-mode", action="store_true", help="stop after 10 products")
     parser.add_argument("--max-create-variants", type=int, default=900,
                         help="daily create cap passed to main.py quota logic")
@@ -127,7 +136,7 @@ def main():
         fresh = fresh[:10]
         print(f"[INFO] TEST MODE: limited to {len(fresh)} products")
 
-    action = "create" if args.status == "create_candidate" else "update"
+    action = "create" if args.status in ("create_candidate", "untracked") else "update"
     processed = success = 0
 
     for row in fresh:
