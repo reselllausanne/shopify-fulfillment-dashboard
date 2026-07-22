@@ -79,8 +79,28 @@ export async function confirmShopifyReturnReceipt(options: {
 
   const raw = (row.rawJson as any) || {};
   const customerId = String(raw?.order?.customerId || "").trim();
-  const amount = Number(row.returnAmount);
+  const grossAmount = Number(row.returnAmount);
   const currencyCode = String(row.currency || "CHF").trim() || "CHF";
+
+  // Restocking fee: Shopify stores it per return line item (restockingFeeAmount in shopMoney).
+  // Sum across all lines and deduct from the gross return amount to get the net store credit.
+  // This enforces the 10% return fee the business applies to every return.
+  const lineItems: Array<any> = Array.isArray(raw?.lineItems) ? raw.lineItems : [];
+  let restockingFeeTotal = 0;
+  for (const line of lineItems) {
+    const lineFee = Number(line?.restockingFeeAmount);
+    if (Number.isFinite(lineFee) && lineFee > 0) {
+      restockingFeeTotal += lineFee * (Number(line?.quantity) || 1);
+    } else if (Number(line?.restockingFeePercent) > 0) {
+      const unit = Number(line?.unitAmount) || 0;
+      const qty = Number(line?.quantity) || 1;
+      restockingFeeTotal += (unit * qty * Number(line.restockingFeePercent)) / 100;
+    }
+  }
+  restockingFeeTotal = Number(restockingFeeTotal.toFixed(2));
+  const amount = Number(Math.max(0, grossAmount - restockingFeeTotal).toFixed(2));
+  console.log("[SHOPIFY_STORE_CREDIT] return", row.externalReturnId, "gross:", grossAmount, "restockingFee:", restockingFeeTotal, "net store credit:", amount, currencyCode);
+
   if (!customerId) {
     const failureMessage = "Missing Shopify customer ID on return row";
     await prisma.marketplaceReturn.update({

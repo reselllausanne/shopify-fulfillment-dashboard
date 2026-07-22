@@ -16,6 +16,21 @@ export const dynamic = "force-dynamic";
 
 function serializeReturn(row: any) {
   const raw = row?.rawJson as any;
+  const lineItems: Array<any> = Array.isArray(raw?.lineItems) ? raw.lineItems : [];
+  let restockingFeeTotal = 0;
+  for (const line of lineItems) {
+    const lineFee = Number(line?.restockingFeeAmount);
+    if (Number.isFinite(lineFee) && lineFee > 0) {
+      restockingFeeTotal += lineFee * (Number(line?.quantity) || 1);
+    } else if (Number(line?.restockingFeePercent) > 0) {
+      const unit = Number(line?.unitAmount) || 0;
+      const qty = Number(line?.quantity) || 1;
+      restockingFeeTotal += (unit * qty * Number(line.restockingFeePercent)) / 100;
+    }
+  }
+  restockingFeeTotal = Number(restockingFeeTotal.toFixed(2));
+  const gross = row.returnAmount != null ? Number(row.returnAmount) : null;
+  const netStoreCredit = gross != null ? Number(Math.max(0, gross - restockingFeeTotal).toFixed(2)) : null;
   return {
     id: row.id,
     platform: row.platform,
@@ -30,7 +45,9 @@ function serializeReturn(row: any) {
     sku: row.sku,
     returnLabelNumber: row.returnLabelNumber,
     labelKey: row.labelKey ?? null,
-    returnAmount: row.returnAmount != null ? Number(row.returnAmount) : null,
+    returnAmount: gross,
+    restockingFeeAmount: restockingFeeTotal || null,
+    netStoreCreditAmount: netStoreCredit,
     currency: row.currency,
     returnReasonCode: row.returnReasonCode,
     returnReasonLabel: row.returnReasonLabel,

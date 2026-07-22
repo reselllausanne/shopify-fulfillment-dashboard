@@ -15,6 +15,8 @@ type ReceiptReturn = {
   returnLabelNumber: string | null;
   labelKey?: string | null;
   returnAmount: number | null;
+  restockingFeeAmount?: number | null;
+  netStoreCreditAmount?: number | null;
   currency: string;
   returnReasonCode: string | null;
   returnReasonLabel: string | null;
@@ -796,7 +798,7 @@ export default function DecathlonReturnsReceiptPage() {
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">
-                  {selected.platform === "shopify" ? "Store credit amount" : "Refund amount"}
+                  {selected.platform === "shopify" ? "Return amount (gross)" : "Refund amount"}
                 </dt>
                 <dd className="font-semibold">
                   {selected.returnAmount != null
@@ -804,6 +806,22 @@ export default function DecathlonReturnsReceiptPage() {
                     : "—"}
                 </dd>
               </div>
+              {selected.restockingFeeAmount != null && selected.restockingFeeAmount > 0 && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Restocking fee (10%)</dt>
+                  <dd className="text-red-600">
+                    −{selected.restockingFeeAmount.toFixed(2)} {selected.currency}
+                  </dd>
+                </div>
+              )}
+              {selected.platform === "shopify" && selected.netStoreCreditAmount != null && (
+                <div className="flex justify-between gap-4 border-t border-slate-100 pt-2">
+                  <dt className="font-medium text-slate-700">Store credit issued</dt>
+                  <dd className="font-bold text-green-700">
+                    {selected.netStoreCreditAmount.toFixed(2)} {selected.currency}
+                  </dd>
+                </div>
+              )}
               <div className="flex justify-between gap-4">
                 <dt className="text-slate-500">Return reason</dt>
                 <dd className="text-right">
