@@ -41,6 +41,57 @@ async function runPostRestockConvergence(
 }
 
 /**
+ * Shape A (GTIN already on Shopify) used to skip DB import — then marketplace
+ * had no STX row to merge physical qty into, and convergence could not lock
+ * liquidation. Ensure an stx_ SupplierVariant exists when KickDB has a slug.
+ */
+async function ensureStxSupplierForGtin(
+  gtin: string,
+  dryRun: boolean | undefined,
+  warnings: string[]
+): Promise<{ ok: boolean; importedVariantsCount?: number; errors?: string[] }> {
+  if (dryRun || isManualOnlyGtin(gtin)) {
+    return { ok: true, importedVariantsCount: 0 };
+  }
+  try {
+    const existing = await prisma.supplierVariant.findFirst({
+      where: { gtin, supplierVariantId: { startsWith: "stx_" } },
+      select: { id: true },
+    });
+    if (existing) return { ok: true, importedVariantsCount: 0 };
+
+    const kv = await prisma.kickDBVariant.findFirst({
+      where: { OR: [{ gtin }, { ean: gtin }] },
+      select: { product: { select: { urlKey: true } } },
+    });
+    const slug = String(kv?.product?.urlKey ?? "").trim();
+    if (!slug) {
+      warnings.push(
+        `Import DB ignoré: pas de slug KickDB pour ${gtin} — marketplace ne verra pas ce stock physique`
+      );
+      return { ok: false, errors: ["kickdb_slug_missing"] };
+    }
+
+    const imported = await importStxProductByInput(slug, { forceImport: true });
+    if (!imported.ok) {
+      warnings.push(
+        `Import DB (Galaxus/Decathlon) échoué: ${imported.errors.join("; ") || "raison inconnue"}`
+      );
+      return { ok: false, importedVariantsCount: 0, errors: imported.errors };
+    }
+    warnings.push(`Import DB: ${imported.importedVariantsCount ?? 0} variantes STX (forceImport)`);
+    return {
+      ok: true,
+      importedVariantsCount: imported.importedVariantsCount,
+      errors: imported.errors,
+    };
+  } catch (err: any) {
+    warnings.push(`Import DB erreur: ${err?.message ?? err}`);
+    return { ok: false, errors: [err?.message ?? String(err)] };
+  }
+}
+
+/**
  * Case 3 orchestrator — physical stock scan (GTIN).
  *
  * Cascade (validated with user):
@@ -596,12 +647,14 @@ export async function applyScanRestock(input: {
     });
     if (restock.found) {
       const outWarnings = [...warnings, ...restock.warnings];
+      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, outWarnings);
       await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
       return {
         ok: true,
         status: "restocked",
         gtin,
         shopify: { created: false, productId: restock.variant?.productId ?? null, restock },
+        db,
         warnings: outWarnings,
       };
     }
