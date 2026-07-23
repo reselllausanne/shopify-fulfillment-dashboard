@@ -14,7 +14,7 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
  * GTIN, based on the mirror.
  *
  *   physical > 0  → liquidation state
- *                   Shopify: price = STX × (1 - DISCOUNT), compareAt = STX,
+ *                   Shopify: compareAt = normal calc_sell, price = × liquidation mult (0.96),
  *                            metafield custom.price_locked = true
  *                   DB    : manualLock = true, manualPrice = liq_price
  *                           (manualStock stays null so the resolver still
@@ -31,7 +31,7 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
  */
 
 import { resolveReferenceBuyNowPrice } from "@/shopify/restock/referencePrice";
-import { LIQ_DISCOUNT } from "@/shopify/restock/liquidationPricing";
+import { calcPhysicalLiquidationSellPrice } from "@/shopify/pricing/calcShopifySellPrice";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -190,23 +190,22 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
     return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
   }
 
-  const stxNormalPrice = stxRow ? toNumber(stxRow.price) : null;
-  const referencePrice =
-    stxNormalPrice ??
-    (shopifyVariant
-      ? await resolveReferenceBuyNowPrice({
-          gtin: cleanGtin,
-          variantId: shopifyVariant.variantId,
-          sku: shopifyVariant.sku,
-        })
-      : null);
+  const referencePrice = await resolveReferenceBuyNowPrice({
+    gtin: cleanGtin,
+    variantId: shopifyVariant?.variantId ?? null,
+    sku: shopifyVariant?.sku ?? null,
+  });
 
   if (desired === "liquidation") {
     if (!referencePrice || referencePrice <= 0) {
       warnings.push("no reference buy-now price — cannot compute liquidation price");
       return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
     }
-    const liqPrice = round2(referencePrice * (1 - LIQ_DISCOUNT));
+    const liqPrice = calcPhysicalLiquidationSellPrice(referencePrice);
+    if (liqPrice == null || liqPrice <= 0) {
+      warnings.push("no liquidation sell price — cannot compute physical pricing");
+      return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
+    }
 
     // DB side: manualLock=true + manualPrice=liq. manualStock stays null so
     // Resolver keeps adding physical on top of STX asks (no double-count).

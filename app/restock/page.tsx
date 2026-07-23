@@ -40,6 +40,22 @@ type LookupResult =
       matchedSizeUs: string | null;
     }
   | {
+      status: "shopify-exists-no-gtin";
+      gtin: string;
+      slug: string;
+      title: string | null;
+      brand: string | null;
+      styleSku: string | null;
+      image: string | null;
+      productId: string;
+      gtinConfirmed: boolean;
+      matchedSizeEu: string | null;
+      matchedSizeUs: string | null;
+      suggestedVariantId: string | null;
+      variantChoices: VariantChoice[];
+      matchedVia: string;
+    }
+  | {
       status: "not-found";
       gtin: string;
       message: string;
@@ -92,6 +108,28 @@ type HistoryEntry = {
   warning?: string;
 };
 
+function isAwaitingManualAction(
+  lookup: LookupResult | null,
+  applyResult: ApplyResult | null,
+  variantChoices: VariantChoice[] | null,
+  autoMode: boolean
+): boolean {
+  if (
+    variantChoices?.length &&
+    (applyResult?.status === "size-confirmation-required" ||
+      applyResult?.status === "gtin-confirmation-required")
+  ) {
+    return true;
+  }
+  if (!lookup) return false;
+  if (lookup.status === "shopify-exists-no-gtin") return true;
+  if (lookup.status === "resolved") return true;
+  if (lookup.status === "not-found") return true;
+  if (lookup.status === "on-shopify" && lookup.ambiguous) return true;
+  if (lookup.status === "on-shopify" && !lookup.ambiguous && !autoMode) return true;
+  return false;
+}
+
 export default function RestockScanPage() {
   const [gtin, setGtin] = useState("");
   const [quantity, setQuantity] = useState(1);
@@ -107,9 +145,25 @@ export default function RestockScanPage() {
   const [autoMode, setAutoMode] = useState<boolean>(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lookupBusyRef = useRef(false);
+
+  function focusScanInput() {
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }
+
+  function prepareNextScan() {
+    setGtin("");
+    setLookup(null);
+    setApplyResult(null);
+    setVariantChoices(null);
+    setPendingIdentifier(null);
+    setManualId("");
+    setError(null);
+    focusScanInput();
+  }
 
   useEffect(() => {
-    inputRef.current?.focus();
+    focusScanInput();
   }, []);
 
   // Load physical locations + restore previous choice (persists per browser so a
@@ -138,13 +192,14 @@ export default function RestockScanPage() {
   function pickLocation(id: string) {
     setLocationId(id);
     if (typeof window !== "undefined") window.localStorage.setItem(LOCATION_STORAGE_KEY, id);
+    focusScanInput();
   }
 
-  // Persist mass-scan preference between sessions (scanner user).
+  // Mass-scan on by default — scanette workflow (opt-out persisted).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem(AUTO_MODE_STORAGE_KEY);
-    if (saved === "1") setAutoMode(true);
+    if (saved === null || saved === "1") setAutoMode(true);
   }, []);
 
   function toggleAutoMode(next: boolean) {
@@ -163,6 +218,7 @@ export default function RestockScanPage() {
 
   const currentLocationName = locations.find((l) => l.id === locationId)?.name ?? null;
   const locationReady = Boolean(locationId && currentLocationName);
+  const awaitingManual = isAwaitingManualAction(lookup, applyResult, variantChoices, autoMode);
 
   function resetAll() {
     setLookup(null);
@@ -175,7 +231,15 @@ export default function RestockScanPage() {
 
   async function runLookup() {
     const cleaned = gtin.trim();
-    if (!cleaned) return;
+    if (!cleaned || lookupBusyRef.current || busy) return;
+
+    if (awaitingManual) {
+      setGtin("");
+      setError("Choisir une action ci-dessous (ou Annuler) avant le prochain scan");
+      return;
+    }
+
+    lookupBusyRef.current = true;
     resetAll();
     setBusy("Recherche…");
     try {
@@ -183,30 +247,27 @@ export default function RestockScanPage() {
       const data = await res.json();
       if (!data.ok) {
         setError(data.error ?? "Recherche échouée");
+        focusScanInput();
       } else {
         const result = data.result as LookupResult;
         setLookup(result);
 
-        // Mass-scan flow: if already on Shopify, immediately restock and clear
-        // for the next scan. Anything else (KickDB match / unknown) still needs
-        // manual confirmation because product creation is not idempotent per
-        // scan and we don't want to silently create wrong SKUs.
-        if (autoMode && result.status === "on-shopify" && !result.ambiguous && locationId) {
-          await runApply({}, "Auto restock…", { autoScan: true });
+        // Scanette: auto-restock only when GTIN maps 1:1 on Shopify (no size/GTIN pick).
+        if (autoMode && locationId && result.status === "on-shopify" && !result.ambiguous) {
+          await runApply({}, "Auto restock…");
+          return;
         }
       }
     } catch (err: any) {
       setError(err?.message ?? "Erreur réseau");
+      focusScanInput();
     } finally {
       setBusy(null);
+      lookupBusyRef.current = false;
     }
   }
 
-  async function runApply(
-    body: Record<string, unknown>,
-    busyLabel: string,
-    options: { autoScan?: boolean } = {}
-  ) {
+  async function runApply(body: Record<string, unknown>, busyLabel: string) {
     if (!locationId) {
       setError("Choisir un emplacement (Bussigny / Antica / THE LAB) avant restock");
       return;
@@ -245,26 +306,36 @@ export default function RestockScanPage() {
         data.status !== "gtin-confirmation-required"
       ) {
         setError(data.error ?? "Échec");
+        focusScanInput();
       }
-      // Mass-scan flow — record + clear immediately for the next scan.
-      if (options.autoScan) {
-        pushHistory({
-          gtin: scannedGtin,
-          status: (data.status as HistoryEntry["status"]) ?? "error",
-          ok: Boolean(data.ok),
-          title: data.shopify?.restock?.variant?.productTitle ?? null,
-          quantity,
-          location: currentLoc,
-          warning: data.warnings?.[0],
-        });
-        setGtin("");
-        setLookup(null);
-        setApplyResult(null);
-        setError(null);
-        setTimeout(() => inputRef.current?.focus(), 0);
+
+      const restockDone =
+        data.ok &&
+        (data.status === "restocked" || data.status === "created-restocked");
+
+      if (restockDone) {
+        if (autoMode) {
+          pushHistory({
+            gtin: scannedGtin,
+            status: data.status as HistoryEntry["status"],
+            ok: true,
+            title: data.shopify?.restock?.variant?.productTitle ?? null,
+            quantity,
+            location: currentLoc,
+            warning: data.warnings?.[0],
+          });
+        }
+        prepareNextScan();
+      } else if (
+        data.status !== "size-confirmation-required" &&
+        data.status !== "gtin-confirmation-required"
+      ) {
+        focusScanInput();
       }
+      // Confirmation UI open — do not clear or refocus for next scan.
     } catch (err: any) {
       setError(err?.message ?? "Erreur réseau");
+      focusScanInput();
     } finally {
       setBusy(null);
     }
@@ -289,7 +360,7 @@ export default function RestockScanPage() {
             className="h-4 w-4"
           />
           <span>
-            Mass-scan (auto-restock si déjà sur Shopify — sinon confirmation manuelle)
+            Mode scanette (auto-restock si GTIN unique sur Shopify — sinon choix manuel)
           </span>
         </label>
       </div>
@@ -320,32 +391,72 @@ export default function RestockScanPage() {
         <input
           ref={inputRef}
           value={gtin}
+          autoFocus
           onChange={(e) => setGtin(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") runLookup();
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (awaitingManual) {
+                setGtin("");
+                setError("Choisir une action ci-dessous (ou Annuler) avant le prochain scan");
+                return;
+              }
+              void runLookup();
+            }
           }}
           placeholder="GTIN / barcode…"
           inputMode="numeric"
-          className="flex-1 rounded-sm border border-gray-300 px-3 py-2 text-lg focus:border-black focus:outline-none"
+          autoComplete="off"
+          readOnly={awaitingManual}
+          className={`flex-1 rounded-sm border px-3 py-2 text-lg focus:border-black focus:outline-none ${
+            awaitingManual ? "border-amber-400 bg-amber-50 text-gray-500" : "border-gray-300"
+          }`}
         />
         <input
           type="number"
           min={1}
           value={quantity}
           onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              focusScanInput();
+            }
+          }}
+          tabIndex={-1}
           className="w-20 rounded-sm border border-gray-300 px-3 py-2 text-lg focus:border-black focus:outline-none"
           title="Quantité"
         />
         <button
-          onClick={runLookup}
-          disabled={!!busy || !gtin.trim()}
+          type="button"
+          onClick={() => void runLookup()}
+          disabled={!!busy || !gtin.trim() || awaitingManual}
           className="rounded-sm bg-black px-5 py-2 font-medium text-white disabled:opacity-40"
         >
           {busy ?? "Scanner"}
         </button>
       </div>
 
-      {error && (
+      {awaitingManual && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <span>Action requise — confirmer ci-dessous avant le scan suivant.</span>
+          <button
+            type="button"
+            onClick={prepareNextScan}
+            className="rounded-sm border border-amber-700 bg-white px-3 py-1.5 text-sm font-medium hover:border-black"
+          >
+            Annuler / scan suivant
+          </button>
+        </div>
+      )}
+
+      {error && awaitingManual && (
+        <div className="mt-4 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {error}
+        </div>
+      )}
+
+      {error && !awaitingManual && (
         <div className="mt-4 rounded-sm border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </div>
@@ -434,6 +545,62 @@ export default function RestockScanPage() {
         </div>
       )}
 
+      {/* Lookup: product on Shopify but GTIN missing on variant */}
+      {lookup?.status === "shopify-exists-no-gtin" && !applyResult && (
+        <div className="mt-6 rounded-sm border border-amber-400 bg-amber-50 p-4">
+          <div className="text-sm font-semibold text-amber-950">
+            Produit déjà sur Shopify — GTIN absent sur la variante
+          </div>
+          <div className="mt-1 text-xs text-amber-900">
+            Pas de création. Choisir la taille physique scannée — le GTIN sera écrit sur la variante.
+            {lookup.matchedVia ? ` (${lookup.matchedVia})` : ""}
+          </div>
+          <div className="mt-2 flex gap-3">
+            {lookup.image && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={lookup.image} alt="" className="h-20 w-20 rounded-sm object-cover" />
+            )}
+            <div className="text-sm text-gray-800">
+              <div className="font-medium">{lookup.title ?? lookup.slug}</div>
+              <div>SKU style: {lookup.styleSku ?? "—"} · {lookup.brand ?? ""}</div>
+              {lookup.gtinConfirmed && (
+                <div className="mt-1 text-green-800">
+                  GTIN confirmé KickDB · taille EU {lookup.matchedSizeEu ?? "?"}
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {lookup.variantChoices.map((v) => {
+              const suggested = v.variantId === lookup.suggestedVariantId;
+              return (
+                <button
+                  key={v.variantId}
+                  onClick={() =>
+                    runApply(
+                      { identifier: lookup.slug, confirmVariantId: v.variantId },
+                      suggested ? "Restock (taille suggérée)…" : "Restock…"
+                    )
+                  }
+                  disabled={!!busy || !locationReady}
+                  className={`rounded-sm border px-2 py-2 text-sm disabled:opacity-40 ${
+                    suggested
+                      ? "border-amber-700 bg-amber-100 font-semibold hover:border-black"
+                      : "border-gray-300 bg-white hover:border-black"
+                  }`}
+                >
+                  <div className="font-medium">{v.title ?? v.sku ?? "?"}</div>
+                  <div className="text-xs text-gray-500">
+                    {v.sku ?? "—"} · {v.price ?? "—"} CHF
+                    {suggested ? " · suggéré" : ""}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Lookup: not found -> manual input */}
       {lookup?.status === "not-found" && !applyResult && (
         <div className="mt-6 rounded-sm border border-amber-300 bg-amber-50 p-4">
@@ -492,7 +659,9 @@ export default function RestockScanPage() {
       {variantChoices && applyResult?.status === "size-confirmation-required" && (
         <div className="mt-6 rounded-sm border border-amber-300 bg-amber-50 p-4">
           <div className="text-sm font-semibold text-amber-900">
-            GTIN scanné ≠ barcodes du produit créé — choisir la taille physique de la paire
+            {applyResult.warnings?.some((w) => w.includes("Produit déjà sur Shopify"))
+              ? "Produit déjà sur Shopify — confirmer la taille de la paire scannée"
+              : "GTIN scanné ≠ barcodes du produit créé — choisir la taille physique de la paire"}
           </div>
           <div className="mt-1 text-xs text-amber-800">
             Le GTIN scanné sera écrit comme barcode sur la variante choisie.
@@ -592,11 +761,8 @@ export default function RestockScanPage() {
             </ul>
           )}
           <button
-            onClick={() => {
-              setGtin("");
-              resetAll();
-              inputRef.current?.focus();
-            }}
+            type="button"
+            onClick={prepareNextScan}
             className="mt-3 rounded-sm border border-gray-400 px-4 py-2 text-sm hover:border-black"
           >
             Scanner la paire suivante

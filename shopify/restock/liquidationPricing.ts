@@ -6,12 +6,7 @@ import {
   getShopifyVariantDetail,
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
-
-export const LIQ_DISCOUNT = (() => {
-  const pct = Number(process.env.LIQUIDATION_DISCOUNT_PCT ?? "30");
-  if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) return 0.3;
-  return pct / 100;
-})();
+import { calcPhysicalLiquidationSellPrice } from "@/shopify/pricing/calcShopifySellPrice";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -63,8 +58,8 @@ async function writeShopifyPriceLocked(variantId: string, locked: boolean): Prom
 
 /**
  * Physical stock restock → storefront sale badge:
- * price = reference buy-now × (1 - LIQ_DISCOUNT), compareAt = reference.
- * Reference = STX buy price, else same-size online listing with dropship stock.
+ * compareAt = calc_sell_price(StockX buy) — normal website listing.
+ * price = same base × SHOPIFY liquidation multiplier (default 0.96, e.g. 97 → 93).
  */
 export async function applyLiquidationSaleDisplay(input: {
   gtin: string;
@@ -92,8 +87,8 @@ export async function applyLiquidationSaleDisplay(input: {
     return { applied: false, referencePrice: null, salePrice: null, warnings };
   }
 
-  const salePrice = round2(reference * (1 - LIQ_DISCOUNT));
-  if (salePrice <= 0 || salePrice >= reference) {
+  const salePrice = calcPhysicalLiquidationSellPrice(reference);
+  if (salePrice == null || salePrice <= 0 || salePrice >= reference) {
     warnings.push("Computed sale price invalid — compare-at sale not applied");
     return { applied: false, referencePrice: reference, salePrice: null, warnings };
   }

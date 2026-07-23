@@ -221,6 +221,7 @@ function normalizeGtinKey(value: string): string {
 
 export default function GalaxusWarehouseShipmentsPage() {
   const actionsRef = useRef<HTMLDivElement | null>(null);
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
@@ -436,11 +437,22 @@ export default function GalaxusWarehouseShipmentsPage() {
     setSelectedLines({});
   };
 
+  const focusScanInput = () => {
+    requestAnimationFrame(() => {
+      const el = scanInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    });
+  };
+
   const scanAndSelect = (raw: string) => {
     if (busy !== null) return;
     const cleaned = normalizeGtinKey(raw);
     if (!cleaned) {
       setError("Scan a GTIN to select a line.");
+      setScanInput("");
+      focusScanInput();
       return;
     }
     setError(null);
@@ -469,6 +481,8 @@ export default function GalaxusWarehouseShipmentsPage() {
 
     if (matches.length === 0) {
       setError(`No remaining line found for GTIN ${cleaned}.`);
+      setScanInput("");
+      focusScanInput();
       return;
     }
 
@@ -504,6 +518,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     const label = target.order.orderNumber ?? target.order.galaxusOrderId;
     setScanResult(`Added ${title} (${size}) from order ${label}.`);
     setScanInput("");
+    focusScanInput();
   };
 
   const createShipment = async () => {
@@ -1037,10 +1052,15 @@ export default function GalaxusWarehouseShipmentsPage() {
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <input
+              ref={scanInputRef}
               className="border rounded px-2 py-1 text-xs w-56"
               placeholder="Scan GTIN to add line"
               value={scanInput}
-              onChange={(e) => setScanInput(e.target.value)}
+              autoFocus
+              onChange={(e) => {
+                setScanInput(e.target.value);
+                if (error?.includes("GTIN")) setError(null);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
