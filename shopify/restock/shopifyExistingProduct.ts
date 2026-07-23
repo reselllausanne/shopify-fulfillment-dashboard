@@ -132,13 +132,13 @@ export function pickVariantBySize(
     const title = normalizeSizeTitle(v.title);
     const tail = skuTailSize(v.sku);
     let s = 0;
-    if (sizeEu) {
+    if (sizeEu && wantedEu) {
       if (sizeTitlesMatch(v.title, sizeEu) || sizeTitlesMatch(tail, sizeEu)) s += 100;
       else if (parseSizeToNumber(sizeEu) == null && parseSizeToNumber(v.title) == null) {
         if (title.includes(wantedEu) || wantedEu.includes(title)) s += 40;
       }
     }
-    if (sizeUs) {
+    if (sizeUs && wantedUs) {
       if (sizeTitlesMatch(v.title, sizeUs)) s += 80;
       else if (parseSizeToNumber(sizeUs) == null && title.includes(wantedUs)) s += 40;
     }
