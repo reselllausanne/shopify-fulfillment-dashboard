@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   expandSnowleaderGraphqlProduct,
+  isRetryableSnowleaderGraphqlError,
   parseSnowleaderStock,
   pickSnowleaderProductType,
 } from "@/app/lib/snowleaderGraphqlClient";
@@ -66,5 +67,13 @@ describe("snowleaderGraphqlClient", () => {
         { id: "39", name: "Skihosen Damen", urlPath: "snow/skihosen-damen", level: 4 },
       ])
     ).toBe("Skihosen Damen");
+  });
+
+  it("flags cloudflare 504 as retryable", () => {
+    expect(
+      isRetryableSnowleaderGraphqlError(
+        new Error('Snowleader GraphQL HTTP 504: {"title":"Error 504: Gateway time-out"}')
+      )
+    ).toBe(true);
   });
 });

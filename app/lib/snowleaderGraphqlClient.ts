@@ -12,8 +12,11 @@ const GRAPHQL_URL = "https://api.snowleader.com/graphql/";
 /** Hardcoded — only `SCRAPER_SHOPS` env needed to register the shop. */
 export const SNOWLEADER_GRAPHQL_STORE = "Store_View_CH_DE";
 export const SNOWLEADER_GRAPHQL_CATEGORY_IDS = SNOWLEADER_GALAXUS_CATEGORY_IDS;
-export const SNOWLEADER_GRAPHQL_PAGE_SIZE = 10;
-export const SNOWLEADER_GRAPHQL_REQUEST_DELAY_MS = 300;
+/** Small list pages — heavy variant/gallery payload is fetched per SKU. */
+export const SNOWLEADER_GRAPHQL_PAGE_SIZE = 5;
+export const SNOWLEADER_GRAPHQL_REQUEST_DELAY_MS = 800;
+export const SNOWLEADER_GRAPHQL_REQUEST_TIMEOUT_MS = 45_000;
+export const SNOWLEADER_GRAPHQL_MAX_RETRIES = 5;
 
 export type SnowleaderGqlCategory = {
   id: string;
@@ -31,7 +34,6 @@ export type SnowleaderGqlVariant = {
   sizeLabel: string | null;
   stock: number;
   inStock: boolean;
-  /** Snowleader website sell price (CHF TTC) — stored as supplier buy cost. */
   buyPriceChf: number;
   regularPriceChf: number | null;
   discountPercentOff: number | null;
@@ -56,11 +58,11 @@ export type SnowleaderGqlProduct = {
   variants: SnowleaderGqlVariant[];
 };
 
-export type SnowleaderGqlProductsPage = {
+export type SnowleaderGqlProductSkusPage = {
   totalCount: number;
   currentPage: number;
   pageSize: number;
-  products: SnowleaderGqlProduct[];
+  skus: string[];
 };
 
 type GqlMoney = { value?: number | null };
@@ -88,7 +90,6 @@ type GqlConfigurableVariant = {
 };
 
 type GqlMedia = { url?: string | null; position?: number | null; disabled?: boolean | null };
-type GqlHtml = { html?: string | null };
 
 type GqlProductItem = {
   sku?: string | null;
@@ -98,8 +99,8 @@ type GqlProductItem = {
   brand?: { name?: string | null } | null;
   image?: { url?: string | null } | null;
   media_gallery?: GqlMedia[] | null;
-  description?: GqlHtml | null;
-  short_description?: GqlHtml | null;
+  description?: { html?: string | null } | null;
+  short_description?: { html?: string | null } | null;
   categories?: Array<{
     id?: number | string | null;
     name?: string | null;
@@ -112,8 +113,8 @@ type GqlProductItem = {
   price_range?: { minimum_price?: GqlPrice | null } | null;
 };
 
-const PRODUCTS_PAGE_QUERY = `
-query SnowleaderProductsPage($page: Int!, $pageSize: Int!, $categoryId: String!) {
+const PRODUCT_LIST_QUERY = `
+query SnowleaderProductList($page: Int!, $pageSize: Int!, $categoryId: String!) {
   products(
     pageSize: $pageSize
     currentPage: $page
@@ -122,14 +123,22 @@ query SnowleaderProductsPage($page: Int!, $pageSize: Int!, $categoryId: String!)
     total_count
     items {
       sku
+    }
+  }
+}
+`;
+
+const PRODUCT_DETAIL_QUERY = `
+query SnowleaderProductDetail($sku: String!) {
+  products(filter: { sku: { eq: $sku } }) {
+    items {
+      sku
       name
       url_key
       color
       brand { name }
       image { url }
       media_gallery { url position disabled }
-      description { html }
-      short_description { html }
       categories { id name url_path level }
       ... on ConfigurableProduct {
         variants {
@@ -138,7 +147,7 @@ query SnowleaderProductsPage($page: Int!, $pageSize: Int!, $categoryId: String!)
             sku
             ... on SimpleProduct {
               ean
-              inventory_status { is_in_stock total_qty supply_delay date_reappro }
+              inventory_status { is_in_stock total_qty }
               price_range {
                 minimum_price {
                   final_price { value }
@@ -172,11 +181,32 @@ export function snowleaderGraphqlConfig() {
     categoryIds: SNOWLEADER_GRAPHQL_CATEGORY_IDS,
     pageSize: SNOWLEADER_GRAPHQL_PAGE_SIZE,
     requestDelayMs: SNOWLEADER_GRAPHQL_REQUEST_DELAY_MS,
+    requestTimeoutMs: SNOWLEADER_GRAPHQL_REQUEST_TIMEOUT_MS,
+    maxRetries: SNOWLEADER_GRAPHQL_MAX_RETRIES,
   };
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitterMs(max = 400) {
+  return Math.floor(Math.random() * max);
+}
+
+export function isRetryableSnowleaderGraphqlError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("http 429") ||
+    msg.includes("http 502") ||
+    msg.includes("http 503") ||
+    msg.includes("http 504") ||
+    msg.includes("gateway time-out") ||
+    msg.includes("timeout") ||
+    msg.includes("aborted") ||
+    msg.includes("econnreset") ||
+    msg.includes("fetch failed")
+  );
 }
 
 function parseMoney(value: unknown): number | null {
@@ -247,11 +277,6 @@ function extractImageUrls(item: GqlProductItem): string[] {
   return out.slice(0, 9);
 }
 
-function readDescriptionHtml(item: GqlProductItem): string | null {
-  const html = String(item.description?.html ?? item.short_description?.html ?? "").trim();
-  return html || null;
-}
-
 function variantFromSimpleProduct(input: {
   parentSku: string;
   parentName: string;
@@ -261,7 +286,6 @@ function variantFromSimpleProduct(input: {
   imageUrls: string[];
   color: string | null;
   gender: string | null;
-  descriptionHtml: string | null;
   categories: SnowleaderGqlCategory[];
   productType: string | null;
   galaxusKind: GalaxusProductKind | null;
@@ -295,7 +319,7 @@ function variantFromSimpleProduct(input: {
     imageUrls: input.imageUrls,
     color: input.color,
     gender: input.gender,
-    descriptionHtml: input.descriptionHtml,
+    descriptionHtml: null,
     categories: input.categories,
     productType: input.productType,
     galaxusKind: input.galaxusKind,
@@ -316,7 +340,6 @@ export function expandSnowleaderGraphqlProduct(item: GqlProductItem): Snowleader
   const galaxusKind = classifySnowleaderCategoryLabel(productType);
   const color = item.color ? String(item.color).trim() || null : null;
   const gender = inferSnowleaderGender([parentName, ...categories.map((c) => c.name)]);
-  const descriptionHtml = readDescriptionHtml(item);
   const shared = {
     parentSku,
     parentName,
@@ -326,7 +349,6 @@ export function expandSnowleaderGraphqlProduct(item: GqlProductItem): Snowleader
     imageUrls,
     color,
     gender,
-    descriptionHtml,
     categories,
     productType,
     galaxusKind,
@@ -359,7 +381,19 @@ export function expandSnowleaderGraphqlProduct(item: GqlProductItem): Snowleader
   return simple ? [simple] : [];
 }
 
-export async function fetchSnowleaderGraphql<T>(
+function mapProductItem(item: GqlProductItem): SnowleaderGqlProduct {
+  return {
+    sku: String(item.sku ?? ""),
+    name: String(item.name ?? item.sku ?? ""),
+    urlKey: item.url_key ? String(item.url_key) : null,
+    brand: item.brand?.name ? String(item.brand.name) : null,
+    imageUrl: item.image?.url ? String(item.image.url) : null,
+    categories: normalizeCategories(item.categories),
+    variants: expandSnowleaderGraphqlProduct(item),
+  };
+}
+
+async function fetchSnowleaderGraphqlOnce<T>(
   query: string,
   variables?: Record<string, unknown>
 ): Promise<T> {
@@ -376,7 +410,7 @@ export async function fetchSnowleaderGraphql<T>(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     },
     body: JSON.stringify({ query, variables }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(cfg.requestTimeoutMs),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -390,27 +424,43 @@ export async function fetchSnowleaderGraphql<T>(
     throw new Error(json.errors.map((e) => e.message).filter(Boolean).join("; ") || "GraphQL error");
   }
   if (!json.data) throw new Error("Snowleader GraphQL returned no data");
-  if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs);
   return json.data;
 }
 
-export async function fetchSnowleaderProductsPage(options: {
+export async function fetchSnowleaderGraphql<T>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  const cfg = snowleaderGraphqlConfig();
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < cfg.maxRetries; attempt++) {
+    try {
+      const data = await fetchSnowleaderGraphqlOnce<T>(query, variables);
+      if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs + jitterMs(250));
+      return data;
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryableSnowleaderGraphqlError(err) || attempt >= cfg.maxRetries - 1) break;
+      const backoff = cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(500);
+      await sleep(backoff);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+export async function fetchSnowleaderProductSkusPage(options: {
   page: number;
   pageSize?: number;
   categoryId: string;
-}): Promise<SnowleaderGqlProductsPage> {
+}): Promise<SnowleaderGqlProductSkusPage> {
   const cfg = snowleaderGraphqlConfig();
   const pageSize = options.pageSize ?? cfg.pageSize;
-  const categoryId = options.categoryId;
   const data = await fetchSnowleaderGraphql<{
-    products?: {
-      total_count?: number;
-      items?: GqlProductItem[];
-    };
-  }>(PRODUCTS_PAGE_QUERY, {
+    products?: { total_count?: number; items?: Array<{ sku?: string | null }> };
+  }>(PRODUCT_LIST_QUERY, {
     page: Math.max(1, options.page),
     pageSize,
-    categoryId,
+    categoryId: options.categoryId,
   });
 
   const items = data.products?.items ?? [];
@@ -418,14 +468,42 @@ export async function fetchSnowleaderProductsPage(options: {
     totalCount: Number(data.products?.total_count ?? 0),
     currentPage: Math.max(1, options.page),
     pageSize,
-    products: items.map((item) => ({
-      sku: String(item.sku ?? ""),
-      name: String(item.name ?? item.sku ?? ""),
-      urlKey: item.url_key ? String(item.url_key) : null,
-      brand: item.brand?.name ? String(item.brand.name) : null,
-      imageUrl: item.image?.url ? String(item.image.url) : null,
-      categories: normalizeCategories(item.categories),
-      variants: expandSnowleaderGraphqlProduct(item),
-    })),
+    skus: items.map((item) => String(item.sku ?? "").trim()).filter(Boolean),
+  };
+}
+
+export async function fetchSnowleaderProductBySku(sku: string): Promise<SnowleaderGqlProduct | null> {
+  const trimmed = String(sku ?? "").trim();
+  if (!trimmed) return null;
+  const data = await fetchSnowleaderGraphql<{
+    products?: { items?: GqlProductItem[] };
+  }>(PRODUCT_DETAIL_QUERY, { sku: trimmed });
+  const item = data.products?.items?.[0];
+  if (!item) return null;
+  return mapProductItem(item);
+}
+
+/** @deprecated Use fetchSnowleaderProductSkusPage + fetchSnowleaderProductBySku. */
+export async function fetchSnowleaderProductsPage(options: {
+  page: number;
+  pageSize?: number;
+  categoryId: string;
+}): Promise<{
+  totalCount: number;
+  currentPage: number;
+  pageSize: number;
+  products: SnowleaderGqlProduct[];
+}> {
+  const list = await fetchSnowleaderProductSkusPage(options);
+  const products: SnowleaderGqlProduct[] = [];
+  for (const sku of list.skus) {
+    const product = await fetchSnowleaderProductBySku(sku);
+    if (product) products.push(product);
+  }
+  return {
+    totalCount: list.totalCount,
+    currentPage: list.currentPage,
+    pageSize: list.pageSize,
+    products,
   };
 }
