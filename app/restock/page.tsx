@@ -13,9 +13,19 @@ type LookupResult =
         sku: string | null;
         barcode: string | null;
         price: number | null;
+        compareAtPrice: number | null;
         onSale: boolean;
+        productHandle: string | null;
       };
       ambiguous: boolean;
+      ambiguousMatches?: Array<{
+        variantId: string;
+        productTitle: string | null;
+        sku: string | null;
+        price: number | null;
+        compareAtPrice: number | null;
+        productHandle: string | null;
+      }>;
     }
   | {
       status: "resolved";
@@ -41,6 +51,8 @@ type VariantChoice = {
   sku: string | null;
   barcode: string | null;
   price: string | null;
+  compareAtPrice?: string | null;
+  productHandle?: string | null;
 };
 
 type ApplyResult = {
@@ -71,7 +83,7 @@ const AUTO_MODE_STORAGE_KEY = "restock.autoMode";
 type HistoryEntry = {
   id: string;
   gtin: string;
-  status: "restocked" | "created-restocked" | "size-confirmation-required" | "error";
+  status: "restocked" | "created-restocked" | "size-confirmation-required" | "gtin-confirmation-required" | "error";
   ok: boolean;
   title?: string | null;
   quantity: number;
@@ -179,7 +191,7 @@ export default function RestockScanPage() {
         // for the next scan. Anything else (KickDB match / unknown) still needs
         // manual confirmation because product creation is not idempotent per
         // scan and we don't want to silently create wrong SKUs.
-        if (autoMode && result.status === "on-shopify" && locationId) {
+        if (autoMode && result.status === "on-shopify" && !result.ambiguous && locationId) {
           await runApply({}, "Auto restock…", { autoScan: true });
         }
       }
@@ -217,13 +229,21 @@ export default function RestockScanPage() {
       });
       const data = (await res.json()) as ApplyResult;
       setApplyResult(data);
-      if (data.status === "size-confirmation-required" && data.variantChoices) {
+      if (
+        (data.status === "size-confirmation-required" ||
+          data.status === "gtin-confirmation-required") &&
+        data.variantChoices
+      ) {
         setVariantChoices(data.variantChoices);
         setPendingIdentifier((body.identifier as string) ?? null);
       } else {
         setVariantChoices(null);
       }
-      if (!data.ok && data.status !== "size-confirmation-required") {
+      if (
+        !data.ok &&
+        data.status !== "size-confirmation-required" &&
+        data.status !== "gtin-confirmation-required"
+      ) {
         setError(data.error ?? "Échec");
       }
       // Mass-scan flow — record + clear immediately for the next scan.
@@ -339,11 +359,33 @@ export default function RestockScanPage() {
             <div className="font-medium">{lookup.variant.productTitle ?? "(sans titre)"}</div>
             <div>SKU: {lookup.variant.sku ?? "—"} · Prix: {lookup.variant.price ?? "—"}</div>
             {lookup.ambiguous && (
-              <div className="mt-1 text-amber-700">
-                Attention: plusieurs variantes partagent ce GTIN.
+              <div className="mt-2 rounded-sm border border-amber-400 bg-amber-100 px-3 py-2 text-sm text-amber-900">
+                Plusieurs produits Shopify partagent ce GTIN — choisir la bonne paire avant restock.
+              </div>
+            )}
+            {lookup.ambiguous && lookup.ambiguousMatches && lookup.ambiguousMatches.length > 0 && (
+              <div className="mt-3 grid gap-2">
+                {lookup.ambiguousMatches.map((v) => (
+                  <button
+                    key={v.variantId}
+                    type="button"
+                    onClick={() =>
+                      runApply({ confirmVariantId: v.variantId }, "Confirmation GTIN…")
+                    }
+                    disabled={!!busy || !locationReady}
+                    className="rounded-sm border border-gray-300 bg-white px-3 py-2 text-left text-sm hover:border-black disabled:opacity-40"
+                  >
+                    <div className="font-medium">{v.productTitle ?? "(sans titre)"}</div>
+                    <div className="text-xs text-gray-600">
+                      SKU {v.sku ?? "—"} · {v.price != null ? `${v.price} CHF` : "—"}
+                      {v.compareAtPrice != null ? ` (was ${v.compareAtPrice})` : ""}
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
+          {!lookup.ambiguous && (
           <button
             onClick={() => runApply({}, "Restock…")}
             disabled={!!busy || !locationReady}
@@ -351,6 +393,7 @@ export default function RestockScanPage() {
           >
             Ajouter {quantity} en stock à {currentLocationName ?? "…"}
           </button>
+          )}
         </div>
       )}
 
@@ -419,6 +462,33 @@ export default function RestockScanPage() {
       )}
 
       {/* Size confirmation guard */}
+      {variantChoices && applyResult?.status === "gtin-confirmation-required" && (
+        <div className="mt-6 rounded-sm border border-amber-300 bg-amber-50 p-4">
+          <div className="text-sm font-semibold text-amber-900">
+            GTIN partagé — choisir le produit correspondant à la paire scannée
+          </div>
+          <div className="mt-1 text-xs text-amber-800">
+            Le GTIN sera gardé sur la variante choisie et retiré des autres fiches Shopify + DB.
+          </div>
+          <div className="mt-3 grid gap-2">
+            {variantChoices.map((v) => (
+              <button
+                key={v.variantId}
+                onClick={() => runApply({ confirmVariantId: v.variantId }, "Confirmation GTIN…")}
+                disabled={!!busy}
+                className="rounded-sm border border-gray-300 bg-white px-3 py-2 text-left text-sm hover:border-black disabled:opacity-40"
+              >
+                <div className="font-medium">{v.title ?? v.sku ?? "?"}</div>
+                <div className="text-xs text-gray-500">
+                  SKU {v.sku ?? "—"} · {v.price ?? "—"} CHF
+                  {v.compareAtPrice ? ` · compare ${v.compareAtPrice}` : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {variantChoices && applyResult?.status === "size-confirmation-required" && (
         <div className="mt-6 rounded-sm border border-amber-300 bg-amber-50 p-4">
           <div className="text-sm font-semibold text-amber-900">
@@ -485,7 +555,9 @@ export default function RestockScanPage() {
         </div>
       )}
 
-      {applyResult && applyResult.status !== "size-confirmation-required" && (
+      {applyResult &&
+        applyResult.status !== "size-confirmation-required" &&
+        applyResult.status !== "gtin-confirmation-required" && (
         <div
           className={`mt-6 rounded-sm border p-4 ${
             doneOk ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50"

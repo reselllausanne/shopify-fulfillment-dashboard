@@ -30,11 +30,8 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
  * Idempotent: only writes on state diff. Safe to run every 15 minutes.
  */
 
-const LIQ_DISCOUNT = (() => {
-  const pct = Number(process.env.LIQUIDATION_DISCOUNT_PCT ?? "30");
-  if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) return 0.3;
-  return pct / 100;
-})();
+import { resolveReferenceBuyNowPrice } from "@/shopify/restock/referencePrice";
+import { LIQ_DISCOUNT } from "@/shopify/restock/liquidationPricing";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -194,13 +191,22 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
   }
 
   const stxNormalPrice = stxRow ? toNumber(stxRow.price) : null;
+  const referencePrice =
+    stxNormalPrice ??
+    (shopifyVariant
+      ? await resolveReferenceBuyNowPrice({
+          gtin: cleanGtin,
+          variantId: shopifyVariant.variantId,
+          sku: shopifyVariant.sku,
+        })
+      : null);
 
   if (desired === "liquidation") {
-    if (!stxNormalPrice || stxNormalPrice <= 0) {
-      warnings.push("no STX normal price on record — cannot compute liquidation price");
+    if (!referencePrice || referencePrice <= 0) {
+      warnings.push("no reference buy-now price — cannot compute liquidation price");
       return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
     }
-    const liqPrice = round2(stxNormalPrice * (1 - LIQ_DISCOUNT));
+    const liqPrice = round2(referencePrice * (1 - LIQ_DISCOUNT));
 
     // DB side: manualLock=true + manualPrice=liq. manualStock stays null so
     // Resolver keeps adding physical on top of STX asks (no double-count).
@@ -232,17 +238,17 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
       const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
       const priceDiffers = currentPrice == null || Math.abs(currentPrice - liqPrice) > 0.005;
       const compareDiffers =
-        currentCompareAt == null || Math.abs(currentCompareAt - stxNormalPrice) > 0.005;
+        currentCompareAt == null || Math.abs(currentCompareAt - referencePrice) > 0.005;
       if (priceDiffers || compareDiffers) {
         try {
           await writeShopifyVariantPrice({
             productId: shopifyVariant.productId,
             variantId: shopifyVariant.variantId,
             price: liqPrice,
-            compareAtPrice: stxNormalPrice,
+            compareAtPrice: referencePrice,
           });
           changes.push(
-            `Shopify price=${liqPrice.toFixed(2)} compareAt=${stxNormalPrice.toFixed(2)}`
+            `Shopify price=${liqPrice.toFixed(2)} compareAt=${referencePrice.toFixed(2)}`
           );
         } catch (err: any) {
           warnings.push(`Shopify price write failed: ${err?.message ?? err}`);

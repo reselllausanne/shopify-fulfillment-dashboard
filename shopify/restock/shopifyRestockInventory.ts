@@ -343,6 +343,13 @@ export async function findShopifyVariantByGtin(gtin: string): Promise<{
   return { match: detail, ambiguous: rows.length > 1, rawMatches };
 }
 
+/** All Shopify variants sharing a GTIN (for staff disambiguation UI). */
+export async function listShopifyVariantsByGtinDetailed(gtin: string): Promise<ShopifyVariantDetail[]> {
+  const rows = await findShopifyVariantsByGtin(gtin);
+  const details = await Promise.all(rows.map((r) => getShopifyVariantDetail(r.variantId)));
+  return details.filter((d): d is ShopifyVariantDetail => Boolean(d));
+}
+
 /**
  * Add (not set) quantity at a location — repeated scans accumulate stock.
  *
@@ -476,7 +483,27 @@ export async function setVariantBarcode(input: {
   assertNoUserErrors(data?.productVariantsBulkUpdate?.userErrors, "productVariantsBulkUpdate");
 }
 
-async function applyVariantSalePrice(input: {
+/** Remove barcode from a variant (duplicate GTIN cleanup). */
+export async function clearVariantBarcode(input: {
+  productId: string;
+  variantId: string;
+}): Promise<void> {
+  const { data, errors } = await shopifyGraphQL<{
+    productVariantsBulkUpdate: {
+      productVariants: Array<{ id: string; barcode: string | null }>;
+      userErrors: ShopifyUserError[];
+    };
+  }>(VARIANT_BARCODE_MUTATION, {
+    productId: input.productId,
+    variants: [{ id: input.variantId, barcode: "" }],
+  });
+  if (errors?.length) {
+    throw new Error(`Shopify barcode clear failed: ${errors.map((e) => e.message).join("; ")}`);
+  }
+  assertNoUserErrors(data?.productVariantsBulkUpdate?.userErrors, "productVariantsBulkUpdate");
+}
+
+export async function applyVariantSalePrice(input: {
   productId: string;
   variantId: string;
   salePrice: number;
@@ -531,6 +558,8 @@ export async function restockShopifyVariantByGtin(input: {
   quantity: number;
   salePrice?: number | null;
   dryRun?: boolean;
+  /** When set (GTIN disambiguation), restock this variant directly. */
+  variantId?: string | null;
   /**
    * Physical location id. Scan UI MUST pass this.
    * When `requireExplicitLocation` is true (scan API), missing/invalid id
@@ -548,7 +577,27 @@ export async function restockShopifyVariantByGtin(input: {
     return { found: false, dryRun, gtin, actions, warnings: ["Empty GTIN"] };
   }
 
-  const { match, ambiguous, rawMatches } = await findShopifyVariantByGtin(gtin);
+  let match: ShopifyVariantDetail | null = null;
+  let ambiguous = false;
+  const explicitVariantId = String(input.variantId ?? "").trim();
+  if (explicitVariantId) {
+    match = await getShopifyVariantDetail(explicitVariantId);
+    if (!match) {
+      return {
+        found: false,
+        dryRun,
+        gtin,
+        ambiguous: false,
+        actions,
+        warnings: [`Variant ${explicitVariantId} not found on Shopify`],
+      };
+    }
+  } else {
+    const hit = await findShopifyVariantByGtin(gtin);
+    match = hit.match;
+    ambiguous = hit.ambiguous;
+  }
+
   if (!match) {
     return {
       found: false,
@@ -560,11 +609,25 @@ export async function restockShopifyVariantByGtin(input: {
     };
   }
   if (ambiguous) {
+    const dupes = await listShopifyVariantsByGtinDetailed(gtin);
     warnings.push(
-      `Multiple Shopify variants share GTIN ${gtin}: ${rawMatches
+      `Multiple Shopify variants share GTIN ${gtin}: ${dupes
         .map((m) => m.sku ?? m.variantId)
-        .join(", ")} — using first match`
+        .join(", ")} — pick the correct product before restock`
     );
+  }
+
+  if (ambiguous && !explicitVariantId) {
+    return {
+      found: true,
+      dryRun,
+      gtin,
+      ambiguous: true,
+      variant: match,
+      locationId: null,
+      actions,
+      warnings,
+    };
   }
 
   const { locationId, source, candidates, name: locationName } = await resolvePhysicalLocationId(
@@ -753,6 +816,21 @@ export async function restockShopifyVariantByGtin(input: {
         compareAtPrice != null ? ` compareAt=${compareAtPrice.toFixed(2)}` : ""
       }`
     );
+  } else if (!dryRun && quantity > 0) {
+    try {
+      const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
+      const liq = await applyLiquidationSaleDisplay({ gtin, variant: match });
+      if (liq.applied) {
+        actions.push(
+          `liquidation sale price=${liq.salePrice?.toFixed(2)} compareAt=${liq.referencePrice?.toFixed(2)}`
+        );
+        const refreshed = await getShopifyVariantDetail(match.variantId);
+        if (refreshed) match = refreshed;
+      }
+      warnings.push(...liq.warnings);
+    } catch (err: any) {
+      warnings.push(`Liquidation pricing failed: ${err?.message ?? err}`);
+    }
   }
 
   // Record in-hand listing so the sold-check cron can watch it.

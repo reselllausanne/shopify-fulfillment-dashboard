@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Trigger the in-app Shopify scraper for all configured SCRAPER_SHOPS.
+# Trigger configured SCRAPER_SHOPS (Shopify + HHV adapters).
 # Intended to be run by cron on the VPS host. Mints a short-lived admin JWT
 # from JWT_SECRET (in /opt/resell/.env) and POSTs the scrape endpoint.
 #

@@ -2,14 +2,18 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
 
 /**
  * Websites to scrape are configured via the SCRAPER_SHOPS env var.
- * Format: comma-separated entries `KEY|Name|baseUrl[|CURRENCY]`
+ * Format: comma-separated entries `KEY|Name|baseUrl[|CURRENCY][|platform]`
  *   KEY  = supplier key, MUST be 3 letters (becomes the Galaxus ProviderKey prefix)
  *   Name = display name
- *   baseUrl = Shopify storefront root (e.g. https://www.wellplayed.ch)
+ *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
+ *   CURRENCY = optional ISO code (default CHF)
+ *   platform = optional adapter: shopify (default) | hhv
  *
  * Example:
- *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,ABC|Other|https://other.ch
+ *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
  */
+
+export type ScraperPlatform = "shopify" | "hhv";
 
 export type ScraperShop = {
   key: string; // lowercase, used as shop_id + VariantMapping.supplierKey
@@ -17,6 +21,7 @@ export type ScraperShop = {
   name: string;
   baseUrl: string;
   currency: string;
+  platform: ScraperPlatform;
   gated: boolean; // true = NOT in Galaxus feed allowlist (won't be sent)
 };
 
@@ -37,19 +42,27 @@ export function parseScraperShops(): ScraperShop[] {
 
   for (const entry of raw.split(",")) {
     const parts = entry.split("|").map((p) => p.trim());
-    const [rawKey, name, baseUrl, currency] = parts;
+    const [rawKey, name, baseUrl, currencyOrPlatform, platformRaw] = parts;
     if (!rawKey || !baseUrl) continue;
     const key = rawKey.toLowerCase().replace(/[^a-z0-9]/g, "");
     const code = key.slice(0, 3).toUpperCase();
     if (code.length !== 3) continue;
     if (seen.has(key)) continue;
     seen.add(key);
+
+    const currencyCandidate = String(currencyOrPlatform || "").toUpperCase();
+    const currency =
+      currencyCandidate.length === 3 && /^[A-Z]{3}$/.test(currencyCandidate) ? currencyCandidate : "CHF";
+    const platformCandidate = String(platformRaw || currencyOrPlatform || "shopify").toLowerCase();
+    const platform: ScraperPlatform = platformCandidate === "hhv" ? "hhv" : "shopify";
+
     out.push({
       key,
       code,
       name: name || rawKey,
       baseUrl: baseUrl.replace(/\/+$/, ""),
-      currency: (currency || "CHF").toUpperCase(),
+      currency,
+      platform,
       // allowlist is checked against the lowercase key AND the 3-letter code
       gated: !(allow.has(key) || allow.has(code.toLowerCase())),
     });

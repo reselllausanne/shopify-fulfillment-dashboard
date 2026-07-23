@@ -247,6 +247,38 @@ function deriveSkuSearchQuery(value: string): string {
   return trimmed;
 }
 
+function parseHhvManualNoteMpn(manualNote: unknown): string | null {
+  if (!manualNote) return null;
+  try {
+    const parsed = typeof manualNote === "string" ? JSON.parse(manualNote) : manualNote;
+    if (parsed?.type !== "hhv_landed_cost") return null;
+    const mpn = String(parsed?.mpn ?? "").trim();
+    return mpn || null;
+  } catch {
+    return null;
+  }
+}
+
+/** HHV rows store internal SKUs — KickDB query comes from manualNote.mpn (style code). */
+function deriveKickdbSearchQuery(variant: {
+  supplierVariantId?: string | null;
+  supplierSku?: string | null;
+  manualNote?: string | null;
+}): string | null {
+  const variantId = String(variant.supplierVariantId ?? "");
+  const manualMpn = parseHhvManualNoteMpn(variant.manualNote);
+  if (variantId.startsWith("hhv_") && manualMpn) {
+    return deriveSkuSearchQuery(manualMpn);
+  }
+
+  const sku = String(variant.supplierSku ?? "").trim();
+  if (!sku) return manualMpn ? deriveSkuSearchQuery(manualMpn) : null;
+  if (/^\d+[a-z]?\d*$/i.test(sku)) {
+    return manualMpn ? deriveSkuSearchQuery(manualMpn) : null;
+  }
+  return deriveSkuSearchQuery(sku);
+}
+
 function buildSkuCandidates(value: string): string[] {
   const candidates = new Set<string>();
   const trimmed = value.trim();
@@ -564,7 +596,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     }
 
     const supplierProductName = variantName ?? variant?.supplierProductName ?? null;
-    const query = variantSku ? deriveSkuSearchQuery(variantSku) : null;
+    const query = deriveKickdbSearchQuery(variant);
     const debugInfo: DebugInfo | undefined = debug
       ? {
           query: query ?? undefined,

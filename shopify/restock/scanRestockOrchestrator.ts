@@ -8,12 +8,14 @@ import {
   activateInventoryAtLocation,
   adjustInventoryAtLocation,
   findShopifyVariantByGtin,
+  listShopifyVariantsByGtinDetailed,
   resolveBussignyLocationId,
   restockShopifyVariantByGtin,
   setVariantBarcode,
   type RestockShopifyResult,
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
+import { assignGtinToVariantExclusive } from "@/shopify/restock/gtinResolution";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
 import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
@@ -114,6 +116,7 @@ export type ScanLookupResult =
       gtin: string;
       variant: ShopifyVariantDetail;
       ambiguous: boolean;
+      ambiguousMatches?: ShopifyVariantDetail[];
     }
   | {
       status: "resolved";
@@ -369,11 +372,15 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
   for (const candidate of gtinCandidates(gtin)) {
     const shopifyHit = await findShopifyVariantByGtin(candidate);
     if (shopifyHit.match) {
+      const ambiguousMatches = shopifyHit.ambiguous
+        ? await listShopifyVariantsByGtinDetailed(candidate)
+        : undefined;
       return {
         status: "on-shopify",
         gtin,
         variant: shopifyHit.match,
         ambiguous: shopifyHit.ambiguous,
+        ambiguousMatches,
       };
     }
   }
@@ -453,6 +460,7 @@ export type ApplyScanResult = {
   status:
     | "restocked"
     | "size-confirmation-required"
+    | "gtin-confirmation-required"
     | "created-restocked"
     | "error";
   gtin: string;
@@ -569,47 +577,14 @@ export async function applyScanRestock(input: {
     return { ok: false, status: "error", gtin: input.gtin, error: "GTIN vide", warnings };
   }
 
-  // --- Shape C: size confirmed, write barcode then stock ---
+  // --- Shape C: variant confirmed (size after create OR GTIN disambiguation) ---
   if (input.confirmVariantId) {
     try {
-      const detailQuery = /* GraphQL */ `
-        query RestockConfirmVariant($id: ID!) {
-          productVariant(id: $id) {
-            id
-            product {
-              id
-            }
-            inventoryItem {
-              id
-            }
-          }
-        }
-      `;
-      const { data, errors } = await shopifyGraphQL<{
-        productVariant: {
-          id: string;
-          product: { id: string } | null;
-          inventoryItem: { id: string } | null;
-        } | null;
-      }>(detailQuery, { id: input.confirmVariantId });
-      if (errors?.length) throw new Error(errors.map((e) => e.message).join("; "));
-      const node = data?.productVariant;
-      if (!node?.product?.id || !node.inventoryItem?.id) {
-        return {
-          ok: false,
-          status: "error",
-          gtin,
-          error: "Variante confirmée introuvable sur Shopify",
-          warnings,
-        };
-      }
-
-      await setVariantBarcode({
-        productId: node.product.id,
-        variantId: node.id,
-        barcode: gtin,
+      const resolution = await assignGtinToVariantExclusive({
+        gtin,
+        chosenVariantId: input.confirmVariantId,
       });
-      warnings.push(`Barcode ${gtin} écrit sur la variante confirmée`);
+      warnings.push(...resolution.warnings);
 
       const restock = await restockShopifyVariantByGtin({
         gtin,
@@ -617,13 +592,28 @@ export async function applyScanRestock(input: {
         salePrice: input.salePrice ?? null,
         dryRun: input.dryRun ?? false,
         locationId: input.locationId ?? null,
+        variantId: input.confirmVariantId,
         requireExplicitLocation: true,
       });
+      if (!restock.found) {
+        return {
+          ok: false,
+          status: "error",
+          gtin,
+          error: restock.warnings.join("; ") || "Restock failed after variant confirmation",
+          warnings: [...warnings, ...restock.warnings],
+        };
+      }
+
+      const productId = restock.variant?.productId ?? null;
+      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings);
+      await runPostRestockConvergence(gtin, input.dryRun, warnings);
       return {
-        ok: restock.found,
+        ok: true,
         status: "restocked",
         gtin,
-        shopify: { created: false, productId: node.product.id, restock },
+        shopify: { created: false, productId, restock },
+        db,
         warnings: [...warnings, ...restock.warnings],
       };
     } catch (error: any) {
@@ -639,6 +629,28 @@ export async function applyScanRestock(input: {
 
   // --- Shape A: direct restock when GTIN already on Shopify ---
   if (!input.identifier) {
+    const hit = await findShopifyVariantByGtin(gtin);
+    if (hit.ambiguous) {
+      const choices = await listShopifyVariantsByGtinDetailed(gtin);
+      return {
+        ok: false,
+        status: "gtin-confirmation-required",
+        gtin,
+        variantChoices: choices.map((v) => ({
+          variantId: v.variantId,
+          title: v.productTitle,
+          sku: v.sku,
+          barcode: v.barcode,
+          price: v.price != null ? v.price.toFixed(2) : null,
+          compareAtPrice: v.compareAtPrice != null ? v.compareAtPrice.toFixed(2) : null,
+          productHandle: v.productHandle,
+        })),
+        warnings: [
+          `GTIN ${gtin} partagé par ${choices.length} variantes Shopify — choisir la bonne paire`,
+        ],
+      };
+    }
+
     const restock = await restockShopifyVariantByGtin({
       gtin,
       quantity: input.quantity,

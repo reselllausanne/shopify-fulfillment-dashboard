@@ -83,6 +83,7 @@ export async function GET() {
         name: shop.name,
         baseUrl: shop.baseUrl,
         currency: shop.currency,
+        platform: shop.platform,
         gated: shop.gated,
         withGtin,
         inStock,

@@ -68,7 +68,14 @@ export async function POST(request: Request) {
       locationId,
     });
 
-    return NextResponse.json(result, { status: result.ok || result.status === "size-confirmation-required" ? 200 : 400 });
+    return NextResponse.json(result, {
+      status:
+        result.ok ||
+        result.status === "size-confirmation-required" ||
+        result.status === "gtin-confirmation-required"
+          ? 200
+          : 400,
+    });
   } catch (error: any) {
     console.error("[RESTOCK][SCAN][POST]", error);
     return NextResponse.json(

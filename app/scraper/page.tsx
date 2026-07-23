@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type ShopRow = {
@@ -8,6 +9,7 @@ type ShopRow = {
   name: string;
   baseUrl: string;
   currency: string;
+  platform: string;
   gated: boolean;
   withGtin: number;
   inStock: number;
@@ -41,6 +43,11 @@ function fmtDate(iso: string | null | undefined) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "never";
   return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function platformLabel(platform: string) {
+  if (platform === "hhv") return "HHV / Playwright";
+  return "Shopify";
 }
 
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
@@ -77,10 +84,19 @@ export default function ScraperPage() {
     }
   }, []);
 
-  // Load once on mount. No auto-polling — use the Refresh button.
   useEffect(() => {
     load();
   }, [load]);
+
+  const anyRunning = Boolean(ov?.shops?.some((s) => s.running));
+
+  useEffect(() => {
+    if (!anyRunning) return;
+    const id = window.setInterval(() => {
+      void load();
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [anyRunning, load]);
 
   const scrape = useCallback(
     async (shopKey?: string) => {
@@ -111,8 +127,10 @@ export default function ScraperPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Scraped Websites</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Shopify catalogs scraped into the main product DB (inspect on the Galaxus pricing page).
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">
+              HHV = sneaker discovery catalog. GTIN comes from matching HHV MPN + EU size against your existing DB
+              (STX/Golden barcodes, WEL, etc.) — HHV only exposes one GTIN per colorway on their site, not per size.
+              KickDB/StockX is optional fallback only. HHV stays out of Galaxus until allowlisted.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -121,7 +139,7 @@ export default function ScraperPage() {
               disabled={loading}
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-50"
             >
-              Refresh stats
+              {anyRunning ? "Refresh (auto 5s)…" : "Refresh stats"}
             </button>
             {configured && shops.length > 0 ? (
               <button
@@ -148,8 +166,14 @@ export default function ScraperPage() {
             <div className="text-base font-semibold">No websites configured</div>
             <p className="mt-2 max-w-2xl">{ov?.message}</p>
             <pre className="mt-3 overflow-auto rounded-lg bg-amber-100/60 p-3 text-xs">
-{`# .env — comma-separated  KEY|Name|baseUrl   (KEY = 3 letters)
-SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch`}
+{`# .env — KEY|Name|baseUrl[|CURRENCY][|platform]
+SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de/de-CH|CHF|hhv
+
+# HHV GTIN = DB match on MPN + size (sync STX/Golden catalog first). KickDB optional:
+SCRAPER_HHV_KICKDB=0
+
+# Do NOT add hhv until GTIN match rate looks good:
+GALAXUS_FEED_SUPPLIER_ALLOWLIST=stx,ner,the,flo,get,scl,wel`}
             </pre>
           </div>
         ) : null}
@@ -158,7 +182,7 @@ SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch`}
           <>
             <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
               <StatCard label="Websites" value={fmtNum(totals?.shops)} />
-              <StatCard label="GTIN variants" value={fmtNum(totals?.withGtin)} accent="text-emerald-600" />
+              <StatCard label="DB variants" value={fmtNum(totals?.withGtin)} accent="text-emerald-600" />
               <StatCard label="In stock" value={fmtNum(totals?.inStock)} />
               <StatCard label="Scraping now" value={fmtNum(totals?.running)} accent={totals?.running ? "text-sky-600" : undefined} />
             </div>
@@ -170,72 +194,102 @@ SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch`}
 
               {shops.map((s) => {
                 const running = s.running || busy === s.key;
+                const run = s.lastRun;
                 return (
-                  <div
-                    key={s.key}
-                    className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-slate-900">{s.name}</span>
-                        <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
-                          {s.code}
-                        </span>
-                        {s.gated ? (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-inset ring-slate-500/20">
-                            Gated · not sent to Galaxus
+                  <div key={s.key} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-slate-900">{s.name}</span>
+                          <span className="rounded bg-slate-900 px-1.5 py-0.5 font-mono text-[10px] font-bold text-white">
+                            {s.code}
                           </span>
-                        ) : (
-                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-                            In Galaxus feed
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-inset ring-slate-400/20">
+                            {platformLabel(s.platform)}
                           </span>
-                        )}
+                          {s.gated ? (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-inset ring-slate-500/20">
+                              Gated · not sent to Galaxus
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                              In Galaxus feed
+                            </span>
+                          )}
+                        </div>
+                        <a
+                          href={s.baseUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-0.5 block truncate text-xs text-slate-400 hover:text-slate-600 hover:underline"
+                        >
+                          {s.baseUrl} · {s.currency}
+                        </a>
+                        <Link
+                          href={`/galaxus/pricing?supplierKey=${encodeURIComponent(s.key)}`}
+                          className="mt-2 inline-block text-xs font-medium text-sky-700 hover:underline"
+                        >
+                          View {s.code} rows in pricing DB →
+                        </Link>
                       </div>
-                      <a
-                        href={s.baseUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-0.5 block truncate text-xs text-slate-400 hover:text-slate-600 hover:underline"
-                      >
-                        {s.baseUrl}
-                      </a>
+
+                      <div className="flex flex-wrap items-center gap-6">
+                        <div className="text-center">
+                          <div className="text-lg font-semibold text-emerald-600">{fmtNum(s.withGtin)}</div>
+                          <div className="text-[11px] text-slate-500">variants in DB</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-lg font-semibold text-slate-900">{fmtNum(s.inStock)}</div>
+                          <div className="text-[11px] text-slate-500">in stock</div>
+                        </div>
+                        <div className="min-w-[140px] text-center">
+                          {running ? (
+                            <div className="inline-flex items-center gap-1.5 text-sm font-medium text-sky-600">
+                              <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
+                              scraping…
+                            </div>
+                          ) : (
+                            <div
+                              className={`text-sm font-medium ${
+                                run?.status === "error" ? "text-rose-600" : "text-slate-700"
+                              }`}
+                            >
+                              {run?.status === "error" ? "last run failed" : fmtDate(run?.finishedAt)}
+                            </div>
+                          )}
+                          <div className="text-[11px] text-slate-400">last scrape</div>
+                        </div>
+
+                        <button
+                          onClick={() => scrape(s.key)}
+                          disabled={busy !== null || running}
+                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-40 md:w-28"
+                        >
+                          {running ? "Running" : "Scrape"}
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-6">
-                      <div className="text-center">
-                        <div className="text-lg font-semibold text-emerald-600">{fmtNum(s.withGtin)}</div>
-                        <div className="text-[11px] text-slate-500">GTIN variants</div>
+                    {run ? (
+                      <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                        <span className="font-medium text-slate-800">Run {run.status}</span>
+                        {run.startedAt ? ` · started ${fmtDate(run.startedAt)}` : null}
+                        {run.status === "running" ? (
+                          <>
+                            {" · "}
+                            listed {fmtNum(run.productsListed)} · upserted {fmtNum(run.variantsUpserted)} · errors{" "}
+                            {fmtNum(run.errors)}
+                          </>
+                        ) : run.status === "ok" ? (
+                          <>
+                            {" · "}
+                            listed {fmtNum(run.productsListed)} · upserted {fmtNum(run.variantsUpserted)} · errors{" "}
+                            {fmtNum(run.errors)}
+                          </>
+                        ) : null}
+                        {run.message ? <div className="mt-1 break-all font-mono text-[10px] text-slate-500">{run.message}</div> : null}
                       </div>
-                      <div className="text-center">
-                        <div className="text-lg font-semibold text-slate-900">{fmtNum(s.inStock)}</div>
-                        <div className="text-[11px] text-slate-500">in stock</div>
-                      </div>
-                      <div className="min-w-[130px] text-center">
-                        {running ? (
-                          <div className="inline-flex items-center gap-1.5 text-sm font-medium text-sky-600">
-                            <span className="h-2 w-2 animate-pulse rounded-full bg-sky-500" />
-                            scraping…
-                          </div>
-                        ) : (
-                          <div
-                            className={`text-sm font-medium ${
-                              s.lastRun?.status === "error" ? "text-rose-600" : "text-slate-700"
-                            }`}
-                          >
-                            {s.lastRun?.status === "error" ? "last run failed" : fmtDate(s.lastRun?.finishedAt)}
-                          </div>
-                        )}
-                        <div className="text-[11px] text-slate-400">last scrape</div>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => scrape(s.key)}
-                      disabled={busy !== null || running}
-                      className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-40 md:w-28"
-                    >
-                      {running ? "Running" : "Scrape"}
-                    </button>
+                    ) : null}
                   </div>
                 );
               })}

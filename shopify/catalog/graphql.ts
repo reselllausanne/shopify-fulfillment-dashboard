@@ -130,7 +130,7 @@ type VariantSearchNode = {
   inventoryItem: { id: string } | null;
 };
 
-async function searchProductVariants(
+export async function searchProductVariants(
   shopifyQuery: string,
   first: number
 ): Promise<
