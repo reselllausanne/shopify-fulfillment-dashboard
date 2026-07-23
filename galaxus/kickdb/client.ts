@@ -329,6 +329,22 @@ function getVariantSizeCandidates(variant: KickDbVariant, context?: SizeMatchCon
   return Array.from(tokens);
 }
 
+/** Best EU size title for Shopify (sizes[] / size_eu / US→EU chart). */
+export function extractKickdbVariantEuSize(
+  variant: KickDbVariant,
+  context?: SizeMatchContext
+): string | null {
+  const euValues = extractEuSizes(variant);
+  if (euValues.length) return euValues[0]!;
+
+  for (const usValue of extractUsSizes(variant)) {
+    const converted = convertUsToEu(usValue, context);
+    if (converted) return converted;
+  }
+
+  return null;
+}
+
 function matchVariantBySize(
   variants: KickDbVariant[] = [],
   sizeRaw?: string | null,

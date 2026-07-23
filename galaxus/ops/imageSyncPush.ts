@@ -12,8 +12,8 @@ export async function getLatestImageSyncJobRun() {
   });
 }
 
-/** Stale threshold: crash/restart can leave finishedAt == startedAt forever. */
-const IMAGE_SYNC_STALE_MS = 2 * 60 * 60 * 1000;
+/** Stale threshold: crash/restart can leave finishedAt == startedAt forever. Must exceed nightly full sync (~83m observed). */
+const IMAGE_SYNC_STALE_MS = 4 * 60 * 60 * 1000;
 
 /** Job run rows are created with finishedAt = startedAt until the handler completes. */
 export function isImageSyncJobRunning(

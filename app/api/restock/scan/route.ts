@@ -40,6 +40,7 @@ export async function POST(request: Request) {
     const quantityRaw = Number(body?.quantity ?? 1);
     const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? Math.trunc(quantityRaw) : 1;
     const salePriceRaw = body?.salePrice != null ? Number(body.salePrice) : null;
+    const compareAtRaw = body?.compareAtPrice != null ? Number(body.compareAtPrice) : null;
     const locationId =
       typeof body?.locationId === "string" && body.locationId.trim() ? body.locationId.trim() : null;
     if (!locationId) {
@@ -63,7 +64,17 @@ export async function POST(request: Request) {
         typeof body?.confirmVariantId === "string" && body.confirmVariantId.trim()
           ? body.confirmVariantId.trim()
           : null,
+      confirmManualSizeEu:
+        typeof body?.confirmManualSizeEu === "string" && body.confirmManualSizeEu.trim()
+          ? body.confirmManualSizeEu.trim()
+          : null,
+      confirmProductId:
+        typeof body?.confirmProductId === "string" && body.confirmProductId.trim()
+          ? body.confirmProductId.trim()
+          : null,
+      ensureMissingSize: body?.ensureMissingSize === true,
       salePrice: salePriceRaw != null && Number.isFinite(salePriceRaw) ? salePriceRaw : null,
+      compareAtPrice: compareAtRaw != null && Number.isFinite(compareAtRaw) ? compareAtRaw : null,
       dryRun: body?.dryRun === true,
       locationId,
     });
@@ -72,6 +83,7 @@ export async function POST(request: Request) {
       status:
         result.ok ||
         result.status === "size-confirmation-required" ||
+        result.status === "manual-price-required" ||
         result.status === "gtin-confirmation-required"
           ? 200
           : 400,

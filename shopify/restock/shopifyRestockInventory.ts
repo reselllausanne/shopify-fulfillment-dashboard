@@ -1,5 +1,6 @@
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
+import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
 import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import {
@@ -330,23 +331,42 @@ export async function findShopifyVariantByGtin(gtin: string): Promise<{
   ambiguous: boolean;
   rawMatches: Array<{ variantId: string; productId: string; sku: string | null }>;
 }> {
-  const rows = await findShopifyVariantsByGtin(gtin);
-  const rawMatches = rows.map((r) => ({
-    variantId: r.variantId,
-    productId: r.productId,
-    sku: r.sku,
-  }));
-  if (rows.length === 0) {
+  const seenVariant = new Set<string>();
+  const rawMatches: Array<{ variantId: string; productId: string; sku: string | null }> = [];
+
+  for (const candidate of gtinCandidates(gtin)) {
+    const rows = await findShopifyVariantsByGtin(candidate);
+    for (const r of rows) {
+      if (seenVariant.has(r.variantId)) continue;
+      seenVariant.add(r.variantId);
+      rawMatches.push({
+        variantId: r.variantId,
+        productId: r.productId,
+        sku: r.sku,
+      });
+    }
+  }
+
+  if (rawMatches.length === 0) {
     return { match: null, ambiguous: false, rawMatches };
   }
-  const detail = await getShopifyVariantDetail(rows[0].variantId);
-  return { match: detail, ambiguous: rows.length > 1, rawMatches };
+  const detail = await getShopifyVariantDetail(rawMatches[0]!.variantId);
+  return { match: detail, ambiguous: rawMatches.length > 1, rawMatches };
 }
 
 /** All Shopify variants sharing a GTIN (for staff disambiguation UI). */
 export async function listShopifyVariantsByGtinDetailed(gtin: string): Promise<ShopifyVariantDetail[]> {
-  const rows = await findShopifyVariantsByGtin(gtin);
-  const details = await Promise.all(rows.map((r) => getShopifyVariantDetail(r.variantId)));
+  const seenVariant = new Set<string>();
+  const variantIds: string[] = [];
+  for (const candidate of gtinCandidates(gtin)) {
+    const rows = await findShopifyVariantsByGtin(candidate);
+    for (const r of rows) {
+      if (seenVariant.has(r.variantId)) continue;
+      seenVariant.add(r.variantId);
+      variantIds.push(r.variantId);
+    }
+  }
+  const details = await Promise.all(variantIds.map((id) => getShopifyVariantDetail(id)));
   return details.filter((d): d is ShopifyVariantDetail => Boolean(d));
 }
 

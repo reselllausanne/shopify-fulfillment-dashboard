@@ -209,6 +209,37 @@ def write_bulk_url_cursor(filepath, next_index):
 # Helper constants for filtering fast delivery variants
 FAST_DELIVERY_KEYWORDS = ["express", "fast delivery", "fast shipping", "fast", "expedited", "next day", "24h", "same day", "priority"]
 
+_PHYSICAL_RESTOCK_GTIN = None
+
+
+def set_physical_restock_gtin(gtin):
+    """When set, allow create/update of the scanned size even with zero StockX asks."""
+    global _PHYSICAL_RESTOCK_GTIN
+    digits = re.sub(r"\D", "", str(gtin or ""))
+    _PHYSICAL_RESTOCK_GTIN = digits or None
+
+
+def _gtin_digits_match(a, b):
+    da = re.sub(r"\D", "", str(a or "")).lstrip("0")
+    db = re.sub(r"\D", "", str(b or "")).lstrip("0")
+    return bool(da) and da == db
+
+
+def _estimate_stockx_raw_from_traits(traits):
+    for t in traits or []:
+        if not isinstance(t, dict):
+            continue
+        name = str(t.get("name") or t.get("trait") or "").lower()
+        if name not in ("retail price", "rrp", "msrp"):
+            continue
+        try:
+            retail = float(t.get("value"))
+            if retail > 0:
+                return max(40.0, round(retail / 2.2, 2))
+        except (TypeError, ValueError):
+            continue
+    return 80.0
+
 def is_fast_delivery(text):
     """Check if variant title contains fast delivery keywords (case-insensitive)"""
     if not text:
@@ -217,7 +248,7 @@ def is_fast_delivery(text):
     return any(keyword in text_lower for keyword in FAST_DELIVERY_KEYWORDS)
 
 def filter_variants(variants, for_create=False):
-    """Filter invalid variants. On create: drop zero qty/price. On update: keep sold-out (qty=0) for inventory sync."""
+    """Filter invalid variants. On create: drop zero qty/price unless physical_restock."""
     filtered = []
     for variant in variants:
         # Check for fast delivery keywords in title/name
@@ -228,6 +259,10 @@ def filter_variants(variants, for_create=False):
         qty = int(variant.get("quantity") or variant.get("inventory_quantity") or 0)
         price_raw = variant.get("price")
         price = float(price_raw) if price_raw is not None else 0.0
+
+        if variant.get("physical_restock") and price > 0:
+            filtered.append(variant)
+            continue
 
         # Sold-out rows from StockX (no asks / asks<2): keep on update so inventory can go to 0.
         if not for_create and (qty <= 0 or variant.get("sold_out")):
@@ -240,6 +275,10 @@ def filter_variants(variants, for_create=False):
             continue
 
         filtered.append(variant)
+
+    # physical_gtin only forces the scanned size through when StockX has no asks
+    # (physical_restock flag above). Never shrink create to a single variant — restock
+    # scan still adds Bussigny qty for the scanned GTIN only after full catalog create.
     return filtered
 
 
@@ -1621,10 +1660,12 @@ def update_product_enhanced(url, title, product_info, existing_product):
                     else:
                         print(f"[SKIP NEW VARIANT] {title} - Size {size_title}: missing on Shopify (--no-new-variants)")
                     continue
-                # Skip creating new variants that are sold out on StockX.
-                if variant_qty <= 0 or variant.get("sold_out"):
+                # Skip creating new variants that are sold out on StockX (except physical restock scan).
+                if (variant_qty <= 0 or variant.get("sold_out")) and not variant.get("physical_restock"):
                     print(f"[SKIP VARIANT] {title} - Size {size_title}: sold out on StockX, not creating")
                     continue
+                if variant.get("physical_restock"):
+                    print(f"[NEW VARIANT] {title} - Size {size_title}: physical restock (GTIN scan)")
                 # CREATE new variants that don't exist yet (full sync mode for main.py automation)
                 print(f"[NEW VARIANT] {title} - Size {size_title}: Creating new variant with price {new_price} CHF")
                 
@@ -2712,6 +2753,36 @@ def process_url(url, thread_id=0, prefetched=None):
                     express_prices.append(entry)
         
         if not available_prices:
+            barcode = get_upc(variant) or product_barcode
+            phys_gtin = _PHYSICAL_RESTOCK_GTIN
+            if phys_gtin and barcode and _gtin_digits_match(barcode, phys_gtin):
+                pc = thread_api_products[title]["productCategory"]
+                product_handle = thread_api_products[title].get("handle", "")
+                raw_price = _estimate_stockx_raw_from_traits(traits)
+                cost_value = calc_touch_price(raw_price, pc, product_handle)
+                sell_price = calc_sell_price(
+                    raw_price, pc, is_express=False, product_handle=product_handle, brand=brand
+                )
+                print(
+                    f"[Thread {thread_id}] [PHYSICAL RESTOCK] Size {eu_size}: no StockX asks — "
+                    f"estimated RAW={raw_price} CHF, SELL={sell_price} CHF (GTIN {barcode})"
+                )
+                us_size_raw = get_size_by_type(variant, "us m") or get_size_by_type(variant, "us w") or get_size_by_type(variant, "us")
+                us_size_clean = str(us_size_raw or "").replace("US M", "").replace("US W", "").replace("US", "").strip() or None
+                thread_api_products[title]["variants"].append({
+                    "size": eu_size,
+                    "price": sell_price,
+                    "cost": {"amount": f"{cost_value:.2f}", "currencyCode": "CHF"},
+                    "sku": f"{base_sku}-OS" if eu_size == "One Size" else f"{base_sku}-{eu_size}",
+                    "quantity": 0,
+                    "sold_out": False,
+                    "physical_restock": True,
+                    "barcode": barcode,
+                    "express_price": None,
+                    "express_available": False,
+                    "us_size": us_size_clean,
+                })
+                continue
             print(f"[Thread {thread_id}] [INFO] No StockX asks for size {eu_size}; marking sold out")
             barcode = get_upc(variant) or product_barcode
             us_size_raw = get_size_by_type(variant, "us m") or get_size_by_type(variant, "us w") or get_size_by_type(variant, "us")

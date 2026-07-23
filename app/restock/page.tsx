@@ -86,6 +86,16 @@ type ApplyResult = {
   };
   db?: { ok: boolean; importedVariantsCount?: number; errors?: string[] };
   variantChoices?: VariantChoice[];
+  matchedSizeEu?: string | null;
+  matchedSizeUs?: string | null;
+  suggestedVariantId?: string | null;
+  gtinConfirmed?: boolean;
+  kickdbSizeOptions?: Array<{
+    sizeEu: string | null;
+    sizeUs: string | null;
+    gtin: string | null;
+    gtinMatch: boolean;
+  }>;
   error?: string;
   warnings?: string[];
 };
@@ -121,6 +131,7 @@ function isAwaitingManualAction(
   ) {
     return true;
   }
+  if (applyResult?.status === "manual-price-required") return true;
   if (!lookup) return false;
   if (lookup.status === "shopify-exists-no-gtin") return true;
   if (lookup.status === "resolved") return true;
@@ -144,6 +155,9 @@ export default function RestockScanPage() {
   const [locationId, setLocationId] = useState<string>("");
   const [autoMode, setAutoMode] = useState<boolean>(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [manualSizeEu, setManualSizeEu] = useState("");
+  const [manualSellPrice, setManualSellPrice] = useState("");
+  const [manualCompareAt, setManualCompareAt] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const lookupBusyRef = useRef(false);
 
@@ -157,6 +171,9 @@ export default function RestockScanPage() {
     setApplyResult(null);
     setVariantChoices(null);
     setPendingIdentifier(null);
+    setManualSizeEu("");
+    setManualSellPrice("");
+    setManualCompareAt("");
     setManualId("");
     setError(null);
     focusScanInput();
@@ -252,9 +269,20 @@ export default function RestockScanPage() {
         const result = data.result as LookupResult;
         setLookup(result);
 
-        // Scanette: auto-restock only when GTIN maps 1:1 on Shopify (no size/GTIN pick).
+        // Scanette: auto-restock when GTIN maps 1:1 on Shopify (no size/GTIN pick).
         if (autoMode && locationId && result.status === "on-shopify" && !result.ambiguous) {
           await runApply({}, "Auto restock…");
+          return;
+        }
+
+        // KickDB GTIN→size connu, produit déjà sur Shopify → auto créer variante si besoin + restock.
+        if (
+          locationId &&
+          result.status === "shopify-exists-no-gtin" &&
+          result.gtinConfirmed &&
+          result.matchedSizeEu
+        ) {
+          await runApply({ identifier: result.slug }, `Auto EU ${result.matchedSizeEu}…`);
           return;
         }
       }
@@ -303,7 +331,8 @@ export default function RestockScanPage() {
       if (
         !data.ok &&
         data.status !== "size-confirmation-required" &&
-        data.status !== "gtin-confirmation-required"
+        data.status !== "gtin-confirmation-required" &&
+        data.status !== "manual-price-required"
       ) {
         setError(data.error ?? "Échec");
         focusScanInput();
@@ -328,7 +357,8 @@ export default function RestockScanPage() {
         prepareNextScan();
       } else if (
         data.status !== "size-confirmation-required" &&
-        data.status !== "gtin-confirmation-required"
+        data.status !== "gtin-confirmation-required" &&
+        data.status !== "manual-price-required"
       ) {
         focusScanInput();
       }
@@ -342,6 +372,92 @@ export default function RestockScanPage() {
   }
 
   const doneOk = applyResult?.ok === true;
+
+  const sizeConfirmIdentifier =
+    pendingIdentifier ??
+    applyResult?.slug ??
+    (lookup?.status === "resolved" || lookup?.status === "shopify-exists-no-gtin"
+      ? lookup.slug
+      : null);
+
+  const sizeConfirmProductId =
+    applyResult?.shopify?.productId ??
+    (lookup?.status === "shopify-exists-no-gtin" ? lookup.productId : null);
+
+  const sizeConfirmMatchedEu =
+    applyResult?.matchedSizeEu ??
+    (lookup?.status === "shopify-exists-no-gtin" ? lookup.matchedSizeEu : null);
+
+  const sizeConfirmSuggestedId =
+    applyResult?.suggestedVariantId ??
+    (lookup?.status === "shopify-exists-no-gtin" ? lookup.suggestedVariantId : null);
+
+  const kickdbSizeKnown = Boolean(
+    sizeConfirmMatchedEu &&
+      (applyResult?.gtinConfirmed ||
+        (lookup?.status === "shopify-exists-no-gtin" && lookup.gtinConfirmed))
+  );
+
+  const showManualSizeFallback =
+    !kickdbSizeKnown || applyResult?.status === "size-confirmation-required";
+
+  function runManualPriceRestock() {
+    const sell = Number(manualSellPrice.replace(",", "."));
+    if (!Number.isFinite(sell) || sell <= 0) {
+      setError("Saisir un prix de vente valide (CHF)");
+      return;
+    }
+    const size =
+      applyResult?.matchedSizeEu?.trim() ||
+      manualSizeEu.trim() ||
+      (lookup?.status === "shopify-exists-no-gtin" ? (lookup.matchedSizeEu ?? "") : "");
+    if (!size) {
+      setError("Taille EU manquante — rescanner");
+      return;
+    }
+    if (!sizeConfirmProductId) {
+      setError("ProductId Shopify manquant — rescanner");
+      return;
+    }
+    const compareRaw = manualCompareAt.trim().replace(",", ".");
+    const compare = compareRaw ? Number(compareRaw) : null;
+    runApply(
+      {
+        identifier: sizeConfirmIdentifier ?? undefined,
+        confirmManualSizeEu: size,
+        confirmProductId: sizeConfirmProductId,
+        salePrice: sell,
+        compareAtPrice:
+          compare != null && Number.isFinite(compare) && compare > sell ? compare : undefined,
+      },
+      `Création EU ${size} @ ${sell} CHF…`
+    );
+  }
+
+  function runManualSizeCreate() {
+    const size = manualSizeEu.trim();
+    if (!size) {
+      setError("Saisir la taille EU de la paire");
+      return;
+    }
+    if (!sizeConfirmProductId) {
+      setError("ProductId Shopify manquant — rescanner");
+      return;
+    }
+    runApply(
+      {
+        identifier: sizeConfirmIdentifier ?? undefined,
+        confirmManualSizeEu: size,
+        confirmProductId: sizeConfirmProductId,
+      },
+      `Création EU ${size} + restock…`
+    );
+  }
+
+  useEffect(() => {
+    if (!sizeConfirmMatchedEu) return;
+    setManualSizeEu((prev) => prev || sizeConfirmMatchedEu);
+  }, [sizeConfirmMatchedEu, gtin]);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
@@ -540,7 +656,7 @@ export default function RestockScanPage() {
             disabled={!!busy || !locationReady}
             className="mt-3 rounded-sm bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            Créer le produit + stock {currentLocationName ?? "…"}
+            Créer le produit (toutes tailles StockX) + stock {currentLocationName ?? "…"}
           </button>
         </div>
       )}
@@ -598,6 +714,32 @@ export default function RestockScanPage() {
               );
             })}
           </div>
+          {showManualSizeFallback && (
+          <div className="mt-3 border-t border-amber-400 pt-3">
+            <div className="text-xs font-medium text-amber-950">
+              KickDB taille inconnue — saisir EU manuellement
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={manualSizeEu}
+                onChange={(e) => setManualSizeEu(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runManualSizeCreate();
+                }}
+                placeholder="39 1/3"
+                className="flex-1 rounded-sm border border-amber-700 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={runManualSizeCreate}
+                disabled={!!busy || !locationReady || !manualSizeEu.trim()}
+                className="rounded-sm bg-amber-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+              >
+                Créer + restock
+              </button>
+            </div>
+          </div>
+          )}
         </div>
       )}
 
@@ -614,7 +756,7 @@ export default function RestockScanPage() {
                   runApply({ identifier: manualId.trim() }, "Création + restock…");
                 }
               }}
-              placeholder="SKU boîte (ex: JS0250) ou slug StockX…"
+              placeholder="SKU boîte ou slug StockX"
               className="flex-1 rounded-sm border border-gray-300 px-3 py-2 focus:border-black focus:outline-none"
             />
             <button
@@ -665,25 +807,155 @@ export default function RestockScanPage() {
           </div>
           <div className="mt-1 text-xs text-amber-800">
             Le GTIN scanné sera écrit comme barcode sur la variante choisie.
+            {sizeConfirmMatchedEu ? (
+              <span className="mt-1 block font-medium text-amber-950">
+                Taille scannée (KickDB): EU {sizeConfirmMatchedEu}
+              </span>
+            ) : null}
           </div>
           <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
-            {variantChoices.map((v) => (
-              <button
-                key={v.variantId}
-                onClick={() =>
-                  runApply(
-                    { identifier: pendingIdentifier, confirmVariantId: v.variantId },
-                    "Confirmation…"
-                  )
-                }
-                disabled={!!busy}
-                className="rounded-sm border border-gray-300 bg-white px-2 py-2 text-sm hover:border-black disabled:opacity-40"
-              >
-                <div className="font-medium">{v.title ?? "?"}</div>
-                <div className="text-xs text-gray-500">{v.price ?? ""}</div>
-              </button>
-            ))}
+            {variantChoices.map((v) => {
+              const suggested = v.variantId === sizeConfirmSuggestedId;
+              return (
+                <button
+                  key={v.variantId}
+                  onClick={() =>
+                    runApply(
+                      {
+                        identifier: sizeConfirmIdentifier ?? pendingIdentifier,
+                        confirmVariantId: v.variantId,
+                      },
+                      suggested ? "Confirmation (suggéré)…" : "Confirmation…"
+                    )
+                  }
+                  disabled={!!busy}
+                  className={`rounded-sm border px-2 py-2 text-sm disabled:opacity-40 ${
+                    suggested
+                      ? "border-amber-700 bg-amber-100 font-semibold hover:border-black"
+                      : "border-gray-300 bg-white hover:border-black"
+                  }`}
+                >
+                  <div className="font-medium">{v.title ?? "?"}</div>
+                  <div className="text-xs text-gray-500">
+                    {v.price ?? ""}
+                    {suggested ? " · suggéré" : ""}
+                  </div>
+                </button>
+              );
+            })}
           </div>
+          {applyResult.kickdbSizeOptions && applyResult.kickdbSizeOptions.length > 0 && (
+            <div className="mt-3 border-t border-amber-300 pt-3">
+              <div className="text-xs font-medium text-amber-950">
+                Tailles KickDB / StockX (avec GTIN)
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {applyResult.kickdbSizeOptions
+                  .filter((o) => o.sizeEu)
+                  .map((opt) => (
+                    <button
+                      key={`${opt.sizeEu}-${opt.gtin ?? "x"}`}
+                      type="button"
+                      onClick={() =>
+                        runApply(
+                          {
+                            identifier: sizeConfirmIdentifier ?? undefined,
+                            confirmManualSizeEu: opt.sizeEu!,
+                            confirmProductId: sizeConfirmProductId ?? undefined,
+                          },
+                          opt.gtinMatch
+                            ? `Créer EU ${opt.sizeEu} (GTIN scanné)…`
+                            : `Créer EU ${opt.sizeEu}…`
+                        )
+                      }
+                      disabled={!!busy || !locationReady || !sizeConfirmProductId}
+                      className={`rounded-sm border px-2 py-2 text-sm disabled:opacity-40 ${
+                        opt.gtinMatch
+                          ? "border-green-700 bg-green-50 font-semibold hover:border-black"
+                          : "border-gray-300 bg-white hover:border-black"
+                      }`}
+                    >
+                      <div>EU {opt.sizeEu}</div>
+                      <div className="text-xs text-gray-500">
+                        {opt.gtinMatch ? "GTIN scanné" : opt.gtin ? "autre GTIN" : ""}
+                      </div>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+          {showManualSizeFallback && (
+          <div className="mt-3 border-t border-amber-400 pt-3">
+            <div className="text-xs font-medium text-amber-950">
+              KickDB taille inconnue — saisir EU manuellement
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                value={manualSizeEu}
+                onChange={(e) => setManualSizeEu(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runManualSizeCreate();
+                }}
+                placeholder="39 1/3"
+                className="flex-1 rounded-sm border border-amber-700 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={runManualSizeCreate}
+                disabled={!!busy || !locationReady || !manualSizeEu.trim()}
+                className="rounded-sm bg-amber-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+              >
+                Créer + restock
+              </button>
+            </div>
+          </div>
+          )}
+        </div>
+      )}
+
+      {applyResult?.status === "manual-price-required" && (
+        <div className="mt-6 rounded-sm border border-violet-400 bg-violet-50 p-4">
+          <div className="text-sm font-semibold text-violet-950">
+            Taille KickDB confirmée — pas d&apos;ask StockX
+          </div>
+          <div className="mt-1 text-xs text-violet-900">
+            EU {applyResult.matchedSizeEu ?? "?"} · GTIN {applyResult.gtin}
+            {applyResult.warnings?.[0] ? ` — ${applyResult.warnings[0]}` : ""}
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="text-xs font-medium text-violet-950">
+              Prix de vente (CHF) *
+              <input
+                value={manualSellPrice}
+                onChange={(e) => setManualSellPrice(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runManualPriceRestock();
+                }}
+                placeholder="189"
+                className="mt-1 w-full rounded-sm border border-violet-700 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-violet-950">
+              Compare-at (CHF, optionnel)
+              <input
+                value={manualCompareAt}
+                onChange={(e) => setManualCompareAt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") runManualPriceRestock();
+                }}
+                placeholder="349"
+                className="mt-1 w-full rounded-sm border border-violet-300 bg-white px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={runManualPriceRestock}
+            disabled={!!busy || !locationReady || !manualSellPrice.trim()}
+            className="mt-3 rounded-sm bg-violet-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+          >
+            Créer EU {applyResult.matchedSizeEu ?? "?"} + stock {currentLocationName ?? "…"}
+          </button>
         </div>
       )}
 
@@ -726,7 +998,8 @@ export default function RestockScanPage() {
 
       {applyResult &&
         applyResult.status !== "size-confirmation-required" &&
-        applyResult.status !== "gtin-confirmation-required" && (
+        applyResult.status !== "gtin-confirmation-required" &&
+        applyResult.status !== "manual-price-required" && (
         <div
           className={`mt-6 rounded-sm border p-4 ${
             doneOk ? "border-green-300 bg-green-50" : "border-red-300 bg-red-50"

@@ -87,7 +87,7 @@ export function pickPersistedKickdbSizes(matchedVariant: any): { sizeEu: string 
   if ((!sizeEu || !sizeUs) && matchedVariant && typeof matchedVariant === "object") {
     for (const { type, size } of collectVariantSizes(matchedVariant)) {
       const t = type.toLowerCase();
-      if (!sizeEu && t === "eu") sizeEu = pickString(size);
+      if (!sizeEu && t === "eu") sizeEu = normalizeEuSizeLabel(size);
       if (!sizeUs && (t === "us m" || t === "us w" || t === "us" || t === "usm" || t === "usw")) {
         sizeUs = pickString(size);
       }
@@ -96,10 +96,21 @@ export function pickPersistedKickdbSizes(matchedVariant: any): { sizeEu: string 
   const st = String(matchedVariant?.size_type ?? "").toLowerCase();
   const rawSize = pickString(matchedVariant?.size);
   if (rawSize) {
-    if (!sizeEu && st.includes("eu")) sizeEu = rawSize;
+    if (!sizeEu && st.includes("eu")) sizeEu = normalizeEuSizeLabel(rawSize);
     if (!sizeUs && st.includes("us")) sizeUs = rawSize;
+    // Plain EU numeric (40, 39 1/3) when KickDB only sends variant.size without size_type.
+    if (!sizeEu && /^\d+(\s+\d\/\d)?$/.test(rawSize.trim())) {
+      sizeEu = rawSize.trim();
+    }
   }
+  sizeEu = normalizeEuSizeLabel(sizeEu);
   return { sizeEu, sizeUs };
+}
+
+function normalizeEuSizeLabel(raw: string | null | undefined): string | null {
+  const s = pickString(raw);
+  if (!s) return null;
+  return s.replace(/^eu\s+/i, "").trim() || s;
 }
 
 /**

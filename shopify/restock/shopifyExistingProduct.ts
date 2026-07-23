@@ -17,8 +17,72 @@ export function formatSizeEuLabel(sizeEu: string | null | undefined): string {
   return raw.replace(/^eu\s+/i, "").trim() || raw;
 }
 
+const INVALID_SIZE_LABELS = new Set(["?", "-", "n/a", "na", "unknown", "null", "undefined"]);
+
+/** Real EU size label safe for Shopify variant create (rejects "?" placeholders). */
+export function isValidEuSizeForCreate(size: string | null | undefined): boolean {
+  const raw = String(size ?? "").trim();
+  if (!raw || INVALID_SIZE_LABELS.has(raw.toLowerCase())) return false;
+  if (/\d/.test(raw)) return true;
+  return /^(xxs|xs|s|m|l|xl|xxl|xxxl|os|one size|o\/s)$/i.test(raw);
+}
+
+export function sanitizeEuSizeForCreate(size: string | null | undefined): string | null {
+  const label = formatSizeEuLabel(size);
+  if (!isValidEuSizeForCreate(label)) return null;
+  return label;
+}
+
+const UNICODE_FRACTIONS: Record<string, string> = {
+  "½": "1/2",
+  "⅓": "1/3",
+  "⅔": "2/3",
+  "¼": "1/4",
+  "¾": "3/4",
+};
+
+/** Parse EU/US size labels ("39 1/2", "39.5", "39½") to a numeric key for matching. */
+export function parseSizeToNumber(value: string | null | undefined): number | null {
+  let s = String(value ?? "")
+    .toLowerCase()
+    .replace(/^eu\s+/i, "")
+    .replace(/\s*eu\s*$/i, "")
+    .replace(/,/g, ".")
+    .replace(/[wy]$/i, "")
+    .trim();
+  if (!s) return null;
+
+  for (const [symbol, fraction] of Object.entries(UNICODE_FRACTIONS)) {
+    s = s.replace(new RegExp(symbol, "g"), ` ${fraction}`);
+  }
+  s = s.replace(/\s+/g, " ").trim();
+
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+
+  const frac = s.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if (frac) {
+    const whole = parseInt(frac[1]!, 10);
+    const num = parseInt(frac[2]!, 10);
+    const den = parseInt(frac[3]!, 10);
+    if (den > 0) return whole + num / den;
+  }
+
+  const embedded = s.match(/(\d+)\s+(\d+)\/(\d+)/);
+  if (embedded) {
+    const whole = parseInt(embedded[1]!, 10);
+    const num = parseInt(embedded[2]!, 10);
+    const den = parseInt(embedded[3]!, 10);
+    if (den > 0) return whole + num / den;
+  }
+
+  const decimal = s.match(/^(\d+\.\d+)/);
+  if (decimal) return parseFloat(decimal[1]!);
+
+  return null;
+}
+
 export function normalizeSizeTitle(value: string | null | undefined): string {
-  return String(value ?? "")
+  const raw = String(value ?? "")
     .toLowerCase()
     .replace(/^eu\s+/i, "")
     .replace(/\s*eu\s*$/i, "")
@@ -26,6 +90,26 @@ export function normalizeSizeTitle(value: string | null | undefined): string {
     .replace(/[wy]$/i, "")
     .replace(/\s+/g, " ")
     .trim();
+  const num = parseSizeToNumber(raw);
+  if (num != null && Number.isFinite(num)) {
+    const rounded = Math.round(num * 100) / 100;
+    return String(rounded);
+  }
+  return raw;
+}
+
+export function sizeTitlesMatch(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  const na = parseSizeToNumber(a);
+  const nb = parseSizeToNumber(b);
+  if (na != null && nb != null) return Math.abs(na - nb) < 0.05;
+
+  const sa = normalizeSizeTitle(a);
+  const sb = normalizeSizeTitle(b);
+  if (!sa || !sb) return false;
+  return sa === sb || sa.includes(sb) || sb.includes(sa);
 }
 
 function skuTailSize(sku: string | null | undefined): string {
@@ -48,14 +132,15 @@ export function pickVariantBySize(
     const title = normalizeSizeTitle(v.title);
     const tail = skuTailSize(v.sku);
     let s = 0;
-    if (wantedEu) {
-      if (title === wantedEu || tail === wantedEu) s += 100;
-      else if (title.includes(wantedEu) || tail.includes(wantedEu)) s += 50;
-      else if (wantedEu.includes(title) && title) s += 30;
+    if (sizeEu) {
+      if (sizeTitlesMatch(v.title, sizeEu) || sizeTitlesMatch(tail, sizeEu)) s += 100;
+      else if (parseSizeToNumber(sizeEu) == null && parseSizeToNumber(v.title) == null) {
+        if (title.includes(wantedEu) || wantedEu.includes(title)) s += 40;
+      }
     }
-    if (wantedUs) {
-      if (title === wantedUs) s += 80;
-      else if (title.includes(wantedUs)) s += 40;
+    if (sizeUs) {
+      if (sizeTitlesMatch(v.title, sizeUs)) s += 80;
+      else if (parseSizeToNumber(sizeUs) == null && title.includes(wantedUs)) s += 40;
     }
     return s;
   };
@@ -69,7 +154,7 @@ export function pickVariantBySize(
       best = v;
     }
   }
-  return bestScore >= 30 ? best : null;
+  return bestScore >= 80 ? best : null;
 }
 
 function pickProductIdFromResolveRaw(raw: unknown): string | null {

@@ -14,7 +14,8 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
  * GTIN, based on the mirror.
  *
  *   physical > 0  → liquidation state
- *                   Shopify: compareAt = normal calc_sell, price = × liquidation mult (0.96),
+ *                   Shopify: compareAt = calcShopifySellPrice(stockx raw),
+ *                            price = calc_touch_price(stockx raw) − 30%,
  *                            metafield custom.price_locked = true
  *                   DB    : manualLock = true, manualPrice = liq_price
  *                           (manualStock stays null so the resolver still
@@ -30,8 +31,7 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
  * Idempotent: only writes on state diff. Safe to run every 15 minutes.
  */
 
-import { resolveReferenceBuyNowPrice } from "@/shopify/restock/referencePrice";
-import { calcPhysicalLiquidationSellPrice } from "@/shopify/pricing/calcShopifySellPrice";
+import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -190,20 +190,13 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
     return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
   }
 
-  const referencePrice = await resolveReferenceBuyNowPrice({
-    gtin: cleanGtin,
-    variantId: shopifyVariant?.variantId ?? null,
-    sku: shopifyVariant?.sku ?? null,
-  });
+  const pricing = await resolvePhysicalRestockPricing(cleanGtin);
+  const referencePrice = pricing.compareAt;
+  const liqPrice = pricing.sellPrice;
 
   if (desired === "liquidation") {
-    if (!referencePrice || referencePrice <= 0) {
-      warnings.push("no reference buy-now price — cannot compute liquidation price");
-      return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
-    }
-    const liqPrice = calcPhysicalLiquidationSellPrice(referencePrice);
-    if (liqPrice == null || liqPrice <= 0) {
-      warnings.push("no liquidation sell price — cannot compute physical pricing");
+    if (!referencePrice || referencePrice <= 0 || !liqPrice || liqPrice <= 0) {
+      warnings.push(`no StockX liquidation pricing (${pricing.source})`);
       return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
     }
 

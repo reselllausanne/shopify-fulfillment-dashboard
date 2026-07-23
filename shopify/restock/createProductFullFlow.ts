@@ -97,7 +97,7 @@ export function extractLastJsonObject(stdout: string): unknown | null {
  */
 export async function createProductFullFlow(
   identifier: string,
-  options: { lock?: boolean; timeoutMs?: number } = {}
+  options: { lock?: boolean; timeoutMs?: number; physicalGtin?: string | null } = {}
 ): Promise<CreateProductFullFlowResult> {
   const cleaned = String(identifier ?? "").trim();
   const base: CreateProductFullFlowResult = {
@@ -114,6 +114,8 @@ export async function createProductFullFlow(
 
   const args = ["upsert", cleaned];
   if (options.lock) args.push("--lock");
+  const physicalGtin = String(options.physicalGtin ?? "").replace(/\D/g, "").trim();
+  if (physicalGtin) args.push("--physical-gtin", physicalGtin);
 
   let cliResult: Awaited<ReturnType<typeof runPythonCli>>;
   try {

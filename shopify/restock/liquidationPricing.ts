@@ -1,12 +1,11 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
-import { resolveReferenceBuyNowPrice } from "@/shopify/restock/referencePrice";
+import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
 import {
   applyVariantSalePrice,
   getShopifyVariantDetail,
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
-import { calcPhysicalLiquidationSellPrice } from "@/shopify/pricing/calcShopifySellPrice";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -58,8 +57,8 @@ async function writeShopifyPriceLocked(variantId: string, locked: boolean): Prom
 
 /**
  * Physical stock restock → storefront sale badge:
- * compareAt = calc_sell_price(StockX buy) — normal website listing.
- * price = same base × SHOPIFY liquidation multiplier (default 0.96, e.g. 97 → 93).
+ * compareAt = calcShopifySellPrice(stockx raw) — normal website listing.
+ * price = calc_touch_price(stockx raw) − 30% (liquidation).
  */
 export async function applyLiquidationSaleDisplay(input: {
   gtin: string;
@@ -73,23 +72,19 @@ export async function applyLiquidationSaleDisplay(input: {
   warnings: string[];
 }> {
   const warnings: string[] = [];
-  const reference =
-    input.referencePrice != null && input.referencePrice > 0
-      ? input.referencePrice
-      : await resolveReferenceBuyNowPrice({
-          gtin: input.gtin,
-          variantId: input.variant.variantId,
-          sku: input.variant.sku,
-        });
+  const pricing = await resolvePhysicalRestockPricing(input.gtin);
+  const reference = pricing.compareAt;
+  const salePrice = pricing.sellPrice;
 
-  if (!reference || reference <= 0) {
-    warnings.push("No reference buy-now price — compare-at sale not applied");
-    return { applied: false, referencePrice: null, salePrice: null, warnings };
+  if (!reference || reference <= 0 || !salePrice || salePrice <= 0) {
+    warnings.push(
+      `No StockX pricing (${pricing.source}) — compare-at sale not applied`
+    );
+    return { applied: false, referencePrice: reference, salePrice: null, warnings };
   }
 
-  const salePrice = calcPhysicalLiquidationSellPrice(reference);
-  if (salePrice == null || salePrice <= 0 || salePrice >= reference) {
-    warnings.push("Computed sale price invalid — compare-at sale not applied");
+  if (salePrice >= reference) {
+    warnings.push("Liquidation sell >= compareAt — sale not applied");
     return { applied: false, referencePrice: reference, salePrice: null, warnings };
   }
 

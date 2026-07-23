@@ -57,7 +57,7 @@ from shopifyAPI_GQL import (
     set_variant_price_locked,
     update_variants_bulk,
 )
-from main import process_single_url_enhanced
+from main import process_single_url_enhanced, set_physical_restock_gtin
 
 # Auto-create custom.price_locked definition on first import (idempotent).
 try:
@@ -204,6 +204,7 @@ def upsert_product(
     lock_after: bool = False,
     lock_sizes: Optional[List[str]] = None,
     price_only: bool = False,
+    physical_gtin: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create or update a product from slug/URL/SKU/GTIN.
@@ -248,6 +249,7 @@ def upsert_product(
         return result
 
     try:
+        set_physical_restock_gtin(physical_gtin)
         ok = process_single_url_enhanced(
             slug,
             action,
@@ -258,6 +260,8 @@ def upsert_product(
         result["error"] = f"rate_limited:{e}"
         result["action"] = action
         return result
+    finally:
+        set_physical_restock_gtin(None)
 
     if ok is None:
         result["error"] = "deferred_variant_creation_limit"
@@ -554,6 +558,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_up.add_argument("--lock", action="store_true", help="Lock all variant prices after upsert")
     p_up.add_argument("--lock-size", action="append", default=[], help="Lock only these size titles")
     p_up.add_argument("--price-only", action="store_true")
+    p_up.add_argument(
+        "--physical-gtin",
+        default=None,
+        help="Scanned GTIN — create priced variant when StockX has no asks",
+    )
 
     p_res = sub.add_parser("resolve", help="Resolve identifier only")
     p_res.add_argument("identifier")
@@ -589,6 +598,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             lock_after=args.lock or bool(args.lock_size),
             lock_sizes=args.lock_size or None,
             price_only=args.price_only,
+            physical_gtin=getattr(args, "physical_gtin", None),
         )
         _print_json(res)
         return 0 if res.get("ok") else 1

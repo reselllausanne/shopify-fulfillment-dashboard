@@ -1,4 +1,9 @@
-import { searchStockxProducts, fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/kickdb/client";
+import { pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
+import {
+  searchStockxProducts,
+  fetchStockxProductByIdOrSlugRaw,
+  extractVariantGtin,
+} from "@/galaxus/kickdb/client";
 import { importStxProductByInput } from "@/galaxus/stx/importProduct";
 import {
   createProductFullFlow,
@@ -16,15 +21,20 @@ import {
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
 import { assignGtinToVariantExclusive } from "@/shopify/restock/gtinResolution";
+import { ensureManualSizeVariant, isManualPriceRequiredError } from "@/shopify/restock/createManualVariant";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
 import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
 import { convergeVariant } from "@/shopify/inventory/convergence";
+import { cleanGtin, gtinCandidates, gtinEquals } from "@/shopify/restock/gtinNormalize";
 import {
   findExistingShopifyProductForCatalogIdentifier,
   formatSizeEuLabel,
-  normalizeSizeTitle,
+  isValidEuSizeForCreate,
+  sanitizeEuSizeForCreate,
+  parseSizeToNumber,
   pickVariantBySize,
+  sizeTitlesMatch,
   type ShopifyVariantChoice,
 } from "@/shopify/restock/shopifyExistingProduct";
 
@@ -81,7 +91,10 @@ async function ensureStxSupplierForGtin(
       return { ok: false, errors: ["kickdb_slug_missing"] };
     }
 
-    const imported = await importStxProductByInput(slug, { forceImport: true });
+    const imported = await importStxProductByInput(slug, {
+      forceImport: true,
+      targetGtin: gtin,
+    });
     if (!imported.ok) {
       warnings.push(
         `Import DB (Galaxus/Decathlon) échoué: ${imported.errors.join("; ") || "raison inconnue"}`
@@ -166,10 +179,6 @@ export type ScanLookupResult =
       message: string;
     };
 
-function cleanGtin(value: string): string {
-  return String(value ?? "").replace(/\D/g, "").trim();
-}
-
 function pickStr(...values: unknown[]): string | null {
   for (const v of values) {
     if (typeof v === "string" && v.trim()) return v.trim();
@@ -177,29 +186,25 @@ function pickStr(...values: unknown[]): string | null {
   return null;
 }
 
-/** GTIN digit-comparison tolerant to leading zeros (UPC-A vs EAN-13). */
-function gtinEquals(a: string | null | undefined, b: string | null | undefined): boolean {
-  const ca = cleanGtin(String(a ?? "")).replace(/^0+/, "");
-  const cb = cleanGtin(String(b ?? "")).replace(/^0+/, "");
-  return Boolean(ca) && ca === cb;
-}
-
 async function inspectKickdbSlugForGtin(
   slug: string,
   gtin: string
 ): Promise<{ gtinConfirmed: boolean; matchedSizeEu: string | null; matchedSizeUs: string | null }> {
+  const candidates = gtinCandidates(gtin);
   try {
     const { product } = await fetchStockxProductByIdOrSlugRaw(slug);
     const variants = Array.isArray((product as any)?.variants) ? (product as any).variants : [];
     for (const variant of variants) {
       const vGtin = extractVariantGtin(variant);
-      if (vGtin && gtinEquals(vGtin, gtin)) {
-        return {
-          gtinConfirmed: true,
-          matchedSizeEu: formatSizeEuLabel(pickStr(variant?.size_eu)),
-          matchedSizeUs: pickStr(variant?.size_us, variant?.size),
-        };
-      }
+      if (!vGtin) continue;
+      if (!candidates.some((c) => gtinEquals(vGtin, c))) continue;
+      const { sizeEu, sizeUs } = pickPersistedKickdbSizes(variant);
+      const euSize = sanitizeEuSizeForCreate(sizeEu);
+      return {
+        gtinConfirmed: true,
+        matchedSizeEu: euSize,
+        matchedSizeUs: pickStr(sizeUs, variant?.size_us, variant?.size),
+      };
     }
   } catch {
     // Non-fatal: detail fetch failure just means we cannot confirm the GTIN.
@@ -207,19 +212,34 @@ async function inspectKickdbSlugForGtin(
   return { gtinConfirmed: false, matchedSizeEu: null, matchedSizeUs: null };
 }
 
-/** GTIN match candidates tolerant to UPC-A/EAN-13/GTIN-14 zero-padding. */
-function gtinCandidates(rawGtin: string): string[] {
-  const clean = cleanGtin(rawGtin);
-  if (!clean) return [];
-  const stripped = clean.replace(/^0+/, "");
-  const set = new Set<string>([clean, stripped]);
-  for (const base of [clean, stripped]) {
-    if (!base) continue;
-    for (const len of [12, 13, 14]) {
-      if (base.length <= len) set.add(base.padStart(len, "0"));
-    }
+/** All KickDB/StockX variants with GTIN + EU size (fallback picker). */
+async function listKickdbGtinSizeOptions(slug: string, gtin: string) {
+  const candidates = gtinCandidates(gtin);
+  try {
+    const { product } = await fetchStockxProductByIdOrSlugRaw(slug);
+    const variants = Array.isArray((product as any)?.variants) ? (product as any).variants : [];
+    return variants
+      .map((variant: any) => {
+        const vGtin = extractVariantGtin(variant);
+        const { sizeEu, sizeUs } = pickPersistedKickdbSizes(variant);
+        const eu = sanitizeEuSizeForCreate(sizeEu);
+        if (!eu && !vGtin) return null;
+        return {
+          sizeEu: eu,
+          sizeUs: pickString(sizeUs),
+          gtin: vGtin,
+          gtinMatch: Boolean(vGtin && candidates.some((c) => gtinEquals(vGtin, c))),
+        };
+      })
+      .filter(Boolean) as Array<{
+      sizeEu: string | null;
+      sizeUs: string | null;
+      gtin: string | null;
+      gtinMatch: boolean;
+    }>;
+  } catch {
+    return [];
   }
-  return [...set].filter(Boolean);
 }
 
 type LocalGtinHit = {
@@ -410,6 +430,327 @@ function mapVariantChoices(
   }));
 }
 
+function toPublicVariantChoices(variants: ShopifyVariantChoice[]) {
+  return variants.map((v) => ({
+    variantId: v.variantId,
+    title: v.title,
+    sku: v.sku,
+    barcode: v.barcode,
+    price: v.price,
+  }));
+}
+
+async function resolveMatchedSizesForGtin(input: {
+  gtin: string;
+  slug: string | null;
+  matchedSizeEu?: string | null;
+  matchedSizeUs?: string | null;
+  gtinConfirmed?: boolean;
+}): Promise<{
+  matchedSizeEu: string | null;
+  matchedSizeUs: string | null;
+  gtinConfirmed: boolean;
+}> {
+  let matchedSizeEu = input.matchedSizeEu ?? null;
+  let matchedSizeUs = input.matchedSizeUs ?? null;
+  let gtinConfirmed = input.gtinConfirmed ?? false;
+
+  // 1. Local KickDBVariant row — GTIN known even when sizeEu not backfilled yet.
+  try {
+    const local = await resolveGtinFromLocalSources(input.gtin);
+    if (local?.source === "kickdb-variant") {
+      gtinConfirmed = true;
+      const localEu = sanitizeEuSizeForCreate(local.sizeEu);
+      if (localEu) {
+        matchedSizeEu = matchedSizeEu ?? localEu;
+        matchedSizeUs = matchedSizeUs ?? local.sizeUs;
+      }
+    }
+  } catch {
+    // Non-fatal.
+  }
+
+  // 2. Live KickDB — fill size when DB row has GTIN but sizeEu null (common gap).
+  if (input.slug && !matchedSizeEu) {
+    const confirm = await inspectKickdbSlugForGtin(input.slug, input.gtin);
+    matchedSizeEu = matchedSizeEu ?? confirm.matchedSizeEu;
+    matchedSizeUs = matchedSizeUs ?? confirm.matchedSizeUs;
+    if (confirm.gtinConfirmed) gtinConfirmed = true;
+  }
+
+  // 3. Other local sources (supplier, partner, …).
+  if (!matchedSizeEu || !matchedSizeUs) {
+    try {
+      const local = await resolveGtinFromLocalSources(input.gtin);
+      if (local && local.source !== "kickdb-variant") {
+        matchedSizeEu = matchedSizeEu ?? sanitizeEuSizeForCreate(local.sizeEu);
+        matchedSizeUs = matchedSizeUs ?? local.sizeUs;
+      }
+    } catch {
+      // Non-fatal — KickDB API / DB lookup optional.
+    }
+  }
+
+  if (matchedSizeEu && !isValidEuSizeForCreate(matchedSizeEu)) {
+    matchedSizeEu = null;
+  }
+
+  return { matchedSizeEu, matchedSizeUs, gtinConfirmed };
+}
+
+/**
+ * Full main.py catalog (all StockX sizes) then pick scanned EU size.
+ * Falls back to single manual variant only if sync + pick both miss.
+ */
+async function syncFullCatalogAndResolveVariant(input: {
+  gtin: string;
+  slug: string | null;
+  productId: string | null;
+  sizeEu: string;
+  sizeUs?: string | null;
+  dryRun?: boolean;
+  manualSellPrice?: number | null;
+  manualCompareAtPrice?: number | null;
+}): Promise<{
+  productId: string;
+  variantId: string;
+  variantCreated: boolean;
+  catalogSynced: boolean;
+}> {
+  let productId = String(input.productId ?? "").trim() || null;
+  let catalogSynced = false;
+  const slug = String(input.slug ?? "").trim();
+
+  if (slug && !(input.dryRun ?? false)) {
+    const sync = await createProductFullFlow(slug, { physicalGtin: input.gtin });
+    if (sync.ok && sync.productId) {
+      productId = sync.productId;
+      catalogSynced = true;
+    } else if (!productId) {
+      throw new Error(`Sync catalogue Shopify échouée: ${sync.error ?? "inconnue"}`);
+    }
+  }
+
+  if (!productId) {
+    throw new Error("ProductId Shopify manquant — rescanner ou fournir un slug");
+  }
+
+  const variants = mapVariantChoices(await listProductVariants(productId));
+  const picked = pickVariantBySize(variants, input.sizeEu, input.sizeUs ?? null);
+  if (picked) {
+    return {
+      productId,
+      variantId: picked.variantId,
+      variantCreated: false,
+      catalogSynced,
+    };
+  }
+
+  const ensured = await ensureManualSizeVariant({
+    productId,
+    sizeTitle: input.sizeEu,
+    gtin: input.gtin,
+    dryRun: input.dryRun ?? false,
+    manualSellPrice: input.manualSellPrice,
+    manualCompareAtPrice: input.manualCompareAtPrice,
+  });
+  return {
+    productId,
+    variantId: ensured.variantId,
+    variantCreated: ensured.created,
+    catalogSynced,
+  };
+}
+
+/** KickDB/local GTIN→size known: restock existing variant or create missing size — no UI. */
+async function tryKickdbAutoRestock(input: {
+  gtin: string;
+  slug: string | null;
+  productId: string;
+  matchedSizeEu: string | null;
+  matchedSizeUs: string | null;
+  gtinConfirmed: boolean;
+  quantity: number;
+  locationId: string | null;
+  dryRun?: boolean;
+  warnings: string[];
+  created?: boolean;
+  salePrice?: number | null;
+  compareAtPrice?: number | null;
+}): Promise<ApplyScanResult | null> {
+  if (!input.gtinConfirmed || !isValidEuSizeForCreate(input.matchedSizeEu)) return null;
+
+  const variants = mapVariantChoices(await listProductVariants(input.productId));
+  const suggested = pickVariantBySize(variants, input.matchedSizeEu, input.matchedSizeUs);
+
+  let variantId: string;
+  let variantCreated = input.created ?? false;
+
+  try {
+    if (suggested) {
+      variantId = suggested.variantId;
+    } else if (input.slug) {
+      const resolved = await syncFullCatalogAndResolveVariant({
+        gtin: input.gtin,
+        slug: input.slug,
+        productId: input.productId,
+        sizeEu: input.matchedSizeEu!,
+        sizeUs: input.matchedSizeUs,
+        dryRun: input.dryRun,
+        manualSellPrice: input.salePrice,
+        manualCompareAtPrice: input.compareAtPrice,
+      });
+      variantId = resolved.variantId;
+      if (resolved.catalogSynced) {
+        input.warnings.push("Catalogue Shopify synchronisé (main.py — toutes tailles StockX)");
+      }
+      if (resolved.variantCreated) {
+        variantCreated = true;
+        input.warnings.push(
+          `Variante EU ${formatSizeEuLabel(input.matchedSizeEu)} créée après sync (KickDB GTIN confirmé)`
+        );
+      }
+    } else {
+      const ensured = await ensureManualSizeVariant({
+        productId: input.productId,
+        sizeTitle: input.matchedSizeEu!,
+        gtin: input.gtin,
+        dryRun: input.dryRun ?? false,
+        manualSellPrice: input.salePrice,
+        manualCompareAtPrice: input.compareAtPrice,
+      });
+      variantId = ensured.variantId;
+      if (ensured.created) {
+        variantCreated = true;
+        input.warnings.push(
+          `Variante EU ${formatSizeEuLabel(input.matchedSizeEu)} créée (KickDB GTIN confirmé)`
+        );
+      }
+    }
+  } catch (err) {
+    if (isManualPriceRequiredError(err)) {
+      return buildManualPriceRequiredResult({
+        gtin: input.gtin,
+        slug: input.slug,
+        productId: input.productId,
+        matchedSizeEu: input.matchedSizeEu!,
+        gtinConfirmed: input.gtinConfirmed,
+        warnings: input.warnings,
+      });
+    }
+    throw err;
+  }
+
+  if (input.dryRun) {
+    return {
+      ok: true,
+      status: "restocked",
+      gtin: input.gtin,
+      slug: input.slug,
+      shopify: { created: variantCreated, productId: input.productId },
+      warnings: input.warnings,
+    };
+  }
+
+  const resolution = await assignGtinToVariantExclusive({
+    gtin: input.gtin,
+    chosenVariantId: variantId,
+  });
+  input.warnings.push(...resolution.warnings);
+
+  const restock = await restockShopifyVariantByGtin({
+    gtin: input.gtin,
+    quantity: input.quantity,
+    salePrice: input.salePrice ?? null,
+    dryRun: false,
+    locationId: input.locationId ?? null,
+    variantId,
+    requireExplicitLocation: true,
+  });
+  if (!restock.found) {
+    return {
+      ok: false,
+      status: "error",
+      gtin: input.gtin,
+      slug: input.slug,
+      error: restock.warnings.join("; ") || "Restock auto KickDB échoué",
+      warnings: [...input.warnings, ...restock.warnings],
+    };
+  }
+
+  const db = await ensureStxSupplierForGtin(input.gtin, input.dryRun, input.warnings);
+  await runPostRestockConvergence(input.gtin, input.dryRun, input.warnings);
+  return {
+    ok: true,
+    status: "restocked",
+    gtin: input.gtin,
+    slug: input.slug,
+    shopify: {
+      created: variantCreated,
+      productId: input.productId,
+      restock,
+    },
+    db,
+    warnings: [...input.warnings, ...restock.warnings],
+  };
+}
+
+async function buildManualPriceRequiredResult(input: {
+  gtin: string;
+  slug: string | null;
+  productId: string;
+  matchedSizeEu: string;
+  gtinConfirmed?: boolean;
+  warnings: string[];
+}): Promise<ApplyScanResult> {
+  return {
+    ok: false,
+    status: "manual-price-required",
+    gtin: input.gtin,
+    slug: input.slug,
+    shopify: { created: false, productId: input.productId },
+    matchedSizeEu: input.matchedSizeEu,
+    gtinConfirmed: input.gtinConfirmed ?? true,
+    warnings: [
+      ...input.warnings,
+      `KickDB confirme EU ${formatSizeEuLabel(input.matchedSizeEu)} — aucun ask StockX, saisir le prix de vente`,
+    ],
+  };
+}
+
+async function buildSizeConfirmationResult(input: {
+  gtin: string;
+  slug: string | null;
+  productId: string;
+  created: boolean;
+  variants: ShopifyVariantChoice[];
+  matchedSizeEu: string | null;
+  matchedSizeUs: string | null;
+  gtinConfirmed: boolean;
+  warnings: string[];
+  db?: ApplyScanResult["db"];
+}): Promise<ApplyScanResult> {
+  const suggested = pickVariantBySize(input.variants, input.matchedSizeEu, input.matchedSizeUs);
+  const kickdbSizeOptions = input.slug
+    ? (await listKickdbGtinSizeOptions(input.slug, input.gtin)).filter((o) => o.sizeEu)
+    : [];
+  return {
+    ok: false,
+    status: "size-confirmation-required",
+    gtin: input.gtin,
+    slug: input.slug,
+    shopify: { created: input.created, productId: input.productId },
+    db: input.db,
+    variantChoices: toPublicVariantChoices(input.variants),
+    matchedSizeEu: input.matchedSizeEu,
+    matchedSizeUs: input.matchedSizeUs,
+    suggestedVariantId: suggested?.variantId ?? null,
+    gtinConfirmed: input.gtinConfirmed,
+    kickdbSizeOptions: kickdbSizeOptions.length ? kickdbSizeOptions : undefined,
+    warnings: input.warnings,
+  };
+}
+
 /**
  * KickDB/local hit but GTIN missing on Shopify barcode — check if the product
  * already exists (style SKU / slug) before offering full create (duplicate risk).
@@ -418,6 +759,14 @@ async function finalizeCatalogLookup(
   gtin: string,
   catalog: CatalogHit
 ): Promise<ScanLookupResult> {
+  const resolved = await resolveMatchedSizesForGtin({
+    gtin,
+    slug: catalog.slug,
+    matchedSizeEu: catalog.matchedSizeEu,
+    matchedSizeUs: catalog.matchedSizeUs,
+    gtinConfirmed: catalog.gtinConfirmed,
+  });
+
   const existing = await findExistingShopifyProductForCatalogIdentifier({
     slug: catalog.slug,
     styleSku: catalog.styleSku,
@@ -431,17 +780,17 @@ async function finalizeCatalogLookup(
       brand: catalog.brand,
       styleSku: catalog.styleSku,
       image: catalog.image,
-      gtinConfirmed: catalog.gtinConfirmed,
-      matchedSizeEu: catalog.matchedSizeEu,
-      matchedSizeUs: catalog.matchedSizeUs,
+      gtinConfirmed: resolved.gtinConfirmed,
+      matchedSizeEu: resolved.matchedSizeEu,
+      matchedSizeUs: resolved.matchedSizeUs,
     };
   }
 
   const variants = mapVariantChoices(await listProductVariants(existing.productId));
   const suggested = pickVariantBySize(
     variants,
-    catalog.matchedSizeEu,
-    catalog.matchedSizeUs
+    resolved.matchedSizeEu,
+    resolved.matchedSizeUs
   );
 
   return {
@@ -453,9 +802,9 @@ async function finalizeCatalogLookup(
     styleSku: catalog.styleSku,
     image: catalog.image,
     productId: existing.productId,
-    gtinConfirmed: catalog.gtinConfirmed,
-    matchedSizeEu: catalog.matchedSizeEu,
-    matchedSizeUs: catalog.matchedSizeUs,
+    gtinConfirmed: resolved.gtinConfirmed,
+    matchedSizeEu: resolved.matchedSizeEu,
+    matchedSizeUs: resolved.matchedSizeUs,
     suggestedVariantId: suggested?.variantId ?? null,
     variantChoices: variants.map((v) => ({
       variantId: v.variantId,
@@ -475,6 +824,13 @@ async function requireSizeConfirmationForExistingProduct(input: {
   identifier?: string | null;
   matchedSizeEu?: string | null;
   matchedSizeUs?: string | null;
+  gtinConfirmed?: boolean;
+  quantity?: number;
+  locationId?: string | null;
+  dryRun?: boolean;
+  salePrice?: number | null;
+  compareAtPrice?: number | null;
+  warnings?: string[];
 }): Promise<ApplyScanResult | null> {
   const existing = await findExistingShopifyProductForCatalogIdentifier({
     slug: input.slug,
@@ -482,35 +838,54 @@ async function requireSizeConfirmationForExistingProduct(input: {
   });
   if (!existing) return null;
 
+  const warnings = input.warnings ?? [];
   const variants = mapVariantChoices(await listProductVariants(existing.productId));
-  let sizeEu = input.matchedSizeEu ?? null;
-  let sizeUs = input.matchedSizeUs ?? null;
-  if (input.slug && (!sizeEu || !sizeUs)) {
-    const confirm = await inspectKickdbSlugForGtin(input.slug, input.gtin);
-    sizeEu = sizeEu ?? confirm.matchedSizeEu;
-    sizeUs = sizeUs ?? confirm.matchedSizeUs;
-  }
-  const suggested = pickVariantBySize(variants, sizeEu, sizeUs);
-
-  return {
-    ok: false,
-    status: "size-confirmation-required",
+  const { matchedSizeEu, matchedSizeUs, gtinConfirmed } = await resolveMatchedSizesForGtin({
     gtin: input.gtin,
     slug: input.slug,
-    shopify: { created: false, productId: existing.productId },
-    variantChoices: variants.map((v) => ({
-      variantId: v.variantId,
-      title: v.title,
-      sku: v.sku,
-      barcode: v.barcode,
-      price: v.price,
-    })),
+    matchedSizeEu: input.matchedSizeEu,
+    matchedSizeUs: input.matchedSizeUs,
+    gtinConfirmed: input.gtinConfirmed,
+  });
+
+  if (input.quantity != null && gtinConfirmed && isValidEuSizeForCreate(matchedSizeEu)) {
+    const auto = await tryKickdbAutoRestock({
+      gtin: input.gtin,
+      slug: input.slug,
+      productId: existing.productId,
+      matchedSizeEu,
+      matchedSizeUs,
+      gtinConfirmed,
+      quantity: input.quantity,
+      locationId: input.locationId ?? null,
+      dryRun: input.dryRun,
+      salePrice: input.salePrice ?? null,
+      compareAtPrice: input.compareAtPrice ?? null,
+      warnings,
+      created: false,
+    });
+    if (auto?.ok) return auto;
+    if (auto && !auto.ok) return auto;
+  }
+
+  return await buildSizeConfirmationResult({
+    gtin: input.gtin,
+    slug: input.slug,
+    productId: existing.productId,
+    created: false,
+    variants,
+    matchedSizeEu,
+    matchedSizeUs,
+    gtinConfirmed,
     warnings: [
-      `Produit déjà sur Shopify (${existing.matchedVia}) — GTIN absent sur variante, choisir la taille${
-        suggested ? ` (suggestion: ${suggested.title ?? suggested.sku})` : ""
-      }`,
+      ...warnings,
+      gtinConfirmed && matchedSizeEu
+        ? `Auto KickDB EU ${formatSizeEuLabel(matchedSizeEu)} échoué — choisir la taille manuellement`
+        : `Produit déjà sur Shopify (${existing.matchedVia}) — GTIN absent, choisir la taille${
+            matchedSizeEu ? ` (KickDB: EU ${formatSizeEuLabel(matchedSizeEu)})` : ""
+          }`,
     ],
-  };
+  });
 }
 
 /**
@@ -523,22 +898,19 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
     return { status: "not-found", gtin: rawGtin, message: "GTIN vide ou invalide" };
   }
 
-  // 1. Shopify direct (barcode). Try zero-padding candidates so a scanner that
-  // emits a UPC-A/EAN-13 variant still matches an existing Shopify barcode.
-  for (const candidate of gtinCandidates(gtin)) {
-    const shopifyHit = await findShopifyVariantByGtin(candidate);
-    if (shopifyHit.match) {
-      const ambiguousMatches = shopifyHit.ambiguous
-        ? await listShopifyVariantsByGtinDetailed(candidate)
-        : undefined;
-      return {
-        status: "on-shopify",
-        gtin,
-        variant: shopifyHit.match,
-        ambiguous: shopifyHit.ambiguous,
-        ambiguousMatches,
-      };
-    }
+  // 1. Shopify direct (barcode). Zero-padding tolerant (UPC-A vs EAN-13 on Shopify).
+  const shopifyHit = await findShopifyVariantByGtin(gtin);
+  if (shopifyHit.match) {
+    const ambiguousMatches = shopifyHit.ambiguous
+      ? await listShopifyVariantsByGtinDetailed(gtin)
+      : undefined;
+    return {
+      status: "on-shopify",
+      gtin,
+      variant: shopifyHit.match,
+      ambiguous: shopifyHit.ambiguous,
+      ambiguousMatches,
+    };
   }
 
   // 2. Local data sources (reliable): a prior import stored this GTIN somewhere.
@@ -559,8 +931,8 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
         brand: local.brand,
         styleSku: local.styleSku,
         image: local.image,
-        gtinConfirmed: true,
-        matchedSizeEu: formatSizeEuLabel(local.sizeEu),
+        gtinConfirmed: local.source === "kickdb-variant",
+        matchedSizeEu: sanitizeEuSizeForCreate(local.sizeEu),
         matchedSizeUs: local.sizeUs,
       });
     }
@@ -601,7 +973,8 @@ export async function lookupScan(rawGtin: string): Promise<ScanLookupResult> {
   return {
     status: "not-found",
     gtin,
-    message: "GTIN inconnu (pas sur Shopify, pas en base) — scanner/entrer le SKU de la boîte",
+    message:
+      "GTIN inconnu — entrer slug StockX ou SKU boîte",
   };
 }
 
@@ -610,6 +983,7 @@ export type ApplyScanResult = {
   status:
     | "restocked"
     | "size-confirmation-required"
+    | "manual-price-required"
     | "gtin-confirmation-required"
     | "created-restocked"
     | "error";
@@ -633,6 +1007,16 @@ export type ApplyScanResult = {
     sku: string | null;
     barcode: string | null;
     price: string | null;
+  }>;
+  matchedSizeEu?: string | null;
+  matchedSizeUs?: string | null;
+  suggestedVariantId?: string | null;
+  gtinConfirmed?: boolean;
+  kickdbSizeOptions?: Array<{
+    sizeEu: string | null;
+    sizeUs: string | null;
+    gtin: string | null;
+    gtinMatch: boolean;
   }>;
   error?: string;
   warnings: string[];
@@ -708,7 +1092,13 @@ export async function applyScanRestock(input: {
   quantity: number;
   identifier?: string | null;
   confirmVariantId?: string | null;
+  /** Operator-typed EU size — create variant if missing, then GTIN + restock. */
+  confirmManualSizeEu?: string | null;
+  confirmProductId?: string | null;
+  /** @deprecated Prefer confirmManualSizeEu */
+  ensureMissingSize?: boolean;
   salePrice?: number | null;
+  compareAtPrice?: number | null;
   dryRun?: boolean;
   /** Preferred physical Shopify location id; validated against locationConfig. */
   locationId?: string | null;
@@ -717,6 +1107,198 @@ export async function applyScanRestock(input: {
   const warnings: string[] = [];
   if (!gtin) {
     return { ok: false, status: "error", gtin: input.gtin, error: "GTIN vide", warnings };
+  }
+
+  // --- Shape D: operator types physical EU size → create variant if needed ---
+  const manualSize = String(input.confirmManualSizeEu ?? "").trim();
+  if (manualSize) {
+    if (!isValidEuSizeForCreate(manualSize)) {
+      return {
+        ok: false,
+        status: "error",
+        gtin,
+        error: `Taille EU invalide: "${manualSize}"`,
+        warnings,
+      };
+    }
+
+    let productId = String(input.confirmProductId ?? "").trim() || null;
+    let slug: string | null = null;
+    const identifier = String(input.identifier ?? "").trim();
+    if (identifier) {
+      try {
+        const resolved = await resolveProductIdentifier(identifier);
+        slug = resolved.slug ?? identifier;
+      } catch {
+        slug = identifier;
+      }
+    }
+    if (!productId && identifier) {
+      const existing = await findExistingShopifyProductForCatalogIdentifier({
+        slug,
+        styleSku: identifier,
+      });
+      productId = existing?.productId ?? null;
+    }
+    if (!productId && !slug) {
+      return {
+        ok: false,
+        status: "error",
+        gtin,
+        error: "confirmProductId ou identifier (slug/SKU) requis",
+        warnings,
+      };
+    }
+
+    try {
+      const resolved = await syncFullCatalogAndResolveVariant({
+        gtin,
+        slug,
+        productId,
+        sizeEu: manualSize,
+        dryRun: input.dryRun ?? false,
+        manualSellPrice: input.salePrice,
+        manualCompareAtPrice: input.compareAtPrice,
+      });
+      productId = resolved.productId;
+      if (resolved.catalogSynced) {
+        warnings.push("Catalogue Shopify synchronisé (main.py — toutes tailles StockX)");
+      }
+      if (resolved.variantCreated) {
+        warnings.push(`Variante EU ${manualSize} créée (absente après sync catalogue)`);
+      }
+
+      if (input.dryRun) {
+        return {
+          ok: true,
+          status: "restocked",
+          gtin,
+          shopify: { created: resolved.variantCreated, productId },
+          warnings,
+        };
+      }
+
+      const resolution = await assignGtinToVariantExclusive({
+        gtin,
+        chosenVariantId: resolved.variantId,
+      });
+      warnings.push(...resolution.warnings);
+
+      const restock = await restockShopifyVariantByGtin({
+        gtin,
+        quantity: input.quantity,
+        salePrice: input.salePrice ?? null,
+        dryRun: false,
+        locationId: input.locationId ?? null,
+        variantId: resolved.variantId,
+        requireExplicitLocation: true,
+      });
+      if (!restock.found) {
+        return {
+          ok: false,
+          status: "error",
+          gtin,
+          error: restock.warnings.join("; ") || "Restock failed after catalog sync",
+          warnings: [...warnings, ...restock.warnings],
+        };
+      }
+
+      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings);
+      await runPostRestockConvergence(gtin, input.dryRun, warnings);
+      return {
+        ok: true,
+        status: "restocked",
+        gtin,
+        shopify: { created: resolved.variantCreated, productId, restock },
+        db,
+        warnings: [...warnings, ...restock.warnings],
+      };
+    } catch (error: any) {
+      if (isManualPriceRequiredError(error)) {
+        return buildManualPriceRequiredResult({
+          gtin,
+          slug,
+          productId: productId ?? "",
+          matchedSizeEu: manualSize,
+          gtinConfirmed: true,
+          warnings,
+        });
+      }
+      return {
+        ok: false,
+        status: "error",
+        gtin,
+        error: error?.message ?? "Sync catalogue + restock échoué",
+        warnings,
+      };
+    }
+  }
+
+  // --- Shape E: legacy sync via Python physical GTIN (KickDB) ---
+  if (input.ensureMissingSize) {
+    const identifier = String(input.identifier ?? "").trim();
+    if (!identifier) {
+      return {
+        ok: false,
+        status: "error",
+        gtin,
+        error: "ensureMissingSize nécessite identifier (slug/SKU)",
+        warnings,
+      };
+    }
+
+    let slug: string | null = null;
+    try {
+      const resolved = await resolveProductIdentifier(identifier);
+      slug = resolved.slug ?? identifier;
+    } catch {
+      slug = identifier;
+    }
+
+    const sync = await createProductFullFlow(slug, { physicalGtin: gtin });
+    if (!sync.ok || !sync.productId) {
+      return {
+        ok: false,
+        status: "error",
+        gtin,
+        slug,
+        error: `Sync Shopify échouée: ${sync.error ?? "inconnue"}`,
+        warnings,
+      };
+    }
+
+    const variants = mapVariantChoices(await listProductVariants(sync.productId));
+    const { matchedSizeEu, matchedSizeUs, gtinConfirmed } = await resolveMatchedSizesForGtin({
+      gtin,
+      slug,
+    });
+    const suggested = pickVariantBySize(variants, matchedSizeEu, matchedSizeUs);
+
+    if (suggested) {
+      return applyScanRestock({
+        ...input,
+        ensureMissingSize: false,
+        identifier,
+        confirmVariantId: suggested.variantId,
+      });
+    }
+
+    return await buildSizeConfirmationResult({
+      gtin,
+      slug,
+      productId: sync.productId,
+      created: sync.action === "create",
+      variants,
+      matchedSizeEu,
+      matchedSizeUs,
+      gtinConfirmed,
+      warnings: [
+        ...warnings,
+        matchedSizeEu
+          ? `Taille KickDB EU ${formatSizeEuLabel(matchedSizeEu)} toujours absente après sync — choisir manuellement ou revérifier le produit`
+          : "Sync terminée mais taille scannée introuvable — choisir manuellement",
+      ],
+    });
   }
 
   // --- Shape C: variant confirmed (size after create OR GTIN disambiguation) ---
@@ -866,7 +1448,10 @@ export async function applyScanRestock(input: {
       // item on the shelf, we want a supplier row so marketplace feeds can
       // publish it, regardless of the express-price filter (clothing, niche
       // sizes, low-ask variants — all valid to sell when we own stock).
-      const imported = await importStxProductByInput(slug, { forceImport: true });
+      const imported = await importStxProductByInput(slug, {
+        forceImport: true,
+        targetGtin: gtin,
+      });
       if (!imported.ok) {
         warnings.push(
           `Import DB (Galaxus/Decathlon) échoué: ${imported.errors.join("; ") || "raison inconnue"}`
@@ -913,6 +1498,12 @@ export async function applyScanRestock(input: {
     slug,
     styleSku: String(input.identifier ?? "").trim() || null,
     identifier: input.identifier ?? null,
+    quantity: input.quantity,
+    locationId: input.locationId ?? null,
+    dryRun: input.dryRun,
+    salePrice: input.salePrice ?? null,
+    compareAtPrice: input.compareAtPrice ?? null,
+    warnings,
   });
   if (duplicateGuard) {
     duplicateGuard.db = await runDbImport();
@@ -930,7 +1521,7 @@ export async function applyScanRestock(input: {
   }
 
   // B.4 — Shopify full create (Python pipeline) — only when product truly absent.
-  const created = await createProductFullFlow(slug);
+  const created = await createProductFullFlow(slug, { physicalGtin: gtin });
   if (!created.ok) {
     return {
       ok: false,
@@ -980,26 +1571,45 @@ export async function applyScanRestock(input: {
       warnings,
     };
   }
-  const variants = await listProductVariants(created.productId);
-  return {
-    ok: false,
-    status: "size-confirmation-required",
+  const variants = mapVariantChoices(await listProductVariants(created.productId));
+  const { matchedSizeEu, matchedSizeUs, gtinConfirmed } = await resolveMatchedSizesForGtin({
     gtin,
     slug,
-    shopify: { created: created.action === "create", productId: created.productId },
+  });
+  const auto = await tryKickdbAutoRestock({
+    gtin,
+    slug,
+    productId: created.productId,
+    matchedSizeEu,
+    matchedSizeUs,
+    gtinConfirmed,
+    quantity: input.quantity,
+    locationId: input.locationId ?? null,
+    dryRun: input.dryRun,
+    salePrice: input.salePrice ?? null,
+    compareAtPrice: input.compareAtPrice ?? null,
+    warnings,
+    created: created.action === "create",
+  });
+  if (auto) {
+    auto.db = db;
+    return auto;
+  }
+  return await buildSizeConfirmationResult({
+    gtin,
+    slug,
+    productId: created.productId,
+    created: created.action === "create",
+    variants,
+    matchedSizeEu,
+    matchedSizeUs,
+    gtinConfirmed,
     db,
-    variantChoices: variants.map((v) => ({
-      variantId: v.variantId,
-      title: v.title,
-      sku: v.sku,
-      barcode: v.barcode,
-      price: v.price,
-    })),
     warnings: [
       ...warnings,
-      `GTIN scanné ${gtin} ne matche aucun barcode du produit "${slug}" — confirmer la taille (data KickDB possiblement fausse)`,
+      `GTIN scanné ${gtin} ne matche aucun barcode — confirmer la taille manuellement`,
     ],
-  };
+  });
 }
 
 /**
@@ -1013,8 +1623,7 @@ export async function addStockAtBussignyBySize(input: {
   gtinToWrite?: string | null;
 }): Promise<{ ok: boolean; variantId?: string; error?: string }> {
   const variants = await listProductVariants(input.productId);
-  const wanted = normalizeSizeTitle(input.sizeEu);
-  const match = variants.find((v) => normalizeSizeTitle(v.title) === wanted);
+  const match = variants.find((v) => sizeTitlesMatch(v.title, input.sizeEu));
   if (!match) {
     return { ok: false, error: `Taille "${input.sizeEu}" introuvable sur le produit` };
   }

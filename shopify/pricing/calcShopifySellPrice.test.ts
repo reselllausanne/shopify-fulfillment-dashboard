@@ -29,7 +29,7 @@ describe("calcShopifySellPrice", () => {
 });
 
 describe("calcPhysicalLiquidationSellPrice", () => {
-  it("uses Shopify liquidation multiplier (97 → 93.12)", () => {
-    expect(calcPhysicalLiquidationSellPrice(97)).toBe(93.12);
+  it("applies 30% off cost with psych rounding (261.92 → 189)", () => {
+    expect(calcPhysicalLiquidationSellPrice(261.92)).toBe(189);
   });
 });

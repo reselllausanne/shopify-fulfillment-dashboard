@@ -12,6 +12,12 @@ import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
 import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
 import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
+import {
+  buildPhysicalOnlySelectedOffer,
+  calcSuggestedRetailForPhysicalRaw,
+  gtinDigitsEqual,
+  pickPhysicalImportStockxRaw,
+} from "@/galaxus/stx/physicalImport";
 import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import { STX_MIN_ASKS_FOR_LISTING, isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
 
@@ -268,7 +274,7 @@ function runRegionHook(
 
 export async function importStxProductByInput(
   input: string,
-  options: { forceImport?: boolean } = {}
+  options: { forceImport?: boolean; targetGtin?: string | null } = {}
 ): Promise<StxImportResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -350,8 +356,57 @@ export async function importStxProductByInput(
   // to attach qty to.
   const forceImport = options.forceImport === true || isStxForceImportSlug(slug ?? normalizedInput);
   diagnostics.forceImport = forceImport;
+  const targetGtin = String(options.targetGtin ?? "").replace(/\D/g, "").trim();
   const parsedRows: ParsedVariantRow[] = [];
   let eligibleVariantsCount = 0;
+
+  function pushPhysicalOnlyRow(
+    variant: any,
+    variantId: string,
+    sizeLabel: string,
+    gtin: string
+  ): boolean {
+    const fallbackRaw = pickPhysicalImportStockxRaw({ traits, product });
+    const selected = buildPhysicalOnlySelectedOffer(fallbackRaw);
+    const shippingCHF = resolveStxShippingCHF(product);
+    const stxSellPrice = estimatedStockxBuyChfFromList(selected.price, shippingCHF);
+    const suggestedRetailPriceInclVat =
+      calcSuggestedRetailForPhysicalRaw({
+        stockxRaw: selected.price,
+        productHandle: slug,
+        productName: name,
+      }) ??
+      calcSuggestedRetailFromStxOffer({
+        stockxRaw: selected.price,
+        productHandle: slug,
+        productName: name,
+        deliveryType: selected.deliveryType,
+      });
+
+    parsedRows.push({
+      supplierVariantId: `stx_${variantId}`,
+      supplierSku: supplierSkuFallback,
+      providerKey: buildProviderKey(gtin, `stx_${variantId}`),
+      gtin,
+      price: stxSellPrice,
+      stock: 0,
+      sizeRaw: pickSizeRawEuFirst(variant),
+      supplierBrand: brand,
+      supplierProductName: name,
+      images,
+      leadTimeDays: null,
+      deliveryType: selected.deliveryType,
+      suggestedRetailPriceInclVat,
+      kickdbVariantExternalId: variantId,
+      sizeUs: pickString(variant?.size_us),
+      sizeEu: pickString(variant?.size_eu),
+      ean: pickString(variant?.ean),
+    });
+    warnings.push(
+      `Physical-only import: size ${sizeLabel} (${variantId}) — no StockX asks; estimated raw=${fallbackRaw} CHF`
+    );
+    return true;
+  }
 
   for (const variant of variants) {
     const variantId = pickString(variant?.id);
@@ -362,8 +417,22 @@ export async function importStxProductByInput(
       continue;
     }
 
+    const gtinRaw = pickString(extractVariantGtin(variant));
+    const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+
     const selected = selectStxOfferForImport(variant?.prices, { forceImport });
     if (!selected) {
+      if (
+        forceImport &&
+        targetGtin &&
+        gtin &&
+        gtinDigitsEqual(gtin, targetGtin) &&
+        images &&
+        images.length > 0
+      ) {
+        pushPhysicalOnlyRow(variant, variantId, sizeLabel, gtin);
+        continue;
+      }
       diagnostics.skipReasons.noUsablePrice += 1;
       const priceHint = summarizePriceRows(variant?.prices);
       if (!diagnostics.samplePriceRows?.includes(priceHint) && diagnostics.samplePriceRows!.length < 3) {
@@ -379,8 +448,6 @@ export async function importStxProductByInput(
     if (isStxListingEligibleAsks(selected.asks)) eligibleVariantsCount += 1;
 
     const supplierVariantId = `stx_${variantId}`;
-    const gtinRaw = pickString(extractVariantGtin(variant));
-    const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
     if (!gtin) {
       diagnostics.skipReasons.invalidGtin += 1;
       warnings.push(`Size ${sizeLabel} (${variantId}): missing/invalid GTIN (got ${gtinRaw ?? "none"}).`);
@@ -427,10 +494,13 @@ export async function importStxProductByInput(
   diagnostics.variantsParsed = parsedRows.length;
   diagnostics.variantsEligible = eligibleVariantsCount;
 
+  const hasTargetPhysicalRow =
+    Boolean(targetGtin) &&
+    parsedRows.some((row) => row.gtin && gtinDigitsEqual(row.gtin, targetGtin));
+
   if (parsedRows.length === 0) {
     errors.push("No importable variants were found on this product.");
-  }
-  if (!forceImport && eligibleVariantsCount === 0) {
+  } else if (!forceImport && eligibleVariantsCount === 0 && !hasTargetPhysicalRow) {
     errors.push(
       `No eligible express variants (need express_standard or express_expedited with price>0 and asks≥${STX_MIN_ASKS_FOR_LISTING}).`
     );

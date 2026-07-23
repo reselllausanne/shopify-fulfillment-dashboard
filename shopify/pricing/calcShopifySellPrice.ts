@@ -4,7 +4,6 @@ import {
   psychRoundUp,
   type SuggestedSellCategory,
 } from "@/galaxus/pricing/suggestedSellPrice";
-import { computeChannelVariantPrice } from "@/inventory/pricingPolicy";
 
 export type CalcShopifySellPriceInput = {
   /** StockX list/ask before their fees (CHF). */
@@ -110,15 +109,45 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   return psychRoundUp(finalPriceRaw);
 }
 
+/** StockX acquisition cost — port of Python `calc_touch_price`. */
+export function calcShopifyTouchPrice(input: {
+  stockxRaw: number;
+  productCategory?: SuggestedSellCategory | string | null;
+  productHandle?: string | null;
+}): number | null {
+  const stockxRaw = Number(input.stockxRaw);
+  if (!Number.isFinite(stockxRaw) || stockxRaw <= 0) return null;
+
+  const productHandle = String(input.productHandle ?? "");
+  const category =
+    typeof input.productCategory === "string" &&
+    (input.productCategory === "sneakers" ||
+      input.productCategory === "clothing" ||
+      input.productCategory === "lego")
+      ? input.productCategory
+      : classifySuggestedSellCategory({ productHandle });
+
+  if (category === "lego") {
+    const shipping = getLegoInboundShippingChf(productHandle);
+    return Math.round((stockxRaw * 1.1 + shipping) * 100) / 100;
+  }
+
+  return Math.round((stockxRaw * 1.08 + 20) * 100) / 100;
+}
+
+function readLiquidationDiscountPct(): number {
+  const raw = process.env.LIQUIDATION_DISCOUNT_PCT ?? process.env.SHOPIFY_LIQUIDATION_DISCOUNT_PCT ?? "30";
+  const n = Number.parseFloat(String(raw));
+  if (!Number.isFinite(n) || n <= 0 || n >= 100) return 30;
+  return n;
+}
+
 /**
- * Physical-stock liquidation sell on Shopify: same calc_sell_price base, then
- * SHOPIFY liquidation channel multiplier (default ×0.96 → ~93 when normal ≈ 97).
+ * Physical liquidation sell on Shopify: **cost minus 30%** (default).
+ * compareAt = calcShopifySellPrice(stockx raw) is applied separately.
  */
-export function calcPhysicalLiquidationSellPrice(normalSellPrice: number): number | null {
-  if (!Number.isFinite(normalSellPrice) || normalSellPrice <= 0) return null;
-  return computeChannelVariantPrice({
-    channel: "SHOPIFY",
-    basePrice: normalSellPrice,
-    classification: "liquidation",
-  });
+export function calcPhysicalLiquidationSellPrice(costChf: number): number | null {
+  if (!Number.isFinite(costChf) || costChf <= 0) return null;
+  const pct = readLiquidationDiscountPct();
+  return psychRoundUp(costChf * (1 - pct / 100));
 }

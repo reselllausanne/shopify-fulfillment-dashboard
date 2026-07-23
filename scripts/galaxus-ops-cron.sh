@@ -10,7 +10,8 @@
 # Env overrides:
 #   GALAXUS_OPS_BASE_URL   default http://127.0.0.1:3000
 #   GALAXUS_OPS_LOG_DIR    default /var/log/resell
-#   GALAXUS_OPS_WAIT_SEC   default 3600 (max wait per push step)
+#   GALAXUS_OPS_WAIT_SEC            default 3600 (max wait per feed push step)
+#   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 14400 (max wait for image-sync; ~83m observed)
 #
 set -euo pipefail
 
@@ -18,6 +19,7 @@ ACTION="${1:-}"
 BASE_URL="${GALAXUS_OPS_BASE_URL:-http://127.0.0.1:3000}"
 LOG_DIR="${GALAXUS_OPS_LOG_DIR:-/var/log/resell}"
 WAIT_SEC="${GALAXUS_OPS_WAIT_SEC:-3600}"
+IMAGE_SYNC_WAIT_SEC="${GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC:-14400}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/galaxus-ops-cron.log"
 
@@ -93,22 +95,22 @@ const p=new PrismaClient();
 
 # Ops status exposes feeds.imageSyncRunning (job run startedAt == finishedAt while active).
 wait_image_sync_idle() {
-  local deadline=$((SECONDS + WAIT_SEC))
+  local deadline=$((SECONDS + IMAGE_SYNC_WAIT_SEC))
   while (( SECONDS < deadline )); do
     local running
     running="$(
       curl -sS --max-time 30 "$BASE_URL/api/galaxus/ops/status" 2>/dev/null \
         | python3 -c 'import json,sys; d=json.load(sys.stdin); print("1" if d.get("feeds",{}).get("imageSyncRunning") else "0")' \
-        2>/dev/null || echo 0
+        2>/dev/null || echo 1
     )"
     if [[ "$running" == "0" ]]; then
       return 0
     fi
-    log "waiting image-sync idle"
+    log "waiting image-sync idle (elapsed=$((SECONDS - (deadline - IMAGE_SYNC_WAIT_SEC)))s max=${IMAGE_SYNC_WAIT_SEC}s)"
     sleep 30
   done
-  log "WARN: timed out waiting for image-sync after ${WAIT_SEC}s; continuing feeds"
-  return 0
+  log "ERROR: image-sync still running after ${IMAGE_SYNC_WAIT_SEC}s — aborting feeds"
+  return 1
 }
 
 run_push() {
@@ -122,7 +124,7 @@ run_push() {
 
 run_image_sync_full() {
   log "START image-sync full"
-  wait_image_sync_idle || true
+  wait_image_sync_idle
   post_json '{"action":"image-sync","imageMode":"full"}' >/dev/null
   wait_image_sync_idle
   log "DONE image-sync full"
