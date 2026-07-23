@@ -2,18 +2,19 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
 
 /**
  * Websites to scrape are configured via the SCRAPER_SHOPS env var.
- * Format: comma-separated entries `KEY|Name|baseUrl[|CURRENCY][|platform]`
+ * Format: one shop per line (or comma-separated)
+ *   KEY|Name|baseUrl[|CURRENCY][|platform]
  *   KEY  = supplier key, MUST be 3 letters (becomes the Galaxus ProviderKey prefix)
  *   Name = display name
  *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
  *   CURRENCY = optional ISO code (default CHF)
- *   platform = optional adapter: shopify (default) | hhv
+ *   platform = optional adapter: shopify (default) | hhv | snl
  *
  * Example:
  *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
  */
 
-export type ScraperPlatform = "shopify" | "hhv";
+export type ScraperPlatform = "shopify" | "hhv" | "snl";
 
 export type ScraperShop = {
   key: string; // lowercase, used as shop_id + VariantMapping.supplierKey
@@ -33,6 +34,13 @@ function allowlistKeys(): Set<string> {
   );
 }
 
+function parseScraperShopEntries(raw: string): string[] {
+  return raw
+    .split(/[\n,]+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 export function parseScraperShops(): ScraperShop[] {
   const raw = String(process.env.SCRAPER_SHOPS || "").trim();
   if (!raw) return [];
@@ -40,7 +48,7 @@ export function parseScraperShops(): ScraperShop[] {
   const out: ScraperShop[] = [];
   const seen = new Set<string>();
 
-  for (const entry of raw.split(",")) {
+  for (const entry of parseScraperShopEntries(raw)) {
     const parts = entry.split("|").map((p) => p.trim());
     const [rawKey, name, baseUrl, currencyOrPlatform, platformRaw] = parts;
     if (!rawKey || !baseUrl) continue;
@@ -54,7 +62,8 @@ export function parseScraperShops(): ScraperShop[] {
     const currency =
       currencyCandidate.length === 3 && /^[A-Z]{3}$/.test(currencyCandidate) ? currencyCandidate : "CHF";
     const platformCandidate = String(platformRaw || currencyOrPlatform || "shopify").toLowerCase();
-    const platform: ScraperPlatform = platformCandidate === "hhv" ? "hhv" : "shopify";
+    const platform: ScraperPlatform =
+      platformCandidate === "hhv" ? "hhv" : platformCandidate === "snl" ? "snl" : "shopify";
 
     out.push({
       key,

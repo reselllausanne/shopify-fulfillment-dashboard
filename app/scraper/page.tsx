@@ -47,6 +47,7 @@ function fmtDate(iso: string | null | undefined) {
 
 function platformLabel(platform: string) {
   if (platform === "hhv") return "HHV / Playwright";
+  if (platform === "snl") return "Snowleader / GraphQL";
   return "Shopify";
 }
 
@@ -128,9 +129,9 @@ export default function ScraperPage() {
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Scraped Websites</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              HHV = sneaker discovery catalog. GTIN comes from matching HHV MPN + EU size against your existing DB
-              (STX/Golden barcodes, WEL, etc.) — HHV only exposes one GTIN per colorway on their site, not per size.
-              KickDB/StockX is optional fallback only. HHV stays out of Galaxus until allowlisted.
+              One line per shop in <code className="text-xs">SCRAPER_SHOPS</code>. Snowleader/HHV sync into the DB
+              automatically; Galaxus export stays off until you add the shop key to{" "}
+              <code className="text-xs">GALAXUS_FEED_SUPPLIER_ALLOWLIST</code>.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -166,14 +167,9 @@ export default function ScraperPage() {
             <div className="text-base font-semibold">No websites configured</div>
             <p className="mt-2 max-w-2xl">{ov?.message}</p>
             <pre className="mt-3 overflow-auto rounded-lg bg-amber-100/60 p-3 text-xs">
-{`# .env — KEY|Name|baseUrl[|CURRENCY][|platform]
-SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de/de-CH|CHF|hhv
-
-# HHV GTIN = DB match on MPN + size (sync STX/Golden catalog first). KickDB optional:
-SCRAPER_HHV_KICKDB=0
-
-# Do NOT add hhv until GTIN match rate looks good:
-GALAXUS_FEED_SUPPLIER_ALLOWLIST=stx,ner,the,flo,get,scl,wel`}
+{`SCRAPER_SHOPS="WEL|WellPlayed|https://www.wellplayed.ch
+HHV|HHV|https://www.hhv.de|EUR|hhv
+SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl"`}
             </pre>
           </div>
         ) : null}

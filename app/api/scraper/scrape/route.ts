@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { parseScraperShops, findScraperShop } from "@/app/lib/scraperShops";
 import { startRun, scrapeShop, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
 import { scrapeHhvShop } from "@/app/lib/hhvScrape";
+import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,7 +42,12 @@ export async function POST(request: Request) {
     }
     const runId = await startRun(shop);
     started.push({ shop: shop.key, runId });
-    const runScrape = shop.platform === "hhv" ? scrapeHhvShop : scrapeShop;
+    const runScrape =
+      shop.platform === "hhv"
+        ? scrapeHhvShop
+        : shop.platform === "snl"
+          ? scrapeSnowleaderShop
+          : scrapeShop;
     // Fire-and-forget: keep processing after the response returns.
     void runScrape(shop, runId, maxProducts).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);
