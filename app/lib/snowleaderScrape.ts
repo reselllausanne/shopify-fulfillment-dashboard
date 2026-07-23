@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { normalizeSize } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { ScraperShop } from "@/app/lib/scraperShops";
@@ -30,6 +31,8 @@ function formatGraphqlNote(variant: SnowleaderGqlVariant) {
     childSku: variant.childSku,
     urlKey: variant.urlKey,
     sizeLabel: variant.sizeLabel,
+    sizeSourceLabel: variant.sizeSourceLabel,
+    sizeConversion: variant.sizeConversion,
     galaxusKind: variant.galaxusKind,
     buyPriceSource: "website_final_price",
     regularPriceChf: variant.regularPriceChf,
@@ -96,6 +99,7 @@ async function upsertSnowleaderVariant(
 
   const existing = existingById.get(supplierVariantId);
   const queueImage = needsImageHosting(existing, input.imageUrl);
+  const sizeNormalized = normalizeSize(input.sizeRaw) ?? input.sizeRaw;
   const now = new Date();
 
   await prismaAny.supplierVariant.upsert({
@@ -108,6 +112,7 @@ async function upsertSnowleaderVariant(
       price: input.price,
       stock: input.stock,
       sizeRaw: input.sizeRaw,
+      sizeNormalized,
       supplierBrand: input.brand,
       supplierProductName: input.name,
       supplierProductType: input.productType,
@@ -126,6 +131,7 @@ async function upsertSnowleaderVariant(
       price: input.price,
       stock: input.stock,
       sizeRaw: input.sizeRaw,
+      sizeNormalized,
       supplierBrand: input.brand,
       supplierProductName: input.name,
       supplierProductType: input.productType,

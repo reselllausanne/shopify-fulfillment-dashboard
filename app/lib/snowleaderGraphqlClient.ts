@@ -6,6 +6,7 @@ import {
   SNOWLEADER_GALAXUS_CATEGORY_IDS,
 } from "@/app/lib/snowleaderGalaxusCategories";
 import type { GalaxusProductKind } from "@/galaxus/exports/galaxusCategoryPaths";
+import { resolveSnowleaderVariantEuSize } from "@/app/lib/footwearSizeEu";
 
 const GRAPHQL_URL = "https://api.snowleader.com/graphql/";
 
@@ -32,6 +33,8 @@ export type SnowleaderGqlVariant = {
   childSku: string | null;
   gtin: string;
   sizeLabel: string | null;
+  sizeSourceLabel: string | null;
+  sizeConversion: "eu" | "us" | "uk" | "raw" | null;
   stock: number;
   inStock: boolean;
   buyPriceChf: number;
@@ -85,7 +88,7 @@ type GqlSimpleProduct = {
 };
 
 type GqlConfigurableVariant = {
-  attributes?: Array<{ label?: string | null; value_index?: number | null }> | null;
+  attributes?: Array<{ label?: string | null; code?: string | null; value_index?: number | null }> | null;
   product?: GqlSimpleProduct | null;
 };
 
@@ -142,7 +145,7 @@ query SnowleaderProductDetail($sku: String!) {
       categories { id name url_path level }
       ... on ConfigurableProduct {
         variants {
-          attributes { label value_index }
+          attributes { label code value_index }
           product {
             sku
             ... on SimpleProduct {
@@ -291,6 +294,8 @@ function variantFromSimpleProduct(input: {
   galaxusKind: GalaxusProductKind | null;
   childSku?: string | null;
   sizeLabel?: string | null;
+  sizeSourceLabel?: string | null;
+  sizeConversion?: "eu" | "us" | "uk" | "raw" | null;
   simple: GqlSimpleProduct;
 }): SnowleaderGqlVariant | null {
   const gtin = normalizeBvGtin(input.simple.ean);
@@ -309,6 +314,8 @@ function variantFromSimpleProduct(input: {
     childSku: input.childSku ?? input.simple.sku ?? null,
     gtin,
     sizeLabel: input.sizeLabel ?? null,
+    sizeSourceLabel: input.sizeSourceLabel ?? input.sizeLabel ?? null,
+    sizeConversion: input.sizeConversion ?? null,
     stock,
     inStock,
     buyPriceChf,
@@ -360,11 +367,18 @@ export function expandSnowleaderGraphqlProduct(item: GqlProductItem): Snowleader
     for (const variant of variants) {
       const product = variant.product;
       if (!product) continue;
-      const sizeLabel = String(variant.attributes?.[0]?.label ?? "").trim() || null;
+      const sizeResolved = resolveSnowleaderVariantEuSize({
+        attributes: variant.attributes,
+        brand: shared.brand,
+        gender: shared.gender,
+        galaxusKind: shared.galaxusKind,
+      });
       const parsed = variantFromSimpleProduct({
         ...shared,
         childSku: product.sku ? String(product.sku) : null,
-        sizeLabel,
+        sizeLabel: sizeResolved.sizeLabel,
+        sizeSourceLabel: sizeResolved.sourceLabel,
+        sizeConversion: sizeResolved.conversion,
         simple: product,
       });
       if (parsed) out.push(parsed);
@@ -376,6 +390,8 @@ export function expandSnowleaderGraphqlProduct(item: GqlProductItem): Snowleader
     ...shared,
     childSku: parentSku,
     sizeLabel: null,
+    sizeSourceLabel: null,
+    sizeConversion: null,
     simple: item,
   });
   return simple ? [simple] : [];
