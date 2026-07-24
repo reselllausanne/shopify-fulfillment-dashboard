@@ -227,7 +227,16 @@ function withEngineRecovery(): PrismaClient {
   }) as PrismaClient;
 }
 
-const prisma = withEngineRecovery();
+/**
+ * The engine-recovery Proxy wraps every model call in `.catch(...)`, turning the
+ * returned PrismaPromise into a native Promise. That breaks the array form of
+ * `prisma.$transaction([...])`, which requires each element to be a PrismaPromise
+ * ("All elements of the array need to be Prisma Client promises"). The recovery is
+ * only needed for dev Turbopack HMR (which can kill the query engine), so in
+ * production use the raw client directly and keep PrismaPromises intact.
+ */
+const prisma =
+  process.env.NODE_ENV === "production" ? resolvePrismaClient() : withEngineRecovery();
 const prismaDirect = resolvePrismaDirectClient();
 
 export { prisma, prismaDirect };
