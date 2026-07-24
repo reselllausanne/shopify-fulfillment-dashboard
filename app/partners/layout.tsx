@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import ThemeToggle from "@/app/components/ThemeToggle";
 
 type PartnerInfo = {
   id: string;
@@ -64,7 +65,7 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <div className="min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <header className="bg-slate-950 text-white">
         <div className="mx-auto max-w-6xl px-6 py-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -78,6 +79,7 @@ export default function PartnerLayout({ children }: { children: React.ReactNode 
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <ThemeToggle className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-xs uppercase tracking-wide text-slate-200 hover:border-[#55b3f3] hover:text-white" />
               <button
                 className="rounded-full border border-slate-800 bg-slate-900 px-4 py-2 text-xs uppercase tracking-wide text-slate-200 hover:border-[#55b3f3] hover:text-white"
                 onClick={logout}

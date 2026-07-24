@@ -204,17 +204,17 @@ export function CreateProductModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-4 py-3">
+      <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Create product</div>
-            <div className="text-xs text-slate-500">
+            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Create product</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
               Add a single offer without uploading a CSV.
             </div>
           </div>
           <button
             type="button"
-            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50"
+            className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-xs text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
             onClick={onClose}
           >
             Close
@@ -222,13 +222,13 @@ export function CreateProductModal({
         </div>
 
         <div className="space-y-3 p-4 text-xs">
-          <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-0.5 text-[11px]">
+          <div className="inline-flex rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-0.5 text-[11px]">
             <button
               type="button"
               className={`rounded-full px-3 py-1 ${
                 mode === "from-db"
                   ? "bg-slate-900 text-white"
-                  : "text-slate-600 hover:text-slate-900"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
               }`}
               onClick={() => setMode("from-db")}
             >
@@ -239,7 +239,7 @@ export function CreateProductModal({
               className={`rounded-full px-3 py-1 ${
                 mode === "custom"
                   ? "bg-slate-900 text-white"
-                  : "text-slate-600 hover:text-slate-900"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
               }`}
               onClick={() => setMode("custom")}
             >
@@ -259,13 +259,13 @@ export function CreateProductModal({
           ) : null}
 
           {mode === "from-db" ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
-              <div className="text-[11px] font-medium text-slate-700">
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3 space-y-2">
+              <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
                 Find a product already in the DB (by GTIN, SKU, name, brand)
               </div>
               <div className="flex flex-wrap gap-2">
                 <input
-                  className="min-w-[16rem] flex-1 rounded border border-slate-200 px-2 py-1.5"
+                  className="min-w-[16rem] flex-1 rounded border border-slate-200 dark:border-slate-600 dark:bg-slate-900 px-2 py-1.5"
                   placeholder="e.g. 195866820350 or Air Jordan 1"
                   value={lookupQ}
                   onChange={(e) => setLookupQ(e.target.value)}
@@ -283,9 +283,9 @@ export function CreateProductModal({
                 </button>
               </div>
               {lookupResults.length > 0 ? (
-                <div className="max-h-48 overflow-auto rounded border border-slate-200 bg-white">
+                <div className="max-h-48 overflow-auto rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
                   <table className="min-w-full text-[11px]">
-                    <thead className="bg-slate-50 text-slate-600">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
                       <tr>
                         <th className="px-2 py-1 text-left">GTIN</th>
                         <th className="px-2 py-1 text-left">Brand</th>
@@ -304,7 +304,7 @@ export function CreateProductModal({
                           <td className="px-2 py-1 text-right">
                             <button
                               type="button"
-                              className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] hover:border-[#55b3f3]"
+                              className="rounded-full border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-[10px] hover:border-[#55b3f3]"
                               onClick={() => applyBase(r)}
                             >
                               {selectedBase?.gtin === r.gtin ? "Selected" : "Use"}
@@ -317,7 +317,7 @@ export function CreateProductModal({
                 </div>
               ) : null}
               {selectedBase ? (
-                <div className="text-[11px] text-slate-600">
+                <div className="text-[11px] text-slate-600 dark:text-slate-400">
                   Prefilled from GTIN <span className="font-mono">{selectedBase.gtin}</span>.
                   You still set <strong>your</strong> SKU, size, price, stock below.
                 </div>
@@ -389,7 +389,7 @@ export function CreateProductModal({
             />
           </div>
 
-          <label className="flex items-center gap-2 text-[11px] text-slate-600">
+          <label className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-400">
             <input
               type="checkbox"
               checked={overwrite}
@@ -398,17 +398,17 @@ export function CreateProductModal({
             Overwrite if a variant with this SKU + size already exists
           </label>
 
-          <p className="text-[10px] leading-snug text-slate-500">
+          <p className="text-[10px] leading-snug text-slate-500 dark:text-slate-400">
             With <strong>GTIN</strong> set, the variant is published as <code>SUPPLIER_GTIN</code>{" "}
             (ready for Galaxus & Decathlon feeds after you mark it ready in Catalog →
             Product data). Without GTIN, it is saved as <code>PENDING_GTIN</code> draft —
             it stays in your catalog but is not pushed to marketplaces.
           </p>
 
-          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-3">
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-700 pt-3">
             <button
               type="button"
-              className="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-700"
+              className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs text-slate-700 dark:text-slate-300"
               onClick={onClose}
               disabled={busy}
             >
@@ -441,9 +441,9 @@ function Field(props: {
   const { label, value, onChange, mono, align, spanFull } = props;
   return (
     <label className={`space-y-1 ${spanFull ? "sm:col-span-2" : ""}`}>
-      <span className="text-[11px] font-medium text-slate-600">{label}</span>
+      <span className="text-[11px] font-medium text-slate-600 dark:text-slate-400">{label}</span>
       <input
-        className={`w-full rounded border border-slate-200 px-2 py-1.5 ${
+        className={`w-full rounded border border-slate-200 dark:border-slate-600 dark:bg-slate-900 px-2 py-1.5 ${
           mono ? "font-mono text-[11px]" : ""
         } ${align === "right" ? "text-right" : ""}`}
         value={value}

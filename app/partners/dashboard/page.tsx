@@ -302,44 +302,44 @@ export default function PartnerDashboardPage() {
   return (
     <div className="space-y-8">
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-slate-900">Partner Dashboard</h1>
-        <p className="text-sm text-slate-500">
+        <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Partner Dashboard</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           {partner ? `${partner.name} (${partner.key})` : "Loading partner…"}
         </p>
       </div>
 
-      {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {error && <div className="rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-sm text-red-700 dark:text-red-300">{error}</div>}
 
       <div className="grid gap-4 md:grid-cols-2">
         <button
           type="button"
-          className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-[#55b3f3]"
+          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/catalog")}
         >
-          <div className="text-sm font-medium text-slate-500">Catalog</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">{catalogCount}</div>
+          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Catalog</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{catalogCount}</div>
         </button>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="text-sm font-medium text-slate-500">Enrichment queue</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">{pendingEnrichCount}</div>
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Enrichment queue</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{pendingEnrichCount}</div>
         </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <button
-          className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-left transition hover:border-[#55b3f3]"
+          className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-6 text-left transition hover:border-[#55b3f3]"
           onClick={() => router.push("/partners/orders")}
         >
-          <div className="text-sm font-medium text-slate-500">Orders to process</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900 tabular-nums">
+          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Orders to process</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
             {ordersToProcessCount == null ? "—" : ordersToProcessCount}
           </div>
         </button>
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center gap-3">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-6 flex flex-col justify-center gap-3">
           <div>
-            <div className="text-xs font-medium text-slate-500">Sales (Decathlon + Galaxus)</div>
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Sales (Decathlon + Galaxus)</div>
             <div className="mt-1 flex flex-wrap items-center gap-3">
-              <div className="text-3xl font-semibold text-slate-900 tabular-nums tracking-tight">
+              <div className="text-3xl font-semibold text-slate-900 dark:text-slate-100 tabular-nums tracking-tight">
                 {totalSaleFeedChf == null ? "—" : `CHF ${totalSaleFeedChf.toFixed(2)}`}
               </div>
               <button
@@ -351,28 +351,28 @@ export default function PartnerDashboardPage() {
               </button>
             </div>
             {totalGalaxusSaleChf != null ? (
-              <div className="mt-1 text-xs text-slate-500">Galaxus: CHF {totalGalaxusSaleChf.toFixed(2)}</div>
+              <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Galaxus: CHF {totalGalaxusSaleChf.toFixed(2)}</div>
             ) : null}
-            <p className="mt-2 text-[11px] leading-snug text-slate-500">
+            <p className="mt-2 text-[11px] leading-snug text-slate-500 dark:text-slate-400">
               Galaxus sell prices already account for the <strong>2% fast-payment</strong> fee Digitech /
               Galaxus deducts.
             </p>
           </div>
         </div>
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 flex flex-col justify-center">
-          <div className="text-sm font-medium text-slate-500">Swiss Post labels</div>
-          <div className="mt-2 text-3xl font-semibold text-slate-900 tabular-nums">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-6 flex flex-col justify-center">
+          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Swiss Post labels</div>
+          <div className="mt-2 text-3xl font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
             {postLabelCount == null ? "—" : postLabelCount}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Generated from partner ship (Decathlon)</div>
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">Generated from partner ship (Decathlon)</div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Add a single product</div>
-            <div className="text-xs text-slate-500">
+            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Add a single product</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
               Faster than a CSV when you only need to publish one offer. Use an existing DB
               product as a base, or build a fully custom product (works for new releases
               without a StockX page).
@@ -381,7 +381,7 @@ export default function PartnerDashboardPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              className="rounded-full border border-slate-200 px-4 py-2 text-xs font-medium text-slate-700 hover:border-[#55b3f3]"
+              className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-[#55b3f3]"
               onClick={() => {
                 setCreateMode("from-db");
                 setCreateOpen(true);
@@ -401,7 +401,7 @@ export default function PartnerDashboardPage() {
             </button>
           </div>
         </div>
-        <p className="text-[11px] text-slate-500 leading-snug">
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
           With a valid GTIN the variant is created as <code>SUPPLIER_GTIN</code> (ready for
           Galaxus / Decathlon after marking ready in Catalog → Product data). Without GTIN it
           is saved as <code>PENDING_GTIN</code> draft and stays in your catalog only.
@@ -409,16 +409,16 @@ export default function PartnerDashboardPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-slate-900">Catalog Upload</div>
-              <div className="text-xs text-slate-500">
+              <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Catalog Upload</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400">
                 Upload your stock CSV. Newly added products will be queued for enrichment.
               </div>
             </div>
             <button
-              className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 hover:border-[#55b3f3]"
+              className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-xs text-slate-600 dark:text-slate-400 hover:border-[#55b3f3]"
               onClick={downloadTemplate}
               disabled={busy}
             >
@@ -440,20 +440,20 @@ export default function PartnerDashboardPage() {
             </button>
           </div>
           {importQueueLog && (
-            <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+            <div className="rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3 text-xs text-slate-700 dark:text-slate-300">
               {importQueueLog}
             </div>
           )}
           {uploadResult && (
-            <div className="space-y-2 text-xs text-slate-600">
+            <div className="space-y-2 text-xs text-slate-600 dark:text-slate-400">
               <div>
                 Imported: {uploadResult.importedRows ?? 0}, New: {uploadResult.newRows ?? 0}, Errors:{" "}
                 {uploadResult.errorRows ?? 0}
               </div>
               {uploadResult.rows && uploadResult.rows.length > 0 && (
-                <div className="overflow-auto rounded border border-slate-200">
+                <div className="overflow-auto rounded border border-slate-200 dark:border-slate-700">
                   <table className="min-w-full text-xs">
-                    <thead className="bg-slate-50">
+                    <thead className="bg-slate-50 dark:bg-slate-800/60">
                       <tr>
                         <th className="px-2 py-1 text-left">Row</th>
                         <th className="px-2 py-1 text-left">Status</th>
@@ -478,24 +478,24 @@ export default function PartnerDashboardPage() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Enrichment</div>
-            <div className="text-xs text-slate-500">
+            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Enrichment</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
               After upload, enrichment runs once in the background (up to 2000 rows per queued job). Use force re-enrich
               only after you change SKU/size values in the catalog and want to refresh KickDB matches.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
-              className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
+              className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-50"
               onClick={() => enrichPending(true)}
               disabled={busy}
             >
               Force re-enrich
             </button>
             <button
-              className="rounded-full border border-slate-200 px-4 py-2 text-xs text-slate-700 disabled:opacity-50"
+              className="rounded-full border border-slate-200 dark:border-slate-700 px-4 py-2 text-xs text-slate-700 dark:text-slate-300 disabled:opacity-50"
               onClick={downloadCatalogCsv}
               disabled={busy || downloadBusy}
             >
@@ -503,21 +503,21 @@ export default function PartnerDashboardPage() {
             </button>
           </div>
           {enrichLog && (
-            <div className="rounded border border-slate-200 bg-slate-50 p-3 text-xs overflow-auto whitespace-pre-wrap">
+            <div className="rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 p-3 text-xs overflow-auto whitespace-pre-wrap">
               {enrichLog}
             </div>
           )}
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold text-slate-900">Upload History</div>
-            <div className="text-xs text-slate-500">Past CSV uploads and their status.</div>
+            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">Upload History</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">Past CSV uploads and their status.</div>
           </div>
           <button
-            className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600"
+            className="rounded-full border border-slate-200 dark:border-slate-700 px-3 py-1 text-xs text-slate-600 dark:text-slate-400"
             onClick={() => loadHistory()}
             disabled={busy}
           >
@@ -526,13 +526,13 @@ export default function PartnerDashboardPage() {
         </div>
 
         {uploadHistory.length === 0 && historyLoaded && (
-          <div className="text-xs text-slate-400">No uploads yet.</div>
+          <div className="text-xs text-slate-400 dark:text-slate-500">No uploads yet.</div>
         )}
 
         {uploadHistory.length > 0 && (
-          <div className="overflow-auto rounded border border-slate-200">
+          <div className="overflow-auto rounded border border-slate-200 dark:border-slate-700">
             <table className="min-w-full text-xs">
-              <thead className="bg-slate-50">
+              <thead className="bg-slate-50 dark:bg-slate-800/60">
                 <tr>
                   <th className="px-2 py-1 text-left">Date</th>
                   <th className="px-2 py-1 text-left">File</th>
@@ -558,7 +558,7 @@ export default function PartnerDashboardPage() {
                             ? "text-red-600"
                             : u.status === "COMPLETED_WITH_ERRORS"
                             ? "text-amber-700"
-                            : "text-slate-600"
+                            : "text-slate-600 dark:text-slate-400"
                         }
                       >
                         {u.status}

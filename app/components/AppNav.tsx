@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import ThemeToggle from "@/app/components/ThemeToggle";
 
 type NavLink = { label: string; href: string; badge?: string };
 type NavGroup = { label: string; links: NavLink[] };
@@ -98,9 +99,9 @@ export default function AppNav() {
   };
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
+    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:border-slate-800 dark:bg-slate-950/85 dark:supports-[backdrop-filter]:bg-slate-950/70">
       <nav className="mx-auto flex h-14 max-w-[1600px] items-center gap-1 px-4">
-        <Link href="/" className="mr-2 flex items-center gap-2 font-semibold text-slate-900">
+        <Link href="/" className="mr-2 flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold text-white">
             RO
           </span>
@@ -161,9 +162,10 @@ export default function AppNav() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <ThemeToggle className="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white md:block" />
           <button
             onClick={logout}
-            className="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 md:block"
+            className="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white md:block"
           >
             Log out
           </button>

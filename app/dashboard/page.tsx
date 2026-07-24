@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { formatMoneyCHF, formatPercent } from "@/app/utils/numbers";
 import { getJson, postJson } from "@/app/lib/api";
+import ThemeToggle from "@/app/components/ThemeToggle";
 
 interface DailyRow {
   date: string;
@@ -86,25 +87,25 @@ type KPIProps = {
 };
 
 const KPI_COLORS: Record<string, string> = {
-  blue: "text-blue-600 border-blue-200 shadow-blue-50",
-  green: "text-green-700 border-green-200 shadow-green-50",
-  purple: "text-purple-600 border-purple-200 shadow-purple-50",
-  orange: "text-orange-600 border-orange-200 shadow-orange-50",
-  red: "text-red-600 border-red-200 shadow-red-50",
-  gray: "text-gray-700 border-gray-200 shadow-gray-50",
-  teal: "text-teal-600 border-teal-200 shadow-teal-50",
+  blue: "text-blue-600 border-blue-200 shadow-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-slate-900 dark:shadow-blue-950/20",
+  green: "text-green-700 border-green-200 shadow-green-50 dark:text-green-400 dark:border-green-800 dark:bg-slate-900 dark:shadow-green-950/20",
+  purple: "text-purple-600 border-purple-200 shadow-purple-50 dark:text-purple-400 dark:border-purple-800 dark:bg-slate-900 dark:shadow-purple-950/20",
+  orange: "text-orange-600 border-orange-200 shadow-orange-50 dark:text-orange-400 dark:border-orange-800 dark:bg-slate-900 dark:shadow-orange-950/20",
+  red: "text-red-600 border-red-200 shadow-red-50 dark:text-red-400 dark:border-red-800 dark:bg-slate-900 dark:shadow-red-950/20",
+  gray: "text-gray-700 border-gray-200 shadow-gray-50 dark:text-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:shadow-slate-950/20",
+  teal: "text-teal-600 border-teal-200 shadow-teal-50 dark:text-teal-400 dark:border-teal-800 dark:bg-slate-900 dark:shadow-teal-950/20",
 };
 
 function KPI({ title, value, detail, color = "gray", trendColor }: KPIProps) {
   const classes = KPI_COLORS[color] || KPI_COLORS.gray;
   return (
-    <div className={`bg-white p-6 rounded-lg shadow-sm border ${classes}`}>
-      <div className="text-sm text-gray-600 mb-1">{title}</div>
+    <div className={`bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border ${classes}`}>
+      <div className="text-sm text-gray-600 dark:text-slate-400 mb-1">{title}</div>
       <div className="text-2xl font-bold">
         {formatMoneyCHF(value)}
         {trendColor && <span className={`ml-2 px-2 py-0.5 text-xs rounded ${trendColor}`}>{trendColor}</span>}
       </div>
-      {detail && <div className="text-xs text-gray-500 mt-1">{detail}</div>}
+      {detail && <div className="text-xs text-gray-500 dark:text-slate-500 mt-1">{detail}</div>}
     </div>
   );
 }
@@ -228,9 +229,9 @@ export default function DashboardPage() {
 
   if (loading && !metrics) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 p-8">
         <div className="max-w-7xl mx-auto">
-          <p className="text-gray-600">Loading dashboard...</p>
+          <p className="text-gray-600 dark:text-slate-400">Loading dashboard...</p>
         </div>
       </div>
     );
@@ -278,12 +279,12 @@ export default function DashboardPage() {
     : [];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950 p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">📊 Margin Dashboard</h1>
-          <p className="text-gray-600">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-slate-100 mb-2">📊 Margin Dashboard</h1>
+          <p className="text-gray-600 dark:text-slate-400">
             Real COGS-based margin grouped by Shopify sell date, plus matched Decathlon & Galaxus marketplace payouts.
           </p>
           
@@ -295,7 +296,7 @@ export default function DashboardPage() {
             >
               🏠 Orders
             </a>
-            <span className="text-gray-900 font-bold py-2 px-3 bg-blue-100 rounded-md">
+            <span className="text-gray-900 dark:text-slate-100 font-bold py-2 px-3 bg-blue-100 dark:bg-blue-950 dark:text-blue-200 rounded-md">
               📊 Dashboard (Current)
             </span>
             <a
@@ -310,6 +311,7 @@ export default function DashboardPage() {
             >
               📈 Financial Overview
             </a>
+            <ThemeToggle className="px-4 py-2 rounded-md font-medium" />
             <button
               onClick={handleLogout}
               className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors font-medium ml-auto"
@@ -328,7 +330,7 @@ export default function DashboardPage() {
               className={`px-4 py-2 rounded-md font-medium transition-colors ${
                 range === d
                   ? "bg-blue-600 text-white"
-                  : "bg-white text-gray-700 hover:bg-gray-100 border border-gray-300"
+                  : "bg-white dark:bg-slate-900 text-gray-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 border border-gray-300 dark:border-slate-600"
               }`}
             >
               {d === 1 ? "Today" : `Last ${d} days`}
@@ -352,30 +354,30 @@ export default function DashboardPage() {
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-800 font-medium">Error: {error}</p>
+          <div className="mb-6 p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg">
+            <p className="text-red-800 dark:text-red-300 font-medium">Error: {error}</p>
           </div>
         )}
 
         {/* Info Cards */}
         {totals && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <div className="text-sm text-gray-600 mb-1">Reporting Window</div>
-              <div className="text-3xl font-bold text-gray-900">{range}d</div>
-              <p className="text-xs text-gray-500 mt-1">Grouped by Shopify sell date (Europe/Zurich)</p>
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+              <div className="text-sm text-gray-600 dark:text-slate-400 mb-1">Reporting Window</div>
+              <div className="text-3xl font-bold text-gray-900 dark:text-slate-100">{range}d</div>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">Grouped by Shopify sell date (Europe/Zurich)</p>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <div className="text-sm text-gray-600 mb-1">Orders Count</div>
-              <div className="text-3xl font-bold text-gray-900">{totals.ordersCount}</div>
-              <p className="text-xs text-gray-500 mt-1">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+              <div className="text-sm text-gray-600 dark:text-slate-400 mb-1">Orders Count</div>
+              <div className="text-3xl font-bold text-gray-900 dark:text-slate-100">{totals.ordersCount}</div>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">
                 Line items: {totals.lineItemsCount} • Missing cost: {totals.missingCostCount} • Missing sell date: {totals.missingSellDateCount}
               </p>
             </div>
-            <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <div className="text-sm text-gray-600 mb-1">Shopify Margin %</div>
-              <div className="text-3xl font-bold text-gray-900">{formatPercent(totals.marginPct)}</div>
-              <p className="text-xs text-gray-500 mt-1">Based on matches with known cost</p>
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+              <div className="text-sm text-gray-600 dark:text-slate-400 mb-1">Shopify Margin %</div>
+              <div className="text-3xl font-bold text-gray-900 dark:text-slate-100">{formatPercent(totals.marginPct)}</div>
+              <p className="text-xs text-gray-500 dark:text-slate-500 mt-1">Based on matches with known cost</p>
             </div>
           </div>
         )}
@@ -397,8 +399,8 @@ export default function DashboardPage() {
 
         {/* Daily Chart */}
         {metrics && metrics.rows.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-8">
-            <h2 className="text-xl font-semibold mb-4">📈 Daily Margin (Shopify + Marketplaces)</h2>
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 mb-8">
+            <h2 className="text-xl font-semibold mb-4 dark:text-slate-100">📈 Daily Margin (Shopify + Marketplaces)</h2>
             <ResponsiveContainer width="100%" height={400}>
               <ComposedChart data={metrics.rows}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -439,38 +441,38 @@ export default function DashboardPage() {
 
         {/* Daily Table */}
         {metrics && metrics.rows.length > 0 && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="p-6 border-b border-gray-200">
-              <h2 className="text-xl font-semibold">📅 Daily Margin (Shopify + Marketplaces)</h2>
+          <div className="bg-white dark:bg-slate-900 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
+            <div className="p-6 border-b border-gray-200 dark:border-slate-700">
+              <h2 className="text-xl font-semibold dark:text-slate-100">📅 Daily Margin (Shopify + Marketplaces)</h2>
             </div>
               <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                <table className="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+                  <thead className="bg-gray-50 dark:bg-slate-800/60">
                     <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Sales</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cost</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Shopify Margin</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Marketplace Margin</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Margin</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Shopify Margin %</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Ads</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Total Net</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Orders</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Items</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Missing Cost</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase"></th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Date</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Sales</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Cost</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Shopify Margin</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Marketplace Margin</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Total Margin</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Shopify Margin %</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Ads</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Total Net</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Orders</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Items</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase">Missing Cost</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-slate-500 uppercase"></th>
                     </tr>
                   </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
+                  <tbody className="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-slate-700">
                   {metrics.rows.map((row, i) => (
                     <React.Fragment key={i}>
                     <tr
-                      className="hover:bg-gray-50 cursor-pointer"
+                      className="hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"
                       onClick={() => toggleDayDetails(row.date)}
                       title="Click to view order breakdown"
                     >
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-medium">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 dark:text-slate-100 font-medium">
                         {new Date(row.date).toLocaleDateString('de-CH')}
                           </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-blue-600">
@@ -488,7 +490,7 @@ export default function DashboardPage() {
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-emerald-600 font-bold">
                         CHF {row.totalMarginChf.toFixed(2)}
                           </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700 dark:text-slate-300">
                         {row.marginPct.toFixed(1)}%
                           </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-orange-600">
@@ -499,34 +501,34 @@ export default function DashboardPage() {
                       }`}>
                         CHF {row.totalNetAfterAdsChf.toFixed(2)}
                           </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700 dark:text-slate-300">
                         {row.ordersCount}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-700 dark:text-slate-300">
                         {row.lineItemsCount}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right">
                         {row.missingCostCount > 0 ? (
                           <span className="text-red-600 font-medium">{row.missingCostCount}</span>
                         ) : (
-                          <span className="text-gray-400">—</span>
+                          <span className="text-gray-400 dark:text-slate-500">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right text-gray-400">
+                      <td className="px-4 py-3 text-right text-gray-400 dark:text-slate-500">
                         {expandedDate === row.date ? "▲" : "▼"}
                       </td>
                     </tr>
                     {expandedDate === row.date && (
                       <tr>
-                        <td colSpan={13} className="bg-gray-50 px-4 py-4">
+                        <td colSpan={13} className="bg-gray-50 dark:bg-slate-800/60 px-4 py-4">
                           {detailsLoading[row.date] ? (
-                            <div className="text-sm text-gray-500">Loading details...</div>
+                            <div className="text-sm text-gray-500 dark:text-slate-500">Loading details...</div>
                           ) : (detailsByDate[row.date] || []).length === 0 ? (
-                            <div className="text-sm text-gray-500">No orders found for this day.</div>
+                            <div className="text-sm text-gray-500 dark:text-slate-500">No orders found for this day.</div>
                           ) : (
                             <div className="overflow-x-auto">
-                              <table className="min-w-full text-xs bg-white border border-gray-200 rounded">
-                                <thead className="bg-gray-100">
+                              <table className="min-w-full text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded">
+                                <thead className="bg-gray-100 dark:bg-slate-800">
                                   <tr>
                                     <th className="px-3 py-2 text-left">Time</th>
                                     <th className="px-3 py-2 text-left">Order</th>
@@ -577,9 +579,9 @@ export default function DashboardPage() {
 
         {/* Empty State */}
         {metrics && metrics.rows.length === 0 && (
-          <div className="bg-white p-12 rounded-lg shadow-sm border border-gray-200 text-center">
-            <p className="text-gray-600 mb-4">No data available for selected period</p>
-            <p className="text-sm text-gray-500">
+          <div className="bg-white dark:bg-slate-900 p-12 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 text-center">
+            <p className="text-gray-600 dark:text-slate-400 mb-4">No data available for selected period</p>
+            <p className="text-sm text-gray-500 dark:text-slate-500">
               Go to the <a href="/" className="text-blue-600 hover:underline">main page</a> to match orders
             </p>
           </div>
