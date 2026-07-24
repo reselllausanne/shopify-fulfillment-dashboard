@@ -10,7 +10,9 @@ describe("snowleaderGalaxusCategories", () => {
     expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("596");
     expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("380");
     expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("1047");
-    expect(SNOWLEADER_GALAXUS_CATEGORY_IDS.length).toBeGreaterThan(180);
+    expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("346");
+    expect(SNOWLEADER_GALAXUS_CATEGORY_IDS).toContain("272");
+    expect(SNOWLEADER_GALAXUS_CATEGORY_IDS.length).toBe(275);
   });
 
   it("classifies leaf category labels", () => {
