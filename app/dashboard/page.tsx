@@ -15,7 +15,6 @@ import {
 } from "recharts";
 import { formatMoneyCHF, formatPercent } from "@/app/utils/numbers";
 import { getJson, postJson } from "@/app/lib/api";
-import ThemeToggle from "@/app/components/ThemeToggle";
 
 interface DailyRow {
   date: string;
@@ -311,7 +310,6 @@ export default function DashboardPage() {
             >
               📈 Financial Overview
             </a>
-            <ThemeToggle className="px-4 py-2 rounded-md font-medium" />
             <button
               onClick={handleLogout}
               className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors font-medium ml-auto"
