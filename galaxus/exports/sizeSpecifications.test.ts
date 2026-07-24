@@ -6,6 +6,8 @@ import {
   resolveGalaxusExportClassification,
 } from "@/galaxus/exports/sizeSpecifications";
 import { classifyGalaxusProductKind, resolveGalaxusProductCategoryPath } from "@/galaxus/exports/productClassification";
+import { classifySnowleaderCategoryLabel } from "@/app/lib/snowleaderGalaxusCategories";
+import { GALAXUS_LENGTH_CM_KEY, GALAXUS_SHOE_SIZE_KEY } from "@/galaxus/exports/sizeSpecifications";
 
 describe("productClassification", () => {
   it("classifies The Brick phone lock from supplier title", () => {
@@ -75,13 +77,18 @@ describe("buildGalaxusSizeSpecRow", () => {
   });
 
   it("strips EU prefix and converts adidas fractional footwear sizes", () => {
-    expect(formatGalaxusSizeSpecValue("EU 43 1/3", true)).toBe("43");
-    expect(formatGalaxusSizeSpecValue("EU 38 2/3", true)).toBe("38.5");
+    expect(formatGalaxusSizeSpecValue("EU 43 1/3", "sneakers")).toBe("43");
+    expect(formatGalaxusSizeSpecValue("EU 38 2/3", "sneakers")).toBe("38.5");
   });
 
   it("leaves decimal and whole footwear sizes unchanged", () => {
-    expect(formatGalaxusSizeSpecValue("EU 42.5", true)).toBe("42.5");
-    expect(formatGalaxusSizeSpecValue("EU 42", true)).toBe("42");
+    expect(formatGalaxusSizeSpecValue("EU 42.5", "sneakers")).toBe("42.5");
+    expect(formatGalaxusSizeSpecValue("EU 42", "sneakers")).toBe("42");
+  });
+
+  it("exports ski length in cm", () => {
+    expect(formatGalaxusSizeSpecValue("173 cm", "ski")).toBe("173");
+    expect(formatGalaxusSizeSpecValue("183.4", "langlauf_ski")).toBe("183.4");
   });
 });
 
@@ -187,5 +194,81 @@ describe("KickDB breadcrumb-driven classification (resilient)", () => {
     });
     expect(row?.SpecificationKey).toBe("Shoe size (EU)");
     expect(row?.SpecificationValue).toBe("42.5");
+  });
+});
+
+describe("Snowleader category classification", () => {
+  it("maps Skijacken to ski_jacket not generic apparel", () => {
+    expect(classifySnowleaderCategoryLabel("Skijacken")).toBe("ski_jacket");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        supplierKey: "snl",
+        supplierProductType: "Skijacken",
+      })
+    ).toBe("Sport > Wintersport > Wintersportbekleidung > Skijacke");
+  });
+
+  it("maps Wanderschuhe to Sport > Outdoor path not Mode Stiefel", () => {
+    expect(classifySnowleaderCategoryLabel("Wanderschuhe Herren")).toBe("hiking_boots");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        supplierKey: "snl",
+        supplierProductType: "Wanderschuhe Herren",
+      })
+    ).toBe("Sport > Outdoor > Wandern > Wanderschuhe");
+  });
+
+  it("maps Fleecejacken to outdoor jacket path", () => {
+    expect(classifySnowleaderCategoryLabel("Fleecejacken")).toBe("outdoor_jacket");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        supplierKey: "snl",
+        supplierProductType: "Fleecejacken",
+      })
+    ).toBe("Sport > Outdoor > Outdoorbekleidung > Outdoorjacken");
+  });
+
+  it("maps Rucksäcke to Sport > Taschen + Gepäck path", () => {
+    expect(classifySnowleaderCategoryLabel("Wanderrucksäcke")).toBe("backpack");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        supplierKey: "snl",
+        supplierProductType: "Wanderrucksäcke",
+      })
+    ).toBe("Sport > Taschen + Gepäck > Rucksack");
+  });
+
+  it("maps Mützen to beanie leaf path not generic Accessoires", () => {
+    expect(classifySnowleaderCategoryLabel("Mützen")).toBe("beanie");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        supplierKey: "snl",
+        supplierProductType: "Mützen",
+      })
+    ).toBe("Mode > Alles in Mode > Accessoires > Hüte + Caps > Mütze");
+  });
+
+  it("maps Skis to alpine ski with length spec", () => {
+    expect(classifySnowleaderCategoryLabel("Skis")).toBe("ski");
+    const row = buildGalaxusSizeSpecRow({
+      providerKey: "SNL_TEST",
+      sizeRaw: "173 cm",
+      supplierKey: "snl",
+      supplierProductType: "Skis",
+    });
+    expect(row?.SpecificationKey).toBe(GALAXUS_LENGTH_CM_KEY);
+    expect(row?.SpecificationValue).toBe("173");
+  });
+
+  it("maps Skischuhe to ski_boots with shoe size", () => {
+    expect(classifySnowleaderCategoryLabel("Skischuhe")).toBe("ski_boots");
+    const row = buildGalaxusSizeSpecRow({
+      providerKey: "SNL_TEST",
+      sizeRaw: "EU 27.5",
+      supplierKey: "snl",
+      supplierProductType: "Skischuhe",
+    });
+    expect(row?.SpecificationKey).toBe(GALAXUS_SHOE_SIZE_KEY);
+    expect(row?.SpecificationValue).toBe("27.5");
   });
 });

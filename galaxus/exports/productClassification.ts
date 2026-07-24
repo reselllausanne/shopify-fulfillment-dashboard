@@ -206,18 +206,80 @@ function classifyUggFootwearKind(title?: string | null): GalaxusProductKind {
   return "boots";
 }
 
+const FOOTWEAR_KINDS = new Set<GalaxusProductKind>([
+  "sneakers",
+  "slippers",
+  "boots",
+  "halbschuhe",
+  "hiking_boots",
+  "sandals",
+  "flip_flops",
+  "ski_boots",
+  "langlauf_boots",
+  "snowboard_boots",
+  "running_shoes",
+  "trail_shoes",
+  "climbing_shoes",
+]);
+
+const CLOTHING_SIZE_KINDS = new Set<GalaxusProductKind>([
+  "apparel",
+  "shorts",
+  "trousers",
+  "underwear",
+  "socks",
+  "sport_socks",
+  "outdoor_jacket",
+  "rain_jacket",
+  "winter_jacket",
+  "running_jacket",
+  "bike_jacket",
+  "outdoor_pants",
+  "bike_pants",
+  "outdoor_shirt",
+  "functional_shirt",
+  "pullover",
+  "tshirt",
+  "hemd",
+  "vest",
+  "base_layer_top",
+  "base_layer_bottom",
+  "ski_jacket",
+  "langlauf_jacket",
+  "ski_pants",
+  "langlauf_pants",
+  "ski_gloves",
+  "beanie",
+  "headband",
+  "cap",
+  "hat",
+  "gaiters",
+  "sport_bra",
+  "ski_mask",
+]);
+
 export function requiresGalaxusSizeSpec(kind: GalaxusProductKind): boolean {
   return (
-    kind === "apparel" ||
-    kind === "shorts" ||
-    kind === "trousers" ||
-    kind === "underwear" ||
-    kind === "socks" ||
-    kind === "sneakers" ||
-    kind === "slippers" ||
-    kind === "boots" ||
-    kind === "sandals"
+    FOOTWEAR_KINDS.has(kind) ||
+    CLOTHING_SIZE_KINDS.has(kind) ||
+    kind === "ski" ||
+    kind === "langlauf_ski" ||
+    kind === "ski_poles" ||
+    kind === "hiking_poles" ||
+    kind === "snowboard"
   );
+}
+
+const LENGTH_CM_KINDS = new Set<GalaxusProductKind>([
+  "ski",
+  "langlauf_ski",
+  "ski_poles",
+  "hiking_poles",
+  "snowboard",
+]);
+
+export function isGalaxusLengthCmKind(kind: GalaxusProductKind): boolean {
+  return LENGTH_CM_KINDS.has(kind);
 }
 
 export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusProductKind {
@@ -282,7 +344,7 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
 }
 
 export function isFootwearKind(kind: GalaxusProductKind): boolean {
-  return kind === "sneakers" || kind === "slippers" || kind === "boots" || kind === "sandals";
+  return FOOTWEAR_KINDS.has(kind);
 }
 
 export function resolveGalaxusProductCategoryPath(input: ClassificationInput): string {

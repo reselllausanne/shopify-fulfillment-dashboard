@@ -49,23 +49,105 @@ export const SNOWLEADER_GALAXUS_CATEGORY_IDS: string[] = [
   "611", "612", "613", "614", "615", "616", "631", "632",
   // skateboards
   "1047",
+  // winter sport (Snowleader snow/* leaf categories)
+  "12", "16", "20", "29", "34", "42", "46", "49", "59", "70", "73", "88",
+  "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99", "100",
+  "101", "102", "103", "104", "105", "106", "107", "108", "110", "111", "112", "113",
+  "114", "115", "116", "117", "119", "120", "121", "122", "123", "124", "125", "126",
+  "127", "128", "129", "130", "131", "132", "133", "134", "135", "136", "137", "138",
+  "139", "140", "141", "142", "143", "145", "146", "147", "148", "149", "150", "151",
+  "152", "153", "154", "155", "157", "158", "160", "162", "163", "164", "166", "167",
+  "168", "169", "170", "171", "172", "173", "174", "175", "176", "177", "178", "179",
+  "180", "181", "182", "183", "184", "185", "186", "187", "188", "189", "190", "191",
+  "192", "193", "194", "201", "217", "218", "219", "220", "227", "228", "253", "254",
+  "255", "256", "268", "269", "385", "386", "387", "388", "389", "413", "438", "462",
+  "469", "470", "471", "472", "473", "474", "475", "476", "479", "516", "617", "931",
+  "935", "1157", "1296", "3827", "24188", "24189", "24190", "24191", "31032", "31033", "31040", "31041",
+  "39006", "39007", "39046", "39047", "39048",
 ];
 
+/**
+ * Snowleader leaf category label → Galaxus kind.
+ * Order matters: specific winter/outdoor/sport patterns before generic Mode fallbacks.
+ * Paths: galaxus/exports/galaxusCategoryPaths.ts (Producttypes.xlsx).
+ */
 const SNL_CATEGORY_LABEL_TO_KIND: Array<{ pattern: RegExp; kind: GalaxusProductKind }> = [
-  { pattern: /sneaker|basket/i, kind: "sneakers" },
-  { pattern: /apr[eè]s|après/i, kind: "slippers" },
-  { pattern: /sandale|flip.?flop|tong/i, kind: "sandals" },
+  // footwear
+  { pattern: /sneaker|basket|\bnike sb\b/i, kind: "sneakers" },
+  { pattern: /apr[eè]s|après|winterschuhe/i, kind: "slippers" },
+  { pattern: /flip.?flop|tong/i, kind: "flip_flops" },
   { pattern: /wandersandal/i, kind: "sandals" },
-  { pattern: /wanderschuhe|bergsteiger|trekking.*schuh|zustieg|halbschuhe|warme wanderschuhe/i, kind: "boots" },
+  { pattern: /sandale/i, kind: "sandals" },
+  { pattern: /kletterschuhe/i, kind: "climbing_shoes" },
+  { pattern: /laufschuhe|recovery-schuhe/i, kind: "running_shoes" },
+  { pattern: /trailschuhe/i, kind: "trail_shoes" },
+  { pattern: /wanderschuhe|bergsteiger|warme wanderschuhe|trekking.*schuh|zustiegsschuh/i, kind: "hiking_boots" },
+  { pattern: /halbschuhe/i, kind: "halbschuhe" },
+  // winter hardware
+  { pattern: /skibrille|langlaufsonnenbrille|visiere/i, kind: "ski_goggles" },
+  { pattern: /sonnenbrille|sonnenschutz/i, kind: "sunglasses" },
+  { pattern: /ski.?helm|ski helme|\bhelme\b/i, kind: "ski_helmet" },
+  { pattern: /skimask|sturmhaube|halsschlauch/i, kind: "ski_mask" },
+  { pattern: /snowboardschuh|snowboard.*boot/i, kind: "snowboard_boots" },
+  { pattern: /snowboardbindung|snowboard.*bind/i, kind: "snowboard_binding" },
+  { pattern: /snowboard/i, kind: "snowboard" },
+  { pattern: /langlaufschuhe/i, kind: "langlauf_boots" },
+  { pattern: /langlaufski|rollskier|skiroller|pistenski|skating|klassisch/i, kind: "langlauf_ski" },
+  { pattern: /skischuh|innenschuh|einlegsohl/i, kind: "ski_boots" },
+  { pattern: /skist[oö]ck|langlaufst[oö]ck/i, kind: "ski_poles" },
+  { pattern: /wanderst[oö]ck|trekkingst[oö]cke|nordic walking st[oö]cke|trailrunning.?st[oö]cke|\bst[oö]cke\b/i, kind: "hiking_poles" },
+  { pattern: /skibindung|ski bindung|\bbindungen\b/i, kind: "ski_binding" },
+  { pattern: /wachsen|gleitwachs|steigwachs/i, kind: "ski_wax" },
+  { pattern: /werzeuge|harscheisen|eispickel|steigeisen/i, kind: "ski_tools" },
+  {
+    pattern: /tourenski|\bskis\b|freeride ski|freestyle ski|piste ski|\bski set\b|ski inkl|splitboard|telemark|\bski\b(?!.*sock|.*tasche|.*wachs|.*werkzeug|.*zubeh)/i,
+    kind: "ski",
+  },
+  // winter apparel (before generic jacken)
+  { pattern: /skihandschuh|ski-hand|langlauf-handschuh|tourenski-handschuh/i, kind: "ski_gloves" },
+  { pattern: /langlaufhose|langlauf-hose/i, kind: "langlauf_pants" },
+  { pattern: /skihose|tourenskihose|snowboardhose/i, kind: "ski_pants" },
+  { pattern: /skianzug/i, kind: "ski_jacket" },
+  { pattern: /skijacke|tourenskijacke|ski stepp|ski-fleece|tourenski.*jacke|tourenski-fleece|tourenski-stepp/i, kind: "ski_jacket" },
+  { pattern: /langlauf-jacken|langlaufjacke|langlauf bekleidung/i, kind: "langlauf_jacket" },
+  // outdoor / sport apparel
+  { pattern: /gamaschen/i, kind: "gaiters" },
+  { pattern: /sport-bh/i, kind: "sport_bra" },
+  { pattern: /mtb bekleidung|fahrradjacke|fahrradbekleidung|velojacke|mtb jacke|bike jacke/i, kind: "bike_jacket" },
+  { pattern: /mtb short|velohose|bike short|radhose/i, kind: "bike_pants" },
+  { pattern: /trailrunning bekleidung|laufjacke|trailrunning.*jacke/i, kind: "running_jacket" },
+  { pattern: /wanderjacke|wanderbekleidung|kletter-bekleidung|kletterbekleidung/i, kind: "outdoor_jacket" },
+  { pattern: /tourenjacke|tourenbekleidung/i, kind: "outdoor_jacket" },
+  { pattern: /regenjacke|hardshell/i, kind: "rain_jacket" },
+  { pattern: /daunen|stepp|winterjacke|parka|isolationsjacke|wärmende jacken/i, kind: "winter_jacket" },
+  { pattern: /fleece|softshell|outdoorjacke|funktionsbekleidung|windbreaker|coupe.?vent|outdoor bekleidung|bekleidung technische|blouson/i, kind: "outdoor_jacket" },
+  { pattern: /funktionshemd|funktionsshirt|oberteile|technische tops|klettershirt/i, kind: "functional_shirt" },
+  { pattern: /thermokleidung|unterhemd/i, kind: "base_layer_top" },
+  { pattern: /funktionsunterw|baselayer|first layer|unterhosen|\bleggings\b|\btights\b/i, kind: "base_layer_bottom" },
+  { pattern: /outdoorhose|wanderhose|trekkinghose|laufhose|trail.*hose|overalls?|regenhose/i, kind: "outdoor_pants" },
+  { pattern: /sportshirt|outdoor.*shirt/i, kind: "outdoor_shirt" },
+  { pattern: /\bjacken\b/i, kind: "outdoor_jacket" },
+  // base layers / underwear / socks
   { pattern: /boxer|unterhose|unterw[aä]sche/i, kind: "underwear" },
-  { pattern: /socken/i, kind: "socks" },
-  { pattern: /mütze|muetze|beanie|kappe|\bcap\b|hut|stirnband/i, kind: "hat" },
-  { pattern: /rucks[aä]ck|daypack|trekkingrucks[aä]ck|tagesrucks[aä]ck|wanderrucks[aä]ck/i, kind: "backpack" },
-  { pattern: /duffel|tasche|bauchtasche|reisetasche|fahrradtasche|packtasche/i, kind: "bag" },
-  { pattern: /skateboard|nike sb/i, kind: "skateboard" },
-  { pattern: /skihose|skihosen|snowboardhose|outdoorhose|\bhosen\b|laufhosen|wanderhosen|legging|tight/i, kind: "trousers" },
+  { pattern: /socken|oversocken|ski-sock/i, kind: "sport_socks" },
+  // headwear
+  { pattern: /stirnb[aä]nder|schlauchtuch/i, kind: "headband" },
+  { pattern: /mütze|muetze|beanie/i, kind: "beanie" },
+  { pattern: /\bcap\b|kappe/i, kind: "cap" },
+  // bags
+  { pattern: /bauchtasche/i, kind: "waist_bag" },
+  { pattern: /duffel|reisetasche/i, kind: "duffel" },
+  { pattern: /rucks[aä]ck|daypack|lawinenrucks[aä]ck/i, kind: "backpack" },
+  { pattern: /tasche|packtasche|fahrradtasche|skitasche|skis[aä]ck/i, kind: "bag" },
+  { pattern: /skateboard/i, kind: "skateboard" },
+  // city / mode apparel
+  { pattern: /\bhemd|\bhemden\b|bluse/i, kind: "hemd" },
+  { pattern: /pullover|sweat|hoodie|midlayer|mid layer/i, kind: "pullover" },
+  { pattern: /t-shirt|tshirt|\bshirt|\bshirts\b|polo|topologie/i, kind: "tshirt" },
+  { pattern: /\bweste\b/i, kind: "vest" },
+  { pattern: /\bhosen\b|city.*hose/i, kind: "trousers" },
   { pattern: /short/i, kind: "shorts" },
-  { pattern: /t-shirt|tshirt|polo|pullover|sweat|hemd|jacke|fleece|weste|parka|hoodie|shirt|bluse|triko|bekleidung/i, kind: "apparel" },
+  { pattern: /jacke|bekleidung|triko|bodywarmer/i, kind: "apparel" },
 ];
 
 /** Map Snowleader leaf category label → Galaxus kind (used when supplierKey = snl). */

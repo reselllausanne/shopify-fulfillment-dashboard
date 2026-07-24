@@ -1,6 +1,7 @@
 import {
   classifyGalaxusProductKind,
   isFootwearKind,
+  isGalaxusLengthCmKind,
   requiresGalaxusSizeSpec,
   resolveGalaxusProductCategoryPath,
   type GalaxusProductKind,
@@ -10,6 +11,7 @@ import { FALLBACK_SIZE_CHARTS } from "@/galaxus/kickdb/sizeCharts";
 
 export const GALAXUS_CLOTHING_SIZE_KEY = "Clothing size";
 export const GALAXUS_SHOE_SIZE_KEY = "Shoe size (EU)";
+export const GALAXUS_LENGTH_CM_KEY = "Length (cm)";
 
 type ExportClassificationInput = {
   supplierTitle?: string | null;
@@ -130,12 +132,20 @@ export function convertFractionalEuSizeForGalaxus(size: string): string {
 
 export function formatGalaxusSizeSpecValue(
   sizeRaw: string | null | undefined,
-  isFootwear: boolean
+  kind: GalaxusProductKind
 ): string | null {
   const trimmed = String(sizeRaw ?? "").trim();
   if (!trimmed) return null;
 
-  if (isFootwear) {
+  if (isGalaxusLengthCmKind(kind)) {
+    const match = trimmed.replace(/,/g, ".").match(/(\d{2,3}(?:\.\d+)?)/);
+    if (!match?.[1]) return null;
+    const cm = Number.parseFloat(match[1]);
+    if (!Number.isFinite(cm) || cm < 80 || cm > 230) return null;
+    return String(cm % 1 === 0 ? Math.round(cm) : cm);
+  }
+
+  if (isFootwearKind(kind)) {
     const withoutPrefix = normalizeFootwearEuSizeLabel(trimmed);
     if (!withoutPrefix) return null;
     if (/^(OS|ONE\s*SIZE)$/i.test(withoutPrefix)) return null;
@@ -145,8 +155,10 @@ export function formatGalaxusSizeSpecValue(
   return trimmed;
 }
 
-export function resolveGalaxusSizeSpecKey(isFootwear: boolean): string {
-  return isFootwear ? GALAXUS_SHOE_SIZE_KEY : GALAXUS_CLOTHING_SIZE_KEY;
+export function resolveGalaxusSizeSpecKey(kind: GalaxusProductKind): string {
+  if (isGalaxusLengthCmKind(kind)) return GALAXUS_LENGTH_CM_KEY;
+  if (isFootwearKind(kind)) return GALAXUS_SHOE_SIZE_KEY;
+  return GALAXUS_CLOTHING_SIZE_KEY;
 }
 
 export function buildGalaxusSizeSpecRow(input: {
@@ -166,7 +178,7 @@ export function buildGalaxusSizeSpecRow(input: {
   const providerKey = String(input.providerKey ?? "").trim();
   if (!providerKey) return null;
 
-  const { isFootwear, requiresSizeSpec } = resolveGalaxusExportClassification({
+  const { kind, requiresSizeSpec } = resolveGalaxusExportClassification({
     supplierTitle: input.supplierTitle,
     supplierSku: input.supplierSku,
     kickdbTitle: input.kickdbTitle,
@@ -181,13 +193,13 @@ export function buildGalaxusSizeSpecRow(input: {
   if (!requiresSizeSpec) return null;
 
   const sizeValue =
-    formatGalaxusSizeSpecValue(input.sizeRaw, isFootwear) ??
-    formatGalaxusSizeSpecValue(input.sizeNormalized, isFootwear);
+    formatGalaxusSizeSpecValue(input.sizeRaw, kind) ??
+    formatGalaxusSizeSpecValue(input.sizeNormalized, kind);
   if (!sizeValue) return null;
 
   return {
     ProviderKey: providerKey,
-    SpecificationKey: resolveGalaxusSizeSpecKey(isFootwear),
+    SpecificationKey: resolveGalaxusSizeSpecKey(kind),
     SpecificationValue: sizeValue,
   };
 }
