@@ -1,7 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { randomUUID } from "crypto";
 import { after } from "next/server";
-import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
+import { withAdvisoryLock, withAdvisoryXactLock } from "@/galaxus/jobs/advisoryLock";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import type { FeedScope, FeedTriggerSource } from "./types";
 
@@ -193,7 +193,10 @@ export async function startFeedPushAsync(params: {
   scope: FeedScope;
   triggerSource?: FeedTriggerSource;
 }): Promise<{ ok: boolean; accepted?: boolean; runId?: string; error?: string; status?: number }> {
-  const locked = await withAdvisoryLock("galaxus:feed-push", async () => {
+  // Transaction-scoped lock: the critical section here is short (dedupe active-run + enqueue; the
+  // heavy upload runs in `after()` outside the lock). Session locks leak under pgbouncer and were
+  // starving the nightly push-master-specs step with false "lock busy" 409s.
+  const locked = await withAdvisoryXactLock("galaxus:feed-push", async () => {
     const active = await getActiveFeedRun();
     if (active) {
       return {

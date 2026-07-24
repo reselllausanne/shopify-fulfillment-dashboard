@@ -30,7 +30,9 @@ log() {
 post_json() {
   local body="$1"
   local attempt=1
-  local max_attempts=5
+  # 409 = feed lock busy. Retry generously: even with the pgbouncer xact-lock fix a prior heavy
+  # push can legitimately hold the lock, and master-specs (last step) must not be silently dropped.
+  local max_attempts=12
   local http=""
   local resp=""
 

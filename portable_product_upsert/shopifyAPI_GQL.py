@@ -555,6 +555,62 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     return final_price
 
 
+def _psych_round_up(price: float) -> int:
+    endings = [9, 19, 29, 39, 49, 59, 69, 79, 89, 99]
+    base = (int(price) // 100) * 100
+    for ending in endings:
+        candidate = base + ending
+        if candidate >= price:
+            return candidate
+    return base + 109
+
+
+def calc_liquidation_sell_price(cost_chf) -> int:
+    """
+    Physical warehouse liquidation sell: cost minus LIQUIDATION_DISCOUNT_PCT (default 30%).
+    Matches shopify/pricing/calcShopifySellPrice.ts calcPhysicalLiquidationSellPrice.
+    """
+    cost = float(cost_chf)
+    if cost <= 0:
+        return 0
+    raw_pct = (
+        os.environ.get("LIQUIDATION_DISCOUNT_PCT")
+        or os.environ.get("SHOPIFY_LIQUIDATION_DISCOUNT_PCT")
+        or "30"
+    )
+    try:
+        pct = float(raw_pct)
+    except (TypeError, ValueError):
+        pct = 30.0
+    if pct <= 0 or pct >= 100:
+        pct = 30.0
+    return _psych_round_up(cost * (1.0 - pct / 100.0))
+
+
+def calc_physical_restock_prices(
+    stockx_raw,
+    product_category="sneakers",
+    product_handle="",
+    brand="",
+):
+    """
+    Single physical-restock pricing model (same as TS resolvePhysicalRestockPricing):
+      cost       = calc_touch_price(stockx raw)
+      compare_at = calc_sell_price(stockx raw)   — normal website price
+      sell       = cost − 30% (psych round)
+    """
+    cost = float(calc_touch_price(stockx_raw, product_category, product_handle))
+    compare_at = calc_sell_price(
+        stockx_raw,
+        product_category,
+        is_express=False,
+        product_handle=product_handle,
+        brand=brand,
+    )
+    sell = calc_liquidation_sell_price(cost)
+    return {"cost": cost, "sell": sell, "compare_at": compare_at}
+
+
 def remove_20(price):
     """Example cost logic: removing 20% from price (or some custom logic)."""
     float_price = float(price)
@@ -2680,6 +2736,9 @@ def create_variants_bulk(product_id, option_id, variants):
                 "availableQuantity": int(v.get("quantity", 1))
             }]
         })
+        compare_at = v.get("compare_at_price")
+        if compare_at is not None and float(compare_at) > float(price):
+            variants_input[-1]["compareAtPrice"] = str(compare_at)
 
     resp = _run_query(mutation, {"productId": product_id, "variants": variants_input})
     ue = (resp.get("productVariantsBulkCreate") or {}).get("userErrors") or []
@@ -2791,6 +2850,9 @@ def update_variants_bulk(product_id, variants):
         if v.get("barcode"):
             variant_data["barcode"] = v["barcode"]
             print(f"[BARCODE UPDATE] Adding barcode {v['barcode']} to variant {v['id']}")
+        compare_at = v.get("compare_at_price")
+        if compare_at is not None and float(compare_at) > float(price):
+            variant_data["compareAtPrice"] = str(compare_at)
         
         variants_input.append(variant_data)
 

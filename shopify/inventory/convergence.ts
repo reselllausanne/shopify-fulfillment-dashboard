@@ -32,6 +32,12 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
  */
 
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
+import {
+  readShopifyDelivery48h,
+  writeShopifyDelivery48h,
+  BUSSIGNY_LOCATION_ID,
+} from "@/shopify/restock/bussignyDeliveryMetafield";
+import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -68,6 +74,38 @@ function toNumber(x: unknown): number | null {
   if (x == null) return null;
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
+}
+
+async function getBussignyQtyForGtin(gtin: string): Promise<number> {
+  const rows = await prisma.$queryRaw<Array<{ available: number }>>`
+    SELECT COALESCE(SUM(s."available"), 0)::int AS available
+    FROM "public"."ShopifyVariantLocationStock" s
+    WHERE s."gtin" = ${gtin}
+      AND s."locationId" = ${BUSSIGNY_LOCATION_ID}
+      AND s."sourceType" = 'physical'
+      AND s."available" > 0
+  `;
+  return Number(rows[0]?.available ?? 0);
+}
+
+async function syncBussignyDelivery48h(
+  shopifyVariant: ShopifyVariantDetail | null,
+  gtin: string,
+  changes: string[],
+  warnings: string[]
+): Promise<void> {
+  if (!shopifyVariant?.variantId) return;
+  try {
+    const bussignyQty = await getBussignyQtyForGtin(gtin);
+    const want48h = bussignyQty > 0;
+    const has48h = await readShopifyDelivery48h(shopifyVariant.variantId);
+    if (has48h !== want48h) {
+      await writeShopifyDelivery48h(shopifyVariant.variantId, want48h);
+      changes.push(`Shopify delivery_48h=${want48h ? "true" : "false"} (Bussigny qty=${bussignyQty})`);
+    }
+  } catch (err: any) {
+    warnings.push(`Shopify delivery_48h failed: ${err?.message ?? err}`);
+  }
 }
 
 async function readShopifyPriceLocked(variantId: string): Promise<boolean> {
@@ -193,73 +231,79 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
   const pricing = await resolvePhysicalRestockPricing(cleanGtin);
   const referencePrice = pricing.compareAt;
   const liqPrice = pricing.sellPrice;
+  const hasLiquidationPricing =
+    referencePrice != null &&
+    referencePrice > 0 &&
+    liqPrice != null &&
+    liqPrice > 0;
 
   if (desired === "liquidation") {
-    if (!referencePrice || referencePrice <= 0 || !liqPrice || liqPrice <= 0) {
+    if (!hasLiquidationPricing) {
       warnings.push(`no StockX liquidation pricing (${pricing.source})`);
-      return { gtin: cleanGtin, physicalQty, desired, changed: false, changes, warnings };
     }
 
-    // DB side: manualLock=true + manualPrice=liq. manualStock stays null so
-    // Resolver keeps adding physical on top of STX asks (no double-count).
-    if (stxRow) {
-      const needDbUpdate =
-        !stxRow.manualLock ||
-        toNumber(stxRow.manualPrice) !== liqPrice ||
-        stxRow.manualStock !== null;
-      if (needDbUpdate) {
-        await prisma.supplierVariant.update({
-          where: { id: stxRow.id },
-          data: {
-            manualLock: true,
-            manualPrice: liqPrice,
-            manualStock: null,
-            manualUpdatedAt: new Date(),
-            manualNote: `phase4:liquidation physical=${physicalQty} @ ${
-              physical?.preferredLocationName ?? "?"
-            }`,
-          },
-        });
-        changes.push(`DB manualLock=true, manualPrice=${liqPrice.toFixed(2)}`);
-      }
-    }
-
-    // Shopify side: price / compareAt + metafield lock.
-    if (shopifyVariant?.variantId && shopifyVariant.productId) {
-      const currentPrice = toNumber(shopifyVariant.price);
-      const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
-      const priceDiffers = currentPrice == null || Math.abs(currentPrice - liqPrice) > 0.005;
-      const compareDiffers =
-        currentCompareAt == null || Math.abs(currentCompareAt - referencePrice) > 0.005;
-      if (priceDiffers || compareDiffers) {
-        try {
-          await writeShopifyVariantPrice({
-            productId: shopifyVariant.productId,
-            variantId: shopifyVariant.variantId,
-            price: liqPrice,
-            compareAtPrice: referencePrice,
+    if (hasLiquidationPricing) {
+      // DB side: manualLock=true + manualPrice=liq. manualStock stays null so
+      // Resolver keeps adding physical on top of STX asks (no double-count).
+      if (stxRow) {
+        const needDbUpdate =
+          !stxRow.manualLock ||
+          toNumber(stxRow.manualPrice) !== liqPrice ||
+          stxRow.manualStock !== null;
+        if (needDbUpdate) {
+          await prisma.supplierVariant.update({
+            where: { id: stxRow.id },
+            data: {
+              manualLock: true,
+              manualPrice: liqPrice,
+              manualStock: null,
+              manualUpdatedAt: new Date(),
+              manualNote: `phase4:liquidation physical=${physicalQty} @ ${
+                physical?.preferredLocationName ?? "?"
+              }`,
+            },
           });
-          changes.push(
-            `Shopify price=${liqPrice.toFixed(2)} compareAt=${referencePrice.toFixed(2)}`
-          );
-        } catch (err: any) {
-          warnings.push(`Shopify price write failed: ${err?.message ?? err}`);
+          changes.push(`DB manualLock=true, manualPrice=${liqPrice!.toFixed(2)}`);
         }
       }
-      try {
-        const isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
-        if (!isLocked) {
-          await writeShopifyPriceLocked(shopifyVariant.variantId, true);
-          changes.push("Shopify price_locked=true");
+
+      // Shopify side: price / compareAt + metafield lock.
+      if (shopifyVariant?.variantId && shopifyVariant.productId) {
+        const currentPrice = toNumber(shopifyVariant.price);
+        const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+        const priceDiffers = currentPrice == null || Math.abs(currentPrice - liqPrice!) > 0.005;
+        const compareDiffers =
+          currentCompareAt == null || Math.abs(currentCompareAt - referencePrice!) > 0.005;
+        if (priceDiffers || compareDiffers) {
+          try {
+            await writeShopifyVariantPrice({
+              productId: shopifyVariant.productId,
+              variantId: shopifyVariant.variantId,
+              price: liqPrice!,
+              compareAtPrice: referencePrice!,
+            });
+            changes.push(
+              `Shopify price=${liqPrice!.toFixed(2)} compareAt=${referencePrice!.toFixed(2)}`
+            );
+          } catch (err: any) {
+            warnings.push(`Shopify price write failed: ${err?.message ?? err}`);
+          }
         }
-      } catch (err: any) {
-        warnings.push(`Shopify metafield read/write failed: ${err?.message ?? err}`);
+        try {
+          const isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+          if (!isLocked) {
+            await writeShopifyPriceLocked(shopifyVariant.variantId, true);
+            changes.push("Shopify price_locked=true");
+          }
+        } catch (err: any) {
+          warnings.push(`Shopify metafield read/write failed: ${err?.message ?? err}`);
+        }
       }
     }
   } else {
-    // Dropship: physical hit 0 → clear manual lock, unlock Shopify, refresh
-    // via main.py so it repushes live StockX pricing.
-    if (stxRow && (stxRow.manualLock || stxRow.manualPrice !== null || stxRow.manualStock !== null)) {
+    // Dropship: physical hit 0 → clear manual lock, unlock Shopify, restore live sell price.
+    const hadDbLiquidation = Boolean(stxRow?.manualLock);
+    if (stxRow && (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)) {
       await prisma.supplierVariant.update({
         where: { id: stxRow.id },
         data: {
@@ -273,12 +317,54 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
       changes.push("DB manualLock=false, cleared manual overrides");
     }
 
-    if (shopifyVariant?.variantId) {
+    if (shopifyVariant?.variantId && shopifyVariant.productId) {
       try {
-        const isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+        let isLocked = false;
+        try {
+          isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+        } catch (err: any) {
+          warnings.push(`Shopify price_locked read failed: ${err?.message ?? err}`);
+        }
+
+        const currentPrice = toNumber(shopifyVariant.price);
+        const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+        const looksLikeLiquidation =
+          currentPrice != null &&
+          currentCompareAt != null &&
+          currentCompareAt > currentPrice * 1.15;
+        const matchesLiquidationPrice =
+          hasLiquidationPricing &&
+          liqPrice != null &&
+          currentPrice != null &&
+          Math.abs(currentPrice - liqPrice) <= 0.01;
+
+        const needsPriceRevert =
+          hadDbLiquidation || isLocked || looksLikeLiquidation || matchesLiquidationPrice;
+
         if (isLocked) {
-          // Trigger full refresh through the Python bridge: it unlocks the
-          // metafield AND lets main.py re-apply live pricing / republish.
+          await writeShopifyPriceLocked(shopifyVariant.variantId, false);
+          changes.push("Shopify price_locked=false");
+        }
+
+        const dropshipPrice =
+          referencePrice != null && referencePrice > 0 ? referencePrice : null;
+
+        if (needsPriceRevert && dropshipPrice != null) {
+          const priceDiffers =
+            currentPrice == null || Math.abs(currentPrice - dropshipPrice) > 0.005;
+          const compareStillSet = currentCompareAt != null && currentCompareAt > 0;
+          if (priceDiffers || compareStillSet || isLocked) {
+            await writeShopifyVariantPrice({
+              productId: shopifyVariant.productId,
+              variantId: shopifyVariant.variantId,
+              price: dropshipPrice,
+              compareAtPrice: null,
+            });
+            changes.push(
+              `Shopify reverted to dropship price=${dropshipPrice.toFixed(2)}, compareAt cleared`
+            );
+          }
+        } else if (needsPriceRevert) {
           const refresh = await createProductFullFlow(cleanGtin);
           if (refresh.ok === false) {
             warnings.push(`createProductFullFlow failed: ${refresh.error ?? "unknown"}`);
@@ -287,10 +373,13 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
           }
         }
       } catch (err: any) {
-        warnings.push(`Shopify unlock/refresh failed: ${err?.message ?? err}`);
+        warnings.push(`Shopify unlock/revert failed: ${err?.message ?? err}`);
       }
     }
   }
+
+  await syncBussignyDelivery48h(shopifyVariant, cleanGtin, changes, warnings);
+  await syncSoldes48hProductMetafield(shopifyVariant?.productId, changes, warnings);
 
   return {
     gtin: cleanGtin,
@@ -314,8 +403,9 @@ export type ConvergeAllResult = {
 /**
  * Batch convergence run:
  *  - liquidation candidates: every GTIN with physical > 0 in the mirror
- *  - dropship candidates   : every GTIN that is currently locked in the DB
- *                            (manualLock=true) but no longer has physical > 0
+ *  - dropship candidates   : STX GTINs still locked in DB (liquidation note), OR recently
+ *                            transitioned to dropship (physical=0) — catches orphaned Shopify
+ *                            liquidation prices when DB unlock succeeded but Shopify revert failed.
  *
  * `sample` returns the first N results with a change; useful for cron audit.
  */
@@ -335,10 +425,26 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
   const dropRows = await prisma.$queryRaw<Array<{ gtin: string }>>`
     SELECT DISTINCT sv."gtin"
     FROM "public"."SupplierVariant" sv
-    WHERE sv."manualLock" = true
-      AND sv."supplierVariantId" LIKE 'stx\\_%' ESCAPE '\\'
+    WHERE sv."supplierVariantId" LIKE 'stx\\_%' ESCAPE '\\'
       AND sv."gtin" IS NOT NULL
-      AND sv."manualNote" LIKE 'phase4:liquidation%'
+      AND (
+        (
+          sv."manualLock" = true
+          AND sv."manualNote" LIKE 'phase4:liquidation%'
+        )
+        OR (
+          sv."manualLock" = false
+          AND sv."manualNote" LIKE 'phase4:dropship%'
+          AND sv."manualUpdatedAt" >= NOW() - INTERVAL '14 days'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "public"."ShopifyVariantLocationStock" s
+            WHERE s."gtin" = sv."gtin"
+              AND s."sourceType" = 'physical'
+              AND s."available" > 0
+          )
+        )
+      )
   `;
   const allGtins = new Set<string>([...liqGtins, ...dropRows.map((r) => r.gtin)]);
 

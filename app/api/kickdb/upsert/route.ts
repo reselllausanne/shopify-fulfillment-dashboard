@@ -4,6 +4,7 @@ import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/gal
 import { extractVariantGtin } from "@/galaxus/kickdb/client";
 import { validateGtin } from "@/app/lib/normalize";
 import { checkSharedSecret } from "@/app/api/kickdb/auth";
+import { ingestStxFromRawPayload, zeroStxStockForKickdbProduct } from "@/galaxus/jobs/stxSync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,9 @@ export const dynamic = "force-dynamic";
  *
  * Merge semantics: COALESCE — a null extraction NEVER overwrites an existing
  * non-null column. VariantMapping is never touched here.
+ *
+ * The same payload also patches existing STX `SupplierVariant` price/stock
+ * (marketplace DB bridge — no extra KicksDB call).
  *
  * Callers: SSE listener, sweeper, bootstrap job.
  *
@@ -46,6 +50,33 @@ export async function POST(req: Request) {
   }
 
   const now = new Date();
+
+  // Delist signal: product no longer on KicksDB (SSE fetch returned 404).
+  // Mark notFound and zero marketplace stock so the Galaxus feed drops it (price preserved).
+  if (body?.notFound === true) {
+    try {
+      await prisma.$executeRaw`
+        UPDATE "public"."KickDBProduct"
+        SET "notFound" = true, "lastFetchedAt" = ${now}, "updatedAt" = ${now}
+        WHERE "kickdbProductId" = ${kickdbProductId}
+      `;
+      const stockZeroed = await zeroStxStockForKickdbProduct(kickdbProductId);
+      return NextResponse.json({
+        ok: true,
+        delisted: true,
+        kickdbProductId,
+        stockZeroed,
+        ms: Date.now() - startedAt,
+      });
+    } catch (e: any) {
+      console.error("[kickdb/upsert] delist error", e);
+      return NextResponse.json(
+        { ok: false, error: e?.message ?? "delist_failed", ms: Date.now() - startedAt },
+        { status: 500 }
+      );
+    }
+  }
+
   const digest = digestProductFields(data);
 
   try {
@@ -121,12 +152,22 @@ export async function POST(req: Request) {
       variantsUpserted += 1;
     }
 
+    const ingest = await ingestStxFromRawPayload(data, kickdbProductId);
+
     return NextResponse.json({
       ok: true,
       productId: productRowId,
       kickdbProductId,
       urlKey: digest.urlKey,
       variantsUpserted,
+      supplierVariantSync: {
+        offeredVariants: ingest.offeredVariants,
+        created: ingest.created,
+        updated: ingest.updated,
+        stockZeroed: ingest.stockZeroed,
+        mappingsInserted: ingest.mappingsInserted,
+        mappingsUpdated: ingest.mappingsUpdated,
+      },
       ms: Date.now() - startedAt,
     });
   } catch (e: any) {

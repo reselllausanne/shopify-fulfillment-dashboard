@@ -187,7 +187,15 @@ def worker_loop(q, api_key, upsert_url):
             payload, err = fetch_full_product(uuid, api_key)
             if err:
                 if err == "http_404":
-                    mark_fetched(uuid)  # delisted: don't retry-storm
+                    # Delisted on StockX/KicksDB: tell the API to zero marketplace stock
+                    # (Galaxus drops it OOS) and flag notFound. Don't retry-storm.
+                    ok, derr = upsert_to_db({"data": {"id": uuid}, "notFound": True}, upsert_url)
+                    if ok:
+                        bump("upserted")
+                    else:
+                        bump("errors")
+                        log(f"uuid={uuid} delist FAILED: {derr}")
+                    mark_fetched(uuid)
                 else:
                     bump("errors")
                     log(f"uuid={uuid} fetch error: {err}")

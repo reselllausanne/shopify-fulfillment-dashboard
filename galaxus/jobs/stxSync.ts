@@ -226,6 +226,261 @@ async function zeroStockForStxVariantsNotInEligibleBatch(
   return n;
 }
 
+/**
+ * Zero stock for `stx_{variantId}` rows present in the SSE payload but no longer eligible
+ * (no express offer, invalid GTIN, etc.). Works even when VariantMapping is missing.
+ */
+async function zeroStockForPayloadStxVariantsNotInEligibleBatch(
+  payload: any,
+  eligibleSupplierVariantIds: Set<string>,
+  now: Date,
+  options?: { skip?: boolean }
+): Promise<number> {
+  if (options?.skip) return 0;
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const toZero: string[] = [];
+  for (const variant of variants) {
+    const variantId = pickString(variant?.id);
+    if (!variantId) continue;
+    const supplierVariantId = `${STX_PREFIX}${variantId}`;
+    if (!eligibleSupplierVariantIds.has(supplierVariantId)) {
+      toZero.push(supplierVariantId);
+    }
+  }
+  if (toZero.length === 0) return 0;
+  let n = 0;
+  for (const batch of chunkArray(toZero, 500)) {
+    n += await bulkUpdateSupplierVariants(
+      batch.map((supplierVariantId) => ({ supplierVariantId, stock: 0 })),
+      now,
+      { updateGtinWhenProvided: false }
+    );
+  }
+  return n;
+}
+
+/** Parsed row for full ingest — includes identifiers needed to (re)create KickDBVariant links. */
+type IngestParsedRow = ParsedStxRow & {
+  kickdbVariantExternalId: string;
+  sizeUs: string | null;
+  sizeEu: string | null;
+  ean: string | null;
+};
+
+/**
+ * Parse every variant that currently has a USABLE offer (StockX express/expedited ask).
+ * Unlike `extractRowsFromPayload`, no-GTIN rows are KEPT (stored as PENDING_GTIN, locked from the
+ * Galaxus feed but tracked). Variants with no usable offer are omitted here — they are never created
+ * (a later SSE event creates them once an offer exists); existing rows that lost their offer are
+ * handled by the zero-stock pass in `ingestStxFromRawPayload`.
+ */
+function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestParsedRow[] {
+  const rows: IngestParsedRow[] = [];
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const supplierBrand = pickString(payload?.brand);
+  const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
+  const images = pickImages(payload);
+  const supplierSkuFallback =
+    pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
+  const forceImport = isStxForceImportSlug(pickString(payload?.slug, payload?.url_key, payload?.urlKey));
+
+  for (const variant of variants) {
+    const variantId = pickString(variant?.id);
+    if (!variantId) continue;
+
+    const selected = selectStxOfferForImport(variant?.prices, { forceImport });
+    if (!selected) continue;
+
+    const gtinRaw = pickString(extractVariantGtin(variant));
+    const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+    const supplierVariantId = `${STX_PREFIX}${variantId}`;
+    const providerKey = gtin ? buildProviderKey(gtin, supplierVariantId) : null;
+
+    const stxBasePrice = Number(selected.price);
+    const shippingCHF = resolveStxShippingCHF(payload);
+    const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
+    const suggestedRetailPriceInclVat = suggestedRetailFromStxPayload({
+      stxBasePrice,
+      payload,
+      supplierProductName,
+      deliveryType: selected.deliveryType,
+    });
+
+    rows.push({
+      supplierVariantId,
+      supplierSku: supplierSkuFallback,
+      providerKey,
+      gtin,
+      price: stxSellPrice,
+      stock: selected.asks,
+      sizeRaw: pickSizeRawEuFirst(variant),
+      supplierBrand,
+      supplierProductName,
+      images,
+      leadTimeDays: null,
+      deliveryType: selected.deliveryType,
+      suggestedRetailPriceInclVat,
+      kickdbVariantExternalId: variantId,
+      sizeUs: pickString(variant?.size_us),
+      sizeEu: pickString(variant?.size_eu),
+      ean: pickString(variant?.ean),
+    });
+  }
+  return rows;
+}
+
+/**
+ * Product delisted on KicksDB (fetch 404). Zero stock on every STX `SupplierVariant` linked to it
+ * (price preserved; `manualLock` rows skipped) so the Galaxus feed drops it to out-of-stock.
+ */
+export async function zeroStxStockForKickdbProduct(kickdbProductId: string): Promise<number> {
+  const now = new Date();
+  const ids = await listStxSupplierVariantIdsForKickdbProductId(kickdbProductId);
+  if (ids.length === 0) return 0;
+  let n = 0;
+  for (const batch of chunkArray(ids, 500)) {
+    n += await bulkUpdateSupplierVariants(
+      batch.map((supplierVariantId) => ({ supplierVariantId, stock: 0 })),
+      now,
+      { updateGtinWhenProvided: false }
+    );
+  }
+  return n;
+}
+
+export type StxIngestResult = {
+  offeredVariants: number;
+  created: number;
+  updated: number;
+  stockZeroed: number;
+  mappingsInserted: number;
+  mappingsUpdated: number;
+  durationMs: number;
+};
+
+/**
+ * Marketplace DB bridge (create + maintain) from a raw KicksDB product payload — no extra API call.
+ *
+ * On every SSE event, `/api/kickdb/upsert` calls this so the Galaxus DB is driven end-to-end by the
+ * SSE stream (the manual slug-import page is no longer required):
+ *   - CREATE a `SupplierVariant` + `VariantMapping` for every offered variant (GTIN → SUPPLIER_GTIN;
+ *     no GTIN → PENDING_GTIN, tracked but auto-excluded from the feed until a GTIN appears).
+ *   - MAINTAIN existing rows: refresh price/stock; `manualLock` rows are skipped by the bulk SQL.
+ *   - LOST OFFER (asks→0 or size removed from payload): stock set to 0, price preserved
+ *     (stock is the single control — 0 ⇒ not offered anywhere; Shopify qty follows via the buffer).
+ *
+ * Assumes `KickDBVariant` rows for this product were already upserted by the caller (route) so the
+ * mapping can attach `kickdbVariantId`.
+ */
+export async function ingestStxFromRawPayload(
+  payload: any,
+  kickdbProductId: string,
+  options?: { skipZeroStock?: boolean }
+): Promise<StxIngestResult> {
+  const startedAt = Date.now();
+  const now = new Date();
+  const cleanId = String(kickdbProductId ?? "").trim();
+  const empty: StxIngestResult = {
+    offeredVariants: 0,
+    created: 0,
+    updated: 0,
+    stockZeroed: 0,
+    mappingsInserted: 0,
+    mappingsUpdated: 0,
+    durationMs: Date.now() - startedAt,
+  };
+  if (!cleanId) return empty;
+
+  const parsed = extractOfferedRowsKeepNoGtin(payload, cleanId);
+  const remappedResult = await remapRowsToExistingProviderKeyGtin(parsed);
+  const rows = remappedResult.rows as IngestParsedRow[];
+  const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
+  const skipZeroStock =
+    options?.skipZeroStock === true ||
+    isStxForceImportSlug(pickString(payload?.slug, payload?.url_key, payload?.urlKey));
+
+  for (const row of rows) {
+    assertMappingIntegrity({
+      supplierVariantId: row.supplierVariantId,
+      gtin: row.gtin,
+      providerKey: row.providerKey,
+      status: row.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN",
+    });
+  }
+
+  // CREATE missing rows (ON CONFLICT DO NOTHING), then MAINTAIN existing (skips manualLock).
+  let created = 0;
+  for (const batch of chunkArray(rows, 500)) {
+    created += await bulkInsertSupplierVariants(batch, now);
+  }
+  let updated = 0;
+  for (const batch of chunkArray(rows, 500)) {
+    updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: true });
+  }
+
+  // LOST OFFER: zero stock (keep price) for rows no longer offered — via mapping and via payload ids.
+  const stockZeroedMapped = await zeroStockForStxVariantsNotInEligibleBatch(cleanId, eligibleIds, now, {
+    skip: skipZeroStock,
+  });
+  const stockZeroedPayload = await zeroStockForPayloadStxVariantsNotInEligibleBatch(
+    payload,
+    eligibleIds,
+    now,
+    { skip: skipZeroStock }
+  );
+
+  // Mappings need the DB `KickDBVariant.id` (route already upserted these rows).
+  const externalIds = Array.from(
+    new Set(rows.map((r) => r.kickdbVariantExternalId).filter((id): id is string => Boolean(id)))
+  );
+  const kvRows =
+    externalIds.length > 0
+      ? await prisma.kickDBVariant.findMany({
+          where: { kickdbVariantId: { in: externalIds } },
+          select: { id: true, kickdbVariantId: true },
+        })
+      : [];
+  const kvIdByExternal = new Map(kvRows.map((k) => [String(k.kickdbVariantId), k.id]));
+
+  const mappingRows = rows.map((row) => ({
+    supplierVariantId: row.supplierVariantId,
+    gtin: row.gtin,
+    providerKey: row.providerKey,
+    status: row.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN",
+    kickdbVariantId: kvIdByExternal.get(row.kickdbVariantExternalId) ?? null,
+  }));
+  const mappingRes = await bulkUpsertVariantMappings(mappingRows, now, {
+    doNotDowngradeFromMatched: true,
+    onlySetPendingIfMissing: true,
+  });
+
+  const stockZeroed = stockZeroedMapped + stockZeroedPayload;
+  const durationMs = Date.now() - startedAt;
+  if (created > 0 || updated > 0 || stockZeroed > 0 || mappingRes.inserted > 0) {
+    console.info("[galaxus][ingest:stx-raw-payload] done", {
+      kickdbProductId: cleanId,
+      offered: rows.length,
+      created,
+      updated,
+      stockZeroed,
+      mappingsInserted: mappingRes.inserted,
+      mappingsUpdated: mappingRes.updated,
+      remappedToCanonical: remappedResult.remapped,
+      durationMs,
+    });
+  }
+
+  return {
+    offeredVariants: rows.length,
+    created,
+    updated,
+    stockZeroed,
+    mappingsInserted: mappingRes.inserted,
+    mappingsUpdated: mappingRes.updated,
+    durationMs,
+  };
+}
+
 async function removeMissingOrIneligibleStxVariants(activeSupplierVariantIds: string[]) {
   if (activeSupplierVariantIds.length === 0) {
     const removed = await prisma.supplierVariant.deleteMany({
