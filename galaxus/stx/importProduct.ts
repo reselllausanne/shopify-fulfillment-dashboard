@@ -1,6 +1,10 @@
 import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
-import { extractVariantGtin, fetchStockxProductByIdOrSlugRaw } from "@/galaxus/kickdb/client";
+import {
+  extractVariantGtin,
+  fetchStockxProductByIdOrSlugRaw,
+  matchVariantsBySize,
+} from "@/galaxus/kickdb/client";
 import {
   bulkInsertSupplierVariants,
   bulkUpdateSupplierVariants,
@@ -11,14 +15,17 @@ import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/pro
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
 import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
-import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
+import {
+  allowsStxStandardImport,
+  buildStxDualPriceFields,
+} from "@/galaxus/stx/variantPriceLanes";
 import {
   buildPhysicalOnlySelectedOffer,
   calcSuggestedRetailForPhysicalRaw,
   gtinDigitsEqual,
   pickPhysicalImportStockxRaw,
 } from "@/galaxus/stx/physicalImport";
-import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
+import { type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import { STX_MIN_ASKS_FOR_LISTING, isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
 
 type ImportPreviewVariant = {
@@ -82,6 +89,9 @@ type ParsedVariantRow = {
   leadTimeDays: number | null;
   deliveryType: StxDeliveryType;
   suggestedRetailPriceInclVat: number | null;
+  standardBuyPrice: number | null;
+  expressBuyPrice: number | null;
+  standardSuggestedRetailPriceInclVat: number | null;
   kickdbVariantExternalId: string;
   sizeUs: string | null;
   sizeEu: string | null;
@@ -272,9 +282,21 @@ function runRegionHook(
   return { blocked, warnings, errors };
 }
 
+export type StxImportOptions = {
+  forceImport?: boolean;
+  targetGtin?: string | null;
+  /**
+   * Scanned/returned barcode to stamp onto the KickDB variant matching
+   * `attachSizeEu` when KickDB itself has no GTIN for that size. Enables the
+   * DB mirror for physical pairs whose KickDB catalog lacks barcodes.
+   */
+  attachGtin?: string | null;
+  attachSizeEu?: string | null;
+};
+
 export async function importStxProductByInput(
   input: string,
-  options: { forceImport?: boolean; targetGtin?: string | null } = {}
+  options: StxImportOptions = {}
 ): Promise<StxImportResult> {
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -354,9 +376,14 @@ export async function importStxProductByInput(
   // Phase 4 orphan reconciliation can pull in non-express variants that have
   // real physical stock on Shopify — we need a supplier row for the resolver
   // to attach qty to.
-  const forceImport = options.forceImport === true || isStxForceImportSlug(slug ?? normalizedInput);
+  const forceImport =
+    options.forceImport === true || allowsStxStandardImport(product, slug ?? normalizedInput);
   diagnostics.forceImport = forceImport;
   const targetGtin = String(options.targetGtin ?? "").replace(/\D/g, "").trim();
+  const attachGtinRaw = String(options.attachGtin ?? "").replace(/\D/g, "").trim();
+  const attachGtin = attachGtinRaw && validateGtin(attachGtinRaw) ? attachGtinRaw : null;
+  const attachSizeEu = pickString(options.attachSizeEu);
+  let attachGtinUsed = false;
   const parsedRows: ParsedVariantRow[] = [];
   let eligibleVariantsCount = 0;
 
@@ -397,6 +424,9 @@ export async function importStxProductByInput(
       leadTimeDays: null,
       deliveryType: selected.deliveryType,
       suggestedRetailPriceInclVat,
+      standardBuyPrice: stxSellPrice,
+      expressBuyPrice: null,
+      standardSuggestedRetailPriceInclVat: suggestedRetailPriceInclVat,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -418,15 +448,36 @@ export async function importStxProductByInput(
     }
 
     const gtinRaw = pickString(extractVariantGtin(variant));
-    const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+    let gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
 
-    const selected = selectStxOfferForImport(variant?.prices, { forceImport });
-    if (!selected) {
+    // KickDB catalog often lacks barcodes. When the operator scanned a real
+    // GTIN, stamp it onto the size they physically hold so the DB mirror and
+    // provider key resolve for that pair.
+    if (
+      !gtin &&
+      attachGtin &&
+      !attachGtinUsed &&
+      attachSizeEu &&
+      matchVariantsBySize([variant], attachSizeEu, { brand }).length > 0
+    ) {
+      gtin = attachGtin;
+      attachGtinUsed = true;
+      warnings.push(
+        `Size ${sizeLabel} (${variantId}): stamped scanned GTIN ${attachGtin} (KickDB has none).`
+      );
+    }
+
+    const lanes = buildStxDualPriceFields(variant, product, name, {
+      forceImport,
+      slug: slug ?? normalizedInput,
+    });
+    if (!lanes) {
+      const physicalTarget = targetGtin || attachGtin || "";
       if (
         forceImport &&
-        targetGtin &&
+        physicalTarget &&
         gtin &&
-        gtinDigitsEqual(gtin, targetGtin) &&
+        gtinDigitsEqual(gtin, physicalTarget) &&
         images &&
         images.length > 0
       ) {
@@ -445,13 +496,16 @@ export async function importStxProductByInput(
       );
       continue;
     }
-    if (isStxListingEligibleAsks(selected.asks)) eligibleVariantsCount += 1;
+    if (isStxListingEligibleAsks(lanes.stock)) eligibleVariantsCount += 1;
 
     const supplierVariantId = `stx_${variantId}`;
+    // No KickDB GTIN is NOT a skip: keep the row as PENDING_GTIN (null
+    // providerKey) so the DB mirrors Shopify physical pairs regardless of
+    // KickDB barcode coverage. Feed export stays gated on providerKey.
     if (!gtin) {
-      diagnostics.skipReasons.invalidGtin += 1;
-      warnings.push(`Size ${sizeLabel} (${variantId}): missing/invalid GTIN (got ${gtinRaw ?? "none"}).`);
-      continue;
+      warnings.push(
+        `Size ${sizeLabel} (${variantId}): no GTIN on KickDB — imported as PENDING_GTIN.`
+      );
     }
     if (!images || images.length === 0) {
       diagnostics.skipReasons.missingImages += 1;
@@ -460,30 +514,23 @@ export async function importStxProductByInput(
     }
     const providerKey = buildProviderKey(gtin, supplierVariantId);
 
-    const stxBasePrice = Number(selected.price);
-    const shippingCHF = resolveStxShippingCHF(product);
-    const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
-    const suggestedRetailPriceInclVat = calcSuggestedRetailFromStxOffer({
-      stockxRaw: stxBasePrice,
-      productHandle: slug,
-      productName: name,
-      deliveryType: selected.deliveryType,
-    });
-
     parsedRows.push({
       supplierVariantId,
       supplierSku: supplierSkuFallback,
       providerKey,
       gtin,
-      price: stxSellPrice,
-      stock: selected.asks,
+      price: lanes.price,
+      stock: lanes.stock,
       sizeRaw: pickSizeRawEuFirst(variant),
       supplierBrand: brand,
       supplierProductName: name,
       images,
       leadTimeDays: null,
-      deliveryType: selected.deliveryType,
-      suggestedRetailPriceInclVat,
+      deliveryType: lanes.deliveryType,
+      suggestedRetailPriceInclVat: lanes.suggestedRetailPriceInclVat,
+      standardBuyPrice: lanes.standardBuyPrice,
+      expressBuyPrice: lanes.expressBuyPrice,
+      standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -502,7 +549,7 @@ export async function importStxProductByInput(
     errors.push("No importable variants were found on this product.");
   } else if (!forceImport && eligibleVariantsCount === 0 && !hasTargetPhysicalRow) {
     errors.push(
-      `No eligible express variants (need express_standard or express_expedited with price>0 and asks≥${STX_MIN_ASKS_FOR_LISTING}).`
+      `No eligible variants (need express_standard/expedited, or standard for LEGO, with price>0 and asks≥${STX_MIN_ASKS_FOR_LISTING}).`
     );
   }
   if (errors.length > 0) {
@@ -616,9 +663,11 @@ export async function importStxProductByInput(
         productId: savedProduct.id,
         sizeUs: row.sizeUs,
         sizeEu: row.sizeEu,
-        gtin: row.gtin,
-        ean: row.ean,
-        providerKey: row.providerKey,
+        // Never wipe a known barcode with a null from a KickDB payload that
+        // lacks GTINs (rows may have been stamped from a physical scan).
+        gtin: row.gtin ?? undefined,
+        ean: row.ean ?? undefined,
+        providerKey: row.providerKey ?? undefined,
         lastFetchedAt: now,
         notFound: false,
       },

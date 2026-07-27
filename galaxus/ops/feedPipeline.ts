@@ -1,7 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { randomUUID } from "crypto";
 import { after } from "next/server";
-import { withAdvisoryLock, withAdvisoryXactLock } from "@/galaxus/jobs/advisoryLock";
+import { withAdvisoryXactLock } from "@/galaxus/jobs/advisoryLock";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import type { FeedScope, FeedTriggerSource } from "./types";
 
@@ -15,6 +15,16 @@ type FeedRunResult = {
   error?: string;
 };
 
+export type FeedPushStartResult = {
+  ok: boolean;
+  accepted?: boolean;
+  queued?: boolean;
+  runId?: string;
+  triggerId?: string;
+  error?: string;
+  status?: number;
+};
+
 /** After container kill/redeploy, finishedAt stays null — keep short so night cron recovers. */
 const STALE_FEED_RUN_MS = 90 * 60 * 1000;
 
@@ -24,6 +34,7 @@ function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
     triggerSource === "manual" ||
     triggerSource === "manual-pricing" ||
     triggerSource === "order-ingest" ||
+    triggerSource === "shopify-post-sale" ||
     triggerSource === "admin" ||
     triggerSource === "partner-admin" ||
     triggerSource === "partner-order-fulfilled" ||
@@ -87,12 +98,206 @@ export async function reconcileStaleFeedRuns(maxAgeMs = STALE_FEED_RUN_MS) {
   });
 }
 
+const STALE_FEED_TRIGGER_MS = 2 * 60 * 60 * 1000;
+
+/** Reset zombie RUNNING triggers; re-queue recent ones if no active feed. */
+export async function reconcileStaleFeedTriggers() {
+  const prismaAny = prisma as any;
+  const cutoff = new Date(Date.now() - STALE_FEED_TRIGGER_MS);
+  const failed = await prismaAny.galaxusFeedTrigger.updateMany({
+    where: { status: "RUNNING", requestedAt: { lt: cutoff } },
+    data: { status: "FAILED" },
+  });
+
+  const active = await prismaAny.galaxusFeedRun.findFirst({
+    where: { finishedAt: null },
+    select: { id: true },
+  });
+  if (active) return failed?.count ?? 0;
+
+  const reset = await prismaAny.galaxusFeedTrigger.updateMany({
+    where: { status: "RUNNING", requestedAt: { gte: cutoff } },
+    data: { status: "PENDING", consumedAt: null },
+  });
+  return (failed?.count ?? 0) + (reset?.count ?? 0);
+}
+
 export async function getActiveFeedRun() {
   await reconcileStaleFeedRuns();
+  await reconcileStaleFeedTriggers();
   return (prisma as any).galaxusFeedRun.findFirst({
     where: { finishedAt: null },
     orderBy: { startedAt: "desc" },
   });
+}
+
+export async function countPendingFeedPushTriggers(scope?: FeedScope) {
+  const prismaAny = prisma as any;
+  return prismaAny.galaxusFeedTrigger.count({
+    where: {
+      status: "PENDING",
+      ...(scope ? { scope } : {}),
+    },
+  });
+}
+
+/** One pending row per scope — bursts coalesce instead of flooding SFTP. */
+export async function enqueueFeedPushTrigger(params: {
+  scope: FeedScope;
+  triggerSource?: FeedTriggerSource;
+}): Promise<{ triggerId: string; created: boolean }> {
+  const prismaAny = prisma as any;
+  const existing = await prismaAny.galaxusFeedTrigger.findFirst({
+    where: { scope: params.scope, status: "PENDING" },
+    orderBy: { requestedAt: "asc" },
+  });
+  if (existing) {
+    return { triggerId: String(existing.id), created: false };
+  }
+  const row = await prismaAny.galaxusFeedTrigger.create({
+    data: {
+      scope: params.scope,
+      triggerSource: params.triggerSource ?? null,
+    },
+  });
+  return { triggerId: String(row.id), created: true };
+}
+
+async function finalizeFeedTrigger(params: {
+  feedTriggerId?: string;
+  success: boolean;
+  origin: string;
+  scope: FeedScope;
+  triggerSource?: FeedTriggerSource;
+}) {
+  const prismaAny = prisma as any;
+  if (params.feedTriggerId) {
+    await prismaAny.galaxusFeedTrigger
+      .update({
+        where: { id: params.feedTriggerId },
+        data: {
+          status: params.success ? "DONE" : "PENDING",
+          consumedAt: params.success ? new Date() : null,
+        },
+      })
+      .catch((err: unknown) => {
+        console.warn("[GALAXUS][FEED][QUEUE] trigger finalize failed", {
+          feedTriggerId: params.feedTriggerId,
+          error: err,
+        });
+      });
+  } else if (!params.success) {
+    await enqueueFeedPushTrigger({
+      scope: params.scope,
+      triggerSource: params.triggerSource,
+    });
+  }
+
+  void drainFeedPushQueue(params.origin).catch((err) => {
+    console.error("[GALAXUS][FEED][QUEUE] drain failed:", err);
+  });
+}
+
+function scheduleAsyncFeedRun(params: {
+  feedRunId: string;
+  runId: string;
+  origin: string;
+  scope: FeedScope;
+  triggerSource?: FeedTriggerSource;
+  providerKeys?: string[];
+  feedTriggerId?: string;
+}) {
+  const start = () =>
+    executeFeedRun({
+      feedRunId: params.feedRunId,
+      runId: params.runId,
+      origin: params.origin,
+      scope: params.scope,
+      triggerSource: params.triggerSource,
+      providerKeys: params.providerKeys,
+    })
+      .then((result) =>
+        finalizeFeedTrigger({
+          feedTriggerId: params.feedTriggerId,
+          success: result.ok,
+          origin: params.origin,
+          scope: params.scope,
+          triggerSource: params.triggerSource,
+        })
+      )
+      .catch((err) => {
+        console.error("[GALAXUS][FEED][ASYNC] Background push failed:", err);
+        return finalizeFeedTrigger({
+          feedTriggerId: params.feedTriggerId,
+          success: false,
+          origin: params.origin,
+          scope: params.scope,
+          triggerSource: params.triggerSource,
+        });
+      });
+
+  // `after()` only fires while a request is still open. Post-sale pushes come from a
+  // debounce timer (request already flushed) and from cron modules, where the callback
+  // is silently dropped: the run row stays finishedAt=null and blocks the queue for
+  // hours. Run in the background on this long-lived server; keep `after()` only as the
+  // request-scoped path so HTTP responses still return before the SFTP work starts.
+  let started = false;
+  const startOnce = () => {
+    if (started) return;
+    started = true;
+    void start();
+  };
+
+  try {
+    after(startOnce);
+  } catch {
+    // no request scope (cron/timer caller)
+  }
+
+  // after() may accept the callback and never invoke it (closed request scope).
+  const fallback = setTimeout(startOnce, 1_000);
+  fallback.unref?.();
+}
+
+async function beginAsyncFeedRun(params: {
+  origin: string;
+  scope: FeedScope;
+  triggerSource?: FeedTriggerSource;
+  providerKeys?: string[];
+  feedTriggerId?: string;
+}): Promise<FeedPushStartResult> {
+  const runId = randomUUID();
+  const feedRun = await (prisma as any).galaxusFeedRun.create({
+    data: {
+      runId,
+      scope: params.scope,
+      triggerSource: params.triggerSource ?? null,
+      startedAt: new Date(),
+      finishedAt: null,
+      success: false,
+      errorMessage: null,
+      countsJson: null,
+      manifestIds: [],
+    },
+  });
+
+  scheduleAsyncFeedRun({
+    feedRunId: feedRun.id,
+    runId,
+    origin: params.origin,
+    scope: params.scope,
+    triggerSource: params.triggerSource,
+    providerKeys: params.providerKeys,
+    feedTriggerId: params.feedTriggerId,
+  });
+
+  return {
+    ok: true,
+    accepted: true,
+    runId,
+    triggerId: params.feedTriggerId,
+    status: 202,
+  };
 }
 
 async function executeFeedRun(params: {
@@ -192,55 +397,75 @@ export async function startFeedPushAsync(params: {
   origin: string;
   scope: FeedScope;
   triggerSource?: FeedTriggerSource;
-}): Promise<{ ok: boolean; accepted?: boolean; runId?: string; error?: string; status?: number }> {
-  // Transaction-scoped lock: the critical section here is short (dedupe active-run + enqueue; the
-  // heavy upload runs in `after()` outside the lock). Session locks leak under pgbouncer and were
-  // starving the nightly push-master-specs step with false "lock busy" 409s.
+  providerKeys?: string[];
+}): Promise<FeedPushStartResult> {
+  // Transaction-scoped lock: short critical section (dedupe active-run + enqueue/start).
   const locked = await withAdvisoryXactLock("galaxus:feed-push", async () => {
     const active = await getActiveFeedRun();
     if (active) {
+      const queued = await enqueueFeedPushTrigger({
+        scope: params.scope,
+        triggerSource: params.triggerSource,
+      });
       return {
-        ok: false,
-        error: "A feed push is already running",
+        ok: true,
+        queued: true,
         runId: active.runId,
-        status: 409,
+        triggerId: queued.triggerId,
+        status: 202,
       };
     }
 
-    const runId = randomUUID();
-    const feedRun = await (prisma as any).galaxusFeedRun.create({
-      data: {
-        runId,
-        scope: params.scope,
-        triggerSource: params.triggerSource ?? null,
-        startedAt: new Date(),
-        finishedAt: null,
-        success: false,
-        errorMessage: null,
-        countsJson: null,
-        manifestIds: [],
-      },
-    });
-
-    // Keep work alive after the 202 response (Next can drop bare void promises).
-    after(() => {
-      void executeFeedRun({
-        feedRunId: feedRun.id,
-        runId,
-        origin: params.origin,
-        scope: params.scope,
-        triggerSource: params.triggerSource,
-      }).catch((err) => {
-        console.error("[GALAXUS][FEED][ASYNC] Background push failed:", err);
-      });
-    });
-
-    return { ok: true, accepted: true, runId };
+    return beginAsyncFeedRun(params);
   });
 
   if (!locked.locked) {
-    return { ok: false, error: "Feed push lock busy — try again", status: 409 };
+    const queued = await enqueueFeedPushTrigger({
+      scope: params.scope,
+      triggerSource: params.triggerSource,
+    });
+    return {
+      ok: true,
+      queued: true,
+      triggerId: queued.triggerId,
+      status: 202,
+    };
   }
+  return locked.result;
+}
+
+/**
+ * Start the oldest pending feed push when no run is active.
+ * Called after each async feed completes and safe to invoke from cron/tick.
+ */
+export async function drainFeedPushQueue(origin: string): Promise<FeedPushStartResult | { ok: true; drained: false }> {
+  const locked = await withAdvisoryXactLock("galaxus:feed-push", async () => {
+    const active = await getActiveFeedRun();
+    if (active) return { ok: true as const, drained: false as const };
+
+    const prismaAny = prisma as any;
+    const pending: { id: string; scope: string; triggerSource: string | null } | null =
+      await prismaAny.galaxusFeedTrigger.findFirst({
+        where: { status: "PENDING" },
+        orderBy: { requestedAt: "asc" },
+      });
+    if (!pending) return { ok: true as const, drained: false as const };
+
+    await prismaAny.galaxusFeedTrigger.update({
+      where: { id: pending.id },
+      data: { status: "RUNNING", consumedAt: new Date() },
+    });
+
+    const started = await beginAsyncFeedRun({
+      origin,
+      scope: pending.scope as FeedScope,
+      triggerSource: (pending.triggerSource as FeedTriggerSource) ?? "unknown",
+      feedTriggerId: pending.id,
+    });
+    return { ...started, drained: true as const };
+  });
+
+  if (!locked.locked) return { ok: true, drained: false };
   return locked.result;
 }
 
@@ -272,57 +497,21 @@ export async function requestFeedPush(params: {
     return startFeedPushAsync({ origin, scope, triggerSource });
   }
 
-  const prismaAny = prisma as any;
-  const existing = await prismaAny.galaxusFeedTrigger.findFirst({
-    where: { scope, status: "PENDING" },
-    orderBy: { requestedAt: "asc" },
-  });
-  if (!existing) {
-    await prismaAny.galaxusFeedTrigger.create({
-      data: { scope, triggerSource },
-    });
-  }
+  const queued = await enqueueFeedPushTrigger({ scope, triggerSource });
   if (runNow) {
-    return runPendingFeedTriggers({ origin, scope });
+    const drained = await drainFeedPushQueue(origin);
+    if ("accepted" in drained && drained.accepted) return drained;
+    if ("queued" in drained && drained.queued) return drained;
+    return { ok: true, queued: true, triggerId: queued.triggerId };
   }
-  return { ok: true, queued: true };
+  return { ok: true, queued: true, triggerId: queued.triggerId };
 }
 
+/** @deprecated Prefer {@link drainFeedPushQueue} — kept for legacy callers. */
 export async function runPendingFeedTriggers(params: { origin: string; scope: FeedScope }) {
-  const { origin, scope } = params;
-  const lockName = `galaxus:ops:feed:${scope}`;
-  const locked = await withAdvisoryLock(lockName, async () => {
-    const prismaAny = prisma as any;
-    const pending: Array<{ id: string; triggerSource: string | null }> = await prismaAny.$queryRaw`
-      SELECT "id", "triggerSource"
-      FROM "public"."GalaxusFeedTrigger"
-      WHERE "scope" = ${scope} AND "status" = 'PENDING'
-      ORDER BY "requestedAt" ASC
-      LIMIT 1
-      FOR UPDATE SKIP LOCKED
-    `;
-    if (!pending || pending.length === 0) {
-      return { ok: true, skipped: "no_pending" };
-    }
-    const trigger = pending[0];
-    await prismaAny.galaxusFeedTrigger.update({
-      where: { id: trigger.id },
-      data: { status: "RUNNING", consumedAt: new Date() },
-    });
-    const result = await runFeedPipeline({
-      origin,
-      scope,
-      triggerSource: (trigger.triggerSource as FeedTriggerSource) ?? "unknown",
-    });
-    await prismaAny.galaxusFeedTrigger.update({
-      where: { id: trigger.id },
-      data: { status: result.ok ? "DONE" : "FAILED" },
-    });
-    return result;
-  });
-
-  if (!locked.locked) {
-    return { ok: true, skipped: "locked" };
+  const drained = await drainFeedPushQueue(params.origin);
+  if ("drained" in drained && !drained.drained) {
+    return { ok: true, skipped: "no_pending_or_busy" as const };
   }
-  return locked.result;
+  return drained;
 }

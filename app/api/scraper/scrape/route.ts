@@ -3,6 +3,7 @@ import { parseScraperShops, findScraperShop } from "@/app/lib/scraperShops";
 import { startRun, scrapeShop, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
 import { scrapeHhvShop } from "@/app/lib/hhvScrape";
 import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
+import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function POST(request: Request) {
   }
 
   // Recover any run left 'running' by a previous crash/restart so it can't block us.
-  await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 180));
+  await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 90));
 
   const started: Array<{ shop: string; runId: number }> = [];
   const skipped: string[] = [];
@@ -47,7 +48,9 @@ export async function POST(request: Request) {
         ? scrapeHhvShop
         : shop.platform === "snl"
           ? scrapeSnowleaderShop
-          : scrapeShop;
+          : shop.platform === "rei"
+            ? scrapeReicheltShop
+            : scrapeShop;
     // Fire-and-forget: keep processing after the response returns.
     void runScrape(shop, runId, maxProducts).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);

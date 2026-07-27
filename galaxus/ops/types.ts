@@ -21,6 +21,7 @@ export type FeedTriggerSource =
   | "decathlon-partner-ship-reconciled"
   | "inventory-sync"
   | "order-ingest"
+  | "shopify-post-sale"
   | "image-sync"
   | "admin"
   | "unknown";

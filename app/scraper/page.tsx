@@ -48,6 +48,7 @@ function fmtDate(iso: string | null | undefined) {
 function platformLabel(platform: string) {
   if (platform === "hhv") return "HHV / Playwright";
   if (platform === "snl") return "Snowleader / GraphQL";
+  if (platform === "rei") return "Reichelt / HTML";
   return "Shopify";
 }
 
@@ -247,10 +248,18 @@ SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl"`}
                           ) : (
                             <div
                               className={`text-sm font-medium ${
-                                run?.status === "error" ? "text-rose-600" : "text-slate-700"
+                                run?.status === "error"
+                                  ? "text-rose-600"
+                                  : run?.status === "interrupted"
+                                    ? "text-amber-600"
+                                    : "text-slate-700"
                               }`}
                             >
-                              {run?.status === "error" ? "last run failed" : fmtDate(run?.finishedAt)}
+                              {run?.status === "error"
+                                ? "last run failed"
+                                : run?.status === "interrupted"
+                                  ? "interrupted by restart"
+                                  : fmtDate(run?.finishedAt)}
                             </div>
                           )}
                           <div className="text-[11px] text-slate-400">last scrape</div>
@@ -276,7 +285,7 @@ SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl"`}
                             listed {fmtNum(run.productsListed)} · upserted {fmtNum(run.variantsUpserted)} · errors{" "}
                             {fmtNum(run.errors)}
                           </>
-                        ) : run.status === "ok" ? (
+                        ) : run.status === "ok" || run.status === "interrupted" ? (
                           <>
                             {" · "}
                             listed {fmtNum(run.productsListed)} · upserted {fmtNum(run.variantsUpserted)} · errors{" "}

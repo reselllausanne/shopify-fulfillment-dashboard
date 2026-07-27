@@ -217,6 +217,26 @@ export async function recoverStaleRuns(maxAgeMin = 20): Promise<void> {
   }
 }
 
+/** After process/container restart, in-memory scrapes are gone — clear orphan `running` rows. */
+export async function recoverOrphanedRuns(): Promise<number> {
+  try {
+    const rows = await scraperQuery<{ id: string }>(
+      `UPDATE scraper.scrape_runs
+         SET status = CASE
+               WHEN COALESCE(variants_upserted, 0) > 0 THEN 'interrupted'
+               ELSE 'error'
+             END,
+             finished_at = NOW(),
+             message = COALESCE(message, '') || ' [auto-recovered: process restart]'
+       WHERE status = 'running'
+       RETURNING id`
+    );
+    return rows.length;
+  } catch {
+    return 0;
+  }
+}
+
 export async function hasRunningRun(shopKey: string): Promise<boolean> {
   const rows = await scraperQuery<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM scraper.scrape_runs WHERE shop_id = $1 AND status = 'running'`,

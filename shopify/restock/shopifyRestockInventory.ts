@@ -2,6 +2,7 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
+import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import {
   resolveProviderKeyForGtin,
@@ -52,6 +53,7 @@ const VARIANT_DETAIL_QUERY = /* GraphQL */ `
 query RestockVariantDetail($id: ID!) {
   productVariant(id: $id) {
     id
+    title
     sku
     price
     compareAtPrice
@@ -265,6 +267,8 @@ export type ShopifyVariantDetail = {
   productTitle: string | null;
   productStatus: string | null;
   productHandle: string | null;
+  /** Variant option title — our catalog uses the EU size (e.g. "37.5"). */
+  variantTitle: string | null;
   inventoryItemId: string | null;
   sku: string | null;
   barcode: string | null;
@@ -285,6 +289,7 @@ export async function getShopifyVariantDetail(
   const { data, errors } = await shopifyGraphQL<{
     productVariant: {
       id: string;
+      title: string | null;
       sku: string | null;
       price: string | null;
       compareAtPrice: string | null;
@@ -312,6 +317,7 @@ export async function getShopifyVariantDetail(
     productTitle: node.product.title ?? null,
     productStatus: node.product.status ?? null,
     productHandle: node.product.handle ?? null,
+    variantTitle: node.title ?? null,
     inventoryItemId: node.inventoryItem?.id ?? null,
     sku: node.sku ?? null,
     barcode: node.barcode ?? null,
@@ -659,7 +665,7 @@ export async function restockShopifyVariantByGtin(input: {
     const explicit = String(input.locationId ?? "").trim();
     if (!explicit) {
       throw new Error(
-        "locationId required — select Warehouse Bussigny / Antica Bottegas / THE LAB before restock"
+        "locationId required — select Warehouse Bussigny / Antica Bottegas before restock"
       );
     }
     if (!locationId || source === "invalid") {
@@ -723,6 +729,7 @@ export async function restockShopifyVariantByGtin(input: {
     actions.push(
       `[dry-run] would add +${quantity} stock at location ${locationId} for variant ${match.variantId}`
     );
+    actions.push(`[dry-run] would force Chemin online qty=0 for same inventory item`);
     if (salePrice != null) {
       actions.push(
         `[dry-run] would set price=${salePrice.toFixed(2)}${
@@ -798,6 +805,52 @@ export async function restockShopifyVariantByGtin(input: {
 
     actions.push(`added +${quantity} stock at ${locationName ?? locationId} only`);
 
+    // SOLDES INVARIANT at restock time (not only on later main.py refresh):
+    // physical warehouse stock and dropship stock share one Shopify variant /
+    // one price. Leaving Chemin online > 0 while we hold a soldes pair lets
+    // checkout sell a StockX copy at the warehouse discount. Zero it now.
+    try {
+      const { ONLINE_LOCATION } = await import("@/shopify/inventory/locationConfig");
+      const onlineLoc = ONLINE_LOCATION;
+      if (onlineLoc && onlineLoc.id !== locationId) {
+        const onlineAvailable =
+          (await getInventoryAvailableAtLocation({
+            inventoryItemId: match.inventoryItemId,
+            locationId: onlineLoc.id,
+          })) ?? 0;
+        if (onlineAvailable > 0) {
+          await adjustInventoryAtLocation({
+            inventoryItemId: match.inventoryItemId,
+            locationId: onlineLoc.id,
+            delta: -onlineAvailable,
+            idempotencyKey: `restock-zero-online:${match.inventoryItemId}:${onlineAvailable}`,
+            reason: "correction",
+            referenceDocumentUri: `gid://resell-lausanne/ScanRestock/${gtin}`,
+          });
+          actions.push(
+            `zeroed Chemin online (${onlineLoc.name}): was ${onlineAvailable} → 0`
+          );
+        } else {
+          actions.push(`Chemin online already 0 (${onlineLoc.name})`);
+        }
+        try {
+          await upsertLocationStockRow(onlineLoc, {
+            shopifyVariantId: match.variantId,
+            inventoryItemId: match.inventoryItemId,
+            sku: match.sku,
+            gtin,
+            available: 0,
+          });
+        } catch (mirrorOnlineErr: any) {
+          warnings.push(
+            `Online mirror zero failed (cron will catch up): ${mirrorOnlineErr?.message ?? mirrorOnlineErr}`
+          );
+        }
+      }
+    } catch (err: any) {
+      warnings.push(`Chemin online zero failed: ${err?.message ?? err}`);
+    }
+
     // Write mirror immediately so convergence / marketplace feeds don't wait
     // for the 30-min bulk sync cron. Raw SQL (not prisma model) — HMR-safe.
     try {
@@ -838,16 +891,27 @@ export async function restockShopifyVariantByGtin(input: {
     );
   } else if (!dryRun && quantity > 0) {
     try {
-      const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
-      const liq = await applyLiquidationSaleDisplay({ gtin, variant: match });
-      if (liq.applied) {
-        actions.push(
-          `liquidation sale price=${liq.salePrice?.toFixed(2)} compareAt=${liq.referencePrice?.toFixed(2)}`
-        );
-        const refreshed = await getShopifyVariantDetail(match.variantId);
-        if (refreshed) match = refreshed;
+      if (!isEssentialsShopifyVariant(match)) {
+        const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
+        const liq = await applyLiquidationSaleDisplay({
+          gtin,
+          variant: match,
+          // Product handle mirrors the KickDB slug for auto-created products;
+          // variant title is the EU size. Enables pricing when KickDB has no GTIN.
+          slug: match.productHandle,
+          sizeEu: match.variantTitle,
+        });
+        if (liq.applied) {
+          actions.push(
+            `liquidation sale price=${liq.salePrice?.toFixed(2)} compareAt=${liq.referencePrice?.toFixed(2)}`
+          );
+          const refreshed = await getShopifyVariantDetail(match.variantId);
+          if (refreshed) match = refreshed;
+        }
+        warnings.push(...liq.warnings);
+      } else {
+        actions.push("Essentials product — liquidation pricing skipped");
       }
-      warnings.push(...liq.warnings);
     } catch (err: any) {
       warnings.push(`Liquidation pricing failed: ${err?.message ?? err}`);
     }

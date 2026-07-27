@@ -6,6 +6,7 @@ import {
 } from "../config";
 import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
 import { normalizeSize as normalizeSizeValue } from "@/app/lib/normalize";
+import { gtinCandidates, gtinEquals } from "@/shopify/restock/gtinNormalize";
 
 type KickDbProduct = {
   id: string;
@@ -97,22 +98,65 @@ export function extractVariantGtin(variant?: KickDbVariantWithIdentifiers): stri
   if (variant.ean) return variant.ean;
   const identifiers = variant.identifiers;
   if (Array.isArray(identifiers)) {
-    const gtin = identifiers.find((item) =>
-      ["GTIN", "EAN", "UPC"].includes(item.identifier_type.toUpperCase())
-    );
+    const gtin = identifiers.find((item) => {
+      const kind = String(item.identifier_type ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      // KickDB sends many variants of the same concept: EAN-13, GTIN-8, UPC-A…
+      // Treat them as barcode candidates for downstream GTIN validation.
+      return (
+        kind === "GTIN" ||
+        kind.startsWith("GTIN") ||
+        kind === "EAN" ||
+        kind.startsWith("EAN") ||
+        kind === "UPC" ||
+        kind.startsWith("UPC")
+      );
+    });
     return gtin?.identifier ?? null;
   }
   if (identifiers && typeof identifiers === "object") {
     const candidates = [
       (identifiers as Record<string, string | string[]>).gtin,
       (identifiers as Record<string, string | string[]>).ean,
+      (identifiers as Record<string, string | string[]>).ean13,
+      (identifiers as Record<string, string | string[]>).upc,
+      (identifiers as Record<string, string | string[]>).upca,
       (identifiers as Record<string, string | string[]>).GTIN,
       (identifiers as Record<string, string | string[]>).EAN,
+      (identifiers as Record<string, string | string[]>).EAN13,
+      (identifiers as Record<string, string | string[]>).UPC,
+      (identifiers as Record<string, string | string[]>).UPCA,
     ].flat();
     const value = Array.isArray(candidates) ? candidates[0] : candidates;
     return typeof value === "string" ? value : null;
   }
   return null;
+}
+
+/** Match scanned GTIN against every identifier on a KickDB variant (EAN-13, UPC, GTIN-8, …). */
+export function kickdbVariantMatchesGtin(
+  variant: KickDbVariantWithIdentifiers | undefined,
+  gtin: string
+): boolean {
+  if (!variant || !gtin) return false;
+  const matchesId = (id: string | null | undefined): boolean =>
+    Boolean(id) && gtinCandidates(gtin).some((c) => gtinEquals(id, c));
+
+  if (matchesId(variant.gtin) || matchesId(variant.ean)) return true;
+
+  const identifiers = variant.identifiers;
+  if (Array.isArray(identifiers)) {
+    for (const item of identifiers) {
+      if (matchesId(item.identifier)) return true;
+    }
+  } else if (identifiers && typeof identifiers === "object") {
+    for (const value of Object.values(identifiers as Record<string, string | string[]>)) {
+      const arr = Array.isArray(value) ? value : [value];
+      for (const id of arr) {
+        if (typeof id === "string" && matchesId(id)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 type SizeMatchContext = {

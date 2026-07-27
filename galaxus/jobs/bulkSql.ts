@@ -98,6 +98,9 @@ export async function bulkInsertSupplierVariants(
     deliveryType?: string | null;
     gtin?: string | null;
     suggestedRetailPriceInclVat?: number | null;
+    standardBuyPrice?: number | null;
+    expressBuyPrice?: number | null;
+    standardSuggestedRetailPriceInclVat?: number | null;
   }>,
   now: Date
 ): Promise<number> {
@@ -121,6 +124,9 @@ export async function bulkInsertSupplierVariants(
       ${r.leadTimeDays},
       ${r.deliveryType ?? null},
       ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")},
+      ${numericOrNull(r.standardBuyPrice, "numeric")},
+      ${numericOrNull(r.expressBuyPrice, "numeric")},
+      ${numericOrNull(r.standardSuggestedRetailPriceInclVat, "numeric")},
       ${now},
       ${now},
       ${now}
@@ -145,6 +151,9 @@ export async function bulkInsertSupplierVariants(
         "leadTimeDays",
         "deliveryType",
         "suggestedRetailPriceInclVat",
+        "standardBuyPrice",
+        "expressBuyPrice",
+        "standardSuggestedRetailPriceInclVat",
         "lastSyncAt",
         "createdAt",
         "updatedAt"
@@ -393,6 +402,9 @@ export async function bulkUpdateSupplierVariants(
     supplierGender?: string | null;
     supplierColorway?: string | null;
     suggestedRetailPriceInclVat?: number | null;
+    standardBuyPrice?: number | null;
+    expressBuyPrice?: number | null;
+    standardSuggestedRetailPriceInclVat?: number | null;
   }>,
   now: Date,
   options?: { updateGtinWhenProvided?: boolean }
@@ -417,7 +429,10 @@ export async function bulkUpdateSupplierVariants(
       ${r.deliveryType ?? null},
       ${r.supplierGender ?? null},
       ${r.supplierColorway ?? null},
-      ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")}
+      ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")},
+      ${numericOrNull(r.standardBuyPrice, "numeric")},
+      ${numericOrNull(r.expressBuyPrice, "numeric")},
+      ${numericOrNull(r.standardSuggestedRetailPriceInclVat, "numeric")}
     )`;
   });
 
@@ -438,7 +453,10 @@ export async function bulkUpdateSupplierVariants(
       "deliveryType",
       "supplierGender",
       "supplierColorway",
-      "suggestedRetailPriceInclVat"
+      "suggestedRetailPriceInclVat",
+      "standardBuyPrice",
+      "expressBuyPrice",
+      "standardSuggestedRetailPriceInclVat"
     ) AS (
       VALUES ${Prisma.join(values)}
     ),
@@ -466,6 +484,12 @@ export async function bulkUpdateSupplierVariants(
         "supplierGender" = COALESCE(vals."supplierGender", t."supplierGender"),
         "supplierColorway" = COALESCE(vals."supplierColorway", t."supplierColorway"),
         "suggestedRetailPriceInclVat" = COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat"),
+        "standardBuyPrice" = COALESCE(vals."standardBuyPrice", t."standardBuyPrice"),
+        "expressBuyPrice" = COALESCE(vals."expressBuyPrice", t."expressBuyPrice"),
+        "standardSuggestedRetailPriceInclVat" = COALESCE(
+          vals."standardSuggestedRetailPriceInclVat",
+          t."standardSuggestedRetailPriceInclVat"
+        ),
         "gtin" = CASE
           WHEN vals."gtin" IS NULL THEN t."gtin"
           WHEN t."gtin" IS DISTINCT FROM vals."gtin"
@@ -493,6 +517,12 @@ export async function bulkUpdateSupplierVariants(
             t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
             t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
             t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
+            t."standardBuyPrice" IS DISTINCT FROM COALESCE(vals."standardBuyPrice", t."standardBuyPrice") OR
+            t."expressBuyPrice" IS DISTINCT FROM COALESCE(vals."expressBuyPrice", t."expressBuyPrice") OR
+            t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(
+              vals."standardSuggestedRetailPriceInclVat",
+              t."standardSuggestedRetailPriceInclVat"
+            ) OR
             (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
             (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL)
           )
@@ -516,6 +546,12 @@ export async function bulkUpdateSupplierVariants(
           t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
           t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
           t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
+          t."standardBuyPrice" IS DISTINCT FROM COALESCE(vals."standardBuyPrice", t."standardBuyPrice") OR
+          t."expressBuyPrice" IS DISTINCT FROM COALESCE(vals."expressBuyPrice", t."expressBuyPrice") OR
+          t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(
+            vals."standardSuggestedRetailPriceInclVat",
+            t."standardSuggestedRetailPriceInclVat"
+          ) OR
           (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
           (vals."providerKey" IS NOT NULL AND t."providerKey" IS DISTINCT FROM vals."providerKey") OR
           (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR

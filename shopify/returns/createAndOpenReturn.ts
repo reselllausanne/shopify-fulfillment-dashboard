@@ -1,6 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { generateShopifyReturnLabel } from "@/shopify/returns/label";
+import { fetchShopifyReturnLineItems } from "@/shopify/returns/returnLineItemsForReceipt";
+import { defaultReturnRestockingFeeInput } from "@/shopify/returns/restockingFee";
 import { parseStrictPublicOrderNumber } from "@/shopify/returns/publicOrderNumber";
 
 export type ReturnFormReason =
@@ -733,6 +735,7 @@ export async function createAndOpenReturnFromFormData(
     quantity: entry.quantity,
     returnReason: entry.reason,
     customerNote: entry.customerNote,
+    restockingFee: defaultReturnRestockingFeeInput(),
   }));
 
   const requestResult = await shopifyGraphQL<{
@@ -897,6 +900,24 @@ export async function createAndOpenReturnFromFormData(
   }, 0);
   const returnAmount = Number.isFinite(totalAmount) ? Number(totalAmount.toFixed(2)) : 0;
   const currency = selectedLines.find((entry) => entry.line.currencyCode)?.line.currencyCode ?? "CHF";
+  const storedLineItems = await fetchShopifyReturnLineItems(approvedReturn.id);
+  const receiptLineItems =
+    storedLineItems.length > 0
+      ? storedLineItems
+      : selectedLines.map((entry) => ({
+          id: "",
+          title: entry.line.title ?? "Item",
+          sku: entry.line.sku ?? null,
+          variantTitle: null,
+          quantity: entry.quantity,
+          unitAmount: entry.line.unitAmount,
+          currencyCode: entry.line.currencyCode ?? null,
+          returnReason: entry.reason,
+          returnReasonLabel: mapReasonLabel(entry.reason),
+          customerNote: entry.customerNote,
+          restockingFeePercent: null,
+          restockingFeeAmount: null,
+        }));
   const firstLine = selectedLines[0]?.line;
   const customerId =
     approvedReturn.order?.customer?.id || order.customer?.id || null;
@@ -967,12 +988,7 @@ export async function createAndOpenReturnFromFormData(
           comment: customerEmailComment,
         },
         swissPost: label.swissResponse,
-        lineItems: selectedLines.map((entry) => ({
-          ...entry.line,
-          selectedQuantity: entry.quantity,
-          selectedReason: entry.reason,
-          selectedNote: entry.customerNote,
-        })),
+        lineItems: receiptLineItems,
       },
       auditLogJson: [
         {
@@ -1047,12 +1063,7 @@ export async function createAndOpenReturnFromFormData(
           comment: customerEmailComment,
         },
         swissPost: label.swissResponse,
-        lineItems: selectedLines.map((entry) => ({
-          ...entry.line,
-          selectedQuantity: entry.quantity,
-          selectedReason: entry.reason,
-          selectedNote: entry.customerNote,
-        })),
+        lineItems: receiptLineItems,
       },
       failureMessage: null,
     },

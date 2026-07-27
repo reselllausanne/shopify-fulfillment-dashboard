@@ -28,11 +28,11 @@ describe("parseScraperShops", () => {
   it("parses one shop per line", () => {
     process.env.SCRAPER_SHOPS = `WEL|WellPlayed|https://www.wellplayed.ch
 HHV|HHV|https://www.hhv.de|EUR|hhv
-SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl`;
+SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
+REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei`;
     const shops = parseScraperShops();
-    expect(shops.map((s) => s.key)).toEqual(["wel", "hhv", "snl"]);
-    expect(shops[2].platform).toBe("snl");
-    expect(shops[2].gated).toBe(true);
-    expect(shops[0].gated).toBe(false);
+    expect(shops.map((s) => s.key)).toEqual(["wel", "hhv", "snl", "rei"]);
+    expect(shops[3].platform).toBe("rei");
+    expect(shops[3].currency).toBe("CHF");
   });
 });

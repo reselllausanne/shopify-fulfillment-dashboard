@@ -9,7 +9,8 @@ import {
   createProductFullFlow,
   unlockShopifyPriceByBarcode,
 } from "@/shopify/restock/createProductFullFlow";
-import { syncChannelsAfterTheSale } from "@/inventory/theSaleChannelSync";
+import { pushMarketplaceStockForProviderKeys } from "@/inventory/marketplaceStockSync";
+import { convergeVariant } from "@/shopify/inventory/convergence";
 
 /**
  * Phase 3 — Shopify sold-check cron (runs every ~2 days).
@@ -18,10 +19,11 @@ import { syncChannelsAfterTheSale } from "@/inventory/theSaleChannelSync";
  * the restock flow. For each, reads the current Bussigny `available` quantity.
  * When it has dropped to 0, the physical in-hand pair was sold on Shopify:
  *   1. DB SupplierVariant.stock -> 0 (marketplace delist source of truth)
- *   2. syncChannelsAfterTheSale: Decathlon + Galaxus stock=0 + Shopify Bussigny=0
+ *   2. marketplace stock push: Decathlon STO01 + Galaxus StockData (any provider key)
  *   3. unlock `price_locked` metafield (pricing automation resumes)
  *   4. re-upsert the product slug (refresh variants with live pricing)
- *   5. mark listing SOLD_OUT
+ *   5. convergeVariant: clear delivery_48h + product soldes_48h when physical=0
+ *   6. mark listing SOLD_OUT
  *
  * Idempotent and dry-run aware.
  */
@@ -67,14 +69,18 @@ async function processSold(input: {
       .catch((err: any) => warnings.push(`DB stock zero failed: ${err?.message ?? err}`));
   }
 
-  // 2. Marketplaces + Shopify Bussigny zero (Decathlon + Galaxus full push)
+  // 2. Marketplace stock push (Decathlon STO01 + queued Galaxus StockData)
   const isSynthetic = input.providerKey.startsWith("SHOPIFY_HAND_");
   if (!isSynthetic) {
-    const sync = await syncChannelsAfterTheSale({
+    const sync = await pushMarketplaceStockForProviderKeys({
       providerKeys: [input.providerKey],
       origin: input.origin,
     });
-    if (!sync.ok) warnings.push(`Channel sale sync not fully ok: ${sync.error ?? "see logs"}`);
+    if (!sync.ok) {
+      warnings.push(
+        `Marketplace stock push not fully ok: ${sync.decathlon?.error ?? sync.galaxus?.error ?? "see logs"}`
+      );
+    }
   } else {
     warnings.push("Synthetic providerKey — no SupplierVariant, marketplaces skipped");
   }
@@ -91,7 +97,19 @@ async function processSold(input: {
     if (!refresh.ok) warnings.push(`Slug refresh failed: ${refresh.error ?? "unknown"}`);
   }
 
-  // 5. Mark listing SOLD_OUT
+  // 5. Converge: clear delivery_48h + product soldes_48h + unlock if mirror shows physical=0
+  if (input.gtin) {
+    try {
+      const conv = await convergeVariant(input.gtin);
+      if (conv.warnings.length) {
+        warnings.push(...conv.warnings.map((w) => `Convergence: ${w}`));
+      }
+    } catch (err: any) {
+      warnings.push(`Convergence failed: ${err?.message ?? err}`);
+    }
+  }
+
+  // 6. Mark listing SOLD_OUT
   await upsertShopifyListingState({
     providerKey: input.providerKey,
     supplierVariantId: input.supplierVariantId,

@@ -11,7 +11,8 @@
 #   GALAXUS_OPS_BASE_URL   default http://127.0.0.1:3000
 #   GALAXUS_OPS_LOG_DIR    default /var/log/resell
 #   GALAXUS_OPS_WAIT_SEC            default 3600 (max wait per feed push step)
-#   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 14400 (max wait for image-sync; ~83m observed)
+#   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 5400 (max wait for image-sync before feeds; ~90m)
+#   GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS default 0 — when 1, abort full-flow if image-sync still busy
 #
 set -euo pipefail
 
@@ -19,7 +20,8 @@ ACTION="${1:-}"
 BASE_URL="${GALAXUS_OPS_BASE_URL:-http://127.0.0.1:3000}"
 LOG_DIR="${GALAXUS_OPS_LOG_DIR:-/var/log/resell}"
 WAIT_SEC="${GALAXUS_OPS_WAIT_SEC:-3600}"
-IMAGE_SYNC_WAIT_SEC="${GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC:-14400}"
+IMAGE_SYNC_WAIT_SEC="${GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC:-5400}"
+IMAGE_SYNC_BLOCK_FEEDS="${GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS:-0}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/galaxus-ops-cron.log"
 
@@ -54,7 +56,7 @@ post_json() {
       return 0
     fi
     if [[ "$http" == "409" ]]; then
-      log "lock busy — retry $attempt/$max_attempts in 60s"
+      log "lock busy — retry $attempt/$max_attempts in 60s (should be rare; queue handles most)"
       sleep 60
       attempt=$((attempt + 1))
       continue
@@ -126,10 +128,17 @@ run_push() {
 
 run_image_sync_full() {
   log "START image-sync full"
-  wait_image_sync_idle
-  post_json '{"action":"image-sync","imageMode":"full"}' >/dev/null
-  wait_image_sync_idle
-  log "DONE image-sync full"
+  wait_image_sync_idle || true
+  post_json '{"action":"image-sync","imageMode":"full"}' >/dev/null || true
+  if [[ "$IMAGE_SYNC_BLOCK_FEEDS" == "1" ]]; then
+    if ! wait_image_sync_idle; then
+      log "ERROR: image-sync still running after ${IMAGE_SYNC_WAIT_SEC}s — aborting feeds"
+      return 1
+    fi
+  elif ! wait_image_sync_idle; then
+    log "WARN: image-sync still running after ${IMAGE_SYNC_WAIT_SEC}s — continuing with stock/price/master feeds"
+  fi
+  log "DONE image-sync phase"
 }
 
 if [[ -z "$ACTION" ]]; then
@@ -141,9 +150,8 @@ cd /opt/resell
 
 case "$ACTION" in
   full-flow)
-    # Host images first so master MainImageUrl is present, then stock → price → master.
-    # Partner-admin no longer runs inline full (broken); cron is the reliable nightly path.
-    run_image_sync_full
+    # Image sync is best-effort — never block stock/price/master on a hung image job.
+    run_image_sync_full || true
     run_push "push-stock"
     run_push "push-price"
     run_push "push-master-specs"

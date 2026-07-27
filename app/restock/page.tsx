@@ -84,7 +84,13 @@ type ApplyResult = {
       variant?: { productTitle: string | null; sku: string | null; price: number | null };
     };
   };
-  db?: { ok: boolean; importedVariantsCount?: number; errors?: string[] };
+  db?: {
+    ok: boolean;
+    importedVariantsCount?: number;
+    errors?: string[];
+    stxUnavailable?: boolean;
+    stxUnavailableReason?: string;
+  };
   variantChoices?: VariantChoice[];
   matchedSizeEu?: string | null;
   matchedSizeUs?: string | null;
@@ -1021,9 +1027,19 @@ export default function RestockScanPage() {
           {applyResult.db && (
             <div className="mt-1 text-xs text-gray-600">
               DB export Galaxus/Decathlon:{" "}
-              {applyResult.db.ok
-                ? `OK (${applyResult.db.importedVariantsCount ?? 0} variantes)`
-                : `échec — ${applyResult.db.errors?.join("; ") ?? ""}`}
+              {applyResult.db.stxUnavailable
+                ? "STX N/A — prix manuel"
+                : applyResult.db.ok
+                  ? `OK (${applyResult.db.importedVariantsCount ?? 0} variantes)`
+                  : `échec — ${applyResult.db.errors?.join("; ") ?? ""}`}
+            </div>
+          )}
+          {applyResult.db?.stxUnavailable && (
+            <div className="mt-3 rounded-sm border border-orange-500 bg-orange-50 p-3 text-sm text-orange-950">
+              <div className="font-semibold">
+                STX indisponible ({applyResult.db.stxUnavailableReason}) — définir
+                prix + compareAt sur Shopify
+              </div>
             </div>
           )}
           {(applyResult.warnings?.length ?? 0) > 0 && (

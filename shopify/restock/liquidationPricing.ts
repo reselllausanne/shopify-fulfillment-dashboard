@@ -6,6 +6,7 @@ import {
   getShopifyVariantDetail,
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
+import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -62,7 +63,13 @@ async function writeShopifyPriceLocked(variantId: string, locked: boolean): Prom
  */
 export async function applyLiquidationSaleDisplay(input: {
   gtin: string;
-  variant: Pick<ShopifyVariantDetail, "variantId" | "productId" | "sku" | "price" | "compareAtPrice">;
+  variant: Pick<
+    ShopifyVariantDetail,
+    "variantId" | "productId" | "sku" | "price" | "compareAtPrice" | "productTitle"
+  >;
+  /** KickDB slug + EU size — lets pricing resolve when KickDB lacks the GTIN. */
+  slug?: string | null;
+  sizeEu?: string | null;
   /** Override reference anchor (CHF). When omitted, resolved automatically. */
   referencePrice?: number | null;
 }): Promise<{
@@ -72,7 +79,15 @@ export async function applyLiquidationSaleDisplay(input: {
   warnings: string[];
 }> {
   const warnings: string[] = [];
-  const pricing = await resolvePhysicalRestockPricing(input.gtin);
+  if (isEssentialsShopifyVariant(input.variant)) {
+    warnings.push("Essentials product — liquidation pricing skipped");
+    return { applied: false, referencePrice: null, salePrice: null, warnings };
+  }
+
+  const pricing = await resolvePhysicalRestockPricing(input.gtin, {
+    slug: input.slug ?? null,
+    sizeEu: input.sizeEu ?? null,
+  });
   const reference = pricing.compareAt;
   const salePrice = pricing.sellPrice;
 
@@ -129,6 +144,10 @@ export async function applyLiquidationSaleDisplay(input: {
           },
         });
       }
+    } else {
+      warnings.push(
+        `No stx_ SupplierVariant for GTIN ${input.gtin} — DB manualLock not set (convergence may revert the sale price)`
+      );
     }
   } catch (err: any) {
     warnings.push(`DB manualPrice lock skipped: ${err?.message ?? err}`);

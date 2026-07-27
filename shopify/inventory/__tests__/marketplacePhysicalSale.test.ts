@@ -15,8 +15,8 @@ vi.mock("@/shopify/inventory/locationMirror", () => ({
   upsertLocationStockRow: vi.fn(),
 }));
 
-vi.mock("@/shopify/inventory/convergence", () => ({
-  convergeVariant: vi.fn(),
+vi.mock("@/shopify/orders/webSaleInventory", () => ({
+  syncMirrorForGtinFromShopify: vi.fn().mockResolvedValue({ gtin: "", synced: 0, levels: [] }),
 }));
 
 vi.mock("@/shopify/inventory/locationConfig", () => ({
@@ -24,7 +24,6 @@ vi.mock("@/shopify/inventory/locationConfig", () => ({
 }));
 
 import { loadPhysicalMirrorLocationRowsByGtin } from "@/shopify/inventory/physicalAvailability";
-import { convergeVariant } from "@/shopify/inventory/convergence";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
 import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import {
@@ -39,7 +38,6 @@ const mockedFindVariant = findShopifyVariantByGtin as unknown as ReturnType<type
 const mockedGetQty = getInventoryAvailableAtLocation as unknown as ReturnType<typeof vi.fn>;
 const mockedAdjust = adjustInventoryAtLocation as unknown as ReturnType<typeof vi.fn>;
 const mockedUpsertMirror = upsertLocationStockRow as unknown as ReturnType<typeof vi.fn>;
-const mockedConverge = convergeVariant as unknown as ReturnType<typeof vi.fn>;
 const mockedLocCfg = getLocationConfig as unknown as ReturnType<typeof vi.fn>;
 
 describe("routeMarketplacePhysicalSale", () => {
@@ -92,14 +90,6 @@ describe("routeMarketplacePhysicalSale", () => {
       sourceType: "physical",
       priority: 1,
     });
-    mockedConverge.mockResolvedValue({
-      gtin: "196479477181",
-      physicalQty: 0,
-      desired: "dropship",
-      changed: true,
-      changes: ["unlocked"],
-      warnings: [],
-    });
 
     const result = await routeMarketplacePhysicalSale({
       channel: "DECATHLON",
@@ -118,6 +108,5 @@ describe("routeMarketplacePhysicalSale", () => {
       })
     );
     expect(mockedUpsertMirror).toHaveBeenCalled();
-    expect(mockedConverge).toHaveBeenCalledWith("196479477181");
   });
 });

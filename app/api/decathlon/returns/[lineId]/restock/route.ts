@@ -4,9 +4,8 @@ import { resolveDecathlonReturnOfferSku } from "@/decathlon/returns/resolveRetur
 import {
   applyReturnRestock,
   extractGtinFromOfferSku,
-  stxOfferSkuToTheCatalogOfferSku,
-} from "@/decathlon/returns/theRestockFromReturnLine";
-import { scheduleTheRestockChannelSync } from "@/inventory/theSaleChannelSync";
+  scheduleStxReturnRestockChannelSync,
+} from "@/decathlon/returns/restockFromReturnLine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -84,12 +83,28 @@ export async function POST(request: Request, { params }: { params: Promise<{ lin
       basePrice,
     });
 
+    // NER pairs never enter our stock: the return is refunded, nothing to restock.
+    if (!restockResult.applied && restockResult.reason === "ner_refund_only") {
+      await prismaAny.decathlonReturnLine.update({
+        where: { id: row.id },
+        data: { restockAppliedAt: new Date(), restockSupplierVariantId: null },
+      });
+      return NextResponse.json({
+        ok: true,
+        restocked: false,
+        refundOnly: true,
+        message: "Offre NER — remboursement uniquement, pas de remise en stock",
+      });
+    }
+
     if (!restockResult.applied) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            "Could not restock: no STX SupplierVariant for this offer (to clone as THE_), and no THE row to add stock to",
+            restockResult.reason === "no_stx_variant"
+              ? "Could not restock: no STX SupplierVariant for this offer"
+              : `Could not restock: ${restockResult.reason ?? "unknown"}`,
         },
         { status: 400 }
       );
@@ -103,25 +118,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ lin
       },
     });
 
-    // Relist across channels (Decathlon STO01 + Galaxus feed) and put the
-    // returned pair on SALE on Shopify at Bussigny (create product if missing).
-    const restockedProviderKey =
-      restockResult.supplierVariantId ??
-      (providerKey ? stxOfferSkuToTheCatalogOfferSku(providerKey) : null);
-    const restockGtin =
-      gtin ?? extractGtinFromOfferSku(restockResult.supplierVariantId ?? null);
-    if (restockedProviderKey) {
-      scheduleTheRestockChannelSync({
-        providerKeys: [restockedProviderKey],
-        gtin: restockGtin ?? null,
-        salePrice: restockResult.newPrice ?? null,
-        quantity: Number(row.quantity ?? 1) || 1,
-        origin: new URL(request.url).origin,
-      });
-    }
+    // Relist the returned pair: Shopify sale at a physical location, dropship copy
+    // zeroed, then Decathlon STO01 + Galaxus stock push.
+    scheduleStxReturnRestockChannelSync({
+      providerKey: restockResult.providerKey ?? providerKey,
+      gtin:
+        restockResult.gtin ??
+        gtin ??
+        extractGtinFromOfferSku(restockResult.supplierVariantId ?? null),
+      salePrice: restockResult.newPrice ?? null,
+      quantity: Number(row.quantity ?? 1) || 1,
+      origin: new URL(request.url).origin,
+    });
 
     return NextResponse.json({
       ok: true,
+      restocked: true,
       restockSupplierVariantId: restockResult.supplierVariantId ?? null,
       restockNewPrice: restockResult.newPrice ?? null,
     });

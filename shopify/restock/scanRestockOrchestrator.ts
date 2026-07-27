@@ -5,6 +5,7 @@ import {
   extractVariantGtin,
 } from "@/galaxus/kickdb/client";
 import { importStxProductByInput } from "@/galaxus/stx/importProduct";
+import { isPartnerCatalogSupplierVariantId, STX_SUPPLIER_VARIANT_WHERE } from "@/galaxus/supplier/supplierKeyGuards";
 import {
   createProductFullFlow,
   resolveProductIdentifier,
@@ -13,6 +14,7 @@ import {
   activateInventoryAtLocation,
   adjustInventoryAtLocation,
   findShopifyVariantByGtin,
+  getShopifyVariantDetail,
   listShopifyVariantsByGtinDetailed,
   resolveBussignyLocationId,
   restockShopifyVariantByGtin,
@@ -21,6 +23,7 @@ import {
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
 import { assignGtinToVariantExclusive } from "@/shopify/restock/gtinResolution";
+import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugForGtin";
 import { ensureManualSizeVariant, isManualPriceRequiredError } from "@/shopify/restock/createManualVariant";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
@@ -64,42 +67,78 @@ async function runPostRestockConvergence(
  * had no STX row to merge physical qty into, and convergence could not lock
  * liquidation. Ensure an stx_ SupplierVariant exists when KickDB has a slug.
  */
+export type EnsureStxResult = {
+  ok: boolean;
+  importedVariantsCount?: number;
+  errors?: string[];
+  /** true → GTIN has no StockX equivalent (NER-only, no KickDB slug, or STX import failed). Operator must set price manually. */
+  stxUnavailable?: boolean;
+  /** Human reason for the operator UI. */
+  stxUnavailableReason?: "kickdb_slug_missing" | "stx_import_failed" | "ner_only";
+};
+
 async function ensureStxSupplierForGtin(
   gtin: string,
   dryRun: boolean | undefined,
-  warnings: string[]
-): Promise<{ ok: boolean; importedVariantsCount?: number; errors?: string[] }> {
+  warnings: string[],
+  options?: {
+    /** Known KickDB slug (skips GTIN->slug resolution). */
+    slug?: string | null;
+    /** EU size of the physical pair — stamps the scanned GTIN onto the matching KickDB size when KickDB lacks barcodes. */
+    sizeEu?: string | null;
+  }
+): Promise<EnsureStxResult> {
   if (dryRun || isManualOnlyGtin(gtin)) {
     return { ok: true, importedVariantsCount: 0 };
   }
   try {
     const existing = await prisma.supplierVariant.findFirst({
-      where: { gtin, supplierVariantId: { startsWith: "stx_" } },
+      where: { gtin, ...STX_SUPPLIER_VARIANT_WHERE },
       select: { id: true },
     });
     if (existing) return { ok: true, importedVariantsCount: 0 };
 
-    const kv = await prisma.kickDBVariant.findFirst({
-      where: { OR: [{ gtin }, { ean: gtin }] },
-      select: { product: { select: { urlKey: true } } },
+    // Detect NER-only GTIN before hitting KickDB.
+    const nerOnly = await prisma.supplierVariant.findFirst({
+      where: { gtin },
+      select: { supplierVariantId: true },
     });
-    const slug = String(kv?.product?.urlKey ?? "").trim();
+
+    const slug =
+      String(options?.slug ?? "").trim() || (await resolveKickdbSlugForGtin(gtin));
     if (!slug) {
-      warnings.push(
-        `Import DB ignoré: pas de slug KickDB pour ${gtin} — marketplace ne verra pas ce stock physique`
-      );
-      return { ok: false, errors: ["kickdb_slug_missing"] };
+      const reason: EnsureStxResult["stxUnavailableReason"] =
+        nerOnly && isPartnerCatalogSupplierVariantId(nerOnly.supplierVariantId)
+          ? "ner_only"
+          : "kickdb_slug_missing";
+      warnings.push(`STX indisponible (${reason}) pour ${gtin} — prix manuel requis`);
+      return {
+        ok: false,
+        errors: [reason],
+        stxUnavailable: true,
+        stxUnavailableReason: reason,
+      };
     }
 
     const imported = await importStxProductByInput(slug, {
       forceImport: true,
       targetGtin: gtin,
+      attachGtin: gtin,
+      attachSizeEu: options?.sizeEu ?? null,
     });
-    if (!imported.ok) {
+    if (!imported.ok || (imported.importedVariantsCount ?? 0) === 0) {
       warnings.push(
-        `Import DB (Galaxus/Decathlon) échoué: ${imported.errors.join("; ") || "raison inconnue"}`
+        `STX import échoué pour ${gtin} (${slug}): ${
+          imported.errors?.join("; ") || "aucune variante StockX"
+        } — prix manuel requis`
       );
-      return { ok: false, importedVariantsCount: 0, errors: imported.errors };
+      return {
+        ok: false,
+        importedVariantsCount: imported.importedVariantsCount ?? 0,
+        errors: imported.errors,
+        stxUnavailable: true,
+        stxUnavailableReason: "stx_import_failed",
+      };
     }
     warnings.push(`Import DB: ${imported.importedVariantsCount ?? 0} variantes STX (forceImport)`);
     return {
@@ -109,7 +148,12 @@ async function ensureStxSupplierForGtin(
     };
   } catch (err: any) {
     warnings.push(`Import DB erreur: ${err?.message ?? err}`);
-    return { ok: false, errors: [err?.message ?? String(err)] };
+    return {
+      ok: false,
+      errors: [err?.message ?? String(err)],
+      stxUnavailable: true,
+      stxUnavailableReason: "stx_import_failed",
+    };
   }
 }
 
@@ -303,6 +347,7 @@ async function resolveGtinFromLocalSources(gtin: string): Promise<LocalGtinHit |
       },
       supplierVariant: {
         select: {
+          supplierVariantId: true,
           supplierSku: true,
           supplierProductName: true,
           supplierBrand: true,
@@ -328,21 +373,23 @@ async function resolveGtinFromLocalSources(gtin: string): Promise<LocalGtinHit |
   }
   if (vm?.supplierVariant?.supplierSku) {
     const sv = vm.supplierVariant;
-    return {
-      slug: null,
-      styleSku: pickStr(sv.supplierSku),
-      title: pickStr(sv.supplierProductName),
-      brand: pickStr(sv.supplierBrand),
-      image: pickStr(sv.sourceImageUrl),
-      sizeEu: pickStr(sv.sizeNormalized),
-      sizeUs: null,
-      source: "variant-mapping-supplier",
-    };
+    if (!isPartnerCatalogSupplierVariantId(sv.supplierVariantId)) {
+      return {
+        slug: null,
+        styleSku: pickStr(sv.supplierSku),
+        title: pickStr(sv.supplierProductName),
+        brand: pickStr(sv.supplierBrand),
+        image: pickStr(sv.sourceImageUrl),
+        sizeEu: pickStr(sv.sizeNormalized),
+        sizeUs: null,
+        source: "variant-mapping-supplier",
+      };
+    }
   }
 
-  // 3. SupplierVariant direct (export catalog)
+  // 3. SupplierVariant direct — STX catalog only (never NER partner rows)
   const sv = await p.supplierVariant.findFirst({
-    where: { gtin: { in: cands } },
+    where: { gtin: { in: cands }, ...STX_SUPPLIER_VARIANT_WHERE },
     select: {
       supplierSku: true,
       supplierProductName: true,
@@ -361,7 +408,7 @@ async function resolveGtinFromLocalSources(gtin: string): Promise<LocalGtinHit |
       image: pickStr(sv.sourceImageUrl),
       sizeEu: pickStr(sv.sizeNormalized),
       sizeUs: null,
-      source: "supplier-variant",
+      source: "supplier-variant-stx",
     };
   }
 
@@ -658,6 +705,13 @@ async function tryKickdbAutoRestock(input: {
   });
   input.warnings.push(...resolution.warnings);
 
+  // Ensure the DB mirror BEFORE the stock write so the liquidation pricing
+  // inside restockShopifyVariantByGtin sees a fresh stx_ row (DB lock target).
+  const db = await ensureStxSupplierForGtin(input.gtin, input.dryRun, input.warnings, {
+    slug: input.slug,
+    sizeEu: input.matchedSizeEu ?? null,
+  });
+
   const restock = await restockShopifyVariantByGtin({
     gtin: input.gtin,
     quantity: input.quantity,
@@ -678,7 +732,6 @@ async function tryKickdbAutoRestock(input: {
     };
   }
 
-  const db = await ensureStxSupplierForGtin(input.gtin, input.dryRun, input.warnings);
   await runPostRestockConvergence(input.gtin, input.dryRun, input.warnings);
   return {
     ok: true,
@@ -999,6 +1052,9 @@ export type ApplyScanResult = {
     importedVariantsCount?: number;
     errors?: string[];
     warnings?: string[];
+    /** true → GTIN has no StockX equivalent; operator must set price manually, no auto-guess */
+    stxUnavailable?: boolean;
+    stxUnavailableReason?: "kickdb_slug_missing" | "stx_import_failed" | "ner_only";
   };
   /** For size-confirmation-required: created variants to choose from */
   variantChoices?: Array<{
@@ -1184,6 +1240,12 @@ export async function applyScanRestock(input: {
       });
       warnings.push(...resolution.warnings);
 
+      // DB mirror before the stock write: liquidation pricing needs the stx_ row.
+      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings, {
+        slug,
+        sizeEu: manualSize,
+      });
+
       const restock = await restockShopifyVariantByGtin({
         gtin,
         quantity: input.quantity,
@@ -1203,7 +1265,6 @@ export async function applyScanRestock(input: {
         };
       }
 
-      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings);
       await runPostRestockConvergence(gtin, input.dryRun, warnings);
       return {
         ok: true,
@@ -1310,6 +1371,15 @@ export async function applyScanRestock(input: {
       });
       warnings.push(...resolution.warnings);
 
+      // DB mirror before the stock write so liquidation pricing has an stx_ row.
+      const confirmedDetail = await getShopifyVariantDetail(input.confirmVariantId).catch(
+        () => null
+      );
+      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings, {
+        slug: confirmedDetail?.productHandle ?? null,
+        sizeEu: confirmedDetail?.variantTitle ?? null,
+      });
+
       const restock = await restockShopifyVariantByGtin({
         gtin,
         quantity: input.quantity,
@@ -1330,7 +1400,6 @@ export async function applyScanRestock(input: {
       }
 
       const productId = restock.variant?.productId ?? null;
-      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings);
       await runPostRestockConvergence(gtin, input.dryRun, warnings);
       return {
         ok: true,
@@ -1375,6 +1444,16 @@ export async function applyScanRestock(input: {
       };
     }
 
+    // DB mirror BEFORE the stock write: liquidation pricing inside
+    // restockShopifyVariantByGtin needs the stx_ row for the DB manual lock.
+    let db: ApplyScanResult["db"];
+    if (hit.match) {
+      db = await ensureStxSupplierForGtin(gtin, input.dryRun, warnings, {
+        slug: hit.match.productHandle,
+        sizeEu: hit.match.variantTitle,
+      });
+    }
+
     const restock = await restockShopifyVariantByGtin({
       gtin,
       quantity: input.quantity,
@@ -1385,7 +1464,9 @@ export async function applyScanRestock(input: {
     });
     if (restock.found) {
       const outWarnings = [...warnings, ...restock.warnings];
-      const db = await ensureStxSupplierForGtin(gtin, input.dryRun, outWarnings);
+      if (!db) {
+        db = await ensureStxSupplierForGtin(gtin, input.dryRun, outWarnings);
+      }
       await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
       return {
         ok: true,
@@ -1428,7 +1509,7 @@ export async function applyScanRestock(input: {
 
   // B.1 — DB upsert for Galaxus/Decathlon export (THE_ row). Independent of
   // whether the product exists on Shopify. Non-fatal; skipped without a slug.
-  async function runDbImport(): Promise<ApplyScanResult["db"]> {
+  async function runDbImport(sizeEu?: string | null): Promise<ApplyScanResult["db"]> {
     // Manual-only GTINs (wrong KickDB match / Shopify-only stock) must never
     // get an STX supplier row.
     if (isManualOnlyGtin(gtin)) {
@@ -1451,6 +1532,8 @@ export async function applyScanRestock(input: {
       const imported = await importStxProductByInput(slug, {
         forceImport: true,
         targetGtin: gtin,
+        attachGtin: gtin,
+        attachSizeEu: sizeEu ?? null,
       });
       if (!imported.ok) {
         warnings.push(
@@ -1470,6 +1553,14 @@ export async function applyScanRestock(input: {
   }
 
   // B.2 — GTIN already on Shopify? Just adjust Bussigny stock, NEVER recreate.
+  // DB import runs BEFORE the stock write so the liquidation pricing inside
+  // restockShopifyVariantByGtin sees a fresh stx_ row (and the scanned GTIN is
+  // stamped on the matching KickDB size).
+  const preHit = await findShopifyVariantByGtin(gtin).catch(() => null);
+  let dbExisting: ApplyScanResult["db"];
+  if (preHit?.match && !preHit.ambiguous) {
+    dbExisting = await runDbImport(preHit.match.variantTitle);
+  }
   const existing = await restockShopifyVariantByGtin({
     gtin,
     quantity: input.quantity,
@@ -1479,7 +1570,7 @@ export async function applyScanRestock(input: {
     requireExplicitLocation: true,
   });
   if (existing.found) {
-    const dbExisting = await runDbImport();
+    if (!dbExisting) dbExisting = await runDbImport();
     const outWarnings = [...warnings, ...existing.warnings];
     await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
     return {

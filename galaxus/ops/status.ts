@@ -1,6 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { listJobDefinitions } from "./jobDefinitions";
-import { reconcileStaleFeedRuns } from "./feedPipeline";
+import { reconcileStaleFeedRuns, countPendingFeedPushTriggers } from "./feedPipeline";
 import { getLatestImageSyncJobRun, isImageSyncJobRunning } from "./imageSyncPush";
 import type { OpsJobKey } from "./types";
 
@@ -61,6 +61,7 @@ export async function getOpsStatus() {
     where: { finishedAt: null },
     orderBy: { startedAt: "desc" },
   });
+  const pendingFeedPushCount = await countPendingFeedPushTriggers();
   const latestImageSyncRun = await getLatestImageSyncJobRun();
 
   const ordersTotal = await (prisma as any).galaxusOrder.count({
@@ -106,6 +107,7 @@ export async function getOpsStatus() {
     feeds: {
       running: Boolean(runningFeed),
       runningFeed,
+      pendingFeedPushCount,
       imageSyncRunning: isImageSyncJobRunning(latestImageSyncRun),
       latestImageSyncRun,
       lastStockPrice,

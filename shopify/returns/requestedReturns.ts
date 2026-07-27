@@ -4,6 +4,11 @@ import {
   ShopifyReturnRequestError,
 } from "@/shopify/returns/createAndOpenReturn";
 import { generateShopifyReturnLabel } from "@/shopify/returns/label";
+import {
+  fetchShopifyReturnLineItems,
+  mergeReturnLineItemsForStorage,
+  normalizeReturnLineItemGid,
+} from "@/shopify/returns/returnLineItemsForReceipt";
 
 type ShopifyReturnUserError = {
   code?: string | null;
@@ -404,12 +409,13 @@ function assertNoReturnUserErrors(
 function mapReturnLine(
   node: any
 ): RequestedShopifyReturnLine {
+  const id = normalizeReturnLineItemGid(node?.id) ?? "";
   const lineItem = node?.fulfillmentLineItem?.lineItem;
   const money = lineItem?.originalUnitPriceSet?.shopMoney;
   const restockMoney = node?.restockingFee?.amountSet?.shopMoney;
   const reasonDef = node?.returnReasonDefinition;
   return {
-    id: String(node?.id || ""),
+    id,
     title: String(lineItem?.title || lineItem?.name || "Item"),
     sku: lineItem?.sku ?? null,
     variantTitle: lineItem?.variantTitle ?? null,
@@ -623,7 +629,7 @@ export async function syncShopifyReturnsFromAdmin(options: {
           platform: "shopify",
           externalReturnId: { in: candidateReturnIds },
         },
-        select: { externalReturnId: true, localStatus: true },
+        select: { externalReturnId: true, localStatus: true, rawJson: true },
       })
     : [];
   const existingByReturnId = new Map(
@@ -668,6 +674,34 @@ export async function syncShopifyReturnsFromAdmin(options: {
       const reverseDelivery = extractReverseDeliveryFromReturn(returnNode);
       const returnReasonCode = firstLine.returnReason ?? "OTHER";
       const returnReasonLabel = firstLine.returnReasonLabel ?? "Other";
+      const existingRaw = ((existing?.rawJson as Record<string, unknown> | null) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const mergedLineItems = mergeReturnLineItemsForStorage(existingRaw.lineItems, lineItems);
+      const nextRawJson = {
+        ...existingRaw,
+        order: {
+          id: orderNode.id,
+          name: orderNode.name,
+          email: orderEmail,
+          customerId: orderNode.customer?.id ?? null,
+        },
+        return: {
+          id: returnNode.id,
+          name: returnNode.name,
+          status,
+          createdAt: returnNode.createdAt ?? null,
+        },
+        reverseFulfillmentOrderId: reverseDelivery.reverseFulfillmentOrderId,
+        reverseDelivery: {
+          id: reverseDelivery.reverseDeliveryId,
+          labelPublicFileUrl: reverseDelivery.labelPublicUrl,
+          trackingNumber: reverseDelivery.trackingNumber,
+          trackingUrl: reverseDelivery.trackingUrl,
+        },
+        lineItems: mergedLineItems,
+      };
 
       await prisma.marketplaceReturn.upsert({
         where: {
@@ -701,28 +735,7 @@ export async function syncShopifyReturnsFromAdmin(options: {
             0
           ),
           apiSource: "shopify-admin-sync",
-          rawJson: {
-            order: {
-              id: orderNode.id,
-              name: orderNode.name,
-              email: orderEmail,
-              customerId: orderNode.customer?.id ?? null,
-            },
-            return: {
-              id: returnNode.id,
-              name: returnNode.name,
-              status,
-              createdAt: returnNode.createdAt ?? null,
-            },
-            reverseFulfillmentOrderId: reverseDelivery.reverseFulfillmentOrderId,
-            reverseDelivery: {
-              id: reverseDelivery.reverseDeliveryId,
-              labelPublicFileUrl: reverseDelivery.labelPublicUrl,
-              trackingNumber: reverseDelivery.trackingNumber,
-              trackingUrl: reverseDelivery.trackingUrl,
-            },
-            lineItems,
-          },
+          rawJson: nextRawJson,
           auditLogJson: [
             {
               at: syncedAt,
@@ -750,28 +763,7 @@ export async function syncShopifyReturnsFromAdmin(options: {
             (sum: number, line: RequestedShopifyReturnLine) => sum + line.quantity,
             0
           ),
-          rawJson: {
-            order: {
-              id: orderNode.id,
-              name: orderNode.name,
-              email: orderEmail,
-              customerId: orderNode.customer?.id ?? null,
-            },
-            return: {
-              id: returnNode.id,
-              name: returnNode.name,
-              status,
-              createdAt: returnNode.createdAt ?? null,
-            },
-            reverseFulfillmentOrderId: reverseDelivery.reverseFulfillmentOrderId,
-            reverseDelivery: {
-              id: reverseDelivery.reverseDeliveryId,
-              labelPublicFileUrl: reverseDelivery.labelPublicUrl,
-              trackingNumber: reverseDelivery.trackingNumber,
-              trackingUrl: reverseDelivery.trackingUrl,
-            },
-            lineItems,
-          },
+          rawJson: nextRawJson,
         },
       });
       upserted += 1;
@@ -965,6 +957,9 @@ export async function acceptRequestedShopifyReturn(
     );
   }
 
+  const approvedLines = await fetchShopifyReturnLineItems(approvedReturn.id);
+  const storedLineItems = approvedLines.length ? approvedLines : lineItems;
+
   let reverseFulfillmentOrderId =
     approvedReturn.reverseFulfillmentOrders?.edges?.[0]?.node?.id ?? null;
   if (!reverseFulfillmentOrderId) {
@@ -1037,14 +1032,14 @@ export async function acceptRequestedShopifyReturn(
   }
 
   const order = requestedReturn.order;
-  const firstLine = lineItems[0];
-  const totalAmount = lineItems.reduce((sum: number, line: RequestedShopifyReturnLine) => {
+  const firstLine = storedLineItems[0];
+  const totalAmount = storedLineItems.reduce((sum: number, line: RequestedShopifyReturnLine) => {
     if (line.unitAmount == null) return sum;
     return sum + line.unitAmount * line.quantity;
   }, 0);
   const returnAmount = Number.isFinite(totalAmount) ? Number(totalAmount.toFixed(2)) : 0;
   const currency =
-    lineItems.find((line: RequestedShopifyReturnLine) => line.currencyCode)?.currencyCode ??
+    storedLineItems.find((line: RequestedShopifyReturnLine) => line.currencyCode)?.currencyCode ??
     "CHF";
   const customerId =
     approvedReturn.order?.customer?.id || order?.customer?.id || null;
@@ -1067,8 +1062,8 @@ export async function acceptRequestedShopifyReturn(
       externalOrderLineId: null,
       productId: null,
       productTitle:
-        lineItems.length > 1
-          ? `${firstLine.title} (+${lineItems.length - 1} more)`
+        storedLineItems.length > 1
+          ? `${firstLine.title} (+${storedLineItems.length - 1} more)`
           : firstLine.title,
       sku: firstLine.sku,
       returnLabelNumber: label.trackingNumber,
@@ -1082,7 +1077,7 @@ export async function acceptRequestedShopifyReturn(
       localStatus: "pending_receipt",
       processStep: "pending",
       syncedAt: new Date(),
-      quantity: lineItems.reduce(
+      quantity: storedLineItems.reduce(
         (sum: number, line: RequestedShopifyReturnLine) => sum + line.quantity,
         0
       ),
@@ -1111,7 +1106,7 @@ export async function acceptRequestedShopifyReturn(
           mimeType: label.mimeType,
         },
         source: "shopify_return_request_accept",
-        lineItems,
+        lineItems: storedLineItems,
       },
       auditLogJson: [
         {
@@ -1135,8 +1130,8 @@ export async function acceptRequestedShopifyReturn(
     update: {
       externalOrderId: order?.name || order?.id || approvedReturn.order?.name || "",
       productTitle:
-        lineItems.length > 1
-          ? `${firstLine.title} (+${lineItems.length - 1} more)`
+        storedLineItems.length > 1
+          ? `${firstLine.title} (+${storedLineItems.length - 1} more)`
           : firstLine.title,
       sku: firstLine.sku,
       returnLabelNumber: label.trackingNumber,
@@ -1150,7 +1145,7 @@ export async function acceptRequestedShopifyReturn(
       localStatus: "pending_receipt",
       processStep: "pending",
       syncedAt: new Date(),
-      quantity: lineItems.reduce(
+      quantity: storedLineItems.reduce(
         (sum: number, line: RequestedShopifyReturnLine) => sum + line.quantity,
         0
       ),
@@ -1179,7 +1174,7 @@ export async function acceptRequestedShopifyReturn(
           mimeType: label.mimeType,
         },
         source: "shopify_return_request_accept",
-        lineItems,
+        lineItems: storedLineItems,
       },
       failureMessage: null,
     },

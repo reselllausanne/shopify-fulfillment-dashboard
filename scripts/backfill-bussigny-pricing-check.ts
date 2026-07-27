@@ -9,6 +9,8 @@
  *   npx tsx scripts/backfill-bussigny-pricing-check.ts              # dry-run report
  *   npx tsx scripts/backfill-bussigny-pricing-check.ts --write       # apply via convergeVariant
  *   npx tsx scripts/backfill-bussigny-pricing-check.ts --json       # machine-readable
+ *   npx tsx scripts/backfill-bussigny-pricing-check.ts --days 14     # recent restock only
+ *   npx tsx scripts/backfill-bussigny-pricing-check.ts --all-physical # all warehouse locations
  */
 import { prisma } from "../app/lib/prisma";
 import { LOCATIONS } from "../shopify/inventory/locationConfig";
@@ -51,6 +53,65 @@ function toNum(x: unknown): number | null {
 function priceMatch(a: number | null, b: number | null, tol = 0.005): boolean {
   if (a == null || b == null) return false;
   return Math.abs(a - b) <= tol;
+}
+
+async function loadPhysicalRows(options: { days?: number; allPhysical?: boolean }): Promise<Row[]> {
+  const days = options.days != null && options.days > 0 ? Math.trunc(options.days) : null;
+  const since = days ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
+
+  if (options.allPhysical) {
+    if (since) {
+      return prisma.$queryRaw<Row[]>`
+        SELECT DISTINCT ON (s."gtin")
+          s."gtin"              AS gtin,
+          s."sku"               AS sku,
+          s."shopifyVariantId"  AS "shopifyVariantId",
+          s."available"         AS available,
+          s."locationName"      AS "locationName"
+        FROM "public"."ShopifyVariantLocationStock" s
+        WHERE s."sourceType" = 'physical'
+          AND s."available"  > 0
+          AND s."gtin" IS NOT NULL
+          AND length(trim(s."gtin")) > 0
+          AND s."updatedAt" >= ${since}
+        ORDER BY s."gtin", s."priority" ASC, s."updatedAt" DESC
+      `;
+    }
+    return prisma.$queryRaw<Row[]>`
+      SELECT DISTINCT ON (s."gtin")
+        s."gtin"              AS gtin,
+        s."sku"               AS sku,
+        s."shopifyVariantId"  AS "shopifyVariantId",
+        s."available"         AS available,
+        s."locationName"      AS "locationName"
+      FROM "public"."ShopifyVariantLocationStock" s
+      WHERE s."sourceType" = 'physical'
+        AND s."available"  > 0
+        AND s."gtin" IS NOT NULL
+        AND length(trim(s."gtin")) > 0
+      ORDER BY s."gtin", s."priority" ASC, s."updatedAt" DESC
+    `;
+  }
+
+  if (since) {
+    return prisma.$queryRaw<Row[]>`
+      SELECT
+        s."gtin"              AS gtin,
+        s."sku"               AS sku,
+        s."shopifyVariantId"  AS "shopifyVariantId",
+        s."available"         AS available,
+        s."locationName"      AS "locationName"
+      FROM "public"."ShopifyVariantLocationStock" s
+      WHERE s."locationId" = ${BUSSIGNY_ID}
+        AND s."available"  > 0
+        AND s."gtin" IS NOT NULL
+        AND length(trim(s."gtin")) > 0
+        AND s."updatedAt" >= ${since}
+      ORDER BY s."available" DESC, s."gtin" ASC
+    `;
+  }
+
+  return loadBussignyRows();
 }
 
 async function loadBussignyRows(): Promise<Row[]> {
@@ -116,8 +177,18 @@ async function auditRow(row: Row): Promise<AuditRow> {
 async function main() {
   const write = process.argv.includes("--write");
   const jsonOut = process.argv.includes("--json");
+  const allPhysical = process.argv.includes("--all-physical");
+  const daysArg = process.argv.find((a) => a.startsWith("--days="));
+  const daysIdx = process.argv.indexOf("--days");
+  const daysRaw =
+    daysArg?.split("=")[1] ??
+    (daysIdx >= 0 ? process.argv[daysIdx + 1] : undefined);
+  const days = daysRaw != null ? Number(daysRaw) : null;
 
-  const rows = await loadBussignyRows();
+  const rows = await loadPhysicalRows({
+    allPhysical,
+    days: days != null && Number.isFinite(days) && days > 0 ? days : undefined,
+  });
   const audits: AuditRow[] = [];
 
   for (const row of rows) {
@@ -129,7 +200,8 @@ async function main() {
   const ok = audits.filter((a) => !a.needsFix && a.expectedSell && a.expectedCompareAt);
 
   const summary = {
-    locationId: BUSSIGNY_ID,
+    locationId: allPhysical ? "all-physical" : BUSSIGNY_ID,
+    days: days ?? null,
     scanned: audits.length,
     ok: ok.length,
     needsFix: needsFix.length,

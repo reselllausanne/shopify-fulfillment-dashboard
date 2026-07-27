@@ -9,6 +9,7 @@ import {
 } from "@/galaxus/exports/galaxusCategoryPaths";
 import { classifyWelProductKind } from "@/galaxus/exports/welProductClassification";
 import { classifySnowleaderCategoryLabel } from "@/app/lib/snowleaderGalaxusCategories";
+import { classifyReicheltGalaxusKind } from "@/app/lib/reicheltGalaxusCategories";
 
 export type { GalaxusProductKind };
 
@@ -297,6 +298,16 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (supplierKey === "snl") {
     const fromCategory = classifySnowleaderCategoryLabel(input.supplierProductType);
     if (fromCategory) return fromCategory;
+  }
+
+  if (supplierKey === "rei") {
+    const fromReichelt = classifyReicheltGalaxusKind({
+      breadcrumbs: input.breadcrumbs,
+      title: input.title,
+      supplierProductType: input.supplierProductType,
+    });
+    if (fromReichelt) return fromReichelt;
+    return "unknown";
   }
 
   if (brand && BRAND_CATEGORY[brand]) return BRAND_CATEGORY[brand];

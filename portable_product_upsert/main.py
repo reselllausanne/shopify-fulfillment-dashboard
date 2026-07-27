@@ -23,6 +23,7 @@ from shopifyAPI_GQL import (
     get_product_variants,
     calc_touch_price,
     calc_sell_price,
+    calc_physical_restock_prices,
     update_variants_bulk,
     get_first_option_id_of_product,
     set_product_metafield,
@@ -89,6 +90,14 @@ INCLUDE_360_ON_CREATE = os.environ.get("SHOPIFY_CREATE_INCLUDE_360", "1").strip(
 )
 # Set True via --full-pass: force SEO/alt refresh + 360 images (categories never change on update).
 FULL_PASS_MODE = False
+# On UPDATE: keep merchant-edited title + descriptionHtml (manual FR translations).
+# Env SHOPIFY_PRESERVE_COPY_ON_UPDATE=0 to re-enable StockX copy overwrites.
+PRESERVE_COPY_ON_UPDATE = os.environ.get("SHOPIFY_PRESERVE_COPY_ON_UPDATE", "1").strip() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 # Set True via --no-new-variants: skip creating missing sizes (quota saver). Default: create new
 # available sizes; sold-out / gone sizes stay on Shopify with qty=0 (never deleted).
 NO_NEW_VARIANTS_MODE = False
@@ -223,6 +232,11 @@ def _gtin_digits_match(a, b):
     da = re.sub(r"\D", "", str(a or "")).lstrip("0")
     db = re.sub(r"\D", "", str(b or "")).lstrip("0")
     return bool(da) and da == db
+
+
+def _is_physical_scan_barcode(barcode):
+    phys_gtin = _PHYSICAL_RESTOCK_GTIN
+    return bool(phys_gtin and barcode and _gtin_digits_match(barcode, phys_gtin))
 
 
 def _estimate_stockx_raw_from_traits(traits):
@@ -1465,24 +1479,26 @@ def update_product_enhanced(url, title, product_info, existing_product):
         express_metafields_for_existing = []
         price_lock_skips = 0
 
-        current_title = (existing_product.get("title") or "").strip()
-        if title and current_title != title.strip():
-            try:
-                if update_product_title(product_id, title):
-                    existing_product["title"] = title
-            except Exception as e:
-                print(f"[WARNING] Failed to update title for {title}: {e}")
-        
-        # Update description - ALWAYS update to ensure old products get descriptions
-        new_description = product_info.get("description", "")
-        if new_description:
-            try:
-                update_product_description(product_id, new_description)
-                print(f"[INFO] Updated description for {title}")
-            except Exception as e:
-                print(f"[WARNING] Failed to update description for {title}: {e}")
+        if not PRESERVE_COPY_ON_UPDATE:
+            current_title = (existing_product.get("title") or "").strip()
+            if title and current_title != title.strip():
+                try:
+                    if update_product_title(product_id, title):
+                        existing_product["title"] = title
+                except Exception as e:
+                    print(f"[WARNING] Failed to update title for {title}: {e}")
+
+            new_description = product_info.get("description", "")
+            if new_description:
+                try:
+                    update_product_description(product_id, new_description)
+                    print(f"[INFO] Updated description for {title}")
+                except Exception as e:
+                    print(f"[WARNING] Failed to update description for {title}: {e}")
+            else:
+                print(f"[WARNING] No description available for {title} during update")
         else:
-            print(f"[WARNING] No description available for {title} during update")
+            print(f"[INFO] Preserving Shopify title + description for {title} (SHOPIFY_PRESERVE_COPY_ON_UPDATE=1)")
         
         # Update STANDARD product attributes (for Google Merchant Center)
         stockx_raw_data = product_info.get("__raw_vendor__", {})
@@ -1636,13 +1652,28 @@ def update_product_enhanced(url, title, product_info, existing_product):
                     if existing_cost is not None:
                         cost_value = existing_cost
                 
+                # SOLDES INVARIANT: a price_locked variant means the physical pair
+                # sits at Bussigny warehouse at the discount, and the same variant
+                # id/price is what marketplaces and Shopify sell. If we also keep a
+                # StockX-sourced qty at the Chemin dropship location, checkout can
+                # decrement Chemin and sell a pair we never had at the soldes price
+                # -> guaranteed loss. Force Chemin qty = 0 whenever the variant is
+                # locked, regardless of what StockX reported.
+                effective_qty = 0 if is_locked else variant_qty
+                if is_locked and variant_qty != 0:
+                    print(
+                        f"[PRICE LOCK] {title} - Size {size_title}: forcing Chemin qty 0 "
+                        f"(was {variant_qty}) to protect warehouse soldes stock"
+                    )
                 update_data = {
                     "id": matched_variant["id"],
                     "price": str(effective_price),
-                    "quantity": variant_qty,
+                    "quantity": effective_qty,
                     "inventoryItemId": matched_variant.get("inventoryItemId"),
                     "inventoryItem": {"cost": str(cost_value)}
                 }
+                if variant.get("compare_at_price") and float(variant["compare_at_price"]) > float(effective_price or 0):
+                    update_data["compare_at_price"] = variant["compare_at_price"]
                 # Add barcode if provided from StockX and not already set or different
                 if new_barcode and (not matched_variant.get("barcode") or matched_variant.get("barcode") != new_barcode):
                     update_data["barcode"] = new_barcode
@@ -1680,6 +1711,7 @@ def update_product_enhanced(url, title, product_info, existing_product):
                     "cost": {"amount": str(cost_value), "currencyCode": "CHF"},
                     "barcode": new_barcode,
                     "express_price": express_price,
+                    "compare_at_price": variant.get("compare_at_price"),
                 })
         
         # Zero out or remove variants no longer available on StockX.
@@ -2759,19 +2791,23 @@ def process_url(url, thread_id=0, prefetched=None):
                 pc = thread_api_products[title]["productCategory"]
                 product_handle = thread_api_products[title].get("handle", "")
                 raw_price = _estimate_stockx_raw_from_traits(traits)
-                cost_value = calc_touch_price(raw_price, pc, product_handle)
-                sell_price = calc_sell_price(
-                    raw_price, pc, is_express=False, product_handle=product_handle, brand=brand
+                pr = calc_physical_restock_prices(
+                    raw_price, pc, product_handle=product_handle, brand=brand
                 )
+                cost_value = pr["cost"]
+                sell_price = pr["sell"]
+                compare_at_price = pr["compare_at"]
                 print(
                     f"[Thread {thread_id}] [PHYSICAL RESTOCK] Size {eu_size}: no StockX asks — "
-                    f"estimated RAW={raw_price} CHF, SELL={sell_price} CHF (GTIN {barcode})"
+                    f"estimated RAW={raw_price} CHF, SELL={sell_price} CHF, "
+                    f"COMPARE={compare_at_price} CHF (GTIN {barcode})"
                 )
                 us_size_raw = get_size_by_type(variant, "us m") or get_size_by_type(variant, "us w") or get_size_by_type(variant, "us")
                 us_size_clean = str(us_size_raw or "").replace("US M", "").replace("US W", "").replace("US", "").strip() or None
                 thread_api_products[title]["variants"].append({
                     "size": eu_size,
                     "price": sell_price,
+                    "compare_at_price": compare_at_price,
                     "cost": {"amount": f"{cost_value:.2f}", "currencyCode": "CHF"},
                     "sku": f"{base_sku}-OS" if eu_size == "One Size" else f"{base_sku}-{eu_size}",
                     "quantity": 0,
@@ -2828,7 +2864,26 @@ def process_url(url, thread_id=0, prefetched=None):
             # Calculate standard cost/sell.
             cost_value = calc_touch_price(raw_price, pc, product_handle)
             sell_price = calc_sell_price(raw_price, pc, is_express=False, product_handle=product_handle, brand=brand)
-            print(f"[CALCULATED] {title} - Size {eu_size}: STOCKX={raw_price} CHF, COST={cost_value:.2f} CHF, SELL={sell_price} CHF")
+            compare_at_price = None
+            physical_restock = False
+            barcode = get_upc(variant) or product_barcode
+            if _is_physical_scan_barcode(barcode):
+                pr = calc_physical_restock_prices(
+                    raw_price, pc, product_handle=product_handle, brand=brand
+                )
+                cost_value = pr["cost"]
+                sell_price = pr["sell"]
+                compare_at_price = pr["compare_at"]
+                physical_restock = True
+                print(
+                    f"[PHYSICAL RESTOCK] {title} - Size {eu_size}: STOCKX={raw_price} CHF, "
+                    f"COST={cost_value:.2f}, SELL={sell_price}, COMPARE={compare_at_price} (GTIN {barcode})"
+                )
+            else:
+                print(
+                    f"[CALCULATED] {title} - Size {eu_size}: STOCKX={raw_price} CHF, "
+                    f"COST={cost_value:.2f} CHF, SELL={sell_price} CHF"
+                )
 
             # Express sell price for metafield (only when asks > 2 on express lanes).
             express_sell_price = None
@@ -2863,7 +2918,7 @@ def process_url(url, thread_id=0, prefetched=None):
         us_size_clean = str(us_size_raw or "").replace("US M", "").replace("US W", "").replace("US", "").strip() or None
 
         print(f"[Thread {thread_id}] [DEBUG] Creating variant: size={eu_size}, price={sell_price}, barcode={barcode or 'none'}")
-        thread_api_products[title]["variants"].append({
+        variant_row = {
             "size": eu_size,
             "price": sell_price,
             "cost": {"amount": f"{cost_value:.2f}", "currencyCode": "CHF"},
@@ -2874,7 +2929,12 @@ def process_url(url, thread_id=0, prefetched=None):
             "express_price": express_sell_price if express_sell_price is not None else None,
             "express_available": express_sell_price is not None,
             "us_size": us_size_clean,
-        })
+        }
+        if compare_at_price is not None and compare_at_price > sell_price:
+            variant_row["compare_at_price"] = compare_at_price
+        if physical_restock:
+            variant_row["physical_restock"] = True
+        thread_api_products[title]["variants"].append(variant_row)
 
         # SKIP express variants entirely as per requirement
         # No longer creating express/fast delivery variants

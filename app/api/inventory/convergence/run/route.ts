@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { checkSharedSecret } from "@/app/api/kickdb/auth";
 import { convergeAll, convergeVariant } from "@/shopify/inventory/convergence";
+import { convergeRecentPaidShopifyOrders } from "@/shopify/orders/recentPaidConvergence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +14,7 @@ export const maxDuration = 600;
  * Optional single-GTIN override for the Shopify order webhook / marketplace
  * sale hook.
  *
- * Body (optional): { gtin?: string, sampleSize?: number }
+ * Body (optional): { gtin?: string, sampleSize?: number, recentPaidOrders?: boolean, sinceMinutes?: number }
  * Query alternative: ?gtin=... (for easy manual curl)
  */
 export async function POST(req: Request) {
@@ -30,15 +31,40 @@ export async function POST(req: Request) {
     body = null;
   }
   const gtin = String(body?.gtin ?? gtinFromQs ?? "").trim();
+  const mode = String(body?.mode ?? url.searchParams.get("mode") ?? "").trim().toLowerCase();
 
   try {
     if (gtin) {
       const res = await convergeVariant(gtin);
       return NextResponse.json({ ok: !res.error, mode: "single", result: res });
     }
+
+    const recentPaidOrders =
+      mode === "recent-paid" ||
+      body?.recentPaidOrders === true ||
+      url.searchParams.get("recentPaidOrders") === "1" ||
+      url.searchParams.get("recentPaidOrders") === "true";
+
+    if (mode === "recent-paid" || (recentPaidOrders && mode === "recent-paid-only")) {
+      const sinceMinutes = Number.isFinite(Number(body?.sinceMinutes))
+        ? Number(body.sinceMinutes)
+        : undefined;
+      const recentPaid = await convergeRecentPaidShopifyOrders({ sinceMinutes });
+      return NextResponse.json({ ok: true, mode: "recent-paid", recentPaid });
+    }
+
     const sampleSize = Number.isFinite(Number(body?.sampleSize)) ? Number(body.sampleSize) : undefined;
     const res = await convergeAll({ sampleSize });
-    return NextResponse.json({ mode: "all", ...res });
+
+    let recentPaid: Awaited<ReturnType<typeof convergeRecentPaidShopifyOrders>> | null = null;
+    if (recentPaidOrders) {
+      const sinceMinutes = Number.isFinite(Number(body?.sinceMinutes))
+        ? Number(body.sinceMinutes)
+        : undefined;
+      recentPaid = await convergeRecentPaidShopifyOrders({ sinceMinutes });
+    }
+
+    return NextResponse.json({ mode: "all", ...res, recentPaid });
   } catch (err: any) {
     console.error("[convergence/run] error", err);
     return NextResponse.json({ ok: false, error: err?.message ?? "convergence_failed" }, { status: 500 });
@@ -49,6 +75,6 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     endpoint: "POST /api/inventory/convergence/run",
-    body: "{ gtin?, sampleSize? }",
+    body: "{ gtin?, sampleSize?, recentPaidOrders?, sinceMinutes? }",
   });
 }

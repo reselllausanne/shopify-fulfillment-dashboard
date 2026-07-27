@@ -1,28 +1,65 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import {
+  resolveProcessReturnLineItems,
+} from "@/shopify/returns/returnLineItemsForReceipt";
+import { computeReturnRestockingFeeTotal } from "@/shopify/returns/restockingFee";
 import { restockShopifyReturnOnReceipt } from "@/shopify/returns/restockOnReceipt";
 
-const STORE_CREDIT_ACCOUNT_CREDIT_MUTATION = /* GraphQL */ `
-mutation StoreCreditAccountCredit($id: ID!, $creditInput: StoreCreditAccountCreditInput!) {
-  storeCreditAccountCredit(id: $id, creditInput: $creditInput) {
-    storeCreditAccountTransaction {
+/**
+ * Issue store credit via returnProcess + refundMethods.storeCreditRefund.
+ *
+ * Prefer this over storeCreditAccountCredit: that mutation needs
+ * write_store_credit_account_transactions, which custom-app tokens often lack.
+ * returnProcess only needs write_returns (already required for the returns flow).
+ */
+const RETURN_PROCESS_MUTATION = /* GraphQL */ `
+mutation ReturnProcess($input: ReturnProcessInput!) {
+  returnProcess(input: $input) {
+    return {
       id
+      status
+    }
+    userErrors {
+      field
+      message
+      code
+    }
+  }
+}
+`;
+
+const RETURN_CLOSE_MUTATION = /* GraphQL */ `
+mutation ReturnClose($id: ID!) {
+  returnClose(id: $id) {
+    return {
+      id
+      status
+    }
+    userErrors {
+      field
+      message
+      code
+    }
+  }
+}
+`;
+
+const RETURN_SUGGESTED_REFUND_QUERY = /* GraphQL */ `
+query ReturnSuggestedRefund(
+  $id: ID!
+  $returnRefundLineItems: [ReturnRefundLineItemInput!]!
+) {
+  return(id: $id) {
+    id
+    status
+    suggestedRefund(returnRefundLineItems: $returnRefundLineItems) {
       amount {
-        amount
-        currencyCode
-      }
-      account {
-        id
-        balance {
+        shopMoney {
           amount
           currencyCode
         }
       }
-    }
-    userErrors {
-      message
-      field
-      code
     }
   }
 }
@@ -41,6 +78,17 @@ function pushAudit(existing: unknown, entry: Record<string, unknown>) {
   const arr = Array.isArray(existing) ? [...existing] : [];
   arr.push(entry);
   return arr;
+}
+
+function formatGraphqlFailure(
+  fallback: string,
+  errors?: Array<{ message?: string | null } | null> | null
+): string {
+  const messages = (errors ?? [])
+    .map((e) => String(e?.message || "").trim())
+    .filter(Boolean);
+  if (!messages.length) return fallback;
+  return `${fallback}: ${messages.join("; ")}`;
 }
 
 export async function confirmShopifyReturnReceipt(options: {
@@ -77,32 +125,23 @@ export async function confirmShopifyReturnReceipt(options: {
     };
   }
 
+  if (row.localStatus === "failed") {
+    await prisma.marketplaceReturn.update({
+      where: { id: row.id },
+      data: {
+        localStatus: "processing",
+        failureMessage: null,
+      },
+    });
+  }
+
   const raw = (row.rawJson as any) || {};
-  const customerId = String(raw?.order?.customerId || "").trim();
+  const returnId = String(row.externalReturnId || raw?.return?.id || "").trim();
   const grossAmount = Number(row.returnAmount);
   const currencyCode = String(row.currency || "CHF").trim() || "CHF";
 
-  // Restocking fee: Shopify stores it per return line item (restockingFeeAmount in shopMoney).
-  // Sum across all lines and deduct from the gross return amount to get the net store credit.
-  // This enforces the 10% return fee the business applies to every return.
-  const lineItems: Array<any> = Array.isArray(raw?.lineItems) ? raw.lineItems : [];
-  let restockingFeeTotal = 0;
-  for (const line of lineItems) {
-    const lineFee = Number(line?.restockingFeeAmount);
-    if (Number.isFinite(lineFee) && lineFee > 0) {
-      restockingFeeTotal += lineFee * (Number(line?.quantity) || 1);
-    } else if (Number(line?.restockingFeePercent) > 0) {
-      const unit = Number(line?.unitAmount) || 0;
-      const qty = Number(line?.quantity) || 1;
-      restockingFeeTotal += (unit * qty * Number(line.restockingFeePercent)) / 100;
-    }
-  }
-  restockingFeeTotal = Number(restockingFeeTotal.toFixed(2));
-  const amount = Number(Math.max(0, grossAmount - restockingFeeTotal).toFixed(2));
-  console.log("[SHOPIFY_STORE_CREDIT] return", row.externalReturnId, "gross:", grossAmount, "restockingFee:", restockingFeeTotal, "net store credit:", amount, currencyCode);
-
-  if (!customerId) {
-    const failureMessage = "Missing Shopify customer ID on return row";
+  if (!returnId) {
+    const failureMessage = "Missing Shopify return ID on return row";
     await prisma.marketplaceReturn.update({
       where: { id: row.id },
       data: {
@@ -125,6 +164,59 @@ export async function confirmShopifyReturnReceipt(options: {
       failureMessage,
     };
   }
+
+  const resolvedLines = await resolveProcessReturnLineItems({ rawJson: raw, returnId });
+  const processReturnLineItems = resolvedLines.items;
+
+  if (!processReturnLineItems.length) {
+    const failureMessage = "Missing Shopify return line item IDs";
+    await prisma.marketplaceReturn.update({
+      where: { id: row.id },
+      data: {
+        localStatus: "failed",
+        failureMessage,
+        auditLogJson: pushAudit(row.auditLogJson, {
+          at: new Date().toISOString(),
+          step: "shopify_store_credit_issue",
+          ok: false,
+          error: failureMessage,
+        }),
+      },
+    });
+    return {
+      ok: false,
+      id: row.id,
+      localStatus: "failed",
+      processStep: row.processStep,
+      message: failureMessage,
+      failureMessage,
+    };
+  }
+
+  const feeLines =
+    resolvedLines.lineItemsForStorage.length > 0
+      ? (resolvedLines.lineItemsForStorage as Array<Record<string, unknown>>)
+      : ((Array.isArray(raw?.lineItems) ? raw.lineItems : []) as Array<Record<string, unknown>>);
+  const feeComputation = computeReturnRestockingFeeTotal({
+    lineItems: feeLines,
+    grossAmount,
+  });
+  const { restockingFeeTotal, netAmount: amount, appliedDefaultPercent } = feeComputation;
+
+  console.log(
+    "[SHOPIFY_STORE_CREDIT] return",
+    row.externalReturnId,
+    "gross:",
+    grossAmount,
+    "restockingFee:",
+    restockingFeeTotal,
+    "defaultPercentApplied:",
+    appliedDefaultPercent,
+    "net store credit:",
+    amount,
+    currencyCode
+  );
+
   if (!Number.isFinite(amount) || amount <= 0) {
     const failureMessage = "Invalid return amount for store credit";
     await prisma.marketplaceReturn.update({
@@ -150,31 +242,66 @@ export async function confirmShopifyReturnReceipt(options: {
     };
   }
 
-  const result = await shopifyGraphQL<{
-    storeCreditAccountCredit?: {
-      storeCreditAccountTransaction?: {
+  // Prefer Shopify suggested net when the return already has restocking fees configured.
+  let creditAmount = amount.toFixed(2);
+  let creditCurrency = currencyCode;
+  if (!appliedDefaultPercent) {
+    const suggested = await shopifyGraphQL<{
+      return?: {
         id?: string | null;
-        amount?: { amount?: string | null; currencyCode?: string | null } | null;
-        account?: {
-          id?: string | null;
-          balance?: { amount?: string | null; currencyCode?: string | null } | null;
+        status?: string | null;
+        suggestedRefund?: {
+          amount?: { shopMoney?: { amount?: string | null; currencyCode?: string | null } | null } | null;
         } | null;
       } | null;
+    }>(RETURN_SUGGESTED_REFUND_QUERY, {
+      id: returnId,
+      returnRefundLineItems: processReturnLineItems.map((line) => ({
+        returnLineItemId: line.id,
+        quantity: line.quantity,
+      })),
+    });
+
+    const suggestedMoney = suggested.data?.return?.suggestedRefund?.amount?.shopMoney;
+    if (suggestedMoney?.amount != null && Number(suggestedMoney.amount) > 0) {
+      creditAmount = Number(suggestedMoney.amount).toFixed(2);
+      creditCurrency = String(suggestedMoney.currencyCode || currencyCode).trim() || currencyCode;
+    }
+  }
+
+  const processResult = await shopifyGraphQL<{
+    returnProcess?: {
+      return?: { id?: string | null; status?: string | null } | null;
       userErrors?: Array<{ code?: string | null; field?: string[] | null; message?: string | null }>;
     };
-  }>(STORE_CREDIT_ACCOUNT_CREDIT_MUTATION, {
-    id: customerId,
-    creditInput: {
-      creditAmount: {
-        amount: amount.toFixed(2),
-        currencyCode,
+  }>(RETURN_PROCESS_MUTATION, {
+    input: {
+      returnId,
+      returnLineItems: processReturnLineItems,
+      financialTransfer: {
+        issueRefund: {
+          orderTransactions: [],
+          refundMethods: [
+            {
+              storeCreditRefund: {
+                amount: {
+                  amount: creditAmount,
+                  currencyCode: creditCurrency,
+                },
+              },
+            },
+          ],
+        },
       },
-      notify: true,
+      notifyCustomer: true,
     },
   });
 
-  if (result.errors?.length) {
-    const failureMessage = "Shopify store credit mutation failed";
+  if (processResult.errors?.length) {
+    const failureMessage = formatGraphqlFailure(
+      "Shopify store credit mutation failed",
+      processResult.errors
+    );
     await prisma.marketplaceReturn.update({
       where: { id: row.id },
       data: {
@@ -185,7 +312,7 @@ export async function confirmShopifyReturnReceipt(options: {
           step: "shopify_store_credit_issue",
           ok: false,
           error: failureMessage,
-          response: result.errors,
+          response: processResult.errors,
         }),
       },
     });
@@ -199,9 +326,11 @@ export async function confirmShopifyReturnReceipt(options: {
     };
   }
 
-  const userErrors = result.data?.storeCreditAccountCredit?.userErrors ?? [];
-  if (userErrors.length > 0) {
-    const failureMessage = userErrors.map((e) => e.message).filter(Boolean).join("; ") || "Store credit user error";
+  const processUserErrors = processResult.data?.returnProcess?.userErrors ?? [];
+  if (processUserErrors.length > 0) {
+    const failureMessage =
+      processUserErrors.map((e) => e.message).filter(Boolean).join("; ") ||
+      "Store credit user error";
     await prisma.marketplaceReturn.update({
       where: { id: row.id },
       data: {
@@ -212,7 +341,7 @@ export async function confirmShopifyReturnReceipt(options: {
           step: "shopify_store_credit_issue",
           ok: false,
           error: failureMessage,
-          response: userErrors,
+          response: processUserErrors,
         }),
       },
     });
@@ -226,7 +355,32 @@ export async function confirmShopifyReturnReceipt(options: {
     };
   }
 
-  const transaction = result.data?.storeCreditAccountCredit?.storeCreditAccountTransaction;
+  // Financial transfer can succeed while return stays OPEN (no dispositions).
+  // Close so staff UI / sync see a terminal Shopify status.
+  let closedStatus = String(processResult.data?.returnProcess?.return?.status || "").toUpperCase();
+  if (closedStatus !== "CLOSED") {
+    const closeResult = await shopifyGraphQL<{
+      returnClose?: {
+        return?: { id?: string | null; status?: string | null } | null;
+        userErrors?: Array<{ code?: string | null; field?: string[] | null; message?: string | null }>;
+      };
+    }>(RETURN_CLOSE_MUTATION, { id: returnId });
+
+    const closeErrors = [
+      ...(closeResult.errors ?? []).map((e) => ({ message: e.message })),
+      ...(closeResult.data?.returnClose?.userErrors ?? []),
+    ];
+    if (closeErrors.length) {
+      console.warn("[SHOPIFY][RETURN][RECEIPT] returnClose soft-fail", {
+        id: row.id,
+        returnId,
+        errors: closeErrors,
+      });
+    } else {
+      closedStatus = String(closeResult.data?.returnClose?.return?.status || "CLOSED").toUpperCase();
+    }
+  }
+
   const now = new Date();
 
   // Restock the returned pair: existing Shopify variant -> Bussigny stock +qty,
@@ -251,12 +405,22 @@ export async function confirmShopifyReturnReceipt(options: {
       receivedAt: now,
       completedAt: now,
       failureMessage: null,
-      refundIdsJson: (transaction?.id ? [transaction.id] : row.refundIdsJson) as any,
+      miraklStatus: closedStatus || "CLOSED",
       rawJson: {
         ...(raw || {}),
+        lineItems:
+          resolvedLines.lineItemsForStorage.length > 0
+            ? resolvedLines.lineItemsForStorage
+            : raw?.lineItems,
+        restockingFee: {
+          total: restockingFeeTotal,
+          appliedDefaultPercent,
+        },
         storeCredit: {
           issuedAt: now.toISOString(),
-          transaction,
+          method: "returnProcess",
+          amount: creditAmount,
+          currencyCode: creditCurrency,
         },
         restock: restock ?? undefined,
       },
@@ -264,10 +428,12 @@ export async function confirmShopifyReturnReceipt(options: {
         at: now.toISOString(),
         step: "shopify_store_credit_issue",
         ok: true,
-        customerId,
-        amount: amount.toFixed(2),
-        currencyCode,
-        transactionId: transaction?.id || null,
+        returnId,
+        amount: creditAmount,
+        currencyCode: creditCurrency,
+        restockingFeeTotal,
+        appliedDefaultPercent,
+        shopifyStatus: closedStatus || null,
         restockOk: restock?.ok ?? null,
         restockLines: restock?.lines ?? null,
       }),

@@ -1,5 +1,9 @@
 import { prisma } from "@/app/lib/prisma";
 import {
+  isPartnerCatalogSupplierVariantId,
+  STX_SUPPLIER_VARIANT_WHERE,
+} from "@/galaxus/supplier/supplierKeyGuards";
+import {
   clearVariantBarcode,
   getShopifyVariantDetail,
   listShopifyVariantsByGtinDetailed,
@@ -86,9 +90,10 @@ export async function assignGtinToVariantExclusive(input: {
     if (chosenSku) {
       const dupRows = await prisma.supplierVariant.findMany({
         where: { gtin },
-        select: { id: true, providerKey: true },
+        select: { id: true, providerKey: true, supplierVariantId: true },
       });
       for (const row of dupRows) {
+        if (isPartnerCatalogSupplierVariantId(row.supplierVariantId)) continue;
         const key = String(row.providerKey ?? "").trim();
         const matchesChosen =
           key === chosenSku || key.endsWith(`-${chosenSku}`) || chosenSku.endsWith(key);

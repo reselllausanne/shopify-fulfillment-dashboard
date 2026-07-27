@@ -3,10 +3,11 @@ import {
   applyTheCatalogStockDeltaInTx,
   isTheSupplierVariantId,
 } from "@/galaxus/warehouse/theCatalogStock";
-import { isTheWarehouseSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
 import { routeMarketplacePhysicalSale } from "@/shopify/inventory/marketplacePhysicalSale";
+import { refreshAfterShopifySale } from "@/shopify/orders/postSaleRefresh";
 import { resolveSupplierVariantForInventoryLine } from "./resolveSupplierVariant";
-import { scheduleTheSaleChannelSync } from "./theSaleChannelSync";
+import { scheduleMarketplaceStockPush } from "./marketplaceStockSync";
+import { schedulePostSaleMarketplacePricePush } from "./postSaleMarketplacePricePush";
 import type {
   ApplyInventoryOrderLineInput,
   ApplyInventoryOrderLineResult,
@@ -18,11 +19,11 @@ type ApplyInventoryOrderLineOptions = {
   syncChannels?: boolean;
 };
 
-function shouldScheduleTheSaleSync(result: ApplyInventoryOrderLineResult): boolean {
+/** Any sold line changes what marketplaces may still offer, whatever the supplier. */
+function shouldPushMarketplaceStock(result: ApplyInventoryOrderLineResult): boolean {
   if (!result.applied) return false;
   if ((result.quantityDelta ?? 0) >= 0) return false;
-  if (!isTheSupplierVariantId(result.supplierVariantId)) return false;
-  return isTheWarehouseSupplierSku(result.providerKey);
+  return Boolean(String(result.providerKey ?? "").trim());
 }
 
 function normalizePositiveQuantity(quantity: number): number | null {
@@ -182,24 +183,27 @@ export async function applyInventoryOrderLine(
       };
     });
 
-    if (options?.syncChannels !== false && shouldScheduleTheSaleSync(result)) {
-      scheduleTheSaleChannelSync({ providerKeys: [result.providerKey] });
+    if (options?.syncChannels !== false && shouldPushMarketplaceStock(result)) {
+      scheduleMarketplaceStockPush({ providerKeys: [result.providerKey] });
     }
 
-    if (
-      result.applied &&
-      (eventType === "SALE" || eventType === undefined) &&
-      (result.quantityDelta ?? 0) < 0
-    ) {
+    if (result.applied && (result.quantityDelta ?? 0) < 0) {
       const gtin = String(resolvedVariant.gtin ?? input.gtin ?? "").trim();
-      if (gtin) {
+      const isMarketplaceSale =
+        channel === "GALAXUS" || channel === "DECATHLON";
+
+      if (
+        gtin &&
+        isMarketplaceSale &&
+        (eventType === "SALE" || eventType === undefined)
+      ) {
         try {
           const route = await routeMarketplacePhysicalSale({
             channel,
             externalLineId,
             externalOrderId,
             gtin,
-            quantity: quantity,
+            quantity,
           });
           if (route.warnings.length) {
             console.warn("[inventory][marketplace-physical-sale]", {
@@ -226,6 +230,23 @@ export async function applyInventoryOrderLine(
             error: err?.message ?? err,
           });
         }
+
+        void refreshAfterShopifySale(gtin, {
+          forceMarketPrice: true,
+          skipInventoryDecrement: true,
+        })
+          .then(() => schedulePostSaleMarketplacePricePush())
+          .catch((err: any) => {
+            console.error("[inventory][post-sale-refresh] failed", {
+              channel,
+              externalLineId,
+              gtin,
+              error: err?.message ?? err,
+            });
+            schedulePostSaleMarketplacePricePush();
+          });
+      } else {
+        schedulePostSaleMarketplacePricePush();
       }
     }
 
@@ -250,16 +271,16 @@ export async function applyInventoryOrderLines(
   lines: ApplyInventoryOrderLineInput[]
 ): Promise<ApplyInventoryOrderLineResult[]> {
   const results: ApplyInventoryOrderLineResult[] = [];
-  const theSaleKeys: string[] = [];
+  const soldKeys: string[] = [];
   for (const line of lines) {
     const result = await applyInventoryOrderLine(line, { syncChannels: false });
     results.push(result);
-    if (shouldScheduleTheSaleSync(result) && result.providerKey) {
-      theSaleKeys.push(result.providerKey);
+    if (shouldPushMarketplaceStock(result) && result.providerKey) {
+      soldKeys.push(result.providerKey);
     }
   }
-  if (theSaleKeys.length > 0) {
-    scheduleTheSaleChannelSync({ providerKeys: theSaleKeys });
+  if (soldKeys.length > 0) {
+    scheduleMarketplaceStockPush({ providerKeys: soldKeys });
   }
   return results;
 }

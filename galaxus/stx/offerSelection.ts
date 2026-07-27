@@ -44,6 +44,37 @@ function normalizeDeliveryType(value: unknown): StxDeliveryType | null {
   return null;
 }
 
+export function selectStxStandardOffer(prices: unknown): SelectedStxOffer | null {
+  const list = Array.isArray(prices) ? prices : [];
+  const candidates: Array<SelectedStxOffer & { idx: number }> = [];
+
+  for (let idx = 0; idx < list.length; idx += 1) {
+    const row = list[idx] as Record<string, unknown>;
+    if (String(row?.type ?? "").trim().toLowerCase() !== "standard") continue;
+
+    const price = toNumber(row?.price);
+    const asks = toInt(row?.asks);
+    if (!price || price <= 0) continue;
+    if (asks === null || asks < 0) continue;
+
+    candidates.push({ deliveryType: "standard", price, asks, idx });
+  }
+
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => {
+    if (a.price !== b.price) return a.price - b.price;
+    return a.idx - b.idx;
+  });
+
+  const winner = candidates[0];
+  return {
+    deliveryType: winner.deliveryType,
+    price: winner.price,
+    asks: winner.asks,
+  };
+}
+
 export function selectStxActiveOffer(prices: unknown): SelectedStxOffer | null {
   const list = Array.isArray(prices) ? prices : [];
   const candidates: Array<SelectedStxOffer & { idx: number }> = [];

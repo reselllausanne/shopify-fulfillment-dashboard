@@ -138,6 +138,31 @@ async function bussignyQtyForVariantIds(variantIds: string[]): Promise<number> {
   return Number(rows[0]?.available ?? 0);
 }
 
+/**
+ * Bussigny qty restricted to variants whose GTIN carries a REAL liquidation
+ * lock (stx_ SupplierVariant.manualLock). Qty alone must not put a product in
+ * the soldes collection when its price was never actually changed.
+ */
+async function bussignyLiquidationQtyForVariantIds(variantIds: string[]): Promise<number> {
+  if (variantIds.length === 0) return 0;
+  const rows = await prisma.$queryRaw<Array<{ available: number }>>`
+    SELECT COALESCE(SUM(s."available"), 0)::int AS available
+    FROM "public"."ShopifyVariantLocationStock" s
+    WHERE s."shopifyVariantId" = ANY(${variantIds}::text[])
+      AND s."locationId" = ${BUSSIGNY_LOCATION_ID}
+      AND s."sourceType" = 'physical'
+      AND s."available" > 0
+      AND EXISTS (
+        SELECT 1
+        FROM "public"."SupplierVariant" sv
+        WHERE sv."gtin" = s."gtin"
+          AND sv."supplierVariantId" LIKE 'stx\\_%' ESCAPE '\\'
+          AND sv."manualLock" = true
+      )
+  `;
+  return Number(rows[0]?.available ?? 0);
+}
+
 export async function getBussignyQtyForProduct(productId: string): Promise<number> {
   const { variantIds } = await readProductSoldes48hState(productId);
   return bussignyQtyForVariantIds(variantIds);
@@ -169,8 +194,8 @@ export async function writeProductSoldes48h(productId: string, enabled: boolean)
 }
 
 /**
- * Set product custom.soldes_48h when any variant has Bussigny mirror stock > 0;
- * clear when none do.
+ * Set product custom.soldes_48h when any variant has Bussigny mirror stock > 0
+ * WITH a real liquidation lock (price actually changed); clear otherwise.
  */
 export async function syncSoldes48hProductMetafield(
   productId: string | null | undefined,
@@ -180,12 +205,12 @@ export async function syncSoldes48hProductMetafield(
   if (!productId) return;
   try {
     const { enabled, variantIds } = await readProductSoldes48hState(productId);
-    const bussignyQty = await bussignyQtyForVariantIds(variantIds);
-    const want = bussignyQty > 0;
+    const liquidationQty = await bussignyLiquidationQtyForVariantIds(variantIds);
+    const want = liquidationQty > 0;
     if (want !== enabled) {
       await writeProductSoldes48h(productId, want);
       changes.push(
-        `Shopify product soldes_48h=${want ? "true" : "false"} (Bussigny qty=${bussignyQty})`
+        `Shopify product soldes_48h=${want ? "true" : "false"} (Bussigny liquidation qty=${liquidationQty})`
       );
     }
   } catch (err: any) {

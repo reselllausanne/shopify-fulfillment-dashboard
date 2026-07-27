@@ -2,11 +2,16 @@ import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/kickdb/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
-import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
-import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
-import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSellPrice";
-import { isStxForceImportSlug, listForceImportStxSupplierVariantIds } from "@/galaxus/stx/forceImportSlugs";
-import { selectStxOfferForImport, type StxDeliveryType } from "@/galaxus/stx/offerSelection";
+import { listForceImportStxSupplierVariantIds } from "@/galaxus/stx/forceImportSlugs";
+import { type StxDeliveryType } from "@/galaxus/stx/offerSelection";
+import {
+  allowsStxStandardImport,
+  buildStxDualPriceFields,
+} from "@/galaxus/stx/variantPriceLanes";
+import {
+  syncShopifyStxPricesForGtins,
+  syncShopifyStxPricesForSupplierVariantIds,
+} from "@/shopify/stx/syncShopifyStxPrices";
 import {
   bulkInsertSupplierVariants,
   bulkUpdateSupplierVariants,
@@ -55,6 +60,9 @@ type ParsedStxRow = {
   leadTimeDays: number | null;
   deliveryType: StxDeliveryType;
   suggestedRetailPriceInclVat: number | null;
+  standardBuyPrice: number | null;
+  expressBuyPrice: number | null;
+  standardSuggestedRetailPriceInclVat: number | null;
 };
 
 const STX_PREFIX = "stx_";
@@ -103,20 +111,6 @@ function pickImages(product: any): string[] | null {
   return images.length > 0 ? Array.from(new Set(images)) : null;
 }
 
-function suggestedRetailFromStxPayload(input: {
-  stxBasePrice: number;
-  payload: any;
-  supplierProductName: string | null;
-  deliveryType: StxDeliveryType;
-}): number | null {
-  return calcSuggestedRetailFromStxOffer({
-    stockxRaw: input.stxBasePrice,
-    productHandle: pickString(input.payload?.slug, input.payload?.url_key, input.payload?.urlKey),
-    productName: input.supplierProductName,
-    deliveryType: input.deliveryType,
-  });
-}
-
 function stxVariantSyncPatch(row: ParsedStxRow) {
   return {
     supplierVariantId: row.supplierVariantId,
@@ -124,6 +118,9 @@ function stxVariantSyncPatch(row: ParsedStxRow) {
     stock: row.stock,
     deliveryType: row.deliveryType,
     suggestedRetailPriceInclVat: row.suggestedRetailPriceInclVat,
+    standardBuyPrice: row.standardBuyPrice,
+    expressBuyPrice: row.expressBuyPrice,
+    standardSuggestedRetailPriceInclVat: row.standardSuggestedRetailPriceInclVat,
   };
 }
 
@@ -135,9 +132,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
   const images = pickImages(payload);
   const supplierSkuFallback =
     pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
-  const forceImport = isStxForceImportSlug(
-    pickString(payload?.slug, payload?.url_key, payload?.urlKey)
-  );
+  const forceImport = allowsStxStandardImport(payload);
 
   for (const variant of variants) {
     const variantId = pickString(variant?.id);
@@ -147,36 +142,33 @@ function extractRowsFromPayload(payload: any, productId: string) {
     const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
     if (!gtin) continue;
 
-    const selected = selectStxOfferForImport(variant?.prices, { forceImport });
-    if (!selected) continue;
+    const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
+      forceImport,
+      slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey),
+    });
+    if (!lanes) continue;
 
     const supplierVariantId = `${STX_PREFIX}${variantId}`;
     const providerKey = buildProviderKey(gtin, supplierVariantId);
     if (!providerKey) continue;
 
-    const stxBasePrice = Number(selected.price);
-    const shippingCHF = resolveStxShippingCHF(payload);
-    const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
-    const suggestedRetailPriceInclVat = suggestedRetailFromStxPayload({
-      stxBasePrice,
-      payload,
-      supplierProductName,
-      deliveryType: selected.deliveryType,
-    });
     rows.push({
       supplierVariantId,
       supplierSku: supplierSkuFallback,
       providerKey,
       gtin,
-      price: stxSellPrice,
-      stock: selected.asks,
+      price: lanes.price,
+      stock: lanes.stock,
       sizeRaw: pickSizeRawEuFirst(variant),
       supplierBrand,
       supplierProductName,
       images,
       leadTimeDays: null,
-      deliveryType: selected.deliveryType,
-      suggestedRetailPriceInclVat,
+      deliveryType: lanes.deliveryType,
+      suggestedRetailPriceInclVat: lanes.suggestedRetailPriceInclVat,
+      standardBuyPrice: lanes.standardBuyPrice,
+      expressBuyPrice: lanes.expressBuyPrice,
+      standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
     });
   }
   return rows;
@@ -282,44 +274,40 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
   const images = pickImages(payload);
   const supplierSkuFallback =
     pickString(payload?.sku, payload?.model, payload?.slug, payload?.id) ?? `${STX_PREFIX}${productId}`;
-  const forceImport = isStxForceImportSlug(pickString(payload?.slug, payload?.url_key, payload?.urlKey));
+  const forceImport = allowsStxStandardImport(payload);
 
   for (const variant of variants) {
     const variantId = pickString(variant?.id);
     if (!variantId) continue;
 
-    const selected = selectStxOfferForImport(variant?.prices, { forceImport });
-    if (!selected) continue;
+    const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
+      forceImport,
+      slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey),
+    });
+    if (!lanes) continue;
 
     const gtinRaw = pickString(extractVariantGtin(variant));
     const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
     const supplierVariantId = `${STX_PREFIX}${variantId}`;
     const providerKey = gtin ? buildProviderKey(gtin, supplierVariantId) : null;
 
-    const stxBasePrice = Number(selected.price);
-    const shippingCHF = resolveStxShippingCHF(payload);
-    const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
-    const suggestedRetailPriceInclVat = suggestedRetailFromStxPayload({
-      stxBasePrice,
-      payload,
-      supplierProductName,
-      deliveryType: selected.deliveryType,
-    });
-
     rows.push({
       supplierVariantId,
       supplierSku: supplierSkuFallback,
       providerKey,
       gtin,
-      price: stxSellPrice,
-      stock: selected.asks,
+      price: lanes.price,
+      stock: lanes.stock,
       sizeRaw: pickSizeRawEuFirst(variant),
       supplierBrand,
       supplierProductName,
       images,
       leadTimeDays: null,
-      deliveryType: selected.deliveryType,
-      suggestedRetailPriceInclVat,
+      deliveryType: lanes.deliveryType,
+      suggestedRetailPriceInclVat: lanes.suggestedRetailPriceInclVat,
+      standardBuyPrice: lanes.standardBuyPrice,
+      expressBuyPrice: lanes.expressBuyPrice,
+      standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -397,7 +385,7 @@ export async function ingestStxFromRawPayload(
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
   const skipZeroStock =
     options?.skipZeroStock === true ||
-    isStxForceImportSlug(pickString(payload?.slug, payload?.url_key, payload?.urlKey));
+    allowsStxStandardImport(payload);
 
   for (const row of rows) {
     assertMappingIntegrity({
@@ -455,6 +443,28 @@ export async function ingestStxFromRawPayload(
   });
 
   const stockZeroed = stockZeroedMapped + stockZeroedPayload;
+
+  const gtins = rows.map((r) => r.gtin).filter((g): g is string => Boolean(g));
+  const pendingNoGtinSupplierIds = rows
+    .filter((r) => !r.gtin)
+    .map((r) => r.supplierVariantId)
+    .filter(Boolean);
+  if ((gtins.length > 0 || pendingNoGtinSupplierIds.length > 0) && (created > 0 || updated > 0)) {
+    try {
+      if (gtins.length > 0) {
+        await syncShopifyStxPricesForGtins(gtins);
+      }
+      if (pendingNoGtinSupplierIds.length > 0) {
+        await syncShopifyStxPricesForSupplierVariantIds(pendingNoGtinSupplierIds);
+      }
+    } catch (err) {
+      console.warn("[galaxus][ingest:stx-raw-payload] shopify price sync failed", {
+        kickdbProductId: cleanId,
+        err,
+      });
+    }
+  }
+
   const durationMs = Date.now() - startedAt;
   if (created > 0 || updated > 0 || stockZeroed > 0 || mappingRes.inserted > 0) {
     console.info("[galaxus][ingest:stx-raw-payload] done", {
@@ -560,39 +570,37 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
           const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
           if (!gtin) continue;
 
-          const forceImport = isStxForceImportSlug(
+          const forceImport = allowsStxStandardImport(
+            payload,
             pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
           );
-          const selected = selectStxOfferForImport(variant?.prices, { forceImport });
-          if (!selected) continue;
+          const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
+            forceImport,
+            slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey),
+          });
+          if (!lanes) continue;
 
           const supplierVariantId = `${STX_PREFIX}${variantId}`;
           const providerKey = buildProviderKey(gtin, supplierVariantId);
           if (!providerKey) continue;
 
-          const stxBasePrice = Number(selected.price);
-          const shippingCHF = resolveStxShippingCHF(payload);
-          const stxSellPrice = estimatedStockxBuyChfFromList(stxBasePrice, shippingCHF);
-          const suggestedRetailPriceInclVat = suggestedRetailFromStxPayload({
-            stxBasePrice,
-            payload,
-            supplierProductName,
-            deliveryType: selected.deliveryType,
-          });
           parsedRows.push({
             supplierVariantId,
             supplierSku: supplierSkuFallback,
             providerKey,
             gtin,
-            price: stxSellPrice,
-            stock: selected.asks, // raw express stock; export applies guardrail
+            price: lanes.price,
+            stock: lanes.stock,
             sizeRaw: pickSizeRawEuFirst(variant),
             supplierBrand,
             supplierProductName,
             images,
             leadTimeDays: null,
-            deliveryType: selected.deliveryType,
-            suggestedRetailPriceInclVat,
+            deliveryType: lanes.deliveryType,
+            suggestedRetailPriceInclVat: lanes.suggestedRetailPriceInclVat,
+            standardBuyPrice: lanes.standardBuyPrice,
+            expressBuyPrice: lanes.expressBuyPrice,
+            standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
           });
         }
       })
@@ -718,7 +726,8 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
         const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const skipZeroStock = isStxForceImportSlug(
+        const skipZeroStock = allowsStxStandardImport(
+          payload,
           pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
         );
         const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
@@ -849,7 +858,8 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
   const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
   const rows = remappedResult.rows;
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-  const skipZeroStock = isStxForceImportSlug(
+  const skipZeroStock = allowsStxStandardImport(
+    payload,
     pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey, slug)
   );
   const stockZeroed =
@@ -866,6 +876,16 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
       now,
       { updateGtinWhenProvided: false }
     );
+  }
+
+  const gtins = rows.map((r) => r.gtin).filter((g): g is string => Boolean(g));
+  if (gtins.length > 0) {
+    try {
+      const shopifySync = await syncShopifyStxPricesForGtins(gtins);
+      console.info("[galaxus][sync:stx-urlkey] shopify prices", { urlKey: slug, ...shopifySync });
+    } catch (err) {
+      console.warn("[galaxus][sync:stx-urlkey] shopify price sync failed", { urlKey: slug, err });
+    }
   }
 
   const durationMs = Date.now() - startedAt;
@@ -944,7 +964,8 @@ export async function refreshStxProductsByKickdbProductIds(
         const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const skipZeroStock = isStxForceImportSlug(
+        const skipZeroStock = allowsStxStandardImport(
+          payload,
           pickString(payload?.slug, payload?.url_key, payload?.urlKey, kickRow?.urlKey)
         );
         const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(

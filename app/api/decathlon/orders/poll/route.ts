@@ -4,7 +4,7 @@ import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
-import { extractGtinFromOfferSku, roundToCents } from "@/decathlon/returns/theRestockFromReturnLine";
+import { extractGtinFromOfferSku, roundToCents } from "@/decathlon/returns/restockFromReturnLine";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
 
 export const runtime = "nodejs";

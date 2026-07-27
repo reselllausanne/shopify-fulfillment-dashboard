@@ -1,0 +1,503 @@
+import { validateGtin } from "@/app/lib/normalize";
+import { extractReicheltWeightGrams } from "@/app/lib/reicheltPricing";
+
+const DEFAULT_UA =
+  process.env.SCRAPER_USER_AGENT ||
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+export const REICHELT_SITEMAP_INDEX_URL = "https://www.reichelt.com/ch/fr/sitemap.xml";
+export const REICHELT_PRODUCT_SITEMAP_PREFIX = "https://www.reichelt.com/sitemaps/products/products_";
+export const REICHELT_CATEGORY_SITEMAP_PREFIX = "https://www.reichelt.com/sitemaps/categories/category_";
+/** Category XHR lives on apex domain — `/ch/fr/api/...` 404s. */
+export const REICHELT_API_ORIGIN = "https://www.reichelt.com";
+
+export type ReicheltCategorySettings = {
+  count: number;
+  start: number;
+  offset: number;
+  categoryId: string;
+  sort: string;
+};
+
+export type ReicheltListItem = {
+  articleId: string;
+  name: string | null;
+  reicheltSku: string | null;
+  brand: string | null;
+  priceEur: number | null;
+  priceChf: number | null;
+  stockStatus: string | null;
+  stockText: string | null;
+  productUrl: string | null;
+  imageUrl: string | null;
+};
+
+export type ReicheltProduct = {
+  articleId: string;
+  reicheltSku: string;
+  gtin: string;
+  name: string;
+  brand: string | null;
+  manufacturerPartNo: string | null;
+  priceChf: number | null;
+  priceEur: number | null;
+  weightGrams: number | null;
+  stockStatus: string | null;
+  stockText: string | null;
+  inStock: boolean;
+  imageUrl: string | null;
+  breadcrumbs: string[];
+  productUrl: string;
+  descriptionHtml: string | null;
+};
+
+type CookieJar = Map<string, string>;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function jitterMs(max = 400) {
+  return Math.floor(Math.random() * max);
+}
+
+function parseMoney(value: unknown): number | null {
+  const raw = String(value ?? "").trim().replace(",", ".");
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
+}
+
+function absorbSetCookie(jar: CookieJar, header: string | null) {
+  if (!header) return;
+  for (const part of header.split(/,(?=\s*[^;]+=[^;]+)/)) {
+    const seg = part.split(";")[0]?.trim();
+    if (!seg || !seg.includes("=")) continue;
+    const eq = seg.indexOf("=");
+    const name = seg.slice(0, eq).trim();
+    const value = seg.slice(eq + 1).trim();
+    if (name) jar.set(name, value);
+  }
+}
+
+function cookieHeader(jar: CookieJar): string {
+  return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+export function reicheltConfig() {
+  return {
+    userAgent: DEFAULT_UA,
+    requestDelayMs: Math.max(
+      0,
+      Number(process.env.SCRAPER_REI_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 40)
+    ),
+    requestTimeoutMs: Math.max(5_000, Number(process.env.SCRAPER_REI_REQUEST_TIMEOUT_MS || 45_000)),
+    maxRetries: Math.max(1, Number(process.env.SCRAPER_REI_MAX_RETRIES || 5)),
+    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
+    productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 16)),
+  };
+}
+
+export function reicheltCategoryPageUrl(categoryUrl: string, page: number): string {
+  const pathname = new URL(categoryUrl).pathname;
+  const u = new URL(categoryUrl);
+  u.searchParams.set("q", pathname);
+  u.searchParams.set("PAGE", String(page));
+  return u.href;
+}
+
+/** `gate_driver-10497` → `gate driver` — cheap pre-filter before product HTML fetch. */
+export function extractReicheltCategorySlug(categoryUrl: string): string | null {
+  let decoded = String(categoryUrl);
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    /* keep raw */
+  }
+  const match = decoded.match(/\/(?:cat[eé]gorie|kategorie)\/([^/?#]+)/i);
+  if (!match) return null;
+  return match[1].replace(/-\d+$/, "").replace(/_/g, " ").trim() || null;
+}
+
+export function isRetryableReicheltError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("http 429") ||
+    msg.includes("http 451") ||
+    msg.includes("http 502") ||
+    msg.includes("http 503") ||
+    msg.includes("http 504") ||
+    msg.includes("timeout") ||
+    msg.includes("aborted") ||
+    msg.includes("econnreset") ||
+    msg.includes("fetch failed")
+  );
+}
+
+/** Prefer CHF from `(12.34 CHF)` on CH storefront; reject absurd CHF/EUR pairs. */
+export function parseReicheltChfPrice(html: string, priceEur: number | null = null): number | null {
+  const pick = (raw: string | undefined): number | null => {
+    const chf = parseMoney(raw);
+    if (!chf || priceEur == null) return chf;
+    if (chf > priceEur * 3) return null;
+    if (priceEur >= 100 && chf < priceEur * 0.05) return null;
+    if (priceEur >= 20 && chf < priceEur * 0.2) return null;
+    return chf;
+  };
+
+  const paren = html.match(/\(([\d.,]+)\s*CHF\)/i);
+  if (paren) {
+    const chf = pick(paren[1]);
+    if (chf) return chf;
+  }
+  const inline = html.match(/([\d.,]+)\s*CHF\b/i);
+  if (inline) {
+    const chf = pick(inline[1]);
+    if (chf) return chf;
+  }
+  return null;
+}
+
+export function parseReicheltStockStatus(html: string): { status: string | null; text: string | null; inStock: boolean } {
+  const status = html.match(/class="availability status_(\d+)/i)?.[1] ?? null;
+  const textMatch = html.match(/class="availability[^"]*"[^>]*>[\s\S]*?([^<]{5,160})/i);
+  const text = textMatch ? decodeHtml(textMatch[1].replace(/\s+/g, " ").trim()) : null;
+  const inStock = status ? ["1", "4", "6", "16", "100"].includes(status) : /en stock|ex stock|lieferbar|disponible|in stock/i.test(text ?? "");
+  return { status, text, inStock };
+}
+
+export function parseReicheltCategorySettings(html: string): ReicheltCategorySettings | null {
+  const match = html.match(/id="settings">\s*(\{[\s\S]*?\})\s*</i);
+  if (!match) return null;
+  try {
+    const raw = JSON.parse(match[1]) as Record<string, unknown>;
+    const categoryId = String(raw.categoryId ?? "").trim();
+    if (!categoryId) return null;
+    return {
+      count: Number(raw.count ?? 0),
+      start: Number.parseInt(String(raw.start ?? "0"), 10) || 0,
+      offset: Number.parseInt(String(raw.offset ?? "16"), 10) || 16,
+      categoryId,
+      sort: String(raw.sort ?? "null"),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function parseReicheltListHtml(html: string, baseUrl: string): ReicheltListItem[] {
+  const out: ReicheltListItem[] = [];
+  const seen = new Set<string>();
+  for (const block of html.match(/<div class="al_gallery_article[\s\S]*?(?=<div class="al_gallery_article|$)/gi) ?? []) {
+    const articleId = block.match(/produit\/[^"']+-(\d+)"/i)?.[1] ?? block.match(/product\/[^"']+-(\d+)"/i)?.[1];
+    if (!articleId || seen.has(articleId)) continue;
+    seen.add(articleId);
+    const name =
+      block.match(/itemprop="name"\s+content="([^"]+)"/i)?.[1] ??
+      block.match(/class="al_artname[^"]*"[^>]*>([^<]+)/i)?.[1] ??
+      null;
+    const reicheltSku = block.match(/num[eé]ro d'article:\s*([^<\n]+)/i)?.[1]?.trim() ?? null;
+    const brand = block.match(/itemprop="brand"\s+content="([^"]+)"/i)?.[1] ?? null;
+    const priceEur = parseMoney(block.match(/itemprop="price"[^>]*content="([^"]+)"/i)?.[1]);
+    const priceChf = parseReicheltChfPrice(block, priceEur);
+    const stock = parseReicheltStockStatus(block);
+    const rel = block.match(/href="([^"]*(?:produit|product)\/[^"]+-(\d+))"/i)?.[1] ?? null;
+    const productUrl = rel ? (rel.startsWith("http") ? rel : new URL(rel, baseUrl).href) : `${baseUrl}/shop/produit/-${articleId}`;
+    const imageUrl = decodeHtml(
+      block.match(/itemprop="image"[^>]*src="([^"]+)"/i)?.[1] ??
+        block.match(/src="(https:\/\/cdn-reichelt[^"]+)"/i)?.[1] ??
+        ""
+    ) || null;
+    out.push({
+      articleId,
+      name: name ? decodeHtml(name.trim()) : null,
+      reicheltSku,
+      brand: brand ? decodeHtml(brand.trim()) : null,
+      priceEur,
+      priceChf,
+      stockStatus: stock.status,
+      stockText: stock.text,
+      productUrl,
+      imageUrl,
+    });
+  }
+  if (out.length) return out;
+
+  for (const match of html.matchAll(/(?:produit|product)\/[^"']+-(\d+)"/gi)) {
+    const articleId = match[1];
+    if (seen.has(articleId)) continue;
+    seen.add(articleId);
+    out.push({
+      articleId,
+      name: null,
+      reicheltSku: null,
+      brand: null,
+      priceEur: null,
+      priceChf: null,
+      stockStatus: null,
+      stockText: null,
+      productUrl: `${baseUrl}/shop/produit/-${articleId}`,
+      imageUrl: null,
+    });
+  }
+  return out;
+}
+
+export function parseReicheltProductHtml(html: string, articleId: string, baseUrl: string): ReicheltProduct | null {
+  const gtinRaw = html.match(/itemprop="gtin13">([^<]+)</i)?.[1]?.trim();
+  if (!gtinRaw || !validateGtin(gtinRaw)) return null;
+
+  const reicheltSku = html.match(/itemprop="sku"><b>([^<]+)</i)?.[1]?.trim();
+  if (!reicheltSku) return null;
+
+  const name =
+    html.match(/itemprop="name"\s+content="([^"]+)"/i)?.[1] ??
+    html.match(/<title>\s*([^|<]+)/i)?.[1] ??
+    reicheltSku;
+  const brand = html.match(/itemprop="brand">([^<]+)</i)?.[1]?.trim() ?? null;
+  const manufacturerPartNo =
+    html.match(/Man\.\s*part no\.:[\s\S]{0,80}?<[^>]+>\s*([^<]+)/i)?.[1]?.trim() ??
+    html.match(/R[eé]f[\s\S]{0,40}?fabricant[\s\S]{0,80}?<[^>]+>\s*([^<]+)/i)?.[1]?.trim() ??
+    null;
+  const priceEur = parseMoney(html.match(/itemprop="price"[^>]*content="([^"]+)"/i)?.[1]);
+  const priceChf = parseReicheltChfPrice(html, priceEur);
+  const weightGrams = extractReicheltWeightGrams(html);
+
+  const stock = parseReicheltStockStatus(html);
+  const canonical = html.match(/rel="canonical"\s+href="([^"]+)"/i)?.[1];
+  const productUrl = canonical ?? `${baseUrl}/shop/produit/-${articleId}`;
+  const imageUrl = decodeHtml(
+    html.match(/itemprop="image"[^>]*src="([^"]+)"/i)?.[1] ??
+      html.match(/itemprop="image"[^>]*content="([^"]+)"/i)?.[1] ??
+      ""
+  ) || null;
+  const breadcrumbs = [
+    ...(html.match(/class="breadcrumb"[\s\S]*?<\/ul>/i)?.[0]?.matchAll(/<a[^>]*>([^<]+)</gi) ?? []),
+  ]
+    .map((m) => decodeHtml(m[1].replace(/\s+/g, " ").trim()))
+    .filter((b) => b && !/^vous êtes ici|^you are here|^home$|^page d'accueil$/i.test(b));
+  const descriptionHtml = html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/div>/i)?.[1]?.trim() ?? null;
+
+  return {
+    articleId,
+    reicheltSku,
+    gtin: gtinRaw,
+    name: decodeHtml(name.trim()),
+    brand: brand ? decodeHtml(brand) : null,
+    manufacturerPartNo: manufacturerPartNo ? decodeHtml(manufacturerPartNo) : null,
+    priceChf,
+    priceEur,
+    weightGrams,
+    stockStatus: stock.status,
+    stockText: stock.text,
+    inStock: stock.inStock,
+    imageUrl,
+    breadcrumbs,
+    productUrl,
+    descriptionHtml,
+  };
+}
+
+export function extractReicheltArticleIdFromUrl(url: string): string | null {
+  const match = String(url).match(/-(\d+)(?:\?|#|$)/);
+  return match?.[1] ?? null;
+}
+
+export function toReicheltChFrCategoryUrl(sitemapUrl: string): string | null {
+  const match = String(sitemapUrl).match(/\/shop\/(?:kategorie|cat[eé]gorie)\/([^/?#]+)$/i);
+  if (!match) return null;
+  return `https://www.reichelt.com/ch/fr/shop/cat%C3%A9gorie/${match[1]}`;
+}
+
+/** Sitemap uses /de/en/shop/product/… — rewrite to CH/FR slug URL for CHF + bot tolerance. */
+export function toReicheltChFrProductUrl(sitemapUrl: string): string | null {
+  const match = String(sitemapUrl).match(/\/shop\/(?:product|produit)\/([^/?#]+)$/i);
+  if (!match) return null;
+  return `https://www.reichelt.com/ch/fr/shop/produit/${match[1]}`;
+}
+
+export class ReicheltClient {
+  private jar: CookieJar = new Map();
+  private xsrf: string | null = null;
+
+  constructor(private readonly baseUrl: string) {}
+
+  private async fetchOnce(url: string, init: RequestInit = {}): Promise<Response> {
+    const cfg = reicheltConfig();
+    const headers = new Headers(init.headers);
+    headers.set("User-Agent", cfg.userAgent);
+    headers.set("Accept-Language", "fr-CH,fr;q=0.9,de;q=0.8,en;q=0.7");
+    headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+    headers.set("Referer", `${this.baseUrl}/`);
+    const cookie = cookieHeader(this.jar);
+    if (cookie) headers.set("Cookie", cookie);
+    if (this.xsrf) headers.set("X-CSRF-TOKEN", this.xsrf);
+    const res = await fetch(url, {
+      ...init,
+      headers,
+      signal: AbortSignal.timeout(cfg.requestTimeoutMs),
+      redirect: "follow",
+    });
+    absorbSetCookie(this.jar, res.headers.get("set-cookie"));
+    const xsrf = this.jar.get("XSRF-TOKEN");
+    if (xsrf) {
+      try {
+        this.xsrf = decodeURIComponent(xsrf);
+      } catch {
+        this.xsrf = xsrf;
+      }
+    }
+    return res;
+  }
+
+  async fetchText(url: string, init: RequestInit = {}): Promise<string> {
+    const cfg = reicheltConfig();
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < cfg.maxRetries; attempt++) {
+      try {
+        const res = await this.fetchOnce(url, init);
+        if (!res.ok) throw new Error(`Reichelt HTTP ${res.status} ${url}`);
+        const text = await res.text();
+        if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs + jitterMs(250));
+        return text;
+      } catch (err) {
+        lastErr = err;
+        if (!isRetryableReicheltError(err) || attempt >= cfg.maxRetries - 1) break;
+        await sleep(cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(500));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  async fetchCategory(categoryUrl: string, page = 0): Promise<{ html: string; settings: ReicheltCategorySettings | null; items: ReicheltListItem[] }> {
+    const html = await this.fetchText(reicheltCategoryPageUrl(categoryUrl, page));
+    const settings = parseReicheltCategorySettings(html);
+    const items = parseReicheltListHtml(html, this.baseUrl);
+    return { html, settings, items };
+  }
+
+  /** Reliable pagination: `?q={pathname}&PAGE=N` (16 products/page). XHR API is flaky server-side. */
+  async *iterCategoryProductPages(categoryUrl: string): AsyncGenerator<ReicheltListItem[]> {
+    const first = await this.fetchCategory(categoryUrl, 0);
+    if (first.items.length) yield first.items;
+    const total = first.settings?.count ?? first.items.length;
+    const pageSize = first.settings?.offset ?? 16;
+    if (total <= first.items.length) return;
+    const pages = Math.ceil(total / pageSize);
+    for (let page = 1; page < pages; page++) {
+      const { items } = await this.fetchCategory(categoryUrl, page);
+      if (!items.length) break;
+      yield items;
+    }
+  }
+
+  async fetchCategoryProductsPage(settings: ReicheltCategorySettings, start: number, referer: string): Promise<ReicheltListItem[]> {
+    const sort = encodeURIComponent(settings.sort);
+    const url = `${REICHELT_API_ORIGIN}/api/category/getProducts/${settings.categoryId}/${start}/${settings.offset}/*/0/2000000/filter/null/null/0/0/0/${sort}`;
+    const html = await this.fetchText(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Referer: referer,
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: JSON.stringify({ filter: [] }),
+    });
+    try {
+      const json = JSON.parse(html) as { html?: string };
+      return parseReicheltListHtml(json.html ?? "", this.baseUrl);
+    } catch {
+      return [];
+    }
+  }
+
+  async fetchProductByArticleId(articleId: string, productUrl?: string | null): Promise<ReicheltProduct | null> {
+    const url =
+      productUrl && productUrl.includes(String(articleId))
+        ? productUrl
+        : `${this.baseUrl}/shop/produit/-${articleId}`;
+    const html = await this.fetchText(url);
+    return parseReicheltProductHtml(html, articleId, this.baseUrl);
+  }
+
+  /** Map articleId → canonical sitemap product URL (slugged; short `/-id` often 451/503). */
+  collectArticleTargetsFromProductUrls(urls: string[]): Array<{ articleId: string; productUrl: string }> {
+    const out: Array<{ articleId: string; productUrl: string }> = [];
+    const seen = new Set<string>();
+    for (const url of urls) {
+      const articleId = extractReicheltArticleIdFromUrl(url);
+      if (!articleId || seen.has(articleId)) continue;
+      seen.add(articleId);
+      out.push({ articleId, productUrl: toReicheltChFrProductUrl(url) ?? url });
+    }
+    return out;
+  }
+
+  async *iterProductSitemapShards(): AsyncGenerator<{ shard: number; urls: string[] }> {
+    const cfg = reicheltConfig();
+    const startShard = Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_START_SHARD || 0));
+    const indexXml = await this.fetchText(REICHELT_SITEMAP_INDEX_URL);
+    const shards = [...indexXml.matchAll(/products_(\d+)\.xml/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+    for (const shard of shards) {
+      if (shard < startShard) continue;
+      let xml: string | null = null;
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < cfg.maxRetries; attempt++) {
+        try {
+          xml = await this.fetchText(`${REICHELT_PRODUCT_SITEMAP_PREFIX}${shard}.xml`);
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (!isRetryableReicheltError(err) || attempt >= cfg.maxRetries - 1) break;
+          await sleep(cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(800));
+        }
+      }
+      if (!xml) {
+        console.warn(
+          `[SCRAPER] rei sitemap shard ${shard} skipped:`,
+          (lastErr as Error)?.message || lastErr
+        );
+        continue;
+      }
+      const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim());
+      yield { shard, urls };
+    }
+  }
+
+  async *iterCategorySitemapUrls(): AsyncGenerator<string> {
+    for (let i = 0; i < 32; i++) {
+      try {
+        const xml = await this.fetchText(`${REICHELT_CATEGORY_SITEMAP_PREFIX}${i}.xml`);
+        for (const match of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) {
+          const ch = toReicheltChFrCategoryUrl(match[1]);
+          if (ch) yield ch;
+        }
+      } catch {
+        break;
+      }
+    }
+  }
+
+  collectArticleIdsFromProductUrls(urls: string[]): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const url of urls) {
+      const id = extractReicheltArticleIdFromUrl(url);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+    }
+    return out;
+  }
+}

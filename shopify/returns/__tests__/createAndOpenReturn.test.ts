@@ -102,6 +102,7 @@ function setupHappyPathGraphqlMocks() {
     }
     if (query.includes("mutation ReturnRequestCreate")) {
       expect(variables.input.returnLineItems[0].returnReason).toBe("SIZE_TOO_SMALL");
+      expect(variables.input.returnLineItems[0].restockingFee).toEqual({ percentage: 10 });
       return {
         data: {
           returnRequest: {
@@ -137,6 +138,40 @@ function setupHappyPathGraphqlMocks() {
               },
             },
             userErrors: [],
+          },
+        },
+      };
+    }
+    if (query.includes("query ReturnLineItemsForReceipt")) {
+      return {
+        data: {
+          return: {
+            returnLineItems: {
+              edges: [
+                {
+                  node: {
+                    __typename: "ReturnLineItem",
+                    id: "gid://shopify/ReturnLineItem/1",
+                    quantity: 1,
+                    restockingFee: {
+                      percentage: 10,
+                      amountSet: {
+                        shopMoney: { amount: "10.00", currencyCode: "CHF" },
+                      },
+                    },
+                    fulfillmentLineItem: {
+                      lineItem: {
+                        title: "Nike Dunk",
+                        sku: "SKU-1",
+                        originalUnitPriceSet: {
+                          shopMoney: { amount: "100.00", currencyCode: "CHF" },
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
           },
         },
       };
@@ -335,6 +370,9 @@ describe("createAndOpenReturnFromFormData", () => {
       String(call[0]).includes("mutation ReturnRequestCreate")
     );
     expect(returnRequestCall?.[1]?.input?.returnLineItems?.[0]?.quantity).toBe(1);
+    expect(returnRequestCall?.[1]?.input?.returnLineItems?.[0]?.restockingFee).toEqual({
+      percentage: 10,
+    });
 
     const upsertPayload = prismaMock.marketplaceReturn.upsert.mock.calls[0][0];
     expect(upsertPayload.create.returnAmount).toBe(100);

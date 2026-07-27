@@ -877,7 +877,7 @@ export async function POST(
                 if (origin) {
                   await requestFeedPush({
                     origin,
-                    scope: "full",
+                    scope: "stock-price",
                     triggerSource: "decathlon-partner-ship-reconciled",
                     runNow: true,
                   });
@@ -1139,7 +1139,7 @@ export async function POST(
         if (origin) {
           await requestFeedPush({
             origin,
-            scope: "full",
+            scope: "stock-price",
             triggerSource: "decathlon-partner-ship",
             runNow: true,
           });

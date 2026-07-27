@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { STX_SUPPLIER_VARIANT_WHERE } from "@/galaxus/supplier/supplierKeyGuards";
 
 /**
  * Shared ChannelListingState (channel=SHOPIFY) helpers for the restock flow.
@@ -6,16 +7,15 @@ import { prisma } from "@/app/lib/prisma";
  * These rows let the sold-check cron know which Shopify variants hold physical
  * "in-hand" stock at Bussigny so it can detect sales and delist everywhere.
  *
- * providerKey resolution: real SupplierVariant.providerKey when the GTIN maps
- * to one, otherwise a synthetic `SHOPIFY_HAND_{gtin}` (nothing to delist on
- * marketplaces in that case — there is no SupplierVariant).
+ * providerKey resolution: stx_ SupplierVariant.providerKey when the GTIN maps
+ * to one; never NER/partner rows. Otherwise synthetic `SHOPIFY_HAND_{gtin}`.
  */
 
 export function syntheticHandProviderKey(gtin: string): string {
   return `SHOPIFY_HAND_${String(gtin).replace(/\D/g, "")}`;
 }
 
-/** Best providerKey for a scanned GTIN: real SupplierVariant first, else synthetic. */
+/** Best providerKey for a scanned GTIN: stx_ SupplierVariant only, else synthetic. */
 export async function resolveProviderKeyForGtin(gtin: string): Promise<{
   providerKey: string;
   supplierVariantId: string | null;
@@ -25,7 +25,7 @@ export async function resolveProviderKeyForGtin(gtin: string): Promise<{
   const prismaAny = prisma as any;
   if (clean) {
     const row = await prismaAny.supplierVariant.findFirst({
-      where: { gtin: clean },
+      where: { gtin: clean, ...STX_SUPPLIER_VARIANT_WHERE },
       select: { providerKey: true, supplierVariantId: true },
       orderBy: { updatedAt: "desc" },
     });

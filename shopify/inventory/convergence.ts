@@ -3,26 +3,25 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { loadPhysicalMirrorStockByGtin } from "@/shopify/inventory/physicalAvailability";
 import {
   findShopifyVariantByGtin,
+  getShopifyVariantDetail,
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
 import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
+import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 
 /**
  * Phase 4 — convergence engine.
  *
- * Liquidation pricing applies ONLY when stock sits at the Bussigny warehouse
- * (manual warehouse / soldes lane). Other physical locations (Antica, Bienne,
- * store transfers) do not trigger automatic price changes — merchant sets those.
+ * Liquidation pricing on Shopify:
+ *   - Bussigny physical qty > 0 with an existing manualLock → warehouse soldes scan
+ *   - Chemin (online) is the StockX dropship pool, not owned stock → never liquidation
  *
- *   Bussigny qty > 0  → liquidation state
- *                       Shopify: compareAt = normal sell, price = cost − 30%,
- *                       custom.price_locked = true
- *                       DB: manualLock + manualPrice
+ * After a paid web sale, post-sale passes forceDropship — always unlock + market price.
  *
- *   Bussigny qty = 0  → dropship state (even if other physical locations hold stock)
- *                       unlock + revert liquidation display on Shopify
- *
- * delivery_48h / soldes_48h metafields still follow Bussigny qty (unchanged).
+ * delivery_48h / soldes_48h metafields are coupled to a REAL liquidation lock
+ * (manualLock + Bussigny qty), never to quantity alone: a pair whose price was
+ * not actually changed must not appear in the soldes collection. Bussigny=0
+ * still clears both flags.
  */
 
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
@@ -32,6 +31,7 @@ import {
   BUSSIGNY_LOCATION_ID,
 } from "@/shopify/restock/bussignyDeliveryMetafield";
 import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
+import { ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -82,20 +82,39 @@ async function getBussignyQtyForGtin(gtin: string): Promise<number> {
   return Number(rows[0]?.available ?? 0);
 }
 
+/** Home / Chemin soldes lane (where web "sold from home" stock lives). */
+async function getHomeQtyForGtin(gtin: string): Promise<number> {
+  const homeId = ONLINE_LOCATION?.id;
+  if (!homeId) return 0;
+  const rows = await prisma.$queryRaw<Array<{ available: number }>>`
+    SELECT COALESCE(SUM(s."available"), 0)::int AS available
+    FROM "public"."ShopifyVariantLocationStock" s
+    WHERE s."gtin" = ${gtin}
+      AND s."locationId" = ${homeId}
+      AND s."available" > 0
+  `;
+  return Number(rows[0]?.available ?? 0);
+}
+
 async function syncBussignyDelivery48h(
   shopifyVariant: ShopifyVariantDetail | null,
   gtin: string,
+  liquidationLockActive: boolean,
   changes: string[],
   warnings: string[]
 ): Promise<void> {
   if (!shopifyVariant?.variantId) return;
   try {
     const bussignyQty = await getBussignyQtyForGtin(gtin);
-    const want48h = bussignyQty > 0;
+    // Flag only when the liquidation lock is real: qty alone must not mark a
+    // pair as 48h/soldes when its price was never actually changed.
+    const want48h = bussignyQty > 0 && liquidationLockActive;
     const has48h = await readShopifyDelivery48h(shopifyVariant.variantId);
     if (has48h !== want48h) {
       await writeShopifyDelivery48h(shopifyVariant.variantId, want48h);
-      changes.push(`Shopify delivery_48h=${want48h ? "true" : "false"} (Bussigny qty=${bussignyQty})`);
+      changes.push(
+        `Shopify delivery_48h=${want48h ? "true" : "false"} (Bussigny qty=${bussignyQty}, liquidation=${liquidationLockActive ? "locked" : "none"})`
+      );
     }
   } catch (err: any) {
     warnings.push(`Shopify delivery_48h failed: ${err?.message ?? err}`);
@@ -159,13 +178,22 @@ export type ConvergeVariantResult = {
   gtin: string;
   /** Total physical qty across all warehouse locations (mirror). */
   physicalQty: number;
-  /** Bussigny-only qty — sole driver for liquidation pricing. */
+  /** Bussigny-only qty — drives delivery_48h. */
   bussignyQty: number;
+  /** Chemin / home qty — drives soldes pricing on web. */
+  homeQty: number;
   desired: "liquidation" | "dropship";
   changed: boolean;
   changes: string[];
   warnings: string[];
   error?: string;
+};
+
+export type ConvergeVariantOptions = {
+  /** Paid web sale just consumed home/physical stock — never re-apply liquidation. */
+  forceDropship?: boolean;
+  /** Exact sold Shopify variant id; bypasses ambiguous GTIN lookup. */
+  preferredVariantId?: string | null;
 };
 
 /**
@@ -176,7 +204,10 @@ export type ConvergeVariantResult = {
  *    lock/unlock in the DB). Those flow through the mirror-only resolver path
  *    for qty; price is whatever Shopify has.
  */
-export async function convergeVariant(gtin: string): Promise<ConvergeVariantResult> {
+export async function convergeVariant(
+  gtin: string,
+  options: ConvergeVariantOptions = {}
+): Promise<ConvergeVariantResult> {
   const changes: string[] = [];
   const warnings: string[] = [];
   const cleanGtin = String(gtin ?? "").trim();
@@ -185,6 +216,7 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
       gtin: "",
       physicalQty: 0,
       bussignyQty: 0,
+      homeQty: 0,
       desired: "dropship",
       changed: false,
       changes: [],
@@ -197,7 +229,7 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
   const physical = physicalMap.get(cleanGtin);
   const physicalQty = physical?.qty ?? 0;
   const bussignyQty = await getBussignyQtyForGtin(cleanGtin);
-  const desired: "liquidation" | "dropship" = bussignyQty > 0 ? "liquidation" : "dropship";
+  const homeQty = await getHomeQtyForGtin(cleanGtin);
 
   const stxRow = await prisma.supplierVariant.findFirst({
     where: {
@@ -215,16 +247,39 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
   });
 
   let shopifyVariant: ShopifyVariantDetail | null = null;
+  const preferredVariantId = String(options.preferredVariantId ?? "").trim();
   try {
-    const { match, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
-    if (ambiguous) warnings.push("multiple Shopify variants share this GTIN — using first match");
-    shopifyVariant = match;
+    if (preferredVariantId) {
+      shopifyVariant = await getShopifyVariantDetail(preferredVariantId);
+      if (!shopifyVariant) {
+        warnings.push(`preferred variant not found: ${preferredVariantId}`);
+      }
+    } else {
+      const { match, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
+      if (ambiguous) warnings.push("multiple Shopify variants share this GTIN — using first match");
+      shopifyVariant = match;
+    }
   } catch (err: any) {
     warnings.push(`Shopify variant lookup failed: ${err?.message ?? err}`);
   }
 
+  const isEssentials = isEssentialsShopifyVariant(shopifyVariant);
+  // Chemin (ONLINE_LOCATION) is the StockX dropship pool: every listed size sits there
+  // at qty 1. It is NOT owned stock, so it must never trigger liquidation — doing so
+  // marked pairs we do not own down to soldes prices. Only real physical warehouse qty
+  // (Bussigny) with an existing scan lock keeps a variant in liquidation.
+  const desired: "liquidation" | "dropship" = options.forceDropship
+    ? "dropship"
+    : !isEssentials && bussignyQty > 0 && Boolean(stxRow?.manualLock)
+      ? "liquidation"
+      : "dropship";
+
+  if (isEssentials && bussignyQty > 0) {
+    warnings.push("Essentials product — liquidation skipped (Bussigny stock kept at manual price)");
+  }
+
   if (!stxRow && !shopifyVariant) {
-    return { gtin: cleanGtin, physicalQty, bussignyQty, desired, changed: false, changes, warnings };
+    return { gtin: cleanGtin, physicalQty, bussignyQty, homeQty, desired, changed: false, changes, warnings };
   }
 
   const pricing = await resolvePhysicalRestockPricing(cleanGtin);
@@ -257,7 +312,7 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
               manualPrice: liqPrice,
               manualStock: null,
               manualUpdatedAt: new Date(),
-              manualNote: `phase4:liquidation bussigny=${bussignyQty}`,
+              manualNote: `phase4:liquidation home=${homeQty} bussigny=${bussignyQty}`,
             },
           });
           changes.push(`DB manualLock=true, manualPrice=${liqPrice!.toFixed(2)}`);
@@ -334,9 +389,17 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
           liqPrice != null &&
           currentPrice != null &&
           Math.abs(currentPrice - liqPrice) <= 0.01;
+        const staleCompareAtAfterSale =
+          Boolean(options.forceDropship) &&
+          currentCompareAt != null &&
+          currentCompareAt > 0;
 
         const needsPriceRevert =
-          hadDbLiquidation || isLocked || looksLikeLiquidation || matchesLiquidationPrice;
+          hadDbLiquidation ||
+          isLocked ||
+          looksLikeLiquidation ||
+          matchesLiquidationPrice ||
+          staleCompareAtAfterSale;
 
         if (isLocked) {
           await writeShopifyPriceLocked(shopifyVariant.variantId, false);
@@ -367,6 +430,20 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
             warnings.push(`createProductFullFlow failed: ${refresh.error ?? "unknown"}`);
           } else {
             changes.push("Shopify unlocked + product refreshed via main.py");
+            // Some legacy products keep a stale compareAt after main.py update.
+            // Ensure dropship state never leaves a sale compareAt marker behind.
+            const refreshed = await getShopifyVariantDetail(shopifyVariant.variantId);
+            const refreshedPrice = toNumber(refreshed?.price);
+            const refreshedCompareAt = toNumber(refreshed?.compareAtPrice);
+            if (refreshedPrice != null && refreshedCompareAt != null && refreshedCompareAt > 0) {
+              await writeShopifyVariantPrice({
+                productId: shopifyVariant.productId,
+                variantId: shopifyVariant.variantId,
+                price: refreshedPrice,
+                compareAtPrice: null,
+              });
+              changes.push("Shopify compareAt cleared after main.py refresh");
+            }
           }
         }
       } catch (err: any) {
@@ -375,13 +452,17 @@ export async function convergeVariant(gtin: string): Promise<ConvergeVariantResu
     }
   }
 
-  await syncBussignyDelivery48h(shopifyVariant, cleanGtin, changes, warnings);
+  // Liquidation state is real only when the DB manual lock backs it (desired
+  // already requires Bussigny qty > 0 + manualLock). Dropship always clears.
+  const liquidationLockActive = desired === "liquidation";
+  await syncBussignyDelivery48h(shopifyVariant, cleanGtin, liquidationLockActive, changes, warnings);
   await syncSoldes48hProductMetafield(shopifyVariant?.productId, changes, warnings);
 
   return {
     gtin: cleanGtin,
     physicalQty,
     bussignyQty,
+    homeQty,
     desired,
     changed: changes.length > 0,
     changes,
@@ -400,7 +481,7 @@ export type ConvergeAllResult = {
 
 /**
  * Batch convergence run:
- *  - liquidation candidates: GTINs with Bussigny warehouse stock > 0
+ *  - liquidation candidates: Bussigny physical qty > 0 (Chemin = dropship pool, never a candidate)
  *  - dropship candidates   : STX rows still locked, or recent Bussigny→0 transitions
  *
  * `sample` returns the first N results with a change; useful for cron audit.
@@ -412,10 +493,10 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
   const liqRows = await prisma.$queryRaw<Array<{ gtin: string }>>`
     SELECT DISTINCT s."gtin"
     FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."sourceType" = 'physical'
+    WHERE s."gtin" IS NOT NULL
+      AND s."available" > 0
+      AND s."sourceType" = 'physical'
       AND s."locationId" = ${BUSSIGNY_LOCATION_ID}
-      AND s."available"  > 0
-      AND s."gtin" IS NOT NULL
   `;
   const liqGtins = new Set(liqRows.map((r) => r.gtin));
 
@@ -465,6 +546,7 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
           gtin,
           physicalQty: 0,
           bussignyQty: 0,
+          homeQty: 0,
           desired: "dropship",
           changed: false,
           changes: [],

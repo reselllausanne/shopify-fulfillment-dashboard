@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { runOpsTick } from "@/galaxus/ops/tick";
-import { startFeedPushAsync } from "@/galaxus/ops/feedPipeline";
+import {
+  countPendingFeedPushTriggers,
+  drainFeedPushQueue,
+  getActiveFeedRun,
+  reconcileStaleFeedRuns,
+  reconcileStaleFeedTriggers,
+  startFeedPushAsync,
+} from "@/galaxus/ops/feedPipeline";
 import { startImageSyncFullAsync } from "@/galaxus/ops/imageSyncPush";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import { syncShopifyCatalog } from "@/shopify/catalog/sync";
@@ -25,12 +32,33 @@ export async function POST(request: Request) {
       stxMode?: string;
       imageMode?: string;
       partnerKey?: string;
+      staleMinutes?: number;
     };
     const action = String(body?.action ?? "").trim().toLowerCase();
     const partnerKey = String(body?.partnerKey ?? "").trim();
 
     if (!action) {
       return NextResponse.json({ ok: false, error: "Missing action" }, { status: 400 });
+    }
+
+    // Cron-safe: reap zombie runs and start the oldest pending push. Keeps post-sale
+    // price files flowing within minutes instead of waiting for the nightly full-flow.
+    if (action === "drain-queue") {
+      const staleMinutes = Number(body?.staleMinutes);
+      if (Number.isFinite(staleMinutes) && staleMinutes > 0) {
+        await reconcileStaleFeedRuns(staleMinutes * 60 * 1000);
+      }
+      await reconcileStaleFeedTriggers();
+      const before = await countPendingFeedPushTriggers();
+      const drained = await drainFeedPushQueue(origin);
+      const active = await getActiveFeedRun();
+      return NextResponse.json({
+        ok: true,
+        pendingBefore: before,
+        pendingAfter: await countPendingFeedPushTriggers(),
+        drained,
+        activeRunId: active?.runId ?? null,
+      });
     }
 
     if (action === "tick") {
@@ -121,11 +149,18 @@ export async function POST(request: Request) {
       if (!started.ok) {
         return NextResponse.json(
           { ok: false, error: started.error ?? "Feed push rejected", runId: started.runId ?? null },
-          { status: started.status ?? 409 }
+          { status: started.status ?? 500 }
         );
       }
       return NextResponse.json(
-        { ok: true, accepted: true, runId: started.runId, scope: pushScope },
+        {
+          ok: true,
+          accepted: Boolean(started.accepted),
+          queued: Boolean(started.queued),
+          runId: started.runId,
+          triggerId: started.triggerId ?? null,
+          scope: pushScope,
+        },
         { status: 202 }
       );
     }

@@ -1030,6 +1030,12 @@ model SupplierVariant {
   deliveryType                String?
   /// Galaxus `SuggestedRetailPriceInclVat_CHF` — recomputed whenever STX price sync runs.
   suggestedRetailPriceInclVat Decimal?  @db.Decimal(10, 2)
+  /// StockX standard-lane estimated buy (CHF). Used for Shopify normal price + LEGO non-express feed.
+  standardBuyPrice            Decimal?  @db.Decimal(10, 2)
+  /// StockX express-lane estimated buy (CHF). Used for Shopify express metafield.
+  expressBuyPrice             Decimal?  @db.Decimal(10, 2)
+  /// Suggested retail for standard lane (Galaxus SRP when only standard is listed).
+  standardSuggestedRetailPriceInclVat Decimal? @db.Decimal(10, 2)
   lastSyncAt                  DateTime?
   createdAt                   DateTime  @default(now())
   updatedAt                   DateTime  @updatedAt
@@ -1123,6 +1129,32 @@ model OrderLineSyncState {
   @@unique([channel, externalLineId])
   @@index([supplierVariantId, channel])
   @@index([externalOrderId])
+  @@schema("public")
+}
+
+/// One row per paid Shopify order line already put through the post-sale flow
+/// (decrement + price convergence). The 5-min recent-paid cron re-scans a 20 min
+/// window, so without this marker the same lines were re-converged every run —
+/// each cycle re-ran main.py and the run kept growing until it hit the 120s
+/// cron timeout and no sale was converged at all.
+model ShopifyPaidLineState {
+  id          String   @id @default(uuid())
+  orderId     String
+  lineItemId  String
+  gtin        String?
+  variantId   String?
+  quantity    Int      @default(1)
+  ok          Boolean  @default(false)
+  attempts    Int      @default(0)
+  lastError   String?
+  firstSeenAt DateTime @default(now())
+  processedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([orderId, lineItemId])
+  @@index([processedAt])
+  @@index([gtin])
   @@schema("public")
 }
 

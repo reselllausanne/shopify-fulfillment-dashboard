@@ -1,6 +1,13 @@
 import { findVariantBySku } from "@/shopify/catalog/graphql";
+import { LOCATIONS } from "@/shopify/inventory/locationConfig";
 import { getShopifyVariantDetail } from "@/shopify/restock/shopifyRestockInventory";
 import { applyScanRestock } from "@/shopify/restock/scanRestockOrchestrator";
+
+/** Customer returns always land in Warehouse Bussigny (priority 1 physical). */
+const BUSSIGNY_LOCATION_ID =
+  LOCATIONS.find((l) => l.sourceType === "physical" && /bussigny/i.test(l.name))?.id ??
+  LOCATIONS.find((l) => l.sourceType === "physical")?.id ??
+  null;
 
 /**
  * Phase 4 — restock a received Shopify customer return.
@@ -73,18 +80,34 @@ export async function restockShopifyReturnOnReceipt(input: {
       // giving a reliable identifier for the THE_ DB export import (the size-
       // suffixed variant SKU does not resolve on KickDB).
       const identifier = detail?.productHandle?.trim() || sku;
+      if (!BUSSIGNY_LOCATION_ID) {
+        results.push({
+          sku,
+          quantity,
+          gtin,
+          status: "error",
+          detail: "Bussigny locationId missing from locationConfig",
+        });
+        continue;
+      }
       const applied = await applyScanRestock({
         gtin,
         quantity,
         identifier,
+        locationId: BUSSIGNY_LOCATION_ID,
         dryRun: input.dryRun ?? false,
       });
+      // Surface warnings even on success: "No StockX pricing" / "no stx row"
+      // must be visible in the staff audit trail, not swallowed.
+      const warningDetail = applied.warnings.filter(Boolean).join("; ");
       results.push({
         sku,
         quantity,
         gtin,
         status: applied.ok ? "restocked" : "error",
-        detail: applied.ok ? undefined : applied.error ?? applied.warnings.join("; "),
+        detail: applied.ok
+          ? warningDetail || undefined
+          : applied.error ?? warningDetail,
       });
     } catch (error: any) {
       results.push({

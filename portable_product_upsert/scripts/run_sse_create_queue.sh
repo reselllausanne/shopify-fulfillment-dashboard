@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Daily Shopify create queue from the SSE buffer.
+# Shopify create queue from the SSE DB buffer.
 #
-# One-step drain: consumer takes every KickDBProduct with no ShopifySyncState
-# row yet (freshest SSE refresh first) and creates it on Shopify, capped at
-# 900 variant creations/day (100/day reserved for new variants on existing
-# products via the update path).
-#
-# ShopifySyncState is created only on successful push (see mark_synced in
-# main_from_db.py), so repeated runs never double-push the same product and
-# create_candidate flag hygiene is not required.
+# Safe to cron often (hourly). flock skips overlap. No local create counter —
+# main_from_db.py probes Shopify and stops only when Shopify returns the
+# daily variant-create limit (cooldown marker then makes later ticks no-op
+# until the wait expires).
 set -u
 ROOT="/opt/shopify-automation"
 LOCK="/tmp/sse_create_queue.lock"
@@ -24,7 +20,6 @@ flock -n 9 || exit 0
 cd "${ROOT}"
 {
   echo "=== $(date -Is) create queue run ==="
-  "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked \
-    --limit 500 --max-create-variants 900
+  "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked --limit 500
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1

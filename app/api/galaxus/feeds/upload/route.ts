@@ -64,6 +64,53 @@ function extractSupplierKeysFromCsv(csv: string): string[] {
   return Array.from(suppliers.values()).sort();
 }
 
+/** Provider keys present in a CSV (first column, header stripped). */
+function collectProviderKeysFromCsv(csv: string): Set<string> {
+  const out = new Set<string>();
+  if (!csv) return out;
+  const lines = csv.split(/\r?\n/);
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line || !line.trim()) continue;
+    const first = line.split(",")[0] ?? "";
+    const key = first.replace(/^"|"$/g, "").trim();
+    if (key) out.add(key);
+  }
+  return out;
+}
+
+/** Drop rows whose ProviderKey is not in `keep` (header preserved). */
+function keepCsvRowsByProviderKey(
+  csv: string,
+  keep: Set<string>
+): { csv: string; kept: number; dropped: number } {
+  if (!csv) return { csv, kept: 0, dropped: 0 };
+  const lines = csv.split(/\r?\n/);
+  if (lines.length === 0) return { csv, kept: 0, dropped: 0 };
+  const header = lines[0];
+  const out: string[] = [header];
+  let kept = 0;
+  let dropped = 0;
+  for (let i = 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) continue;
+    if (!line.trim()) {
+      out.push(line);
+      continue;
+    }
+    const first = line.split(",")[0] ?? "";
+    const key = first.replace(/^"|"$/g, "").trim();
+    if (keep.has(key)) {
+      out.push(line);
+      kept += 1;
+    } else {
+      dropped += 1;
+    }
+  }
+  const trailingNewline = csv.endsWith("\n") ? "\n" : "";
+  return { csv: out.join("\n") + trailingNewline, kept, dropped };
+}
+
 function buildFeedFilename(
   type: "product" | "price" | "stock" | "specifications",
   providerName: string,
@@ -332,18 +379,37 @@ export async function POST(request: Request) {
         { status: 409 }
       );
     }
-    if (needsStock && needsOffer && stockCount !== offerCount) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Stock and price feeds must have the same number of rows.",
-          counts: { stock: stockCount, offer: offerCount },
-        },
-        { status: 409 }
-      );
+    // Stock and offer exports each apply their own skip rules (offer drops rows
+    // with invalid price, stock drops rows with no eta/qty resolution), so the
+    // two CSVs can naturally diverge even though they are built from the same
+    // catalog. Galaxus requires strict row parity between the two feeds, so we
+    // reconcile by intersecting the ProviderKey sets and dropping the divergent
+    // rows on both sides instead of aborting the upload.
+    const parityDrops = { fromStock: [] as string[], fromOffer: [] as string[] };
+    if (needsStock && needsOffer && stockCsv && offerCsv && stockCount !== offerCount) {
+      const stockKeys = collectProviderKeysFromCsv(stockCsv);
+      const offerKeys = collectProviderKeysFromCsv(offerCsv);
+      const shared = new Set<string>();
+      for (const key of stockKeys) if (offerKeys.has(key)) shared.add(key);
+      for (const key of stockKeys) if (!shared.has(key)) parityDrops.fromStock.push(key);
+      for (const key of offerKeys) if (!shared.has(key)) parityDrops.fromOffer.push(key);
+
+      const stockReconciled = keepCsvRowsByProviderKey(stockCsv, shared);
+      const offerReconciled = keepCsvRowsByProviderKey(offerCsv, shared);
+      stockCsv = stockReconciled.csv;
+      offerCsv = offerReconciled.csv;
+      stockCount = stockReconciled.kept;
+      offerCount = offerReconciled.kept;
+
+      console.warn("[GALAXUS][FEEDS][UPLOAD] Reconciled stock<->offer row parity", {
+        sharedProviderKeys: shared.size,
+        droppedFromStock: parityDrops.fromStock.length,
+        droppedFromOffer: parityDrops.fromOffer.length,
+        sampleDroppedFromStock: parityDrops.fromStock.slice(0, 10),
+        sampleDroppedFromOffer: parityDrops.fromOffer.slice(0, 10),
+      });
     }
-    // Keep only stock<->price strict parity.
-    // Master/specs are catalog-oriented and can have more rows.
+    // Master/specs are catalog-oriented and can have more rows than stock/offer.
 
     const masterName = buildFeedFilename("product", providerName, assortmentFile);
     const stockName = buildFeedFilename("stock", providerName, assortmentFile);
@@ -483,6 +549,12 @@ export async function POST(request: Request) {
       },
       omittedByFeed,
       blockedProviderKeys: Array.from(blockedProviderKeys),
+      parityDrops: {
+        fromStock: parityDrops.fromStock.length,
+        fromOffer: parityDrops.fromOffer.length,
+        sampleFromStock: parityDrops.fromStock.slice(0, 20),
+        sampleFromOffer: parityDrops.fromOffer.slice(0, 20),
+      },
       validation: report ?? null,
     };
     if (auditId) {

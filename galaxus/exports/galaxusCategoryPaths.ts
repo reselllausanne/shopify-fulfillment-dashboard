@@ -87,6 +87,142 @@ export type GalaxusProductKind =
   | "ski_mask"
   | "ski_wax"
   | "ski_tools"
+  | "dev_board"
+  | "passive_component"
+  | "active_component"
+  | "electronic_enclosure"
+  | "soldering_tool"
+  | "multimeter"
+  | "electronic_tool"
+  | "pc_ssd"
+  | "pc_hdd"
+  | "pc_ram"
+  | "pc_cpu"
+  | "pc_gpu"
+  | "pc_motherboard"
+  | "pc_psu"
+  | "pc_case"
+  | "pc_fan"
+  | "pc_cooler"
+  | "network_cable"
+  | "network_switch"
+  | "network_router"
+  | "network_nas"
+  | "notebook"
+  | "server"
+  | "keyboard"
+  | "mouse"
+  | "monitor"
+  | "printer"
+  | "scanner"
+  | "power_cable"
+  | "usb_cable"
+  | "audio_cable"
+  | "video_cable"
+  | "smart_home"
+  | "webcam"
+  | "speaker"
+  | "storage_usb"
+  | "storage_card"
+  | "cable_accessory"
+  | "power_strip"
+  | "connector"
+  | "electrical_installation"
+  | "kvm_switch"
+  | "graphics_tablet"
+  | "microphone"
+  | "mixer"
+  | "vr_headset"
+  | "printer_3d"
+  | "toner"
+  | "soundbar"
+  | "smartphone"
+  | "tablet"
+  | "ereader"
+  | "smartwatch"
+  | "smartwatch_accessory"
+  | "activity_tracker"
+  | "smartphone_battery"
+  | "power_bank"
+  | "ups"
+  | "ups_accessory"
+  | "server_accessory"
+  | "server_rack"
+  | "rc_battery"
+  | "rc_charger"
+  | "solar_panel"
+  | "solar_accessory"
+  | "tv"
+  | "tv_accessory"
+  | "beamer"
+  | "beamer_accessory"
+  | "av_receiver"
+  | "bluray_player"
+  | "tv_receiver"
+  | "pc_watercooling"
+  | "pc_barebone"
+  | "pc_hdd_enclosure"
+  | "gaming_chair"
+  | "gaming_desk"
+  | "camping_stove"
+  | "camping_cookware"
+  | "camping_gas"
+  | "camping_mat"
+  | "camping_cooler"
+  | "camping_cooler_acc"
+  | "camping_sleeping_bag"
+  | "camping_sleeping_bag_acc"
+  | "camping_tent"
+  | "camping_tent_acc"
+  | "camping_furniture"
+  | "power_router"
+  | "power_lathe"
+  | "power_planer"
+  | "power_engraver"
+  | "label_printer"
+  | "label_tape"
+  | "label_device"
+  | "shredder"
+  | "ev_charger"
+  | "ev_cable"
+  | "escooter"
+  | "dashcam"
+  | "camera_tripod"
+  | "camera_lens"
+  | "drone"
+  | "robot_vacuum"
+  | "vacuum"
+  | "headlamp"
+  | "camping_lamp"
+  | "home_lamp"
+  | "flashlight"
+  | "light_bulb"
+  | "wifi_repeater"
+  | "powerline_adapter"
+  | "nas_accessory"
+  | "ink_cartridge"
+  | "filament_3d"
+  | "hand_screwdriver"
+  | "pliers"
+  | "wrench_set"
+  | "alarm_system"
+  | "motion_sensor"
+  | "bike_accessory"
+  | "bike_computer"
+  | "health_thermometer"
+  | "health_bp"
+  | "car_hifi"
+  | "car_subwoofer"
+  | "turntable"
+  | "amplifier_hifi"
+  | "endoscope"
+  | "energy_meter"
+  | "oscilloscope"
+  | "lab_power_supply"
+  | "desktop_pc"
+  | "robot_kit"
+  | "robot_module"
+  | "robot_accessory"
   | "unknown";
 
 /** German Galaxus merchant `ProductCategory` paths (Producttypes.xlsx). */
@@ -175,12 +311,161 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   ski_mask: "Sport > Wintersport > Wintersport Schutzausrüstung > Sturmhaube + Halsschlauch",
   ski_wax: "Sport > Wintersport > Skifahren + Langlauf > Skiwachs",
   ski_tools: "Sport > Wintersport > Skifahren + Langlauf > Skiwerkzeug",
+  dev_board: "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Entwicklungsboard + Kit",
+  passive_component:
+    "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Elektrische Bauelemente > Passive Bauelemente > Widerstand",
+  active_component:
+    "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Elektrische Bauelemente > Aktive Bauelemente > Transistor",
+  electronic_enclosure:
+    "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Elektronik > Elektronikzubehör + Gehäuse",
+  soldering_tool: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Elektronikwerkzeug > Lötgerät",
+  multimeter: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Elektronikwerkzeug > Multimeter",
+  electronic_tool:
+    "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Elektronikwerkzeug > Bolzenschneider + Seitenschneider",
+  pc_ssd: "IT + Multimedia > PC Komponenten > Speicher > SSD",
+  pc_hdd: "IT + Multimedia > PC Komponenten > Speicher > Festplatte",
+  pc_ram: "IT + Multimedia > PC Komponenten > RAM",
+  pc_cpu: "IT + Multimedia > PC Komponenten > Prozessor",
+  pc_gpu: "IT + Multimedia > PC Komponenten > Grafikkarte",
+  pc_motherboard: "IT + Multimedia > PC Komponenten > Mainboard",
+  pc_psu: "IT + Multimedia > PC Komponenten > PC Netzteil",
+  pc_case: "IT + Multimedia > PC Komponenten > Gehäuse > PC Gehäuse",
+  pc_fan: "IT + Multimedia > PC Komponenten > Luftkühlung > PC Lüfter",
+  pc_cooler: "IT + Multimedia > PC Komponenten > Luftkühlung > CPU Kühler",
+  network_cable: "IT + Multimedia > Netzwerk > Netzwerkkabel",
+  network_switch: "IT + Multimedia > Netzwerk > Bridges + Router > Netzwerk Switch",
+  network_router: "IT + Multimedia > Netzwerk > Bridges + Router > Router",
+  network_nas: "IT + Multimedia > Netzwerk > Netzwerkspeicher > NAS",
+  notebook: "IT + Multimedia > Notebooks + PCs > Notebook",
+  server: "IT + Multimedia > Netzwerk > Server + Zubehör > Server",
+  keyboard: "IT + Multimedia > Peripherie > Mäuse + Tastaturen > Tastatur",
+  mouse: "IT + Multimedia > Peripherie > Mäuse + Tastaturen > Maus",
+  monitor: "IT + Multimedia > Peripherie > Monitore > Monitor",
+  printer: "IT + Multimedia > Peripherie > Drucker + Scanner > Drucken > Drucker",
+  scanner: "IT + Multimedia > Peripherie > Drucker + Scanner > Scannen > Scanner",
+  power_cable: "IT + Multimedia > Peripherie > Kabel > Stromkabel",
+  usb_cable: "IT + Multimedia > Peripherie > Stromversorgung > Ladegeräte > USB Kabel",
+  audio_cable: "IT + Multimedia > Peripherie > Kabel > Audio Kabel",
+  video_cable: "IT + Multimedia > Peripherie > Kabel > Videokabel",
+  smart_home: "IT + Multimedia > Smart Home > Smart Home Hub",
+  webcam: "IT + Multimedia > Gaming + VR > Streaming > Sound + Video > Webcam",
+  speaker: "IT + Multimedia > Audio > Lautsprecher > Bluetooth Lautsprecher",
+  storage_usb: "IT + Multimedia > Peripherie > Speicher > USB Stick",
+  storage_card: "IT + Multimedia > Peripherie > Speicher > Speicherkarte",
+  cable_accessory: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Kabelbinder",
+  power_strip: "Baumarkt + Garten > Elektrobedarf > Stromverteilung > Steckdosenleiste",
+  connector: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Netzstecker + Netzkupplung",
+  electrical_installation: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Kabelverbindung",
+  kvm_switch: "IT + Multimedia > Peripherie > Hubs + Switches > KVM Switch",
+  graphics_tablet: "IT + Multimedia > Peripherie > Grafiktablett",
+  microphone: "IT + Multimedia > Gaming + VR > Streaming > Sound + Video > Mikrofon",
+  mixer: "IT + Multimedia > Audio > Mischpult",
+  vr_headset: "IT + Multimedia > Gaming + VR > AR + VR > VR Brille",
+  printer_3d: "IT + Multimedia > Peripherie > Drucker + Scanner > Drucken > 3D > 3D Drucker",
+  toner: "IT + Multimedia > Peripherie > Drucker + Scanner > Drucken > Toner",
+  soundbar: "IT + Multimedia > TV + Heimkino > Heimkino Sound > Soundbar",
+  smartphone: "IT + Multimedia > Smartphones + Tablets > Smartphone",
+  tablet: "IT + Multimedia > Smartphones + Tablets > Tablet + eReader > Tablet",
+  ereader: "IT + Multimedia > Smartphones + Tablets > Tablet + eReader > eReader",
+  smartwatch: "IT + Multimedia > Wearables > Smartwatch",
+  smartwatch_accessory: "IT + Multimedia > Wearables > Smartwatch Zubehör",
+  activity_tracker:
+    "IT + Multimedia > Smartphones + Tablets > Smartphone Zubehör > Smartphone Tags > Tracker",
+  smartphone_battery:
+    "IT + Multimedia > Smartphones + Tablets > Smartphone Zubehör > Smartphone Reparatur > Smartphone Akku",
+  power_bank: "IT + Multimedia > Peripherie > Stromversorgung > Powerbank",
+  ups: "IT + Multimedia > Netzwerk > Server + Zubehör > USV",
+  ups_accessory: "IT + Multimedia > Netzwerk > Server + Zubehör > USV Zubehör",
+  server_accessory: "IT + Multimedia > Netzwerk > Server + Zubehör > Server Zubehör",
+  server_rack: "IT + Multimedia > Netzwerk > Server + Zubehör > Serverschrank",
+  rc_battery: "Spielzeug > Spielfahrzeuge > RC + Modellbau > RC Elektronik > RC Akku",
+  rc_charger: "Spielzeug > Spielfahrzeuge > RC + Modellbau > RC Elektronik > RC Ladegerät",
+  solar_panel: "Baumarkt + Garten > Elektrobedarf > Stromerzeugung > Solarpanel",
+  solar_accessory: "Baumarkt + Garten > Elektrobedarf > Stromerzeugung > Zubehör Solarenergie",
+  tv: "IT + Multimedia > TV + Heimkino > TV",
+  tv_accessory: "IT + Multimedia > TV + Heimkino > TV Zubehör",
+  beamer: "IT + Multimedia > TV + Heimkino > Beamer + Leinwände > Beamer",
+  beamer_accessory: "IT + Multimedia > TV + Heimkino > Beamer + Leinwände > Beamer Zubehör",
+  av_receiver: "IT + Multimedia > TV + Heimkino > Heimkino Sound > AV Receiver",
+  bluray_player: "IT + Multimedia > TV + Heimkino > Bluray Player + DVD Player",
+  tv_receiver: "IT + Multimedia > TV + Heimkino > TV Empfangstechnik > TV Receiver",
+  pc_watercooling: "IT + Multimedia > PC Komponenten > Wasserkühlung > CPU Wasserkühler",
+  pc_barebone: "IT + Multimedia > PC Komponenten > Barebone",
+  pc_hdd_enclosure: "IT + Multimedia > PC Komponenten > Gehäuse > Festplattengehäuse",
+  gaming_chair: "IT + Multimedia > Gaming + VR > Gaming Möbel > Gaming Stuhl",
+  gaming_desk: "IT + Multimedia > Gaming + VR > Gaming Möbel > Gaming Tisch",
+  camping_stove: "Sport > Outdoor > Camping > Campingkocher",
+  camping_cookware: "Sport > Outdoor > Camping > Campinggeschirr",
+  camping_gas: "Sport > Outdoor > Camping > Gaskartusche",
+  camping_mat: "Sport > Outdoor > Camping > Isomatte",
+  camping_cooler: "Sport > Outdoor > Camping > Kühlbox",
+  camping_cooler_acc: "Sport > Outdoor > Camping > Kühlbox Zubehör",
+  camping_sleeping_bag: "Sport > Outdoor > Camping > Schlafsack",
+  camping_sleeping_bag_acc: "Sport > Outdoor > Camping > Schlafsack Zubehör",
+  camping_tent: "Sport > Outdoor > Camping > Zelt",
+  camping_tent_acc: "Sport > Outdoor > Camping > Zelt Zubehör",
+  camping_furniture: "Sport > Outdoor > Camping > Campingmobiliar > Campingmöbel",
+  power_router: "Baumarkt + Garten > Werkzeug + Werkstatt > Elektrowerkzeug > Fräsen + Hobeln > Fräse",
+  power_lathe: "Baumarkt + Garten > Werkzeug + Werkstatt > Elektrowerkzeug > Fräsen + Hobeln > Drehmaschine",
+  power_planer: "Baumarkt + Garten > Werkzeug + Werkstatt > Elektrowerkzeug > Fräsen + Hobeln > Hobelmaschine",
+  power_engraver: "Baumarkt + Garten > Werkzeug + Werkstatt > Elektrowerkzeug > Fräsen + Hobeln > Gravierer",
+  label_printer: "IT + Multimedia > Peripherie > Drucker + Scanner > Drucken > Etikettendrucker",
+  label_tape: "Büro + Schreibwaren > Bürotechnik > Bürogeräte > Beschriftungsband",
+  label_device: "Büro + Schreibwaren > Bürotechnik > Bürogeräte > Beschriftungsgerät",
+  shredder: "Büro + Schreibwaren > Bürotechnik > Bürogeräte > Aktenvernichter",
+  ev_charger: "Baumarkt + Garten > Fahrzeug > E-Mobilität > Elektroauto Ladestation",
+  ev_cable: "Baumarkt + Garten > Fahrzeug > E-Mobilität > Elektroauto Ladekabel",
+  escooter: "Sport > E-Mobilität + Rollsport > E-Rideables > E-Scooter",
+  dashcam: "IT + Multimedia > Foto + Video > Actioncams + Videokameras > Dashcam",
+  camera_tripod: "IT + Multimedia > Foto + Video > Stative + Gimbals > Stativ",
+  camera_lens: "IT + Multimedia > Foto + Video > Objektive + Filter > Objektiv",
+  drone: "IT + Multimedia > Foto + Video > Drohne > Drohne",
+  robot_vacuum: "Haushalt > Reinigungsgeräte > Staubsauger Roboter",
+  vacuum: "Haushalt > Reinigungsgeräte > Staubsauger",
+  headlamp: "Sport > Outdoor > Lampen + Leuchten > Stirnlampe",
+  camping_lamp: "Sport > Outdoor > Lampen + Leuchten > Campinglampe",
+  home_lamp: "Wohnen > Lampen + Leuchten > Tischlampe",
+  flashlight: "Baumarkt + Garten > Sicherheit > Selbstschutz > Taschenlampe",
+  light_bulb: "Wohnen > Lampen + Leuchten > Leuchtmittel",
+  wifi_repeater: "IT + Multimedia > Netzwerk > Bridges + Router > WLAN Repeater",
+  powerline_adapter: "IT + Multimedia > Netzwerk > Bridges + Router > Powerline",
+  nas_accessory: "IT + Multimedia > Netzwerk > Netzwerkspeicher > NAS Zubehör",
+  ink_cartridge: "IT + Multimedia > Peripherie > Drucker + Scanner > Drucken > Druckerpatrone",
+  filament_3d: "IT + Multimedia > Peripherie > Drucker + Scanner > Drucken > 3D > 3D Filament",
+  hand_screwdriver:
+    "Baumarkt + Garten > Werkzeug + Werkstatt > Handwerkzeug > Schraubwerkzeuge > Schraubendreher",
+  pliers: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Elektronikwerkzeug > Zange",
+  wrench_set:
+    "Baumarkt + Garten > Werkzeug + Werkstatt > Handwerkzeug > Schraubwerkzeuge > Steckschlüssel + Stecknuss",
+  alarm_system: "Baumarkt + Garten > Sicherheit > Gebäudesicherheit > Einbruchschutz + Alarmanlage",
+  motion_sensor: "Baumarkt + Garten > Sicherheit > Gebäudesicherheit > Bewegungsmelder",
+  bike_accessory: "Sport > Bike > Veloausrüstung > Velolicht",
+  bike_computer: "Sport > Bike > Heimtraining + Navigation > Velocomputer",
+  health_thermometer: "Beauty + Gesundheit > Gesundheit > Gesundheitsmessgeräte > Fieberthermometer",
+  health_bp: "Beauty + Gesundheit > Gesundheit > Gesundheitsmessgeräte > Blutdruckmessgerät",
+  car_hifi: "Baumarkt + Garten > Fahrzeug > Navigation + Car HiFi > Car HiFi + Installation > Car HiFi Verstärker",
+  car_subwoofer:
+    "Baumarkt + Garten > Fahrzeug > Navigation + Car HiFi > Car HiFi + Installation > Car HiFi Subwoofer",
+  turntable: "IT + Multimedia > Audio > HiFi > Plattenspieler",
+  amplifier_hifi: "IT + Multimedia > Audio > HiFi > Stereoverstärker",
+  endoscope: "Baumarkt + Garten > Werkzeug + Werkstatt > Messgeräte > Endoskopkamera",
+  energy_meter: "Baumarkt + Garten > Elektrobedarf > Steuerungstechnik > Energiemessgerät",
+  oscilloscope:
+    "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Elektronikwerkzeug > Messtechnik",
+  lab_power_supply:
+    "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Labornetzgerät",
+  desktop_pc: "IT + Multimedia > Notebooks + PCs > PC",
+  robot_kit: "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Robotik > Robotik Kit",
+  robot_module: "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Robotik > Robotik Modul",
+  robot_accessory:
+    "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Robotik > Robotik Zubehör",
   unknown: "Mode > Alles in Mode > Schuhe > Sneakers",
 };
 
 /** Default kind when no signal matches — supplier-aware. */
 export function defaultGalaxusProductKind(supplierKey?: string | null): GalaxusProductKind {
   if (String(supplierKey ?? "").toLowerCase() === "wel") return "boardgame";
+  if (String(supplierKey ?? "").toLowerCase() === "rei") return "passive_component";
   return "sneakers";
 }
 

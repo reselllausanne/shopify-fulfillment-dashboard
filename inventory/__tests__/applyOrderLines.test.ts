@@ -10,12 +10,20 @@ vi.mock("@/inventory/resolveSupplierVariant", () => ({
   resolveSupplierVariantForInventoryLine: vi.fn(),
 }));
 
-vi.mock("@/inventory/theSaleChannelSync", () => ({
-  scheduleTheSaleChannelSync: vi.fn(),
+vi.mock("@/inventory/marketplaceStockSync", () => ({
+  scheduleMarketplaceStockPush: vi.fn(),
 }));
 
 vi.mock("@/shopify/inventory/marketplacePhysicalSale", () => ({
   routeMarketplacePhysicalSale: vi.fn().mockResolvedValue({ routed: false, decremented: 0, locations: [], warnings: [] }),
+}));
+
+vi.mock("@/shopify/orders/postSaleRefresh", () => ({
+  refreshAfterShopifySale: vi.fn().mockResolvedValue({ gtin: "456", warnings: [] }),
+}));
+
+vi.mock("@/inventory/postSaleMarketplacePricePush", () => ({
+  schedulePostSaleMarketplacePricePush: vi.fn(),
 }));
 
 vi.mock("@/galaxus/warehouse/theCatalogStock", async () => {
@@ -31,8 +39,10 @@ vi.mock("@/galaxus/warehouse/theCatalogStock", async () => {
 import { prisma } from "@/app/lib/prisma";
 import { resolveSupplierVariantForInventoryLine } from "@/inventory/resolveSupplierVariant";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
-import { scheduleTheSaleChannelSync } from "@/inventory/theSaleChannelSync";
+import { scheduleMarketplaceStockPush } from "@/inventory/marketplaceStockSync";
 import { routeMarketplacePhysicalSale } from "@/shopify/inventory/marketplacePhysicalSale";
+import { refreshAfterShopifySale } from "@/shopify/orders/postSaleRefresh";
+import { schedulePostSaleMarketplacePricePush } from "@/inventory/postSaleMarketplacePricePush";
 import { applyTheCatalogStockDeltaInTx } from "@/galaxus/warehouse/theCatalogStock";
 
 const mockedPrisma = prisma as unknown as {
@@ -156,10 +166,10 @@ describe("applyInventoryOrderLine", () => {
     expect(secondCall.quantityDelta).toBe(3);
   });
 
-  it("decrements THE catalog stock and schedules channel sync on sale", async () => {
+  it("pushes marketplace stock on sale for a supplier key", async () => {
     mockedResolver.mockResolvedValue({
-      supplierVariantId: "the:IM4002-100-40",
-      providerKey: "THE_198726522040",
+      supplierVariantId: "stx_IM4002-100-40",
+      providerKey: "STX_198726522040",
       gtin: "198726522040",
     });
 
@@ -184,19 +194,13 @@ describe("applyInventoryOrderLine", () => {
       externalOrderId: "195400913",
       externalLineId: "GALAXUS:195400913:5",
       quantity: 1,
-      providerKey: "THE_198726522040",
+      providerKey: "STX_198726522040",
       eventType: "SALE",
     });
 
     expect(result.applied).toBe(true);
-    expect(applyTheCatalogStockDeltaInTx).toHaveBeenCalledWith(
-      tx,
-      "the:IM4002-100-40",
-      -1,
-      "GALAXUS:GALAXUS:195400913:5"
-    );
-    expect(scheduleTheSaleChannelSync).toHaveBeenCalledWith({
-      providerKeys: ["THE_198726522040"],
+    expect(scheduleMarketplaceStockPush).toHaveBeenCalledWith({
+      providerKeys: ["STX_198726522040"],
     });
   });
 
@@ -239,6 +243,10 @@ describe("applyInventoryOrderLine", () => {
       externalOrderId: "G-1",
       gtin: "456",
       quantity: 1,
+    });
+    expect(refreshAfterShopifySale).toHaveBeenCalledWith("456", {
+      forceMarketPrice: true,
+      skipInventoryDecrement: true,
     });
   });
 });

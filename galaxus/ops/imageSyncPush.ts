@@ -15,14 +15,29 @@ export async function getLatestImageSyncJobRun() {
 /** Stale threshold: crash/restart can leave finishedAt == startedAt forever. Must exceed nightly full sync (~83m observed). */
 const IMAGE_SYNC_STALE_MS = 4 * 60 * 60 * 1000;
 
+type ImageSyncRunRow = {
+  startedAt: Date | string;
+  finishedAt: Date | string;
+  success?: boolean;
+  errorMessage?: string | null;
+  resultJson?: unknown;
+};
+
 /** Job run rows are created with finishedAt = startedAt until the handler completes. */
-export function isImageSyncJobRunning(
-  run: { startedAt: Date | string; finishedAt: Date | string } | null | undefined
-): boolean {
+export function isImageSyncJobRunning(run: ImageSyncRunRow | null | undefined): boolean {
   if (!run?.startedAt || !run?.finishedAt) return false;
   const startedMs = new Date(run.startedAt).getTime();
   const finishedMs = new Date(run.finishedAt).getTime();
   if (finishedMs > startedMs) return false;
+  // Crash before runJob updated the row: create-only stub (success=false, no result).
+  if (
+    run.success === false &&
+    !run.errorMessage &&
+    run.resultJson == null &&
+    Date.now() - startedMs > 10 * 60 * 1000
+  ) {
+    return false;
+  }
   // Still "open" but too old → treat as not running so cron/UI can recover.
   if (Date.now() - startedMs > IMAGE_SYNC_STALE_MS) return false;
   return true;

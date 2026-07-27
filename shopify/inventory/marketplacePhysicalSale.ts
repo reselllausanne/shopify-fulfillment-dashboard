@@ -4,12 +4,12 @@ import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorLocationRowsByGtin,
 } from "@/shopify/inventory/physicalAvailability";
-import { convergeVariant, type ConvergeVariantResult } from "@/shopify/inventory/convergence";
 import {
   adjustInventoryAtLocation,
   findShopifyVariantByGtin,
   getInventoryAvailableAtLocation,
 } from "@/shopify/restock/shopifyRestockInventory";
+import { syncMirrorForGtinFromShopify } from "@/shopify/orders/webSaleInventory";
 import type { InventoryChannel } from "@/inventory/types";
 
 const FLAG_ENV = "MARKETPLACE_PHYSICAL_SALE_ROUTING";
@@ -39,7 +39,6 @@ export type MarketplacePhysicalSaleResult = {
   decremented: number;
   locations: Array<{ locationId: string; locationName: string; delta: number }>;
   warnings: string[];
-  convergence?: ConvergeVariantResult;
   skipReason?: string;
 };
 
@@ -48,7 +47,7 @@ export type MarketplacePhysicalSaleResult = {
  *
  * When Galaxus/Decathlon sells a unit backed by physical mirror stock, decrement
  * Shopify at the highest-priority physical location, refresh the mirror, then
- * converge pricing/state for that GTIN.
+ * Pricing refresh runs in {@link refreshAfterShopifySale} (applyInventoryOrderLine).
  *
  * Idempotent at the order-line level: callers invoke only after
  * `applyInventoryOrderLine` returns `applied: true` (line sync state dedupes).
@@ -77,8 +76,19 @@ export async function routeMarketplacePhysicalSale(
     return { routed: false, decremented: 0, locations, warnings, skipReason: "zero_qty" };
   }
 
-  const mirrorRows = await loadPhysicalMirrorLocationRowsByGtin(gtin);
-  const totalPhysical = mirrorRows.reduce((sum, row) => sum + row.available, 0);
+  // Mirror can lag a few seconds after upstream sync. Force one live refresh so
+  // a real physical sale does not get skipped due to stale mirror rows.
+  let mirrorRows = await loadPhysicalMirrorLocationRowsByGtin(gtin);
+  let totalPhysical = mirrorRows.reduce((sum, row) => sum + row.available, 0);
+  if (totalPhysical <= 0) {
+    try {
+      await syncMirrorForGtinFromShopify(gtin);
+      mirrorRows = await loadPhysicalMirrorLocationRowsByGtin(gtin);
+      totalPhysical = mirrorRows.reduce((sum, row) => sum + row.available, 0);
+    } catch (err: any) {
+      warnings.push(`mirror refresh failed: ${err?.message ?? err}`);
+    }
+  }
   if (totalPhysical <= 0) {
     return { routed: false, decremented: 0, locations, warnings, skipReason: "no_physical" };
   }
@@ -167,15 +177,5 @@ export async function routeMarketplacePhysicalSale(
     };
   }
 
-  let convergence: ConvergeVariantResult | undefined;
-  try {
-    convergence = await convergeVariant(gtin);
-    if (convergence.warnings.length) {
-      warnings.push(...convergence.warnings.map((w) => `Convergence: ${w}`));
-    }
-  } catch (err: any) {
-    warnings.push(`Convergence failed: ${err?.message ?? err}`);
-  }
-
-  return { routed: true, decremented, locations, warnings, convergence };
+  return { routed: true, decremented, locations, warnings };
 }

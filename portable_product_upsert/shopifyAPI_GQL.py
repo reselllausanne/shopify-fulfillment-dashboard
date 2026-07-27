@@ -134,51 +134,43 @@ def _run_query(query, variables=None, max_retries=3, delay=5):
                 error_codes = str(data['errors'])  # Keep original case for code checking
                 print(f"[DEBUG] GraphQL errors detected: {data['errors']}")
                 
-                # VARIANT_THROTTLE_EXCEEDED is NOT a daily limit - just needs delays
+                # Daily variant-create cap MUST win over VARIANT_THROTTLE_EXCEEDED
+                # (Shopify uses that same code for the daily message).
+                if "daily variant creation limit reached" in error_messages:
+                    print(f"[CRITICAL] Shopify daily variant creation limit reached")
+                    print(f"[CRITICAL] GraphQL Error Response: {data['errors']}")
+                    exception = RateLimitException(
+                        "Shopify GraphQL 429: Daily variant creation limit reached"
+                    )
+                    exception.shopify_response = str(data)
+                    exception.api_status_code = response.status_code
+                    exception.retry_after = 24 * 60 * 60
+                    raise exception
+
+                # Soft variant burst throttle — delay + retry, not 24h cooldown
                 if 'VARIANT_THROTTLE_EXCEEDED' in error_codes or 'variant_throttle' in error_messages:
-                    throttle_delay = 5  # 5 second delay for variant throttle
-                    print(f"[WARNING] VARIANT_THROTTLE_EXCEEDED (NOT daily limit)")
+                    throttle_delay = 5
+                    print(f"[WARNING] VARIANT_THROTTLE_EXCEEDED (burst, not daily limit)")
                     print(f"[INFO] Adding {throttle_delay}s delay and continuing...")
                     time.sleep(throttle_delay)
-                    # Don't raise exception - just continue with delay
                     if attempt < max_retries - 1:
                         continue
-                    else:
-                        # Even after retries, don't treat as 429 - just log warning
-                        print(f"[WARNING] Variant throttle persists after retries - continuing anyway")
-                        return data  # Return data even with throttle warning
-                
-                # THROTTLED is NOT a rate limit - it's a soft limit that needs different handling
+                    print(f"[WARNING] Variant throttle persists after retries - continuing anyway")
+                    return data
+
+                # Soft GraphQL cost-bucket throttle
                 if 'throttled' in error_messages:
                     print(f"[WARNING] GraphQL THROTTLED error (NOT rate limit): {data['errors']}")
                     print(f"[INFO] THROTTLED requires longer delays between requests, not 24h wait")
-                    # For THROTTLED, we should add delay and retry, not trigger 24h backoff
                     if attempt < max_retries - 1:
-                        throttle_delay = min(delay * 2, 60)  # Max 60 seconds for throttle
+                        throttle_delay = min(delay * 2, 60)
                         print(f"[INFO] Retrying after {throttle_delay}s due to THROTTLED...")
                         time.sleep(throttle_delay)
                         continue
-                    else:
-                        # If we've exhausted retries, treat as soft error
-                        raise Exception(f"GraphQL THROTTLED after {max_retries} attempts: {data['errors']}")
-                
-                # Check for EXACT Shopify 429 message in GraphQL errors
-                elif "daily variant creation limit reached" in error_messages:
-                    print(f"[CRITICAL] ⚠️  SHOPIFY 429 IN GRAPHQL ERRORS! ⚠️")
-                    print(f"[CRITICAL] 🚫 Daily variant creation limit reached")
-                    print(f"[CRITICAL] 📄 GraphQL Error Response: {data['errors']}")
-                    print(f"[CRITICAL] ✅ This is the REAL Shopify 429 in GraphQL format")
-                    # Create enhanced exception with full response details
-                    exception = RateLimitException(f"Shopify GraphQL 429: Daily variant creation limit reached")
-                    exception.shopify_response = str(data)
-                    exception.api_status_code = response.status_code
-                    exception.retry_after = 24 * 60 * 60  # 24 hours
-                    raise exception
-                
-                # Other GraphQL errors
-                else:
-                    print(f"[ERROR] Other GraphQL error: {data['errors']}")
-                    raise Exception(f"GraphQL Errors: {data['errors']}")
+                    raise Exception(f"GraphQL THROTTLED after {max_retries} attempts: {data['errors']}")
+
+                print(f"[ERROR] Other GraphQL error: {data['errors']}")
+                raise Exception(f"GraphQL Errors: {data['errors']}")
             
             return data.get("data", {})
             
@@ -203,6 +195,53 @@ def _run_query(query, variables=None, max_retries=3, delay=5):
             raise Exception(f"GraphQL Query Error: {e}")
     
     raise Exception(f"Failed after {max_retries} attempts")
+
+
+def probe_shopify_capacity():
+    """
+    Live Shopify capacity probe (no local counters).
+
+    Returns GraphQL cost-bucket throttleStatus + shop-wide variant count.
+    Shopify does NOT expose remaining daily variant-create quota; that limit
+    is only discoverable when mutations return
+    "Daily variant creation limit reached" (handled via RateLimitException).
+    Once a shop has >= 50k variants, Shopify caps new variant creates at
+    ~1000/day (non-Plus) — we report that known rule for logging only.
+    """
+    query = """
+    query ProbeCapacity {
+      productVariantsCount {
+        count
+      }
+      shop { id name }
+    }
+    """
+    payload = {"query": query}
+    response = requests.post(SHOP_URL, json=payload, headers=HEADERS, timeout=30)
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After")
+        raise RateLimitException("HTTP 429 on capacity probe", retry_after=retry_after)
+    response.raise_for_status()
+    body = response.json()
+    if body.get("errors"):
+        raise Exception(f"capacity probe GraphQL errors: {body['errors']}")
+
+    data = body.get("data") or {}
+    cost = ((body.get("extensions") or {}).get("cost") or {})
+    throttle = cost.get("throttleStatus") or {}
+    variant_count = int(((data.get("productVariantsCount") or {}).get("count") or 0))
+    daily_cap = 1000 if variant_count >= 50000 else None
+    return {
+        "productVariantsCount": variant_count,
+        "dailyVariantCreateCapHint": daily_cap,
+        "throttle": {
+            "currentlyAvailable": throttle.get("currentlyAvailable"),
+            "maximumAvailable": throttle.get("maximumAvailable"),
+            "restoreRate": throttle.get("restoreRate"),
+        },
+        "requestedQueryCost": cost.get("requestedQueryCost"),
+        "actualQueryCost": cost.get("actualQueryCost"),
+    }
 
 
 def get_all_products():
@@ -863,55 +902,46 @@ def update_option_name(product_id, option_id, new_name):
 
 
 # ---------------------------------------------------------------------------
-# Shopify taxonomy category GIDs (verified 2026-04)
+# Shopify taxonomy category GIDs — source of truth:
+#   portable_product_upsert/stockx_taxonomy_map.py  (edit aliases there)
+# ---------------------------------------------------------------------------
+from stockx_taxonomy_map import (
+    COARSE_ALIAS_KEYS,
+    GID_AMERICAN_FOOTBALL_SHOES,
+    GID_HOODIES,
+    GID_JERSEYS,
+    GID_LEGO,
+    GID_POSTERS,
+    GID_SANDALS,
+    GID_SNEAKERS,
+    GID_SOCCER_SHOES,
+    GID_SPORTS_TRADING_CARDS,
+    GID_SWEATPANTS,
+    GID_SWEATSHIRTS,
+    GID_TRADING_CARDS,
+    GID_WATCHES,
+    STOCKX_COARSE_TO_GID,
+    STOCKX_LEAF_ALIAS_TO_GID,
+    STOCKX_MID_ALIAS_TO_GID,
+    normalize_token,
+    refine_hoodies_and_sweatshirts,
+    title_keyword_gid,
+)
+
+# Backward-compat flat map (string category / legacy callers).
 _TAXONOMY = {
-    # Sneakers / Footwear
-    "sneakers":          "gid://shopify/TaxonomyCategory/aa-8-8",
-    "shoes":             "gid://shopify/TaxonomyCategory/aa-8-8",
-    # Clothing – tops (specific)
-    "t-shirts":          "gid://shopify/TaxonomyCategory/aa-1-13-8",
-    "tee":               "gid://shopify/TaxonomyCategory/aa-1-13-8",
-    "hoodies":           "gid://shopify/TaxonomyCategory/aa-1-13-13",
-    "hoodie":            "gid://shopify/TaxonomyCategory/aa-1-13-13",
-    "sweatshirts":       "gid://shopify/TaxonomyCategory/aa-1-13-14",
-    "sweatshirt":        "gid://shopify/TaxonomyCategory/aa-1-13-14",
-    "crewneck":          "gid://shopify/TaxonomyCategory/aa-1-13-14",
-    "shirts":            "gid://shopify/TaxonomyCategory/aa-1-13-7",
-    "shirt":             "gid://shopify/TaxonomyCategory/aa-1-13-7",
-    "polos":             "gid://shopify/TaxonomyCategory/aa-1-13-6",
-    "polo":              "gid://shopify/TaxonomyCategory/aa-1-13-6",
-    "tank":              "gid://shopify/TaxonomyCategory/aa-1-13-9",
-    "tops":              "gid://shopify/TaxonomyCategory/aa-1-13",
-    # Clothing – bottoms
-    "pants":             "gid://shopify/TaxonomyCategory/aa-1-12",
-    "shorts":            "gid://shopify/TaxonomyCategory/aa-1-14",
-    # Clothing – outer / misc
-    "outerwear":         "gid://shopify/TaxonomyCategory/aa-1-10",
-    "jacket":            "gid://shopify/TaxonomyCategory/aa-1-10",
-    "jackets":           "gid://shopify/TaxonomyCategory/aa-1-10",
-    "activewear":        "gid://shopify/TaxonomyCategory/aa-1-1",
-    "socks":             "gid://shopify/TaxonomyCategory/aa-1-18",
-    "sock":              "gid://shopify/TaxonomyCategory/aa-1-18",
-    "clothing":          "gid://shopify/TaxonomyCategory/aa-1",
-    "apparel":           "gid://shopify/TaxonomyCategory/aa-1",
-    "streetwear":        "gid://shopify/TaxonomyCategory/aa-1",
-    # Accessories
-    "accessories":       "gid://shopify/TaxonomyCategory/aa-2",
-    "hats":              "gid://shopify/TaxonomyCategory/aa-2",
-    "hat":               "gid://shopify/TaxonomyCategory/aa-2",
-    "cap":               "gid://shopify/TaxonomyCategory/aa-2",
-    "caps":              "gid://shopify/TaxonomyCategory/aa-2",
-    "bag":               "gid://shopify/TaxonomyCategory/aa-5",
-    "bags":              "gid://shopify/TaxonomyCategory/aa-5",
-    "backpack":          "gid://shopify/TaxonomyCategory/aa-5",
-    "wallet":            "gid://shopify/TaxonomyCategory/aa-5",
-    # Toys / collectibles
-    "toys":              "gid://shopify/TaxonomyCategory/tg-5-7-12",
-    "collectibles":      "gid://shopify/TaxonomyCategory/tg-5-7-12",
-    "lego":              "gid://shopify/TaxonomyCategory/tg-5-7-12",
-    # Electronics
-    "electronics":       "gid://shopify/TaxonomyCategory/el",
-    "tech":              "gid://shopify/TaxonomyCategory/el",
+    **STOCKX_COARSE_TO_GID,
+    **STOCKX_MID_ALIAS_TO_GID,
+    **STOCKX_LEAF_ALIAS_TO_GID,
+    "slides & sandals": STOCKX_LEAF_ALIAS_TO_GID["slides-and-sandals"],
+    "trading cards": GID_TRADING_CARDS,
+    "sealed boxes": GID_SPORTS_TRADING_CARDS,
+    "toys": GID_LEGO,
+    "collectibles": GID_LEGO,
+    "art": GID_POSTERS,
+    "electronics": "gid://shopify/TaxonomyCategory/el",
+    "tech": "gid://shopify/TaxonomyCategory/el",
+    "wallet": STOCKX_LEAF_ALIAS_TO_GID["bags"],
 }
 
 # Sporting Goods > Athletics > Basketball > Basketball Shoes (Shopify Standard Product Taxonomy)
@@ -960,17 +990,167 @@ def sync_athletic_shoe_taxonomy(product_id, product_data) -> bool:
 
 TAXONOMY_ATHLETIC_SHOES = _TAXONOMY_ATHLETIC_SHOES
 
+_TAXONOMY_TRADING_CARDS = GID_TRADING_CARDS
+_TAXONOMY_SPORTS_TRADING_CARDS = GID_SPORTS_TRADING_CARDS
+_TAXONOMY_INTERLOCKING_BLOCKS = GID_LEGO
+_TAXONOMY_POSTERS = GID_POSTERS
+_TAXONOMY_JERSEYS = GID_JERSEYS
+_TAXONOMY_SOCCER_SHOES = GID_SOCCER_SHOES
+_TAXONOMY_AMERICAN_FOOTBALL_SHOES = GID_AMERICAN_FOOTBALL_SHOES
+_TAXONOMY_WATCHES = GID_WATCHES
+_TAXONOMY_SANDALS = GID_SANDALS
+_TAXONOMY_HOODIES = GID_HOODIES
+_TAXONOMY_SWEATPANTS = GID_SWEATPANTS
+_TAXONOMY_SWEATSHIRTS = GID_SWEATSHIRTS
+_TAXONOMY_SNEAKERS = GID_SNEAKERS
+
+_SPORTS_CARD_KEYWORDS = (
+    "basketball", "baseball", "football", "bowman", "topps", "panini", "prizm",
+    "select", "hobby box", "blaster", "nba", "nfl", "mlb", "soccer card",
+)
+_AMERICAN_FOOTBALL_CLEAT_KEYWORDS = (
+    "american football", "football cleat", "gridiron", " nfl", "ncaa football",
+    "super bowl", "college football", "vapor edge", "vapor untouchable",
+    "force savage", "alpha menace", "code elite", "freak ", " adizero football",
+)
+
+
+def _breadcrumb_parts(product_data):
+    """Return (path string, value tokens, alias tokens) from StockX breadcrumbs."""
+    breadcrumbs = product_data.get("breadcrumbs") or []
+    values = []
+    aliases = []
+    for b in breadcrumbs:
+        if not isinstance(b, dict):
+            continue
+        v = str(b.get("value") or "").strip().lower()
+        a = str(b.get("alias") or "").strip().lower()
+        if v:
+            values.append(v)
+        if a:
+            aliases.append(a)
+    path = " > ".join(values)
+    return path, values, aliases
+
+
+def _looks_like_sports_trading_card(title, path):
+    hay = f"{title} {path}".lower()
+    return any(kw in hay for kw in _SPORTS_CARD_KEYWORDS)
+
+
+def _is_american_football_cleat(title):
+    t = str(title or "").lower()
+    if any(kw in t for kw in _AMERICAN_FOOTBALL_CLEAT_KEYWORDS):
+        return True
+    if "football" in t and "soccer" not in t and any(
+        x in t for x in ("nfl", "touchdown", "quarterback", "linebacker")
+    ):
+        return True
+    return False
+
+
+def _match_stockx_breadcrumb_taxonomy(product_data, title):
+    """Path-aware rules for StockX categories that default to sneakers today."""
+    path, values, aliases = _breadcrumb_parts(product_data)
+    tokens = set(values + aliases)
+    brand = str(product_data.get("brand") or "").strip().lower()
+    t = str(title or "").lower()
+    hay = f"{path} {t} {brand}"
+
+    if "lego" in brand or "lego" in t:
+        print(f"[TAXONOMY] LEGO -> {_TAXONOMY_INTERLOCKING_BLOCKS}")
+        return _TAXONOMY_INTERLOCKING_BLOCKS
+
+    if (
+        "trading card" in path
+        or "sealed box" in path
+        or "sealed boxes" in tokens
+        or "hobby box" in t
+        or ("box" in t and "trading" in hay)
+    ):
+        if _looks_like_sports_trading_card(t, path):
+            print(f"[TAXONOMY] Sports trading card box -> {_TAXONOMY_SPORTS_TRADING_CARDS}")
+            return _TAXONOMY_SPORTS_TRADING_CARDS
+        print(f"[TAXONOMY] Trading cards -> {_TAXONOMY_TRADING_CARDS}")
+        return _TAXONOMY_TRADING_CARDS
+
+    if "watch" in tokens or "watches" in tokens or (
+        "watch" in t and "swatch" not in t and "watch band" not in t
+    ):
+        print(f"[TAXONOMY] Watches -> {_TAXONOMY_WATCHES}")
+        return _TAXONOMY_WATCHES
+
+    if ("homeware" in path and "art" in path) or (
+        "collectibles" in path and "homeware" in path and "art" in tokens
+    ):
+        print(f"[TAXONOMY] Art / homeware -> {_TAXONOMY_POSTERS}")
+        return _TAXONOMY_POSTERS
+
+    if "jerseys" in tokens or "jersey" in tokens or "jerseys" in path:
+        print(f"[TAXONOMY] Jerseys -> {_TAXONOMY_JERSEYS}")
+        return _TAXONOMY_JERSEYS
+
+    if "cleats" in tokens or "cleats" in path or "cleat" in t:
+        if _is_american_football_cleat(t):
+            print(f"[TAXONOMY] American football cleats -> {_TAXONOMY_AMERICAN_FOOTBALL_SHOES}")
+            return _TAXONOMY_AMERICAN_FOOTBALL_SHOES
+        print(f"[TAXONOMY] Soccer cleats -> {_TAXONOMY_SOCCER_SHOES}")
+        return _TAXONOMY_SOCCER_SHOES
+
+    if (
+        "slides & sandals" in path
+        or "slides and sandals" in path
+        or "sandals" in tokens
+        or ("slides" in tokens and "shoes" in path)
+    ):
+        print(f"[TAXONOMY] Sandals -> {_TAXONOMY_SANDALS}")
+        return _TAXONOMY_SANDALS
+
+    return None
+
+
+def _normalized_breadcrumb_levels(product_data):
+    """Return {level: normalized_alias} preferring alias, then value synonyms."""
+    breadcrumbs = product_data.get("breadcrumbs") or []
+    out = {}
+    for b in breadcrumbs:
+        if not isinstance(b, dict):
+            continue
+        try:
+            level = int(b.get("level", 0))
+        except (TypeError, ValueError):
+            continue
+        token = normalize_token(b.get("alias") or "") or normalize_token(b.get("value") or "")
+        if token:
+            out[level] = token
+    return out
+
+
+def _all_normalized_breadcrumb_tokens(product_data):
+    breadcrumbs = product_data.get("breadcrumbs") or []
+    tokens = []
+    for b in breadcrumbs:
+        if not isinstance(b, dict):
+            continue
+        for key in ("alias", "value"):
+            token = normalize_token(b.get(key) or "")
+            if token and token not in tokens:
+                tokens.append(token)
+    return tokens
+
+
 def derive_taxonomy_category(product_data):
-    """Derive the correct Shopify taxonomy category GID from StockX/Kicks product data.
+    """Derive Shopify taxonomy GID from StockX/Kicks product data.
 
     Resolution order:
-    0. Signature basketball shoe series -> sg-1-3-5 (see basketball_shoe_series.json)
-    1. breadcrumbs level-3 (most specific: "T-Shirts", "Hoodies"…)
-    2. breadcrumbs level-2 ("Tops", "Bottoms"…)
-    3. breadcrumbs level-1 ("Apparel", "Sneakers"…)
-    4. product_type field ("streetwear", "sneakers"…)
-    5. title keyword scan
-    6. default → sneakers
+    0. Signature basketball / athletic shoe series
+    1. Special breadcrumb paths (LEGO, cards, watches, cleats, …)
+    2. StockX leaf alias (level-3), with title refine for hoodies-and-sweatshirts
+    3. Any leaf alias present in breadcrumb tokens (order: deepest first)
+    4. Title keyword scan (hoodie / sweatpant / …)
+    5. Mid-level alias (tops / bottoms) only if no leaf/title hit
+    6. product_type / coarse apparel fallback
+    7. default → sneakers
     """
     if is_basketball_shoe_product(product_data):
         print(f"[TAXONOMY] Basketball shoe -> {_TAXONOMY_BASKETBALL_SHOES}")
@@ -980,29 +1160,75 @@ def derive_taxonomy_category(product_data):
         print(f"[TAXONOMY] Athletic shoe (Performance/Spikes/Trail) -> {_TAXONOMY_ATHLETIC_SHOES}")
         return _TAXONOMY_ATHLETIC_SHOES
 
-    breadcrumbs = product_data.get("breadcrumbs") or []
-    bc = {int(b.get("level", 0)): (b.get("alias") or b.get("value") or "").lower()
-          for b in breadcrumbs if isinstance(b, dict)}
+    title = str(product_data.get("title") or product_data.get("primary_title") or "")
+    stockx_match = _match_stockx_breadcrumb_taxonomy(product_data, title.lower())
+    if stockx_match:
+        return stockx_match
 
-    # Level-3 first (most specific).
-    for level in (3, 2, 1):
-        alias = bc.get(level, "")
-        if alias in _TAXONOMY:
-            return _TAXONOMY[alias]
+    levels = _normalized_breadcrumb_levels(product_data)
+    tokens = _all_normalized_breadcrumb_tokens(product_data)
 
-    # product_type field.
-    pt = str(product_data.get("product_type") or "").strip().lower()
-    if pt in _TAXONOMY:
-        return _TAXONOMY[pt]
+    def _leaf_gid(token: str):
+        if not token or token in COARSE_ALIAS_KEYS:
+            return None
+        gid = STOCKX_LEAF_ALIAS_TO_GID.get(token)
+        if not gid:
+            return None
+        if token in ("hoodies-and-sweatshirts", "hoodies", "hoodie", "sweatshirts", "sweatshirt", "crewneck"):
+            return refine_hoodies_and_sweatshirts(title, default_gid=gid)
+        return gid
 
-    # Title keyword scan (longest keyword first to pick most specific).
-    title = str(product_data.get("title") or "").lower()
-    for kw in sorted(_TAXONOMY.keys(), key=len, reverse=True):
-        if kw in title:
-            return _TAXONOMY[kw]
+    # Level-3 first (most specific StockX leaf).
+    for level in (3, 4, 2, 1):
+        token = levels.get(level, "")
+        gid = _leaf_gid(token)
+        if gid:
+            print(f"[TAXONOMY] breadcrumb L{level} {token!r} -> {gid}")
+            return gid
 
-    print(f"[TAXONOMY] No match for breadcrumbs={bc} product_type={pt!r}; defaulting to sneakers")
-    return _TAXONOMY["sneakers"]
+    # Any leaf token in path (handles odd level numbering).
+    for token in reversed(tokens):
+        gid = _leaf_gid(token)
+        if gid:
+            print(f"[TAXONOMY] breadcrumb token {token!r} -> {gid}")
+            return gid
+
+    # Title keywords beat coarse mid/product_type (streetwear/tops).
+    title_gid = title_keyword_gid(title)
+    if title_gid:
+        print(f"[TAXONOMY] title keyword -> {title_gid} ({title!r})")
+        return title_gid
+
+    # Mid-level (tops/bottoms) only after leaf+title miss.
+    for level in (2, 1):
+        token = levels.get(level, "")
+        if token in STOCKX_MID_ALIAS_TO_GID:
+            gid = STOCKX_MID_ALIAS_TO_GID[token]
+            print(f"[TAXONOMY] breadcrumb mid L{level} {token!r} -> {gid}")
+            return gid
+
+    pt = normalize_token(
+        product_data.get("product_type") or product_data.get("productCategory") or ""
+    )
+    if pt in STOCKX_LEAF_ALIAS_TO_GID:
+        gid = _leaf_gid(pt) or STOCKX_LEAF_ALIAS_TO_GID[pt]
+        print(f"[TAXONOMY] product_type leaf {pt!r} -> {gid}")
+        return gid
+    if pt in STOCKX_MID_ALIAS_TO_GID:
+        print(f"[TAXONOMY] product_type mid {pt!r} -> {STOCKX_MID_ALIAS_TO_GID[pt]}")
+        return STOCKX_MID_ALIAS_TO_GID[pt]
+    if pt in STOCKX_COARSE_TO_GID:
+        print(f"[TAXONOMY] product_type coarse {pt!r} -> {STOCKX_COARSE_TO_GID[pt]}")
+        return STOCKX_COARSE_TO_GID[pt]
+
+    for level in (1,):
+        token = levels.get(level, "")
+        if token in STOCKX_COARSE_TO_GID:
+            print(f"[TAXONOMY] breadcrumb coarse L{level} {token!r} -> {STOCKX_COARSE_TO_GID[token]}")
+            return STOCKX_COARSE_TO_GID[token]
+
+    print(f"[TAXONOMY] No match for levels={levels} product_type={pt!r}; defaulting to sneakers")
+    return _TAXONOMY_SNEAKERS
 
 
 def map_stockx_to_shopify_category(stockx_category, product_title="", brand=""):
@@ -1010,13 +1236,31 @@ def map_stockx_to_shopify_category(stockx_category, product_title="", brand=""):
 
     Kept for backward-compat. Prefer derive_taxonomy_category(product_data) for new code.
     """
-    category_lower = (stockx_category or "").lower()
+    category_norm = normalize_token(stockx_category or "")
     title_lower = (product_title or "").lower()
 
-    if category_lower in _TAXONOMY:
-        return _TAXONOMY[category_lower]
+    if category_norm in STOCKX_LEAF_ALIAS_TO_GID:
+        gid = STOCKX_LEAF_ALIAS_TO_GID[category_norm]
+        if category_norm in ("hoodies-and-sweatshirts", "hoodies", "hoodie", "sweatshirts", "sweatshirt", "crewneck"):
+            return refine_hoodies_and_sweatshirts(product_title, default_gid=gid)
+        return gid
+    if category_norm in STOCKX_MID_ALIAS_TO_GID:
+        return STOCKX_MID_ALIAS_TO_GID[category_norm]
+    if category_norm in STOCKX_COARSE_TO_GID:
+        # Prefer title over coarse streetwear/apparel
+        title_gid = title_keyword_gid(product_title)
+        if title_gid:
+            return title_gid
+        return STOCKX_COARSE_TO_GID[category_norm]
 
-    # Title keyword scan.
+    if category_norm in _TAXONOMY:
+        return _TAXONOMY[category_norm]
+
+    title_gid = title_keyword_gid(product_title)
+    if title_gid:
+        return title_gid
+
+    # Legacy substring scan on flat map.
     for kw in sorted(_TAXONOMY.keys(), key=len, reverse=True):
         if kw in title_lower:
             return _TAXONOMY[kw]
