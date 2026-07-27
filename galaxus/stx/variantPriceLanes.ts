@@ -10,6 +10,15 @@ import {
   type StxDeliveryType,
 } from "@/galaxus/stx/offerSelection";
 
+type ShippingPayload = {
+  slug?: unknown;
+  url_key?: unknown;
+  urlKey?: unknown;
+  title?: unknown;
+  primary_title?: unknown;
+  name?: unknown;
+} | null | undefined;
+
 function pickString(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -17,7 +26,7 @@ function pickString(...values: unknown[]): string | null {
   return null;
 }
 
-function buyFromOffer(offer: SelectedStxOffer, payload: unknown): number {
+function buyFromOffer(offer: SelectedStxOffer, payload: ShippingPayload): number {
   return estimatedStockxBuyChfFromList(offer.price, resolveStxShippingCHF(payload));
 }
 
@@ -59,7 +68,7 @@ export function allowsStxStandardImport(payload: unknown, slug?: string | null):
 
 export function buildStxDualPriceFields(
   variant: { prices?: unknown },
-  payload: unknown,
+  payload: ShippingPayload,
   productName: string | null,
   options?: { forceImport?: boolean; slug?: string | null }
 ): StxDualPriceFields | null {
