@@ -105,8 +105,8 @@ function cleanIdentifierDigits(value: unknown): string {
     .replace(/\D/g, "");
 }
 
-function acceptGtinDigits(digits: string): string | null {
-  const clean = cleanIdentifierDigits(digits);
+function acceptGtinDigits(value: unknown): string | null {
+  const clean = cleanIdentifierDigits(value);
   if (!clean || !validateGtin(clean)) return null;
   return clean;
 }
