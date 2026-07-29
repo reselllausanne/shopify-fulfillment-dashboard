@@ -12,6 +12,7 @@ import {
 } from "@/app/lib/snowleaderGraphqlClient";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { scheduleScraperGalaxusFeedPush } from "@/app/lib/scraperFeedPush";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -346,6 +347,8 @@ export async function scrapeSnowleaderShop(
       imageSynced += img.synced;
       imageFailed += img.failed;
     }
+
+    await scheduleScraperGalaxusFeedPush({ shop, wrote, syncImages: false });
 
     await updateRun(runId, {
       status: "ok",

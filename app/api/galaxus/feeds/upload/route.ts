@@ -153,6 +153,17 @@ export async function POST(request: Request) {
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const limitRaw = searchParams.get("limit");
     const limit = limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null;
+    // Never upload partial feeds to Galaxus SFTP — a short StockData file zeroes the rest of the catalog.
+    if (limit && !["1", "true", "yes"].includes(String(process.env.GALAXUS_FEED_ALLOW_LIMIT ?? "").toLowerCase())) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Partial feed uploads (limit=…) are blocked for SFTP. Use export preview/download endpoints for sampling.",
+        },
+        { status: 400 }
+      );
+    }
     const origin = new URL(request.url).origin;
     const supplierParam = supplier?.trim() ? `&supplier=${encodeURIComponent(supplier.trim())}` : "";
     const providerKeysRaw = searchParams.get("providerKeys")?.trim() ?? "";

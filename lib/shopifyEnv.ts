@@ -17,6 +17,9 @@ export const REQUIRED_SHOPIFY_ADMIN_SCOPES = [
   "read_inventory",
   "write_inventory",
   "read_locations",
+  "read_translations",
+  "write_translations",
+  "read_locales",
 ] as const;
 
 function readFirst(keys: readonly string[], fallback = ""): string {

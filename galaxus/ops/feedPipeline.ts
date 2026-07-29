@@ -1,6 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
 import { randomUUID } from "crypto";
-import { after } from "next/server";
 import { withAdvisoryXactLock } from "@/galaxus/jobs/advisoryLock";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import type { FeedScope, FeedTriggerSource } from "./types";
@@ -23,10 +22,15 @@ export type FeedPushStartResult = {
   triggerId?: string;
   error?: string;
   status?: number;
+  drained?: boolean;
 };
 
 /** After container kill/redeploy, finishedAt stays null — keep short so night cron recovers. */
 const STALE_FEED_RUN_MS = 90 * 60 * 1000;
+/** Master+specs export/upload can run 2–3h on large catalogs; do not reap mid-flight. */
+const STALE_MASTER_SPECS_RUN_MS = 6 * 60 * 60 * 1000;
+/** Stock/price full-catalog export+SFTP can exceed 90m on ~300k rows. */
+const STALE_STOCK_PRICE_RUN_MS = 4 * 60 * 60 * 1000;
 
 /** Triggers that may upload even when GALAXUS_FEED_UPLOADS_MANUAL_ONLY is on. */
 function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
@@ -42,7 +46,8 @@ function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
     triggerSource === "decathlon-partner-ship" ||
     triggerSource === "decathlon-partner-ship-reconciled" ||
     triggerSource === "partner-sync" ||
-    triggerSource === "inventory-sync"
+    triggerSource === "inventory-sync" ||
+    triggerSource === "scraper"
   );
 }
 
@@ -87,9 +92,40 @@ async function collectManifestIds(runId: string) {
 }
 
 export async function reconcileStaleFeedRuns(maxAgeMs = STALE_FEED_RUN_MS) {
-  const cutoff = new Date(Date.now() - maxAgeMs);
-  await (prisma as any).galaxusFeedRun.updateMany({
-    where: { finishedAt: null, startedAt: { lt: cutoff } },
+  const prismaAny = prisma as any;
+  const defaultCutoff = new Date(Date.now() - maxAgeMs);
+  const masterCutoff = new Date(Date.now() - STALE_MASTER_SPECS_RUN_MS);
+  const stockPriceCutoff = new Date(Date.now() - STALE_STOCK_PRICE_RUN_MS);
+  await prismaAny.galaxusFeedRun.updateMany({
+    where: {
+      finishedAt: null,
+      scope: "master-specs",
+      startedAt: { lt: masterCutoff },
+    },
+    data: {
+      finishedAt: new Date(),
+      success: false,
+      errorMessage: "Stale master-specs feed run timed out",
+    },
+  });
+  await prismaAny.galaxusFeedRun.updateMany({
+    where: {
+      finishedAt: null,
+      scope: { in: ["stock", "price", "stock-price", "full"] },
+      startedAt: { lt: stockPriceCutoff },
+    },
+    data: {
+      finishedAt: new Date(),
+      success: false,
+      errorMessage: "Stale stock/price feed run timed out",
+    },
+  });
+  await prismaAny.galaxusFeedRun.updateMany({
+    where: {
+      finishedAt: null,
+      scope: { notIn: ["master-specs", "stock", "price", "stock-price", "full"] },
+      startedAt: { lt: defaultCutoff },
+    },
     data: {
       finishedAt: new Date(),
       success: false,
@@ -122,11 +158,19 @@ export async function reconcileStaleFeedTriggers() {
   return (failed?.count ?? 0) + (reset?.count ?? 0);
 }
 
-export async function getActiveFeedRun() {
+function feedPushLockKey(scope: FeedScope) {
+  return `galaxus:feed-push:${scope}`;
+}
+
+/** Active run for one scope — feeds no longer block each other globally. */
+export async function getActiveFeedRun(scope?: FeedScope) {
   await reconcileStaleFeedRuns();
   await reconcileStaleFeedTriggers();
   return (prisma as any).galaxusFeedRun.findFirst({
-    where: { finishedAt: null },
+    where: {
+      finishedAt: null,
+      ...(scope ? { scope } : {}),
+    },
     orderBy: { startedAt: "desc" },
   });
 }
@@ -236,27 +280,9 @@ function scheduleAsyncFeedRun(params: {
         });
       });
 
-  // `after()` only fires while a request is still open. Post-sale pushes come from a
-  // debounce timer (request already flushed) and from cron modules, where the callback
-  // is silently dropped: the run row stays finishedAt=null and blocks the queue for
-  // hours. Run in the background on this long-lived server; keep `after()` only as the
-  // request-scoped path so HTTP responses still return before the SFTP work starts.
-  let started = false;
-  const startOnce = () => {
-    if (started) return;
-    started = true;
-    void start();
-  };
-
-  try {
-    after(startOnce);
-  } catch {
-    // no request scope (cron/timer caller)
-  }
-
-  // after() may accept the callback and never invoke it (closed request scope).
-  const fallback = setTimeout(startOnce, 1_000);
-  fallback.unref?.();
+  // Start immediately. after()/unref'd setTimeout silently drop work after ops/run returns 202,
+  // leaving galaxusFeedRun rows stuck with finishedAt=null (countsJson=null) until stale reaper kills them.
+  void start();
 }
 
 async function beginAsyncFeedRun(params: {
@@ -399,9 +425,9 @@ export async function startFeedPushAsync(params: {
   triggerSource?: FeedTriggerSource;
   providerKeys?: string[];
 }): Promise<FeedPushStartResult> {
-  // Transaction-scoped lock: short critical section (dedupe active-run + enqueue/start).
-  const locked = await withAdvisoryXactLock("galaxus:feed-push", async () => {
-    const active = await getActiveFeedRun();
+  // Per-scope lock: stock/price/master can run in parallel (Galaxus accepts all 4 SFTP files).
+  const locked = await withAdvisoryXactLock(feedPushLockKey(params.scope), async () => {
+    const active = await getActiveFeedRun(params.scope);
     if (active) {
       const queued = await enqueueFeedPushTrigger({
         scope: params.scope,
@@ -438,35 +464,67 @@ export async function startFeedPushAsync(params: {
  * Start the oldest pending feed push when no run is active.
  * Called after each async feed completes and safe to invoke from cron/tick.
  */
-export async function drainFeedPushQueue(origin: string): Promise<FeedPushStartResult | { ok: true; drained: false }> {
-  const locked = await withAdvisoryXactLock("galaxus:feed-push", async () => {
-    const active = await getActiveFeedRun();
-    if (active) return { ok: true as const, drained: false as const };
+async function tryStartPendingFeedPush(
+  origin: string,
+  pending: { id: string; scope: string; triggerSource: string | null }
+): Promise<FeedPushStartResult | null> {
+  const scope = pending.scope as FeedScope;
+  const locked = await withAdvisoryXactLock(feedPushLockKey(scope), async () => {
+    const active = await getActiveFeedRun(scope);
+    if (active) return null;
 
     const prismaAny = prisma as any;
-    const pending: { id: string; scope: string; triggerSource: string | null } | null =
-      await prismaAny.galaxusFeedTrigger.findFirst({
-        where: { status: "PENDING" },
-        orderBy: { requestedAt: "asc" },
-      });
-    if (!pending) return { ok: true as const, drained: false as const };
+    const row = await prismaAny.galaxusFeedTrigger.findUnique({
+      where: { id: pending.id },
+      select: { status: true },
+    });
+    if (!row || row.status !== "PENDING") return null;
 
     await prismaAny.galaxusFeedTrigger.update({
       where: { id: pending.id },
       data: { status: "RUNNING", consumedAt: new Date() },
     });
 
-    const started = await beginAsyncFeedRun({
+    return beginAsyncFeedRun({
       origin,
-      scope: pending.scope as FeedScope,
+      scope,
       triggerSource: (pending.triggerSource as FeedTriggerSource) ?? "unknown",
       feedTriggerId: pending.id,
     });
-    return { ...started, drained: true as const };
   });
 
-  if (!locked.locked) return { ok: true, drained: false };
-  return locked.result;
+  if (!locked.locked) return null;
+  return locked.result ?? null;
+}
+
+export async function drainFeedPushQueue(
+  origin: string
+): Promise<FeedPushStartResult | { ok: true; drained: false }> {
+  const prismaAny = prisma as any;
+  const pendingRows: Array<{ id: string; scope: string; triggerSource: string | null }> =
+    await prismaAny.galaxusFeedTrigger.findMany({
+      where: { status: "PENDING" },
+      orderBy: { requestedAt: "asc" },
+    });
+  if (!pendingRows.length) return { ok: true, drained: false };
+
+  pendingRows.sort((a, b) => {
+    if (a.scope === "master-specs" && b.scope !== "master-specs") return -1;
+    if (b.scope === "master-specs" && a.scope !== "master-specs") return 1;
+    return 0;
+  });
+
+  const seenScopes = new Set<string>();
+  let lastStarted: FeedPushStartResult | null = null;
+  for (const pending of pendingRows) {
+    if (seenScopes.has(pending.scope)) continue;
+    seenScopes.add(pending.scope);
+    const started = await tryStartPendingFeedPush(origin, pending);
+    if (started) lastStarted = started;
+  }
+
+  if (!lastStarted) return { ok: true, drained: false };
+  return { ...lastStarted, drained: true };
 }
 
 /**

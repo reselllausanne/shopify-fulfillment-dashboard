@@ -12,6 +12,21 @@ import { MIRAKL_TERMINAL_RETURN_STATUSES } from "@/decathlon/returns/receipt/rem
 import { syncMarketplaceReturns } from "@/decathlon/returns/receipt/sync";
 import { computeReturnRestockingFeeTotal } from "@/shopify/returns/restockingFee";
 
+function decathlonLineRestockingFeeTotal(lineItems: Array<any>): number {
+  let total = 0;
+  for (const line of lineItems) {
+    const lineFee = Number(line?.restockingFeeAmount);
+    if (Number.isFinite(lineFee) && lineFee > 0) {
+      total += lineFee * (Number(line?.quantity) || 1);
+    } else if (Number(line?.restockingFeePercent) > 0) {
+      const unit = Number(line?.unitAmount) || 0;
+      const qty = Number(line?.quantity) || 1;
+      total += (unit * qty * Number(line.restockingFeePercent)) / 100;
+    }
+  }
+  return Number(total.toFixed(2));
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -19,15 +34,20 @@ function serializeReturn(row: any) {
   const raw = row?.rawJson as any;
   const lineItems: Array<any> = Array.isArray(raw?.lineItems) ? raw.lineItems : [];
   const gross = row.returnAmount != null ? Number(row.returnAmount) : null;
-  const storedFee = raw?.restockingFee?.total;
-  const feeComputation =
-    gross != null
-      ? computeReturnRestockingFeeTotal({ lineItems, grossAmount: gross })
-      : null;
-  const restockingFeeTotal =
-    storedFee != null && Number.isFinite(Number(storedFee))
-      ? Number(storedFee)
-      : feeComputation?.restockingFeeTotal ?? 0;
+  let restockingFeeTotal = 0;
+  if (row.platform === "shopify") {
+    const storedFee = raw?.restockingFee?.total;
+    if (storedFee != null && Number.isFinite(Number(storedFee))) {
+      restockingFeeTotal = Number(storedFee);
+    } else if (gross != null) {
+      restockingFeeTotal = computeReturnRestockingFeeTotal({
+        lineItems,
+        grossAmount: gross,
+      }).restockingFeeTotal;
+    }
+  } else {
+    restockingFeeTotal = decathlonLineRestockingFeeTotal(lineItems);
+  }
   const netStoreCredit =
     gross != null
       ? Number(Math.max(0, gross - restockingFeeTotal).toFixed(2))

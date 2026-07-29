@@ -4,6 +4,7 @@ import { hasRunningRun, startRun, scrapeShop } from "@/app/lib/shopifyScrape";
 import { scrapeHhvShop } from "@/app/lib/hhvScrape";
 import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
+import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 function runScrapeForShop(shop: ScraperShop, runId: number) {
@@ -14,7 +15,9 @@ function runScrapeForShop(shop: ScraperShop, runId: number) {
         ? scrapeSnowleaderShop
         : shop.platform === "rei"
           ? scrapeReicheltShop
-          : scrapeShop;
+          : shop.platform === "nso"
+            ? scrapeNewsoleShop
+            : scrapeShop;
   return runScrape(shop, runId);
 }
 

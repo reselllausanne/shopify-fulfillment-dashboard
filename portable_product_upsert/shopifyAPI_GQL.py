@@ -368,7 +368,8 @@ def get_lego_shipping_cost(product_handle):
     
     # Small LEGO sets - 35 CHF shipping
     small_sets = ['lego-star-wars-tie-fighter-set-75095', 'lego-creator-horizon-express-set-10233',
-                  'lego-creator-santas-workshop-set-10245']
+                  'lego-creator-santas-workshop-set-10245', 'lego-creator-winter-holiday-train-set-10254',
+                  'lego-at-at-set-75288']
     if any(set_name in handle_lower for set_name in small_sets):
         return 35
     

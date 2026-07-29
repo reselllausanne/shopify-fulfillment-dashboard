@@ -13,6 +13,7 @@ describe("resolveStxShippingCHF", () => {
   it("returns exact manual shipping for small LEGO overrides", () => {
     expect(resolveStxShippingCHF({ slug: "lego-star-wars-tie-fighter-set-75095" })).toBe(35);
     expect(resolveStxShippingCHF({ slug: "lego-creator-winter-holiday-train-set-10254" })).toBe(35);
+    expect(resolveStxShippingCHF({ slug: "lego-at-at-set-75288" })).toBe(35);
   });
 
   it("returns exact manual shipping for explicit 25 CHF LEGO overrides", () => {

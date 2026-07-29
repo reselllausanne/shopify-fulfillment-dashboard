@@ -6,6 +6,7 @@ import {
 } from "../config";
 import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
 import { normalizeSize as normalizeSizeValue } from "@/app/lib/normalize";
+import { validateGtin } from "@/app/lib/normalize";
 import { gtinCandidates, gtinEquals } from "@/shopify/restock/gtinNormalize";
 
 type KickDbProduct = {
@@ -92,44 +93,101 @@ export async function fetchStockxProductByIdOrSlug(idOrSlug: string): Promise<Ki
   return product;
 }
 
+function normalizeIdentifierKind(value: unknown): string {
+  return String(value ?? "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function cleanIdentifierDigits(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .replace(/\D/g, "");
+}
+
+function acceptGtinDigits(digits: string): string | null {
+  const clean = cleanIdentifierDigits(digits);
+  if (!clean || !validateGtin(clean)) return null;
+  return clean;
+}
+
+/** ITF-14 → strip leading zeros so it aligns with UPC (12-digit) when possible. */
+function normalizeItfIdentifier(value: unknown): string | null {
+  const digits = cleanIdentifierDigits(value);
+  if (!digits) return null;
+  const stripped = digits.replace(/^0+/, "") || "0";
+  return acceptGtinDigits(stripped);
+}
+
+function pickFromIdentifierEntries(
+  entries: Array<{ identifier?: string | null; identifier_type?: string | null }>
+): string | null {
+  const findKind = (pred: (kind: string) => boolean): string | null => {
+    for (const entry of entries) {
+      const kind = normalizeIdentifierKind(entry.identifier_type);
+      if (!pred(kind)) continue;
+      const accepted = acceptGtinDigits(entry.identifier);
+      if (accepted) return accepted;
+    }
+    return null;
+  };
+
+  const upc = findKind((kind) => kind === "UPC" || kind.startsWith("UPC"));
+  if (upc) return upc;
+
+  for (const entry of entries) {
+    const kind = normalizeIdentifierKind(entry.identifier_type);
+    if (kind !== "ITF" && !kind.startsWith("ITF")) continue;
+    const normalized = normalizeItfIdentifier(entry.identifier);
+    if (normalized) return normalized;
+  }
+
+  const ean = findKind((kind) => kind === "EAN" || kind.startsWith("EAN"));
+  if (ean) return ean;
+
+  const gtin = findKind((kind) => kind === "GTIN" || kind.startsWith("GTIN"));
+  if (gtin) return gtin;
+
+  return null;
+}
+
+function pickFromIdentifierRecord(record: Record<string, string | string[]>): string | null {
+  const asEntries = (keys: string[]) =>
+    keys.flatMap((key) => {
+      const raw = record[key];
+      const values = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+      return values.map((identifier) => ({
+        identifier,
+        identifier_type: key,
+      }));
+    });
+
+  return pickFromIdentifierEntries([
+    ...asEntries(["upc", "upca", "UPC", "UPCA"]),
+    ...asEntries(["itf", "itf14", "ITF", "ITF14"]),
+    ...asEntries(["ean", "ean13", "EAN", "EAN13"]),
+    ...asEntries(["gtin", "GTIN"]),
+  ]);
+}
+
+/**
+ * Canonical barcode for feed keys (Decathlon/Galaxus STX_*).
+ * Priority: UPC → ITF-14 (leading zeros stripped) → EAN-13 → GTIN-8.
+ */
 export function extractVariantGtin(variant?: KickDbVariantWithIdentifiers): string | null {
   if (!variant) return null;
-  if (variant.gtin) return variant.gtin;
-  if (variant.ean) return variant.ean;
+
   const identifiers = variant.identifiers;
-  if (Array.isArray(identifiers)) {
-    const gtin = identifiers.find((item) => {
-      const kind = String(item.identifier_type ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      // KickDB sends many variants of the same concept: EAN-13, GTIN-8, UPC-A…
-      // Treat them as barcode candidates for downstream GTIN validation.
-      return (
-        kind === "GTIN" ||
-        kind.startsWith("GTIN") ||
-        kind === "EAN" ||
-        kind.startsWith("EAN") ||
-        kind === "UPC" ||
-        kind.startsWith("UPC")
-      );
-    });
-    return gtin?.identifier ?? null;
+  if (Array.isArray(identifiers) && identifiers.length > 0) {
+    const picked = pickFromIdentifierEntries(identifiers);
+    if (picked) return picked;
+  } else if (identifiers && typeof identifiers === "object") {
+    const picked = pickFromIdentifierRecord(identifiers as Record<string, string | string[]>);
+    if (picked) return picked;
   }
-  if (identifiers && typeof identifiers === "object") {
-    const candidates = [
-      (identifiers as Record<string, string | string[]>).gtin,
-      (identifiers as Record<string, string | string[]>).ean,
-      (identifiers as Record<string, string | string[]>).ean13,
-      (identifiers as Record<string, string | string[]>).upc,
-      (identifiers as Record<string, string | string[]>).upca,
-      (identifiers as Record<string, string | string[]>).GTIN,
-      (identifiers as Record<string, string | string[]>).EAN,
-      (identifiers as Record<string, string | string[]>).EAN13,
-      (identifiers as Record<string, string | string[]>).UPC,
-      (identifiers as Record<string, string | string[]>).UPCA,
-    ].flat();
-    const value = Array.isArray(candidates) ? candidates[0] : candidates;
-    return typeof value === "string" ? value : null;
-  }
-  return null;
+
+  const topLevel = acceptGtinDigits(variant.gtin) ?? acceptGtinDigits(variant.ean);
+  return topLevel;
 }
 
 /** Match scanned GTIN against every identifier on a KickDB variant (EAN-13, UPC, GTIN-8, …). */

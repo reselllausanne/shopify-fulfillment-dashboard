@@ -2,7 +2,26 @@
  * Mirakl OR11 order lines expose identifiers under many keys; normalize extraction for DB + StockX linking.
  */
 
+function pickMiraklAdditionalFieldGtin(line: any): string | null {
+  const fields =
+    line?.order_line_additional_fields ??
+    line?.orderLineAdditionalFields ??
+    line?.additional_fields ??
+    line?.additionalFields;
+  if (!Array.isArray(fields)) return null;
+  for (const field of fields) {
+    const code = String(field?.code ?? "")
+      .trim()
+      .toLowerCase();
+    if (code !== "ean" && code !== "gtin" && code !== "barcode") continue;
+    const value = String(field?.value ?? "").trim();
+    if (value) return value;
+  }
+  return null;
+}
+
 const GTIN_PATHS: (string | ((o: any) => unknown))[] = [
+  pickMiraklAdditionalFieldGtin,
   "gtin",
   "ean",
   "product_ean",

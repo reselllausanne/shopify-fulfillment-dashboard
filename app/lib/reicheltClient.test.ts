@@ -10,6 +10,8 @@ import {
   parseReicheltProductHtml,
   reicheltCategoryPageUrl,
   extractReicheltCategorySlug,
+  parseReicheltProductSitemapShards,
+  fallbackReicheltProductSitemapShards,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -101,5 +103,16 @@ describe("extractReicheltCategorySlug", () => {
     expect(
       extractReicheltCategorySlug("https://www.reichelt.com/ch/fr/shop/cat%C3%A9gorie/gate_driver-10497")
     ).toBe("gate driver");
+  });
+});
+
+describe("parseReicheltProductSitemapShards", () => {
+  it("extracts sorted shard numbers from sitemap index", () => {
+    const xml = `<urlset><loc>${"https://www.reichelt.com/sitemaps/products/products_2.xml"}</loc><loc>${"https://www.reichelt.com/sitemaps/products/products_10.xml"}</loc></urlset>`;
+    expect(parseReicheltProductSitemapShards(xml)).toEqual([2, 10]);
+  });
+
+  it("builds blind fallback shard list", () => {
+    expect(fallbackReicheltProductSitemapShards(2)).toEqual([0, 1, 2]);
   });
 });

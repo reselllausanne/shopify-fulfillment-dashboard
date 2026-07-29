@@ -29,6 +29,7 @@ const LEGO_INBOUND_SMALL = [
   "lego-creator-horizon-express-set-10233",
   "lego-creator-santas-workshop-set-10245",
   "lego-creator-winter-holiday-train-set-10254",
+  "lego-at-at-set-75288",
 ];
 
 function normalizeSlug(value: unknown): string {

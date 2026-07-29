@@ -49,6 +49,7 @@ function platformLabel(platform: string) {
   if (platform === "hhv") return "HHV / Playwright";
   if (platform === "snl") return "Snowleader / GraphQL";
   if (platform === "rei") return "Reichelt / HTML";
+  if (platform === "nso") return "Newsole / WooCommerce";
   return "Shopify";
 }
 
@@ -170,7 +171,8 @@ export default function ScraperPage() {
             <pre className="mt-3 overflow-auto rounded-lg bg-amber-100/60 p-3 text-xs">
 {`SCRAPER_SHOPS="WEL|WellPlayed|https://www.wellplayed.ch
 HHV|HHV|https://www.hhv.de|EUR|hhv
-SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl"`}
+SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
+NSO|Newsole|https://newsole.ch|CHF|nso"`}
             </pre>
           </div>
         ) : null}

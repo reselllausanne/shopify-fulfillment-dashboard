@@ -11,20 +11,21 @@ describe("kickdbVariantMatchesGtin", () => {
         { identifier: "6941428241450", identifier_type: "EAN-13" },
       ],
     } as any;
+    expect(extractVariantGtin(variant)).toBe("194851127426");
     expect(kickdbVariantMatchesGtin(variant, "6941428241450")).toBe(true);
     expect(kickdbVariantMatchesGtin(variant, "194851127426")).toBe(true);
   });
 });
 
 describe("extractVariantGtin", () => {
-  it("accepts EAN-13 identifier_type", () => {
+  it("accepts EAN-13 identifier_type when it is the only barcode", () => {
     const variant = {
       identifiers: [{ identifier: "4550457465946", identifier_type: "EAN-13" }],
     } as any;
     expect(extractVariantGtin(variant)).toBe("4550457465946");
   });
 
-  it("accepts GTIN-* / UPC-* variants", () => {
+  it("accepts GTIN-8 / UPC when they are the only barcode", () => {
     const gtin8 = {
       identifiers: [{ identifier: "61923225", identifier_type: "GTIN-8" }],
     } as any;
@@ -33,5 +34,26 @@ describe("extractVariantGtin", () => {
     } as any;
     expect(extractVariantGtin(gtin8)).toBe("61923225");
     expect(extractVariantGtin(upca)).toBe("194851127426");
+  });
+
+  it("prefers UPC over EAN-13 regardless of array order (Jordan UNC Reimagined EU 43)", () => {
+    const variant = {
+      identifiers: [
+        { identifier: "6954000309967", identifier_type: "EAN-13" },
+        { identifier: "197863751597", identifier_type: "UPC" },
+        { identifier: "00197863751597", identifier_type: "ITF-14" },
+      ],
+    } as any;
+    expect(extractVariantGtin(variant)).toBe("197863751597");
+  });
+
+  it("uses ITF-14 with leading zeros stripped when UPC is missing", () => {
+    const variant = {
+      identifiers: [
+        { identifier: "6954000309967", identifier_type: "EAN-13" },
+        { identifier: "00197863751597", identifier_type: "ITF-14" },
+      ],
+    } as any;
+    expect(extractVariantGtin(variant)).toBe("197863751597");
   });
 });

@@ -970,7 +970,9 @@ export default function DecathlonReturnsReceiptPage() {
                     : "—"}
                 </dd>
               </div>
-              {selected.restockingFeeAmount != null && selected.restockingFeeAmount > 0 && (
+              {selected.platform === "shopify" &&
+                selected.restockingFeeAmount != null &&
+                selected.restockingFeeAmount > 0 && (
                 <div className="flex justify-between gap-4">
                   <dt className="text-slate-500">Restocking fee (10%)</dt>
                   <dd className="text-red-600">

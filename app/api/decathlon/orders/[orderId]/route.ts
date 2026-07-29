@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import {
+  applyDecathlonLineSaleSnapshots,
+  loadDecathlonLineSaleSnapshots,
+} from "@/decathlon/orders/saleLineSnapshot";
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
@@ -63,10 +67,12 @@ export async function GET(
     });
     const orderWithMatches = { ...order, stockxMatches };
 
-    const lines: any[] =
+    const linesRaw: any[] =
       scope === "partner" && partnerKey
         ? filterDecathlonLinesForPartner(orderWithMatches.lines ?? [], orderWithMatches, partnerKey)
         : orderWithMatches.lines ?? [];
+    const saleSnapshots = await loadDecathlonLineSaleSnapshots(linesRaw);
+    const lines = applyDecathlonLineSaleSnapshots(linesRaw, saleSnapshots);
     const [kickdbByLineId, catalogByLineId, partnerRows] = await Promise.all([
       enrichDecathlonOrderLinesWithKickdb(lines),
       enrichDecathlonOrderLinesWithSupplierCatalog(lines),

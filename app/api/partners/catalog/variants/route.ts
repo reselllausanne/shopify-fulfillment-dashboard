@@ -68,6 +68,12 @@ function toDecimalOrNull(value: unknown): Prisma.Decimal | null {
   return new Prisma.Decimal(parsed.toFixed(2));
 }
 
+function parseDecimalLike(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function GET(req: NextRequest) {
   const session = await getPartnerSession(req);
   if (!session) {
@@ -412,6 +418,21 @@ export async function POST(req: NextRequest) {
           }
           if ("supplierColorway" in entry) {
             data.supplierColorway = entry.supplierColorway ? String(entry.supplierColorway).trim() : null;
+          }
+
+          const manualLockIncoming =
+            "manualLock" in entry ? Boolean(entry.manualLock) : Boolean(target.manualLock);
+          const manualPriceIncoming =
+            "manualPrice" in entry
+              ? parseDecimalLike(entry.manualPrice)
+              : parseDecimalLike(target.manualPrice);
+          if (manualLockIncoming && !(manualPriceIncoming && manualPriceIncoming > 0)) {
+            output.push({
+              ok: false,
+              error: "manualLock requires manualPrice > 0",
+              supplierVariantId: target.supplierVariantId,
+            });
+            continue;
           }
 
           const keysTouched = Object.keys(data);

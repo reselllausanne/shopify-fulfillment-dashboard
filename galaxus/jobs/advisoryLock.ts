@@ -55,7 +55,7 @@ export async function withAdvisoryXactLock<T>(
       const result = await handler();
       return { locked: true, result };
     },
-    { timeout: options?.timeoutMs ?? 20000, maxWait: options?.maxWaitMs ?? 5000 }
+    { timeout: options?.timeoutMs ?? 60000, maxWait: options?.maxWaitMs ?? 10000 }
   );
 }
 

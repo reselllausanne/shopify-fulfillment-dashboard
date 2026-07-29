@@ -24,4 +24,5 @@ export type FeedTriggerSource =
   | "shopify-post-sale"
   | "image-sync"
   | "admin"
+  | "scraper"
   | "unknown";

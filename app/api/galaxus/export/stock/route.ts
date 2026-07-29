@@ -157,8 +157,8 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
-      // Stock feed should not depend on hosted images.
-      requireImage: false,
+      // Keep stock aligned with master eligibility: missing-image SKUs cannot be listed.
+      requireImage: true,
       galaxusPartnerKeysLower,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {

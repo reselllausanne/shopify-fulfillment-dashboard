@@ -141,6 +141,12 @@ function toDecimalOrNull(value: number | null | undefined): Prisma.Decimal | nul
   return new Prisma.Decimal(value.toFixed(2));
 }
 
+function parseDecimalLike(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function toIntOrNull(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const parsed = Number.parseInt(String(value), 10);
@@ -246,6 +252,22 @@ export async function POST(request: Request) {
           if ("supplierColorway" in entry) {
             data.supplierColorway = entry.supplierColorway ? String(entry.supplierColorway).trim() : null;
           }
+
+          const manualLockIncoming =
+            "manualLock" in entry ? Boolean(entry.manualLock) : Boolean(target.manualLock);
+          const manualPriceIncoming =
+            "manualPrice" in entry
+              ? parseDecimalLike(entry.manualPrice)
+              : parseDecimalLike(target.manualPrice);
+          if (manualLockIncoming && !(manualPriceIncoming && manualPriceIncoming > 0)) {
+            output.push({
+              ok: false,
+              error: "manualLock requires manualPrice > 0",
+              supplierVariantId,
+            });
+            continue;
+          }
+
           if (touchManualMeta) {
             data.manualUpdatedAt = now;
           }

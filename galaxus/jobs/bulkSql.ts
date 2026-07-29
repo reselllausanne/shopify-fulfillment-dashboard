@@ -410,14 +410,14 @@ export async function bulkUpdateSupplierVariants(
   options?: { updateGtinWhenProvided?: boolean }
 ): Promise<number> {
   if (rows.length === 0) return 0;
-  const updateGtin = options?.updateGtinWhenProvided !== false;
+  // GTIN / providerKey are set on INSERT only — never overwrite an existing catalog identity.
+  void options?.updateGtinWhenProvided;
   const values = rows.map((r) => {
-    const gtin = updateGtin ? (r.gtin ?? null) : null;
     return Prisma.sql`(
       ${r.supplierVariantId},
       ${r.supplierSku ?? null},
       ${r.providerKey ?? null},
-      ${gtin},
+      ${r.gtin ?? null},
       ${numericOrNull(r.price, "numeric")},
       ${numericOrNull(r.stock, "int")},
       ${r.sizeRaw ?? null},
@@ -464,11 +464,7 @@ export async function bulkUpdateSupplierVariants(
       UPDATE "public"."SupplierVariant" AS t
       SET
         "supplierSku" = COALESCE(vals."supplierSku", t."supplierSku"),
-        "providerKey" = CASE
-          WHEN vals."providerKey" IS NOT NULL THEN vals."providerKey"
-          WHEN vals."gtin" IS NULL AND t."gtin" IS NULL THEN NULL
-          ELSE t."providerKey"
-        END,
+        "providerKey" = COALESCE(t."providerKey", vals."providerKey"),
         "price" = COALESCE(vals."price", t."price"),
         "stock" = COALESCE(vals."stock", t."stock"),
         "sizeRaw" = COALESCE(vals."sizeRaw", t."sizeRaw"),
@@ -490,19 +486,7 @@ export async function bulkUpdateSupplierVariants(
           vals."standardSuggestedRetailPriceInclVat",
           t."standardSuggestedRetailPriceInclVat"
         ),
-        "gtin" = CASE
-          WHEN vals."gtin" IS NULL THEN t."gtin"
-          WHEN t."gtin" IS DISTINCT FROM vals."gtin"
-            AND NOT EXISTS (
-              SELECT 1
-              FROM "public"."SupplierVariant" AS s2
-              WHERE s2."providerKey" = COALESCE(vals."providerKey", t."providerKey")
-                AND s2."gtin" = vals."gtin"
-                AND s2."supplierVariantId" <> t."supplierVariantId"
-            )
-          THEN vals."gtin"
-          ELSE t."gtin"
-        END,
+        "gtin" = COALESCE(t."gtin", vals."gtin"),
         "lastSyncAt" = CASE
           WHEN (
             t."price" IS DISTINCT FROM COALESCE(vals."price", t."price") OR
@@ -523,8 +507,9 @@ export async function bulkUpdateSupplierVariants(
               vals."standardSuggestedRetailPriceInclVat",
               t."standardSuggestedRetailPriceInclVat"
             ) OR
-            (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
-            (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL)
+            (t."gtin" IS NULL AND vals."gtin" IS NOT NULL) OR
+            (t."providerKey" IS NULL AND vals."providerKey" IS NOT NULL) OR
+            (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")
           )
           THEN ${now}
           ELSE t."lastSyncAt"
@@ -552,9 +537,8 @@ export async function bulkUpdateSupplierVariants(
             vals."standardSuggestedRetailPriceInclVat",
             t."standardSuggestedRetailPriceInclVat"
           ) OR
-          (vals."gtin" IS NOT NULL AND t."gtin" IS DISTINCT FROM vals."gtin") OR
-          (vals."providerKey" IS NOT NULL AND t."providerKey" IS DISTINCT FROM vals."providerKey") OR
-          (vals."gtin" IS NULL AND t."gtin" IS NULL AND t."providerKey" IS NOT NULL AND vals."providerKey" IS NULL) OR
+          (t."gtin" IS NULL AND vals."gtin" IS NOT NULL) OR
+          (t."providerKey" IS NULL AND vals."providerKey" IS NOT NULL) OR
           (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")
         )
       RETURNING 1

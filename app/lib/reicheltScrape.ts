@@ -19,6 +19,7 @@ import {
 } from "@/app/lib/reicheltPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { scheduleScraperGalaxusFeedPush } from "@/app/lib/scraperFeedPush";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -434,19 +435,28 @@ export async function scrapeReicheltShop(
       }
     }
 
+    await scheduleScraperGalaxusFeedPush({ shop, wrote: stats.wrote, syncImages: true });
+
     await updateRun(runId, {
-      status: "ok",
+      status: stats.listed === 0 && stats.processedProducts === 0 ? "error" : "ok",
       finished_at: new Date(),
       products_listed: stats.listed,
       variants_upserted: stats.wrote,
       with_gtin: stats.gtinMatched,
       errors: stats.parseErrors + stats.requestErrors,
-      message: runMessage(stats, discovery, imageSynced, imageFailed),
+      message:
+        stats.listed === 0 && stats.processedProducts === 0
+          ? `${runMessage(stats, discovery, imageSynced, imageFailed)} · reichelt_unreachable_or_503_retry_later`
+          : runMessage(stats, discovery, imageSynced, imageFailed),
     });
   } catch (err: any) {
     await updateRun(runId, {
-      status: "error",
+      status: stats.listed > 0 || stats.wrote > 0 ? "interrupted" : "error",
       finished_at: new Date(),
+      products_listed: stats.listed,
+      variants_upserted: stats.wrote,
+      with_gtin: stats.gtinMatched,
+      errors: stats.parseErrors + stats.requestErrors,
       message: String(err?.message || err).slice(0, 2000),
     });
     throw err;

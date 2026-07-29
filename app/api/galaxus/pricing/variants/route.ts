@@ -186,6 +186,12 @@ function toDecimalOrNull(value: number | null | undefined): Prisma.Decimal | nul
   return new Prisma.Decimal(value.toFixed(2));
 }
 
+function parseDecimalLike(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function parseDateOrNull(value: unknown): Date | null {
   if (value === null || value === undefined) return null;
   if (value instanceof Date && !Number.isNaN(value.valueOf())) return value;
@@ -334,6 +340,22 @@ export async function POST(request: Request) {
             data.manualNote = null;
             touchManualMeta = true;
           }
+
+          const manualLockIncoming =
+            "manualLock" in entry ? Boolean(entry.manualLock) : Boolean(target.manualLock);
+          const manualPriceIncoming =
+            "manualPrice" in entry
+              ? parseDecimalLike(entry.manualPrice)
+              : parseDecimalLike(target.manualPrice);
+          if (manualLockIncoming && !(manualPriceIncoming && manualPriceIncoming > 0)) {
+            output.push({
+              ok: false,
+              error: "manualLock requires manualPrice > 0",
+              supplierVariantId: target.supplierVariantId,
+            });
+            continue;
+          }
+
           const keysTouched = Object.keys(data).filter((k) => k !== "manualUpdatedAt");
           if (keysTouched.length === 0) {
             output.push({

@@ -103,9 +103,26 @@ export function reicheltConfig() {
     ),
     requestTimeoutMs: Math.max(5_000, Number(process.env.SCRAPER_REI_REQUEST_TIMEOUT_MS || 45_000)),
     maxRetries: Math.max(1, Number(process.env.SCRAPER_REI_MAX_RETRIES || 5)),
+    sitemapMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_MAX_RETRIES || 4)),
+    sitemapRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_RETRY_BASE_MS || 3_000)),
+    sitemapShardMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_MAX_RETRIES || 3)),
+    sitemapShardRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_RETRY_BASE_MS || 2_000)),
+    sitemapFallbackMaxShard: Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_FALLBACK_MAX_SHARD || 149)),
     defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 16)),
   };
+}
+
+export function parseReicheltProductSitemapShards(indexXml: string): number[] {
+  return [...indexXml.matchAll(/products_(\d+)\.xml/g)]
+    .map((m) => Number(m[1]))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+}
+
+export function fallbackReicheltProductSitemapShards(maxShard: number): number[] {
+  const cap = Math.max(0, maxShard);
+  return Array.from({ length: cap + 1 }, (_, i) => i);
 }
 
 export function reicheltCategoryPageUrl(categoryUrl: string, page: number): string {
@@ -361,22 +378,72 @@ export class ReicheltClient {
   }
 
   async fetchText(url: string, init: RequestInit = {}): Promise<string> {
-    const cfg = reicheltConfig();
+    return this.fetchTextWithRetry(url, init, reicheltConfig().maxRetries, reicheltConfig().requestDelayMs);
+  }
+
+  private async fetchTextWithRetry(
+    url: string,
+    init: RequestInit,
+    maxRetries: number,
+    retryBaseMs: number
+  ): Promise<string> {
     let lastErr: unknown = null;
-    for (let attempt = 0; attempt < cfg.maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const res = await this.fetchOnce(url, init);
         if (!res.ok) throw new Error(`Reichelt HTTP ${res.status} ${url}`);
         const text = await res.text();
-        if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs + jitterMs(250));
+        const delayMs = reicheltConfig().requestDelayMs;
+        if (delayMs) await sleep(delayMs + jitterMs(250));
         return text;
       } catch (err) {
         lastErr = err;
-        if (!isRetryableReicheltError(err) || attempt >= cfg.maxRetries - 1) break;
-        await sleep(cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(500));
+        if (!isRetryableReicheltError(err) || attempt >= maxRetries - 1) break;
+        const backoff = retryBaseMs * Math.pow(2, attempt) + jitterMs(Math.min(retryBaseMs, 2_000));
+        await sleep(backoff);
       }
     }
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  /** Homepage visit — seeds cookies/XSRF before sitemap/API calls. */
+  async warmSession(): Promise<void> {
+    try {
+      await this.fetchTextWithRetry(`${this.baseUrl}/`, {}, 2, 1_000);
+    } catch (err) {
+      console.warn("[SCRAPER] rei session warmup failed:", (err as Error)?.message || err);
+    }
+  }
+
+  /** Index XML first; if 503/outage, scan known shard range without index. */
+  async resolveProductSitemapShards(): Promise<number[]> {
+    const cfg = reicheltConfig();
+    await this.warmSession();
+
+    const indexUrls = [REICHELT_SITEMAP_INDEX_URL, "https://www.reichelt.com/sitemap.xml"];
+    for (const indexUrl of indexUrls) {
+      try {
+        const indexXml = await this.fetchTextWithRetry(
+          indexUrl,
+          {},
+          cfg.sitemapMaxRetries,
+          cfg.sitemapRetryBaseMs
+        );
+        const shards = parseReicheltProductSitemapShards(indexXml);
+        if (shards.length) return shards;
+      } catch (err) {
+        console.warn(
+          `[SCRAPER] rei sitemap index ${indexUrl} failed:`,
+          (err as Error)?.message || err
+        );
+      }
+    }
+
+    const fallback = fallbackReicheltProductSitemapShards(cfg.sitemapFallbackMaxShard);
+    console.warn(
+      `[SCRAPER] rei sitemap index unavailable — blind shard scan 0..${cfg.sitemapFallbackMaxShard}`
+    );
+    return fallback;
   }
 
   async fetchCategory(categoryUrl: string, page = 0): Promise<{ html: string; settings: ReicheltCategorySettings | null; items: ReicheltListItem[] }> {
@@ -447,29 +514,43 @@ export class ReicheltClient {
   async *iterProductSitemapShards(): AsyncGenerator<{ shard: number; urls: string[] }> {
     const cfg = reicheltConfig();
     const startShard = Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_START_SHARD || 0));
-    const indexXml = await this.fetchText(REICHELT_SITEMAP_INDEX_URL);
-    const shards = [...indexXml.matchAll(/products_(\d+)\.xml/g)].map((m) => Number(m[1])).sort((a, b) => a - b);
+    const shards = await this.resolveProductSitemapShards();
+    let consecutiveSkips = 0;
+    const maxConsecutiveSkips = Math.max(3, Number(process.env.SCRAPER_REI_SITEMAP_MAX_CONSECUTIVE_SKIPS || 5));
     for (const shard of shards) {
       if (shard < startShard) continue;
       let xml: string | null = null;
       let lastErr: unknown = null;
-      for (let attempt = 0; attempt < cfg.maxRetries; attempt++) {
+      for (let attempt = 0; attempt < cfg.sitemapShardMaxRetries; attempt++) {
         try {
-          xml = await this.fetchText(`${REICHELT_PRODUCT_SITEMAP_PREFIX}${shard}.xml`);
+          xml = await this.fetchTextWithRetry(
+            `${REICHELT_PRODUCT_SITEMAP_PREFIX}${shard}.xml`,
+            {},
+            cfg.sitemapShardMaxRetries,
+            cfg.sitemapShardRetryBaseMs
+          );
           break;
         } catch (err) {
           lastErr = err;
-          if (!isRetryableReicheltError(err) || attempt >= cfg.maxRetries - 1) break;
-          await sleep(cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(800));
+          if (!isRetryableReicheltError(err) || attempt >= cfg.sitemapShardMaxRetries - 1) break;
+          await sleep(cfg.sitemapShardRetryBaseMs * Math.pow(2, attempt) + jitterMs(400));
         }
       }
       if (!xml) {
+        consecutiveSkips++;
         console.warn(
           `[SCRAPER] rei sitemap shard ${shard} skipped:`,
           (lastErr as Error)?.message || lastErr
         );
+        if (consecutiveSkips >= maxConsecutiveSkips) {
+          console.warn(
+            `[SCRAPER] rei sitemap aborting after ${consecutiveSkips} consecutive shard failures (site likely down)`
+          );
+          break;
+        }
         continue;
       }
+      consecutiveSkips = 0;
       const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim());
       yield { shard, urls };
     }

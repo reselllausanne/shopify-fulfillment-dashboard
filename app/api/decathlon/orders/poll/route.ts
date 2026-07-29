@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { buildDecathlonOrdersClient } from "@/decathlon/mirakl/ordersClient";
 import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
+import { resolveDecathlonLineGtin } from "@/decathlon/orders/saleLineSnapshot";
 import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { extractGtinFromOfferSku, roundToCents } from "@/decathlon/returns/restockFromReturnLine";
@@ -721,7 +722,7 @@ export async function POST(request: Request) {
           const lineId = String(line?.id ?? line?.order_line_id ?? line?.orderLineId ?? "").trim();
           if (!lineId) continue;
           const quantity = Number(line?.quantity ?? line?.qty ?? 1);
-          const resolvedGtin = pickMiraklLineGtin(line) ?? line?.gtin ?? line?.ean ?? null;
+          const resolvedGtin = resolveDecathlonLineGtin(line) ?? line?.gtin ?? line?.ean ?? null;
           const resolvedLinePartnerKey = resolvePartnerKeyFromLine(line);
           const linePartnerKey =
             resolvedLinePartnerKey && partnerKeys.has(resolvedLinePartnerKey)

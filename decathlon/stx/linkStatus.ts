@@ -1,6 +1,11 @@
 import { prisma } from "@/app/lib/prisma";
 import { pickMiraklLineGtin, pickMiraklLineSkuCandidates } from "@/decathlon/mirakl/orderLineFields";
 import {
+  applyDecathlonLineSaleSnapshots,
+  loadDecathlonLineSaleSnapshots,
+  resolveDecathlonLineGtin,
+} from "@/decathlon/orders/saleLineSnapshot";
+import {
   buildBucketsFromNeeds,
   normalizeGtinKey,
   resolveStxNeedsFromGtinQuantities,
@@ -23,9 +28,42 @@ function isDecathlonLineExcludedFromStockx(line: any): boolean {
 }
 
 function effectiveLineGtin(line: any): string | null {
-  const fromDb = pickMiraklLineGtin(line);
-  if (fromDb) return fromDb;
-  return pickMiraklLineGtin(line?.rawJson);
+  return resolveDecathlonLineGtin(line);
+}
+
+async function loadSaleSnapshotMaps(
+  lines: any[],
+  snapshots: Map<string, import("@/decathlon/orders/saleLineSnapshot").DecathlonLineSaleSnapshot>
+): Promise<{
+  byLineId: Map<string, { supplierVariantId: string; gtin: string | null; providerKey: string | null }>;
+  keyToStxId: Map<string, string>;
+}> {
+  const byLineId = new Map<
+    string,
+    { supplierVariantId: string; gtin: string | null; providerKey: string | null }
+  >();
+  const keyToStxId = new Map<string, string>();
+
+  for (const line of lines) {
+    const lineId = String(line?.id ?? "").trim();
+    const snap = lineId ? snapshots.get(lineId) : undefined;
+    const supplierVariantId = String(snap?.supplierVariantId ?? "").trim();
+    if (!supplierVariantId.toLowerCase().startsWith("stx_")) continue;
+
+    byLineId.set(lineId, {
+      supplierVariantId,
+      gtin: snap?.gtin ?? null,
+      providerKey: snap?.providerKey ?? null,
+    });
+
+    keyToStxId.set(supplierVariantId, supplierVariantId);
+    if (snap?.providerKey) keyToStxId.set(snap.providerKey, supplierVariantId);
+    for (const c of pickMiraklLineSkuCandidates(line)) {
+      keyToStxId.set(c, supplierVariantId);
+    }
+  }
+
+  return { byLineId, keyToStxId };
 }
 
 async function loadSkuToStxMaps(candidates: Set<string>): Promise<{
@@ -98,17 +136,24 @@ export async function buildDecathlonStxLineTargets(order: {
   id: string;
   lines: any[];
 }): Promise<DecathlonStxLineTarget[]> {
+  const rawLines = order.lines ?? [];
+  const snapshots = await loadDecathlonLineSaleSnapshots(rawLines);
+  const lines = applyDecathlonLineSaleSnapshots(rawLines, snapshots);
+
   const candidates = new Set<string>();
-  for (const line of order.lines ?? []) {
+  for (const line of lines) {
     if (isDecathlonLineExcludedFromStockx(line)) continue;
     for (const c of pickMiraklLineSkuCandidates(line)) candidates.add(c);
     for (const c of pickMiraklLineSkuCandidates(line?.rawJson)) candidates.add(c);
   }
 
-  const { keyToStxId, stxIdToCatalogGtin } = await loadSkuToStxMaps(candidates);
+  const { keyToStxId: liveKeyToStxId, stxIdToCatalogGtin } = await loadSkuToStxMaps(candidates);
+  const { byLineId: saleByLineId, keyToStxId: saleKeyToStxId } = await loadSaleSnapshotMaps(lines, snapshots);
+
+  const keyToStxId = new Map<string, string>([...liveKeyToStxId, ...saleKeyToStxId]);
 
   const fullGtinQty = new Map<string, number>();
-  for (const line of order.lines ?? []) {
+  for (const line of lines) {
     if (isDecathlonLineExcludedFromStockx(line)) continue;
     const g = normalizeGtinKey(effectiveLineGtin(line));
     const qty = Number(line?.quantity ?? 0);
@@ -120,13 +165,15 @@ export async function buildDecathlonStxLineTargets(order: {
 
   const targets: DecathlonStxLineTarget[] = [];
 
-  for (const line of order.lines ?? []) {
+  for (const line of lines) {
     if (isDecathlonLineExcludedFromStockx(line)) continue;
     const qty = Number(line?.quantity ?? 0);
     if (qty <= 0) continue;
 
     let supplierVariantId: string | null = null;
     let gtinKey: string | null = null;
+
+    const saleSnap = saleByLineId.get(String(line?.id ?? "").trim());
 
     const skuKeys = [...pickMiraklLineSkuCandidates(line), ...pickMiraklLineSkuCandidates(line?.rawJson)];
     for (const c of skuKeys) {
@@ -135,9 +182,18 @@ export async function buildDecathlonStxLineTargets(order: {
         supplierVariantId = sid;
         const lineG = normalizeGtinKey(effectiveLineGtin(line));
         const catG = stxIdToCatalogGtin.get(sid);
-        gtinKey = lineG || catG || `stxvar:${sid}`;
+        gtinKey = lineG || saleSnap?.gtin || catG || `stxvar:${sid}`;
         break;
       }
+    }
+
+    if (!supplierVariantId && saleSnap?.supplierVariantId) {
+      supplierVariantId = saleSnap.supplierVariantId;
+      gtinKey =
+        normalizeGtinKey(effectiveLineGtin(line)) ||
+        saleSnap.gtin ||
+        stxIdToCatalogGtin.get(saleSnap.supplierVariantId) ||
+        `stxvar:${saleSnap.supplierVariantId}`;
     }
 
     if (!supplierVariantId) {

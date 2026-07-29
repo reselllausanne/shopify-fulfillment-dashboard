@@ -3,6 +3,7 @@ import { scraperQuery } from "@/app/lib/scraperDb";
 import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
+import { scheduleScraperGalaxusFeedPush } from "@/app/lib/scraperFeedPush";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 const USER_AGENT =
@@ -410,6 +411,8 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
     }).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} image backfill failed:`, e?.message || e);
     });
+
+    await scheduleScraperGalaxusFeedPush({ shop, wrote, syncImages: true });
 
     await updateRun(runId, {
       status: "ok",
