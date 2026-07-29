@@ -262,7 +262,7 @@ export async function GET(request: Request) {
     }
   };
   const bestByGtin = new Map<string, any>();
-  const pageSize = all ? 500 : limit;
+  const pageSize = all ? 2000 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
   let cursorUpdatedAt: Date | null = null;
