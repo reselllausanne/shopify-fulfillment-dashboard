@@ -1,5 +1,9 @@
 import { validateGtin } from "@/app/lib/normalize";
 import { extractReicheltWeightGrams } from "@/app/lib/reicheltPricing";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 const DEFAULT_UA =
   process.env.SCRAPER_USER_AGENT ||
@@ -92,6 +96,32 @@ function absorbSetCookie(jar: CookieJar, header: string | null) {
 
 function cookieHeader(jar: CookieJar): string {
   return [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
+
+export function reicheltAcceptLanguage(url: string): string {
+  const override = process.env.SCRAPER_REI_ACCEPT_LANGUAGE?.trim();
+  if (override) return override;
+  // MyraCloud WAF returns 503 to Node fetch when fr-CH is the primary Accept-Language.
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    if (host.endsWith("reichelt.de")) return "de-DE,de;q=0.9,en;q=0.8";
+  } catch {
+    /* ignore */
+  }
+  return "de-DE,de;q=0.9,en;q=0.8,fr;q=0.7";
+}
+
+export function reicheltReferer(url: string, baseUrl: string): string {
+  try {
+    const origin = new URL(url).origin;
+    return `${origin}/`;
+  } catch {
+    return `${baseUrl.replace(/\/$/, "")}/`;
+  }
+}
+
+function reicheltCurlFallbackEnabled(): boolean {
+  return process.env.SCRAPER_REI_CURL_FALLBACK !== "0";
 }
 
 export function reicheltConfig() {
@@ -343,6 +373,54 @@ export function toReicheltChFrProductUrl(sitemapUrl: string): string | null {
   return `https://www.reichelt.com/ch/fr/shop/produit/${match[1]}`;
 }
 
+/** DE storefront slug URL — often more tolerant when CH/FR WAF blocks Node fetch. */
+export function toReicheltDeProductUrl(sitemapUrl: string): string | null {
+  const match = String(sitemapUrl).match(/\/shop\/(?:product|produit|produkt)\/([^/?#]+)$/i);
+  if (!match) return null;
+  const slug = match[1];
+  const articleId = extractReicheltArticleIdFromUrl(slug) ?? extractReicheltArticleIdFromUrl(sitemapUrl);
+  if (articleId && !slug.endsWith(`-${articleId}`)) {
+    return `https://www.reichelt.de/de/de/shop/produkt/${slug}-${articleId}`;
+  }
+  return `https://www.reichelt.de/de/de/shop/produkt/${slug}`;
+}
+
+function buildReicheltFetchHeaders(
+  url: string,
+  baseUrl: string,
+  jar: CookieJar,
+  xsrf: string | null,
+  init: RequestInit = {}
+): Headers {
+  const cfg = reicheltConfig();
+  const headers = new Headers(init.headers);
+  headers.set("User-Agent", cfg.userAgent);
+  headers.set("Accept-Language", reicheltAcceptLanguage(url));
+  headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
+  headers.set("Referer", reicheltReferer(url, baseUrl));
+  const cookie = cookieHeader(jar);
+  if (cookie) headers.set("Cookie", cookie);
+  if (xsrf) headers.set("X-CSRF-TOKEN", xsrf);
+  return headers;
+}
+
+async function fetchTextViaCurl(url: string, headers: Headers): Promise<string> {
+  const cfg = reicheltConfig();
+  const args = [
+    "-sS",
+    "-L",
+    "--compressed",
+    "--max-time",
+    String(Math.max(5, Math.ceil(cfg.requestTimeoutMs / 1000))),
+  ];
+  headers.forEach((value, key) => {
+    args.push("-H", `${key}: ${value}`);
+  });
+  args.push(url);
+  const { stdout } = await execFile("curl", args, { maxBuffer: 25 * 1024 * 1024 });
+  return stdout;
+}
+
 export class ReicheltClient {
   private jar: CookieJar = new Map();
   private xsrf: string | null = null;
@@ -351,14 +429,7 @@ export class ReicheltClient {
 
   private async fetchOnce(url: string, init: RequestInit = {}): Promise<Response> {
     const cfg = reicheltConfig();
-    const headers = new Headers(init.headers);
-    headers.set("User-Agent", cfg.userAgent);
-    headers.set("Accept-Language", "fr-CH,fr;q=0.9,de;q=0.8,en;q=0.7");
-    headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-    headers.set("Referer", `${this.baseUrl}/`);
-    const cookie = cookieHeader(this.jar);
-    if (cookie) headers.set("Cookie", cookie);
-    if (this.xsrf) headers.set("X-CSRF-TOKEN", this.xsrf);
+    const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
     const res = await fetch(url, {
       ...init,
       headers,
@@ -403,6 +474,23 @@ export class ReicheltClient {
         await sleep(backoff);
       }
     }
+
+    const msg = String((lastErr as Error)?.message ?? lastErr ?? "");
+    if (reicheltCurlFallbackEnabled() && /http 503/i.test(msg)) {
+      try {
+        const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
+        const text = await fetchTextViaCurl(url, headers);
+        if (!text || text.length < 500 || !/<html/i.test(text)) {
+          throw new Error(`Reichelt curl empty/invalid response ${url}`);
+        }
+        const delayMs = reicheltConfig().requestDelayMs;
+        if (delayMs) await sleep(delayMs + jitterMs(250));
+        return text;
+      } catch (curlErr) {
+        throw curlErr instanceof Error ? curlErr : new Error(String(curlErr));
+      }
+    }
+
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
   }
 
@@ -490,12 +578,28 @@ export class ReicheltClient {
   }
 
   async fetchProductByArticleId(articleId: string, productUrl?: string | null): Promise<ReicheltProduct | null> {
-    const url =
-      productUrl && productUrl.includes(String(articleId))
-        ? productUrl
-        : `${this.baseUrl}/shop/produit/-${articleId}`;
-    const html = await this.fetchText(url);
-    return parseReicheltProductHtml(html, articleId, this.baseUrl);
+    const candidates = new Set<string>();
+    if (productUrl && productUrl.includes(String(articleId))) candidates.add(productUrl);
+    candidates.add(`${this.baseUrl}/shop/produit/-${articleId}`);
+    if (productUrl) {
+      const ch = toReicheltChFrProductUrl(productUrl);
+      if (ch) candidates.add(ch);
+      const de = toReicheltDeProductUrl(productUrl);
+      if (de) candidates.add(de);
+    }
+
+    let lastErr: unknown = null;
+    for (const url of candidates) {
+      try {
+        const html = await this.fetchText(url);
+        const product = parseReicheltProductHtml(html, articleId, this.baseUrl);
+        if (product) return product;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (lastErr) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    return null;
   }
 
   /** Map articleId → canonical sitemap product URL (slugged; short `/-id` often 451/503). */

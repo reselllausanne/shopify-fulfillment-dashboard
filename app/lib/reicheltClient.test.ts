@@ -12,6 +12,9 @@ import {
   extractReicheltCategorySlug,
   parseReicheltProductSitemapShards,
   fallbackReicheltProductSitemapShards,
+  reicheltAcceptLanguage,
+  reicheltReferer,
+  toReicheltDeProductUrl,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -29,6 +32,43 @@ const SAMPLE_PRODUCT_HTML = `
 <img itemprop="image" src="https://cdn-reichelt.de/images/test.jpg">
 </body>
 </html>`;
+
+describe("reicheltAcceptLanguage", () => {
+  it("avoids fr-CH primary language that triggers MyraCloud 503 on Node fetch", () => {
+    const lang = reicheltAcceptLanguage("https://www.reichelt.com/ch/fr/shop/produit/test-1");
+    expect(lang.toLowerCase().startsWith("fr-ch")).toBe(false);
+    expect(lang.toLowerCase().startsWith("de-de")).toBe(true);
+  });
+
+  it("uses de-DE on reichelt.de", () => {
+    expect(reicheltAcceptLanguage("https://www.reichelt.de/de/de/shop/produkt/test-1")).toBe(
+      "de-DE,de;q=0.9,en;q=0.8"
+    );
+  });
+});
+
+describe("reicheltReferer", () => {
+  it("matches request origin", () => {
+    expect(
+      reicheltReferer(
+        "https://www.reichelt.de/de/de/shop/produkt/test-1",
+        "https://www.reichelt.com/ch/fr"
+      )
+    ).toBe("https://www.reichelt.de/");
+  });
+});
+
+describe("toReicheltDeProductUrl", () => {
+  it("rewrites sitemap product URL to DE slug URL", () => {
+    expect(
+      toReicheltDeProductUrl(
+        "https://www.reichelt.com/de/en/shop/product/unitree_r1_edu_u4_-_humanoid_robot-417249"
+      )
+    ).toBe(
+      "https://www.reichelt.de/de/de/shop/produkt/unitree_r1_edu_u4_-_humanoid_robot-417249"
+    );
+  });
+});
 
 describe("parseReicheltChfPrice", () => {
   it("prefers CHF in parentheses over EUR itemprop", () => {
