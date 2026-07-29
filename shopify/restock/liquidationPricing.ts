@@ -7,6 +7,7 @@ import {
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -81,6 +82,11 @@ export async function applyLiquidationSaleDisplay(input: {
   const warnings: string[] = [];
   if (isEssentialsShopifyVariant(input.variant)) {
     warnings.push("Essentials product — liquidation pricing skipped");
+    return { applied: false, referencePrice: null, salePrice: null, warnings };
+  }
+
+  if (isAdminOnlyShopifyVariant(input.variant.variantId, input.variant.productId)) {
+    warnings.push("Admin-only Shopify product — liquidation pricing skipped");
     return { applied: false, referencePrice: null, salePrice: null, warnings };
   }
 

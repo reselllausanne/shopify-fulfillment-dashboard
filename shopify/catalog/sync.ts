@@ -14,6 +14,7 @@ import {
   setInventoryQuantity,
   updateVariantPricingAndIdentity,
 } from "./graphql";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import type {
   ShopifyCatalogCandidate,
   ShopifyCatalogSyncOptions,
@@ -286,6 +287,23 @@ export async function syncShopifyCatalog(
         productId = found.productId;
         variantId = found.variantId;
         inventoryItemId = found.inventoryItemId;
+      }
+
+      if (isAdminOnlyShopifyVariant(variantId, productId)) {
+        rows.push({
+          providerKey: candidate.providerKey,
+          supplierVariantId: candidate.supplierVariantId,
+          action: "skipped",
+          reason: "admin_only_product",
+          productId,
+          variantId,
+          inventoryItemId,
+          stock: candidate.availableStock,
+          price: candidate.targetPrice,
+          pricingKind: candidate.pricingKind,
+        });
+        skipped += 1;
+        continue;
       }
 
       if (missingOnly && variantId) {

@@ -8,6 +8,7 @@ import {
 } from "@/shopify/restock/shopifyRestockInventory";
 import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
 /**
  * Phase 4 — convergence engine.
@@ -276,6 +277,22 @@ export async function convergeVariant(
 
   if (isEssentials && bussignyQty > 0) {
     warnings.push("Essentials product — liquidation skipped (Bussigny stock kept at manual price)");
+  }
+
+  if (isAdminOnlyShopifyVariant(shopifyVariant?.variantId, shopifyVariant?.productId)) {
+    warnings.push(
+      "Admin-only Shopify product — automation skips price, express, delivery, soldes (inventory mirror only)"
+    );
+    return {
+      gtin: cleanGtin,
+      physicalQty,
+      bussignyQty,
+      homeQty,
+      desired: "dropship",
+      changed: false,
+      changes,
+      warnings,
+    };
   }
 
   if (!stxRow && !shopifyVariant) {

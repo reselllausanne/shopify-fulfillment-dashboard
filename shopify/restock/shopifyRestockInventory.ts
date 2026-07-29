@@ -3,6 +3,7 @@ import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import {
   resolveProviderKeyForGtin,
@@ -535,6 +536,9 @@ export async function applyVariantSalePrice(input: {
   salePrice: number;
   compareAtPrice: number | null;
 }): Promise<void> {
+  if (isAdminOnlyShopifyVariant(input.variantId, input.productId)) {
+    return;
+  }
   const variantPayload: Record<string, unknown> = {
     id: input.variantId,
     price: input.salePrice.toFixed(2),
@@ -877,7 +881,7 @@ export async function restockShopifyVariantByGtin(input: {
     }
   }
 
-  if (salePrice != null) {
+  if (salePrice != null && !isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
     await applyVariantSalePrice({
       productId: match.productId,
       variantId: match.variantId,
@@ -891,7 +895,9 @@ export async function restockShopifyVariantByGtin(input: {
     );
   } else if (!dryRun && quantity > 0) {
     try {
-      if (!isEssentialsShopifyVariant(match)) {
+      if (isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
+        actions.push("Admin-only Shopify product — liquidation pricing skipped");
+      } else if (!isEssentialsShopifyVariant(match)) {
         const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
         const liq = await applyLiquidationSaleDisplay({
           gtin,

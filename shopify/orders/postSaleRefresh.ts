@@ -13,6 +13,7 @@ import { resolveProviderKeyForGtin } from "@/shopify/restock/channelListingState
 import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugForGtin";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import {
   decrementShopifyWebSaleStock,
   syncMirrorForGtinFromShopify,
@@ -96,17 +97,23 @@ export async function refreshAfterShopifySale(
     }
   }
 
-  const unlock = await unlockShopifyPriceByBarcode(cleanGtin);
-  if (!unlock.ok && unlock.error && unlock.error !== "empty_barcode") {
-    warnings.push(`unlock: ${unlock.error}`);
-  }
-
   let isEssentials = false;
+  let isAdminOnly = false;
   try {
     const { match } = await findShopifyVariantByGtin(cleanGtin);
     isEssentials = isEssentialsShopifyVariant(match);
+    isAdminOnly = isAdminOnlyShopifyVariant(match?.variantId, match?.productId);
   } catch {
     // Non-fatal — fall through to StockX refresh attempt.
+  }
+
+  if (!isAdminOnly) {
+    const unlock = await unlockShopifyPriceByBarcode(cleanGtin);
+    if (!unlock.ok && unlock.error && unlock.error !== "empty_barcode") {
+      warnings.push(`unlock: ${unlock.error}`);
+    }
+  } else {
+    warnings.push("Admin-only Shopify product — price unlock skipped");
   }
 
   let convergence: ConvergeVariantResult | undefined;
@@ -125,8 +132,12 @@ export async function refreshAfterShopifySale(
 
   let shopifyRefresh: PostSaleRefreshResult["shopifyRefresh"];
   const stillLiquidation = afterSale ? false : convergence?.desired === "liquidation";
-  if (isEssentials) {
-    shopifyRefresh = { ok: true, action: "skipped", error: null };
+  if (isEssentials || isAdminOnly) {
+    shopifyRefresh = {
+      ok: true,
+      action: isAdminOnly ? "skipped_admin_only" : "skipped",
+      error: null,
+    };
   } else if (stillLiquidation) {
     shopifyRefresh = { ok: true, action: "skipped_liquidation", error: null };
   } else {
@@ -164,7 +175,7 @@ export async function refreshAfterShopifySale(
   }
 
   let kickdbSync: PostSaleRefreshResult["kickdbSync"];
-  if (isEssentials) {
+  if (isEssentials || isAdminOnly) {
     kickdbSync = { ok: true, updated: 0, error: null };
   } else {
     try {

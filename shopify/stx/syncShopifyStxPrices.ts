@@ -3,6 +3,7 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import { calcShopifySellPrice } from "@/shopify/pricing/calcShopifySellPrice";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
 const VARIANT_PRICE_MUTATION = /* GraphQL */ `
 mutation SyncStxVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -263,6 +264,10 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     return { gtin: cleanGtin, ok: false, reason: "price_locked" };
   }
 
+  if (isAdminOnlyShopifyVariant(shopifyVariant.variantId, shopifyVariant.productId)) {
+    return { gtin: cleanGtin, ok: false, reason: "admin_only_product" };
+  }
+
   const productHandle =
     (await resolveProductHandle(cleanGtin)) ?? shopifyVariant.productHandle ?? null;
   const { normalSell, expressSell } = computeSellPrices({
@@ -418,6 +423,16 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
         supplierVariantId,
         ok: false,
         reason: "price_locked",
+        matchedVariantId: match.variantId,
+      });
+      continue;
+    }
+
+    if (isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
+      results.push({
+        supplierVariantId,
+        ok: false,
+        reason: "admin_only_product",
         matchedVariantId: match.variantId,
       });
       continue;

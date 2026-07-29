@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
+import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import path from "node:path";
 
 /**
@@ -112,6 +114,18 @@ export async function createProductFullFlow(
     return { ...base, error: "empty_identifier" };
   }
 
+  const gtinCandidate = cleaned.replace(/\D/g, "");
+  if (gtinCandidate.length >= 8) {
+    try {
+      const { match } = await findShopifyVariantByGtin(gtinCandidate);
+      if (isAdminOnlyShopifyVariant(match?.variantId, match?.productId)) {
+        return { ...base, error: "admin_only_product" };
+      }
+    } catch {
+      // Non-fatal — Python upsert may still resolve slug-only identifiers.
+    }
+  }
+
   const args = ["upsert", cleaned];
   if (options.lock) args.push("--lock");
   const physicalGtin = String(options.physicalGtin ?? "").replace(/\D/g, "").trim();
@@ -165,6 +179,14 @@ export async function unlockShopifyPriceByBarcode(barcode: string): Promise<{
 }> {
   const clean = String(barcode ?? "").replace(/\D/g, "").trim();
   if (!clean) return { ok: false, error: "empty_barcode" };
+  try {
+    const { match } = await findShopifyVariantByGtin(clean);
+    if (isAdminOnlyShopifyVariant(match?.variantId, match?.productId)) {
+      return { ok: true, error: null };
+    }
+  } catch {
+    // Non-fatal — unlock may still target a slug-only product.
+  }
   try {
     const cliResult = await runPythonCli(["unlock", clean], 60_000);
     const parsed = extractLastJsonObject(cliResult.stdout) as Record<string, unknown> | null;
