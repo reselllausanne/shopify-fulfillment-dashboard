@@ -32,10 +32,22 @@ export async function POST(req: Request) {
   }
 
   const isError = Boolean(body?.error);
-  const syncStatus = isError ? "error" : "synced";
+  // Permanent skip flag: caller has determined the KickDB payload can never
+  // produce a valid Shopify product (e.g. zero images). Parked as
+  // 'blocked_no_images' so fresh queries exclude it — no more Shopify API
+  // spend on it until a new SSE refresh replaces the raw payload (which resets
+  // rawFetchedAt; consumer should re-check and clear the block if fixed).
+  const permanent = Boolean(body?.permanent);
+  const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
+  const isBlockedNoImages = permanent && reason === "no_images";
+  const syncStatus = isBlockedNoImages ? "blocked_no_images" : isError ? "error" : "synced";
   const shopifyProductId = typeof body?.shopifyProductId === "string" ? body.shopifyProductId : null;
   const shopifyHandle = typeof body?.shopifyHandle === "string" ? body.shopifyHandle : null;
-  const lastError = isError ? String(body.error).slice(0, 2000) : null;
+  const lastError = isBlockedNoImages
+    ? `blocked_no_images: ${reason}`
+    : isError
+      ? String(body.error).slice(0, 2000)
+      : null;
   const now = new Date();
 
   try {

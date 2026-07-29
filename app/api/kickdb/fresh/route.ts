@@ -70,7 +70,18 @@ export async function GET(req: Request) {
         LEFT JOIN "public"."ShopifySyncState" s
           ON s."kickdbProductId" = p."kickdbProductId"
         WHERE p."rawJson" IS NOT NULL
-          AND (s."kickdbProductId" IS NULL OR s."syncStatus" = 'error')
+          AND (
+            s."kickdbProductId" IS NULL
+            OR s."syncStatus" = 'error'
+            -- Re-include no-image blocks ONLY when a newer KicksDB refresh
+            -- has arrived since the block was written; otherwise the row
+            -- stays parked and burns no Shopify API budget.
+            OR (
+              s."syncStatus" = 'blocked_no_images'
+              AND s."shopifySyncedAt" IS NOT NULL
+              AND p."rawFetchedAt" > s."shopifySyncedAt"
+            )
+          )
         ORDER BY p."updatedAt" DESC
         LIMIT ${limit}
       `;

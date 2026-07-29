@@ -48,6 +48,35 @@ def _auth_headers():
     return {"x-internal-token": token} if token else {}
 
 
+def raw_has_any_image(raw):
+    """Cheap pre-flight: does the KicksDB raw payload carry ANY usable image URL?
+
+    Mirrors the sources used by `select_stockx_product_images` /
+    `list_all_gallery_360_urls` in main.py: primary `image`, `gallery` list,
+    `gallery_360` list. A ton of KicksDB rows come through with all three
+    empty; without this check we still spin up Shopify probes, catalog match,
+    create-shell, only for main.py to bail with reason=no_images. Blocking
+    those rows here saves Shopify API + main.py cycles per cron tick.
+    """
+    if not isinstance(raw, dict):
+        return False
+    primary = raw.get("image")
+    if isinstance(primary, str) and primary.strip():
+        return True
+    for key in ("gallery", "gallery_360"):
+        val = raw.get(key)
+        if isinstance(val, list):
+            for item in val:
+                if isinstance(item, str) and item.strip():
+                    return True
+                if isinstance(item, dict):
+                    for k in ("url", "src", "image", "imageUrl"):
+                        v = item.get(k)
+                        if isinstance(v, str) and v.strip():
+                            return True
+    return False
+
+
 def _purge_legacy_budget_file():
     try:
         if LEGACY_BUDGET_FILE.exists():
@@ -144,12 +173,16 @@ def fetch_fresh_products(db_api, limit=50, status="pending"):
     return body.get("products", [])
 
 
-def mark_synced(db_api, kickdb_product_id, shopify_handle=None, error=None):
+def mark_synced(db_api, kickdb_product_id, shopify_handle=None, error=None, permanent=False, reason=None):
     payload = {"kickdbProductId": kickdb_product_id}
     if shopify_handle:
         payload["shopifyHandle"] = shopify_handle
     if error:
         payload["error"] = str(error)[:2000]
+    if permanent:
+        payload["permanent"] = True
+    if reason:
+        payload["reason"] = str(reason)[:200]
     try:
         r = requests.post(
             f"{db_api}/api/kickdb/mark-synced",
@@ -304,6 +337,22 @@ def main():
             continue
 
         slug = (raw.get("slug") or row.get("urlKey") or kickdb_product_id or "").strip()
+
+        # Pre-flight: park rows with no images BEFORE any Shopify work. KicksDB
+        # frequently returns payloads with zero image/gallery/gallery_360 — no
+        # point probing Shopify, matching catalog, or invoking main.py just to
+        # skip at the create guard. Blocked rows stay out of /fresh until a new
+        # SSE refresh replaces rawJson (rawFetchedAt bumps past shopifySyncedAt).
+        if action == "create" and not raw_has_any_image(raw):
+            print(f"[SKIP] {slug}: no images in raw payload — blocking")
+            mark_synced(
+                args.db_api,
+                kickdb_product_id,
+                permanent=True,
+                reason="no_images",
+            )
+            processed += 1
+            continue
 
         if action == "create":
             planned = main_mod.estimate_create_variant_count(slug, prefetched=raw)
