@@ -221,37 +221,6 @@ run_image_sync_full() {
   log "DONE image-sync phase"
 }
 
-sanitize_missing_image_stock() {
-  log "START preflight sanitize (missing images => stock=0)"
-  local result
-  result="$(
-    docker compose -f /opt/resell/docker-compose.yml exec -T web node -e "
-const {PrismaClient}=require('@prisma/client');
-const p=new PrismaClient();
-(async()=>{
-  const updated = await p.\$executeRawUnsafe(\`
-    UPDATE \"SupplierVariant\" sv
-    SET stock = 0,
-        \"updatedAt\" = NOW()
-    FROM \"VariantMapping\" vm
-    WHERE vm.\"supplierVariantId\" = sv.\"supplierVariantId\"
-      AND vm.status IN ('MATCHED','SUPPLIER_GTIN','PARTNER_GTIN')
-      AND COALESCE(NULLIF(TRIM(sv.\"hostedImageUrl\"), ''), NULLIF(TRIM(sv.\"sourceImageUrl\"), '')) IS NULL
-      AND (
-        sv.images IS NULL
-        OR (jsonb_typeof(sv.images) = 'array' AND jsonb_array_length(sv.images) = 0)
-        OR (jsonb_typeof(sv.images) = 'object' AND sv.images = '{}'::jsonb)
-      )
-      AND COALESCE(sv.stock, 0) > 0
-  \`);
-  process.stdout.write(JSON.stringify({updated}));
-  await p.\$disconnect();
-})().catch(async(e)=>{ process.stdout.write(JSON.stringify({error:e.message})); try{await p.\$disconnect();}catch{} process.exit(1); });
-" 2>/dev/null || echo '{"error":"sanitize_failed"}'
-  )"
-  log "DONE preflight sanitize result=$result"
-}
-
 if [[ -z "$ACTION" ]]; then
   log "ERROR: missing action (full-flow | full-push | stx-full | push-master-specs)"
   exit 2
@@ -262,7 +231,6 @@ cd /opt/resell
 case "$ACTION" in
   full-flow)
     run_image_sync_full || true
-    sanitize_missing_image_stock || true
     log "START full-flow sequential (stock -> price -> master-specs)"
     run_push "push-stock"
     run_push "push-price"
@@ -275,7 +243,6 @@ case "$ACTION" in
     ;;
   full-push)
     log "START action=full-push"
-    sanitize_missing_image_stock || true
     step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     post_json '{"action":"push-full"}' >/dev/null
     wait_scope_success "full" "$step_started" "$MASTER_WAIT_SEC"

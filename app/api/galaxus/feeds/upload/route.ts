@@ -422,6 +422,42 @@ export async function POST(request: Request) {
     }
     // Master/specs are catalog-oriented and can have more rows than stock/offer.
 
+    // Hard safety: never upload empty feeds to Galaxus.
+    // Empty files silently delist / break assortment state on partner side.
+    const emptyFeeds: string[] = [];
+    if (needsMaster && (masterCount ?? 0) <= 0) emptyFeeds.push("master");
+    if (needsStock && (stockCount ?? 0) <= 0) emptyFeeds.push("stock");
+    if (needsOffer && (offerCount ?? 0) <= 0) emptyFeeds.push("offer");
+    if (needsSpecs && (specsCount ?? 0) <= 0) emptyFeeds.push("specs");
+    if (emptyFeeds.length > 0) {
+      const error = `Refusing upload: empty feed(s): ${emptyFeeds.join(", ")}`;
+      if (auditId) {
+        await (prisma as any).galaxusJobRun.update({
+          where: { id: auditId },
+          data: {
+            finishedAt: new Date(),
+            success: false,
+            errorMessage: error,
+            resultJson: {
+              emptyFeeds,
+              counts: { master: masterCount, stock: stockCount, offer: offerCount, specs: specsCount },
+              omittedByFeed,
+              blockedProviderKeys: Array.from(blockedProviderKeys),
+            },
+          },
+        });
+      }
+      return NextResponse.json(
+        {
+          ok: false,
+          error,
+          emptyFeeds,
+          counts: { master: masterCount, stock: stockCount, offer: offerCount, specs: specsCount },
+        },
+        { status: 409 }
+      );
+    }
+
     const masterName = buildFeedFilename("product", providerName, assortmentFile);
     const stockName = buildFeedFilename("stock", providerName, assortmentFile);
     const offerName = buildFeedFilename("price", providerName, assortmentFile);

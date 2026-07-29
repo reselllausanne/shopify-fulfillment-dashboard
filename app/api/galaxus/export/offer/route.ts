@@ -77,7 +77,7 @@ export async function GET(request: Request) {
   let skippedInvalidPrice = 0;
   let skippedMissingProviderKey = 0;
   const bestByGtin = new Map<string, any>();
-  const pageSize = all ? 500 : limit;
+  const pageSize = all ? 5000 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
   let cursorUpdatedAt: Date | null = null;
@@ -167,8 +167,9 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
-      // Keep price aligned with master eligibility: missing-image SKUs cannot be listed.
-      requireImage: true,
+      // Price feed should not depend on hosted images.
+      requireImage: false,
+      preferInStock: true,
       galaxusPartnerKeysLower,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {

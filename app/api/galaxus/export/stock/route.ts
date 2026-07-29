@@ -94,7 +94,7 @@ export async function GET(request: Request) {
   const skippedProviderKeys: string[] = [];
   const trmExclusionStats = createTrmFeedExclusionStats();
   const bestByGtin = new Map<string, any>();
-  const pageSize = all ? 500 : limit;
+  const pageSize = all ? 5000 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
   let cursorUpdatedAt: Date | null = null;
@@ -157,8 +157,9 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
-      // Keep stock aligned with master eligibility: missing-image SKUs cannot be listed.
-      requireImage: true,
+      // Stock feed should not depend on hosted images.
+      requireImage: false,
+      preferInStock: true,
       galaxusPartnerKeysLower,
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {

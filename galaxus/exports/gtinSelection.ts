@@ -63,6 +63,8 @@ type AccumulateOptions = {
   keyBy?: "gtin" | "providerKey";
   requireProductName?: boolean;
   requireImage?: boolean;
+  /** Prefer candidates with stock > 0 over out-of-stock cheaper rows. */
+  preferInStock?: boolean;
   /** Supplier prefixes that exist in `Partner` (lowercase), excluding logic handled inside pricing (e.g. `ner`). */
   galaxusPartnerKeysLower?: Set<string>;
   onExclude?: (payload: {
@@ -93,6 +95,7 @@ export function accumulateBestCandidates(
   const keyBy = options?.keyBy ?? "gtin";
   const requireProductName = options?.requireProductName !== false;
   const requireImage = options?.requireImage !== false;
+  const preferInStock = options?.preferInStock === true;
   const partnerKeysLower = options?.galaxusPartnerKeysLower ?? new Set<string>();
 
   for (const mapping of mappings) {
@@ -188,6 +191,18 @@ export function accumulateBestCandidates(
     if (!existing) {
       bestByGtin.set(mapKey, candidate);
       continue;
+    }
+
+    if (preferInStock) {
+      const existingInStock = existing.stock > 0;
+      const candidateInStock = candidate.stock > 0;
+      if (candidateInStock && !existingInStock) {
+        bestByGtin.set(mapKey, candidate);
+        continue;
+      }
+      if (!candidateInStock && existingInStock) {
+        continue;
+      }
     }
 
     const priceDelta = candidate.sellPriceExVat - existing.sellPriceExVat;
