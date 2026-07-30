@@ -14,25 +14,26 @@ import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProduct
  * Phase 4 — convergence engine.
  *
  * Liquidation pricing on Shopify:
- *   - Bussigny physical qty > 0 with an existing manualLock → warehouse soldes scan
+ *   - Owned physical qty > 0 across LIQUIDATION_LOCATION_IDS (Bussigny + Lab
+ *     Concept) with an existing manualLock → warehouse soldes scan
+ *   - Antica physical stock is NOT part of liquidation lane
  *   - Chemin (online) is the StockX dropship pool, not owned stock → never liquidation
  *
  * After a paid web sale, post-sale passes forceDropship — always unlock + market price.
  *
  * delivery_48h / soldes_48h metafields are coupled to a REAL liquidation lock
- * (manualLock + Bussigny qty), never to quantity alone: a pair whose price was
- * not actually changed must not appear in the soldes collection. Bussigny=0
- * still clears both flags.
+ * (manualLock + liquidation-lane qty), never to quantity alone: a pair whose
+ * price was not actually changed must not appear in the soldes collection.
+ * Liquidation qty = 0 still clears both flags.
  */
 
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
 import {
   readShopifyDelivery48h,
   writeShopifyDelivery48h,
-  BUSSIGNY_LOCATION_ID,
 } from "@/shopify/restock/bussignyDeliveryMetafield";
 import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
-import { ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
+import { LIQUIDATION_LOCATION_IDS, ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -71,12 +72,16 @@ function toNumber(x: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * Owned physical qty across the liquidation lane (Bussigny + Lab Concept).
+ * Kept as `getBussignyQtyForGtin` for callers; drives liquidation eligibility.
+ */
 async function getBussignyQtyForGtin(gtin: string): Promise<number> {
   const rows = await prisma.$queryRaw<Array<{ available: number }>>`
     SELECT COALESCE(SUM(s."available"), 0)::int AS available
     FROM "public"."ShopifyVariantLocationStock" s
     WHERE s."gtin" = ${gtin}
-      AND s."locationId" = ${BUSSIGNY_LOCATION_ID}
+      AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
       AND s."sourceType" = 'physical'
       AND s."available" > 0
   `;
@@ -106,15 +111,15 @@ async function syncBussignyDelivery48h(
 ): Promise<void> {
   if (!shopifyVariant?.variantId) return;
   try {
-    const bussignyQty = await getBussignyQtyForGtin(gtin);
+    const liquidationQty = await getBussignyQtyForGtin(gtin);
     // Flag only when the liquidation lock is real: qty alone must not mark a
     // pair as 48h/soldes when its price was never actually changed.
-    const want48h = bussignyQty > 0 && liquidationLockActive;
+    const want48h = liquidationQty > 0 && liquidationLockActive;
     const has48h = await readShopifyDelivery48h(shopifyVariant.variantId);
     if (has48h !== want48h) {
       await writeShopifyDelivery48h(shopifyVariant.variantId, want48h);
       changes.push(
-        `Shopify delivery_48h=${want48h ? "true" : "false"} (Bussigny qty=${bussignyQty}, liquidation=${liquidationLockActive ? "locked" : "none"})`
+        `Shopify delivery_48h=${want48h ? "true" : "false"} (liquidation qty=${liquidationQty}, lock=${liquidationLockActive ? "locked" : "none"})`
       );
     }
   } catch (err: any) {
@@ -513,7 +518,7 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
     WHERE s."gtin" IS NOT NULL
       AND s."available" > 0
       AND s."sourceType" = 'physical'
-      AND s."locationId" = ${BUSSIGNY_LOCATION_ID}
+      AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
   `;
   const liqGtins = new Set(liqRows.map((r) => r.gtin));
 
@@ -536,7 +541,7 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
             FROM "public"."ShopifyVariantLocationStock" s
             WHERE s."gtin" = sv."gtin"
               AND s."sourceType" = 'physical'
-              AND s."locationId" = ${BUSSIGNY_LOCATION_ID}
+              AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
               AND s."available" > 0
           )
         )

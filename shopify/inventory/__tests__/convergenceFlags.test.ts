@@ -43,6 +43,10 @@ vi.mock("@/shopify/restock/bussignySoldesMetafield", () => ({
 
 vi.mock("@/shopify/inventory/locationConfig", () => ({
   ONLINE_LOCATION: { id: "gid://shopify/Location/999" },
+  LIQUIDATION_LOCATION_IDS: [
+    "gid://shopify/Location/111267971458",
+    "gid://shopify/Location/111267250562",
+  ],
 }));
 
 import { prisma } from "@/app/lib/prisma";

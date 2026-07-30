@@ -36,6 +36,17 @@ export const LOCATIONS: LocationConfig[] = [
 export const PHYSICAL_LOCATIONS = LOCATIONS.filter((l) => l.sourceType === "physical");
 export const ONLINE_LOCATION = LOCATIONS.find((l) => l.sourceType === "online") ?? null;
 
+/**
+ * Physical locations whose owned stock participates in the liquidation /
+ * soldes 48h lane (drives manualLock, delivery_48h, soldes_48h). Antica is a
+ * physical location but not part of liquidation. Chemin (online) is dropship
+ * and never eligible.
+ */
+export const LIQUIDATION_LOCATION_IDS: string[] = [
+  loc("SHOPIFY_LOC_BUSSIGNY", "gid://shopify/Location/111267971458", "Warehouse Bussigny", "physical", 1).id,
+  loc("SHOPIFY_LOC_LAB", "gid://shopify/Location/111267250562", "THE LAB CONCEPT STORE", "physical", 3).id,
+];
+
 const BY_ID = new Map(LOCATIONS.map((l) => [l.id, l]));
 
 export function getLocationConfig(locationId: string): LocationConfig | null {
