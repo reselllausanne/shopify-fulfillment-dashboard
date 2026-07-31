@@ -203,12 +203,61 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
       cost: 185.6,
       compareAt: 219,
       sellPrice: 129.9,
-      source: "stx-db",
+      source: "kickdb-db",
     });
 
     const result = await convergeVariant(GTIN);
 
     expect(result.desired).toBe("dropship");
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+  });
+
+  it("afterWebSale + liquidation lane empty + stale soldes price → reverts to dropship", async () => {
+    mockedMirror.mockResolvedValue(new Map());
+    mockedQueryRaw.mockResolvedValue([{ available: 0 }]);
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({ price: 139, compareAtPrice: null }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedStxFindFirst.mockResolvedValue(null);
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 168,
+      cost: 201.44,
+      compareAt: 289,
+      sellPrice: 149,
+      source: "kickdb-live",
+    });
+
+    const result = await convergeVariant(GTIN, { afterWebSale: true });
+
+    expect(result.desired).toBe("dropship");
+    expect(result.changes.some((c) => c.includes("deferred to post-sale KickDB upsert"))).toBe(
+      true
+    );
+    expect(result.changes.some((c) => c.includes("reverted to dropship"))).toBe(false);
+  });
+
+  it("afterWebSale + liquidation lane stock remains + soldes price → stays liquidation", async () => {
+    mockedMirror.mockResolvedValue(new Map([[GTIN, { qty: 1 }]]));
+    mockedQueryRaw.mockResolvedValue([{ available: 1 }]);
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({ price: 139, compareAtPrice: null }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedStxFindFirst.mockResolvedValue(null);
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 168,
+      cost: 201.44,
+      compareAt: 289,
+      sellPrice: 149,
+      source: "kickdb-live",
+    });
+
+    const result = await convergeVariant(GTIN, { afterWebSale: true });
+
+    expect(result.desired).toBe("liquidation");
+    expect(result.changes.some((c) => c.includes("reverted to dropship"))).toBe(false);
   });
 });

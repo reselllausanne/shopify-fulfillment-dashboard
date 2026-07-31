@@ -19,7 +19,8 @@ import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProduct
  *   - Antica physical stock is NOT part of liquidation lane
  *   - Chemin (online) is the StockX dropship pool, not owned stock → never liquidation
  *
- * After a paid web sale, post-sale passes forceDropship — always unlock + market price.
+ * After a paid web sale, post-sale passes afterWebSale — revert to dropship only when
+ * liquidation-lane stock hits 0; partial sales keep liquidation on remaining units.
  *
  * delivery_48h / soldes_48h metafields are coupled to a REAL liquidation lock
  * (manualLock + liquidation-lane qty), never to quantity alone: a pair whose
@@ -196,8 +197,13 @@ export type ConvergeVariantResult = {
 };
 
 export type ConvergeVariantOptions = {
-  /** Paid web sale just consumed home/physical stock — never re-apply liquidation. */
+  /** Repair/cron override — always target dropship regardless of lane stock. */
   forceDropship?: boolean;
+  /**
+   * Paid Shopify web sale just ran — exit liquidation only when liquidation-lane
+   * stock is 0; keep liquidation pricing when units remain in Bussigny/Lab/COLD.
+   */
+  afterWebSale?: boolean;
   /**
    * Scan restock into a liquidation-lane location just completed — keep/set
    * liquidation (price, manualLock, delivery_48h, soldes_48h) even when the
@@ -207,6 +213,26 @@ export type ConvergeVariantOptions = {
   /** Exact sold Shopify variant id; bypasses ambiguous GTIN lookup. */
   preferredVariantId?: string | null;
 };
+
+function resolveDesiredListingMode(input: {
+  isEssentials: boolean;
+  liquidationLaneQty: number;
+  manualLock: boolean;
+  postPhysicalRestock: boolean;
+  forceDropship: boolean;
+  afterWebSale: boolean;
+  looksLikeLiquidationPrice: boolean;
+}): "liquidation" | "dropship" {
+  if (input.forceDropship && !input.afterWebSale) return "dropship";
+  if (input.isEssentials) return "dropship";
+
+  const liquidationLaneStock = input.liquidationLaneQty > 0;
+  const liquidationSignals =
+    input.manualLock || input.postPhysicalRestock || input.looksLikeLiquidationPrice;
+
+  if (liquidationLaneStock && liquidationSignals) return "liquidation";
+  return "dropship";
+}
 
 /**
  * Converge a single GTIN. Reads mirror + DB + Shopify; applies only diffs.
@@ -276,17 +302,6 @@ export async function convergeVariant(
   }
 
   const isEssentials = isEssentialsShopifyVariant(shopifyVariant);
-  // Chemin (ONLINE_LOCATION) is the StockX dropship pool: every listed size sits there
-  // at qty 1. It is NOT owned stock, so it must never trigger liquidation — doing so
-  // marked pairs we do not own down to soldes prices. Only real physical warehouse qty
-  // (Bussigny) with an existing scan lock keeps a variant in liquidation.
-  const desired: "liquidation" | "dropship" = options.forceDropship
-    ? "dropship"
-    : !isEssentials &&
-        bussignyQty > 0 &&
-        (Boolean(stxRow?.manualLock) || Boolean(options.postPhysicalRestock))
-      ? "liquidation"
-      : "dropship";
 
   if (isEssentials && bussignyQty > 0) {
     warnings.push("Essentials product — liquidation skipped (Bussigny stock kept at manual price)");
@@ -309,7 +324,16 @@ export async function convergeVariant(
   }
 
   if (!stxRow && !shopifyVariant) {
-    return { gtin: cleanGtin, physicalQty, bussignyQty, homeQty, desired, changed: false, changes, warnings };
+    return {
+      gtin: cleanGtin,
+      physicalQty,
+      bussignyQty,
+      homeQty,
+      desired: "dropship",
+      changed: false,
+      changes,
+      warnings,
+    };
   }
 
   const pricing = await resolvePhysicalRestockPricing(cleanGtin);
@@ -320,6 +344,25 @@ export async function convergeVariant(
     referencePrice > 0 &&
     liqPrice != null &&
     liqPrice > 0;
+
+  const currentShopifyPrice = toNumber(shopifyVariant?.price);
+  const looksLikeLiquidationPrice =
+    hasLiquidationPricing &&
+    currentShopifyPrice != null &&
+    liqPrice != null &&
+    currentShopifyPrice <= liqPrice + 0.01;
+
+  // Chemin (ONLINE_LOCATION) is the StockX dropship pool — never triggers liquidation.
+  // Liquidation-lane stock (Bussigny/Lab/COLD) with a lock or sale price keeps soldes.
+  const desired = resolveDesiredListingMode({
+    isEssentials,
+    liquidationLaneQty: bussignyQty,
+    manualLock: Boolean(stxRow?.manualLock),
+    postPhysicalRestock: Boolean(options.postPhysicalRestock),
+    forceDropship: Boolean(options.forceDropship),
+    afterWebSale: Boolean(options.afterWebSale),
+    looksLikeLiquidationPrice,
+  });
 
   if (desired === "liquidation") {
     if (!hasLiquidationPricing) {
@@ -410,6 +453,8 @@ export async function convergeVariant(
 
         const currentPrice = toNumber(shopifyVariant.price);
         const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+        const dropshipPrice =
+          referencePrice != null && referencePrice > 0 ? referencePrice : null;
         const looksLikeLiquidation =
           currentPrice != null &&
           currentCompareAt != null &&
@@ -418,28 +463,44 @@ export async function convergeVariant(
           hasLiquidationPricing &&
           liqPrice != null &&
           currentPrice != null &&
-          Math.abs(currentPrice - liqPrice) <= 0.01;
+          currentPrice <= liqPrice + 0.01;
         const staleCompareAtAfterSale =
-          Boolean(options.forceDropship) &&
+          (Boolean(options.forceDropship) || Boolean(options.afterWebSale)) &&
           currentCompareAt != null &&
           currentCompareAt > 0;
+        const pricedBelowMarket =
+          dropshipPrice != null &&
+          currentPrice != null &&
+          currentPrice < dropshipPrice - 0.01;
+        const exitingLiquidationLaneAfterSale =
+          Boolean(options.afterWebSale) && bussignyQty === 0;
 
         const needsPriceRevert =
           hadDbLiquidation ||
           isLocked ||
           looksLikeLiquidation ||
           matchesLiquidationPrice ||
-          staleCompareAtAfterSale;
+          staleCompareAtAfterSale ||
+          pricedBelowMarket ||
+          (exitingLiquidationLaneAfterSale &&
+            dropshipPrice != null &&
+            currentPrice != null &&
+            Math.abs(currentPrice - dropshipPrice) > 0.005);
 
         if (isLocked) {
           await writeShopifyPriceLocked(shopifyVariant.variantId, false);
           changes.push("Shopify price_locked=false");
         }
 
-        const dropshipPrice =
-          referencePrice != null && referencePrice > 0 ? referencePrice : null;
-
-        if (needsPriceRevert && dropshipPrice != null) {
+        // Post-sale full liquidation exit: unlock flags here; live KickDB upsert
+        // (createProductFullFlow + STX ingest) owns price + stock — not this pass.
+        if (exitingLiquidationLaneAfterSale) {
+          if (needsPriceRevert) {
+            changes.push(
+              "liquidation exit — price/stock deferred to post-sale KickDB upsert"
+            );
+          }
+        } else if (needsPriceRevert && dropshipPrice != null) {
           const priceDiffers =
             currentPrice == null || Math.abs(currentPrice - dropshipPrice) > 0.005;
           const compareStillSet = currentCompareAt != null && currentCompareAt > 0;

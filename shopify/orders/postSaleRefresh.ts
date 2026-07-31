@@ -51,8 +51,10 @@ export type PostSaleRefreshResult = {
  * unlock liquidation if needed, push marketplace stock feed.
  * Galaxus PriceData + Decathlon PRI01 scheduled once per order batch (debounced).
  *
- * Dropship: createProductFullFlow re-prices from KickDB/StockX + restocks qty when asks exist.
- * Physical/Bussigny: convergeVariant clears liquidation lock + delivery metafields.
+ * Dropship: createProductFullFlow re-prices from KickDB/StockX + restocks qty when asks exist
+ * (only when liquidation-lane stock is fully sold). Partial liquidation sales keep soldes pricing
+ * on remaining physical units and skip dropship restock.
+ * Physical/Bussigny: convergeVariant clears liquidation lock + delivery metafields when lane hits 0.
  */
 export async function refreshAfterShopifySale(
   gtin: string,
@@ -77,25 +79,8 @@ export async function refreshAfterShopifySale(
   }
 
   const soldQty = Math.max(0, Math.trunc(options.soldQty ?? 0));
-  if (!options.skipInventoryDecrement && soldQty > 0 && options.orderId) {
-    try {
-      const dec = await decrementShopifyWebSaleStock({
-        gtin: cleanGtin,
-        quantity: soldQty,
-        orderId: options.orderId,
-        lineItemId: options.lineItemId,
-        preferredVariantId,
-        idempotencyScope: "pre-refresh",
-      });
-      inventory.decremented = dec.decremented;
-      if (dec.warnings.length) warnings.push(...dec.warnings.map((w) => `inventory: ${w}`));
-      if (dec.decremented > 0) {
-        await syncMirrorForGtinFromShopify(cleanGtin, { preferredVariantId });
-      }
-    } catch (err: any) {
-      warnings.push(`inventory decrement: ${err?.message ?? err}`);
-    }
-  }
+  // Shopify already commits inventory on orders/paid — mirror only; do not pre-decrement
+  // (a second decrement removed the remaining liquidation-lane unit).
 
   let isEssentials = false;
   let isAdminOnly = false;
@@ -120,7 +105,7 @@ export async function refreshAfterShopifySale(
   const afterSale = Boolean(options.forceMarketPrice) || soldQty > 0;
   try {
     convergence = await convergeVariant(cleanGtin, {
-      forceDropship: afterSale,
+      afterWebSale: afterSale,
       preferredVariantId,
     });
     if (convergence.warnings.length) {
@@ -131,7 +116,26 @@ export async function refreshAfterShopifySale(
   }
 
   let shopifyRefresh: PostSaleRefreshResult["shopifyRefresh"];
-  const stillLiquidation = afterSale ? false : convergence?.desired === "liquidation";
+  const stillLiquidation = convergence?.desired === "liquidation";
+
+  let kickdbSync: PostSaleRefreshResult["kickdbSync"];
+  if (isEssentials || isAdminOnly) {
+    kickdbSync = { ok: true, updated: 0, error: null };
+  } else if (!stillLiquidation) {
+    // Fresh KickDB → STX DB before Shopify upsert (price + stock source of truth).
+    try {
+      kickdbSync = await syncKickdbBufferAndStxForGtin(cleanGtin);
+      if (!kickdbSync.ok) {
+        warnings.push(`kickdb sync: ${kickdbSync.error ?? "failed"}`);
+      }
+    } catch (err: any) {
+      kickdbSync = { ok: false, error: err?.message ?? String(err) };
+      warnings.push(`kickdb sync: ${kickdbSync.error}`);
+    }
+  } else {
+    kickdbSync = { ok: true, updated: 0, error: null };
+  }
+
   if (isEssentials || isAdminOnly) {
     shopifyRefresh = {
       ok: true,
@@ -141,6 +145,7 @@ export async function refreshAfterShopifySale(
   } else if (stillLiquidation) {
     shopifyRefresh = { ok: true, action: "skipped_liquidation", error: null };
   } else {
+    // Full variant recreate from live KickDB: market price, Chemin qty (0 when no ask).
     const refresh = await createProductFullFlow(cleanGtin);
     shopifyRefresh = {
       ok: refresh.ok,
@@ -153,8 +158,14 @@ export async function refreshAfterShopifySale(
   }
 
   // main.py update can recreate online available qty. Consume sold units again so
-  // paid orders do not leave phantom stock after a price refresh.
-  if (!options.skipInventoryDecrement && soldQty > 0 && options.orderId) {
+  // paid orders do not leave phantom stock after a price refresh — only when dropship relist ran.
+  if (
+    !options.skipInventoryDecrement &&
+    !stillLiquidation &&
+    soldQty > 0 &&
+    options.orderId &&
+    shopifyRefresh?.ok
+  ) {
     try {
       const post = await decrementShopifyWebSaleStock({
         gtin: cleanGtin,
@@ -174,10 +185,7 @@ export async function refreshAfterShopifySale(
     }
   }
 
-  let kickdbSync: PostSaleRefreshResult["kickdbSync"];
-  if (isEssentials || isAdminOnly) {
-    kickdbSync = { ok: true, updated: 0, error: null };
-  } else {
+  if (stillLiquidation && !isEssentials && !isAdminOnly) {
     try {
       kickdbSync = await syncKickdbBufferAndStxForGtin(cleanGtin);
       if (!kickdbSync.ok) {

@@ -13,10 +13,9 @@ export const maxDuration = 30;
 /**
  * Phase 4.4 — Shopify order webhook trigger.
  *
- * Shopify decrements physical stock itself when a web sale fulfills. We only
- * need to converge state (unlock liquidation + relist STX) the moment physical
- * hits 0 for a GTIN. Runs `convergeVariant(gtin)` for each unique GTIN on the
- * order. Idempotent — safe on webhook redeliveries.
+ * Shopify commits physical stock on orders/paid. We sync the mirror, converge
+ * listing mode (keep liquidation when lane stock remains, else revert to dropship),
+ * and relist STX when the liquidation lane hits 0. Idempotent on redeliveries.
  *
  * Webhook topic: orders/paid
  * Verify: HMAC-SHA256(raw body, SHOPIFY_API_SECRET) base64 == X-Shopify-Hmac-Sha256
