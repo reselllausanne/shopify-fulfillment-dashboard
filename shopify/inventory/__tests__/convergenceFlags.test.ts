@@ -21,6 +21,12 @@ vi.mock("@/shopify/inventory/physicalAvailability", () => ({
 vi.mock("@/shopify/restock/shopifyRestockInventory", () => ({
   findShopifyVariantByGtin: vi.fn(),
   getShopifyVariantDetail: vi.fn().mockResolvedValue(null),
+  getInventoryAvailableAtLocation: vi.fn().mockResolvedValue(0),
+  adjustInventoryAtLocation: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/shopify/inventory/locationMirror", () => ({
+  upsertLocationStockRow: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/shopify/restock/createProductFullFlow", () => ({
@@ -39,6 +45,12 @@ vi.mock("@/shopify/restock/bussignyDeliveryMetafield", () => ({
 
 vi.mock("@/shopify/restock/bussignySoldesMetafield", () => ({
   syncSoldes48hProductMetafield: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/shopify/restock/liquidationExpressPrice", () => ({
+  readLiquidationExpressSurchargeChf: vi.fn().mockReturnValue(20),
+  syncLiquidationExpressPriceMetafield: vi.fn().mockResolvedValue({ expressPrice: 149.9, changed: true }),
+  restoreStxExpressPriceMetafield: vi.fn().mockResolvedValue({ expressPrice: 319, changed: true }),
 }));
 
 vi.mock("@/shopify/inventory/locationConfig", () => ({
@@ -60,6 +72,7 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { loadPhysicalMirrorStockByGtin } from "@/shopify/inventory/physicalAvailability";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
+import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
 import {
   readShopifyDelivery48h,
@@ -75,6 +88,7 @@ const mockedFindVariant = findShopifyVariantByGtin as unknown as ReturnType<type
 const mockedPricing = resolvePhysicalRestockPricing as unknown as ReturnType<typeof vi.fn>;
 const mockedRead48h = readShopifyDelivery48h as unknown as ReturnType<typeof vi.fn>;
 const mockedWrite48h = writeShopifyDelivery48h as unknown as ReturnType<typeof vi.fn>;
+const mockedCreateProductFullFlow = createProductFullFlow as unknown as ReturnType<typeof vi.fn>;
 
 const GTIN = "4550330121471";
 
@@ -163,7 +177,9 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
   });
 
-  it("postPhysicalRestock at Lab without manualLock → liquidation (no revert)", async () => {
+  it("postPhysicalRestock at Lab without manualLock → liquidation even when mirror lags", async () => {
+    mockedMirror.mockResolvedValue(new Map());
+    mockedQueryRaw.mockResolvedValue([{ available: 0 }]);
     mockedStxFindFirst.mockResolvedValue({
       id: "sv-1",
       supplierVariantId: "stx_v375",
@@ -183,7 +199,7 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     const result = await convergeVariant(GTIN, { postPhysicalRestock: true });
 
     expect(result.desired).toBe("liquidation");
-    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
+    expect(mockedCreateProductFullFlow).not.toHaveBeenCalled();
   });
 
   it("Bussigny=0 → clears delivery_48h even when it was set", async () => {

@@ -2,10 +2,13 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { loadPhysicalMirrorStockByGtin } from "@/shopify/inventory/physicalAvailability";
 import {
+  adjustInventoryAtLocation,
   findShopifyVariantByGtin,
+  getInventoryAvailableAtLocation,
   getShopifyVariantDetail,
   type ShopifyVariantDetail,
 } from "@/shopify/restock/shopifyRestockInventory";
+import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
@@ -34,6 +37,11 @@ import {
   writeShopifyDelivery48h,
 } from "@/shopify/restock/bussignyDeliveryMetafield";
 import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
+import {
+  readLiquidationExpressSurchargeChf,
+  restoreStxExpressPriceMetafield,
+  syncLiquidationExpressPriceMetafield,
+} from "@/shopify/restock/liquidationExpressPrice";
 import { LIQUIDATION_LOCATION_IDS, ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
@@ -226,12 +234,59 @@ function resolveDesiredListingMode(input: {
   if (input.forceDropship && !input.afterWebSale) return "dropship";
   if (input.isEssentials) return "dropship";
 
+  // Fresh scan into Bussigny/Lab/COLD — mirror may lag behind Shopify write.
+  if (input.postPhysicalRestock) return "liquidation";
+
   const liquidationLaneStock = input.liquidationLaneQty > 0;
-  const liquidationSignals =
-    input.manualLock || input.postPhysicalRestock || input.looksLikeLiquidationPrice;
+  const liquidationSignals = input.manualLock || input.looksLikeLiquidationPrice;
 
   if (liquidationLaneStock && liquidationSignals) return "liquidation";
   return "dropship";
+}
+
+/** SOLDES INVARIANT: owned warehouse stock must not share checkout with Chemin dropship qty. */
+async function zeroCheminOnlineStock(
+  shopifyVariant: ShopifyVariantDetail | null,
+  gtin: string,
+  changes: string[],
+  warnings: string[]
+): Promise<void> {
+  const onlineLoc = ONLINE_LOCATION;
+  const inventoryItemId = shopifyVariant?.inventoryItemId;
+  if (!onlineLoc?.id || !inventoryItemId) return;
+
+  try {
+    const onlineAvailable =
+      (await getInventoryAvailableAtLocation({
+        inventoryItemId,
+        locationId: onlineLoc.id,
+      })) ?? 0;
+    if (onlineAvailable <= 0) return;
+
+    await adjustInventoryAtLocation({
+      inventoryItemId,
+      locationId: onlineLoc.id,
+      delta: -onlineAvailable,
+      idempotencyKey: `converge-zero-online:${inventoryItemId}:${onlineAvailable}`,
+      reason: "correction",
+      referenceDocumentUri: `gid://resell-lausanne/Convergence/${gtin}`,
+    });
+    changes.push(`Chemin online zeroed: was ${onlineAvailable} → 0`);
+
+    try {
+      await upsertLocationStockRow(onlineLoc, {
+        shopifyVariantId: shopifyVariant!.variantId,
+        inventoryItemId,
+        sku: shopifyVariant!.sku,
+        gtin,
+        available: 0,
+      });
+    } catch (mirrorErr: any) {
+      warnings.push(`Chemin mirror zero failed: ${mirrorErr?.message ?? mirrorErr}`);
+    }
+  } catch (err: any) {
+    warnings.push(`Chemin online zero failed: ${err?.message ?? err}`);
+  }
 }
 
 /**
@@ -423,9 +478,30 @@ export async function convergeVariant(
         } catch (err: any) {
           warnings.push(`Shopify metafield read/write failed: ${err?.message ?? err}`);
         }
+
+        try {
+          const expressSync = await syncLiquidationExpressPriceMetafield({
+            variantId: shopifyVariant.variantId,
+            liquidationPriceChf: liqPrice!,
+          });
+          if (expressSync.changed) {
+            changes.push(
+              `Shopify express_price=${expressSync.expressPrice.toFixed(2)} (liq+${readLiquidationExpressSurchargeChf()} CHF)`
+            );
+          }
+        } catch (err: any) {
+          warnings.push(`Shopify express_price failed: ${err?.message ?? err}`);
+        }
       }
     }
+
+    await zeroCheminOnlineStock(shopifyVariant, cleanGtin, changes, warnings);
   } else {
+    if (options.postPhysicalRestock) {
+      warnings.push(
+        "postPhysicalRestock set but desired=dropship — skipping dropship revert (unexpected)"
+      );
+    } else {
     // Bussigny empty → clear liquidation lock even if other warehouses still hold stock.
     const hadDbLiquidation = Boolean(stxRow?.manualLock);
     if (stxRow && (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)) {
@@ -537,9 +613,26 @@ export async function convergeVariant(
             }
           }
         }
+
+        if (hadDbLiquidation) {
+          try {
+            const restored = await restoreStxExpressPriceMetafield({
+              gtin: cleanGtin,
+              variantId: shopifyVariant.variantId,
+            });
+            if (restored.changed && restored.expressPrice != null) {
+              changes.push(
+                `Shopify express_price restored=${restored.expressPrice.toFixed(2)} (stx)`
+              );
+            }
+          } catch (err: any) {
+            warnings.push(`Shopify express_price restore failed: ${err?.message ?? err}`);
+          }
+        }
       } catch (err: any) {
         warnings.push(`Shopify unlock/revert failed: ${err?.message ?? err}`);
       }
+    }
     }
   }
 
