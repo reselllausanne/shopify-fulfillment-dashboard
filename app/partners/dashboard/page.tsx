@@ -64,7 +64,7 @@ export default function PartnerDashboardPage() {
 
   const loadHistory = async (offset = 0) => {
     try {
-      const res = await fetch(`/api/partners/uploads/history?limit=100&offset=${offset}`, {
+      const res = await fetch(`/api/partners/uploads/history?limit=100&offset=${offset}&view=summary`, {
         cache: "no-store",
       });
       if (!res.ok) return;
@@ -190,8 +190,10 @@ export default function PartnerDashboardPage() {
       if (data.ok) {
         setPartner(data.partner);
         loadHistory();
-        loadOrdersSummary();
-        loadShippedSales();
+        window.setTimeout(() => {
+          loadOrdersSummary();
+          loadShippedSales();
+        }, 2500);
       }
     };
     load();

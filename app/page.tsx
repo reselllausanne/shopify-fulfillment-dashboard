@@ -470,8 +470,11 @@ export default function Home() {
   }, [operationName, persistedQueryHash, query, variables, stateFilter]);
 
   useEffect(() => {
-    loadTrackingAlert();
-    loadUnlinkedAlert();
+    const timer = window.setTimeout(() => {
+      loadTrackingAlert();
+      loadUnlinkedAlert();
+    }, 2000);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const formatDate = (value?: string | null) => {

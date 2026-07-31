@@ -328,7 +328,11 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
   const loadShopifyOrders = async (sinceDays = 30) => {
     setLoadingShopify(true);
     try {
-      const res = await postJson<any>("/api/shopify/orders", { sinceDays, first: 100 });
+      const res = await postJson<any>("/api/shopify/orders", {
+        sinceDays,
+        first: 50,
+        physicalStock: false,
+      });
       if (!res.ok) {
         alert(`Shopify error: ${res.data?.error || "Unknown error"}`);
         return;

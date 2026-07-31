@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 
 function chunkArray<T>(items: T[], size: number): T[][] {
@@ -53,6 +54,59 @@ export async function resolvePartnerGtins(gtins: string[], partnerKeyUpper: stri
   }
 
   return out;
+}
+
+export function buildPartnerGalaxusLineScopeOr(
+  partnerKeyUpper: string,
+  partnerGtins: string[]
+): Prisma.GalaxusOrderLineWhereInput[] {
+  const pkUpper = partnerKeyUpper.toUpperCase();
+  const pkLower = pkUpper.toLowerCase();
+  const prefix = `${pkUpper}_`;
+  const or: Prisma.GalaxusOrderLineWhereInput[] = [
+    { providerKey: { startsWith: prefix, mode: "insensitive" } },
+    { supplierVariantId: { startsWith: `${pkLower}:`, mode: "insensitive" } },
+    { supplierVariantId: { startsWith: prefix, mode: "insensitive" } },
+    { supplierSku: { startsWith: prefix, mode: "insensitive" } },
+    { supplierPid: { equals: pkUpper, mode: "insensitive" } },
+  ];
+  if (partnerGtins.length > 0 && partnerGtins.length <= 2000) {
+    or.push({ gtin: { in: partnerGtins } });
+  }
+  return or;
+}
+
+export function buildPartnerGalaxusOrderWhere(
+  partnerKeyUpper: string,
+  partnerGtins: string[]
+): Prisma.GalaxusOrderWhereInput {
+  return {
+    lines: { some: { OR: buildPartnerGalaxusLineScopeOr(partnerKeyUpper, partnerGtins) } },
+  };
+}
+
+export async function loadPartnerMappedGtins(partnerKeyUpper: string, maxGtins = 2000): Promise<string[]> {
+  const pkUpper = partnerKeyUpper.toUpperCase();
+  const pkLower = pkUpper.toLowerCase();
+  const prefixProvider = `${pkUpper}_`;
+  const prefixIdColon = `${pkLower}:`;
+  const prefixIdUnderscore = `${pkLower}_`;
+  const prismaAny = prisma as any;
+
+  const rows = await prismaAny.variantMapping.findMany({
+    where: {
+      gtin: { not: "" },
+      OR: [
+        { supplierVariantId: { startsWith: prefixIdColon, mode: "insensitive" } },
+        { supplierVariantId: { startsWith: prefixIdUnderscore, mode: "insensitive" } },
+        { providerKey: { startsWith: prefixProvider, mode: "insensitive" } },
+      ],
+    },
+    select: { gtin: true },
+    take: maxGtins,
+  });
+
+  return Array.from(new Set(rows.map((row: { gtin?: string | null }) => clean(row?.gtin)).filter(Boolean)));
 }
 
 export function lineMatchesPartnerScope(

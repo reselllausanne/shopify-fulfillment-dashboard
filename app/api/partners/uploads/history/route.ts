@@ -25,14 +25,53 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const limit = Math.min(Number(searchParams.get("limit") ?? "200"), 1000);
   const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+  const summaryOnly = searchParams.get("view") === "summary";
 
   const providerKey = normalizeProviderKey(session.partnerKey);
   if (!providerKey) {
     return NextResponse.json({ error: "Invalid partner key" }, { status: 400 });
   }
 
-  // 1) SupplierVariant rows: inbox `ner:` and Mirakl-style `NER_` / `the_` keys
   const catalogWhere = partnerCatalogVariantWhere(providerKey);
+
+  if (summaryOnly) {
+    const [variantCount, pendingEnrichCount, uploads] = await Promise.all([
+      prismaAny.supplierVariant.count({ where: catalogWhere }),
+      prismaAny.partnerUploadRow.count({
+        where: {
+          providerKey,
+          status: "PENDING_ENRICH",
+        },
+      }),
+      prismaAny.partnerUpload.findMany({
+        where: { partnerId: session.partnerId },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+    ]);
+
+    const uploadHistory = uploads.map((u: any) => ({
+      id: u.id,
+      filename: u.filename ?? "",
+      status: u.status ?? "",
+      totalRows: u.totalRows ?? 0,
+      importedRows: u.importedRows ?? 0,
+      errorRows: u.errorRows ?? 0,
+      errorsJson: u.errorsJson ?? null,
+      createdAt: u.createdAt ?? null,
+    }));
+
+    return NextResponse.json({
+      ok: true,
+      providerKey,
+      view: "summary",
+      catalogCount: variantCount,
+      uploads: uploadHistory,
+      pendingEnrichCount,
+    });
+  }
+
+  // 1) SupplierVariant rows: inbox `ner:` and Mirakl-style `NER_` / `the_` keys
   const variants = await prismaAny.supplierVariant.findMany({
     where: catalogWhere,
     orderBy: { updatedAt: "desc" },

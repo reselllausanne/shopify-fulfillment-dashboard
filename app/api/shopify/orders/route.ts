@@ -1,6 +1,10 @@
 // app/api/shopify/orders/route.ts
 import { NextResponse } from "next/server";
-import { shopifyGraphQL, extractEUSize } from "@/lib/shopifyAdmin";
+import {
+  shopifyGraphQL,
+  extractEUSize,
+  sleepForShopifyQueryCost,
+} from "@/lib/shopifyAdmin";
 import { formatInTimeZone } from "date-fns-tz";
 import {
   lineFulfillableQuantity,
@@ -11,10 +15,102 @@ import {
   mergeLineItemCustomAttributes,
   parseShopifyLineItemDelivery,
 } from "@/app/lib/shopifyLineItemDelivery";
+import { parseShopifyOrderPickup } from "@/app/lib/shopifyOrderPickup";
+import {
+  buildPhysicalStockByGtinMap,
+  resolvePhysicalStockForGtin,
+} from "@/shopify/inventory/orderLinePhysicalStock";
 
 export const runtime = "nodejs";
 
 const SHOP_TIMEZONE = "Europe/Zurich";
+/** Paginate headers cheaply; line items fetched in separate low-cost batches. */
+const SHOPIFY_ORDERS_PAGE_SIZE = 50;
+const SHOPIFY_ORDERS_LINE_ITEMS_BATCH = 50;
+const SHOPIFY_ORDERS_MAX_FIRST = 100;
+const SHOPIFY_ORDER_HEADERS_ESTIMATED_COST = 140;
+const SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST = 60;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function fetchShopifyOrderEdges(
+  orderQuery: string | null,
+  totalWanted: number
+): Promise<{ edges: { node: any }[]; errors?: any[] }> {
+  const headerEdges: { node: any }[] = [];
+  let after: string | null = null;
+  let hasNextPage = true;
+
+  while (headerEdges.length < totalWanted && hasNextPage) {
+    const pageSize = Math.min(SHOPIFY_ORDERS_PAGE_SIZE, totalWanted - headerEdges.length);
+    const { data, errors, extensions } = await shopifyGraphQL<{
+      orders: {
+        edges: { node: any }[];
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      };
+    }>(
+      ORDER_HEADERS_QUERY,
+      { first: pageSize, after, orderQuery },
+      { estimatedQueryCost: SHOPIFY_ORDER_HEADERS_ESTIMATED_COST }
+    );
+
+    if (errors?.length) {
+      return { edges: headerEdges, errors };
+    }
+
+    const pageEdges = data?.orders?.edges ?? [];
+    headerEdges.push(...pageEdges);
+
+    hasNextPage = Boolean(data?.orders?.pageInfo?.hasNextPage);
+    after = data?.orders?.pageInfo?.endCursor ?? null;
+    if (!hasNextPage || !after || pageEdges.length === 0) break;
+
+    if (headerEdges.length < totalWanted) {
+      await sleepForShopifyQueryCost(extensions);
+    }
+  }
+
+  const trimmedHeaders = headerEdges.slice(0, totalWanted);
+  const orderIds = trimmedHeaders.map((edge) => edge.node.id).filter(Boolean);
+  const lineItemsByOrderId = new Map<string, any>();
+
+  for (const idBatch of chunkArray(orderIds, SHOPIFY_ORDERS_LINE_ITEMS_BATCH)) {
+    const { data, errors, extensions } = await shopifyGraphQL<{
+      nodes: Array<{ id?: string; lineItems?: any } | null>;
+    }>(
+      ORDER_LINE_ITEMS_BY_IDS_QUERY,
+      { ids: idBatch },
+      { estimatedQueryCost: SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST }
+    );
+
+    if (errors?.length) {
+      return { edges: trimmedHeaders, errors };
+    }
+
+    for (const node of data?.nodes ?? []) {
+      if (node?.id) {
+        lineItemsByOrderId.set(node.id, node.lineItems ?? { edges: [] });
+      }
+    }
+
+    await sleepForShopifyQueryCost(extensions);
+  }
+
+  const edges = trimmedHeaders.map((edge) => ({
+    node: {
+      ...edge.node,
+      lineItems: lineItemsByOrderId.get(edge.node.id) ?? { edges: [] },
+    },
+  }));
+
+  return { edges };
+}
 
 type ShopifyLineItem = {
   shopifyOrderId: string;
@@ -48,6 +144,12 @@ type ShopifyLineItem = {
   expressAvailable: boolean | null;
   expressPrice: string | null;
   variantExpressPrice: string | null;
+  gtin: string | null;
+  physicalStockQty: number | null;
+  physicalStockLocation: string | null;
+  isStorePickup: boolean;
+  pickupLocation: string | null;
+  pickupLabel: string | null;
 };
 
 /**
@@ -98,9 +200,13 @@ function calculateLineItemPricing(
   return { unitPrice, totalPrice };
 }
 
-const ORDERS_QUERY = /* GraphQL */ `
-query LastOrders($first: Int!, $orderQuery: String) {
-  orders(first: $first, query: $orderQuery, sortKey: CREATED_AT, reverse: true) {
+const ORDER_HEADERS_QUERY = /* GraphQL */ `
+query OrderHeaders($first: Int!, $after: String, $orderQuery: String) {
+  orders(first: $first, after: $after, query: $orderQuery, sortKey: CREATED_AT, reverse: true) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     edges {
       node {
         id
@@ -118,6 +224,27 @@ query LastOrders($first: Int!, $orderQuery: String) {
         }
         shippingAddress { country city }
 
+        shippingLines(first: 5) {
+          edges {
+            node {
+              title
+              isRemoved
+            }
+          }
+        }
+
+        fulfillmentOrders(first: 3) {
+          nodes {
+            deliveryMethod {
+              methodType
+              presentedName
+            }
+            assignedLocation {
+              name
+            }
+          }
+        }
+
         currentSubtotalPriceSet {
           shopMoney { amount currencyCode }
         }
@@ -134,54 +261,56 @@ query LastOrders($first: Int!, $orderQuery: String) {
             riskLevel
           }
         }
+      }
+    }
+  }
+}
+`;
 
-        lineItems(first: 50) {
-          edges {
-            node {
-              id
-              name
-              title
-              sku
-              quantity
-              fulfillableQuantity
-              variantTitle
+const ORDER_LINE_ITEMS_BY_IDS_QUERY = /* GraphQL */ `
+query OrderLineItemsByIds($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Order {
+      id
+      lineItems(first: 20) {
+        edges {
+          node {
+            id
+            name
+            title
+            sku
+            quantity
+            fulfillableQuantity
+            variantTitle
+            customAttributes {
+              key
+              value
+            }
+            lineItemGroup {
               customAttributes {
                 key
                 value
               }
-              lineItemGroup {
-                customAttributes {
-                  key
-                  value
-                }
+            }
+            variant {
+              barcode
+              expressAvailable: metafield(namespace: "custom", key: "express_available") {
+                value
               }
-              variant {
-                media(first: 1) {
-                  nodes {
-                    __typename
-                    ... on MediaImage {
-                      image { url }
-                    }
-                  }
-                }
-                expressAvailable: metafield(namespace: "custom", key: "express_available") {
-                  value
-                }
-                expressPrice: metafield(namespace: "custom", key: "express_price") {
-                  value
-                }
-                product {
-                  featuredMedia {
-                    __typename
-                    ... on MediaImage {
-                      image { url }
-                    }
+              expressPrice: metafield(namespace: "custom", key: "express_price") {
+                value
+              }
+              product {
+                featuredMedia {
+                  __typename
+                  ... on MediaImage {
+                    image { url }
                   }
                 }
               }
-              discountedTotalSet {
-                shopMoney { amount currencyCode }
-              }
+            }
+            discountedTotalSet {
+              shopMoney { amount currencyCode }
             }
           }
         }
@@ -289,16 +418,20 @@ query OrderExchangeLineItems($orderId: ID!) {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const requestedFirst = Number(body?.first) > 0 ? Number(body.first) : 100;
-    const first = Math.min(100, requestedFirst);
+    const requestedFirst = Number(body?.first) > 0 ? Number(body.first) : SHOPIFY_ORDERS_MAX_FIRST;
+    const first = Math.min(SHOPIFY_ORDERS_MAX_FIRST, requestedFirst);
     const customOrderQuery = typeof body?.orderQuery === "string" && body.orderQuery.trim() ? String(body.orderQuery).trim() : null;
     const sinceDaysRaw = Number(body?.sinceDays);
     const orderQuery =
       customOrderQuery ||
       (Number.isFinite(sinceDaysRaw) && sinceDaysRaw > 0 ? buildDefaultOrdersSearchQuery(sinceDaysRaw) : null);
     const includeReturns = Boolean(body?.includeExchanges);
+    const includePhysicalStock = Boolean(body?.physicalStock);
 
-    console.log(`[SHOPIFY] Fetching last ${first} orders...`, { orderQuery: orderQuery ?? "(none)" });
+    console.log(`[SHOPIFY] Fetching last ${first} orders...`, {
+      orderQuery: orderQuery ?? "(none)",
+      includePhysicalStock,
+    });
 
     if (body?.orderExchange) {
       const orderId = body.orderId || "12560147906946";
@@ -317,27 +450,50 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, order: data.order });
     }
 
-    const graphQuery = includeReturns ? ORDERS_WITH_EXCHANGE_QUERY : ORDERS_QUERY;
-    const { data, errors } = await shopifyGraphQL<{
-      orders: { edges: { node: any }[] };
-    }>(graphQuery, { first, orderQuery });
-
-    if (errors?.length) {
-      console.error("[SHOPIFY] GraphQL errors:", errors);
-      return NextResponse.json(
-        { error: "Shopify GraphQL errors", details: errors },
-        { status: 500 }
-      );
-    }
-
     if (includeReturns) {
+      const { data, errors } = await shopifyGraphQL<{
+        orders: { edges: { node: any }[] };
+      }>(ORDERS_WITH_EXCHANGE_QUERY, { first, orderQuery });
+      if (errors?.length) {
+        console.error("[SHOPIFY] GraphQL errors:", errors);
+        return NextResponse.json(
+          { error: "Shopify GraphQL errors", details: errors },
+          { status: 500 }
+        );
+      }
       return NextResponse.json({
         success: true,
         orders: data?.orders?.edges ?? [],
       });
     }
 
-    const edges = data?.orders?.edges ?? [];
+    const fetched = await fetchShopifyOrderEdges(orderQuery, first);
+    if (fetched.errors?.length) {
+      console.error("[SHOPIFY] GraphQL errors:", fetched.errors);
+      return NextResponse.json(
+        { error: "Shopify GraphQL errors", details: fetched.errors },
+        { status: 500 }
+      );
+    }
+
+    const edges = fetched.edges;
+    const lineGtinsForStock: string[] = [];
+    if (includePhysicalStock) {
+      for (const e of edges) {
+        const o = e.node;
+        if (shouldSkipOrderForFulfillmentMatching(o)) continue;
+        for (const liE of o.lineItems?.edges ?? []) {
+          const li = liE?.node;
+          if (lineFulfillableQuantity(li) <= 0) continue;
+          const barcode = String(li?.variant?.barcode ?? "").trim();
+          if (barcode) lineGtinsForStock.push(barcode);
+        }
+      }
+    }
+    const physicalStockByGtin = includePhysicalStock
+      ? await buildPhysicalStockByGtinMap(lineGtinsForStock)
+      : new Map();
+
     const lineItems: ShopifyLineItem[] = [];
     const seenLineItemIds = new Set<string>();
 
@@ -368,6 +524,22 @@ export async function POST(req: Request) {
       const orderCurrency = orderTotal?.currencyCode || "CHF";
 
       const riskNorm = normalizeOrderRisk(o.risk);
+
+      const orderShippingLines = (o.shippingLines?.edges ?? [])
+        .map((edge: any) => edge?.node)
+        .filter(Boolean)
+        .map((node: any) => ({
+          title: node.title ?? null,
+          isRemoved: Boolean(node.isRemoved),
+        }));
+      const orderFulfillmentOrders = (o.fulfillmentOrders?.nodes ?? []).map((node: any) => ({
+        deliveryMethod: node.deliveryMethod ?? null,
+        assignedLocation: node.assignedLocation ?? null,
+      }));
+      const pickupInfo = parseShopifyOrderPickup({
+        shippingLines: orderShippingLines,
+        fulfillmentOrders: orderFulfillmentOrders,
+      });
 
       const liEdgesAll = o.lineItems?.edges ?? [];
       const liEdges = liEdgesAll.filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
@@ -410,12 +582,7 @@ export async function POST(req: Request) {
         const productName = li.name ?? li.title ?? "Unknown Product";
         const sizeEU = extractEUSize(variantTitle) ?? extractEUSize(productName) ?? null;
         let lineItemImageUrl = null;
-        const variantMediaNode = li?.variant?.media?.nodes?.find(
-          (node: any) => node?.__typename === "MediaImage"
-        );
-        if (variantMediaNode?.image?.url) {
-          lineItemImageUrl = variantMediaNode.image.url;
-        } else if (li?.variant?.product?.featuredMedia?.__typename === "MediaImage") {
+        if (li?.variant?.product?.featuredMedia?.__typename === "MediaImage") {
           lineItemImageUrl = li?.variant?.product?.featuredMedia?.image?.url ?? null;
         }
 
@@ -427,6 +594,10 @@ export async function POST(req: Request) {
           expressAvailableMetafield: li?.variant?.expressAvailable?.value ?? null,
           expressPriceMetafield: li?.variant?.expressPrice?.value ?? null,
         });
+
+        const gtin = String(li?.variant?.barcode ?? "").trim() || null;
+        const physicalStock =
+          includePhysicalStock && gtin ? resolvePhysicalStockForGtin(gtin, physicalStockByGtin) : null;
 
         lineItems.push({
           shopifyOrderId: orderId,
@@ -460,6 +631,12 @@ export async function POST(req: Request) {
           expressAvailable: deliveryInfo.expressAvailable,
           expressPrice: deliveryInfo.expressPrice,
           variantExpressPrice: deliveryInfo.variantExpressPrice,
+          gtin,
+          physicalStockQty: physicalStock?.qty ?? null,
+          physicalStockLocation: physicalStock?.locationName ?? null,
+          isStorePickup: pickupInfo.isStorePickup,
+          pickupLocation: pickupInfo.locationName,
+          pickupLabel: pickupInfo.label,
         });
       }
 
