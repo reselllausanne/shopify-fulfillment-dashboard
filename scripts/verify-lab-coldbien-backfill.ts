@@ -49,7 +49,8 @@ async function main() {
         manualPrice: true,
         deliveryType: true,
         stock: true,
-        rawJson: true,
+        images: true,
+        hostedImageUrl: true,
       },
     });
 
@@ -62,7 +63,9 @@ async function main() {
       await new Promise((r) => setTimeout(r, 150));
     }
 
-    const hasImages = stx?.rawJson != null;
+    const hasImages =
+      (Array.isArray(stx?.images) && stx.images.length > 0) ||
+      Boolean(stx?.hostedImageUrl);
     const manualLock = Boolean(stx?.manualLock);
     const manualPrice = stx?.manualPrice != null ? Number(stx.manualPrice) : null;
     const price = shopify?.price != null ? Number(shopify.price) : null;
