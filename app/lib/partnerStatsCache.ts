@@ -19,6 +19,10 @@ export function createPartnerKeyedCache<T>(
   const store = new Map<string, CacheEntry<T>>();
   const inflight = new Map<string, Promise<T>>();
 
+  const put = (key: string, value: T) => {
+    store.set(key, { at: Date.now(), value });
+  };
+
   return {
     getFresh(key: string): T | null {
       const entry = store.get(key);
@@ -37,9 +41,7 @@ export function createPartnerKeyedCache<T>(
       return entry.value;
     },
 
-    set(key: string, value: T) {
-      store.set(key, { at: Date.now(), value });
-    },
+    set: put,
 
     async revalidate(key: string, loader: () => Promise<T>): Promise<T> {
       const existing = inflight.get(key);
@@ -47,7 +49,7 @@ export function createPartnerKeyedCache<T>(
 
       const promise = loader()
         .then((value) => {
-          store.set(key, value);
+          put(key, value);
           return value;
         })
         .finally(() => {
