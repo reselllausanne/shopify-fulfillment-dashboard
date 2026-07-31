@@ -12,6 +12,7 @@ import {
 } from "@/galaxus/exports/feedValidation";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
+import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import {
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
@@ -155,8 +156,11 @@ function buildMasterRowsFromCandidates(
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
-    const isPublishableStx =
-      deliveryType.startsWith("express_") || deliveryType === "standard";
+    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+      slug: product?.urlKey ?? null,
+      product,
+      productName: supplierVariant?.supplierProductName ?? product?.name ?? null,
+    });
     const effectiveStock =
       isStx && isPublishableStx
         ? publishStxStockFromAsks(rawStock)

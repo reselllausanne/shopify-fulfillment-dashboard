@@ -23,6 +23,7 @@ import {
   calcSuggestedRetailFromStoredStxBuyPrice,
 } from "@/galaxus/pricing/suggestedSellPrice";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
+import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -304,8 +305,11 @@ export async function GET(request: Request) {
         : manualLock && manualStock !== null
           ? manualStock
           : baseStock;
-    const isPublishableStx =
-      deliveryType.startsWith("express_") || deliveryType === "standard";
+    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+      slug: productHandle || null,
+      product: kickdbProduct,
+      productName,
+    });
     const dropshipDelisted = isStx && !isPublishableStx;
     const dropshipStock = isStx && isPublishableStx
       ? publishStxStockFromAsks(rawStock)

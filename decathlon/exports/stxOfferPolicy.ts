@@ -1,4 +1,5 @@
 import { isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
+import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import type { DecathlonExportCandidate } from "./types";
 import {
   readDecathlonStxMaxListPriceChf,
@@ -65,12 +66,13 @@ export function resolveDecathlonStxOfferStockBeforeDelist(candidate: DecathlonEx
   const baseStock = parseIntSafe(variant?.stock) ?? 0;
   const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
   const deliveryType = String(variant?.deliveryType ?? "");
-  // Any valid StockX deliveryType is publishable — express variants (both ranks)
-  // are preferred by selectStxOfferForImport, and "standard" is the fallback
-  // used when a product family has no express asks (LEGO, low-liquidity apparel).
-  // Lead time on the offer row carries the actual shipping estimate downstream.
+  const ctx = decathlonStxListPriceContextFromCandidate(candidate);
   const stxEligible =
-    (deliveryType.startsWith("express_") || deliveryType === "standard") &&
+    isStxMarketplacePublishableDeliveryType(deliveryType, {
+      slug: ctx.productHandle,
+      product: candidate.product ?? candidate.kickdbVariant?.product ?? null,
+      productName: ctx.productName,
+    }) &&
     Number.isFinite(rawStock) &&
     isStxListingEligibleAsks(rawStock);
   return stxEligible ? 1 : 0;

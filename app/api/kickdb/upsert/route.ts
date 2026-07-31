@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
-import { extractVariantGtin } from "@/galaxus/kickdb/client";
-import { validateGtin } from "@/app/lib/normalize";
+import { pickPersistedKickdbBarcodes } from "@/galaxus/kickdb/client";
 import { checkSharedSecret } from "@/app/api/kickdb/auth";
 import { ingestStxFromRawPayload, zeroStxStockForKickdbProduct } from "@/galaxus/jobs/stxSync";
 
@@ -127,9 +126,7 @@ export async function POST(req: Request) {
       if (!kickdbVariantId) continue;
 
       const { sizeEu, sizeUs } = pickPersistedKickdbSizes(v);
-      const gtinRaw = extractVariantGtin(v);
-      const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
-      const ean = pickString(v?.ean);
+      const { gtin, ean } = pickPersistedKickdbBarcodes(v);
 
       await prisma.$executeRaw`
         INSERT INTO "public"."KickDBVariant" (

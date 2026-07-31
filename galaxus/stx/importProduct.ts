@@ -2,6 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import {
   extractVariantGtin,
+  extractVariantEan,
+  kickdbVariantMatchesGtin,
   fetchStockxProductByIdOrSlugRaw,
   matchVariantsBySize,
 } from "@/galaxus/kickdb/client";
@@ -441,7 +443,7 @@ export async function importStxProductByInput(
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
-      ean: pickString(variant?.ean),
+      ean: pickString(extractVariantEan(variant)),
     });
     warnings.push(
       `Physical-only import: size ${sizeLabel} (${variantId}) — no StockX asks; estimated raw=${fallbackRaw} CHF`
@@ -510,7 +512,7 @@ export async function importStxProductByInput(
       warnings.push(
         forceImport
           ? `Size ${sizeLabel} (${variantId}): no usable price. Prices: ${priceHint || "none"}.`
-          : `Size ${sizeLabel} (${variantId}): no express price (need express_standard/expedited). Prices: ${priceHint || "none"}.`
+          : `Size ${sizeLabel} (${variantId}): no usable price row (need standard or express with price>0). Prices: ${priceHint || "none"}.`
       );
       continue;
     }
@@ -555,7 +557,7 @@ export async function importStxProductByInput(
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
-      ean: pickString(variant?.ean),
+      ean: pickString(extractVariantEan(variant)),
     });
   }
 
@@ -570,7 +572,7 @@ export async function importStxProductByInput(
     errors.push("No importable variants were found on this product.");
   } else if (!forceImport && eligibleVariantsCount === 0 && !hasTargetPhysicalRow) {
     errors.push(
-      `No eligible variants (need express_standard/expedited, or standard for LEGO, with price>0 and asks≥${STX_MIN_ASKS_FOR_LISTING}).`
+      `No eligible variants (need standard or express with price>0 and asks≥${STX_MIN_ASKS_FOR_LISTING}).`
     );
   }
   if (errors.length > 0) {

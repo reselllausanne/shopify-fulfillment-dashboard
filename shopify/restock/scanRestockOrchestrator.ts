@@ -3,6 +3,7 @@ import {
   searchStockxProducts,
   fetchStockxProductByIdOrSlugRaw,
   extractVariantGtin,
+  kickdbVariantMatchesGtin,
 } from "@/galaxus/kickdb/client";
 import { importStxProductByInput } from "@/galaxus/stx/importProduct";
 import { isPartnerCatalogSupplierVariantId, STX_SUPPLIER_VARIANT_WHERE } from "@/galaxus/supplier/supplierKeyGuards";
@@ -300,14 +301,11 @@ async function inspectKickdbSlugForGtin(
   slug: string,
   gtin: string
 ): Promise<{ gtinConfirmed: boolean; matchedSizeEu: string | null; matchedSizeUs: string | null }> {
-  const candidates = gtinCandidates(gtin);
   try {
     const { product } = await fetchStockxProductByIdOrSlugRaw(slug);
     const variants = Array.isArray((product as any)?.variants) ? (product as any).variants : [];
     for (const variant of variants) {
-      const vGtin = extractVariantGtin(variant);
-      if (!vGtin) continue;
-      if (!candidates.some((c) => gtinEquals(vGtin, c))) continue;
+      if (!kickdbVariantMatchesGtin(variant, gtin)) continue;
       const { sizeEu, sizeUs } = pickPersistedKickdbSizes(variant);
       const euSize = sanitizeEuSizeForCreate(sizeEu);
       return {
@@ -324,21 +322,20 @@ async function inspectKickdbSlugForGtin(
 
 /** All KickDB/StockX variants with GTIN + EU size (fallback picker). */
 async function listKickdbGtinSizeOptions(slug: string, gtin: string) {
-  const candidates = gtinCandidates(gtin);
   try {
     const { product } = await fetchStockxProductByIdOrSlugRaw(slug);
     const variants = Array.isArray((product as any)?.variants) ? (product as any).variants : [];
     return variants
       .map((variant: any) => {
-        const vGtin = extractVariantGtin(variant);
         const { sizeEu, sizeUs } = pickPersistedKickdbSizes(variant);
         const eu = sanitizeEuSizeForCreate(sizeEu);
+        const vGtin = extractVariantGtin(variant);
         if (!eu && !vGtin) return null;
         return {
           sizeEu: eu,
           sizeUs: pickString(sizeUs),
-          gtin: vGtin,
-          gtinMatch: Boolean(vGtin && candidates.some((c) => gtinEquals(vGtin, c))),
+          gtin: extractVariantGtin(variant),
+          gtinMatch: kickdbVariantMatchesGtin(variant, gtin),
         };
       })
       .filter(Boolean) as Array<{

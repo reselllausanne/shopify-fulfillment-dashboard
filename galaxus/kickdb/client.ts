@@ -119,20 +119,23 @@ function normalizeItfIdentifier(value: unknown): string | null {
   return acceptGtinDigits(stripped);
 }
 
+function findIdentifierByKind(
+  entries: Array<{ identifier?: string | null; identifier_type?: string | null }>,
+  pred: (kind: string) => boolean
+): string | null {
+  for (const entry of entries) {
+    const kind = normalizeIdentifierKind(entry.identifier_type);
+    if (!pred(kind)) continue;
+    const accepted = acceptGtinDigits(entry.identifier);
+    if (accepted) return accepted;
+  }
+  return null;
+}
+
 function pickFromIdentifierEntries(
   entries: Array<{ identifier?: string | null; identifier_type?: string | null }>
 ): string | null {
-  const findKind = (pred: (kind: string) => boolean): string | null => {
-    for (const entry of entries) {
-      const kind = normalizeIdentifierKind(entry.identifier_type);
-      if (!pred(kind)) continue;
-      const accepted = acceptGtinDigits(entry.identifier);
-      if (accepted) return accepted;
-    }
-    return null;
-  };
-
-  const upc = findKind((kind) => kind === "UPC" || kind.startsWith("UPC"));
+  const upc = findIdentifierByKind(entries, (kind) => kind === "UPC" || kind.startsWith("UPC"));
   if (upc) return upc;
 
   for (const entry of entries) {
@@ -142,13 +145,33 @@ function pickFromIdentifierEntries(
     if (normalized) return normalized;
   }
 
-  const ean = findKind((kind) => kind === "EAN" || kind.startsWith("EAN"));
+  const ean = findIdentifierByKind(entries, (kind) => kind === "EAN" || kind.startsWith("EAN"));
   if (ean) return ean;
 
-  const gtin = findKind((kind) => kind === "GTIN" || kind.startsWith("GTIN"));
+  const gtin = findIdentifierByKind(entries, (kind) => kind === "GTIN" || kind.startsWith("GTIN"));
   if (gtin) return gtin;
 
   return null;
+}
+
+function pickEanFromIdentifierEntries(
+  entries: Array<{ identifier?: string | null; identifier_type?: string | null }>
+): string | null {
+  return findIdentifierByKind(entries, (kind) => kind === "EAN" || kind.startsWith("EAN"));
+}
+
+function pickEanFromIdentifierRecord(record: Record<string, string | string[]>): string | null {
+  const asEntries = (keys: string[]) =>
+    keys.flatMap((key) => {
+      const raw = record[key];
+      const values = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+      return values.map((identifier) => ({
+        identifier,
+        identifier_type: key,
+      }));
+    });
+
+  return pickEanFromIdentifierEntries(asEntries(["ean", "ean13", "EAN", "EAN13"]));
 }
 
 function pickFromIdentifierRecord(record: Record<string, string | string[]>): string | null {
@@ -188,6 +211,38 @@ export function extractVariantGtin(variant?: KickDbVariantWithIdentifiers): stri
 
   const topLevel = acceptGtinDigits(variant.gtin) ?? acceptGtinDigits(variant.ean);
   return topLevel;
+}
+
+/**
+ * EAN-13 (or EAN-prefixed identifier_type) when present alongside UPC.
+ * Stored on `KickDBVariant.ean` so EAN scans resolve while feed keys stay UPC-first.
+ */
+export function extractVariantEan(variant?: KickDbVariantWithIdentifiers): string | null {
+  if (!variant) return null;
+
+  const identifiers = variant.identifiers;
+  if (Array.isArray(identifiers) && identifiers.length > 0) {
+    const picked = pickEanFromIdentifierEntries(identifiers);
+    if (picked) return picked;
+  } else if (identifiers && typeof identifiers === "object") {
+    const picked = pickEanFromIdentifierRecord(identifiers as Record<string, string | string[]>);
+    if (picked) return picked;
+  }
+
+  return acceptGtinDigits(variant.ean);
+}
+
+/** Canonical feed GTIN (UPC-first) + secondary EAN for cross-barcode lookup. */
+export function pickPersistedKickdbBarcodes(variant?: KickDbVariantWithIdentifiers): {
+  gtin: string | null;
+  ean: string | null;
+} {
+  const gtinRaw = extractVariantGtin(variant);
+  const gtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
+  const eanRaw = extractVariantEan(variant);
+  let ean = eanRaw && validateGtin(eanRaw) ? eanRaw : null;
+  if (ean && gtin && gtinEquals(ean, gtin)) ean = null;
+  return { gtin, ean };
 }
 
 /** Match scanned GTIN against every identifier on a KickDB variant (EAN-13, UPC, GTIN-8, …). */

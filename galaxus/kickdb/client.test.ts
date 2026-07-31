@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractVariantGtin, kickdbVariantMatchesGtin } from "@/galaxus/kickdb/client";
+import { extractVariantGtin, kickdbVariantMatchesGtin, extractVariantEan, pickPersistedKickdbBarcodes } from "@/galaxus/kickdb/client";
 
 describe("kickdbVariantMatchesGtin", () => {
   it("matches EAN-13 when primary extract would be UPC", () => {
@@ -55,5 +55,33 @@ describe("extractVariantGtin", () => {
       ],
     } as any;
     expect(extractVariantGtin(variant)).toBe("197863751597");
+  });
+});
+
+describe("extractVariantEan", () => {
+  it("returns EAN-13 when both UPC and EAN exist (ASICS EU39 pattern)", () => {
+    const variant = {
+      identifiers: [
+        { identifier: "197298747899", identifier_type: "UPC" },
+        { identifier: "4570158520201", identifier_type: "EAN-13" },
+      ],
+    } as any;
+    expect(extractVariantEan(variant)).toBe("4570158520201");
+    expect(extractVariantGtin(variant)).toBe("197298747899");
+  });
+});
+
+describe("pickPersistedKickdbBarcodes", () => {
+  it("stores UPC on gtin and EAN on ean without duplicating", () => {
+    const variant = {
+      identifiers: [
+        { identifier: "197298747899", identifier_type: "UPC" },
+        { identifier: "4570158520201", identifier_type: "EAN-13" },
+      ],
+    } as any;
+    expect(pickPersistedKickdbBarcodes(variant)).toEqual({
+      gtin: "197298747899",
+      ean: "4570158520201",
+    });
   });
 });

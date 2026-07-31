@@ -17,6 +17,7 @@ import {
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
+import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -310,11 +311,12 @@ export async function GET(request: Request) {
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
-    // Any StockX offer that survived selectStxOfferForImport is publishable —
-    // express is preferred by the selector; "standard" is the fallback for
-    // product families with no express asks (LEGO, low-liquidity apparel).
-    const isPublishableStx =
-      deliveryType.startsWith("express_") || deliveryType === "standard";
+    const kickdbProduct = (candidate as any)?.product ?? (candidate as any)?.kickdbVariant?.product ?? null;
+    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+      slug: kickdbProduct?.urlKey ?? null,
+      product: kickdbProduct,
+      productName: variant?.supplierProductName ?? kickdbProduct?.name ?? null,
+    });
     const dropshipDelisted = isStx && !isPublishableStx;
     const dropshipStock = isStx && isPublishableStx
       ? publishStxStockFromAsks(rawStock)

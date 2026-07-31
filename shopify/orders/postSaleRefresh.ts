@@ -1,6 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { validateGtin } from "@/app/lib/normalize";
-import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/kickdb/client";
+import { fetchStockxProductByIdOrSlugRaw, pickPersistedKickdbBarcodes } from "@/galaxus/kickdb/client";
 import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
 import { ingestStxFromRawPayload } from "@/galaxus/jobs/stxSync";
 import { scheduleMarketplaceStockPush } from "@/inventory/marketplaceStockSync";
@@ -294,9 +293,9 @@ async function syncKickdbBufferAndStxForGtin(gtin: string): Promise<{
     const kickdbVariantId = pickString(variant?.id);
     if (!kickdbVariantId) continue;
     const { sizeEu, sizeUs } = pickPersistedKickdbSizes(variant);
-    const gtinRaw = extractVariantGtin(variant as Parameters<typeof extractVariantGtin>[0]);
-    const variantGtin = gtinRaw && validateGtin(gtinRaw) ? gtinRaw : null;
-    const ean = pickString(variant?.ean);
+    const { gtin: variantGtin, ean } = pickPersistedKickdbBarcodes(
+      variant as Parameters<typeof pickPersistedKickdbBarcodes>[0]
+    );
 
     await prisma.$executeRaw`
       INSERT INTO "public"."KickDBVariant" (

@@ -6,6 +6,7 @@ import {
   fetchStockxProductByIdOrSlugRaw,
   matchVariantsBySize,
   extractVariantGtin,
+  extractVariantEan,
   searchStockxProducts,
 } from "@/galaxus/kickdb/client";
 import { Prisma } from "@prisma/client";
@@ -964,7 +965,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
             sizeUs: persistedUs,
             sizeEu: persistedEu,
             gtin: pickString(finalGtin),
-            ean: pickString(matchedVariant?.ean),
+            ean: pickString(extractVariantEan(matchedVariant ?? undefined)),
             providerKey: providerKey ?? null,
             lastFetchedAt: now,
             notFound: false,
@@ -974,7 +975,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
             sizeUs: persistedUs,
             sizeEu: persistedEu,
             gtin: pickString(finalGtin),
-            ean: pickString(matchedVariant?.ean),
+            ean: pickString(extractVariantEan(matchedVariant ?? undefined)),
             providerKey: providerKey ?? null,
             lastFetchedAt: now,
             notFound: false,

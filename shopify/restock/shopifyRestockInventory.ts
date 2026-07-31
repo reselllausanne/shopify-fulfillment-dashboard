@@ -1,6 +1,6 @@
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
-import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
+import { expandGtinLookupCandidates } from "@/shopify/restock/gtinAliasLookup";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
@@ -338,10 +338,11 @@ export async function findShopifyVariantByGtin(gtin: string): Promise<{
   ambiguous: boolean;
   rawMatches: Array<{ variantId: string; productId: string; sku: string | null }>;
 }> {
+  const lookupCandidates = await expandGtinLookupCandidates(gtin);
   const seenVariant = new Set<string>();
   const rawMatches: Array<{ variantId: string; productId: string; sku: string | null }> = [];
 
-  for (const candidate of gtinCandidates(gtin)) {
+  for (const candidate of lookupCandidates) {
     const rows = await findShopifyVariantsByGtin(candidate);
     for (const r of rows) {
       if (seenVariant.has(r.variantId)) continue;
@@ -363,9 +364,10 @@ export async function findShopifyVariantByGtin(gtin: string): Promise<{
 
 /** All Shopify variants sharing a GTIN (for staff disambiguation UI). */
 export async function listShopifyVariantsByGtinDetailed(gtin: string): Promise<ShopifyVariantDetail[]> {
+  const lookupCandidates = await expandGtinLookupCandidates(gtin);
   const seenVariant = new Set<string>();
   const variantIds: string[] = [];
-  for (const candidate of gtinCandidates(gtin)) {
+  for (const candidate of lookupCandidates) {
     const rows = await findShopifyVariantsByGtin(candidate);
     for (const r of rows) {
       if (seenVariant.has(r.variantId)) continue;

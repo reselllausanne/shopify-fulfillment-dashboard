@@ -1,6 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
-import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
+import { expandGtinLookupCandidates } from "@/shopify/restock/gtinAliasLookup";
 
 /**
  * KickDB / StockX slug for physical restock + STX import.
@@ -9,7 +9,7 @@ import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 export async function resolveKickdbSlugForGtin(gtin: string): Promise<string | null> {
   const clean = String(gtin ?? "").trim();
   if (!clean) return null;
-  const cands = gtinCandidates(clean);
+  const cands = await expandGtinLookupCandidates(clean);
 
   const kv = await prisma.kickDBVariant.findFirst({
     where: { OR: [{ gtin: { in: cands } }, { ean: { in: cands } }] },

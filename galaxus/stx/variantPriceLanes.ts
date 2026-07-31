@@ -66,17 +66,39 @@ export function allowsStxStandardImport(payload: unknown, slug?: string | null):
   return isStxForceImportSlug(handle) || isLegoStxSlug(handle) || isLegoStxProduct(payload as object);
 }
 
+/** Galaxus/Decathlon feeds: express always; standard only for LEGO / force-import slugs. */
+export function isStxMarketplacePublishableDeliveryType(
+  deliveryType: string,
+  options?: {
+    slug?: string | null;
+    product?: unknown;
+    productName?: string | null;
+  }
+): boolean {
+  const normalized = String(deliveryType ?? "").trim();
+  if (normalized.startsWith("express_")) return true;
+  if (normalized === "standard") {
+    return allowsStxStandardImport(
+      options?.product ?? (options?.productName ? { title: options.productName } : null),
+      options?.slug
+    );
+  }
+  return false;
+}
+
+/**
+ * DB mirror + Shopify STX pricing: store every size with a usable StockX ask
+ * (express preferred, standard fallback). Marketplace export filters separately.
+ */
 export function buildStxDualPriceFields(
   variant: { prices?: unknown },
   payload: ShippingPayload,
   productName: string | null,
-  options?: { forceImport?: boolean; slug?: string | null }
+  _options?: { forceImport?: boolean; slug?: string | null }
 ): StxDualPriceFields | null {
-  const allowStandard =
-    options?.forceImport === true || allowsStxStandardImport(payload, options?.slug ?? null);
   const express = selectStxActiveOffer(variant?.prices);
   const standard = selectStxStandardOffer(variant?.prices);
-  const active = express ?? (allowStandard ? standard : null);
+  const active = express ?? standard;
   if (!active) return null;
 
   const expressBuy = express ? buyFromOffer(express, payload) : null;

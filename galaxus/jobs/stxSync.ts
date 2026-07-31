@@ -1,6 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
-import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin } from "@/galaxus/kickdb/client";
+import { fetchStockxProductByIdOrSlugRaw, extractVariantGtin, extractVariantEan } from "@/galaxus/kickdb/client";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { listForceImportStxSupplierVariantIds } from "@/galaxus/stx/forceImportSlugs";
 import { type StxDeliveryType } from "@/galaxus/stx/offerSelection";
@@ -260,11 +260,10 @@ type IngestParsedRow = ParsedStxRow & {
 };
 
 /**
- * Parse every variant that currently has a USABLE offer (StockX express/expedited ask).
- * Unlike `extractRowsFromPayload`, no-GTIN rows are KEPT (stored as PENDING_GTIN, locked from the
- * Galaxus feed but tracked). Variants with no usable offer are omitted here — they are never created
- * (a later SSE event creates them once an offer exists); existing rows that lost their offer are
- * handled by the zero-stock pass in `ingestStxFromRawPayload`.
+ * Parse every variant that currently has a USABLE StockX ask (express or standard).
+ * Unlike `extractRowsFromPayload`, no-GTIN rows are KEPT (stored as PENDING_GTIN). Standard-only
+ * rows are stored for Shopify sync; Galaxus/Decathlon export skips them unless LEGO / force-import.
+ * Variants with no usable offer are omitted; lost offers are zero-stocked in `ingestStxFromRawPayload`.
  */
 function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestParsedRow[] {
   const rows: IngestParsedRow[] = [];
@@ -311,7 +310,7 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
-      ean: pickString(variant?.ean),
+      ean: pickString(extractVariantEan(variant)),
     });
   }
   return rows;
