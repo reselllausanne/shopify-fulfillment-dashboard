@@ -669,6 +669,13 @@ export default function DecathlonOrdersPage() {
   }, [selectedOrder, selectedOrder?.orderState, selectedShipmentSummary.remainingUnits, canceledStates]);
 
   /** Partial / 2nd label: backend + Mirakl support per-line qty; UI must allow 1 Mirakl line with qty > 1. */
+  const hasLabelDocument = useMemo(() => {
+    const docs: any[] = Array.isArray(selectedOrder?.documents) ? selectedOrder.documents : [];
+    if (docs.some((d) => String(d?.type ?? "").toUpperCase() === "LABEL")) return true;
+    const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
+    return shipments.some((s) => Boolean(s?.shippedAt) && Boolean(s?.trackingNumber));
+  }, [selectedOrder]);
+
   const canSplitShipment = useMemo(() => {
     if (!selectedOrder) return false;
     const state = normalizeState(selectedOrder?.orderState);
@@ -794,6 +801,26 @@ export default function DecathlonOrdersPage() {
     }
   };
 
+  const downloadLabel = async () => {
+    if (!selectedOrderId) return;
+    const filename = await downloadPdf(
+      `/api/decathlon/orders/${selectedOrderId}/documents/label`,
+      `decathlon-label_${selectedOrderId}.pdf`
+    );
+    setOpsLog(`Saved to Downloads: ${filename}`);
+  };
+
+  const downloadLabelManual = async () => {
+    if (!selectedOrderId) return;
+    setOpsLog(null);
+    setError(null);
+    try {
+      await downloadLabel();
+    } catch (err: any) {
+      setError(err?.message ?? "Label download failed");
+    }
+  };
+
   const openSplitShipment = () => {
     if (!selectedOrder) return;
     const next: Record<string, number> = {};
@@ -864,6 +891,18 @@ export default function DecathlonOrdersPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Ship failed");
       setOpsLog(JSON.stringify(data, null, 2));
+      if (data.documentId) {
+        try {
+          await downloadLabel();
+        } catch (labelErr: any) {
+          const msg = String(labelErr?.message ?? labelErr);
+          setError(
+            msg.toLowerCase().includes("failed to fetch")
+              ? "Label created but auto-download failed (network). Use Download label to retry."
+              : `Label created but auto-download failed. Use Download label to retry (${msg}).`
+          );
+        }
+      }
       await loadOrderDetail(selectedOrderId);
     } catch (err: any) {
       setError(err.message);
@@ -1223,6 +1262,15 @@ export default function DecathlonOrdersPage() {
             >
               Download packing slip
             </button>
+            {hasLabelDocument ? (
+              <button
+                onClick={downloadLabelManual}
+                disabled={!selectedOrderId}
+                className="px-3 py-1.5 bg-gray-100 rounded text-xs"
+              >
+                Download label
+              </button>
+            ) : null}
             {canSplitShipment ? (
               <button
                 onClick={openSplitShipment}
