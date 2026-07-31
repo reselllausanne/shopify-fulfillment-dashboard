@@ -58,6 +58,24 @@ function pickLocations(arg: string | undefined): LocationConfig[] {
   return [lab, bien];
 }
 
+type LevelsResponse = {
+  location: {
+    inventoryLevels: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      edges: Array<{
+        node: {
+          quantities: Array<{ name: string; quantity: number }> | null;
+          item: {
+            id: string;
+            sku: string | null;
+            variant: { id: string; sku: string | null; barcode: string | null } | null;
+          } | null;
+        };
+      }>;
+    };
+  } | null;
+};
+
 async function syncLocationFast(location: LocationConfig): Promise<{
   locationName: string;
   stocked: number;
@@ -71,23 +89,12 @@ async function syncLocationFast(location: LocationConfig): Promise<{
   let throttleRetries = 0;
 
   while (pages < maxPages) {
-    const { data, errors } = await shopifyGraphQL<{
-      location: {
-        inventoryLevels: {
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          edges: Array<{
-            node: {
-              quantities: Array<{ name: string; quantity: number }> | null;
-              item: {
-                id: string;
-                sku: string | null;
-                variant: { id: string; sku: string | null; barcode: string | null } | null;
-              } | null;
-            };
-          }>;
-        };
-      } | null;
-    }>(LEVELS_QUERY, { loc: location.id, cur: cursor, n: 100 });
+    const response = await shopifyGraphQL<LevelsResponse>(LEVELS_QUERY, {
+      loc: location.id,
+      cur: cursor,
+      n: 100,
+    });
+    const { data, errors } = response;
 
     const throttled = errors?.some(
       (e) =>
