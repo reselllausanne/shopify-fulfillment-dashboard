@@ -198,6 +198,12 @@ export type ConvergeVariantResult = {
 export type ConvergeVariantOptions = {
   /** Paid web sale just consumed home/physical stock — never re-apply liquidation. */
   forceDropship?: boolean;
+  /**
+   * Scan restock into a liquidation-lane location just completed — keep/set
+   * liquidation (price, manualLock, delivery_48h, soldes_48h) even when the
+   * mirror or DB lock was not pre-existing. Prevents post-scan revert to dropship.
+   */
+  postPhysicalRestock?: boolean;
   /** Exact sold Shopify variant id; bypasses ambiguous GTIN lookup. */
   preferredVariantId?: string | null;
 };
@@ -276,7 +282,9 @@ export async function convergeVariant(
   // (Bussigny) with an existing scan lock keeps a variant in liquidation.
   const desired: "liquidation" | "dropship" = options.forceDropship
     ? "dropship"
-    : !isEssentials && bussignyQty > 0 && Boolean(stxRow?.manualLock)
+    : !isEssentials &&
+        bussignyQty > 0 &&
+        (Boolean(stxRow?.manualLock) || Boolean(options.postPhysicalRestock))
       ? "liquidation"
       : "dropship";
 

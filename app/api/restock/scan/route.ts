@@ -49,7 +49,7 @@ export async function POST(request: Request) {
           ok: false,
           status: "error",
           error:
-            "locationId required — select Warehouse Bussigny / Antica Bottegas / THE LAB before restock",
+            "locationId required — select Warehouse Bussigny / Antica Bottegas / THE LAB / COLD BIEN before restock",
           warnings: [],
         },
         { status: 400 }

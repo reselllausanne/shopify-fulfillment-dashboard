@@ -22,10 +22,21 @@ vi.mock("@/shopify/restock/shopifyRestockInventory", () => ({
   getShopifyVariantDetail: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock("@/shopify/restock/bussignyDeliveryMetafield", () => ({
+  readShopifyDelivery48h: vi.fn().mockResolvedValue(false),
+  writeShopifyDelivery48h: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("@/shopify/restock/bussignySoldesMetafield", () => ({
+  syncSoldes48hProductMetafield: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
 import { applyVariantSalePrice } from "@/shopify/restock/shopifyRestockInventory";
+import { writeShopifyDelivery48h } from "@/shopify/restock/bussignyDeliveryMetafield";
+import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
 import { applyLiquidationSaleDisplay } from "@/shopify/restock/liquidationPricing";
 
 const mockedPricing = resolvePhysicalRestockPricing as unknown as ReturnType<typeof vi.fn>;
@@ -33,6 +44,8 @@ const mockedSalePrice = applyVariantSalePrice as unknown as ReturnType<typeof vi
 const mockedGraphQL = shopifyGraphQL as unknown as ReturnType<typeof vi.fn>;
 const mockedStxFindFirst = prisma.supplierVariant.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedStxUpdate = prisma.supplierVariant.update as unknown as ReturnType<typeof vi.fn>;
+const mockedWrite48h = writeShopifyDelivery48h as unknown as ReturnType<typeof vi.fn>;
+const mockedSoldes48h = syncSoldes48hProductMetafield as unknown as ReturnType<typeof vi.fn>;
 
 const GTIN = "4550330121471";
 const VARIANT = {
@@ -122,6 +135,8 @@ describe("applyLiquidationSaleDisplay — hard gate on pricing", () => {
         data: expect.objectContaining({ manualLock: true, manualPrice: 129.9 }),
       })
     );
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
+    expect(mockedSoldes48h).toHaveBeenCalledWith("gid://shopify/Product/1", [], expect.any(Array));
   });
 
   it("warns loudly when no stx_ SupplierVariant exists for the DB lock", async () => {

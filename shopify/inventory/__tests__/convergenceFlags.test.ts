@@ -46,7 +46,14 @@ vi.mock("@/shopify/inventory/locationConfig", () => ({
   LIQUIDATION_LOCATION_IDS: [
     "gid://shopify/Location/111267971458",
     "gid://shopify/Location/111267250562",
+    "gid://shopify/Location/111272100226",
   ],
+  isLiquidationPhysicalLocation: (id: string) =>
+    [
+      "gid://shopify/Location/111267971458",
+      "gid://shopify/Location/111267250562",
+      "gid://shopify/Location/111272100226",
+    ].includes(id),
 }));
 
 import { prisma } from "@/app/lib/prisma";
@@ -151,6 +158,29 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     });
 
     const result = await convergeVariant(GTIN);
+
+    expect(result.desired).toBe("liquidation");
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
+  });
+
+  it("postPhysicalRestock at Lab without manualLock → liquidation (no revert)", async () => {
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-1",
+      supplierVariantId: "stx_v375",
+      price: 110,
+      manualLock: false,
+      manualPrice: null,
+      manualStock: null,
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 120,
+      cost: 185.6,
+      compareAt: 219,
+      sellPrice: 129.9,
+      source: "kickdb-live-size",
+    });
+
+    const result = await convergeVariant(GTIN, { postPhysicalRestock: true });
 
     expect(result.desired).toBe("liquidation");
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);

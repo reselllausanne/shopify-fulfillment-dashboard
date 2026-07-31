@@ -49,6 +49,14 @@ export const LIQUIDATION_LOCATION_IDS: string[] = [
   loc("SHOPIFY_LOC_COLD_BIEN", "gid://shopify/Location/111272100226", "COLD BIEN", "physical", 4).id,
 ];
 
+const LIQUIDATION_LOCATION_ID_SET = new Set(LIQUIDATION_LOCATION_IDS);
+
+/** Bussigny / Lab / COLD BIEN — physical restock locations that get liquidation pricing. */
+export function isLiquidationPhysicalLocation(locationId: string | null | undefined): boolean {
+  const id = String(locationId ?? "").trim();
+  return id.length > 0 && LIQUIDATION_LOCATION_ID_SET.has(id);
+}
+
 const BY_ID = new Map(LOCATIONS.map((l) => [l.id, l]));
 
 export function getLocationConfig(locationId: string): LocationConfig | null {

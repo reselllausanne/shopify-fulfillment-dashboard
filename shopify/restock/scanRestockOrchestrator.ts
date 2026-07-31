@@ -29,6 +29,7 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { prisma } from "@/app/lib/prisma";
 import { isManualOnlyGtin } from "@/shopify/inventory/manualOnlyGtins";
 import { convergeVariant } from "@/shopify/inventory/convergence";
+import { isLiquidationPhysicalLocation } from "@/shopify/inventory/locationConfig";
 import { cleanGtin, gtinCandidates, gtinEquals } from "@/shopify/restock/gtinNormalize";
 import {
   findExistingShopifyProductForCatalogIdentifier,
@@ -45,13 +46,15 @@ import {
 async function runPostRestockConvergence(
   gtin: string,
   dryRun: boolean | undefined,
-  warnings: string[]
+  warnings: string[],
+  locationId?: string | null
 ): Promise<void> {
   if (dryRun || isManualOnlyGtin(gtin)) return;
+  const postPhysicalRestock = isLiquidationPhysicalLocation(locationId);
   try {
     // Mirror may lag — convergeVariant reads ShopifyVariantLocationStock.
     // Force a single-GTIN convergence; if mirror still 0, next cron retries.
-    const conv = await convergeVariant(gtin);
+    const conv = await convergeVariant(gtin, { postPhysicalRestock });
     if (conv.changed) {
       warnings.push(`Convergence: ${conv.changes.join("; ")}`);
     } else if (conv.warnings.length) {
@@ -125,7 +128,70 @@ async function ensureStxSupplierForGtin(
       targetGtin: gtin,
       attachGtin: gtin,
       attachSizeEu: options?.sizeEu ?? null,
+      // Physical scan wins over KickDB's stale/placeholder per-size UPCs.
+      // Without this, convergence sees no stx_ row for the scanned GTIN,
+      // reads price_locked=true, and reverts liquidation to full price.
+      overwriteGtinOnAttach: true,
     });
+
+    // bulkUpdateSupplierVariants never overwrites gtin on existing rows, so
+    // stale stx_ rows can keep an out-of-date GTIN even after import parses a
+    // corrected KickDB payload. When our scanned GTIN is now attached to a
+    // KickDBVariant under this slug/size, sync it onto the matching stx_ row
+    // so convergence has a real manualLock target for the physical pair.
+    try {
+      const existsAfterImport = await prisma.supplierVariant.findFirst({
+        where: { gtin, ...STX_SUPPLIER_VARIANT_WHERE },
+        select: { id: true },
+      });
+      if (!existsAfterImport) {
+        const kv = await prisma.kickDBVariant.findFirst({
+          where: {
+            product: { urlKey: slug },
+            OR: [
+              { gtin },
+              ...(options?.sizeEu ? [{ sizeEu: options.sizeEu }] : []),
+            ],
+          },
+          select: { kickdbVariantId: true, gtin: true, sizeEu: true },
+          orderBy: { updatedAt: "desc" },
+        });
+        if (kv?.kickdbVariantId) {
+          const targetSvId = `stx_${kv.kickdbVariantId}`;
+          const targetRow = await prisma.supplierVariant.findUnique({
+            where: { supplierVariantId: targetSvId },
+            select: { id: true, gtin: true, providerKey: true },
+          });
+          if (targetRow) {
+            const { buildProviderKey } = await import("@/galaxus/supplier/providerKey");
+            const newProviderKey = buildProviderKey(gtin, targetSvId);
+            if (newProviderKey) {
+              await prisma.supplierVariant.updateMany({
+                where: {
+                  providerKey: newProviderKey,
+                  gtin,
+                  NOT: { supplierVariantId: targetSvId },
+                },
+                data: { gtin: null, providerKey: null },
+              });
+            }
+            await prisma.supplierVariant.update({
+              where: { supplierVariantId: targetSvId },
+              data: {
+                gtin,
+                providerKey: newProviderKey,
+              },
+            });
+            warnings.push(
+              `Sync gtin sur ${targetSvId} (EU ${kv.sizeEu ?? "?"}): ${targetRow.gtin ?? "null"} → ${gtin}`
+            );
+          }
+        }
+      }
+    } catch (err: any) {
+      warnings.push(`Sync gtin post-import échoué: ${err?.message ?? err}`);
+    }
+
     if (!imported.ok || (imported.importedVariantsCount ?? 0) === 0) {
       warnings.push(
         `STX import échoué pour ${gtin} (${slug}): ${
@@ -732,7 +798,7 @@ async function tryKickdbAutoRestock(input: {
     };
   }
 
-  await runPostRestockConvergence(input.gtin, input.dryRun, input.warnings);
+  await runPostRestockConvergence(input.gtin, input.dryRun, input.warnings, input.locationId);
   return {
     ok: true,
     status: "restocked",
@@ -1265,7 +1331,7 @@ export async function applyScanRestock(input: {
         };
       }
 
-      await runPostRestockConvergence(gtin, input.dryRun, warnings);
+      await runPostRestockConvergence(gtin, input.dryRun, warnings, input.locationId);
       return {
         ok: true,
         status: "restocked",
@@ -1400,7 +1466,7 @@ export async function applyScanRestock(input: {
       }
 
       const productId = restock.variant?.productId ?? null;
-      await runPostRestockConvergence(gtin, input.dryRun, warnings);
+      await runPostRestockConvergence(gtin, input.dryRun, warnings, input.locationId);
       return {
         ok: true,
         status: "restocked",
@@ -1467,7 +1533,7 @@ export async function applyScanRestock(input: {
       if (!db) {
         db = await ensureStxSupplierForGtin(gtin, input.dryRun, outWarnings);
       }
-      await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
+      await runPostRestockConvergence(gtin, input.dryRun, outWarnings, input.locationId);
       return {
         ok: true,
         status: "restocked",
@@ -1534,6 +1600,7 @@ export async function applyScanRestock(input: {
         targetGtin: gtin,
         attachGtin: gtin,
         attachSizeEu: sizeEu ?? null,
+        overwriteGtinOnAttach: true,
       });
       if (!imported.ok) {
         warnings.push(
@@ -1572,7 +1639,7 @@ export async function applyScanRestock(input: {
   if (existing.found) {
     if (!dbExisting) dbExisting = await runDbImport();
     const outWarnings = [...warnings, ...existing.warnings];
-    await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
+    await runPostRestockConvergence(gtin, input.dryRun, outWarnings, input.locationId);
     return {
       ok: true,
       status: "restocked",
@@ -1638,7 +1705,7 @@ export async function applyScanRestock(input: {
   });
   if (restock.found) {
     const outWarnings = [...warnings, ...restock.warnings];
-    await runPostRestockConvergence(gtin, input.dryRun, outWarnings);
+    await runPostRestockConvergence(gtin, input.dryRun, outWarnings, input.locationId);
     return {
       ok: true,
       status: "created-restocked",

@@ -292,6 +292,13 @@ export type StxImportOptions = {
    */
   attachGtin?: string | null;
   attachSizeEu?: string | null;
+  /**
+   * When true, `attachGtin` overwrites the KickDB gtin on the matching-size
+   * variant even if KickDB already has one. Physical scan is source of truth:
+   * KickDB catalogs sometimes carry stale/placeholder UPCs per size and the
+   * box we hold is the correct barcode. Off by default.
+   */
+  overwriteGtinOnAttach?: boolean;
 };
 
 export async function importStxProductByInput(
@@ -383,7 +390,11 @@ export async function importStxProductByInput(
   const attachGtinRaw = String(options.attachGtin ?? "").replace(/\D/g, "").trim();
   const attachGtin = attachGtinRaw && validateGtin(attachGtinRaw) ? attachGtinRaw : null;
   const attachSizeEu = pickString(options.attachSizeEu);
+  const overwriteGtinOnAttach = options.overwriteGtinOnAttach === true;
   let attachGtinUsed = false;
+  let attachGtinTargetSvId: string | null = null;
+  let attachGtinTargetProviderKey: string | null = null;
+  let attachGtinTargetPrev: string | null = null;
   const parsedRows: ParsedVariantRow[] = [];
   let eligibleVariantsCount = 0;
 
@@ -454,16 +465,21 @@ export async function importStxProductByInput(
     // GTIN, stamp it onto the size they physically hold so the DB mirror and
     // provider key resolve for that pair.
     if (
-      !gtin &&
       attachGtin &&
       !attachGtinUsed &&
       attachSizeEu &&
-      matchVariantsBySize([variant], attachSizeEu, { brand }).length > 0
+      matchVariantsBySize([variant], attachSizeEu, { brand }).length > 0 &&
+      (!gtin || (overwriteGtinOnAttach && !gtinDigitsEqual(gtin, attachGtin)))
     ) {
+      const prev = gtin;
       gtin = attachGtin;
       attachGtinUsed = true;
+      attachGtinTargetSvId = `stx_${variantId}`;
+      attachGtinTargetPrev = prev;
       warnings.push(
-        `Size ${sizeLabel} (${variantId}): stamped scanned GTIN ${attachGtin} (KickDB has none).`
+        prev
+          ? `Size ${sizeLabel} (${variantId}): overwrote KickDB GTIN ${prev} with scanned GTIN ${attachGtin} (physical scan wins).`
+          : `Size ${sizeLabel} (${variantId}): stamped scanned GTIN ${attachGtin} (KickDB has none).`
       );
     }
 
@@ -513,6 +529,9 @@ export async function importStxProductByInput(
       continue;
     }
     const providerKey = buildProviderKey(gtin, supplierVariantId);
+    if (attachGtinTargetSvId === supplierVariantId) {
+      attachGtinTargetProviderKey = providerKey;
+    }
 
     parsedRows.push({
       supplierVariantId,
@@ -636,6 +655,43 @@ export async function importStxProductByInput(
 
   await bulkInsertSupplierVariants(rows, now);
   await bulkUpdateSupplierVariants(rows, now, { updateGtinWhenProvided: true });
+
+  // bulkUpdateSupplierVariants intentionally never overwrites gtin/providerKey
+  // on existing rows (protects catalog identity). Physical scan overrides need
+  // an explicit update so convergence sees the scanned GTIN on the stx_ row.
+  if (attachGtinUsed && attachGtinTargetSvId && attachGtin) {
+    try {
+      // Detach any stale row currently holding this scanned gtin under the
+      // same providerKey (unique constraint on providerKey+gtin).
+      if (attachGtinTargetProviderKey) {
+        await prisma.supplierVariant.updateMany({
+          where: {
+            providerKey: attachGtinTargetProviderKey,
+            gtin: attachGtin,
+            NOT: { supplierVariantId: attachGtinTargetSvId },
+          },
+          data: { gtin: null, providerKey: null },
+        });
+      }
+      await prisma.supplierVariant.update({
+        where: { supplierVariantId: attachGtinTargetSvId },
+        data: {
+          gtin: attachGtin,
+          providerKey: attachGtinTargetProviderKey,
+          updatedAt: now,
+        },
+      });
+      warnings.push(
+        attachGtinTargetPrev
+          ? `DB gtin override on ${attachGtinTargetSvId}: ${attachGtinTargetPrev} → ${attachGtin}`
+          : `DB gtin stamped on ${attachGtinTargetSvId}: ${attachGtin}`
+      );
+    } catch (err: any) {
+      warnings.push(
+        `Attach-gtin override failed on ${attachGtinTargetSvId}: ${err?.message ?? err}`
+      );
+    }
+  }
 
   const mappingRows: Array<{
     supplierVariantId: string;

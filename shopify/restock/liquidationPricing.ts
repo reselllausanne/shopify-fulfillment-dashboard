@@ -8,6 +8,11 @@ import {
 } from "@/shopify/restock/shopifyRestockInventory";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
+import {
+  readShopifyDelivery48h,
+  writeShopifyDelivery48h,
+} from "@/shopify/restock/bussignyDeliveryMetafield";
+import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -157,6 +162,17 @@ export async function applyLiquidationSaleDisplay(input: {
     }
   } catch (err: any) {
     warnings.push(`DB manualPrice lock skipped: ${err?.message ?? err}`);
+  }
+
+  // 48h + soldes flags — same as Bussigny restock; convergence cron reinforces.
+  try {
+    const has48h = await readShopifyDelivery48h(input.variant.variantId);
+    if (!has48h) {
+      await writeShopifyDelivery48h(input.variant.variantId, true);
+    }
+    await syncSoldes48hProductMetafield(input.variant.productId, [], warnings);
+  } catch (err: any) {
+    warnings.push(`delivery_48h/soldes_48h failed: ${err?.message ?? err}`);
   }
 
   return { applied: true, referencePrice: reference, salePrice, warnings };

@@ -192,7 +192,7 @@ export async function resolveBussignyLocationId(options: { force?: boolean } = {
  *
  * Order:
  *   1. Explicit `preferredId` — must match one of the configured physical
- *      locations (Bussigny/Antica/Bienne). Rejected otherwise so a bad UI
+ *      locations (Bussigny/Antica/Lab/COLD BIEN). Rejected otherwise so a bad UI
  *      selection can't accidentally write to the dropship (online) location.
  *   2. Fall back to Bussigny via `resolveBussignyLocationId` (existing behavior).
  */
@@ -669,7 +669,7 @@ export async function restockShopifyVariantByGtin(input: {
     const explicit = String(input.locationId ?? "").trim();
     if (!explicit) {
       throw new Error(
-        "locationId required — select Warehouse Bussigny / Antica Bottegas before restock"
+        "locationId required — select Warehouse Bussigny / Antica Bottegas / THE LAB / COLD BIEN before restock"
       );
     }
     if (!locationId || source === "invalid") {
@@ -894,32 +894,39 @@ export async function restockShopifyVariantByGtin(input: {
       }`
     );
   } else if (!dryRun && quantity > 0) {
-    try {
-      if (isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
-        actions.push("Admin-only Shopify product — liquidation pricing skipped");
-      } else if (!isEssentialsShopifyVariant(match)) {
-        const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
-        const liq = await applyLiquidationSaleDisplay({
-          gtin,
-          variant: match,
-          // Product handle mirrors the KickDB slug for auto-created products;
-          // variant title is the EU size. Enables pricing when KickDB has no GTIN.
-          slug: match.productHandle,
-          sizeEu: match.variantTitle,
-        });
-        if (liq.applied) {
-          actions.push(
-            `liquidation sale price=${liq.salePrice?.toFixed(2)} compareAt=${liq.referencePrice?.toFixed(2)}`
-          );
-          const refreshed = await getShopifyVariantDetail(match.variantId);
-          if (refreshed) match = refreshed;
+    const { isLiquidationPhysicalLocation } = await import("@/shopify/inventory/locationConfig");
+    if (!isLiquidationPhysicalLocation(locationId)) {
+      actions.push(
+        `Non-liquidation location (${locationName ?? locationId}) — liquidation pricing skipped`
+      );
+    } else {
+      try {
+        if (isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
+          actions.push("Admin-only Shopify product — liquidation pricing skipped");
+        } else if (!isEssentialsShopifyVariant(match)) {
+          const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
+          const liq = await applyLiquidationSaleDisplay({
+            gtin,
+            variant: match,
+            // Product handle mirrors the KickDB slug for auto-created products;
+            // variant title is the EU size. Enables pricing when KickDB has no GTIN.
+            slug: match.productHandle,
+            sizeEu: match.variantTitle,
+          });
+          if (liq.applied) {
+            actions.push(
+              `liquidation sale price=${liq.salePrice?.toFixed(2)} compareAt=${liq.referencePrice?.toFixed(2)}`
+            );
+            const refreshed = await getShopifyVariantDetail(match.variantId);
+            if (refreshed) match = refreshed;
+          }
+          warnings.push(...liq.warnings);
+        } else {
+          actions.push("Essentials product — liquidation pricing skipped");
         }
-        warnings.push(...liq.warnings);
-      } else {
-        actions.push("Essentials product — liquidation pricing skipped");
+      } catch (err: any) {
+        warnings.push(`Liquidation pricing failed: ${err?.message ?? err}`);
       }
-    } catch (err: any) {
-      warnings.push(`Liquidation pricing failed: ${err?.message ?? err}`);
     }
   }
 
