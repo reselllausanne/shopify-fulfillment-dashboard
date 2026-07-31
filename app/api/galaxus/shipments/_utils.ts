@@ -7,7 +7,10 @@ type ShipmentPlacement = {
 };
 
 
+let shipmentPlacementColumnsCache: boolean | null = null;
+
 async function shipmentPlacementColumnsExist() {
+  if (shipmentPlacementColumnsCache != null) return shipmentPlacementColumnsCache;
   const rows = await prisma.$queryRaw<{ column_name: string }[]>`
     SELECT column_name
     FROM information_schema.columns
@@ -16,7 +19,8 @@ async function shipmentPlacementColumnsExist() {
       AND column_name IN ('supplierOrderRef', 'status')
   `;
   const set = new Set(rows.map((row) => row.column_name));
-  return set.has("supplierOrderRef") && set.has("status");
+  shipmentPlacementColumnsCache = set.has("supplierOrderRef") && set.has("status");
+  return shipmentPlacementColumnsCache;
 }
 
 export async function getShipmentPlacementByOrder(orderId: string): Promise<Map<string, ShipmentPlacement>> {

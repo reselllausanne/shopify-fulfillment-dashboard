@@ -262,7 +262,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     try {
       const q = debouncedOrderSearch ? `&q=${encodeURIComponent(debouncedOrderSearch)}` : "";
       const res = await fetch(
-        `/api/galaxus/orders?view=active&warehouseOpen=1&limit=500${q}`,
+        `/api/galaxus/orders?view=active&warehouseOpen=1&limit=500&excludeDeliveryType=direct_delivery${q}`,
         { cache: "no-store" }
       );
       const data = await res.json().catch(() => ({}));

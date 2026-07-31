@@ -147,101 +147,67 @@ function enrichGalaxusOrderLine(
   return { ...line, productName, size, supplierSku, styleSku, offerSupplierSku, sizeRaw, catalogPrice };
 }
 
+const shipmentDocumentSelect = {
+  id: true,
+  type: true,
+  storageUrl: true,
+  version: true,
+  createdAt: true,
+} as const;
+
+async function loadGalaxusOrderShipments(orderDbId: string, includeDocuments: boolean) {
+  return prisma.shipment.findMany({
+    where: { orderId: orderDbId },
+    include: {
+      items: true,
+      ...(includeDocuments ? { documents: { select: shipmentDocumentSelect } } : {}),
+    },
+  });
+}
+
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
     const { orderId } = await params;
-    const order =
-      (await prisma.galaxusOrder.findUnique({
-        where: { id: orderId },
-        include: {
-          lines: true,
-          shipments: {
-            include: {
-              items: true,
-              documents: true,
-            },
-          },
-          statusEvents: true,
-          ediFiles: true,
-        },
-      })) ??
-      (await prisma.galaxusOrder.findUnique({
-        where: { galaxusOrderId: orderId },
-        include: {
-          lines: true,
-          shipments: {
-            include: {
-              items: true,
-              documents: true,
-            },
-          },
-          statusEvents: true,
-          ediFiles: true,
-        },
-      }));
+    const { searchParams } = new URL(request.url);
+    const view = String(searchParams.get("view") ?? "minimal").trim().toLowerCase();
+    const viewFull = view === "full" || view === "ops";
+
+    const order = await prisma.galaxusOrder.findFirst({
+      where: { OR: [{ id: orderId }, { galaxusOrderId: orderId }] },
+      include: {
+        lines: true,
+        ...(viewFull ? { statusEvents: true, ediFiles: true } : {}),
+      },
+    });
 
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
+
+    const isDirectDelivery = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
+    (order as any).shipments =
+      viewFull || isDirectDelivery
+        ? await loadGalaxusOrderShipments(order.id, viewFull || isDirectDelivery)
+        : [];
 
     const repaired = await repairOrderAddressesFromLatestOrdp(order).catch(() => null);
     const orderRow = repaired?.updated
       ? ({
           ...(order as any),
           ...(repaired.updated as any),
+          shipments: (order as any).shipments,
         } as any)
       : order;
 
     // Fast DB-only slot reservation; full reconcile runs on ingest / sync / manual entry.
-    await reserveStxPurchaseUnitsForOrder(orderRow.id).catch((err) => {
+    await reserveStxPurchaseUnitsForOrder(orderRow.id, orderRow).catch((err) => {
       console.warn("[GALAXUS][ORDERS] STX unit reserve skipped:", err?.message ?? err);
     });
 
-    const placement = await getShipmentPlacementByOrder(orderRow.id);
-    const stx = await getStxLinkStatusForOrder(orderRow.galaxusOrderId).catch(() => null);
-    const stxUnits = await (prisma as any).stxPurchaseUnit
-      .findMany({
-        where: {
-          galaxusOrderId: orderRow.galaxusOrderId,
-        },
-        orderBy: { updatedAt: "desc" },
-        select: {
-          id: true,
-          createdAt: true,
-          updatedAt: true,
-          gtin: true,
-          supplierVariantId: true,
-          stockxOrderId: true,
-          stockxOrderNumber: true,
-          stockxSettledAmount: true,
-          stockxSettledCurrency: true,
-          awb: true,
-          etaMin: true,
-          etaMax: true,
-          checkoutType: true,
-          manualTrackingRaw: true,
-          manualNote: true,
-          manualSetAt: true,
-          cancelledAt: true,
-          cancelledReason: true,
-        },
-      })
-      .catch(() => []);
     const orderLineIds = (orderRow.lines ?? []).map((line: any) => line.id);
-    const stockxMatches = (prisma as any).galaxusStockxMatch?.findMany
-      ? await (prisma as any).galaxusStockxMatch
-          .findMany({
-            where: {
-              galaxusOrderId: orderRow.id,
-              galaxusOrderLineId: { in: orderLineIds },
-            },
-            orderBy: { updatedAt: "desc" },
-          })
-          .catch(() => [])
-      : [];
     const lineGtins: string[] = Array.from(
       new Set<string>(
         (orderRow.lines ?? [])
@@ -250,45 +216,86 @@ export async function GET(
       )
     );
     const gtinQueryKeys = expandGtinQueryVariants(lineGtins);
+    const supplierVariantIdsFromLines = Array.from(
+      new Set(
+        (orderRow.lines as any[]).flatMap((line: any) => {
+          const ids: string[] = [];
+          const sv = String(line?.supplierVariantId ?? "").trim();
+          if (sv) ids.push(sv);
+          const sp = String(line?.supplierPid ?? "").trim();
+          if (sp && /^[A-Za-z][A-Za-z0-9]*[_:]/.test(sp)) ids.push(sp);
+          return ids;
+        })
+      )
+    );
+
+    const prismaAny = prisma as any;
+    const [placement, stx, stxUnits, stockxMatches, mappingsRaw] = await Promise.all([
+      getShipmentPlacementByOrder(orderRow.id),
+      getStxLinkStatusForOrder(orderRow.galaxusOrderId, orderRow).catch(() => null),
+      prismaAny.stxPurchaseUnit
+        .findMany({
+          where: {
+            galaxusOrderId: orderRow.galaxusOrderId,
+          },
+          orderBy: { updatedAt: "desc" },
+          select: {
+            id: true,
+            createdAt: true,
+            updatedAt: true,
+            gtin: true,
+            supplierVariantId: true,
+            stockxOrderId: true,
+            stockxOrderNumber: true,
+            stockxSettledAmount: true,
+            stockxSettledCurrency: true,
+            awb: true,
+            etaMin: true,
+            etaMax: true,
+            checkoutType: true,
+            manualTrackingRaw: true,
+            manualNote: true,
+            manualSetAt: true,
+            cancelledAt: true,
+            cancelledReason: true,
+          },
+        })
+        .catch(() => []),
+      prismaAny.galaxusStockxMatch?.findMany
+        ? prismaAny.galaxusStockxMatch
+            .findMany({
+              where: {
+                galaxusOrderId: orderRow.id,
+                galaxusOrderLineId: { in: orderLineIds },
+              },
+              orderBy: { updatedAt: "desc" },
+            })
+            .catch(() => [])
+        : Promise.resolve([]),
+      gtinQueryKeys.length > 0 || supplierVariantIdsFromLines.length > 0
+        ? prismaAny.variantMapping
+            .findMany({
+              where: {
+                OR: [
+                  gtinQueryKeys.length > 0 ? { gtin: { in: gtinQueryKeys } } : undefined,
+                  supplierVariantIdsFromLines.length > 0
+                    ? { supplierVariantId: { in: supplierVariantIdsFromLines } }
+                    : undefined,
+                ].filter(Boolean),
+              },
+              include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
+              orderBy: { updatedAt: "desc" },
+            })
+            .catch(() => [])
+        : Promise.resolve([]),
+    ]);
     const skuByGtin: Record<string, string> = {};
     const sizeByGtin: Record<string, string> = {};
     const sizeRawByGtin: Record<string, string> = {};
     const productNameByGtin: Record<string, string> = {};
     const catalogPriceByGtin: Record<string, number> = {};
-    if (gtinQueryKeys.length > 0) {
-      const supplierVariantIdsFromLines = Array.from(
-        new Set(
-          (orderRow.lines as any[]).flatMap((line: any) => {
-            const ids: string[] = [];
-            const sv = String(line?.supplierVariantId ?? "").trim();
-            if (sv) ids.push(sv);
-            const sp = String(line?.supplierPid ?? "").trim();
-            if (sp && /^[A-Za-z][A-Za-z0-9]*[_:]/.test(sp)) ids.push(sp);
-            return ids;
-          })
-        )
-      );
-      const byGtin = await (prisma as any).variantMapping.findMany({
-        where: { gtin: { in: gtinQueryKeys } },
-        include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
-        orderBy: { updatedAt: "desc" },
-      });
-      const bySupplierVariantId =
-        supplierVariantIdsFromLines.length > 0
-          ? await (prisma as any).variantMapping.findMany({
-              where: { supplierVariantId: { in: supplierVariantIdsFromLines } },
-              include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
-              orderBy: { updatedAt: "desc" },
-            })
-          : [];
-      const seenMappingId = new Set<string>();
-      const mappings: any[] = [];
-      for (const m of [...byGtin, ...bySupplierVariantId]) {
-        const id = String(m?.id ?? "");
-        if (!id || seenMappingId.has(id)) continue;
-        seenMappingId.add(id);
-        mappings.push(m);
-      }
+    const mappings = Array.isArray(mappingsRaw) ? mappingsRaw : [];
+    if (mappings.length > 0) {
       const supplierKeyFromPid = (pid?: string | null): string | null => {
         const raw = String(pid ?? "").trim();
         if (!raw) return null;

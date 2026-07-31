@@ -224,8 +224,11 @@ export function buildBucketsFromNeeds(
   });
 }
 
-export async function getStxLinkStatusForOrder(orderIdOrRef: string): Promise<StxOrderLinkStatus> {
-  const order = await resolveGalaxusOrderByIdOrRef(orderIdOrRef);
+export async function getStxLinkStatusForOrder(
+  orderIdOrRef: string,
+  preloadedOrder?: Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>> | null
+): Promise<StxOrderLinkStatus> {
+  const order = preloadedOrder ?? (await resolveGalaxusOrderByIdOrRef(orderIdOrRef));
   if (!order) throw new Error("Order not found");
   const needs = await resolveStxNeedsForOrder(order);
   let units: Array<{
@@ -314,8 +317,11 @@ export async function getStxLinkStatusForOrder(orderIdOrRef: string): Promise<St
   };
 }
 
-export async function reserveStxPurchaseUnitsForOrder(orderIdOrRef: string) {
-  const order = await resolveGalaxusOrderByIdOrRef(orderIdOrRef);
+export async function reserveStxPurchaseUnitsForOrder(
+  orderIdOrRef: string,
+  preloadedOrder?: Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>> | null
+) {
+  const order = preloadedOrder ?? (await resolveGalaxusOrderByIdOrRef(orderIdOrRef));
   if (!order) throw new Error("Order not found");
   const needs = await resolveStxNeedsForOrder(order);
   const prismaAny = prisma as any;

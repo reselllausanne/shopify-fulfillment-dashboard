@@ -21,6 +21,8 @@ export async function GET(request: Request) {
     const orderBy =
       sort === "orderdate" ? { orderDate: "desc" as const } : { createdAt: "desc" as const };
     const deliveryType = String(searchParams.get("deliveryType") ?? "").trim();
+    const excludeDeliveryType = String(searchParams.get("excludeDeliveryType") ?? "").trim();
+    const includeInvoice = searchParams.get("includeInvoice") === "1";
     const q = String(searchParams.get("q") ?? "").trim();
     const warehouseOpen = searchParams.get("warehouseOpen") === "1";
 
@@ -35,6 +37,8 @@ export async function GET(request: Request) {
     }
     if (deliveryType) {
       baseWhere.deliveryType = deliveryType;
+    } else if (excludeDeliveryType) {
+      baseWhere.deliveryType = { not: excludeDeliveryType };
     }
 
     const where: Prisma.GalaxusOrderWhereInput =
@@ -92,10 +96,12 @@ export async function GET(request: Request) {
 
     const orderIds = orders.map((order) => order.id);
     let invoiceProgressByOrderId: Awaited<ReturnType<typeof getInvoiceLineProgressByOrderIds>> | null = null;
-    try {
-      invoiceProgressByOrderId = await getInvoiceLineProgressByOrderIds(orderIds);
-    } catch (err) {
-      console.error("[GALAXUS][ORDERS] Invoice progress batch failed:", err);
+    if (includeInvoice && orderIds.length > 0) {
+      try {
+        invoiceProgressByOrderId = await getInvoiceLineProgressByOrderIds(orderIds);
+      } catch (err) {
+        console.error("[GALAXUS][ORDERS] Invoice progress batch failed:", err);
+      }
     }
     const linkedCountByOrderId = new Map<string, number>();
     if (orderIds.length > 0) {

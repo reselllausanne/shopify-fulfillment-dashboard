@@ -243,6 +243,7 @@ export default function GalaxusInvoicesPage() {
           view: "all",
           limit: "500",
           sort: "orderDate",
+          includeInvoice: "1",
         });
         if (debouncedOrderSearch.length >= 2) {
           params.set("q", debouncedOrderSearch);

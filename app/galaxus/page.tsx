@@ -1203,7 +1203,7 @@ export function GalaxusWarehouseDashboard() {
     setBusy("order-detail");
     setError(null);
     try {
-      const response = await fetch(`/api/galaxus/orders/${orderId}`, { cache: "no-store" });
+      const response = await fetch(`/api/galaxus/orders/${orderId}?view=full`, { cache: "no-store" });
       const data = await response.json();
       if (!data.ok) throw new Error(data.error ?? "Failed to load order");
       setSelectedOrder(data.order ?? null);

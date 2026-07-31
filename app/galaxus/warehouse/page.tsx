@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
+import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
 import { galaxusLineNetRevenueChf, galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
@@ -73,12 +74,13 @@ export default function WarehouseBulkPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/galaxus/orders?view=active&limit=100", { cache: "no-store" });
+      const res = await fetch(
+        "/api/galaxus/orders?view=active&limit=100&excludeDeliveryType=direct_delivery",
+        { cache: "no-store" }
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load orders");
-      const items = Array.isArray(data.items)
-        ? data.items.filter((item: any) => String(item?.deliveryType ?? "").toLowerCase() !== "direct_delivery")
-        : [];
+      const items = Array.isArray(data.items) ? data.items : [];
       setOrders(items);
       if (!selectedOrderId && items[0]?.id) {
         setSelectedOrderId(items[0].id);
@@ -270,7 +272,12 @@ export default function WarehouseBulkPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
-      // Non-StockX order numbers should save without warnings (match is still stored).
+      if (json.stockxEnrich?.attempted && !json.stockxEnrich?.ok) {
+        setError(`Saved, but StockX lookup failed: ${json.stockxEnrich.reason ?? "unknown"}`);
+      }
+      if (json.unitLink?.status === "no_pending_unit") {
+        setError("Match saved, but no pending STX unit slot on this order — run sync or refresh order.");
+      }
       setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
       await loadDetail(orderId);
       await loadOrders();
@@ -447,7 +454,13 @@ export default function WarehouseBulkPage() {
                       return (
                         <div
                           key={line.id}
-                          className={`border rounded p-2 ${linked ? "border-green-400 bg-green-50/50" : "border-gray-200"}`}
+                          className={`border rounded p-2 ${
+                            linked
+                              ? "border-green-400 bg-green-50/50"
+                              : line.physicalStock
+                                ? "border-green-400 bg-green-50/30"
+                                : "border-gray-200"
+                          }`}
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1 space-y-1">
@@ -469,6 +482,10 @@ export default function WarehouseBulkPage() {
                                     NER_ · partner stock
                                   </span>
                                 ) : null}
+                                <PhysicalStockBadge
+                                  physicalStock={line.physicalStock}
+                                  avoidStockxHint={!linked}
+                                />
                                 {isShipped ? (
                                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-slate-200 text-slate-800 shrink-0">
                                     Shipped
@@ -501,6 +518,10 @@ export default function WarehouseBulkPage() {
                                   </span>
                                 ) : null}
                               </div>
+                              <PhysicalStockHintText
+                                physicalStock={line.physicalStock}
+                                avoidStockxHint={!linked}
+                              />
                               {linked && proc ? (
                                 <div className="text-green-800 text-[11px] space-y-0.5">
                                   <div>
@@ -609,6 +630,7 @@ export default function WarehouseBulkPage() {
         isOpen={manualEntryModal.isOpen}
         mode={manualEntryModal.mode}
         initialData={manualEntryModal.initialData}
+        stockxLookupOrderId={manualEntryModal.orderId ?? selectedOrderId ?? null}
         shopifyItem={{
           orderName: manualEntryModal.initialData?.shopifyOrderName ?? "",
           title: manualEntryModal.initialData?.shopifyProductTitle ?? "",
