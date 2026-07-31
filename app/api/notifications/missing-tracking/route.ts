@@ -36,8 +36,8 @@ const isExcludedNoTracking = (sku: string | null, title: string) => {
 
 export async function GET() {
   try {
-    const now = Date.now();
-    if (missingTrackingCache && now - missingTrackingCache.at < MISSING_TRACKING_CACHE_MS) {
+    const cacheAt = Date.now();
+    if (missingTrackingCache && cacheAt - missingTrackingCache.at < MISSING_TRACKING_CACHE_MS) {
       return NextResponse.json(missingTrackingCache.body);
     }
 
@@ -134,7 +134,7 @@ export async function GET() {
       warningItems,
       cachedAt: new Date().toISOString(),
     };
-    missingTrackingCache = { at: now, body };
+    missingTrackingCache = { at: cacheAt, body };
     return NextResponse.json(body);
   } catch (error: any) {
     console.error("[MISSING_TRACKING] Failed:", error);

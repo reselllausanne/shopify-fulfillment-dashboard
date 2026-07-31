@@ -61,8 +61,8 @@ function isExcludedLine(sku: string | null, title: string) {
 
 export async function GET() {
   try {
-    const now = Date.now();
-    if (unlinkedOrdersCache && now - unlinkedOrdersCache.at < UNLINKED_CACHE_MS) {
+    const cacheAt = Date.now();
+    if (unlinkedOrdersCache && cacheAt - unlinkedOrdersCache.at < UNLINKED_CACHE_MS) {
       return NextResponse.json(unlinkedOrdersCache.body);
     }
 
@@ -138,13 +138,12 @@ export async function GET() {
         : [];
     const matchByLineId = new Map(existingMatches.map((m) => [m.shopifyLineItemId, m]));
 
-    const now = Date.now();
     const items = candidateLines
       .filter((line) => !matchByLineId.has(line.shopifyLineItemId))
       .map((line) => {
         const createdMs = new Date(line.shopifyCreatedAt).getTime();
         const ageDays = Number.isFinite(createdMs)
-          ? Math.floor((now - createdMs) / (1000 * 60 * 60 * 24))
+          ? Math.floor((cacheAt - createdMs) / (1000 * 60 * 60 * 24))
           : null;
         return { ...line, ageDays };
       })
@@ -161,7 +160,7 @@ export async function GET() {
       items,
       cachedAt: new Date().toISOString(),
     };
-    unlinkedOrdersCache = { at: now, body };
+    unlinkedOrdersCache = { at: cacheAt, body };
     return NextResponse.json(body);
   } catch (error: any) {
     console.error("[UNLINKED_ORDERS] Failed:", error);
