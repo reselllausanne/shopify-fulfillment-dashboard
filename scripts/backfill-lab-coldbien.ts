@@ -10,7 +10,7 @@
  *   npx tsx scripts/backfill-lab-coldbien.ts coldbien   # only COLD BIEN
  */
 import { prisma } from "../app/lib/prisma";
-import { shopifyGraphQL, type ShopifyGraphQLResult } from "../lib/shopifyAdmin";
+import { shopifyGraphQL } from "../lib/shopifyAdmin";
 import { LOCATIONS, type LocationConfig } from "../shopify/inventory/locationConfig";
 import { upsertLocationStockRow } from "../shopify/inventory/locationMirror";
 import { convergeVariant } from "../shopify/inventory/convergence";
@@ -89,10 +89,11 @@ async function syncLocationFast(location: LocationConfig): Promise<{
   let throttleRetries = 0;
 
   while (pages < maxPages) {
-    const response: ShopifyGraphQLResult<LevelsResponse> = await shopifyGraphQL<LevelsResponse>(
-      LEVELS_QUERY,
-      { loc: location.id, cur: cursor, n: 100 }
-    );
+    const response = await shopifyGraphQL<LevelsResponse>(LEVELS_QUERY, {
+      loc: location.id,
+      cur: cursor,
+      n: 100,
+    });
     const { data, errors } = response;
 
     const throttled = errors?.some(
