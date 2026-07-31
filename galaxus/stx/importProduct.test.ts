@@ -10,6 +10,11 @@ vi.mock("@/app/lib/prisma", () => ({
         Promise.resolve({ id: `kdbvar-${where.kickdbVariantId}` })
       ),
     },
+    supplierVariant: {
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      update: vi.fn().mockResolvedValue({}),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -47,14 +52,22 @@ import { fetchStockxProductByIdOrSlugRaw } from "@/galaxus/kickdb/client";
 import {
   bulkInsertSupplierVariants,
   bulkUpsertVariantMappings,
+  remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
 import { importStxProductByInput } from "@/galaxus/stx/importProduct";
+import { prisma } from "@/app/lib/prisma";
 
 const mockedFetch = fetchStockxProductByIdOrSlugRaw as unknown as ReturnType<typeof vi.fn>;
 const mockedInsert = bulkInsertSupplierVariants as unknown as ReturnType<typeof vi.fn>;
 const mockedMappings = bulkUpsertVariantMappings as unknown as ReturnType<typeof vi.fn>;
+const mockedRemap = remapRowsToExistingProviderKeyGtin as unknown as ReturnType<typeof vi.fn>;
+const mockedSvUpdateMany = prisma.supplierVariant.updateMany as unknown as ReturnType<typeof vi.fn>;
+const mockedSvUpdate = prisma.supplierVariant.update as unknown as ReturnType<typeof vi.fn>;
+const mockedSvFindMany = prisma.supplierVariant.findMany as unknown as ReturnType<typeof vi.fn>;
 
 const SCANNED_GTIN = "4550330121471";
+const LEADING_ZERO_GTIN = "00196149208060";
+const KICKDB_SHORT_UPC = "196149208060";
 
 /** Onitsuka class: KickDB product where NO variant carries a GTIN. */
 function onitsukaLikeProduct() {
@@ -72,6 +85,26 @@ function onitsukaLikeProduct() {
         { id: "v36", size_eu: "36", size_us: "5.5" },
         { id: "v375", size_eu: "37.5", size_us: "6.5" },
         { id: "v38", size_eu: "38", size_us: "7" },
+      ],
+    },
+  };
+}
+
+/** KickDB carries short UPC; physical scan is EAN-14 with leading zeros. */
+function coldBienLikeProduct() {
+  return {
+    product: {
+      id: "kickdb-prod-coldbien",
+      slug: "adidas-cold-bien",
+      sku: "IF6562",
+      title: "adidas Cold Bien",
+      brand: "adidas",
+      image: "https://img.example/coldbien.jpg",
+      gallery: ["https://img.example/coldbien.jpg"],
+      market: "CH",
+      variants: [
+        { id: "v40", size_eu: "40", size_us: "7", gtin: KICKDB_SHORT_UPC },
+        { id: "v42", size_eu: "42", size_us: "8.5", gtin: "0194500875524" },
       ],
     },
   };
@@ -163,5 +196,89 @@ describe("importStxProductByInput — no-GTIN KickDB sizes (Onitsuka class)", ()
 
     const rows = mockedInsert.mock.calls[0]![0] as Array<{ gtin: string | null }>;
     expect(rows.every((r) => r.gtin === null)).toBe(true);
+  });
+});
+
+describe("importStxProductByInput — physical scan GTIN wins over KickDB UPC", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFetch.mockResolvedValue(coldBienLikeProduct());
+    mockedSvFindMany.mockResolvedValue([]);
+  });
+
+  it("overwrites KickDB short UPC with scanned leading-zero GTIN on matching size", async () => {
+    const result = await importStxProductByInput("adidas-cold-bien", {
+      forceImport: true,
+      targetGtin: LEADING_ZERO_GTIN,
+      attachGtin: LEADING_ZERO_GTIN,
+      attachSizeEu: "40",
+      overwriteGtinOnAttach: true,
+    });
+
+    expect(result.ok).toBe(true);
+
+    const rows = mockedInsert.mock.calls[0]![0] as Array<{
+      supplierVariantId: string;
+      gtin: string | null;
+      providerKey: string | null;
+    }>;
+    const stamped = rows.find((r) => r.supplierVariantId === "stx_v40");
+    expect(stamped?.gtin).toBe(LEADING_ZERO_GTIN);
+    expect(stamped?.providerKey).toBe(`STX_${LEADING_ZERO_GTIN}`);
+
+    expect(mockedSvUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { supplierVariantId: "stx_v40" },
+        data: expect.objectContaining({
+          gtin: LEADING_ZERO_GTIN,
+          providerKey: `STX_${LEADING_ZERO_GTIN}`,
+        }),
+      })
+    );
+  });
+
+  it("re-import same GTIN+size is idempotent (no second supplierVariantId)", async () => {
+    mockedRemap.mockImplementation(async (rows: unknown[]) => ({
+      rows,
+      remapped: 0,
+    }));
+
+    const opts = {
+      forceImport: true,
+      targetGtin: LEADING_ZERO_GTIN,
+      attachGtin: LEADING_ZERO_GTIN,
+      attachSizeEu: "40",
+      overwriteGtinOnAttach: true,
+    } as const;
+
+    const first = await importStxProductByInput("adidas-cold-bien", opts);
+    const second = await importStxProductByInput("adidas-cold-bien", opts);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+
+    const firstRows = mockedInsert.mock.calls[0]![0] as Array<{ supplierVariantId: string }>;
+    const secondRows = mockedInsert.mock.calls[1]![0] as Array<{ supplierVariantId: string }>;
+    expect(firstRows.map((r) => r.supplierVariantId)).toEqual(
+      secondRows.map((r) => r.supplierVariantId)
+    );
+    expect(new Set(firstRows.map((r) => r.supplierVariantId)).size).toBe(firstRows.length);
+
+    mockedRemap.mockImplementation(async (rows: unknown[]) => {
+      const typed = rows as Array<{ supplierVariantId: string; providerKey?: string | null; gtin?: string | null }>;
+      return {
+        rows: typed.map((row) =>
+          row.supplierVariantId === "stx_v40" && row.providerKey && row.gtin
+            ? { ...row, supplierVariantId: "stx_v40" }
+            : row
+        ),
+        remapped: 0,
+      };
+    });
+
+    await importStxProductByInput("adidas-cold-bien", opts);
+    const thirdRows = mockedInsert.mock.calls[2]![0] as Array<{ supplierVariantId: string }>;
+    expect(thirdRows.filter((r) => r.gtin === LEADING_ZERO_GTIN)).toHaveLength(1);
+    expect(thirdRows.find((r) => r.gtin === LEADING_ZERO_GTIN)?.supplierVariantId).toBe("stx_v40");
   });
 });

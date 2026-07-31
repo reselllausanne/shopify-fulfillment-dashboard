@@ -469,7 +469,7 @@ export async function importStxProductByInput(
       !attachGtinUsed &&
       attachSizeEu &&
       matchVariantsBySize([variant], attachSizeEu, { brand }).length > 0 &&
-      (!gtin || (overwriteGtinOnAttach && !gtinDigitsEqual(gtin, attachGtin)))
+      (!gtin || overwriteGtinOnAttach)
     ) {
       const prev = gtin;
       gtin = attachGtin;
@@ -477,9 +477,11 @@ export async function importStxProductByInput(
       attachGtinTargetSvId = `stx_${variantId}`;
       attachGtinTargetPrev = prev;
       warnings.push(
-        prev
+        prev && prev !== attachGtin
           ? `Size ${sizeLabel} (${variantId}): overwrote KickDB GTIN ${prev} with scanned GTIN ${attachGtin} (physical scan wins).`
-          : `Size ${sizeLabel} (${variantId}): stamped scanned GTIN ${attachGtin} (KickDB has none).`
+          : prev
+            ? `Size ${sizeLabel} (${variantId}): confirmed scanned GTIN ${attachGtin} on matching size (physical scan wins).`
+            : `Size ${sizeLabel} (${variantId}): stamped scanned GTIN ${attachGtin} (KickDB has none).`
       );
     }
 
@@ -661,16 +663,41 @@ export async function importStxProductByInput(
   // an explicit update so convergence sees the scanned GTIN on the stx_ row.
   if (attachGtinUsed && attachGtinTargetSvId && attachGtin) {
     try {
-      // Detach any stale row currently holding this scanned gtin under the
-      // same providerKey (unique constraint on providerKey+gtin).
+      // Detach exact scanned gtin from any other stx_ row (unique providerKey+gtin).
+      await prisma.supplierVariant.updateMany({
+        where: {
+          gtin: attachGtin,
+          supplierVariantId: { startsWith: "stx_" },
+          NOT: { supplierVariantId: attachGtinTargetSvId },
+        },
+        data: { gtin: null, providerKey: null, updatedAt: now },
+      });
+      // Detach digit-equal short UPC orphans (KickDB 196… vs scanned 00196…).
+      const digitEqualOrphans = await prisma.supplierVariant.findMany({
+        where: {
+          supplierVariantId: { startsWith: "stx_" },
+          gtin: { not: null },
+          NOT: { supplierVariantId: attachGtinTargetSvId },
+        },
+        select: { supplierVariantId: true, gtin: true },
+      });
+      const orphanIds = digitEqualOrphans
+        .filter((row) => row.gtin && gtinDigitsEqual(row.gtin, attachGtin) && row.gtin !== attachGtin)
+        .map((row) => row.supplierVariantId);
+      if (orphanIds.length > 0) {
+        await prisma.supplierVariant.updateMany({
+          where: { supplierVariantId: { in: orphanIds } },
+          data: { gtin: null, providerKey: null, updatedAt: now },
+        });
+      }
+      // Clear providerKey on rows that would collide with the exact scanned key.
       if (attachGtinTargetProviderKey) {
         await prisma.supplierVariant.updateMany({
           where: {
             providerKey: attachGtinTargetProviderKey,
-            gtin: attachGtin,
             NOT: { supplierVariantId: attachGtinTargetSvId },
           },
-          data: { gtin: null, providerKey: null },
+          data: { providerKey: null, updatedAt: now },
         });
       }
       await prisma.supplierVariant.update({
