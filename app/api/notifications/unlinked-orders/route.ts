@@ -4,7 +4,6 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import {
   isInStockEssentialLine,
-  isLiquidationShopifyTitle,
   isShopifyFinancialRefunded,
 } from "@/app/utils/matching";
 import {
@@ -14,11 +13,8 @@ import {
 
 export const runtime = "nodejs";
 
-const UNLINKED_CACHE_MS = Math.max(30_000, Number(process.env.UNLINKED_ORDERS_CACHE_MS ?? "90000"));
-let unlinkedOrdersCache: { at: number; body: Record<string, unknown> } | null = null;
-
 const SHOP_TIMEZONE = "Europe/Zurich";
-const ORDER_LIMIT = 30;
+const ORDER_LIMIT = 50;
 
 const RECENT_ORDERS_QUERY = /* GraphQL */ `
 query RecentOrdersForUnlinked($first: Int!) {
@@ -31,7 +27,7 @@ query RecentOrdersForUnlinked($first: Int!) {
         cancelledAt
         displayFinancialStatus
         displayFulfillmentStatus
-        lineItems(first: 20) {
+        lineItems(first: 50) {
           edges {
             node {
               id
@@ -54,17 +50,12 @@ function convertToShopTimezone(utcTimestamp: string): string {
 }
 
 function isExcludedLine(sku: string | null, title: string) {
-  if (isInStockEssentialLine(sku, title)) return true;
-  if (isLiquidationShopifyTitle(title)) return true;
-  return false;
+  return isInStockEssentialLine(sku, title);
 }
 
 export async function GET() {
   try {
-    const cacheAt = Date.now();
-    if (unlinkedOrdersCache && cacheAt - unlinkedOrdersCache.at < UNLINKED_CACHE_MS) {
-      return NextResponse.json(unlinkedOrdersCache.body);
-    }
+    const now = Date.now();
 
     const { data, errors } = await shopifyGraphQL<{
       orders: { edges: { node: any }[] };
@@ -143,7 +134,7 @@ export async function GET() {
       .map((line) => {
         const createdMs = new Date(line.shopifyCreatedAt).getTime();
         const ageDays = Number.isFinite(createdMs)
-          ? Math.floor((cacheAt - createdMs) / (1000 * 60 * 60 * 24))
+          ? Math.floor((now - createdMs) / (1000 * 60 * 60 * 24))
           : null;
         return { ...line, ageDays };
       })
@@ -153,15 +144,12 @@ export async function GET() {
         return bMs - aMs;
       });
 
-    const body = {
+    return NextResponse.json({
       ok: true,
       count: items.length,
       orderLimit: ORDER_LIMIT,
       items,
-      cachedAt: new Date().toISOString(),
-    };
-    unlinkedOrdersCache = { at: cacheAt, body };
-    return NextResponse.json(body);
+    });
   } catch (error: any) {
     console.error("[UNLINKED_ORDERS] Failed:", error);
     return NextResponse.json(

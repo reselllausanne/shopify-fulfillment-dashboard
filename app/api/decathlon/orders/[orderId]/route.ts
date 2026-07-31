@@ -9,6 +9,7 @@ import {
 import { enrichDecathlonOrderLinesWithKickdb } from "@/decathlon/orders/kickdbLineEnrichment";
 import { enrichDecathlonOrderLinesWithSupplierCatalog } from "@/decathlon/orders/supplierCatalogLineEnrichment";
 import { buildDecathlonLineStockHints } from "@/decathlon/orders/gtinStockHints";
+import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import {
   attachPhysicalStockToLines,
   buildPhysicalStockByGtinMap,
@@ -37,8 +38,8 @@ export async function GET(
     const { orderId } = await params;
     const { searchParams } = new URL(request.url);
     const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
-    const view = String(searchParams.get("view") ?? "minimal").trim().toLowerCase();
-    const viewFull = view === "full" || view === "ops";
+    const view = String(searchParams.get("view") ?? "full").trim().toLowerCase();
+    const viewFull = view !== "minimal";
     const partnerSession = scope === "partner" ? await getPartnerSession(request) : null;
     const partnerKey = normalizeProviderKey(partnerSession?.partnerKey ?? null);
     if (scope === "partner" && !partnerSession) {
@@ -59,7 +60,10 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    const stockxMatches = order.stockxMatches ?? [];
+    await repairDecathlonStockxMatchLineRefs(order.id);
+    const stockxMatches = await prisma.decathlonStockxMatch.findMany({
+      where: { decathlonOrderId: order.id },
+    });
     const orderWithMatches = { ...order, stockxMatches };
 
     const linesRaw: any[] =

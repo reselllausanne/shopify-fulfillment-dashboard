@@ -106,32 +106,29 @@ export default function DecathlonOrdersPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch("/api/decathlon/partner-shipped-fees", { cache: "no-store" });
-          const data = await res.json();
-          if (cancelled) return;
-          if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load partner fee stats");
-          setPartnerFeeStats({
-            spreadChf: Number(data.spreadChf ?? 0),
-            decathlonShippedChf: Number(data.decathlonShippedChf ?? 0),
-            partnerCatalogChf: Number(data.partnerCatalogChf ?? 0),
-            shippedLineCount: Number(data.shippedLineCount ?? 0),
-            currency: String(data.currency ?? "CHF"),
-          });
-          setPartnerFeeStatsErr(null);
-        } catch (e: any) {
-          if (!cancelled) {
-            setPartnerFeeStats(null);
-            setPartnerFeeStatsErr(e?.message ?? "Failed to load");
-          }
+    void (async () => {
+      try {
+        const res = await fetch("/api/decathlon/partner-shipped-fees", { cache: "no-store" });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load partner fee stats");
+        setPartnerFeeStats({
+          spreadChf: Number(data.spreadChf ?? 0),
+          decathlonShippedChf: Number(data.decathlonShippedChf ?? 0),
+          partnerCatalogChf: Number(data.partnerCatalogChf ?? 0),
+          shippedLineCount: Number(data.shippedLineCount ?? 0),
+          currency: String(data.currency ?? "CHF"),
+        });
+        setPartnerFeeStatsErr(null);
+      } catch (e: any) {
+        if (!cancelled) {
+          setPartnerFeeStats(null);
+          setPartnerFeeStatsErr(e?.message ?? "Failed to load");
         }
-      })();
-    }, 3000);
+      }
+    })();
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
   }, []);
 
@@ -492,6 +489,10 @@ export default function DecathlonOrdersPage() {
     }
     void loadOrders();
   }, [leftTab, loadOrders, loadReturns]);
+
+  useEffect(() => {
+    void loadReturns();
+  }, [loadReturns]);
 
   useEffect(() => {
     loadPartners();

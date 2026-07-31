@@ -1,14 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { isInStockEssentialLine, isLiquidationShopifyTitle } from "@/app/utils/matching";
+import { isInStockEssentialLine } from "@/app/utils/matching";
 
 export const runtime = "nodejs";
-
-const MISSING_TRACKING_CACHE_MS = Math.max(
-  30_000,
-  Number(process.env.MISSING_TRACKING_CACHE_MS ?? "90000")
-);
-let missingTrackingCache: { at: number; body: Record<string, unknown> } | null = null;
 
 type TrackingItem = {
   id: string;
@@ -17,6 +11,7 @@ type TrackingItem = {
   shopifyProductTitle: string;
   shopifySku: string | null;
   stockxOrderNumber: string;
+  stockxStatus: string | null;
   supplierSource: string | null;
   shopifyCreatedAt: Date | null;
   stockxPurchaseDate: Date | null;
@@ -28,23 +23,27 @@ const MS_PER_DAY = 1000 * 60 * 60 * 24;
 const CUTOFF_DATE = new Date("2026-02-01T00:00:00.000Z");
 const CRITICAL_AGE_DAYS = 7;
 
-const isExcludedNoTracking = (sku: string | null, title: string) => {
+const NO_TRACKING_STATUSES = new Set([
+  "ESSENTIAL_STOCK",
+  "MANUAL_COST_ONLY",
+  "MANUAL_SUPPLIER",
+]);
+
+const isExcludedNoTracking = (
+  sku: string | null,
+  title: string,
+  stockxStatus?: string | null
+) => {
   if (isInStockEssentialLine(sku, title)) return true;
-  if (isLiquidationShopifyTitle(title)) return true;
+  if (stockxStatus && NO_TRACKING_STATUSES.has(stockxStatus)) return true;
   return false;
 };
 
 export async function GET() {
   try {
-    const cacheAt = Date.now();
-    if (missingTrackingCache && cacheAt - missingTrackingCache.at < MISSING_TRACKING_CACHE_MS) {
-      return NextResponse.json(missingTrackingCache.body);
-    }
-
     const items = await prisma.orderMatch.findMany({
       where: {
         OR: [{ stockxTrackingUrl: null }, { stockxTrackingUrl: "" }],
-        shopifyCreatedAt: { gte: CUTOFF_DATE },
       },
       orderBy: { shopifyCreatedAt: "desc" },
       take: 100,
@@ -55,6 +54,7 @@ export async function GET() {
         shopifyProductTitle: true,
         shopifySku: true,
         stockxOrderNumber: true,
+        stockxStatus: true,
         supplierSource: true,
         shopifyCreatedAt: true,
         stockxPurchaseDate: true,
@@ -79,7 +79,9 @@ export async function GET() {
     const normalized = items
       .filter((item: TrackingItem) => {
         if (item.shopifyOrderId && fulfilledOrderIds.has(item.shopifyOrderId)) return false;
-        if (isExcludedNoTracking(item.shopifySku, item.shopifyProductTitle || "")) return false;
+        if (isExcludedNoTracking(item.shopifySku, item.shopifyProductTitle || "", item.stockxStatus)) {
+          return false;
+        }
         const createdAt = item.shopifyCreatedAt || item.stockxPurchaseDate;
         if (createdAt && createdAt < CUTOFF_DATE) return false;
         return true;
@@ -122,7 +124,7 @@ export async function GET() {
       return i.isOverdue || i.isDueSoon || i.isOlderThan9;
     });
 
-    const body = {
+    return NextResponse.json({
       ok: true,
       count: normalized.length,
       goatCount: goatItems.length,
@@ -132,10 +134,7 @@ export async function GET() {
       goatItems,
       criticalItems,
       warningItems,
-      cachedAt: new Date().toISOString(),
-    };
-    missingTrackingCache = { at: cacheAt, body };
-    return NextResponse.json(body);
+    });
   } catch (error: any) {
     console.error("[MISSING_TRACKING] Failed:", error);
     return NextResponse.json(

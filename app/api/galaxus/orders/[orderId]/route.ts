@@ -172,8 +172,8 @@ export async function GET(
   try {
     const { orderId } = await params;
     const { searchParams } = new URL(request.url);
-    const view = String(searchParams.get("view") ?? "minimal").trim().toLowerCase();
-    const viewFull = view === "full" || view === "ops";
+    const view = String(searchParams.get("view") ?? "full").trim().toLowerCase();
+    const viewFull = view !== "minimal";
 
     const order = await prisma.galaxusOrder.findFirst({
       where: { OR: [{ id: orderId }, { galaxusOrderId: orderId }] },

@@ -6,7 +6,6 @@ import {
   type MatchResult,
   resolveInStockEssential,
   isShopifyFinancialRefunded,
-  isLiquidationShopifyTitle,
 } from "@/app/utils/matching";
 import type { PricingResult } from "@/app/types";
 import { postJson, getJson } from "@/app/lib/api";
@@ -330,8 +329,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     try {
       const res = await postJson<any>("/api/shopify/orders", {
         sinceDays,
-        first: 50,
-        physicalStock: false,
+        first: 100,
+        physicalStock: true,
       });
       if (!res.ok) {
         alert(`Shopify error: ${res.data?.error || "Unknown error"}`);
@@ -833,7 +832,6 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       alert("This Shopify line is refunded. Manual cost entry is disabled.");
       return;
     }
-    const isLiquidation = isLiquidationShopifyTitle(shopifyItem.title);
     const inStockEssential = resolveInStockEssential(shopifyItem.sku, shopifyItem.title);
 
     let supplierCost: number;
@@ -861,10 +859,10 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         }
       }
     } else {
-      const promptMessage = isLiquidation
-        ? `💰 Liquidation Order: ${shopifyItem.title}\n\nEnter your buy price (supplier cost) in CHF:`
-        : `💰 Manual Cost Entry: ${shopifyItem.title}\n\nEnter supplier cost in CHF:`;
-      const supplierCostInput = prompt(promptMessage, "");
+      const supplierCostInput = prompt(
+        `💰 Manual Cost Entry: ${shopifyItem.title}\n\nEnter supplier cost in CHF:`,
+        ""
+      );
       if (!supplierCostInput) return;
       supplierCost = parseFloat(supplierCostInput);
       if (isNaN(supplierCost) || supplierCost < 0) {
@@ -890,7 +888,6 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       `✅ Add to dashboard metrics\n` +
       `✅ Mark as "MANUAL_COST" (no Supplier link)\n` +
       `❌ NOT appear in fulfillment queue\n` +
-      `${isLiquidation ? "✅ Track liquidation sale\n" : ""}` +
       `${inStockEssential ? `✅ Track ${inStockEssential.label} with ${inStockEssential.costChf} CHF cost\n` : ""}`;
 
     if (!confirm(confirmMessage)) return;
@@ -920,11 +917,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         matchScore: 100,
         matchType: "MANUAL_COST",
         matchReasons: [
-          isLiquidation
-            ? "Liquidation order (% in title)"
-            : inStockEssential
-            ? inStockEssential.matchReason
-            : "Manual cost entry",
+          inStockEssential ? inStockEssential.matchReason : "Manual cost entry",
         ],
         timeDiffHours: 0,
         stockxStatus: "MANUAL_COST_ONLY",

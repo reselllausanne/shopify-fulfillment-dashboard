@@ -22,7 +22,7 @@ export async function GET(request: Request) {
       sort === "orderdate" ? { orderDate: "desc" as const } : { createdAt: "desc" as const };
     const deliveryType = String(searchParams.get("deliveryType") ?? "").trim();
     const excludeDeliveryType = String(searchParams.get("excludeDeliveryType") ?? "").trim();
-    const includeInvoice = searchParams.get("includeInvoice") === "1";
+    const includeInvoice = searchParams.get("includeInvoice") !== "0";
     const q = String(searchParams.get("q") ?? "").trim();
     const warehouseOpen = searchParams.get("warehouseOpen") === "1";
 

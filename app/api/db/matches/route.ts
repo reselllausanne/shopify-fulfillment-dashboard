@@ -16,7 +16,11 @@ export async function GET(req: NextRequest) {
     const { searchParams } = req.nextUrl;
     const syncedFilter = searchParams.get("synced");
     const confidenceFilter = searchParams.get("confidence");
-    const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "500"), 1), 5000);
+    const limitParam = searchParams.get("limit");
+    const limit =
+      limitParam != null && limitParam !== ""
+        ? Math.min(Math.max(Number(limitParam), 1), 5000)
+        : undefined;
 
     const where: any = {};
 
@@ -35,7 +39,7 @@ export async function GET(req: NextRequest) {
     const matches = await prisma.orderMatch.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      take: limit,
+      ...(limit != null ? { take: limit } : {}),
     });
 
     console.log(`[DB] Found ${matches.length} matches`);
