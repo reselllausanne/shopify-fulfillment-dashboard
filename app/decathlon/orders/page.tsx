@@ -673,7 +673,10 @@ export default function DecathlonOrdersPage() {
     const docs: any[] = Array.isArray(selectedOrder?.documents) ? selectedOrder.documents : [];
     if (docs.some((d) => String(d?.type ?? "").toUpperCase() === "LABEL")) return true;
     const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
-    return shipments.some((s) => Boolean(s?.shippedAt) && Boolean(s?.trackingNumber));
+    return shipments.some(
+      (s: { shippedAt?: unknown; trackingNumber?: string | null }) =>
+        Boolean(s?.shippedAt) && Boolean(s?.trackingNumber)
+    );
   }, [selectedOrder]);
 
   const canSplitShipment = useMemo(() => {
