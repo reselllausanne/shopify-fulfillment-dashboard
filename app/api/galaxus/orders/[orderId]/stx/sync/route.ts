@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { prisma } from "@/app/lib/prisma";
+import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import {
   expandGtinsForDbLookup,
   getStxLinkStatusForOrder,
@@ -64,6 +65,9 @@ export async function POST(
     const { searchParams } = new URL(_request.url);
     const mode = String(searchParams.get("mode") ?? "").trim().toLowerCase();
     const { orderId } = await params;
+    await reconcileGalaxusOrderProcurement(orderId, { skipAutoLink: true }).catch((err) => {
+      console.warn("[GALAXUS][STX][SYNC] procurement reconcile skipped:", err?.message ?? err);
+    });
     const reservation = await reserveStxPurchaseUnitsForOrder(orderId);
     if (mode === "reserve") {
       return NextResponse.json({

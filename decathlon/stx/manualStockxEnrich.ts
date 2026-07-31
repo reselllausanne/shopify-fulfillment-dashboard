@@ -110,7 +110,12 @@ export function applyStockxDetailsToDecathlonMatchFields(
     stockxSkuKey,
     stockxSizeEU: String(size ?? "").trim() || null,
     stockxPurchaseDate: order?.created ? new Date(order.created) : null,
-    stockxAmount: order?.payment?.settledAmount?.value ?? null,
+    stockxAmount: (() => {
+      const raw = order?.payment?.settledAmount?.value;
+      if (raw == null || raw === "") return null;
+      const n = Number(String(raw).replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    })(),
     stockxCurrencyCode: order?.payment?.settledAmount?.currency ?? null,
     stockxStatus: order?.status != null ? String(order.status) : null,
     stockxEstimatedDelivery: normalizedEtaMin,

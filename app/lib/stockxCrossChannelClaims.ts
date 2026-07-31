@@ -62,7 +62,7 @@ export async function buildStockxOrderClaimIndex(args: {
   if (nums.length > 0) whereOr.push({ stockxOrderNumber: { in: nums } });
   const where = whereOr.length === 1 ? whereOr[0] : { OR: whereOr };
 
-  const [decathlonRows, galaxusRows] = await Promise.all([
+  const [decathlonRows, galaxusRows, stxUnitRows] = await Promise.all([
     prisma.decathlonStockxMatch.findMany({
       where,
       select: {
@@ -72,6 +72,14 @@ export async function buildStockxOrderClaimIndex(args: {
       },
     }),
     (prisma as any).galaxusStockxMatch.findMany({
+      where,
+      select: {
+        id: true,
+        stockxOrderId: true,
+        stockxOrderNumber: true,
+      },
+    }),
+    (prisma as any).stxPurchaseUnit.findMany({
       where,
       select: {
         id: true,
@@ -93,6 +101,14 @@ export async function buildStockxOrderClaimIndex(args: {
     addClaim(index, {
       channel: "galaxus",
       matchId: String(row.id),
+      stockxOrderId: normalizeKey(row.stockxOrderId),
+      stockxOrderNumber: normalizeKey(row.stockxOrderNumber),
+    });
+  }
+  for (const row of stxUnitRows) {
+    addClaim(index, {
+      channel: "galaxus",
+      matchId: `stx_unit:${String(row.id)}`,
       stockxOrderId: normalizeKey(row.stockxOrderId),
       stockxOrderNumber: normalizeKey(row.stockxOrderNumber),
     });

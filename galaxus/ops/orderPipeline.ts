@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { pollIncomingEdi, sendOutgoingEdi } from "@/galaxus/edi/service";
+import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import { refreshStxProductsByKickdbProductIds } from "@/galaxus/jobs/stxSync";
 
 type OrderPipelineResult = {
@@ -111,6 +112,9 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
   let ordrSent = 0;
   let ordrFailed = 0;
   for (const orderId of orderIds) {
+    await reconcileGalaxusOrderProcurement(orderId).catch((err) => {
+      errors.push(`reconcile ${orderId}: ${err?.message ?? err}`);
+    });
     const res = await sendOrdrForOrder(orderId);
     if (res?.ok && !res?.skipped) {
       ordrSent += 1;

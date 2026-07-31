@@ -9,6 +9,12 @@ import {
   buildStockxOrderClaimIndex,
   findStockxOrderClaim,
 } from "@/app/lib/stockxCrossChannelClaims";
+import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
+import {
+  linkOldestPendingStxUnit,
+  reserveStxPurchaseUnitsForOrder,
+  resolveSupplierVariantIdForGalaxusLine,
+} from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,14 +128,31 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       stockxOrderNumbers: [stockxOrderNumberFinal],
     });
     const claim = findStockxOrderClaim(claimIndex, stockxOrderIdFinal, stockxOrderNumberFinal);
-    if (claim && !(claim.channel === "galaxus" && claim.matchId === String(existing?.id ?? ""))) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `StockX order is already linked on ${claim.channel}.`,
-        },
-        { status: 409 }
-      );
+    if (claim) {
+      const sameGalaxusMatch =
+        claim.channel === "galaxus" &&
+        !claim.matchId.startsWith("stx_unit:") &&
+        claim.matchId === String(existing?.id ?? "");
+      const sameGalaxusUnit =
+        claim.channel === "galaxus" &&
+        claim.matchId.startsWith("stx_unit:") &&
+        stockxOrderIdFinal
+          ? await (prisma as any).stxPurchaseUnit
+              .findFirst({
+                where: { stockxOrderId: stockxOrderIdFinal, galaxusOrderId: order.galaxusOrderId },
+                select: { id: true },
+              })
+              .then((u: { id: string } | null) => Boolean(u))
+          : false;
+      if (!sameGalaxusMatch && !sameGalaxusUnit) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `StockX order is already linked on ${claim.channel}.`,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const payload = {
@@ -202,7 +225,32 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       create: payload,
     });
 
-    return NextResponse.json({ ok: true, match, stockxEnrich });
+    let unitLink: Awaited<ReturnType<typeof linkOldestPendingStxUnit>> | null = null;
+    if (stockxOrderIdFinal && looksLikeStockxOrderNumber(stockxOrderNumberFinal)) {
+      await reserveStxPurchaseUnitsForOrder(order.galaxusOrderId);
+      const supplierVariantId = await resolveSupplierVariantIdForGalaxusLine(line);
+      if (supplierVariantId) {
+        unitLink = await linkOldestPendingStxUnit({
+          galaxusOrderId: order.galaxusOrderId,
+          supplierVariantId,
+          gtin: line.gtin,
+          stockxOrderId: stockxOrderIdFinal,
+          stockxOrderNumber: stockxOrderNumberFinal,
+          awb: payload.stockxAwb,
+          etaMin: payload.stockxEstimatedDelivery,
+          etaMax: payload.stockxLatestEstimatedDelivery,
+          stockxSettledAmount: resolvedCost,
+          stockxSettledCurrency: payload.stockxCurrencyCode,
+          allowMissingEta: true,
+        });
+      }
+    }
+
+    await reconcileGalaxusOrderProcurement(order.galaxusOrderId, { skipAutoLink: true }).catch((err) => {
+      console.warn("[GALAXUS][STX][MANUAL] procurement reconcile skipped:", err?.message ?? err);
+    });
+
+    return NextResponse.json({ ok: true, match, stockxEnrich, unitLink });
   } catch (error: any) {
     return NextResponse.json(
       { ok: false, error: error?.message ?? "Manual entry failed" },

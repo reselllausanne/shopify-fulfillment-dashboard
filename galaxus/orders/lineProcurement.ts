@@ -3,6 +3,17 @@ import {
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
 import { sameGtinKey } from "@/galaxus/orders/gtinKey";
+import { expandGtinsForDbLookup } from "@/galaxus/stx/purchaseUnits";
+
+function unitMatchesLine(line: any, unit: any): boolean {
+  if (!unit?.stockxOrderId || unit?.cancelledAt) return false;
+  const gtinKeys = expandGtinsForDbLookup([String(line?.gtin ?? "")]);
+  const unitGtin = String(unit?.gtin ?? "").trim();
+  if (gtinKeys.length > 0 && unitGtin && gtinKeys.some((g) => sameGtinKey(g, unitGtin))) return true;
+  const lineSv = String(line?.supplierVariantId ?? "").trim();
+  const unitSv = String(unit?.supplierVariantId ?? "").trim();
+  return Boolean(lineSv && unitSv && lineSv === unitSv);
+}
 
 export function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
   const gtin = String(line?.gtin ?? "").trim();
@@ -10,12 +21,12 @@ export function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
   if (!gtin) return null;
   const byGtinSv = stxUnits.find(
     (u: any) =>
-      sameGtinKey(gtin, String(u?.gtin ?? "")) &&
+      unitMatchesLine(line, u) &&
       String(u?.supplierVariantId ?? "").trim() === sv &&
       u?.stockxOrderId
   );
   if (byGtinSv) return byGtinSv;
-  return stxUnits.find((u: any) => sameGtinKey(gtin, String(u?.gtin ?? "")) && u?.stockxOrderId) ?? null;
+  return stxUnits.find((u: any) => unitMatchesLine(line, u) && u?.stockxOrderId) ?? null;
 }
 
 /** Per-line procurement: DB match rows (one per unit) and/or STX purchase units (sync + AWB). */
@@ -28,6 +39,21 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     arr.push(m);
     matchesByLineId.set(lid, arr);
   }
+
+  const resolveSavedMatch = (line: any) => {
+    const lineMatches = matchesByLineId.get(String(line?.id ?? "")) ?? [];
+    if (lineMatches.length > 0) return lineMatches[0];
+    const gtinKeys = expandGtinsForDbLookup([String(line?.gtin ?? "")]);
+    if (gtinKeys.length === 0) return null;
+    for (const m of stockxMatches ?? []) {
+      const mg = String(m?.galaxusGtin ?? "").trim();
+      if (!mg) continue;
+      if (gtinKeys.some((g) => sameGtinKey(g, mg)) && String(m?.stockxOrderNumber ?? "").trim()) {
+        return m;
+      }
+    }
+    return null;
+  };
 
   return lines.map((line) => {
     const qty = Math.max(Number(line.quantity ?? 1), 1);
@@ -62,7 +88,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
 
     const gtin = String(line?.gtin ?? "").trim();
     const lineMatches = matchesByLineId.get(String(line?.id ?? "")) ?? [];
-    const match = lineMatches[0] ?? null;
+    const match = lineMatches[0] ?? resolveSavedMatch(line);
     const orderNum = match ? String(match.stockxOrderNumber ?? "").trim() : "";
 
     let ok = false;
@@ -108,12 +134,10 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
         source = "stx_sync";
         const bu = stxUnits.find(
           (u: any) =>
-            sameGtinKey(gtin, String(u?.gtin ?? "")) &&
-            String(u?.supplierVariantId ?? "").trim() === String(bucket.supplierVariantId ?? "").trim() &&
-            u?.stockxOrderId
+            unitMatchesLine(line, u) &&
+            String(u?.supplierVariantId ?? "").trim() === String(bucket.supplierVariantId ?? "").trim()
         );
-        const buLoose =
-          bu ?? stxUnits.find((u: any) => sameGtinKey(gtin, String(u?.gtin ?? "")) && u?.stockxOrderId);
+        const buLoose = bu ?? stxUnits.find((u: any) => unitMatchesLine(line, u));
         stockxOrderId = buLoose?.stockxOrderId != null ? String(buLoose.stockxOrderId) : null;
         awb = buLoose?.awb != null ? String(buLoose.awb) : null;
         const numFromUnit =
@@ -132,7 +156,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     }
 
     const relevantStxUnits = gtin
-      ? stxUnits.filter((u: any) => sameGtinKey(gtin, String(u?.gtin ?? "")) && u?.stockxOrderId && !u?.cancelledAt)
+      ? stxUnits.filter((u: any) => unitMatchesLine(line, u) && u?.stockxOrderId && !u?.cancelledAt)
       : [];
 
     const units = Array.from({ length: qty }, (_, i) => {
@@ -149,7 +173,20 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           awb: unitMatch.stockxAwb ?? null,
         };
       }
-      const stxUnit = relevantStxUnits[i] ?? null;
+      if (i === 0 && match && orderNum) {
+        return {
+          unitIndex: i,
+          linked: true,
+          source: "galaxus_match" as const,
+          stockxOrderNumber: match.stockxOrderNumber ?? null,
+          stockxOrderId: match.stockxOrderId ?? null,
+          stockxAmount: match.stockxAmount != null ? Number(match.stockxAmount) : null,
+          stockxCurrencyCode: match.stockxCurrencyCode ?? null,
+          awb: match.stockxAwb ?? null,
+        };
+      }
+      const stxUnit =
+        relevantStxUnits[i] ?? (i === 0 ? pickStxPurchaseUnitForLine(line, stxUnits) : null);
       if (stxUnit) {
         return {
           unitIndex: i,

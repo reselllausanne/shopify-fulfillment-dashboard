@@ -10,7 +10,7 @@ import { prisma } from "@/app/lib/prisma";
  *   effectiveMarketplaceStock(gtin) = dropshipStock(STX asks/cap) + Σ physical(gtin)
  *
  * Physical stock lives on ONE main Shopify product per shoe, split across
- * physical locations (Bussigny, Antica, Bienne). Dropship = Chemin de Bas-de-
+ * physical locations (Bussigny, Antica, Lab, COLD BIEN). Dropship = Chemin de Bas-de-
  * Plan (online), which we intentionally EXCLUDE here — dropship qty already
  * flows through the STX supplier path (asks cap etc.), so summing the online
  * mirror row would double-count.

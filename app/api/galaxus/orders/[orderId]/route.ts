@@ -4,8 +4,13 @@ import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils"
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { digitsOnlyGtin, sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { attachProcurementToLines } from "@/galaxus/orders/lineProcurement";
+import { reserveStxPurchaseUnitsForOrder } from "@/galaxus/stx/purchaseUnits";
 import { resolveGalaxusLineOfferSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
+import {
+  attachPhysicalStockToLines,
+  buildPhysicalStockByGtinMap,
+} from "@/shopify/inventory/orderLinePhysicalStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -190,13 +195,17 @@ export async function GET(
         } as any)
       : order;
 
+    // Fast DB-only slot reservation; full reconcile runs on ingest / sync / manual entry.
+    await reserveStxPurchaseUnitsForOrder(orderRow.id).catch((err) => {
+      console.warn("[GALAXUS][ORDERS] STX unit reserve skipped:", err?.message ?? err);
+    });
+
     const placement = await getShipmentPlacementByOrder(orderRow.id);
     const stx = await getStxLinkStatusForOrder(orderRow.galaxusOrderId).catch(() => null);
     const stxUnits = await (prisma as any).stxPurchaseUnit
       .findMany({
         where: {
           galaxusOrderId: orderRow.galaxusOrderId,
-          supplierVariantId: { startsWith: "stx_" },
         },
         orderBy: { updatedAt: "desc" },
         select: {
@@ -379,10 +388,14 @@ export async function GET(
       enrichGalaxusOrderLine(line, skuByGtin, sizeByGtin, sizeRawByGtin, productNameByGtin, catalogPriceByGtin)
     );
     const linesWithProcurement = attachProcurementToLines(enrichedLines, stx, stockxMatches, stxUnits);
+    const physicalStockByGtin = await buildPhysicalStockByGtinMap(
+      linesWithProcurement.map((line: { gtin?: string | null }) => line.gtin)
+    );
+    const linesWithPhysicalStock = attachPhysicalStockToLines(linesWithProcurement, physicalStockByGtin);
 
     const normalized = {
       ...orderRow,
-      lines: linesWithProcurement,
+      lines: linesWithPhysicalStock,
       stx,
       stxUnits,
       stockxMatches,
