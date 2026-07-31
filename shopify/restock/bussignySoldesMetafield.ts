@@ -139,7 +139,7 @@ async function liquidationLaneQtyForVariantIds(variantIds: string[]): Promise<nu
 }
 
 /**
- * Liquidation-lane qty (Bussigny + Lab Concept) restricted to variants whose
+ * Liquidation-lane qty (Bussigny + Lab + COLD BIEN) restricted to variants whose
  * GTIN carries a REAL liquidation lock (stx_ SupplierVariant.manualLock). Qty
  * alone must not put a product in the soldes collection when its price was
  * never actually changed.
@@ -196,7 +196,7 @@ export async function writeProductSoldes48h(productId: string, enabled: boolean)
 
 /**
  * Set product custom.soldes_48h when any variant has liquidation-lane mirror
- * stock > 0 (Bussigny + Lab Concept) WITH a real liquidation lock (price
+ * stock > 0 (Bussigny + Lab + COLD BIEN) WITH a real liquidation lock (price
  * actually changed); clear otherwise.
  */
 export async function syncSoldes48hProductMetafield(

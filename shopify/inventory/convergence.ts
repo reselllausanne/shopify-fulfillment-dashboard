@@ -14,8 +14,8 @@ import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProduct
  * Phase 4 — convergence engine.
  *
  * Liquidation pricing on Shopify:
- *   - Owned physical qty > 0 across LIQUIDATION_LOCATION_IDS (Bussigny + Lab
- *     Concept) with an existing manualLock → warehouse soldes scan
+ *   - Owned physical qty > 0 across LIQUIDATION_LOCATION_IDS (Bussigny + Lab + COLD BIEN)
+ *     with an existing manualLock → warehouse soldes scan
  *   - Antica physical stock is NOT part of liquidation lane
  *   - Chemin (online) is the StockX dropship pool, not owned stock → never liquidation
  *
@@ -73,7 +73,7 @@ function toNumber(x: unknown): number | null {
 }
 
 /**
- * Owned physical qty across the liquidation lane (Bussigny + Lab Concept).
+ * Owned physical qty across the liquidation lane (Bussigny + Lab + COLD BIEN).
  * Kept as `getBussignyQtyForGtin` for callers; drives liquidation eligibility.
  */
 async function getBussignyQtyForGtin(gtin: string): Promise<number> {
