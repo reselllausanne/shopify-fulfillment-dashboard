@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
 
 type ManualEntryModalProps = {
   isOpen: boolean;
@@ -6,6 +7,8 @@ type ManualEntryModalProps = {
   initialData: any;
   shopifyItem?: any | null;
   context?: "shopify" | "galaxus" | "decathlon";
+  /** Galaxus order id (uuid or galaxusOrderId) for StockX lookup API */
+  stockxLookupOrderId?: string | null;
   onSave: (data: any, mode: "create" | "edit") => void;
   onClose: () => void;
 };
@@ -16,17 +19,75 @@ export default function GalaxusManualEntryModal({
   initialData,
   shopifyItem,
   context = "galaxus",
+  stockxLookupOrderId = null,
   onSave,
   onClose,
 }: ManualEntryModalProps) {
   const [localData, setLocalData] = useState<any>(initialData);
+  const [lookupStatus, setLookupStatus] = useState<string | null>(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
 
   // Sync when opening
   useEffect(() => {
     if (isOpen) {
       setLocalData(initialData);
+      setLookupStatus(null);
+      setLookupBusy(false);
     }
   }, [isOpen, initialData]);
+
+  const applyLookupFields = (fields: Record<string, unknown>) => {
+    setLocalData((prev: any) => {
+      const revenue =
+        prev.shopifyTotalPrice != null && Number.isFinite(Number(prev.shopifyTotalPrice))
+          ? Number(prev.shopifyTotalPrice)
+          : null;
+      const costRaw = fields.stockxAmount ?? fields.supplierCost;
+      const cost =
+        costRaw != null && Number.isFinite(Number(costRaw)) ? Number(costRaw) : null;
+      const margin =
+        revenue != null && cost != null
+          ? galaxusProfitFromRevenueAndStockxCost(revenue, cost)
+          : null;
+      return {
+        ...prev,
+        ...fields,
+        stockxAmount: cost,
+        supplierCost: cost,
+        marginAmount:
+          margin?.profitChf != null
+            ? Number(margin.profitChf.toFixed(2))
+            : prev.marginAmount ?? null,
+        marginPercent:
+          margin?.profitPercentOfRevenue != null
+            ? Number(margin.profitPercentOfRevenue.toFixed(2))
+            : prev.marginPercent ?? null,
+      };
+    });
+  };
+
+  const lookupStockxOrder = async (orderNumber: string) => {
+    const trimmed = orderNumber.trim();
+    if (!trimmed || context !== "galaxus" || !stockxLookupOrderId) return;
+    setLookupBusy(true);
+    setLookupStatus(null);
+    try {
+      const res = await fetch(
+        `/api/galaxus/orders/${encodeURIComponent(stockxLookupOrderId)}/stockx/lookup?orderNumber=${encodeURIComponent(trimmed)}`
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok || !json.fields) {
+        setLookupStatus(String(json.error ?? "Order not found on StockX"));
+        return;
+      }
+      applyLookupFields(json.fields);
+      setLookupStatus("Loaded from StockX");
+    } catch (error: any) {
+      setLookupStatus(String(error?.message ?? "Lookup failed"));
+    } finally {
+      setLookupBusy(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -118,13 +179,35 @@ export default function GalaxusManualEntryModal({
               </p>
             ) : null}
             <div className="grid grid-cols-2 gap-3">
-              <input
-                type="text"
-                value={localData.stockxOrderNumber || ""}
-                onChange={(e) => update({ stockxOrderNumber: e.target.value })}
-                placeholder={isDecathlon || isGalaxus ? "StockX order #" : "Supplier Order Number"}
-                className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
-              />
+              <div>
+                <input
+                  type="text"
+                  value={localData.stockxOrderNumber || ""}
+                  onChange={(e) => {
+                    setLookupStatus(null);
+                    update({ stockxOrderNumber: e.target.value });
+                  }}
+                  onBlur={(e) => {
+                    if (isGalaxus && stockxLookupOrderId) {
+                      void lookupStockxOrder(e.target.value);
+                    }
+                  }}
+                  placeholder={isDecathlon || isGalaxus ? "StockX order #" : "Supplier Order Number"}
+                  className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
+                />
+                {isGalaxus && lookupBusy ? (
+                  <p className="text-xs text-gray-500 mt-1">Looking up StockX…</p>
+                ) : null}
+                {isGalaxus && lookupStatus ? (
+                  <p
+                    className={`text-xs mt-1 ${
+                      lookupStatus === "Loaded from StockX" ? "text-green-700" : "text-amber-700"
+                    }`}
+                  >
+                    {lookupStatus}
+                  </p>
+                ) : null}
+              </div>
               <input
                 type="text"
                 value={localData.stockxProductName || ""}
