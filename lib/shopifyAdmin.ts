@@ -1,12 +1,116 @@
 // lib/shopifyAdmin.ts
 
 import { missingShopifyAdminEnvKeys, resolveShopifyAdminEnv } from "@/lib/shopifyEnv";
+
 type ShopifyGqlError = { message: string; extensions?: any };
 
-export async function shopifyGraphQL<T>(
+export type ShopifyGraphQLExtensions = {
+  cost?: {
+    requestedQueryCost?: number;
+    actualQueryCost?: number;
+    throttleStatus?: {
+      maximumAvailable?: number;
+      currentlyAvailable?: number;
+      restoreRate?: number;
+    };
+  };
+};
+
+export type ShopifyGraphQLResult<T> = {
+  data: T;
+  errors?: ShopifyGqlError[];
+  extensions?: ShopifyGraphQLExtensions;
+};
+
+let shopifyGraphQLChain: Promise<unknown> = Promise.resolve();
+
+type ThrottleSnapshot = {
+  available: number;
+  restoreRate: number;
+  maximumAvailable: number;
+  updatedAtMs: number;
+};
+
+let throttleSnapshot: ThrottleSnapshot | null = null;
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function applyThrottleExtensions(extensions: ShopifyGraphQLExtensions | undefined): void {
+  const status = extensions?.cost?.throttleStatus;
+  if (!status) return;
+  throttleSnapshot = {
+    available: Number(status.currentlyAvailable ?? 0),
+    restoreRate: Number(status.restoreRate ?? 100),
+    maximumAvailable: Number(status.maximumAvailable ?? 1000),
+    updatedAtMs: Date.now(),
+  };
+}
+
+function projectedShopifyCapacity(): number {
+  if (!throttleSnapshot) return 1000;
+  const elapsedMs = Date.now() - throttleSnapshot.updatedAtMs;
+  return Math.min(
+    throttleSnapshot.maximumAvailable,
+    throttleSnapshot.available + (throttleSnapshot.restoreRate * elapsedMs) / 1000
+  );
+}
+
+async function waitForShopifyCapacity(requiredCost: number): Promise<void> {
+  const target = requiredCost + 80;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (projectedShopifyCapacity() >= target) return;
+    const deficit = target - projectedShopifyCapacity();
+    const restoreRate = throttleSnapshot?.restoreRate ?? 100;
+    const waitMs = Math.ceil((deficit / restoreRate) * 1000) + 250;
+    await sleepMs(Math.min(waitMs, 15000));
+  }
+}
+
+export async function sleepForShopifyQueryCost(
+  extensions: ShopifyGraphQLExtensions | undefined,
+  bufferMs = 400
+): Promise<void> {
+  const spent = Number(
+    extensions?.cost?.actualQueryCost ?? extensions?.cost?.requestedQueryCost ?? 100
+  );
+  const restoreRate = Number(extensions?.cost?.throttleStatus?.restoreRate ?? 100);
+  const waitMs = Math.min(8000, Math.max(800, Math.ceil((spent / restoreRate) * 1000) + bufferMs));
+  await sleepMs(waitMs);
+}
+
+function isRetryableShopifyGraphQLError(errors: ShopifyGqlError[] | undefined): boolean {
+  return (errors ?? []).some((error) => {
+    const code = String(error?.extensions?.code ?? "").toUpperCase();
+    const message = String(error?.message ?? "").toUpperCase();
+    return (
+      code === "THROTTLED" ||
+      code === "MAX_COST_EXCEEDED" ||
+      message.includes("THROTTLED") ||
+      message.includes("MAX_COST_EXCEEDED")
+    );
+  });
+}
+
+function computeShopifyRetryDelayMs(
+  extensions: ShopifyGraphQLExtensions | undefined,
+  attempt: number
+): number {
+  const requested = Number(extensions?.cost?.requestedQueryCost ?? 0);
+  const available = Number(extensions?.cost?.throttleStatus?.currentlyAvailable ?? 0);
+  const restoreRate = Number(extensions?.cost?.throttleStatus?.restoreRate ?? 100);
+  const deficit = Math.max(0, requested - available);
+  const restoreWaitMs =
+    deficit > 0 && restoreRate > 0 ? Math.ceil((deficit / restoreRate) * 1000) : 0;
+  const backoffMs = 1000 + attempt * 800;
+  return Math.min(20000, Math.max(backoffMs, restoreWaitMs + 600));
+}
+
+async function shopifyGraphQLOnce<T>(
   query: string,
   variables: Record<string, any> = {}
-): Promise<{ data: T; errors?: ShopifyGqlError[] }> {
+): Promise<ShopifyGraphQLResult<T>> {
   const { shop, token, version } = resolveShopifyAdminEnv();
 
   if (!shop || !token) {
@@ -37,32 +141,80 @@ export async function shopifyGraphQL<T>(
     throw new Error(`Shopify HTTP ${res.status}: ${JSON.stringify(json).slice(0, 500)}`);
   }
 
-  return json as { data: T; errors?: ShopifyGqlError[] };
+  return {
+    data: json.data as T,
+    errors: json.errors as ShopifyGqlError[] | undefined,
+    extensions: json.extensions as ShopifyGraphQLExtensions | undefined,
+  };
+}
+
+export async function shopifyGraphQL<T>(
+  query: string,
+  variables: Record<string, any> = {},
+  options?: { estimatedQueryCost?: number }
+): Promise<ShopifyGraphQLResult<T>> {
+  const run = async (): Promise<ShopifyGraphQLResult<T>> => {
+    let lastResult: ShopifyGraphQLResult<T> | null = null;
+    const estimatedCost = Number(options?.estimatedQueryCost ?? 0);
+
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      const requiredCost =
+        estimatedCost > 0
+          ? estimatedCost
+          : Number(lastResult?.extensions?.cost?.requestedQueryCost ?? 0);
+      if (requiredCost > 0) {
+        await waitForShopifyCapacity(requiredCost);
+      }
+
+      const result = await shopifyGraphQLOnce<T>(query, variables);
+      lastResult = result;
+      applyThrottleExtensions(result.extensions);
+
+      if (!result.errors?.length) {
+        return result;
+      }
+
+      if (!isRetryableShopifyGraphQLError(result.errors) || attempt >= 14) {
+        return result;
+      }
+
+      const delayMs = computeShopifyRetryDelayMs(result.extensions, attempt);
+      console.warn(
+        `[SHOPIFY] GraphQL retry ${attempt + 1}/15 in ${delayMs}ms`,
+        result.errors?.[0]?.extensions?.code ?? result.errors?.[0]?.message
+      );
+      await sleepMs(delayMs);
+    }
+
+    return lastResult as ShopifyGraphQLResult<T>;
+  };
+
+  const resultPromise = shopifyGraphQLChain.then(run, run);
+  shopifyGraphQLChain = resultPromise.then(
+    () => undefined,
+    () => undefined
+  );
+  return resultPromise;
 }
 
 export function extractEUSize(input?: string | null): string | null {
   if (!input) return null;
-  
-  // Try to match "EU XX" or "EU XX.X" format
+
   const euMatch = input.match(/EU\s*([0-9]{1,2}(?:\.[0-9])?)/i);
   if (euMatch?.[1]) return `EU ${euMatch[1]}`;
-  
-  // Fallback: If input is just a number (like "44.5" or "42"), treat as EU size
+
   const plainNumberMatch = input.trim().match(/^([0-9]{1,2}(?:\.[0-9])?)$/);
   if (plainNumberMatch?.[1]) {
     const size = parseFloat(plainNumberMatch[1]);
-    // EU shoe sizes typically range from 35-50
     if (size >= 35 && size <= 50) {
       return `EU ${plainNumberMatch[1]}`;
     }
   }
 
-  // Birkenstock / narrow-regular-wide suffix: "39N", "40R", "41M"
   const widthSizeMatch = input.trim().match(/^([0-9]{1,2}(?:\.[0-9])?)([NRMW])$/i);
   if (widthSizeMatch?.[1]) {
     return `EU ${widthSizeMatch[1]}${widthSizeMatch[2].toUpperCase()}`;
   }
-  
+
   return null;
 }
-
