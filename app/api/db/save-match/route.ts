@@ -5,6 +5,8 @@ import { formatInTimeZone } from "date-fns-tz";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
 import { detectMilestone } from "@/app/lib/stockxStatus";
 import { getMailer } from "@/app/lib/mailer";
+import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
+import { tryConsumeLocalStockLot } from "@/shopify/localStock/consumeFromLocalStock";
 
 const TIMEZONE = "Europe/Zurich";
 // Auto-send is disabled by default; only manual send should deliver emails.
@@ -235,6 +237,7 @@ export async function POST(req: Request) {
       stockxCheckoutType, // NEW: StockX checkoutType (STANDARD / EXPRESS_*)
       stockxStates, // NEW: StockX states array (raw)
       updateTrackingOnly, // NEW: only update tracking/status fields
+      localStockLotId: requestedLocalStockLotId,
     } = body;
     
     // 🔍 DEBUG: Log received chainId/orderId
@@ -283,15 +286,59 @@ export async function POST(req: Request) {
     });
 
     // Determine supplier source
-    const finalSupplierSource = supplierSource || (stockxOrderNumber ? "STOCKX" : "MANUAL");
-    const isManualSupplier = finalSupplierSource === "MANUAL" || finalSupplierSource === "OTHER";
+    let finalSupplierSource = supplierSource || (stockxOrderNumber ? "STOCKX" : "MANUAL");
+    let isManualSupplier = finalSupplierSource === "MANUAL" || finalSupplierSource === "OTHER";
+    let isLocalSupplier = finalSupplierSource === "LOCAL";
     
     // Manual suppliers don't need StockX order number
     const isManualCostEntry = matchType === "MANUAL_COST" || (!stockxOrderNumber && manualCostOverride);
+
+    const looksLikeRealStockx =
+      Boolean(stockxOrderNumber) &&
+      !String(stockxOrderNumber).startsWith("MANUAL-") &&
+      !String(stockxOrderNumber).startsWith("ESS-") &&
+      !String(stockxOrderNumber).startsWith("LOCAL-");
+
+    let localStockLotId: string | null = null;
+    let localStockStatus: string | null = null;
+    let resolvedSupplierCost = supplierCost ?? 0;
+    let resolvedMarginAmount = marginAmount ?? 0;
+    let resolvedMarginPercent = marginPercent ?? 0;
+    let resolvedManualCostOverride = manualCostOverride || null;
+    let resolvedManualNote: string | null = null;
+
+    // New matches only: consume OPEN local lot (FIFO) when not a real StockX buy.
+    // Replaces fragile SKU-only resell absorb when a LocalStockLot exists.
+    if (!existingMatch && !looksLikeRealStockx && shopifySku) {
+      try {
+        const consumed = await tryConsumeLocalStockLot({
+          shopifySku,
+          lotId: requestedLocalStockLotId || undefined,
+          revenue: Number(shopifyTotalPrice) || 0,
+        });
+        if (consumed) {
+          localStockLotId = consumed.lotId;
+          localStockStatus = consumed.stockxStatus;
+          finalSupplierSource = consumed.supplierSource;
+          isLocalSupplier = true;
+          isManualSupplier = false;
+          resolvedSupplierCost = consumed.supplierCost;
+          resolvedManualCostOverride = consumed.manualCostOverride;
+          resolvedMarginAmount = consumed.marginAmount;
+          resolvedMarginPercent = consumed.marginPercent;
+          resolvedManualNote = consumed.manualNote;
+          console.log(
+            `[DB] Local stock consumed: ${shopifyOrderName} ${shopifySku} ← lot ${consumed.lotId}`
+          );
+        }
+      } catch (error: any) {
+        console.error("[DB] Local stock consume failed:", error?.message ?? error);
+      }
+    }
     
-    if (!isManualCostEntry && !isManualSupplier && !stockxOrderNumber) {
+    if (!isManualCostEntry && !isManualSupplier && !isLocalSupplier && !stockxOrderNumber) {
       return NextResponse.json(
-        { error: "Missing required field: stockxOrderNumber (unless manual supplier)" },
+        { error: "Missing required field: stockxOrderNumber (unless manual/local supplier)" },
         { status: 400 }
       );
     }
@@ -299,10 +346,19 @@ export async function POST(req: Request) {
     console.log(`[DB] Upserting match: ${shopifyOrderName} → ${stockxOrderNumber || supplierOrderRef || "MANUAL"} [Source: ${finalSupplierSource}]`);
 
     // Determine final values based on supplier source
-    const finalStockxOrderNumber = stockxOrderNumber || supplierOrderRef || `MANUAL-${shopifyLineItemId.slice(-8)}`;
+    const finalStockxOrderNumber =
+      stockxOrderNumber ||
+      supplierOrderRef ||
+      (isLocalSupplier
+        ? `LOCAL-${shopifyLineItemId.slice(-8)}`
+        : `MANUAL-${shopifyLineItemId.slice(-8)}`);
     const finalStockxProductName = stockxProductName || shopifyProductTitle;
-    let resolvedStockxStatus: string | null = stockxStatus || null;
-    const finalMatchType = isManualCostEntry ? "MANUAL_COST" : matchType;
+    let resolvedStockxStatus: string | null = localStockStatus || stockxStatus || null;
+    const finalMatchType = isLocalSupplier
+      ? "LOCAL_AUTO"
+      : isManualCostEntry
+        ? "MANUAL_COST"
+        : matchType;
     let finalPurchaseDate = supplierPurchaseDate || stockxPurchaseDate;
     let finalEstimatedDelivery = estimatedDeliveryDate || stockxEstimatedDelivery;
     let finalLatestEstimatedDelivery = stockxLatestEstimatedDelivery || null;
@@ -316,7 +372,12 @@ export async function POST(req: Request) {
     // All tracking/checkoutType/states must come from the enriched StockX order payload.
 
     const finalStockxStatus =
-      resolvedStockxStatus || (isManualSupplier ? "MANUAL_SUPPLIER" : "MANUAL_COST_ONLY");
+      resolvedStockxStatus ||
+      (isLocalSupplier
+        ? "LOCAL_STOCK"
+        : isManualSupplier
+          ? "MANUAL_SUPPLIER"
+          : "MANUAL_COST_ONLY");
     const parsedPurchaseDate = toDateOnlyUtc(parseFlexibleDate(finalPurchaseDate));
     const parsedEstimatedDelivery = toDateOnlyUtc(parseFlexibleDate(finalEstimatedDelivery));
     const parsedLatestEstimatedDelivery = toDateOnlyUtc(parseFlexibleDate(finalLatestEstimatedDelivery));
@@ -465,6 +526,37 @@ export async function POST(req: Request) {
       existingMatch?.returnFeeAmountChf != null ||
       existingMatch?.returnedStockValueChf != null;
 
+    // Fallback: legacy SKU resell absorb when no LocalStockLot was available.
+    if (
+      !existingMatch &&
+      !localStockLotId &&
+      !manualCostOverride &&
+      shopifySku &&
+      Number(resolvedSupplierCost) > 0
+    ) {
+      try {
+        const resell = await tryApplyResellFromReturnedStock({
+          shopifySku,
+          shopifyLineItemId,
+          shopifyOrderId,
+          revenue: Number(shopifyTotalPrice) || 0,
+          supplierCost: Number(resolvedSupplierCost) || 0,
+        });
+        if (resell) {
+          resolvedSupplierCost = resell.supplierCost;
+          resolvedManualCostOverride = resell.manualCostOverride;
+          resolvedMarginAmount = resell.marginAmount;
+          resolvedMarginPercent = resell.marginPercent;
+          resolvedManualNote = resell.manualNote;
+          console.log(
+            `[DB] Resell from returned stock: ${shopifyOrderName} ${shopifySku} ← ${resell.consumedReturnMatchId}`
+          );
+        }
+      } catch (error: any) {
+        console.error("[DB] Resell-from-return lookup failed:", error?.message ?? error);
+      }
+    }
+
     // Upsert (create or update)
     const match = await prisma.orderMatch.upsert({
       where: { shopifyLineItemId },
@@ -496,10 +588,11 @@ export async function POST(req: Request) {
         stockxStates: shouldUpdateStates ? resolvedStates : undefined,
         stockxStatesHash: shouldUpdateStates ? resolvedStatesHash : undefined,
         stockxStatesUpdatedAt: shouldUpdateStates ? new Date() : undefined,
-        supplierCost: hasManualOverrides ? undefined : supplierCost,
-        marginAmount: hasManualOverrides ? undefined : marginAmount,
-        marginPercent: hasManualOverrides ? undefined : marginPercent,
-        manualCostOverride: hasManualOverrides ? undefined : manualCostOverride,
+        supplierCost: hasManualOverrides ? undefined : resolvedSupplierCost,
+        marginAmount: hasManualOverrides ? undefined : resolvedMarginAmount,
+        marginPercent: hasManualOverrides ? undefined : resolvedMarginPercent,
+        manualCostOverride: hasManualOverrides ? undefined : resolvedManualCostOverride,
+        localStockLotId: localStockLotId || undefined,
         shopifyMetafieldsSynced: resolvedMetafieldsSynced,
         shopifyMetafieldsSetAt: resolvedMetafieldsSetAt,
         updatedAt: new Date(),
@@ -540,10 +633,12 @@ export async function POST(req: Request) {
         stockxStates: resolvedStates || null,
         stockxStatesHash: resolvedStatesHash || null,
         stockxStatesUpdatedAt: resolvedStatesHash ? new Date() : null,
-        supplierCost: supplierCost ?? 0,
-        marginAmount: marginAmount ?? 0,
-        marginPercent: marginPercent ?? 0,
-        manualCostOverride: manualCostOverride || null,
+        supplierCost: resolvedSupplierCost,
+        marginAmount: resolvedMarginAmount,
+        marginPercent: resolvedMarginPercent,
+        manualCostOverride: resolvedManualCostOverride,
+        manualNote: resolvedManualNote,
+        localStockLotId: localStockLotId || null,
         shopifyMetafieldsSynced: shopifyMetafieldsSynced || false,
         shopifyMetafieldsSetAt: shopifyMetafieldsSynced ? new Date() : null,
         customerTrackingToken: crypto.randomUUID(),

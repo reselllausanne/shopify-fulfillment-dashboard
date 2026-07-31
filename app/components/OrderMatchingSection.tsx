@@ -1,8 +1,14 @@
 import React from "react";
 import type { MatchResult, ShopifyLineItem } from "@/app/utils/matching";
 import { formatShopifyDeliveryModeLabel } from "@/app/lib/shopifyLineItemDelivery";
-import { isShopifyFinancialRefunded, isLiquidationShopifyTitle, resolveInStockEssential } from "@/app/utils/matching";
+import {
+  isLocalStockSupplierOrder,
+  isShopifyFinancialRefunded,
+  localStockMatchCost,
+  resolveInStockEssential,
+} from "@/app/utils/matching";
 import { shopifyFraudUiTone } from "@/app/lib/shopifyOrderRisk";
+import { PhysicalStockBadge, PhysicalStockHintText, ShopifyPickupBadge } from "@/app/components/PhysicalStockBadge";
 import type { PricingResult, OrderNode } from "@/app/types";
 
 type Props = {
@@ -96,11 +102,23 @@ export default function OrderMatchingSection({
           {matchResults.map((result: MatchResult, idx: number) => {
             const shopify = result.shopifyItem;
             const match = result.bestMatch;
+            const isLocalStockMatch = isLocalStockSupplierOrder(match?.supplierOrder);
+            const localStockLot = match?.supplierOrder.localStockLot ?? null;
             const isRefunded = isShopifyFinancialRefunded(shopify.displayFinancialStatus);
-            const isLiquidation = isLiquidationShopifyTitle(shopify.title);
             const isInStockEssential = Boolean(
               resolveInStockEssential(shopify.sku, shopify.title)
             );
+            const hasPhysicalStock =
+              (shopify.physicalStockQty ?? 0) > 0 && Boolean(shopify.physicalStockLocation);
+            const physicalStockDisplay =
+              hasPhysicalStock && shopify.physicalStockLocation
+                ? {
+                    qty: shopify.physicalStockQty ?? 0,
+                    locationName: shopify.physicalStockLocation,
+                    locationId: null,
+                  }
+                : null;
+            const isStorePickup = Boolean(shopify.isStorePickup);
             const fraudTone = shopifyFraudUiTone({
               fraudRiskLevel: shopify.fraudRiskLevel ?? null,
               fraudRecommendation: shopify.fraudRecommendation ?? null,
@@ -121,10 +139,12 @@ export default function OrderMatchingSection({
                     ? "border-red-600 bg-red-50 ring-2 ring-red-400"
                     : fraudTone === "warn"
                     ? "border-amber-400 bg-amber-50 ring-1 ring-amber-200"
-                    : isLiquidation
-                    ? "border-purple-300 bg-purple-50"
+                    : isLocalStockMatch
+                    ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200"
                     : isInStockEssential
                     ? "border-indigo-300 bg-indigo-50"
+                    : hasPhysicalStock
+                    ? "border-green-400 bg-green-50 ring-1 ring-green-200"
                     : match?.overThreshold
                     ? "border-yellow-300 bg-yellow-50"
                     : match?.confidence === "high"
@@ -138,6 +158,17 @@ export default function OrderMatchingSection({
                   <div>
                     <div className="flex flex-wrap items-center gap-2 mb-2">
                       <h3 className="font-semibold text-sm text-gray-700">📦 Shopify Order: {shopify.orderName}</h3>
+                      <PhysicalStockBadge physicalStock={physicalStockDisplay} />
+                      {isLocalStockMatch ? (
+                        <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-700 text-white shrink-0">
+                          Local stock
+                        </span>
+                      ) : null}
+                      <ShopifyPickupBadge
+                        isStorePickup={isStorePickup}
+                        label={shopify.pickupLabel}
+                        locationName={shopify.pickupLocation}
+                      />
                       {shopify.deliveryMode ? (
                         <span
                           className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wide ${
@@ -251,6 +282,15 @@ export default function OrderMatchingSection({
                       <p>
                         <span className="font-medium">Size:</span> {shopify.sizeEU || shopify.variantTitle || "—"}
                       </p>
+                      {physicalStockDisplay ? (
+                        <PhysicalStockHintText physicalStock={physicalStockDisplay} />
+                      ) : null}
+                      {isStorePickup ? (
+                        <p className="text-green-800 font-medium">
+                          Store pickup
+                          {shopify.pickupLocation ? `: ${shopify.pickupLocation}` : ""}
+                        </p>
+                      ) : null}
                       <p>
                         <span className="font-medium">Price:</span> {shopify.currencyCode} {shopify.price}
                         {shopify.quantity > 1 && (
@@ -263,7 +303,29 @@ export default function OrderMatchingSection({
                   <div>
                     {match ? (
                       <>
-                        <h3 className="font-semibold text-sm text-gray-700 mb-2">🎯 Suggested Supplier Match</h3>
+                        <h3 className="font-semibold text-sm text-gray-700 mb-2">
+                          {isLocalStockMatch ? "🏬 Suggested Local Stock Match" : "🎯 Suggested Supplier Match"}
+                        </h3>
+                        {localStockLot ? (
+                          <div className="mb-2 rounded border border-emerald-300 bg-emerald-100 p-2 text-xs text-emerald-900">
+                            <p className="font-semibold">Local stock</p>
+                            <p>
+                              {localStockLot.origin} · {localStockLot.locationName}
+                            </p>
+                            <p>
+                              Lot {localStockLot.lotId} · Qty available {localStockLot.qtyAvailable} · Cost CHF{" "}
+                              {localStockMatchCost(localStockLot).toFixed(2)}
+                            </p>
+                          </div>
+                        ) : null}
+                        {physicalStockDisplay ? (
+                          <p className="mb-2">
+                            <PhysicalStockBadge
+                              physicalStock={physicalStockDisplay}
+                              avoidStockxHint
+                            />
+                          </p>
+                        ) : null}
                         {shopify.deliveryMode && (
                           <p className="mb-2">
                             <span
@@ -289,15 +351,15 @@ export default function OrderMatchingSection({
                                   [shopify.lineItemId]: e.target.value,
                                 })
                               }
-                              disabled={isRefunded}
-                              readOnly={isRefunded}
+                              disabled={isRefunded || isLocalStockMatch}
+                              readOnly={isRefunded || isLocalStockMatch}
                               className={`inline-block w-32 px-1 py-0.5 border rounded text-xs font-mono ${
-                                isRefunded ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""
+                                isRefunded || isLocalStockMatch ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""
                               }`}
                             />
                           </p>
                           <p>
-                            <span className="font-medium">Purchase:</span>{" "}
+                            <span className="font-medium">{isLocalStockMatch ? "Entered:" : "Purchase:"}</span>{" "}
                             {new Date(match.supplierOrder.purchaseDate).toLocaleString("fr-CH")}
                           </p>
                           <p>
@@ -312,7 +374,7 @@ export default function OrderMatchingSection({
                           <p>
                             <span className="font-medium">Offer:</span> CHF{" "}
                             {match.supplierOrder.offerAmount?.toFixed(2) || "—"}
-                            {match.supplierOrder.totalTTC && (
+                            {match.supplierOrder.totalTTC != null && (
                               <span className="text-green-700 font-semibold ml-2">
                                 (Total: CHF {match.supplierOrder.totalTTC.toFixed(2)})
                               </span>
@@ -348,12 +410,12 @@ export default function OrderMatchingSection({
                               confirmedMatches[shopify.lineItemId] || match.supplierOrder.supplierOrderNumber;
                             const supplierCostFromMatch = match.supplierOrder.totalTTC;
                             const pricingData = pricingByOrder[supplierOrderNum];
-                            const supplierCostFromPricing = pricingData?.total || null;
+                            const supplierCostFromPricing = pricingData?.total ?? null;
                             const autoTTC = supplierCostFromMatch ?? supplierCostFromPricing;
                             const manualCost = manualCostOverrides[shopify.lineItemId];
                             const displayCost = manualCost
                               ? parseFloat(manualCost)
-                              : autoTTC || match.supplierOrder.offerAmount || 0;
+                              : autoTTC ?? match.supplierOrder.offerAmount ?? 0;
                             const marginAmount = shopifyRevenue - displayCost;
                             const marginPercent = shopifyRevenue > 0 ? (marginAmount / shopifyRevenue) * 100 : 0;
 
@@ -371,7 +433,9 @@ export default function OrderMatchingSection({
                                     step="0.01"
                                     value={
                                       manualCost ||
-                                      (autoTTC ? autoTTC.toFixed(2) : (match.supplierOrder.offerAmount || 0).toFixed(2))
+                                      (autoTTC != null
+                                        ? autoTTC.toFixed(2)
+                                        : (match.supplierOrder.offerAmount || 0).toFixed(2))
                                     }
                                     onChange={(e) =>
                                       setManualCostOverrides({
@@ -386,7 +450,7 @@ export default function OrderMatchingSection({
                                     }`}
                                     placeholder="Cost"
                                   />
-                                  {!autoTTC && <span className="text-orange-600 text-xs">⚠️ No TTC</span>}
+                                  {autoTTC == null && <span className="text-orange-600 text-xs">⚠️ No TTC</span>}
                                   {manualCost && <span className="text-blue-600 text-xs">✏️ Manual</span>}
                                 </div>
                                 <p className={`font-semibold ${marginAmount >= 0 ? "text-green-700" : "text-red-700"}`}>
@@ -413,7 +477,7 @@ export default function OrderMatchingSection({
                                 : "bg-purple-600 text-white hover:bg-purple-700"
                             }`}
                           >
-                            📝 Set Metafields on Shopify
+                            {isLocalStockMatch ? "🏬 Save Local Stock Match" : "📝 Set Metafields on Shopify"}
                           </button>
                           <button
                             onClick={() => openManualEntryModal(shopify)}

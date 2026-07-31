@@ -1,12 +1,14 @@
 import { useState } from "react";
 import {
   matchShopifyToSupplier,
+  isLocalStockSupplierOrder,
   type NormalizedSupplierOrder,
   type ShopifyLineItem,
   type MatchResult,
   resolveInStockEssential,
   isShopifyFinancialRefunded,
 } from "@/app/utils/matching";
+import type { AvailableLocalStockLot } from "@/shopify/localStock/availableLocalStock";
 import type { PricingResult } from "@/app/types";
 import { postJson, getJson } from "@/app/lib/api";
 import {
@@ -37,6 +39,83 @@ type UseMatchingArgs = {
   pricingByOrder: Record<string, PricingResult | null>;
   reloadDb?: () => Promise<void>;
 };
+
+type LocalStockAllocation = {
+  lot: AvailableLocalStockLot;
+  remaining: number;
+};
+
+async function loadAvailableLocalStockBySku(
+  items: ShopifyLineItem[]
+): Promise<Map<string, LocalStockAllocation>> {
+  const skus = Array.from(
+    new Set(
+      items
+        .map((item) => String(item.sku || "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (skus.length === 0) return new Map();
+
+  try {
+    const res = await postJson<{ localStock?: AvailableLocalStockLot[] }>(
+      "/api/db/local-stock/available",
+      { skus }
+    );
+    if (!res.ok) {
+      console.warn("[LOCAL-STOCK] Availability lookup failed", res.data);
+      return new Map();
+    }
+    const allocations = new Map<string, LocalStockAllocation>();
+    for (const lot of res.data?.localStock || []) {
+      allocations.set(lot.sku, {
+        lot,
+        remaining: Math.max(0, Math.trunc(Number(lot.qtyAvailable) || 0)),
+      });
+    }
+    console.log(`[LOCAL-STOCK] Loaded ${allocations.size} available SKU lot(s)`);
+    return allocations;
+  } catch (err) {
+    console.warn("[LOCAL-STOCK] Availability lookup error; continuing with StockX matching", err);
+    return new Map();
+  }
+}
+
+function takeLocalStockLot(
+  allocations: Map<string, LocalStockAllocation>,
+  sku: string | null | undefined
+): AvailableLocalStockLot | null {
+  const key = String(sku || "").trim();
+  if (!key) return null;
+  const allocation = allocations.get(key);
+  if (!allocation || allocation.remaining <= 0) return null;
+  const remainingBefore = allocation.remaining;
+  allocation.remaining -= 1;
+  return {
+    ...allocation.lot,
+    qtyAvailable: remainingBefore,
+  };
+}
+
+function localStockLotIdFromOrder(
+  order: NormalizedSupplierOrder | null | undefined
+): string | null {
+  return order?.localStockLot?.lotId ?? null;
+}
+
+function reserveExistingLocalMatches(
+  allocations: Map<string, LocalStockAllocation>,
+  results: MatchResult[]
+) {
+  for (const result of results) {
+    const order = result.bestMatch?.supplierOrder;
+    if (!isLocalStockSupplierOrder(order) || !order?.localStockLot) continue;
+    const allocation = allocations.get(order.localStockLot.sku);
+    if (allocation && allocation.lot.lotId === order.localStockLot.lotId) {
+      allocation.remaining = Math.max(0, allocation.remaining - 1);
+    }
+  }
+}
 
 export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }: UseMatchingArgs) {
   const [shopifyItems, setShopifyItems] = useState<ShopifyLineItem[]>([]);
@@ -185,6 +264,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
           stockxChainId: supplierOrder.chainId || null,
           stockxOrderId: supplierOrder.orderId || null,
           stockxOrderNumber: supplierOrderNumber,
+          supplierSource: supplierOrder.supplierSource || undefined,
+          localStockLotId: localStockLotIdFromOrder(supplierOrder),
           stockxProductName: supplierOrder.productName || supplierOrder.productTitle || "",
           stockxSizeEU: supplierOrder.sizeEU || null,
           stockxSkuKey: supplierOrder.skuKey || null,
@@ -305,9 +386,11 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
     const resultsById = new Map<string, MatchResult>();
+    const localStockBySku = await loadAvailableLocalStockBySku(sortedItems);
 
     for (const item of sortedItems) {
-      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+      const localLot = takeLocalStockLot(localStockBySku, item.sku);
+      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers, localLot);
       const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
       if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
       resultsById.set(item.lineItemId, result);
@@ -395,9 +478,12 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
       if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
     }
+    const localStockBySku = await loadAvailableLocalStockBySku(fetchedLineItems);
+    reserveExistingLocalMatches(localStockBySku, matchResults);
 
     const newMatchResults = fetchedLineItems.map((item) => {
-      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers);
+      const localLot = takeLocalStockLot(localStockBySku, item.sku);
+      const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers, localLot);
       const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
       if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
       return result;
@@ -1232,6 +1318,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
             stockxChainId: (resolvedSupplier as any).chainId || null,
             stockxOrderId: (resolvedSupplier as any).orderId || null,
             stockxOrderNumber: supplierOrderNumber,
+            supplierSource: (resolvedSupplier as any).supplierSource || undefined,
+            localStockLotId: localStockLotIdFromOrder(resolvedSupplier as NormalizedSupplierOrder),
             stockxProductName: (resolvedSupplier as any).displayName || resolvedSupplier.productTitle,
             stockxSizeEU: resolvedSupplier.size || resolvedSupplier.sizeEU,
             stockxSkuKey: resolvedSupplier.skuKey,

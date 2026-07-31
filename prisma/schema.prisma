@@ -44,7 +44,28 @@ model ShopifyOrder {
 enum SupplierSource {
   STOCKX
   MANUAL
+  LOCAL
   OTHER
+
+  @@schema("public")
+}
+
+/// Why a physical unit/lot entered owned stock (not the Shopify product type).
+enum LocalStockOrigin {
+  CUSTOMER_RETURN
+  LEGACY_LIQUIDATION
+  VOLUNTARY_PURCHASE
+  ESSENTIALS
+  OTHER
+
+  @@schema("public")
+}
+
+/// How unitCostChf should be treated in P&L when the lot is sold.
+enum LocalStockCostBasis {
+  ACQUISITION
+  ALREADY_EXPENSED
+  UNKNOWN
 
   @@schema("public")
 }
@@ -141,6 +162,13 @@ model OrderMatch {
   manualRevenueAdjustment Decimal? @db.Decimal(10, 2)
   manualNote              String?
 
+  /// When this sale consumed owned local stock (not StockX).
+  localStockLotId String?
+  localStockLot   LocalStockLot? @relation("LocalStockSaleLot", fields: [localStockLotId], references: [id], onDelete: SetNull)
+
+  /// Lots created when this match was returned and kept in warehouse.
+  localStockLotsFromReturn LocalStockLot[] @relation("LocalStockSourceMatch")
+
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -149,6 +177,7 @@ model OrderMatch {
   @@index([stockxOrderNumber])
   @@index([shopifyMetafieldsSynced])
   @@index([stockxPurchaseDate])
+  @@index([localStockLotId])
   @@schema("public")
 }
 
@@ -1268,7 +1297,7 @@ model ShopifyVariantLocationStock {
   locationName     String
   /// 'physical' | 'online'
   sourceType       String
-  /// Lower = sold first. Bussigny=1, Antica=2, THE LAB (Bienne)=3, dropship=99.
+  /// Lower = sold first. Bussigny=1, Antica=2, THE LAB=3, COLD BIEN=4, dropship=99.
   priority         Int      @default(99)
   available        Int      @default(0)
   lastSeenAt       DateTime @default(now())
@@ -1280,6 +1309,49 @@ model ShopifyVariantLocationStock {
   @@index([sku])
   @@index([gtin])
   @@index([sourceType, available])
+  @@schema("public")
+}
+
+/// Owned physical stock with cost + origin. Mirror (`ShopifyVariantLocationStock`)
+/// stays the qty-by-location sync from Shopify; this table is the ledger for
+/// matching/margin (which unit, why it's there, what cost to use on resale).
+/// No separate reservation table: sale matching decrements qtyAvailable in a tx.
+model LocalStockLot {
+  id                        String             @id @default(uuid())
+  shopifyProductId          String?
+  shopifyVariantId          String
+  inventoryItemId           String?
+  sku                       String?
+  gtin                      String?
+  sizeLabel                 String?
+  locationId                String
+  locationName              String
+  origin                    LocalStockOrigin
+  costBasis                 LocalStockCostBasis
+  unitCostChf               Decimal            @db.Decimal(10, 2)
+  currencyCode              String             @default("CHF")
+  qtyInitial                Int
+  qtyAvailable              Int
+  qtySold                   Int                @default(0)
+  /// OPEN | DEPLETED | QUARANTINED
+  status                    String             @default("OPEN")
+  sourceOrderMatchId        String?
+  sourceMarketplaceReturnId String?
+  enteredAt                 DateTime           @default(now())
+  notes                     String?
+  /// Idempotent migration / intake key (e.g. returnMatch:<id>).
+  migrationKey              String?            @unique
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+
+  sourceOrderMatch OrderMatch?  @relation("LocalStockSourceMatch", fields: [sourceOrderMatchId], references: [id], onDelete: SetNull)
+  saleMatches      OrderMatch[] @relation("LocalStockSaleLot")
+
+  @@index([shopifyVariantId, status, qtyAvailable])
+  @@index([sku, qtyAvailable])
+  @@index([gtin, qtyAvailable])
+  @@index([locationId, qtyAvailable])
+  @@index([sourceOrderMatchId])
   @@schema("public")
 }
 

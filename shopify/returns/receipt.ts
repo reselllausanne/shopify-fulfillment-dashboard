@@ -4,7 +4,9 @@ import {
   resolveProcessReturnLineItems,
 } from "@/shopify/returns/returnLineItemsForReceipt";
 import { computeReturnRestockingFeeTotal } from "@/shopify/returns/restockingFee";
+import { applyShopifyReturnToOrderMatches } from "@/shopify/returns/applyReturnToOrderMatch";
 import { restockShopifyReturnOnReceipt } from "@/shopify/returns/restockOnReceipt";
+import { intakeLocalStockLotsFromReturnReceipt } from "@/shopify/localStock/intakeFromReturnReceipt";
 
 /**
  * Issue store credit via returnProcess + refundMethods.storeCreditRefund.
@@ -397,6 +399,45 @@ export async function confirmShopifyReturnReceipt(options: {
     restock = { ok: false, lines: [] };
   }
 
+  let orderMatchApply: Awaited<ReturnType<typeof applyShopifyReturnToOrderMatches>> | null =
+    null;
+  try {
+    orderMatchApply = await applyShopifyReturnToOrderMatches({
+      externalOrderId: row.externalOrderId,
+      lineItems:
+        resolvedLines.lineItemsForStorage.length > 0
+          ? resolvedLines.lineItemsForStorage
+          : ((Array.isArray(raw?.lineItems) ? raw.lineItems : []) as typeof resolvedLines.lineItemsForStorage),
+      returnReasonCode: row.returnReasonCode,
+      marketplaceReturnId: row.id,
+      appliedAt: now,
+    });
+  } catch (error: any) {
+    console.error("[SHOPIFY][RETURN][RECEIPT] OrderMatch return apply failed", {
+      id: row.id,
+      error: error?.message ?? error,
+    });
+    orderMatchApply = null;
+  }
+
+  let localStockIntake:
+    | Awaited<ReturnType<typeof intakeLocalStockLotsFromReturnReceipt>>
+    | null = null;
+  try {
+    localStockIntake = await intakeLocalStockLotsFromReturnReceipt({
+      marketplaceReturnId: row.id,
+      updatedMatchIds: orderMatchApply?.updatedMatchIds ?? [],
+      restockLines: restock?.lines ?? [],
+      now,
+    });
+  } catch (error: any) {
+    console.error("[SHOPIFY][RETURN][RECEIPT] Local stock lot intake failed", {
+      id: row.id,
+      error: error?.message ?? error,
+    });
+    localStockIntake = null;
+  }
+
   await prisma.marketplaceReturn.update({
     where: { id: row.id },
     data: {
@@ -423,6 +464,8 @@ export async function confirmShopifyReturnReceipt(options: {
           currencyCode: creditCurrency,
         },
         restock: restock ?? undefined,
+        orderMatchApply: orderMatchApply ?? undefined,
+        localStockIntake: localStockIntake ?? undefined,
       },
       auditLogJson: pushAudit(row.auditLogJson, {
         at: now.toISOString(),
@@ -436,6 +479,8 @@ export async function confirmShopifyReturnReceipt(options: {
         shopifyStatus: closedStatus || null,
         restockOk: restock?.ok ?? null,
         restockLines: restock?.lines ?? null,
+        orderMatchApply,
+        localStockIntake,
       }),
     },
   });

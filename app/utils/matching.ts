@@ -1,10 +1,15 @@
 import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
-import { isLiquidationProductTitle } from "@/inventory/pricingPolicy";
+import {
+  resolveInStockFixedPrice,
+  isInStockFixedPriceProduct,
+} from "@/shopify/inventory/inStockFixedPrice";
+import type { AvailableLocalStockLot } from "@/shopify/localStock/availableLocalStock";
 
 export interface NormalizedSupplierOrder {
   chainId: string; // StockX long chainId (e.g. "14826275139352606543")
   orderId: string; // StockX orderId (often = orderNumber)
   supplierOrderNumber: string;
+  supplierSource?: "STOCKX" | "MANUAL" | "LOCAL" | "OTHER";
   purchaseDate: string; // ISO
   offerAmount: number | null;
   totalTTC: number | null;
@@ -22,6 +27,7 @@ export interface NormalizedSupplierOrder {
   trackingUrl?: string | null; // ✅ Full tracking URL (from Query B)
   stockxCheckoutType?: string | null;
   stockxStates?: any | null;
+  localStockLot?: AvailableLocalStockLot | null;
 }
 
 export interface ShopifyLineItem {
@@ -57,6 +63,12 @@ export interface ShopifyLineItem {
   expressAvailable?: boolean | null;
   expressPrice?: string | null;
   variantExpressPrice?: string | null;
+  gtin?: string | null;
+  physicalStockQty?: number | null;
+  physicalStockLocation?: string | null;
+  isStorePickup?: boolean;
+  pickupLocation?: string | null;
+  pickupLabel?: string | null;
 }
 
 /** True when Shopify order is fully refunded (not partial — partial refunds stay matchable). */
@@ -65,11 +77,6 @@ export function isShopifyFinancialRefunded(displayFinancialStatus: string | null
   const fin = displayFinancialStatus.toUpperCase();
   if (fin.startsWith("PARTIALLY_REFUNDED")) return false;
   return fin.includes("REFUND");
-}
-
-/** Liquidation: "%" before " - {size}" or at title end — not mid-string (e.g. "100% cotton"). */
-export function isLiquidationShopifyTitle(title: string | null | undefined): boolean {
-  return isLiquidationProductTitle(title);
 }
 
 /** Shopify add-on (Route / Navidium etc.) — not a resell product line. */
@@ -112,91 +119,81 @@ export type InStockEssentialConfig = {
   matchReason: string;
 };
 
-type InStockEssentialRule = InStockEssentialConfig & {
-  skuBases?: string[];
-  titlePatterns?: RegExp[];
-};
-
-const IN_STOCK_ESSENTIAL_RULES: InStockEssentialRule[] = [
-  {
-    costChf: 42,
-    label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (auto 42 CHF)",
-    skuBases: ["192HO246258F", "192HO246250F"],
-  },
-  {
-    costChf: 20,
-    label: "Essential T-Shirt (in stock)",
-    matchReason: "Essential T-Shirt (auto 20 CHF)",
-    skuBases: ["125HO244368F"],
-    titlePatterns: [
-      /Fear of God Essentials.*(Jersey|Crewneck|T-Shirt|Tee)\b/i,
-      /^Essentials Tee\b/i,
-    ],
-  },
-  {
-    costChf: 20,
-    label: "Essential Shorts (in stock)",
-    matchReason: "Essential Shorts (auto 20 CHF)",
-    skuBases: ["160BT212012F", "160BT212013F"],
-    titlePatterns: [/^Essentials Shorts\b/i],
-  },
-];
-
-function normalizeSkuKey(sku: string): string {
-  return sku.trim().toUpperCase();
-}
-
-function skuMatchesBase(sku: string, base: string): boolean {
-  const normalizedSku = normalizeSkuKey(sku);
-  const normalizedBase = normalizeSkuKey(base);
-  return normalizedSku === normalizedBase || normalizedSku.startsWith(`${normalizedBase}-`);
-}
-
-function resolveInStockEssentialRule(
-  sku: string | null | undefined,
-  title?: string | null
-): InStockEssentialRule | null {
-  const normalizedSku = sku?.trim() ?? "";
-  const normalizedTitle = title?.trim() ?? "";
-
-  for (const rule of IN_STOCK_ESSENTIAL_RULES) {
-    if (
-      normalizedSku &&
-      rule.skuBases?.some((base) => skuMatchesBase(normalizedSku, base))
-    ) {
-      return rule;
-    }
-    if (
-      normalizedTitle &&
-      rule.titlePatterns?.some((pattern) => pattern.test(normalizedTitle))
-    ) {
-      return rule;
-    }
-  }
-
-  return null;
-}
-
-/** Fear of God Essentials in-stock lines: auto-link with fixed COGS, skip StockX matching. */
+/** Fixed-price in-stock lane (Essentials / Bape / AP×Travis): auto-link with fixed COGS. */
 export function resolveInStockEssential(
   sku: string | null | undefined,
-  title?: string | null
+  title?: string | null,
+  productId?: string | null
 ): InStockEssentialConfig | null {
-  const rule = resolveInStockEssentialRule(sku, title);
-  if (!rule) return null;
-  return {
-    costChf: rule.costChf,
-    label: rule.label,
-    matchReason: rule.matchReason,
-  };
+  return resolveInStockFixedPrice({ sku, title, productId });
 }
 
 export function isInStockEssentialLine(
   sku: string | null | undefined,
-  title?: string | null
+  title?: string | null,
+  productId?: string | null
 ): boolean {
-  return resolveInStockEssentialRule(sku, title) !== null;
+  return isInStockFixedPriceProduct({ sku, title, productId });
+}
+
+export function localStockMatchCost(lot: AvailableLocalStockLot): number {
+  return lot.costBasis === "ALREADY_EXPENSED" ? 0 : lot.unitCostChf;
+}
+
+export function isLocalStockSupplierOrder(order: NormalizedSupplierOrder | null | undefined): boolean {
+  if (!order) return false;
+  return (
+    order.supplierSource === "LOCAL" ||
+    order.statusKey === "LOCAL_STOCK" ||
+    order.supplierOrderNumber.startsWith("LOCAL-")
+  );
+}
+
+function buildLocalStockMatch(
+  shopifyItem: ShopifyLineItem,
+  localLot: AvailableLocalStockLot
+): MatchResult {
+  const cost = localStockMatchCost(localLot);
+  const supplierOrderNumber = `LOCAL-${localLot.lotId.slice(0, 8)}`;
+  const syntheticSupplier: NormalizedSupplierOrder = {
+    chainId: "",
+    orderId: supplierOrderNumber,
+    supplierOrderNumber,
+    supplierSource: "LOCAL",
+    purchaseDate: localLot.enteredAt || shopifyItem.createdAt,
+    offerAmount: cost,
+    totalTTC: cost,
+    productTitle: shopifyItem.title,
+    skuKey: shopifyItem.sku || localLot.sku,
+    sizeEU: shopifyItem.sizeEU || shopifyItem.variantTitle || null,
+    statusKey: "LOCAL_STOCK",
+    statusTitle: "Local stock",
+    currencyCode: shopifyItem.currencyCode || "CHF",
+    estimatedDeliveryDate: null,
+    latestEstimatedDeliveryDate: null,
+    productVariantId: undefined,
+    awb: null,
+    trackingUrl: null,
+    localStockLot: localLot,
+  };
+  const syntheticMatch: MatchCandidate = {
+    supplierOrder: syntheticSupplier,
+    score: 1000,
+    confidence: "high",
+    reasons: [
+      "Local stock lot available",
+      `FIFO lot ${localLot.lotId}`,
+      `Origin ${localLot.origin}`,
+      `Location ${localLot.locationName}`,
+    ],
+    timeDiffHours: 0,
+    overThreshold: true,
+  };
+  return {
+    shopifyItem,
+    bestMatch: syntheticMatch,
+    allCandidates: [syntheticMatch],
+  };
 }
 
 /** @deprecated Use isInStockEssentialLine() — kept for legacy imports. */
@@ -328,16 +325,12 @@ function buildSizeMatchContext(
 
 function cleanShopifyTitleForMatch(title: string): string {
   return title
-    // Remove liquidation "%" before size suffix: " … % - 38.5"
-    .replace(/\s+%\s*-\s*(EU\s*)?\d+(\.\d+)?\s*$/i, "")
     // Remove trailing numeric size (+ optional Birkenstock width): " - 39N", " - EU 42"
     .replace(/\s*-\s*(EU\s*)?\d+(?:\.\d+)?[NRMW]?\s*$/i, "")
     // Remove trailing composite letter sizes: " - L/XL", " - S/M", " - 2XL/3XL"
     .replace(/\s*-\s*[A-Z0-9]+(?:\/[A-Z0-9]+)+\s*$/i, "")
     // Remove trailing letter size: " - L", " - XL", " - One Size", " - OS"
     .replace(/\s*-\s*(XXS|XS|S|M|L|XL|XXL|XXXL|One Size|OS|EU\s*\d+(\.\d+)?)\s*$/i, "")
-    // Remove trailing liquidation "%": "Nike Dunk 20%"
-    .replace(/\s*%\s*$/i, "")
     .trim();
 }
 
@@ -672,10 +665,17 @@ function isValidCausalOrder(
 export function matchShopifyToSupplier(
   shopifyItem: ShopifyLineItem,
   supplierOrders: NormalizedSupplierOrder[],
-  usedSupplierNumbers: Set<string> = new Set()
+  usedSupplierNumbers: Set<string> = new Set(),
+  localStockLot?: AvailableLocalStockLot | null
 ): MatchResult {
+  if (localStockLot && localStockLot.qtyAvailable > 0) {
+    console.log(
+      `[AUTO] Local stock → lot ${localStockLot.lotId} (SKU ${shopifyItem.sku || "n/a"})`
+    );
+    return buildLocalStockMatch(shopifyItem, localStockLot);
+  }
+
   const inStockEssential = resolveInStockEssential(shopifyItem.sku, shopifyItem.title);
-  const isLiquidation = isLiquidationShopifyTitle(shopifyItem.title);
 
   if (inStockEssential) {
     console.log(
@@ -712,16 +712,6 @@ export function matchShopifyToSupplier(
       shopifyItem,
       bestMatch: syntheticMatch,
       allCandidates: [syntheticMatch],
-    };
-  }
-
-  // Liquidation products: never auto-match, return empty for manual only
-  if (isLiquidation) {
-    console.log(`[SKIP] Liquidation (manual only): ${shopifyItem.title}`);
-    return {
-      shopifyItem,
-      bestMatch: null,
-      allCandidates: [],
     };
   }
 

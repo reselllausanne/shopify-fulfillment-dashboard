@@ -2,22 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   classifyProductPricingKind,
   computeChannelVariantPrice,
-  isLiquidationProductTitle,
   isPlusSizeProduct,
 } from "@/inventory/pricingPolicy";
 
 describe("inventory pricing policy", () => {
-  it("detects liquidation title suffix", () => {
-    expect(isLiquidationProductTitle("Nike Dunk 20%")).toBe(true);
-    expect(isLiquidationProductTitle("Nike 100% cotton tee")).toBe(false);
-    expect(
-      isLiquidationProductTitle("Jordan 4 Retro Vivid Sulfur (Women's) % - 38.5")
-    ).toBe(true);
-    expect(
-      isLiquidationProductTitle("Nike Air Max 95 OG Big Bubble 100% Authentic - 42")
-    ).toBe(false);
-  });
-
   it("detects plus-size from EU sizing", () => {
     expect(
       isPlusSizeProduct({
@@ -27,13 +15,19 @@ describe("inventory pricing policy", () => {
     ).toBe(true);
   });
 
-  it("classifies liquidation before plus-size", () => {
+  it("does not classify titles with % as liquidation", () => {
     expect(
       classifyProductPricingKind({
         title: "Jordan 15%",
         sizeEu: "EU 48",
       })
-    ).toBe("liquidation");
+    ).toBe("plus_size");
+    expect(
+      classifyProductPricingKind({
+        title: "Nike Dunk 20%",
+        sizeEu: "EU 42",
+      })
+    ).toBe("normal");
   });
 
   it("applies plus-size multiplier on Shopify", () => {
