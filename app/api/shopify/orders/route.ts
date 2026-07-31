@@ -4,6 +4,7 @@ import {
   shopifyGraphQL,
   extractEUSize,
   sleepForShopifyQueryCost,
+  type ShopifyGraphQLResult,
 } from "@/lib/shopifyAdmin";
 import { formatInTimeZone } from "date-fns-tz";
 import {
@@ -31,6 +32,17 @@ const SHOPIFY_ORDERS_MAX_FIRST = 100;
 const SHOPIFY_ORDER_HEADERS_ESTIMATED_COST = 140;
 const SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST = 60;
 
+type OrderHeadersGraphQL = {
+  orders: {
+    edges: { node: any }[];
+    pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+  };
+};
+
+type OrderLineItemsGraphQL = {
+  nodes: Array<{ id?: string; lineItems?: any } | null>;
+};
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
@@ -49,16 +61,12 @@ async function fetchShopifyOrderEdges(
 
   while (headerEdges.length < totalWanted && hasNextPage) {
     const pageSize = Math.min(SHOPIFY_ORDERS_PAGE_SIZE, totalWanted - headerEdges.length);
-    const { data, errors, extensions } = await shopifyGraphQL<{
-      orders: {
-        edges: { node: any }[];
-        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
-      };
-    }>(
+    const headersResponse: ShopifyGraphQLResult<OrderHeadersGraphQL> = await shopifyGraphQL<OrderHeadersGraphQL>(
       ORDER_HEADERS_QUERY,
       { first: pageSize, after, orderQuery },
       { estimatedQueryCost: SHOPIFY_ORDER_HEADERS_ESTIMATED_COST }
     );
+    const { data, errors, extensions } = headersResponse;
 
     if (errors?.length) {
       return { edges: headerEdges, errors };
@@ -81,13 +89,13 @@ async function fetchShopifyOrderEdges(
   const lineItemsByOrderId = new Map<string, any>();
 
   for (const idBatch of chunkArray(orderIds, SHOPIFY_ORDERS_LINE_ITEMS_BATCH)) {
-    const { data, errors, extensions } = await shopifyGraphQL<{
-      nodes: Array<{ id?: string; lineItems?: any } | null>;
-    }>(
-      ORDER_LINE_ITEMS_BY_IDS_QUERY,
-      { ids: idBatch },
-      { estimatedQueryCost: SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST }
-    );
+    const lineItemsResponse: ShopifyGraphQLResult<OrderLineItemsGraphQL> =
+      await shopifyGraphQL<OrderLineItemsGraphQL>(
+        ORDER_LINE_ITEMS_BY_IDS_QUERY,
+        { ids: idBatch },
+        { estimatedQueryCost: SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST }
+      );
+    const { data, errors, extensions } = lineItemsResponse;
 
     if (errors?.length) {
       return { edges: trimmedHeaders, errors };
