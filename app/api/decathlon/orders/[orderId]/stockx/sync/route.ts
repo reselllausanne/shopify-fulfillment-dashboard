@@ -11,6 +11,7 @@ import {
   GALAXUS_STOCKX_TOKEN_FILE,
   readGalaxusStockxToken,
 } from "@/lib/stockxGalaxusAuth";
+import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import {
   buildDecathlonStxLineTargets,
   getDecathlonStxLinkStatusForOrder,
@@ -57,6 +58,10 @@ export async function POST(
     if (!order) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
+
+    await repairDecathlonStockxMatchLineRefs(order.id).catch((err) => {
+      console.warn("[DECATHLON][STX][SYNC] match line ref repair skipped:", err?.message ?? err);
+    });
 
     // Same StockX account + token files as Galaxus direct-delivery.
     const token = await readGalaxusStockxToken();

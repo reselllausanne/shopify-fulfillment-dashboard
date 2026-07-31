@@ -4,6 +4,12 @@ import { isInStockEssentialLine, isLiquidationShopifyTitle } from "@/app/utils/m
 
 export const runtime = "nodejs";
 
+const MISSING_TRACKING_CACHE_MS = Math.max(
+  30_000,
+  Number(process.env.MISSING_TRACKING_CACHE_MS ?? "90000")
+);
+let missingTrackingCache: { at: number; body: Record<string, unknown> } | null = null;
+
 type TrackingItem = {
   id: string;
   shopifyOrderId: string;
@@ -30,9 +36,15 @@ const isExcludedNoTracking = (sku: string | null, title: string) => {
 
 export async function GET() {
   try {
+    const now = Date.now();
+    if (missingTrackingCache && now - missingTrackingCache.at < MISSING_TRACKING_CACHE_MS) {
+      return NextResponse.json(missingTrackingCache.body);
+    }
+
     const items = await prisma.orderMatch.findMany({
       where: {
         OR: [{ stockxTrackingUrl: null }, { stockxTrackingUrl: "" }],
+        shopifyCreatedAt: { gte: CUTOFF_DATE },
       },
       orderBy: { shopifyCreatedAt: "desc" },
       take: 100,
@@ -110,7 +122,7 @@ export async function GET() {
       return i.isOverdue || i.isDueSoon || i.isOlderThan9;
     });
 
-    return NextResponse.json({
+    const body = {
       ok: true,
       count: normalized.length,
       goatCount: goatItems.length,
@@ -120,7 +132,10 @@ export async function GET() {
       goatItems,
       criticalItems,
       warningItems,
-    });
+      cachedAt: new Date().toISOString(),
+    };
+    missingTrackingCache = { at: now, body };
+    return NextResponse.json(body);
   } catch (error: any) {
     console.error("[MISSING_TRACKING] Failed:", error);
     return NextResponse.json(

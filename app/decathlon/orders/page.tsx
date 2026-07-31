@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
+import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import {
   decathlonLinePayoutPreferMirakl,
@@ -105,29 +106,32 @@ export default function DecathlonOrdersPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch("/api/decathlon/partner-shipped-fees", { cache: "no-store" });
-        const data = await res.json();
-        if (cancelled) return;
-        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load partner fee stats");
-        setPartnerFeeStats({
-          spreadChf: Number(data.spreadChf ?? 0),
-          decathlonShippedChf: Number(data.decathlonShippedChf ?? 0),
-          partnerCatalogChf: Number(data.partnerCatalogChf ?? 0),
-          shippedLineCount: Number(data.shippedLineCount ?? 0),
-          currency: String(data.currency ?? "CHF"),
-        });
-        setPartnerFeeStatsErr(null);
-      } catch (e: any) {
-        if (!cancelled) {
-          setPartnerFeeStats(null);
-          setPartnerFeeStatsErr(e?.message ?? "Failed to load");
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch("/api/decathlon/partner-shipped-fees", { cache: "no-store" });
+          const data = await res.json();
+          if (cancelled) return;
+          if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load partner fee stats");
+          setPartnerFeeStats({
+            spreadChf: Number(data.spreadChf ?? 0),
+            decathlonShippedChf: Number(data.decathlonShippedChf ?? 0),
+            partnerCatalogChf: Number(data.partnerCatalogChf ?? 0),
+            shippedLineCount: Number(data.shippedLineCount ?? 0),
+            currency: String(data.currency ?? "CHF"),
+          });
+          setPartnerFeeStatsErr(null);
+        } catch (e: any) {
+          if (!cancelled) {
+            setPartnerFeeStats(null);
+            setPartnerFeeStatsErr(e?.message ?? "Failed to load");
+          }
         }
-      }
-    })();
+      })();
+    }, 3000);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, []);
 
@@ -182,7 +186,7 @@ export default function DecathlonOrdersPage() {
         items.push(...batch);
         lastBatch = batch.length;
         offset += limit;
-      } while (lastBatch === limit && offset < 2000);
+      } while (lastBatch === limit && offset < 600);
       const fresh = new Set<string>();
       for (const item of items) {
         if (!knownOrderIds.current.has(item.id)) {
@@ -482,8 +486,12 @@ export default function DecathlonOrdersPage() {
   };
 
   useEffect(() => {
+    if (leftTab === "returns") {
+      void loadReturns();
+      return;
+    }
     void loadOrders();
-  }, [loadOrders]);
+  }, [leftTab, loadOrders, loadReturns]);
 
   useEffect(() => {
     loadPartners();
@@ -495,10 +503,6 @@ export default function DecathlonOrdersPage() {
       setEditingAddress(false);
     }
   }, [selectedOrder?.id]);
-
-  useEffect(() => {
-    void loadReturns();
-  }, [loadReturns]);
 
   useEffect(() => {
     if (selectedOrderId) {
@@ -1538,6 +1542,7 @@ export default function DecathlonOrdersPage() {
                   const stockHintLabel = primaryStockHint
                     ? `In stock: ${primaryStockHint.partnerKey.toUpperCase()} (${primaryStockHint.stock})`
                     : null;
+                  const physicalStock = line.physicalStock ?? null;
                   const linkedToneClass =
                     partnerLine && !lineOk
                       ? "text-green-700"
@@ -1566,7 +1571,9 @@ export default function DecathlonOrdersPage() {
                             ? "border-blue-500 bg-blue-50/70 ring-1 ring-blue-200"
                             : lineOk
                               ? "border-green-400 bg-green-50/40"
-                              : "border-gray-200"
+                              : physicalStock
+                                ? "border-green-400 bg-green-50/30"
+                                : "border-gray-200"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -1589,6 +1596,10 @@ export default function DecathlonOrdersPage() {
                             ) : (
                               <span className="text-gray-300">○</span>
                             )}
+                            <PhysicalStockBadge
+                              physicalStock={physicalStock}
+                              avoidStockxHint={!lineOk}
+                            />
                             {buildLineTitle(line)}
                           </div>
                           <div className="text-gray-500 text-[11px] leading-snug flex flex-wrap gap-x-3 gap-y-0.5">
@@ -1631,7 +1642,12 @@ export default function DecathlonOrdersPage() {
                               <div className="text-gray-400 text-[10px]">{catalogSyncHint}</div>
                             ) : null}
                           </div>
-                          {stockHintLabel ? (
+                          {physicalStock ? (
+                            <PhysicalStockHintText
+                              physicalStock={physicalStock}
+                              avoidStockxHint={!lineOk}
+                            />
+                          ) : stockHintLabel ? (
                             <div className="text-[11px] text-amber-700">
                               {stockHintLabel} · avoid StockX buy
                             </div>

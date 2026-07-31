@@ -14,8 +14,11 @@ import {
 
 export const runtime = "nodejs";
 
+const UNLINKED_CACHE_MS = Math.max(30_000, Number(process.env.UNLINKED_ORDERS_CACHE_MS ?? "90000"));
+let unlinkedOrdersCache: { at: number; body: Record<string, unknown> } | null = null;
+
 const SHOP_TIMEZONE = "Europe/Zurich";
-const ORDER_LIMIT = 50;
+const ORDER_LIMIT = 30;
 
 const RECENT_ORDERS_QUERY = /* GraphQL */ `
 query RecentOrdersForUnlinked($first: Int!) {
@@ -28,7 +31,7 @@ query RecentOrdersForUnlinked($first: Int!) {
         cancelledAt
         displayFinancialStatus
         displayFulfillmentStatus
-        lineItems(first: 50) {
+        lineItems(first: 20) {
           edges {
             node {
               id
@@ -58,6 +61,11 @@ function isExcludedLine(sku: string | null, title: string) {
 
 export async function GET() {
   try {
+    const now = Date.now();
+    if (unlinkedOrdersCache && now - unlinkedOrdersCache.at < UNLINKED_CACHE_MS) {
+      return NextResponse.json(unlinkedOrdersCache.body);
+    }
+
     const { data, errors } = await shopifyGraphQL<{
       orders: { edges: { node: any }[] };
     }>(RECENT_ORDERS_QUERY, { first: ORDER_LIMIT });
@@ -146,12 +154,15 @@ export async function GET() {
         return bMs - aMs;
       });
 
-    return NextResponse.json({
+    const body = {
       ok: true,
       count: items.length,
       orderLimit: ORDER_LIMIT,
       items,
-    });
+      cachedAt: new Date().toISOString(),
+    };
+    unlinkedOrdersCache = { at: now, body };
+    return NextResponse.json(body);
   } catch (error: any) {
     console.error("[UNLINKED_ORDERS] Failed:", error);
     return NextResponse.json(

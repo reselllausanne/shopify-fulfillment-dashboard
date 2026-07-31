@@ -11,6 +11,7 @@ import {
   canPartnerAccessDecathlonOrder,
   isDecathlonPartnerFulfillmentLine,
 } from "@/decathlon/orders/partnerLineScope";
+import { repairDecathlonStockxMatchLineRefs } from "@/decathlon/orders/stockxMatchRepair";
 import {
   buildStockxOrderClaimIndex,
   findStockxOrderClaim,
@@ -231,6 +232,10 @@ export async function POST(
       where: { decathlonOrderLineId: line.id },
       update: payload,
       create: payload,
+    });
+
+    await repairDecathlonStockxMatchLineRefs(order.id).catch((err) => {
+      console.warn("[DECATHLON][STX][MANUAL] match line ref repair skipped:", err?.message ?? err);
     });
 
     return NextResponse.json({ ok: true, match, stockxEnrich });

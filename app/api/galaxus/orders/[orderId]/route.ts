@@ -193,7 +193,8 @@ export async function GET(
         ? await loadGalaxusOrderShipments(order.id, viewFull || isDirectDelivery)
         : [];
 
-    const repaired = await repairOrderAddressesFromLatestOrdp(order).catch(() => null);
+    const repaired =
+      viewFull ? await repairOrderAddressesFromLatestOrdp(order).catch(() => null) : null;
     const orderRow = repaired?.updated
       ? ({
           ...(order as any),

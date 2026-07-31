@@ -97,15 +97,21 @@ export async function GET(request: NextRequest) {
         shipments: { select: { shippedAt: true, lines: { select: { orderLineId: true, quantity: true } } } },
       },
     });
+    const lineIds = orders.flatMap((order: { lines?: { id: string }[] }) =>
+      (order.lines ?? []).map((line) => line.id)
+    );
     const [matchRows, partnerRows] = await Promise.all([
-      prismaAny.decathlonStockxMatch.findMany({
-        select: {
-          decathlonOrderLineId: true,
-          stockxOrderNumber: true,
-          stockxOrderId: true,
-          stockxChainId: true,
-        },
-      }),
+      lineIds.length > 0
+        ? prismaAny.decathlonStockxMatch.findMany({
+            where: { decathlonOrderLineId: { in: lineIds } },
+            select: {
+              decathlonOrderLineId: true,
+              stockxOrderNumber: true,
+              stockxOrderId: true,
+              stockxChainId: true,
+            },
+          })
+        : Promise.resolve([]),
       prismaAny.partner.findMany({
         where: { active: true },
         select: { key: true },
