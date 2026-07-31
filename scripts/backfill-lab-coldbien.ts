@@ -14,6 +14,8 @@ import { shopifyGraphQL } from "../lib/shopifyAdmin";
 import { LOCATIONS, type LocationConfig } from "../shopify/inventory/locationConfig";
 import { upsertLocationStockRow } from "../shopify/inventory/locationMirror";
 import { convergeVariant } from "../shopify/inventory/convergence";
+import { findShopifyVariantByGtin } from "../shopify/restock/shopifyRestockInventory";
+import { applyLiquidationSaleDisplay } from "../shopify/restock/liquidationPricing";
 
 const LEVELS_QUERY = /* GraphQL */ `
 query BackfillLocLevels($loc: ID!, $cur: String, $n: Int!) {
@@ -66,6 +68,7 @@ async function syncLocationFast(location: LocationConfig): Promise<{
   let cursor: string | null = null;
   let pages = 0;
   const maxPages = 6000;
+  let throttleRetries = 0;
 
   while (pages < maxPages) {
     const { data, errors } = await shopifyGraphQL<{
@@ -85,6 +88,23 @@ async function syncLocationFast(location: LocationConfig): Promise<{
         };
       } | null;
     }>(LEVELS_QUERY, { loc: location.id, cur: cursor, n: 100 });
+
+    const throttled = errors?.some(
+      (e) =>
+        e?.extensions?.code === "THROTTLED" ||
+        /throttl/i.test(e?.message ?? "")
+    );
+    if (throttled) {
+      throttleRetries += 1;
+      if (throttleRetries > 15) {
+        throw new Error(`${location.name}: throttled repeatedly; giving up`);
+      }
+      const waitMs = Math.min(2000 * throttleRetries, 15000);
+      console.log(`  ${location.name}: throttled, retry in ${waitMs}ms (${throttleRetries}/15)`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+    throttleRetries = 0;
 
     if (errors?.length) throw new Error(`${location.name}: ${errors.map((e) => e.message).join("; ")}`);
 
@@ -110,7 +130,7 @@ async function syncLocationFast(location: LocationConfig): Promise<{
       if (pages % 20 === 0) {
         console.log(`  ${location.name}: page ${pages}, stocked so far ${rows.length}`);
       }
-      await new Promise((r) => setTimeout(r, 80));
+      await new Promise((r) => setTimeout(r, 700));
     } else {
       break;
     }
@@ -151,7 +171,25 @@ async function main() {
 
   for (const [i, gtin] of gtinList.entries()) {
     try {
-      const res = await convergeVariant(gtin);
+      const { match } = await findShopifyVariantByGtin(gtin);
+      if (match) {
+        const liq = await applyLiquidationSaleDisplay({
+          gtin,
+          variant: match,
+          slug: match.productHandle,
+          sizeEu: match.variantTitle,
+        });
+        if (liq.applied) {
+          console.log(
+            `[${i + 1}/${gtinList.length}] ${gtin} liquidation price=${liq.salePrice?.toFixed(2)} compareAt=${liq.referencePrice?.toFixed(2)}`
+          );
+        } else if (liq.warnings.length) {
+          console.log(`[${i + 1}/${gtinList.length}] ${gtin} liquidation skip: ${liq.warnings.join(" | ")}`);
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      const res = await convergeVariant(gtin, { postPhysicalRestock: true });
       ok += 1;
       if (res.changed) changed += 1;
       console.log(
