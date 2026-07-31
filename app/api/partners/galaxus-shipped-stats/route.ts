@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
-import { createPartnerKeyedCache } from "@/app/lib/partnerStatsCache";
+import { createPartnerKeyedCache, getPartnerStatsWithRevalidate } from "@/app/lib/partnerStatsCache";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { computeGalaxusPartnerFulfilledOrderStats } from "@/galaxus/partners/galaxusPartnerFulfilledTotals";
 
@@ -16,19 +16,16 @@ export async function GET(req: NextRequest) {
     const key = normalizeProviderKey(session.partnerKey);
     if (!key) return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
 
-    const cached = statsCache.get(key);
-    if (cached) return NextResponse.json(cached);
-
-    const data = await computeGalaxusPartnerFulfilledOrderStats(key);
-
-    const body = {
-      ok: true,
-      currency: data.currency,
-      totalSaleFeedChf: data.totalChf,
-      fulfilledOrderCount: data.fulfilledOrderCount,
-      fulfilledPartnerLineUnits: data.fulfilledPartnerLineUnits,
-    };
-    statsCache.set(key, body);
+    const { body } = await getPartnerStatsWithRevalidate(statsCache, key, async () => {
+      const data = await computeGalaxusPartnerFulfilledOrderStats(key);
+      return {
+        ok: true,
+        currency: data.currency,
+        totalSaleFeedChf: data.totalChf,
+        fulfilledOrderCount: data.fulfilledOrderCount,
+        fulfilledPartnerLineUnits: data.fulfilledPartnerLineUnits,
+      };
+    });
     return NextResponse.json(body);
   } catch (error: any) {
     return NextResponse.json(

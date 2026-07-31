@@ -23,6 +23,9 @@ import {
   GALAXUS_SUPPLIER_WEBSITE,
 } from "@/galaxus/config";
 
+/** Pool is tight (Supabase pgbouncer); give writes time to acquire a slot. */
+const WAREHOUSE_TX_OPTIONS = { maxWait: 30_000, timeout: 120_000 };
+
 type CreateShipmentsOptions = {
   orderId: string;
   maxPairsPerParcel?: number;
@@ -157,7 +160,7 @@ export async function createShipmentsForOrder(options: CreateShipmentsOptions): 
         });
 
         return shipment;
-      });
+      }, WAREHOUSE_TX_OPTIONS);
 
       let shipmentForList = created;
       const shouldGenerateDeliveryNote = !isDirectDelivery || requiresPhysicalDeliveryNote;
@@ -264,7 +267,7 @@ export async function createManualShipmentsForOrder(
       await tx.shipmentItem.deleteMany({ where: { shipmentId: { in: purgeIds } } });
       await tx.document.deleteMany({ where: { shipmentId: { in: purgeIds } } });
       await tx.shipment.deleteMany({ where: { id: { in: purgeIds } } });
-    });
+    }, WAREHOUSE_TX_OPTIONS);
   }
   const lineById = new Map<string, any>(orderAny.lines.map((line: any) => [line.id, line]));
   const totalsByLine = new Map<string, number>();
@@ -410,7 +413,7 @@ export async function createManualShipmentsForOrder(
       });
 
       return shipment;
-    });
+    }, WAREHOUSE_TX_OPTIONS);
 
     const deliveryNoteData = buildDeliveryNoteData(
       orderAny,
@@ -810,7 +813,7 @@ export async function createCompositeWarehouseShipment(
       await tx.shipmentItem.deleteMany({ where: { shipmentId: { in: purgeIds } } });
       await tx.document.deleteMany({ where: { shipmentId: { in: purgeIds } } });
       await tx.shipment.deleteMany({ where: { id: { in: purgeIds } } });
-    });
+    }, WAREHOUSE_TX_OPTIONS);
   }
 
   const shippedAt = options.shippedAt ?? null;
@@ -855,7 +858,7 @@ export async function createCompositeWarehouseShipment(
     });
 
     return shipment;
-  });
+  }, WAREHOUSE_TX_OPTIONS);
 
   const compositeDeliveryData = buildCompositeDeliveryNoteData(
     anchor,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPartnerSession } from "@/app/lib/partnerAuth";
-import { createPartnerKeyedCache } from "@/app/lib/partnerStatsCache";
+import { createPartnerKeyedCache, getPartnerStatsWithRevalidate } from "@/app/lib/partnerStatsCache";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { countPartnerSwissPostLabels } from "@/galaxus/partners/partnerSwissPostLabelStats";
 
@@ -17,12 +17,10 @@ export async function GET(req: NextRequest) {
     const key = normalizeProviderKey(session.partnerKey);
     if (!key) return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
 
-    const cached = statsCache.get(key);
-    if (cached) return NextResponse.json(cached);
-
-    const postLabelCount = await countPartnerSwissPostLabels(key);
-    const body = { ok: true, postLabelCount };
-    statsCache.set(key, body);
+    const { body } = await getPartnerStatsWithRevalidate(statsCache, key, async () => ({
+      ok: true,
+      postLabelCount: await countPartnerSwissPostLabels(key),
+    }));
     return NextResponse.json(body);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to load label stats";
