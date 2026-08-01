@@ -1,7 +1,5 @@
 import type { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import type { ShopifyDeliveryMode } from "@/app/lib/shopifyLineItemDelivery";
-import { isLiquidationProductTitle } from "@/inventory/pricingPolicy";
-
 export const SWISS_POST_SIGNATURE_MIN_ORDER_CHF = 450;
 
 type OrderShippingInfo = NonNullable<Awaited<ReturnType<typeof fetchOrderShippingInfo>>>;
@@ -64,15 +62,6 @@ export function resolveSwissPostPrzl(input: {
     baseProduct,
     reason: parts.join(" + "),
   };
-}
-
-/** True when every title is a liquidation marker (`… 20%` / `… % - 42`). */
-export function shouldSkipSwissPostLabelForLiquidation(
-  titles: Array<string | null | undefined>
-): boolean {
-  const cleaned = titles.map((t) => String(t ?? "").trim()).filter(Boolean);
-  if (cleaned.length === 0) return false;
-  return cleaned.every((title) => isLiquidationProductTitle(title));
 }
 
 function deliveryModeFromShippingLineTitle(

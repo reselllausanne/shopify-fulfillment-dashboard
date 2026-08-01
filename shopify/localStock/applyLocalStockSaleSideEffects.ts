@@ -24,7 +24,7 @@ export type ApplyLocalStockSaleResult = {
   skipReason?: string;
 };
 
-function resolveLocationConfig(consumed: ConsumeLocalStockResult): LocationConfig | null {
+function resolveLocationConfig(consumed: ConsumeLocalStockResult): LocationConfig {
   return (
     getLocationConfig(consumed.locationId) ?? {
       id: consumed.locationId,

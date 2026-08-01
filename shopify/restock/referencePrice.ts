@@ -3,7 +3,6 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import {
   deriveStockxRawAskFromStoredBuyPrice,
 } from "@/galaxus/pricing/suggestedSellPrice";
-import { isLiquidationProductTitle } from "@/inventory/pricingPolicy";
 import { searchProductVariants } from "@/shopify/catalog/graphql";
 import { ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
 import { calcShopifySellPrice } from "@/shopify/pricing/calcShopifySellPrice";
@@ -152,7 +151,7 @@ export async function resolveReferenceBuyNowPrice(input: {
       if (locked && detail.compareAtPrice != null) {
         return detail.compareAtPrice;
       }
-      if (!isLiquidationProductTitle(detail.productTitle)) {
+      if (!locked) {
         const sell = normalShopifySellPrice(detail);
         if (sell) return sell;
       }
@@ -183,7 +182,6 @@ async function findShopifyNormalSellPriceBySku(
 
     const detail = await getShopifyVariantDetail(row.variantId);
     if (!detail) continue;
-    if (isLiquidationProductTitle(detail.productTitle)) continue;
 
     const priceLocked = await readShopifyPriceLocked(row.variantId);
     if (priceLocked) continue;

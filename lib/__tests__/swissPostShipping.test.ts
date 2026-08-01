@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  pickLineDeliveryMode,
-  resolveSwissPostPrzl,
-  shouldSkipSwissPostLabelForLiquidation,
-} from "@/lib/swissPostShipping";
+import { pickLineDeliveryMode, resolveSwissPostPrzl } from "@/lib/swissPostShipping";
 
 function orderInfo(input: {
   gateways?: string[];
@@ -89,17 +85,5 @@ describe("pickLineDeliveryMode", () => {
       ],
     } as any;
     expect(pickLineDeliveryMode(order, ["1"])).toBe("express");
-  });
-});
-
-describe("shouldSkipSwissPostLabelForLiquidation", () => {
-  it("skips when all titles are liquidation", () => {
-    expect(shouldSkipSwissPostLabelForLiquidation(["Nike Dunk 20%"])).toBe(true);
-    expect(shouldSkipSwissPostLabelForLiquidation(["Jordan % - 42"])).toBe(true);
-  });
-
-  it("does not skip normal titles", () => {
-    expect(shouldSkipSwissPostLabelForLiquidation(["Nike Air Max Plus"])).toBe(false);
-    expect(shouldSkipSwissPostLabelForLiquidation(["100% cotton tee"])).toBe(false);
   });
 });
