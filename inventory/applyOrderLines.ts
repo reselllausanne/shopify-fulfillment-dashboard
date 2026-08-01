@@ -234,6 +234,7 @@ export async function applyInventoryOrderLine(
         void refreshAfterShopifySale(gtin, {
           forceMarketPrice: true,
           skipInventoryDecrement: true,
+          skipDropshipRelist: true,
         })
           .then(() => schedulePostSaleMarketplacePricePush())
           .catch((err: any) => {

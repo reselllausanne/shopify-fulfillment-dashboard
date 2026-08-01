@@ -229,7 +229,7 @@ query RestockInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
   inventoryItem(id: $inventoryItemId) {
     id
     inventoryLevel(locationId: $locationId) {
-      quantities(names: ["available"]) {
+      quantities(names: ["available", "committed"]) {
         name
         quantity
       }
@@ -238,11 +238,19 @@ query RestockInventoryLevel($inventoryItemId: ID!, $locationId: ID!) {
 }
 `;
 
-/** Current `available` quantity for an inventory item at a location (null if not stocked). */
-export async function getInventoryAvailableAtLocation(input: {
+function quantityFromLevel(
+  level: { quantities: Array<{ name: string; quantity: number }> } | null | undefined,
+  name: string
+): number | null {
+  if (!level) return null;
+  const row = level.quantities.find((q) => q.name === name);
+  return row ? row.quantity : null;
+}
+
+async function loadInventoryLevelQuantities(input: {
   inventoryItemId: string;
   locationId: string;
-}): Promise<number | null> {
+}): Promise<{ available: number | null; committed: number | null }> {
   const { data, errors } = await shopifyGraphQL<{
     inventoryItem: {
       inventoryLevel: {
@@ -257,9 +265,28 @@ export async function getInventoryAvailableAtLocation(input: {
     throw new Error(`Shopify inventory level failed: ${errors.map((e) => e.message).join("; ")}`);
   }
   const level = data?.inventoryItem?.inventoryLevel;
-  if (!level) return null;
-  const available = level.quantities.find((q) => q.name === "available");
-  return available ? available.quantity : null;
+  return {
+    available: quantityFromLevel(level, "available"),
+    committed: quantityFromLevel(level, "committed"),
+  };
+}
+
+/** Current `available` quantity for an inventory item at a location (null if not stocked). */
+export async function getInventoryAvailableAtLocation(input: {
+  inventoryItemId: string;
+  locationId: string;
+}): Promise<number | null> {
+  const { available } = await loadInventoryLevelQuantities(input);
+  return available;
+}
+
+/** Units reserved by unfulfilled order lines at this location. */
+export async function getInventoryCommittedAtLocation(input: {
+  inventoryItemId: string;
+  locationId: string;
+}): Promise<number> {
+  const { committed } = await loadInventoryLevelQuantities(input);
+  return Math.max(0, committed ?? 0);
 }
 
 export type ShopifyVariantDetail = {
@@ -397,6 +424,18 @@ export async function adjustInventoryAtLocation(input: {
 }): Promise<void> {
   const delta = Math.trunc(input.delta);
   if (delta === 0) return;
+
+  if (delta > 0) {
+    const committed = await getInventoryCommittedAtLocation({
+      inventoryItemId: input.inventoryItemId,
+      locationId: input.locationId,
+    });
+    if (committed > 0) {
+      throw new Error(
+        `Refusing +${delta} at location: ${committed} unit(s) committed on unfulfilled order(s) (would double-count on hand)`
+      );
+    }
+  }
 
   let attempt = 0;
   let lastError: Error | null = null;

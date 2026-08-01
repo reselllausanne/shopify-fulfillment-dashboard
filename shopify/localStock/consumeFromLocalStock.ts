@@ -11,6 +11,10 @@ export type ConsumeLocalStockInput = {
 
 export type ConsumeLocalStockResult = {
   lotId: string;
+  shopifyVariantId: string;
+  inventoryItemId: string | null;
+  sku: string | null;
+  gtin: string | null;
   unitCostChf: number;
   costBasis: string;
   origin: string;
@@ -90,6 +94,9 @@ export async function tryConsumeLocalStockLot(
       where: { id: lot.id },
       select: {
         id: true,
+        shopifyVariantId: true,
+        inventoryItemId: true,
+        gtin: true,
         unitCostChf: true,
         costBasis: true,
         origin: true,
@@ -139,6 +146,10 @@ export async function tryConsumeLocalStockLot(
 
     return {
       lotId: after.id,
+      shopifyVariantId: after.shopifyVariantId,
+      inventoryItemId: after.inventoryItemId,
+      sku: after.sku,
+      gtin: after.gtin,
       unitCostChf: unitCost,
       costBasis: String(after.costBasis),
       origin: String(after.origin),

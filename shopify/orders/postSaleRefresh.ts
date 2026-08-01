@@ -27,6 +27,8 @@ export type PostSaleRefreshOptions = {
   variantId?: string | null;
   /** Stock already decremented (marketplace physical route) — skip web decrement. */
   skipInventoryDecrement?: boolean;
+  /** Local physical sale — skip main.py dropship relist (convergence only). */
+  skipDropshipRelist?: boolean;
   /** Any channel sale — unlock liquidation + refresh market price (never re-lock same pass). */
   forceMarketPrice?: boolean;
 };
@@ -78,6 +80,9 @@ export async function refreshAfterShopifySale(
   }
 
   const soldQty = Math.max(0, Math.trunc(options.soldQty ?? 0));
+  const skipDropshipRelist =
+    Boolean(options.skipDropshipRelist) ||
+    (Boolean(options.skipInventoryDecrement) && soldQty > 0);
   // Shopify already commits inventory on orders/paid — mirror only; do not pre-decrement
   // (a second decrement removed the remaining liquidation-lane unit).
 
@@ -143,6 +148,8 @@ export async function refreshAfterShopifySale(
     };
   } else if (stillLiquidation) {
     shopifyRefresh = { ok: true, action: "skipped_liquidation", error: null };
+  } else if (skipDropshipRelist) {
+    shopifyRefresh = { ok: true, action: "skipped_local_physical_sale", error: null };
   } else {
     // Full variant recreate from live KickDB: market price, Chemin qty (0 when no ask).
     const refresh = await createProductFullFlow(cleanGtin);

@@ -6,7 +6,6 @@ import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
 import { detectMilestone } from "@/app/lib/stockxStatus";
 import { getMailer } from "@/app/lib/mailer";
 import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
-import { tryConsumeLocalStockLot } from "@/shopify/localStock/consumeFromLocalStock";
 
 const TIMEZONE = "Europe/Zurich";
 // Auto-send is disabled by default; only manual send should deliver emails.
@@ -299,7 +298,7 @@ export async function POST(req: Request) {
       !String(stockxOrderNumber).startsWith("ESS-") &&
       !String(stockxOrderNumber).startsWith("LOCAL-");
 
-    let localStockLotId: string | null = null;
+    let localStockLotId: string | null = requestedLocalStockLotId || null;
     let localStockStatus: string | null = null;
     let resolvedSupplierCost = supplierCost ?? 0;
     let resolvedMarginAmount = marginAmount ?? 0;
@@ -307,33 +306,9 @@ export async function POST(req: Request) {
     let resolvedManualCostOverride = manualCostOverride || null;
     let resolvedManualNote: string | null = null;
 
-    // New matches only: consume OPEN local lot (FIFO) when not a real StockX buy.
-    // Replaces fragile SKU-only resell absorb when a LocalStockLot exists.
-    if (!existingMatch && !looksLikeRealStockx && shopifySku) {
-      try {
-        const consumed = await tryConsumeLocalStockLot({
-          shopifySku,
-          lotId: requestedLocalStockLotId || undefined,
-          revenue: Number(shopifyTotalPrice) || 0,
-        });
-        if (consumed) {
-          localStockLotId = consumed.lotId;
-          localStockStatus = consumed.stockxStatus;
-          finalSupplierSource = consumed.supplierSource;
-          isLocalSupplier = true;
-          isManualSupplier = false;
-          resolvedSupplierCost = consumed.supplierCost;
-          resolvedManualCostOverride = consumed.manualCostOverride;
-          resolvedMarginAmount = consumed.marginAmount;
-          resolvedMarginPercent = consumed.marginPercent;
-          resolvedManualNote = consumed.manualNote;
-          console.log(
-            `[DB] Local stock consumed: ${shopifyOrderName} ${shopifySku} ← lot ${consumed.lotId}`
-          );
-        }
-      } catch (error: any) {
-        console.error("[DB] Local stock consume failed:", error?.message ?? error);
-      }
+    // Local stock ops (consume, Shopify decrement, price/feeds) run on orders/paid — save-match is ledger/UI only.
+    if (isLocalSupplier) {
+      localStockStatus = "LOCAL_STOCK";
     }
     
     if (!isManualCostEntry && !isManualSupplier && !isLocalSupplier && !stockxOrderNumber) {

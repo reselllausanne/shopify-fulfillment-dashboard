@@ -247,6 +247,7 @@ describe("applyInventoryOrderLine", () => {
     expect(refreshAfterShopifySale).toHaveBeenCalledWith("456", {
       forceMarketPrice: true,
       skipInventoryDecrement: true,
+      skipDropshipRelist: true,
     });
   });
 });

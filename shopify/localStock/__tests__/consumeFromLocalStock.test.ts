@@ -38,6 +38,9 @@ describe("tryConsumeLocalStockLot", () => {
     txMock.localStockLot.updateMany.mockResolvedValue({ count: 1 });
     txMock.localStockLot.findUnique.mockResolvedValue({
       id: "lot-1",
+      shopifyVariantId: "gid://shopify/ProductVariant/1",
+      inventoryItemId: "gid://shopify/InventoryItem/1",
+      gtin: "195021206798",
       unitCostChf: 120,
       costBasis: "ALREADY_EXPENSED",
       origin: "CUSTOMER_RETURN",
@@ -63,6 +66,9 @@ describe("tryConsumeLocalStockLot", () => {
 
     expect(result).toMatchObject({
       lotId: "lot-1",
+      shopifyVariantId: "gid://shopify/ProductVariant/1",
+      inventoryItemId: "gid://shopify/InventoryItem/1",
+      gtin: "195021206798",
       supplierSource: "LOCAL",
       stockxStatus: "LOCAL_STOCK",
       unitCostChf: 120,

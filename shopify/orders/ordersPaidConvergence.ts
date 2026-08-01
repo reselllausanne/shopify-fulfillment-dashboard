@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { schedulePostSaleMarketplacePricePush } from "@/inventory/postSaleMarketplacePricePush";
+import { processShopifyPaidPhysicalSale } from "@/shopify/localStock/processShopifyPaidPhysicalSale";
 import { refreshAfterShopifySale } from "@/shopify/orders/postSaleRefresh";
 import { markPaidLineProcessed } from "@/shopify/orders/paidLineState";
 
@@ -12,6 +13,7 @@ export type OrderPaidLineItem = {
   sku?: string | null;
   barcode?: string | null;
   quantity?: number | null;
+  price?: string | number | null;
 };
 
 export type OrderPaidPayload = {
@@ -168,6 +170,8 @@ export type GtinSaleLine = {
   quantity: number;
   lineItemId: string | null;
   variantId: string | null;
+  sku: string | null;
+  revenue: number;
 };
 
 /** One GTIN + sold qty per line item (for post-sale inventory decrement). */
@@ -178,10 +182,13 @@ export async function resolveGtinSalesForLineItems(items: OrderPaidLineItem[]): 
     const qty = Math.max(1, Math.trunc(Number(item.quantity ?? 1)));
     const lineItemId = item.id != null ? String(item.id) : null;
     const variantId = toVariantGid(item.variant_id ?? null);
+    const sku = String(item.sku ?? "").trim() || null;
+    const unitPrice = Number(item.price ?? 0);
+    const revenue = Number.isFinite(unitPrice) ? unitPrice * qty : 0;
     const gtins = await resolveGtinsForLineItems([item]);
     const gtin = gtins[0];
     if (!gtin) continue;
-    sales.push({ gtin, quantity: qty, lineItemId, variantId });
+    sales.push({ gtin, quantity: qty, lineItemId, variantId, sku, revenue });
   }
 
   return sales;
@@ -211,13 +218,33 @@ export async function processOrdersPaidPayload(
   const results: OrdersPaidConvergenceResult["results"] = [];
   for (const sale of sales) {
     try {
-      const refresh = await refreshAfterShopifySale(sale.gtin, {
-        soldQty: sale.quantity,
-        orderId,
-        lineItemId: sale.lineItemId,
+      const physical = await processShopifyPaidPhysicalSale({
+        gtin: sale.gtin,
+        sku: sale.sku,
         variantId: sale.variantId,
-        forceMarketPrice: true,
+        lineItemId: sale.lineItemId,
+        orderId,
+        quantity: sale.quantity,
+        revenue: sale.revenue,
       });
+      if (physical.warnings.length) {
+        console.warn("[shopify][orders-paid][physical-sale]", {
+          orderId,
+          gtin: sale.gtin,
+          warnings: physical.warnings,
+        });
+      }
+
+      const refresh = physical.refreshAlreadyRan
+        ? { gtin: sale.gtin, warnings: physical.warnings, convergence: undefined, shopifyRefresh: { ok: true } }
+        : await refreshAfterShopifySale(sale.gtin, {
+            soldQty: sale.quantity,
+            orderId,
+            lineItemId: sale.lineItemId,
+            variantId: sale.variantId,
+            forceMarketPrice: true,
+            skipDropshipRelist: physical.isPhysicalStoreSale,
+          });
       const conv = refresh.convergence;
       const failed = refresh.warnings.length > 0 && !conv?.changed;
       results.push({
