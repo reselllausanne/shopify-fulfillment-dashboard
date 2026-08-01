@@ -14,7 +14,7 @@ import {
   orderHasTrackingNumber,
 } from "@/lib/shopifyFulfillment";
 import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
-import { pickLineDeliveryMode, resolveSwissPostPrzl, shouldSkipSwissPostLabelForLiquidation } from "@/lib/swissPostShipping";
+import { pickLineDeliveryMode, resolveSwissPostPrzl } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
@@ -690,15 +690,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const liquidationSkip = shouldSkipSwissPostLabelForLiquidation(
-      selectedMatches.map((m) => m.shopifyProductTitle)
-    );
-    if (liquidationSkip) {
-      warnings.push("Liquidation product (% title) — Swiss Post auto-label skipped.");
-    }
-
-    const shouldCallSwissPost =
-      !liquidationSkip && (swissPostEnabled || process.env.SWISS_POST_ENABLE === "1");
+    const shouldCallSwissPost = swissPostEnabled || process.env.SWISS_POST_ENABLE === "1";
 
     let swissPostResult: Awaited<ReturnType<typeof requestSwissPostLabel>> | null = null;
     let swissPostLabelId: string | null = null;

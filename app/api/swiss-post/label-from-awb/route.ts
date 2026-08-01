@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import { fetchOrderIdByName, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { requestSwissPostLabel } from "@/lib/swissPost";
-import { pickLineDeliveryMode, resolveSwissPostPrzl, shouldSkipSwissPostLabelForLiquidation } from "@/lib/swissPostShipping";
+import { pickLineDeliveryMode, resolveSwissPostPrzl } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
   resolveSwissPostFrankingLicenseForRole,
@@ -361,17 +361,6 @@ export async function POST(req: NextRequest) {
 
     if (matches.length === 0) {
       return NextResponse.json({ ok: false, error: "AWB not found" }, { status: 404 });
-    }
-
-    if (shouldSkipSwissPostLabelForLiquidation(matches.map((m) => m.shopifyProductTitle))) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Liquidation product (% title) — Swiss Post auto-label skipped",
-          awb,
-        },
-        { status: 409 }
-      );
     }
 
     let shopifyOrderId = matches[0]?.shopifyOrderId || "";
