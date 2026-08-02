@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { prisma } from "@/app/lib/prisma";
+import { orderMatchHasLocalStockLotIdField, prisma } from "@/app/lib/prisma";
 import { formatInTimeZone } from "date-fns-tz";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
 import { detectMilestone } from "@/app/lib/stockxStatus";
@@ -532,6 +532,11 @@ export async function POST(req: Request) {
       }
     }
 
+    const localStockLotField = orderMatchHasLocalStockLotIdField();
+    const localStockLotUpdate = localStockLotField
+      ? { localStockLotId: localStockLotId || undefined }
+      : {};
+
     // Upsert (create or update)
     const match = await prisma.orderMatch.upsert({
       where: { shopifyLineItemId },
@@ -567,7 +572,7 @@ export async function POST(req: Request) {
         marginAmount: hasManualOverrides ? undefined : resolvedMarginAmount,
         marginPercent: hasManualOverrides ? undefined : resolvedMarginPercent,
         manualCostOverride: hasManualOverrides ? undefined : resolvedManualCostOverride,
-        localStockLotId: localStockLotId || undefined,
+        ...localStockLotUpdate,
         shopifyMetafieldsSynced: resolvedMetafieldsSynced,
         shopifyMetafieldsSetAt: resolvedMetafieldsSetAt,
         updatedAt: new Date(),
@@ -613,7 +618,7 @@ export async function POST(req: Request) {
         marginPercent: resolvedMarginPercent,
         manualCostOverride: resolvedManualCostOverride,
         manualNote: resolvedManualNote,
-        localStockLotId: localStockLotId || null,
+        ...(localStockLotField ? { localStockLotId: localStockLotId || null } : {}),
         shopifyMetafieldsSynced: shopifyMetafieldsSynced || false,
         shopifyMetafieldsSetAt: shopifyMetafieldsSynced ? new Date() : null,
         customerTrackingToken: crypto.randomUUID(),

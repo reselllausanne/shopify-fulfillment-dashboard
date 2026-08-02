@@ -1,4 +1,13 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+
+/** Generated client includes OrderMatch.localStockLotId (local stock P1+). */
+export function orderMatchHasLocalStockLotIdField(): boolean {
+  return (
+    Prisma.dmmf.datamodel.models
+      .find((m) => m.name === "OrderMatch")
+      ?.fields.some((f) => f.name === "localStockLotId") ?? false
+  );
+}
 
 /**
  * Prisma Client singleton
@@ -110,7 +119,8 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
       c.inventorySyncRun &&
       c.inventoryReconcileDrift &&
       c.shopifyVariantLocationStock &&
-      c.localStockLot
+      c.localStockLot &&
+      orderMatchHasLocalStockLotIdField()
   );
 }
 
