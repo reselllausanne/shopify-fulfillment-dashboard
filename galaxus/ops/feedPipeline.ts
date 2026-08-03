@@ -1,8 +1,30 @@
+import "server-only";
 import { prisma } from "@/app/lib/prisma";
 import { randomUUID } from "crypto";
 import { withAdvisoryXactLock } from "@/galaxus/jobs/advisoryLock";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
+import { runFeedUpload } from "@/galaxus/ops/runFeedUpload";
+import {
+  notifyGalaxusFeedFailure,
+  notifyGalaxusFeedStale,
+} from "@/galaxus/ops/feedFailureAlert";
 import type { FeedScope, FeedTriggerSource } from "./types";
+
+/** Hard-fail if someone reintroduces Next route dynamic-import (the Aug 2026 outage). */
+function classifyFeedUploadError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err ?? "Feed upload failed");
+  if (
+    /cannot be imported from a Client Component/i.test(message) ||
+    /server-only/i.test(message)
+  ) {
+    return (
+      "Feed upload import path broken (server-only / Client Component). " +
+      "Must call galaxus/ops/runFeedUpload — never import the Next feeds upload route module. " +
+      `Original: ${message.slice(0, 160)}`
+    );
+  }
+  return message || "Feed upload failed";
+}
 
 type FeedRunResult = {
   ok: boolean;
@@ -51,34 +73,28 @@ function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
   );
 }
 
+function feedScopeToUploadType(scope: FeedScope): string {
+  if (scope === "full") return "all";
+  if (scope === "master-specs") return "master-specs";
+  if (scope === "stock") return "stock";
+  if (scope === "price") return "offer";
+  return "offer-stock";
+}
+
 async function callFeedUpload(
   origin: string,
   scope: FeedScope,
   manual: boolean,
   providerKeys?: string[]
 ) {
-  const type =
-    scope === "full"
-      ? "all"
-      : scope === "master-specs"
-        ? "master-specs"
-        : scope === "stock"
-          ? "stock"
-          : scope === "price"
-            ? "offer"
-            : "offer-stock";
-  const manualParam = manual ? "&manual=1" : "";
-  const keysParam =
-    providerKeys && providerKeys.length > 0
-      ? `&providerKeys=${encodeURIComponent(providerKeys.join(","))}`
-      : "";
-  const url = `${origin}/api/galaxus/feeds/upload?type=${type}${manualParam}${keysParam}`;
-  const routeModule = await import("@/app/api/galaxus/feeds/upload/route");
-  const req = new Request(url, { method: "POST" });
-  const res = await routeModule.POST(req);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error ?? `Feed upload failed (HTTP ${res.status})`);
+  const data = await runFeedUpload({
+    origin,
+    type: feedScopeToUploadType(scope),
+    manual,
+    providerKeysRaw: providerKeys?.length ? providerKeys.join(",") : "",
+  });
+  if (!data.ok) {
+    throw new Error(data.error ?? `Feed upload failed (HTTP ${data.status})`);
   }
   return data;
 }
@@ -207,6 +223,35 @@ export async function enqueueFeedPushTrigger(params: {
   return { triggerId: String(row.id), created: true };
 }
 
+/**
+ * Collapse duplicate PENDING triggers per scope (leftovers from old fail-requeue loops).
+ * Keep oldest; mark the rest FAILED so drain cannot stack useless runs.
+ */
+export async function coalesceDuplicatePendingTriggers(): Promise<number> {
+  const prismaAny = prisma as any;
+  const pending: Array<{ id: string; scope: string; requestedAt: Date }> =
+    await prismaAny.galaxusFeedTrigger.findMany({
+      where: { status: "PENDING" },
+      orderBy: { requestedAt: "asc" },
+      select: { id: true, scope: true, requestedAt: true },
+    });
+  const keepByScope = new Map<string, string>();
+  const dropIds: string[] = [];
+  for (const row of pending) {
+    if (!keepByScope.has(row.scope)) {
+      keepByScope.set(row.scope, row.id);
+      continue;
+    }
+    dropIds.push(row.id);
+  }
+  if (dropIds.length === 0) return 0;
+  await prismaAny.galaxusFeedTrigger.updateMany({
+    where: { id: { in: dropIds } },
+    data: { status: "FAILED", consumedAt: new Date() },
+  });
+  return dropIds.length;
+}
+
 async function finalizeFeedTrigger(params: {
   feedTriggerId?: string;
   success: boolean;
@@ -220,8 +265,8 @@ async function finalizeFeedTrigger(params: {
       .update({
         where: { id: params.feedTriggerId },
         data: {
-          status: params.success ? "DONE" : "PENDING",
-          consumedAt: params.success ? new Date() : null,
+          status: params.success ? "DONE" : "FAILED",
+          consumedAt: new Date(),
         },
       })
       .catch((err: unknown) => {
@@ -230,16 +275,13 @@ async function finalizeFeedTrigger(params: {
           error: err,
         });
       });
-  } else if (!params.success) {
-    await enqueueFeedPushTrigger({
-      scope: params.scope,
-      triggerSource: params.triggerSource,
-    });
   }
 
-  void drainFeedPushQueue(params.origin).catch((err) => {
-    console.error("[GALAXUS][FEED][QUEUE] drain failed:", err);
-  });
+  if (params.success) {
+    void drainFeedPushQueue(params.origin).catch((err) => {
+      console.error("[GALAXUS][FEED][QUEUE] drain failed:", err);
+    });
+  }
 }
 
 function scheduleAsyncFeedRun(params: {
@@ -359,8 +401,8 @@ async function executeFeedRun(params: {
         });
         effectiveRunId = String(data.runId);
       }
-    } catch (err: any) {
-      error = err?.message ?? "Feed upload failed";
+    } catch (err: unknown) {
+      error = classifyFeedUploadError(err);
     }
   }
 
@@ -376,6 +418,17 @@ async function executeFeedRun(params: {
       manifestIds,
     },
   });
+
+  if (error) {
+    void notifyGalaxusFeedFailure({
+      scope,
+      triggerSource,
+      runId: effectiveRunId,
+      error,
+    }).catch((err) => {
+      console.error("[GALAXUS][FEED][ALERT] notify failed", err);
+    });
+  }
 
   return {
     ok: !error,
@@ -501,6 +554,10 @@ export async function drainFeedPushQueue(
   origin: string
 ): Promise<FeedPushStartResult | { ok: true; drained: false }> {
   const prismaAny = prisma as any;
+  const coalesced = await coalesceDuplicatePendingTriggers().catch(() => 0);
+  if (coalesced > 0) {
+    console.info("[GALAXUS][FEED][QUEUE] coalesced duplicate PENDING triggers", { coalesced });
+  }
   const pendingRows: Array<{ id: string; scope: string; triggerSource: string | null }> =
     await prismaAny.galaxusFeedTrigger.findMany({
       where: { status: "PENDING" },
@@ -528,11 +585,8 @@ export async function drainFeedPushQueue(
 }
 
 /**
- * Partner catalog edits used to call this with scope=full + runNow in the same HTTP
- * request. That path dynamic-imports the SFTP upload route mid-request and dies with
- * "cannot be imported from a Client Component module" in ~300ms.
- *
- * Partner/admin side-effects → async stock-price push (same path as manual ops buttons).
+ * Partner catalog edits must not run heavy feed work inline on the HTTP request.
+ * Async stock-price push (same path as manual ops buttons).
  */
 export async function requestFeedPush(params: {
   origin: string;
@@ -572,4 +626,44 @@ export async function runPendingFeedTriggers(params: { origin: string; scope: Fe
     return { ok: true, skipped: "no_pending_or_busy" as const };
   }
   return drained;
+}
+
+const STALE_PRICE_FEED_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Alert if no successful price / stock-price feed landed recently.
+ * Catches silent outages even when individual runs are not retried.
+ */
+export async function checkGalaxusPriceFeedHealth(): Promise<{
+  ok: boolean;
+  lastSuccessAt: string | null;
+  hoursSinceSuccess: number | null;
+}> {
+  const prismaAny = prisma as any;
+  const lastOk = await prismaAny.galaxusFeedRun.findFirst({
+    where: {
+      success: true,
+      scope: { in: ["price", "stock-price"] },
+    },
+    orderBy: { finishedAt: "desc" },
+    select: { finishedAt: true, startedAt: true, scope: true },
+  });
+  const at: Date | null = lastOk?.finishedAt ?? lastOk?.startedAt ?? null;
+  if (!at) {
+    await notifyGalaxusFeedStale({
+      hoursSinceSuccess: null,
+      lastSuccessAt: null,
+    });
+    return { ok: false, lastSuccessAt: null, hoursSinceSuccess: null };
+  }
+  const ageMs = Date.now() - new Date(at).getTime();
+  const hoursSinceSuccess = Math.round((ageMs / 3600000) * 10) / 10;
+  if (ageMs > STALE_PRICE_FEED_MS) {
+    await notifyGalaxusFeedStale({
+      hoursSinceSuccess,
+      lastSuccessAt: new Date(at).toISOString(),
+    });
+    return { ok: false, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
+  }
+  return { ok: true, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
 }

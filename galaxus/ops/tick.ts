@@ -1,7 +1,7 @@
 import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 import { runOpsJob } from "./jobRunner";
 import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
-import { drainFeedPushQueue } from "./feedPipeline";
+import { checkGalaxusPriceFeedHealth, drainFeedPushQueue } from "./feedPipeline";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
 import { runEdiInPipeline } from "./orderPipeline";
@@ -184,5 +184,12 @@ export async function runOpsTick(origin: string, options?: OpsTickOptions) {
     console.error("[galaxus][ops][tick] feed queue drain failed", err);
   }
 
-  return { ok: true, now: now.toISOString(), jobs: results };
+  let feedHealth: Awaited<ReturnType<typeof checkGalaxusPriceFeedHealth>> | null = null;
+  try {
+    feedHealth = await checkGalaxusPriceFeedHealth();
+  } catch (err) {
+    console.error("[galaxus][ops][tick] feed health check failed", err);
+  }
+
+  return { ok: true, now: now.toISOString(), jobs: results, feedHealth };
 }
