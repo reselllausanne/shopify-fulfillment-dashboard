@@ -50,6 +50,7 @@ function platformLabel(platform: string) {
   if (platform === "snl") return "Snowleader / GraphQL";
   if (platform === "rei") return "Reichelt / HTML";
   if (platform === "nso") return "Newsole / WooCommerce";
+  if (platform === "bae") return "Bächli / Rent-a-Shop";
   return "Shopify";
 }
 
