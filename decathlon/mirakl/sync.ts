@@ -1,6 +1,13 @@
 import { prisma } from "@/app/lib/prisma";
 import type { MiraklImportFlow, MiraklImportMode } from "./types";
-import { refreshImportStatus, runOf01Import, runP41Import, runPri01Import, runSto01Import } from "./imports";
+import {
+  refreshImportStatus,
+  runOf01Import,
+  runP41Import,
+  runPhysicalLiquidationOf01Import,
+  runPri01Import,
+  runSto01Import,
+} from "./imports";
 
 export async function runDecathlonOfferSync(params?: {
   limit?: number;
@@ -13,6 +20,17 @@ export async function runDecathlonOfferSync(params?: {
     mode: params?.mode,
     includeAll: params?.includeAll,
     providerKeys: params?.providerKeys,
+  });
+}
+
+/** Daily: physical location stock only, list = liquidation sell / 0.75. NORMAL mode. */
+export async function runDecathlonPhysicalLiquidationOfferSync(params?: {
+  limit?: number;
+  mode?: MiraklImportMode;
+}) {
+  return runPhysicalLiquidationOf01Import({
+    limit: params?.limit,
+    mode: params?.mode,
   });
 }
 

@@ -4,6 +4,7 @@ import {
   checkLatestImportStatus,
   runDecathlonOfferSync,
   runDecathlonOfferOnlySync,
+  runDecathlonPhysicalLiquidationOfferSync,
   runDecathlonPriceSync,
   runDecathlonStockSync,
 } from "@/decathlon/mirakl/sync";
@@ -35,6 +36,13 @@ export async function POST(request: Request) {
         includeAll: false,
         mode: mode ?? "NORMAL",
         providerKeys,
+      });
+      return NextResponse.json({ ok: true, result });
+    }
+    if (action === "physical-offer-sync") {
+      const result = await runDecathlonPhysicalLiquidationOfferSync({
+        limit,
+        mode: mode ?? "NORMAL",
       });
       return NextResponse.json({ ok: true, result });
     }

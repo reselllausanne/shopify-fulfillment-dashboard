@@ -721,6 +721,62 @@ async function filterOffersBySuccessfulP41(
   return { eligible, blockedMissingP41 };
 }
 
+/**
+ * Daily physical-liquidation OF01: full list of in-stock location GTINs.
+ * Uses Mirakl NORMAL (not REPLACE) so other live offers are not wiped.
+ */
+export async function runPhysicalLiquidationOf01Import(params?: {
+  limit?: number;
+  mode?: MiraklImportMode;
+}) {
+  const { buildPhysicalLiquidationOfferRows } = await import("./physicalLiquidationOffers");
+  const built = await buildPhysicalLiquidationOfferRows({ limit: params?.limit });
+  const syncRows: DecathlonSyncRow[] = built.rows.map((row) => ({
+    providerKey: row.providerKey,
+    gtin: row.gtin,
+    offerSku: row.offerSku,
+    supplierVariantId: row.supplierVariantId,
+    price: row.listPrice,
+    stock: row.stock,
+  }));
+  const csvRows = built.rows.map((row) => ({
+    offerSku: row.offerSku,
+    productId: row.gtin,
+    productIdType: "EAN",
+    price: row.listPrice,
+    quantity: row.stock,
+    state: row.state,
+    logisticClass: "",
+    leadtimeToShip: row.leadtimeToShip,
+    minOrderQuantity: "",
+    maxOrderQuantity: "",
+    discountPrice: "",
+    discountStartDate: "",
+    discountEndDate: "",
+    description: "",
+  }));
+  const { csv } = buildOf01Csv(csvRows as any);
+  const mode: MiraklImportMode =
+    params?.mode === "TEST" || DECATHLON_MIRAKL_TEST_MODE
+      ? "TEST"
+      : params?.mode === "REPLACE"
+        ? "REPLACE"
+        : "NORMAL";
+  return runImportFlow({
+    flow: "OF01",
+    mode,
+    rows: syncRows,
+    csv,
+    withProducts: false,
+    summary: {
+      physicalLiquidation: true,
+      build: built.summary,
+      skippedSample: built.skipped.slice(0, 25),
+      testMode: DECATHLON_MIRAKL_TEST_MODE,
+    },
+  });
+}
+
 export async function runOf01Import(params?: {
   limit?: number;
   mode?: MiraklImportMode;

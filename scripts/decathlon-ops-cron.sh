@@ -3,9 +3,10 @@
 # Decathlon scheduled ops (VPS cron).
 #
 # Usage:
-#   bash scripts/decathlon-ops-cron.sh daily-catalog   # P41 product → OF01 offer (sequential)
+#   bash scripts/decathlon-ops-cron.sh daily-catalog   # P41 product → physical liquidation OF01
 #   bash scripts/decathlon-ops-cron.sh product-sync    # P41 only
-#   bash scripts/decathlon-ops-cron.sh offer-sync      # OF01 only
+#   bash scripts/decathlon-ops-cron.sh offer-sync      # legacy full OF01
+#   bash scripts/decathlon-ops-cron.sh physical-offer-sync  # physical location stock OF01
 #
 # Suggested crontab (after Galaxus full-flow ~04:30 UTC):
 #   0 5 * * * /opt/resell/scripts/decathlon-ops-cron.sh daily-catalog
@@ -71,7 +72,7 @@ run_step() {
 }
 
 if [[ -z "$ACTION" ]]; then
-  log "ERROR: missing action (daily-catalog | product-sync | offer-sync)"
+  log "ERROR: missing action (daily-catalog | product-sync | offer-sync | physical-offer-sync)"
   exit 2
 fi
 
@@ -80,7 +81,7 @@ cd /opt/resell
 case "$ACTION" in
   daily-catalog)
     run_step "product-sync"
-    run_step "offer-sync"
+    run_step "physical-offer-sync"
     log "DONE daily-catalog"
     ;;
   product-sync)
@@ -90,6 +91,10 @@ case "$ACTION" in
   offer-sync)
     run_step "offer-sync"
     log "DONE offer-sync"
+    ;;
+  physical-offer-sync)
+    run_step "physical-offer-sync"
+    log "DONE physical-offer-sync"
     ;;
   *)
     log "ERROR: unknown action '$ACTION'"

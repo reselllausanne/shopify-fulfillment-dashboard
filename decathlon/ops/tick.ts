@@ -2,7 +2,12 @@ import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 import { runDecathlonOpsJob } from "./jobRunner";
 import { listDecathlonJobDefinitions, updateDecathlonJobDefinition } from "./jobDefinitions";
 import type { DecathlonOpsJobKey } from "./types";
-import { runDecathlonOfferSync, runDecathlonPriceSync, runDecathlonStockSync } from "@/decathlon/mirakl/sync";
+import {
+  runDecathlonOfferSync,
+  runDecathlonPhysicalLiquidationOfferSync,
+  runDecathlonPriceSync,
+  runDecathlonStockSync,
+} from "@/decathlon/mirakl/sync";
 import { syncMarketplaceReturns } from "@/decathlon/returns/receipt/sync";
 
 type TickJobResult = {
@@ -22,6 +27,9 @@ const buildNextAt = (lastRunAt: Date | null, intervalMs: number) => {
 async function executeJob(jobKey: DecathlonOpsJobKey) {
   if (jobKey === "decathlon-offer-sync") {
     return runDecathlonOpsJob(jobKey, async () => runDecathlonOfferSync());
+  }
+  if (jobKey === "decathlon-physical-offer-sync") {
+    return runDecathlonOpsJob(jobKey, async () => runDecathlonPhysicalLiquidationOfferSync());
   }
   if (jobKey === "decathlon-stock-sync") {
     return runDecathlonOpsJob(jobKey, async () => runDecathlonStockSync());

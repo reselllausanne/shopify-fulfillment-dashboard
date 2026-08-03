@@ -96,6 +96,41 @@ export async function getPhysicalStockForGtin(gtin: string): Promise<PhysicalSto
 }
 
 /**
+ * All GTINs with physical location stock > 0 (Bussigny / Antica / Lab / COLD BIEN).
+ * Excludes online/dropship location.
+ */
+export async function loadAllPhysicalMirrorStockByGtin(): Promise<PhysicalStockMap> {
+  const out: PhysicalStockMap = new Map();
+  const rows = await prisma.$queryRaw<
+    Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }>
+  >`
+    SELECT
+      s."gtin"                                       AS gtin,
+      SUM(s."available")::bigint                     AS qty,
+      (ARRAY_AGG(s."locationId"   ORDER BY s."priority" ASC))[1] AS loc_id,
+      (ARRAY_AGG(s."locationName" ORDER BY s."priority" ASC))[1] AS loc_name
+    FROM "public"."ShopifyVariantLocationStock" s
+    WHERE s."sourceType" = 'physical'
+      AND s."available"  > 0
+      AND s."gtin" IS NOT NULL
+      AND TRIM(s."gtin") <> ''
+    GROUP BY s."gtin"
+  `;
+
+  for (const r of rows) {
+    const gtin = String(r.gtin ?? "").trim();
+    const qty = Number(r.qty ?? 0);
+    if (!gtin || qty <= 0) continue;
+    out.set(gtin, {
+      qty,
+      preferredLocationId: r.loc_id,
+      preferredLocationName: r.loc_name,
+    });
+  }
+  return out;
+}
+
+/**
  * Per-location mirror rows for a GTIN, priority order (Bussigny first).
  * Used by marketplace sale routing to decrement the correct shop.
  */
