@@ -20,6 +20,10 @@ export const dynamic = "force-dynamic";
  *
  * Upserts the ShopifySyncState row (bootstrap also uses this to register the
  * existing catalog).
+ *
+ * Ghost guard: a success mark without shopifyProductId (and no existing id on
+ * the row) is stored as syncStatus='error' / missing_shopify_product_id so
+ * /fresh?status=untracked can retry. Never park handle-only "synced" ghosts.
  */
 export async function POST(req: Request) {
   const authError = checkSharedSecret(req);
@@ -40,9 +44,12 @@ export async function POST(req: Request) {
   const permanent = Boolean(body?.permanent);
   const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
   const isBlockedNoImages = permanent && reason === "no_images";
-  const syncStatus = isBlockedNoImages ? "blocked_no_images" : isError ? "error" : "synced";
-  const shopifyProductId = typeof body?.shopifyProductId === "string" ? body.shopifyProductId : null;
+  const shopifyProductId =
+    typeof body?.shopifyProductId === "string" && body.shopifyProductId.trim()
+      ? body.shopifyProductId.trim()
+      : null;
   const shopifyHandle = typeof body?.shopifyHandle === "string" ? body.shopifyHandle : null;
+  const syncStatus = isBlockedNoImages ? "blocked_no_images" : isError ? "error" : "synced";
   const lastError = isBlockedNoImages
     ? `blocked_no_images: ${reason}`
     : isError
@@ -54,20 +61,52 @@ export async function POST(req: Request) {
     // shopifySyncedAt records the last push ATTEMPT (success or error) so a
     // failing product leaves the fresh queue until a new SSE event bumps
     // rawFetchedAt — prevents an infinite retry loop on permanent skips.
+    //
+    // Success without a product id (new or existing) → force error, not ghost synced.
+    // Success omitting product id but row already has one → keep synced + keep id.
     await prisma.$executeRaw`
       INSERT INTO "public"."ShopifySyncState" (
         "id", "kickdbProductId", "shopifyProductId", "shopifyHandle",
         "syncStatus", "shopifySyncedAt", "lastError", "createdAt", "updatedAt"
       ) VALUES (
-        gen_random_uuid(), ${kickdbProductId}, ${shopifyProductId}, ${shopifyHandle},
-        ${syncStatus}, ${now}, ${lastError}, ${now}, ${now}
+        gen_random_uuid(),
+        ${kickdbProductId},
+        ${shopifyProductId},
+        ${shopifyHandle},
+        CASE
+          WHEN ${syncStatus} = 'synced' AND ${shopifyProductId}::text IS NULL
+          THEN 'error'
+          ELSE ${syncStatus}
+        END,
+        ${now},
+        CASE
+          WHEN ${syncStatus} = 'synced' AND ${shopifyProductId}::text IS NULL
+          THEN 'missing_shopify_product_id'
+          ELSE ${lastError}
+        END,
+        ${now},
+        ${now}
       )
       ON CONFLICT ("kickdbProductId") DO UPDATE SET
         "shopifyProductId" = COALESCE(EXCLUDED."shopifyProductId", "ShopifySyncState"."shopifyProductId"),
         "shopifyHandle"    = COALESCE(EXCLUDED."shopifyHandle", "ShopifySyncState"."shopifyHandle"),
-        "syncStatus"       = EXCLUDED."syncStatus",
+        "syncStatus"       = CASE
+          WHEN ${syncStatus} = 'synced'
+            AND COALESCE(EXCLUDED."shopifyProductId", "ShopifySyncState"."shopifyProductId") IS NULL
+          THEN 'error'
+          WHEN ${syncStatus} = 'synced'
+          THEN 'synced'
+          ELSE ${syncStatus}
+        END,
         "shopifySyncedAt"  = EXCLUDED."shopifySyncedAt",
-        "lastError"        = EXCLUDED."lastError",
+        "lastError"        = CASE
+          WHEN ${syncStatus} = 'synced'
+            AND COALESCE(EXCLUDED."shopifyProductId", "ShopifySyncState"."shopifyProductId") IS NULL
+          THEN 'missing_shopify_product_id'
+          WHEN ${syncStatus} = 'synced'
+          THEN NULL
+          ELSE ${lastError}
+        END,
         "updatedAt"        = EXCLUDED."updatedAt"
     `;
 

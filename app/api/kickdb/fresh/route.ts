@@ -18,8 +18,10 @@ export const dynamic = "force-dynamic";
  *   create_candidate  products explicitly flagged for Shopify creation
  *   untracked         KickDBProducts with NO ShopifySyncState row yet (no flag
  *                     step required — consumer creates every product it sees,
- *                     newest KickDB refresh first). mark_synced creates the
- *                     ShopifySyncState row on success, so re-runs won't loop.
+ *                     newest KickDB refresh first). Also retries `error` rows
+ *                     and ghost `synced` rows missing shopifyProductId.
+ *                     mark_synced creates the ShopifySyncState row on success,
+ *                     so re-runs won't loop.
  *
  * Response products carry: kickdbProductId, urlKey, shopify state, rawJson.
  */
@@ -73,6 +75,12 @@ export async function GET(req: Request) {
           AND (
             s."kickdbProductId" IS NULL
             OR s."syncStatus" = 'error'
+            -- Ghost synced: handle marked but no Shopify product id. Useless
+            -- for updates and blocks create forever — treat as untracked.
+            OR (
+              s."syncStatus" = 'synced'
+              AND (s."shopifyProductId" IS NULL OR BTRIM(s."shopifyProductId") = '')
+            )
             -- Re-include no-image blocks ONLY when a newer KicksDB refresh
             -- has arrived since the block was written; otherwise the row
             -- stays parked and burns no Shopify API budget.

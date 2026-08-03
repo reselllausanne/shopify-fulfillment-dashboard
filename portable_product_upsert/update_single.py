@@ -433,7 +433,8 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
         if eu_size == "One Size":
             quantity = 1
         else:
-            quantity = 1 if total_asks >= 2 else 0
+            # Accept single-ask risk (was >= 2).
+            quantity = 1 if total_asks >= 1 else 0
 
         if matched_variant:
             old_price = matched_variant.get('price', 'N/A')

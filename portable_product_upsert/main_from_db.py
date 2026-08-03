@@ -118,6 +118,9 @@ def clear_create_blocked_until():
 
 def created_variant_count(result):
     """Only real int counts. Never treat bool True as 1 (isinstance(True, int) is True)."""
+    if isinstance(result, dict):
+        n = result.get("variants_created")
+        return n if type(n) is int and n > 0 else 0
     return result if type(result) is int and result > 0 else 0
 
 
@@ -173,10 +176,20 @@ def fetch_fresh_products(db_api, limit=50, status="pending"):
     return body.get("products", [])
 
 
-def mark_synced(db_api, kickdb_product_id, shopify_handle=None, error=None, permanent=False, reason=None):
+def mark_synced(
+    db_api,
+    kickdb_product_id,
+    shopify_handle=None,
+    shopify_product_id=None,
+    error=None,
+    permanent=False,
+    reason=None,
+):
     payload = {"kickdbProductId": kickdb_product_id}
     if shopify_handle:
         payload["shopifyHandle"] = shopify_handle
+    if shopify_product_id:
+        payload["shopifyProductId"] = str(shopify_product_id)
     if error:
         payload["error"] = str(error)[:2000]
     if permanent:
@@ -194,6 +207,23 @@ def mark_synced(db_api, kickdb_product_id, shopify_handle=None, error=None, perm
     except Exception as e:
         print(f"[WARNING] mark-synced failed for {kickdb_product_id}: {e}")
         return False
+
+
+def normalize_process_result(result):
+    """Normalize main.py create/update return into a dict, or False/None."""
+    if result is None:
+        return None  # deferred (daily variant limit mid-create)
+    if result is False:
+        return False
+    if isinstance(result, dict) and result.get("ok"):
+        return result
+    # Legacy: int variant count from create
+    if type(result) is int and result > 0:
+        return {"ok": True, "shopify_product_id": None, "variants_created": result}
+    # Legacy: bare True from update (no product id)
+    if result is True:
+        return {"ok": True, "shopify_product_id": None, "variants_created": 0}
+    return False
 
 
 def load_shopify_catalog(force_refresh=False):
@@ -369,15 +399,9 @@ def main():
                 skip_creates_on_limit=True,
                 prefetched=raw,
             )
-            created_n = created_variant_count(result)
-            if created_n > 0 or result is True:
-                success += 1
-                if created_n > 0:
-                    variants_created += created_n
-                    print(f"[OK] +{created_n} variants created this product (run total={variants_created})")
-                mark_synced(args.db_api, kickdb_product_id, shopify_handle=slug)
-                print(f"[OK] synced + marked: {slug}")
-            elif result is None:
+            parsed = normalize_process_result(result)
+            created_n = created_variant_count(parsed if parsed is not None else result)
+            if parsed is None:
                 # mid-create daily limit — do NOT mark synced; retry next run after cooldown
                 print(f"[DEFER] variant limit hit mid-create: {slug}")
                 save_create_blocked_until(time.time() + 24 * 3600, reason="deferred_mid_create")
@@ -386,6 +410,30 @@ def main():
                     f"variants_created={variants_created} (stopped: Shopify daily limit)"
                 )
                 return 3
+            if parsed and parsed.get("ok"):
+                shopify_product_id = parsed.get("shopify_product_id")
+                if not shopify_product_id:
+                    # Refuse ghost synced rows (handle-only). Keep as error so
+                    # untracked create queue retries instead of parking forever.
+                    mark_synced(
+                        args.db_api,
+                        kickdb_product_id,
+                        shopify_handle=slug,
+                        error="missing_shopify_product_id",
+                    )
+                    print(f"[SKIP] {slug}: success without shopifyProductId — not marking synced")
+                else:
+                    success += 1
+                    if created_n > 0:
+                        variants_created += created_n
+                        print(f"[OK] +{created_n} variants created this product (run total={variants_created})")
+                    mark_synced(
+                        args.db_api,
+                        kickdb_product_id,
+                        shopify_handle=slug,
+                        shopify_product_id=shopify_product_id,
+                    )
+                    print(f"[OK] synced + marked: {slug} ({shopify_product_id})")
             else:
                 mark_synced(args.db_api, kickdb_product_id, error="main_py_returned_false")
                 print(f"[SKIP] not synced: {slug}")

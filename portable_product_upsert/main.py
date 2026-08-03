@@ -278,7 +278,7 @@ def filter_variants(variants, for_create=False):
             filtered.append(variant)
             continue
 
-        # Sold-out rows from StockX (no asks / asks<2): keep on update so inventory can go to 0.
+        # Sold-out rows from StockX (no asks / asks<1): keep on update so inventory can go to 0.
         if not for_create and (qty <= 0 or variant.get("sold_out")):
             filtered.append(variant)
             continue
@@ -1214,14 +1214,28 @@ def process_single_url_enhanced(url, action_type, shopify_products, skip_creates
                     log_event(url, "create", "skipped", reason="product_exists_converting_to_update")
                     log_event(url, "update", "started", reason="auto_converted_from_create")
                 
-                return update_product_enhanced(url, title, product_info, existing_product)
+                updated = update_product_enhanced(url, title, product_info, existing_product)
+                if updated is True:
+                    return {
+                        "ok": True,
+                        "shopify_product_id": existing_product.get("id"),
+                        "variants_created": 0,
+                    }
+                return False
             else:
                 # Product doesn't exist
                 if action_type == "create":
                     try:
                         created = create_product_enhanced(url, title, product_info)
-                        if isinstance(created, int) and created > 0:
+                        if isinstance(created, dict) and created.get("ok") and created.get("shopify_product_id"):
                             return created
+                        # Legacy int return (variant count) — no product id available.
+                        if type(created) is int and created > 0:
+                            return {
+                                "ok": True,
+                                "shopify_product_id": None,
+                                "variants_created": created,
+                            }
                         return False
                     except RateLimitException as e:
                         # Check if this is variant creation limit
@@ -1420,7 +1434,11 @@ def create_product_enhanced(url, title, product_info):
                     "enrichment": enrichment,
                 },
             )
-            return len(created_variants)
+            return {
+                "ok": True,
+                "shopify_product_id": product_id,
+                "variants_created": len(created_variants),
+            }
             
         except RateLimitException as e:
             # Save partial state - product created but variants incomplete
@@ -2747,10 +2765,11 @@ def process_url(url, thread_id=0, prefetched=None):
         total_asks = variant.get("total_asks", 0)
         
         # FIX 3: Set qty=1 for single-variant "One Size" to survive filtering
+        # qty=1 on total_asks >= 1 (accept single-ask risk; was >= 2).
         if eu_size == "One Size":
             valid_quantity = 1
         else:
-            valid_quantity = 1 if total_asks >= 2 else 0
+            valid_quantity = 1 if int(total_asks or 0) >= 1 else 0
         
         # Split prices into standard and express pools.
         prices_list = variant.get("prices", []) or []
