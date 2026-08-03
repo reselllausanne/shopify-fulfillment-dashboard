@@ -80,7 +80,7 @@ cd /opt/resell
 
 case "$ACTION" in
   daily-catalog)
-    run_step "product-sync"
+    # Physical location stock only (Bussigny/Antica/Lab/COLD BIEN). No full-catalog wipe.
     run_step "physical-offer-sync"
     log "DONE daily-catalog"
     ;;
