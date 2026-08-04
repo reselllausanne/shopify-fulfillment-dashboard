@@ -21,40 +21,40 @@ describe("resolveGalaxusStockMoq", () => {
     });
   });
 
-  it("applies MOQ 5 for Golden / GLD", () => {
+  it("applies MOQ 3 for Golden / GLD", () => {
     expect(resolveGalaxusStockMoq({ supplierKey: "golden" })).toEqual({
-      minimumOrderQuantity: 5,
+      minimumOrderQuantity: 3,
       orderQuantitySteps: 1,
     });
     expect(resolveGalaxusStockMoq({ supplierVariantId: "golden:15456" })).toEqual({
-      minimumOrderQuantity: 5,
+      minimumOrderQuantity: 3,
       orderQuantitySteps: 1,
     });
     expect(resolveGalaxusStockMoq({ providerKey: "GLD_4067907638404" })).toEqual({
-      minimumOrderQuantity: 5,
+      minimumOrderQuantity: 3,
       orderQuantitySteps: 1,
     });
     expect(resolveGalaxusStockMoq({ supplierKey: "gld" })).toEqual({
-      minimumOrderQuantity: 5,
+      minimumOrderQuantity: 3,
       orderQuantitySteps: 1,
     });
   });
 
   it("formats CSV fields and clamps invalid OQS", () => {
-    expect(formatGalaxusStockMoqFields({ minimumOrderQuantity: 5, orderQuantitySteps: 1 })).toEqual({
-      MinimumOrderQuantity: "5",
+    expect(formatGalaxusStockMoqFields({ minimumOrderQuantity: 3, orderQuantitySteps: 1 })).toEqual({
+      MinimumOrderQuantity: "3",
       OrderQuantitySteps: "1",
     });
-    expect(formatGalaxusStockMoqFields({ minimumOrderQuantity: 5, orderQuantitySteps: 10 })).toEqual({
-      MinimumOrderQuantity: "5",
-      OrderQuantitySteps: "5",
+    expect(formatGalaxusStockMoqFields({ minimumOrderQuantity: 3, orderQuantitySteps: 10 })).toEqual({
+      MinimumOrderQuantity: "3",
+      OrderQuantitySteps: "3",
     });
   });
 
   it("filters stock below MOQ", () => {
-    const gld = { minimumOrderQuantity: 5, orderQuantitySteps: 1 };
-    expect(meetsGalaxusStockMoq(5, gld)).toBe(true);
-    expect(meetsGalaxusStockMoq(4, gld)).toBe(false);
+    const gld = { minimumOrderQuantity: 3, orderQuantitySteps: 1 };
+    expect(meetsGalaxusStockMoq(3, gld)).toBe(true);
+    expect(meetsGalaxusStockMoq(2, gld)).toBe(false);
     expect(meetsGalaxusStockMoq(1, gld)).toBe(false);
     expect(meetsGalaxusStockMoq(0, gld)).toBe(false);
     expect(meetsGalaxusStockMoq(1, { minimumOrderQuantity: 1, orderQuantitySteps: 1 })).toBe(true);

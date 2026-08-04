@@ -1,6 +1,7 @@
 export type OpsJobKey =
   | "partner-stock-sync"
   | "stx-refresh"
+  | "gld-refresh"
   | "edi-in"
   | "image-sync"
   | "shopify-order-sync"
@@ -12,6 +13,7 @@ export type FeedScope = "stock-price" | "full" | "master-specs" | "stock" | "pri
 export type FeedTriggerSource =
   | "partner-sync"
   | "stx-refresh"
+  | "gld-refresh"
   | "manual"
   | "manual-pricing"
   | "partner-admin"

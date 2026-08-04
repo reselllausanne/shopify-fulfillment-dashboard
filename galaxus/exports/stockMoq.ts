@@ -18,9 +18,9 @@ const DEFAULT_MOQ: GalaxusStockMoq = {
 
 /** Supplier keys (lowercase id prefix) → MOQ. Unlisted suppliers keep default 1/1. */
 const SUPPLIER_STOCK_MOQ: Record<string, GalaxusStockMoq> = {
-  // Golden (GLD): pack of 5 to keep dropship viable
-  golden: { minimumOrderQuantity: 5, orderQuantitySteps: 1 },
-  gld: { minimumOrderQuantity: 5, orderQuantitySteps: 1 },
+  // Golden (GLD): MOQ 3 — batch multiple Galaxus orders into ~10-pair PL→CH shipments
+  golden: { minimumOrderQuantity: 3, orderQuantitySteps: 1 },
+  gld: { minimumOrderQuantity: 3, orderQuantitySteps: 1 },
 };
 
 function normalizeSupplierKey(raw?: string | null): string | null {

@@ -105,6 +105,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, data, stxMode });
     }
 
+    if (action === "gld-refresh") {
+      const data = await runOpsTick(origin, {
+        force: true,
+        only: ["gld-refresh"],
+      });
+      return NextResponse.json({ ok: true, data });
+    }
+
     if (action === "edi-in") {
       const data = await runOpsTick(origin, { force: true, only: ["edi-in"] });
       return NextResponse.json({ ok: true, data });

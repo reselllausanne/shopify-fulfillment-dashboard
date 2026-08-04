@@ -4,6 +4,7 @@ import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
 import { checkGalaxusPriceFeedHealth, drainFeedPushQueue } from "./feedPipeline";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
+import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import type { OpsJobKey } from "./types";
@@ -77,6 +78,10 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
     return runOpsJob(jobKey, async () =>
       mode === "full" ? runStxSync() : runStxPriceStockRefresh()
     );
+  }
+  if (jobKey === "gld-refresh") {
+    // Full Golden assortment price/stock pull (same source as /supplier/sync?mode=stock).
+    return runOpsJob(jobKey, async () => runStockPriceSync());
   }
   if (jobKey === "edi-in") {
     return runOpsJob(jobKey, async () => runEdiInPipeline());

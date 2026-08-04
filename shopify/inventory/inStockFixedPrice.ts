@@ -18,6 +18,11 @@ export const AUDEMARS_TRAVIS_SELL_CHF = 89;
 /** Audemars × Travis express metafield (CHF). Only when physical location stock > 0. */
 export const AUDEMARS_TRAVIS_EXPRESS_CHF = 109;
 
+/** Bape in-stock Shopify sell price (CHF). Never overwritten by StockX. */
+export const BAPE_SELL_CHF = 69;
+/** Bape express metafield (CHF). Only when physical location stock > 0. */
+export const BAPE_EXPRESS_CHF = 99;
+
 export type InStockFixedPriceConfig = {
   costChf: number;
   label: string;
@@ -79,8 +84,10 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   },
   {
     costChf: 35,
+    sellChf: BAPE_SELL_CHF,
+    expressChf: BAPE_EXPRESS_CHF,
     label: "Bape Tee (in stock)",
-    matchReason: "Bape Tee (auto 35 CHF)",
+    matchReason: "Bape Tee (fixed 69/99)",
     productIds: [
       "15356478325122", // Check by Bathing Tee White/Beige
       "15356478357890", // Big Ape Head Tee White

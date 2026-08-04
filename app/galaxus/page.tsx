@@ -393,6 +393,7 @@ export function GalaxusWarehouseDashboard() {
   const opsJobLabels: Record<string, string> = {
     "partner-stock-sync": "Partner stock sync",
     "stx-refresh": "StockX / Kicks refresh",
+    "gld-refresh": "Golden (GLD) price/stock refresh",
     "edi-in": "EDI IN order polling",
   };
 
@@ -2065,6 +2066,13 @@ export function GalaxusWarehouseDashboard() {
                   disabled={opsBusy !== null}
                 >
                   {opsBusy === "ops-stx-refresh" ? "Running…" : "Run StockX/Kicks refresh now"}
+                </button>
+                <button
+                  className="px-3 py-2 rounded bg-amber-700 text-white disabled:opacity-50"
+                  onClick={() => runOpsAction("gld-refresh")}
+                  disabled={opsBusy !== null}
+                >
+                  {opsBusy === "ops-gld-refresh" ? "Running…" : "Run Golden/GLD refresh now"}
                 </button>
                 <button
                   className="px-3 py-2 rounded bg-blue-900 text-white disabled:opacity-50"

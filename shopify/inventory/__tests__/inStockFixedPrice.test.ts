@@ -29,9 +29,11 @@ describe("inStockFixedPrice", () => {
     expect(r?.expressChf).toBe(89);
   });
 
-  it("resolves Bape by productId with COGS 35", () => {
+  it("resolves Bape by productId with COGS 35 and sell 69/99", () => {
     const r = resolveInStockFixedPrice({ productId: "gid://shopify/Product/15356478325122" });
     expect(r?.costChf).toBe(35);
+    expect(r?.sellChf).toBe(69);
+    expect(r?.expressChf).toBe(99);
   });
 
   it("resolves Audemars x Travis by title with COGS 40 and sell 89/109", () => {

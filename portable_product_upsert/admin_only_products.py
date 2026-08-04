@@ -27,10 +27,21 @@ ESSENTIALS_EXPRESS_CHF = 89
 AUDEMARS_TRAVIS_SELL_CHF = 89
 AUDEMARS_TRAVIS_EXPRESS_CHF = 109
 
+# Bape — never StockX; express only when physical stock > 0
+BAPE_SELL_CHF = 69
+BAPE_EXPRESS_CHF = 99
+
 AUDEMARS_TRAVIS_PRODUCT_IDS = frozenset(
     {
         "15115016733058",  # Vintage Tee Black
         "15115016831362",  # Watch Face Tee Green
+    }
+)
+
+BAPE_PRODUCT_IDS = frozenset(
+    {
+        "15356478325122",  # Check by Bathing Tee
+        "15356478357890",  # Big Ape Head Tee
     }
 )
 
@@ -50,9 +61,7 @@ HARDCODED_PRODUCT_IDS = frozenset(
     {
         *ESSENTIALS_PRODUCT_IDS,
         *AUDEMARS_TRAVIS_PRODUCT_IDS,
-        # Bape
-        "15356478325122",  # Check by Bathing Tee
-        "15356478357890",  # Big Ape Head Tee
+        *BAPE_PRODUCT_IDS,
     }
 )
 
