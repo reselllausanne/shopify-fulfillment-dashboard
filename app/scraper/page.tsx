@@ -173,7 +173,8 @@ export default function ScraperPage() {
 {`SCRAPER_SHOPS="WEL|WellPlayed|https://www.wellplayed.ch
 HHV|HHV|https://www.hhv.de|EUR|hhv
 SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
-NSO|Newsole|https://newsole.ch|CHF|nso"`}
+REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
+BAE|Bächli Bergsport|https://www.baechli-bergsport.ch/de|CHF|bae"`}
             </pre>
           </div>
         ) : null}

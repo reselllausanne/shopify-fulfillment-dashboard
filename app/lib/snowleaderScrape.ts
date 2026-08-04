@@ -10,9 +10,8 @@ import {
   snowleaderGraphqlConfig,
   type SnowleaderGqlVariant,
 } from "@/app/lib/snowleaderGraphqlClient";
-import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
+import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
-import { scheduleScraperGalaxusFeedPush } from "@/app/lib/scraperFeedPush";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -242,6 +241,7 @@ export async function scrapeSnowleaderShop(
   let parseErrors = 0;
   let requestErrors = 0;
   let totalListed = 0;
+  let firstCategoryError: string | null = null;
   let imageSynced = 0;
   let imageFailed = 0;
   const seenGtins = new Set<string>();
@@ -271,72 +271,90 @@ export async function scrapeSnowleaderShop(
     for (const categoryId of cfg.categoryIds) {
       let currentPage = 1;
       let categoryTotal = 0;
+      let categoryLoaded = false;
 
-      try {
-        for (;;) {
-          const listPage = await fetchSnowleaderProductSkusPage({
-            page: currentPage,
-            categoryId,
-            pageSize: cfg.pageSize,
-          });
-          if (!categoryTotal) {
-            categoryTotal = listPage.totalCount;
-            totalListed += categoryTotal;
-          }
-          await updateRun(runId, { products_listed: totalListed });
+      for (let categoryAttempt = 0; categoryAttempt < 3 && !categoryLoaded; categoryAttempt++) {
+        try {
+          currentPage = 1;
+          categoryTotal = 0;
+          for (;;) {
+            const listPage = await fetchSnowleaderProductSkusPage({
+              page: currentPage,
+              categoryId,
+              pageSize: cfg.pageSize,
+            });
+            categoryLoaded = true;
+            if (!categoryTotal) {
+              categoryTotal = listPage.totalCount;
+              totalListed += categoryTotal;
+            }
+            await updateRun(runId, { products_listed: totalListed });
 
-          if (!listPage.skus.length) break;
+            if (!listPage.skus.length) break;
 
-          for (const sku of listPage.skus) {
+            for (const sku of listPage.skus) {
+              if (maxProducts && processedProducts >= maxProducts) break;
+              processedProducts++;
+
+              try {
+                const product = await fetchSnowleaderProductBySku(sku);
+                const result = await ingestSnowleaderProduct(
+                  prismaAny,
+                  shop,
+                  product,
+                  seenGtins,
+                  existingById,
+                  imageSyncQueue
+                );
+                wrote += result.wrote;
+                gtinMatched += result.gtinMatched;
+                parseErrors += result.parseErrors;
+              } catch (err) {
+                requestErrors++;
+                if (!isRetryableSnowleaderGraphqlError(err)) throw err;
+              }
+
+              if (imageSyncQueue.size >= IMAGE_SYNC_BATCH) {
+                const img = await flushImageSyncQueue(imageSyncQueue);
+                imageSynced += img.synced;
+                imageFailed += img.failed;
+              }
+
+              if (processedProducts % 10 === 0) {
+                await updateRun(runId, {
+                  with_gtin: gtinMatched,
+                  variants_upserted: wrote,
+                  errors: parseErrors + requestErrors,
+                });
+              }
+            }
+
+            await updateRun(runId, {
+              with_gtin: gtinMatched,
+              variants_upserted: wrote,
+              errors: parseErrors + requestErrors,
+            });
+
             if (maxProducts && processedProducts >= maxProducts) break;
-            processedProducts++;
-
-            try {
-              const product = await fetchSnowleaderProductBySku(sku);
-              const result = await ingestSnowleaderProduct(
-                prismaAny,
-                shop,
-                product,
-                seenGtins,
-                existingById,
-                imageSyncQueue
-              );
-              wrote += result.wrote;
-              gtinMatched += result.gtinMatched;
-              parseErrors += result.parseErrors;
-            } catch (err) {
-              requestErrors++;
-              if (!isRetryableSnowleaderGraphqlError(err)) throw err;
-            }
-
-            if (imageSyncQueue.size >= IMAGE_SYNC_BATCH) {
-              const img = await flushImageSyncQueue(imageSyncQueue);
-              imageSynced += img.synced;
-              imageFailed += img.failed;
-            }
-
-            if (processedProducts % 10 === 0) {
-              await updateRun(runId, {
-                with_gtin: gtinMatched,
-                variants_upserted: wrote,
-                errors: parseErrors + requestErrors,
-              });
-            }
+            if (currentPage * listPage.pageSize >= listPage.totalCount) break;
+            currentPage += 1;
           }
-
-          await updateRun(runId, {
-            with_gtin: gtinMatched,
-            variants_upserted: wrote,
-            errors: parseErrors + requestErrors,
-          });
-
-          if (maxProducts && processedProducts >= maxProducts) break;
-          if (currentPage * listPage.pageSize >= listPage.totalCount) break;
-          currentPage += 1;
+        } catch (err) {
+          requestErrors++;
+          const msg = String((err as Error)?.message || err).slice(0, 200);
+          if (!firstCategoryError) firstCategoryError = `cat=${categoryId}: ${msg}`;
+          console.error(
+            `[SCRAPER] snl category ${categoryId} attempt ${categoryAttempt + 1}/3:`,
+            msg
+          );
+          if (categoryAttempt < 2) {
+            await new Promise((r) => setTimeout(r, 3000 * (categoryAttempt + 1)));
+          }
         }
-      } catch (err) {
-        requestErrors++;
-        console.error(`[SCRAPER] snl category ${categoryId} skipped:`, (err as Error)?.message || err);
+      }
+
+      if (!categoryLoaded) {
+        console.error(`[SCRAPER] snl category ${categoryId} skipped after retries`);
       }
 
       if (maxProducts && processedProducts >= maxProducts) break;
@@ -348,15 +366,19 @@ export async function scrapeSnowleaderShop(
       imageFailed += img.failed;
     }
 
-    await scheduleScraperGalaxusFeedPush({ shop, wrote, syncImages: false });
+    if (!shop.gated && wrote > 0) {
+      const { scheduleScraperGalaxusFeedPush } = await import("@/app/lib/scraperFeedPush");
+      await scheduleScraperGalaxusFeedPush({ shop, wrote, syncImages: false });
+    }
 
+    const ok = processedProducts > 0 || wrote > 0;
     await updateRun(runId, {
-      status: "ok",
+      status: ok ? "ok" : "error",
       finished_at: new Date(),
       variants_upserted: wrote,
       with_gtin: gtinMatched,
       errors: parseErrors + requestErrors,
-      message: `source=graphql-per-sku store=${cfg.store} categories=${cfg.categoryIds.length} products=${processedProducts} gtin_rows=${gtinMatched} req_errors=${requestErrors} images_synced=${imageSynced} images_failed=${imageFailed}`,
+      message: `source=graphql-per-sku store=${cfg.store} categories=${cfg.categoryIds.length} products=${processedProducts} gtin_rows=${gtinMatched} req_errors=${requestErrors} images_synced=${imageSynced} images_failed=${imageFailed}${firstCategoryError ? ` first_err=${firstCategoryError}` : ""}`,
     });
   } catch (err: any) {
     await updateRun(runId, {

@@ -3,14 +3,21 @@ import { scraperQuery } from "@/app/lib/scraperDb";
 import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
-import { scheduleScraperGalaxusFeedPush } from "@/app/lib/scraperFeedPush";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT || "LivioShopifyScraper/1.0 (+catalog sync)";
-const JS_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_JS_WORKERS || 3));
-const REQUEST_DELAY_MS = Number(process.env.SCRAPER_REQUEST_DELAY_MS || 120);
 const DEFAULT_STOCK = Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5));
+
+function shopifyScrapeConfig() {
+  return {
+    jsConcurrency: Math.max(1, Number(process.env.SCRAPER_JS_WORKERS || 2)),
+    requestDelayMs: Math.max(0, Number(process.env.SCRAPER_REQUEST_DELAY_MS || 250)),
+    listPageDelayMs: Math.max(0, Number(process.env.SCRAPER_SHOPIFY_LIST_DELAY_MS || 800)),
+    maxRetries: Math.max(5, Number(process.env.SCRAPER_SHOPIFY_MAX_RETRIES || 20)),
+    max429WaitMs: Math.max(10_000, Number(process.env.SCRAPER_SHOPIFY_429_MAX_WAIT_MS || 300_000)),
+  };
+}
 const WRITE_CONCURRENCY = 10;
 const IMAGE_SYNC_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_IMAGE_SYNC_CONCURRENCY || 5));
 
@@ -65,9 +72,11 @@ function pickImage(product: any, variant: any): string {
   return src || "";
 }
 
-async function getJson(url: string, retries = 5): Promise<any> {
+async function getJson(url: string): Promise<any> {
+  const cfg = shopifyScrapeConfig();
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  let rateLimitHits = 0;
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
     try {
       const res = await fetch(url, {
         headers: {
@@ -78,14 +87,20 @@ async function getJson(url: string, retries = 5): Promise<any> {
         signal: AbortSignal.timeout(45_000),
       });
       if (res.status === 429) {
+        rateLimitHits++;
         const ra = Number(res.headers.get("retry-after") || 0);
-        const wait = Math.max(ra * 1000, Math.min(3000 * 2 ** attempt, 90_000));
+        const wait = Math.min(
+          cfg.max429WaitMs,
+          Math.max(ra * 1000, 5000 * Math.pow(1.4, rateLimitHits))
+        );
+        console.warn(`[SCRAPER] Shopify 429 on ${url} — waiting ${Math.round(wait / 1000)}s`);
         await sleep(wait);
         lastErr = new Error("429");
+        attempt--;
         continue;
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      if (REQUEST_DELAY_MS) await sleep(REQUEST_DELAY_MS);
+      if (cfg.requestDelayMs) await sleep(cfg.requestDelayMs);
       return await res.json();
     } catch (e) {
       lastErr = e;
@@ -95,7 +110,12 @@ async function getJson(url: string, retries = 5): Promise<any> {
   throw new Error(`GET failed ${url}: ${lastErr}`);
 }
 
-async function listProducts(baseUrl: string, maxProducts?: number): Promise<any[]> {
+async function listProducts(
+  baseUrl: string,
+  maxProducts?: number,
+  onPage?: (page: number, listed: number) => void | Promise<void>
+): Promise<any[]> {
+  const cfg = shopifyScrapeConfig();
   const products: any[] = [];
   const seen = new Set<number>();
   let page = 1;
@@ -111,8 +131,10 @@ async function listProducts(baseUrl: string, maxProducts?: number): Promise<any[
       added++;
       if (maxProducts && products.length >= maxProducts) return products;
     }
+    await onPage?.(page, products.length);
     if (added === 0 || batch.length < 250) break;
     page++;
+    if (cfg.listPageDelayMs) await sleep(cfg.listPageDelayMs);
   }
   return products;
 }
@@ -278,8 +300,13 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
   };
 
   try {
-    const listed = await listProducts(shop.baseUrl, maxProducts);
-    await updateRun(runId, { products_listed: listed.length });
+    const listed = await listProducts(shop.baseUrl, maxProducts, async (page, count) => {
+      await updateRun(runId, {
+        products_listed: count,
+        message: `listing page ${page} (${count} products)`,
+      });
+    });
+    await updateRun(runId, { products_listed: listed.length, message: `listed ${listed.length} products` });
 
     const handles = listed.filter((p) => p?.handle);
 
@@ -305,7 +332,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
 
     // Enrich + write per product. Upserts are idempotent (keyed by supplierVariantId),
     // so writing as we go is safe and survives crashes with partial data committed.
-    await runPool(handles, JS_CONCURRENCY, async (product) => {
+    await runPool(handles, shopifyScrapeConfig().jsConcurrency, async (product) => {
       let js: any = null;
       try {
         js = await getJson(`${shop.baseUrl}/products/${product.handle}.js`);
@@ -412,7 +439,10 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
       console.error(`[SCRAPER] ${shop.key} image backfill failed:`, e?.message || e);
     });
 
-    await scheduleScraperGalaxusFeedPush({ shop, wrote, syncImages: true });
+    if (!shop.gated && wrote > 0) {
+      const { scheduleScraperGalaxusFeedPush } = await import("@/app/lib/scraperFeedPush");
+      await scheduleScraperGalaxusFeedPush({ shop, wrote, syncImages: true });
+    }
 
     await updateRun(runId, {
       status: "ok",
