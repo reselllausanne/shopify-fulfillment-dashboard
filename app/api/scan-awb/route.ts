@@ -21,7 +21,10 @@ async function enrichOrderMatchFromShopify(match: {
     if (!orderInfo) return null;
 
     const addr = orderInfo.shippingAddress;
+    const labelAddr = orderInfo.labelShippingAddress ?? null;
     const composedName =
+      [orderInfo.customer?.firstName, orderInfo.customer?.lastName].filter(Boolean).join(" ").trim() ||
+      String(orderInfo.customer?.displayName ?? "").trim() ||
       [addr?.firstName, addr?.lastName].filter(Boolean).join(" ").trim() ||
       (addr?.name || "").trim() ||
       null;
@@ -31,23 +34,32 @@ async function enrichOrderMatchFromShopify(match: {
     const li =
       (targetId ? lineNodes.find((n) => n.id === targetId) : undefined) || lineNodes[0] || null;
 
+    const toAddrPayload = (a: typeof addr) =>
+      a
+        ? {
+            address1: a.address1 ?? null,
+            address2: a.address2 ?? null,
+            zip: a.zip ?? null,
+            city: a.city ?? null,
+            province: a.province ?? null,
+            country: (a.country || a.countryCodeV2) ?? null,
+            company: a.company ?? null,
+            name: a.name ?? null,
+          }
+        : null;
+
     return {
       customer: {
         name: composedName,
         email: orderInfo.email ?? null,
         phone: orderInfo.phone || addr?.phone || null,
-        shippingAddress: addr
-          ? {
-              address1: addr.address1 ?? null,
-              address2: addr.address2 ?? null,
-              zip: addr.zip ?? null,
-              city: addr.city ?? null,
-              province: addr.province ?? null,
-              country: (addr.country || addr.countryCodeV2) ?? null,
-              company: addr.company ?? null,
-            }
-          : null,
+        shippingAddress: toAddrPayload(addr),
       },
+      shipToStore: Boolean(orderInfo.shipToStore),
+      isStorePickup: Boolean(orderInfo.isStorePickup),
+      pickupLabel: orderInfo.pickup?.label ?? null,
+      pickupLocation: orderInfo.pickup?.locationName ?? null,
+      labelShippingAddress: toAddrPayload(labelAddr),
       lineItem: li
         ? {
             title: li.title,
@@ -307,6 +319,11 @@ export async function POST(req: NextRequest) {
           customer: enriched.customer,
           lineItem: enriched.lineItem,
           shopifyOrder: enriched.shopifyOrder,
+          shipToStore: enriched.shipToStore,
+          isStorePickup: enriched.isStorePickup,
+          pickupLabel: enriched.pickupLabel,
+          pickupLocation: enriched.pickupLocation,
+          labelShippingAddress: enriched.labelShippingAddress,
         };
       } else {
         shopifyMatchPayload = base;

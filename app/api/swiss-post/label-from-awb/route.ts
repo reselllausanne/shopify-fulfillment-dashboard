@@ -222,7 +222,8 @@ const normalizeAwb = (code?: string | null) => {
 };
 
 function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>): SwissPostRecipient {
-  const address = orderInfo?.shippingAddress;
+  // Store pickup → ship to store (labelShippingAddress). Else customer shippingAddress.
+  const address = orderInfo?.labelShippingAddress ?? orderInfo?.shippingAddress;
   const fullName =
     address?.name ||
     [address?.firstName, address?.lastName].filter(Boolean).join(" ").trim() ||

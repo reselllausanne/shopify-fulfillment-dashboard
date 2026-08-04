@@ -1,7 +1,17 @@
 export type ShopifyPickupInfo = {
   isStorePickup: boolean;
   locationName: string | null;
+  locationId: string | null;
   label: string | null;
+  locationAddress: {
+    address1?: string | null;
+    address2?: string | null;
+    city?: string | null;
+    zip?: string | null;
+    country?: string | null;
+    countryCode?: string | null;
+    phone?: string | null;
+  } | null;
 };
 
 type ShippingLineInput = {
@@ -14,7 +24,22 @@ type FulfillmentOrderInput = {
     methodType?: string | null;
     presentedName?: string | null;
   } | null;
-  assignedLocation?: { name?: string | null } | null;
+  assignedLocation?: {
+    name?: string | null;
+    location?: {
+      id?: string | null;
+      name?: string | null;
+      address?: {
+        address1?: string | null;
+        address2?: string | null;
+        city?: string | null;
+        zip?: string | null;
+        country?: string | null;
+        countryCode?: string | null;
+        phone?: string | null;
+      } | null;
+    } | null;
+  } | null;
 };
 
 const PICKUP_TITLE_RE = /pick\s?up|retrait|click\s?&?\s?collect|ramassage|collecte en magasin|store pickup/i;
@@ -32,6 +57,8 @@ function pickupFromShippingLines(lines: ShippingLineInput[]): ShopifyPickupInfo 
     return {
       isStorePickup: true,
       locationName: title,
+      locationId: null,
+      locationAddress: null,
       label: `Pickup · ${title}`,
     };
   }
@@ -43,23 +70,30 @@ function pickupFromFulfillmentOrders(orders: FulfillmentOrderInput[]): ShopifyPi
     const methodType = String(fo.deliveryMethod?.methodType ?? "").trim().toUpperCase();
     const presentedName = cleanLabel(fo.deliveryMethod?.presentedName);
     const assignedName = cleanLabel(fo.assignedLocation?.name);
+    const loc = fo.assignedLocation?.location;
+    const locationId = cleanLabel(loc?.id);
+    const locationAddress = loc?.address ?? null;
     const isPickup =
       methodType === "PICK_UP" ||
       methodType === "PICKUP" ||
       methodType === "LOCAL" ||
       Boolean(presentedName && PICKUP_TITLE_RE.test(presentedName));
     if (!isPickup) continue;
-    const locationName = assignedName ?? presentedName;
+    const locationName = assignedName ?? cleanLabel(loc?.name) ?? presentedName;
     if (!locationName) {
       return {
         isStorePickup: true,
         locationName: null,
+        locationId,
+        locationAddress,
         label: "Store pickup",
       };
     }
     return {
       isStorePickup: true,
       locationName,
+      locationId,
+      locationAddress,
       label: `Pickup · ${locationName}`,
     };
   }
@@ -77,6 +111,8 @@ export function parseShopifyOrderPickup(input: {
     pickupFromShippingLines(shippingLines) ?? {
       isStorePickup: false,
       locationName: null,
+      locationId: null,
+      locationAddress: null,
       label: null,
     }
   );

@@ -7,12 +7,20 @@ describe("parseShopifyOrderPickup", () => {
       fulfillmentOrders: [
         {
           deliveryMethod: { methodType: "PICK_UP", presentedName: "Retrait en magasin" },
-          assignedLocation: { name: "Warehouse Bussigny" },
+          assignedLocation: {
+            name: "Warehouse Bussigny",
+            location: {
+              id: "gid://shopify/Location/111267971458",
+              name: "Warehouse Bussigny",
+              address: { address1: "", city: "", zip: "", countryCode: "CH" },
+            },
+          },
         },
       ],
     });
     expect(info.isStorePickup).toBe(true);
     expect(info.locationName).toBe("Warehouse Bussigny");
+    expect(info.locationId).toBe("gid://shopify/Location/111267971458");
     expect(info.label).toContain("Warehouse Bussigny");
   });
 

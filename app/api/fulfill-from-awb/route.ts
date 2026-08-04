@@ -292,7 +292,8 @@ function normalizePostalCity(address: any) {
 }
 
 function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo>>): SwissPostRecipient {
-  const address = orderInfo?.shippingAddress;
+  // Store pickup → ship to store (labelShippingAddress). Else customer shippingAddress.
+  const address = orderInfo?.labelShippingAddress ?? orderInfo?.shippingAddress;
   const fullName =
     address?.name ||
     [address?.firstName, address?.lastName].filter(Boolean).join(" ").trim() ||
@@ -705,6 +706,15 @@ export async function POST(req: NextRequest) {
 
     if (shouldCallSwissPost && process.env.SWISS_POST_LABEL_ENDPOINT) {
       try {
+        if (orderInfo?.shipToStore) {
+          const storeLabel = orderInfo.pickup?.label || orderInfo.pickup?.locationName || "store";
+          warnings.push(`Store pickup: Swiss Post label ships to ${storeLabel} (not customer address).`);
+          console.log("[SWISS POST] ship-to-store", {
+            order: orderInfo.name,
+            pickup: orderInfo.pickup,
+            labelShippingAddress: orderInfo.labelShippingAddress,
+          });
+        }
         const preferredLineItemIds = selectedMatches.map((m) => m.shopifyLineItemId);
         const payload =
           swissPostPayload && typeof swissPostPayload === "object"

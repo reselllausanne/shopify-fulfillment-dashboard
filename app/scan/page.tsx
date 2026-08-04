@@ -40,8 +40,24 @@ type ScanMatchPayload = {
       province?: string | null;
       country?: string | null;
       company?: string | null;
+      name?: string | null;
     } | null;
   };
+  /** Checkout chose get-in-store → AWB label ships to store, not client. */
+  shipToStore?: boolean;
+  isStorePickup?: boolean;
+  pickupLabel?: string | null;
+  pickupLocation?: string | null;
+  labelShippingAddress?: {
+    address1?: string | null;
+    address2?: string | null;
+    zip?: string | null;
+    city?: string | null;
+    province?: string | null;
+    country?: string | null;
+    company?: string | null;
+    name?: string | null;
+  } | null;
   lineItem?: {
     title?: string | null;
     variantTitle?: string | null;
@@ -869,21 +885,47 @@ export default function ScanPage() {
                   <div>Name: {result.match.customer?.name || "—"}</div>
                   <div>Email: {result.match.customer?.email || "—"}</div>
                   <div>Phone: {result.match.customer?.phone || "—"}</div>
-                  <div>
-                    Address:{" "}
-                    {result.match.customer?.shippingAddress
-                      ? [
-                          result.match.customer.shippingAddress.company,
-                          result.match.customer.shippingAddress.address1,
-                          result.match.customer.shippingAddress.address2,
-                          result.match.customer.shippingAddress.zip,
-                          result.match.customer.shippingAddress.city,
-                          result.match.customer.shippingAddress.country,
-                        ]
-                          .filter(Boolean)
-                          .join(", ")
-                      : "—"}
-                  </div>
+                  {result.match.shipToStore || result.match.isStorePickup ? (
+                    <div className="mt-2 p-2 rounded border border-amber-300 bg-amber-50 text-amber-950">
+                      <div className="font-semibold">
+                        Ship to store · {result.match.pickupLabel || result.match.pickupLocation || "Store pickup"}
+                      </div>
+                      <div className="text-sm mt-1">
+                        Label address:{" "}
+                        {result.match.labelShippingAddress
+                          ? [
+                              result.match.labelShippingAddress.company,
+                              result.match.labelShippingAddress.name
+                                ? `(${result.match.labelShippingAddress.name})`
+                                : null,
+                              result.match.labelShippingAddress.address1,
+                              result.match.labelShippingAddress.address2,
+                              result.match.labelShippingAddress.zip,
+                              result.match.labelShippingAddress.city,
+                              result.match.labelShippingAddress.country,
+                            ]
+                              .filter(Boolean)
+                              .join(", ")
+                          : "—"}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      Address:{" "}
+                      {result.match.customer?.shippingAddress
+                        ? [
+                            result.match.customer.shippingAddress.company,
+                            result.match.customer.shippingAddress.address1,
+                            result.match.customer.shippingAddress.address2,
+                            result.match.customer.shippingAddress.zip,
+                            result.match.customer.shippingAddress.city,
+                            result.match.customer.shippingAddress.country,
+                          ]
+                            .filter(Boolean)
+                            .join(", ")
+                        : "—"}
+                    </div>
+                  )}
                 </div>
                 <div className="bg-white bg-opacity-80 p-3 rounded border md:col-span-2">
                   <h3 className="font-semibold text-gray-800 mb-1">Item</h3>

@@ -3,6 +3,11 @@ import {
   mergeLineItemCustomAttributes,
   parseShopifyLineItemDelivery,
 } from "@/app/lib/shopifyLineItemDelivery";
+import { parseShopifyOrderPickup, type ShopifyPickupInfo } from "@/app/lib/shopifyOrderPickup";
+import {
+  resolvePickupShipAddress,
+  storeAddressAsShippingAddress,
+} from "@/app/lib/pickupShipToStore";
 
 type DbFulfillmentItem = {
   sku?: string | null;
@@ -51,6 +56,21 @@ type ShippingLineInfo = {
   isRemoved: boolean;
 };
 
+type OrderShippingAddress = {
+  firstName?: string | null;
+  lastName?: string | null;
+  name?: string | null;
+  company?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  province?: string | null;
+  country?: string | null;
+  countryCodeV2?: string | null;
+  phone?: string | null;
+};
+
 type OrderShippingInfo = {
   id: string;
   name: string;
@@ -60,19 +80,20 @@ type OrderShippingInfo = {
   /** Shopify order locale, e.g. fr-CH, de */
   customerLocale?: string | null;
   paymentGatewayNames?: string[];
-  shippingAddress?: {
+  shippingAddress?: OrderShippingAddress | null;
+  /**
+   * Address used for Swiss Post / AWB labels.
+   * Store pickup → store address; else customer shippingAddress.
+   */
+  labelShippingAddress?: OrderShippingAddress | null;
+  /** True when checkout chose in-store pickup (not the same as physical in-stock). */
+  isStorePickup?: boolean;
+  shipToStore?: boolean;
+  pickup?: ShopifyPickupInfo | null;
+  customer?: {
     firstName?: string | null;
     lastName?: string | null;
-    name?: string | null;
-    company?: string | null;
-    address1?: string | null;
-    address2?: string | null;
-    zip?: string | null;
-    city?: string | null;
-    province?: string | null;
-    country?: string | null;
-    countryCodeV2?: string | null;
-    phone?: string | null;
+    displayName?: string | null;
   } | null;
   lineItems: { nodes: OrderLineItemSummary[] };
   shippingLines?: ShippingLineInfo[];
@@ -200,6 +221,11 @@ query OrderShippingInfo($orderId: ID!) {
     phone
     customerLocale
     paymentGatewayNames
+    customer {
+      firstName
+      lastName
+      displayName
+    }
     currentTotalPriceSet {
       shopMoney {
         amount
@@ -230,6 +256,30 @@ query OrderShippingInfo($orderId: ID!) {
             shopMoney {
               amount
               currencyCode
+            }
+          }
+        }
+      }
+    }
+    fulfillmentOrders(first: 10) {
+      nodes {
+        deliveryMethod {
+          methodType
+          presentedName
+        }
+        assignedLocation {
+          name
+          location {
+            id
+            name
+            address {
+              address1
+              address2
+              city
+              zip
+              country
+              countryCode
+              phone
             }
           }
         }
@@ -721,11 +771,68 @@ export async function fetchOrderShippingInfo(orderId: string) {
     }),
   };
 
+  const fulfillmentOrders = ((order as any).fulfillmentOrders?.nodes ?? []) as Array<{
+    deliveryMethod?: { methodType?: string | null; presentedName?: string | null } | null;
+    assignedLocation?: {
+      name?: string | null;
+      location?: {
+        id?: string | null;
+        name?: string | null;
+        address?: {
+          address1?: string | null;
+          address2?: string | null;
+          city?: string | null;
+          zip?: string | null;
+          country?: string | null;
+          countryCode?: string | null;
+          phone?: string | null;
+        } | null;
+      } | null;
+    } | null;
+  }>;
+
+  const pickup = parseShopifyOrderPickup({
+    shippingLines,
+    fulfillmentOrders,
+  });
+
+  const customerName =
+    [
+      (order as any).customer?.firstName,
+      (order as any).customer?.lastName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    String((order as any).customer?.displayName ?? "").trim() ||
+    order.shippingAddress?.name ||
+    [order.shippingAddress?.firstName, order.shippingAddress?.lastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    null;
+
+  const store = resolvePickupShipAddress({
+    isStorePickup: pickup.isStorePickup,
+    locationName: pickup.locationName,
+    locationId: pickup.locationId,
+    locationAddress: pickup.locationAddress,
+  });
+
+  const shipToStore = Boolean(store);
+  const labelShippingAddress = store
+    ? storeAddressAsShippingAddress(store, customerName)
+    : order.shippingAddress ?? null;
+
   return {
     ...order,
     lineItems,
     shippingLines,
     orderTotal,
+    pickup,
+    isStorePickup: pickup.isStorePickup,
+    shipToStore,
+    labelShippingAddress,
   };
 }
 
