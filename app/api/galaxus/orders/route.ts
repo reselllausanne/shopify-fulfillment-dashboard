@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDispatch";
 import { getInvoiceLineProgressByOrderIds } from "@/galaxus/edi/invoiceCoverage";
+import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
 import { getOpenWarehouseLineCountByOrderId } from "@/galaxus/warehouse/shipmentLineCoverage";
 
 export const runtime = "nodejs";
@@ -103,25 +104,79 @@ export async function GET(request: Request) {
         console.error("[GALAXUS][ORDERS] Invoice progress batch failed:", err);
       }
     }
+    // Align with order-detail procurement.ok (match rows OR StxPurchaseUnit OR warehouse stock).
+    // Old SQL only counted GalaxusStockxMatch rows → STX-linked-via-units showed 0/N on left list.
     const linkedCountByOrderId = new Map<string, number>();
     if (orderIds.length > 0) {
       try {
-        const rows = (await prisma.$queryRaw(
-          Prisma.sql`
-            SELECT m."galaxusOrderId", COUNT(*)::int AS "linkedCount"
-            FROM "public"."GalaxusStockxMatch" m
-            INNER JOIN "public"."GalaxusOrderLine" l
-              ON l."id" = m."galaxusOrderLineId"
-            WHERE m."galaxusOrderId" IN (${Prisma.join(orderIds)})
-              AND l."orderId" = m."galaxusOrderId"
-            GROUP BY m."galaxusOrderId"
-          `
-        )) as Array<{ galaxusOrderId: string; linkedCount: number }>;
-        for (const row of rows) {
-          linkedCountByOrderId.set(row.galaxusOrderId, Number(row.linkedCount) || 0);
+        const orderRefs = orders.map((o) => o.galaxusOrderId).filter(Boolean);
+        const prismaAny = prisma as any;
+        const [lines, stockxMatches, stxUnits] = await Promise.all([
+          prisma.galaxusOrderLine.findMany({
+            where: { orderId: { in: orderIds } },
+            select: {
+              id: true,
+              orderId: true,
+              gtin: true,
+              quantity: true,
+              supplierPid: true,
+              supplierSku: true,
+              supplierVariantId: true,
+              providerKey: true,
+            },
+          }),
+          prismaAny.galaxusStockxMatch?.findMany
+            ? prismaAny.galaxusStockxMatch
+                .findMany({
+                  where: { galaxusOrderId: { in: orderIds } },
+                  select: {
+                    galaxusOrderId: true,
+                    galaxusOrderLineId: true,
+                    galaxusGtin: true,
+                    unitIndex: true,
+                    stockxOrderId: true,
+                    stockxOrderNumber: true,
+                    stockxAmount: true,
+                    stockxCurrencyCode: true,
+                    stockxAwb: true,
+                  },
+                })
+                .catch(() => [])
+            : Promise.resolve([]),
+          orderRefs.length > 0 && prismaAny.stxPurchaseUnit?.findMany
+            ? prismaAny.stxPurchaseUnit
+                .findMany({
+                  where: {
+                    galaxusOrderId: { in: orderRefs },
+                    stockxOrderId: { not: null },
+                    cancelledAt: null,
+                  },
+                  select: {
+                    galaxusOrderId: true,
+                    gtin: true,
+                    supplierVariantId: true,
+                    stockxOrderId: true,
+                    stockxOrderNumber: true,
+                    stockxSettledAmount: true,
+                    stockxSettledCurrency: true,
+                    awb: true,
+                    cancelledAt: true,
+                  },
+                })
+                .catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        const computed = buildLinkedCountByOrderId({
+          orders,
+          lines,
+          stockxMatches: Array.isArray(stockxMatches) ? stockxMatches : [],
+          stxUnits: Array.isArray(stxUnits) ? stxUnits : [],
+        });
+        for (const [id, count] of computed) {
+          linkedCountByOrderId.set(id, count);
         }
       } catch {
-        // If the table isn't available yet, just skip linked counts.
+        // If tables aren't available yet, just skip linked counts.
       }
     }
     const warehouseShippedByOrderId = new Map<string, number>();

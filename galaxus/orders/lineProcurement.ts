@@ -235,3 +235,71 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     };
   });
 }
+
+/** Same “linked” rule as order detail (`procurement.ok`), for left-list linkedCount. */
+export function countLinkedLinesForList(
+  lines: any[],
+  stockxMatches: any[],
+  stxUnits: any[],
+  stx: any = null
+): number {
+  if (!Array.isArray(lines) || lines.length === 0) return 0;
+  return attachProcurementToLines(lines, stx, stockxMatches ?? [], stxUnits ?? []).filter((line) =>
+    Boolean(line?.procurement?.ok)
+  ).length;
+}
+
+/**
+ * Batch linkedCounts for `/api/galaxus/orders` list.
+ * Counts GalaxusStockxMatch, StxPurchaseUnit (stx_sync), and warehouse-stock lines —
+ * not match-row COUNT(*) alone (misses STX units without a match row).
+ */
+export function buildLinkedCountByOrderId(params: {
+  orders: Array<{ id: string; galaxusOrderId: string }>;
+  lines: Array<{ orderId: string } & Record<string, unknown>>;
+  stockxMatches: Array<{ galaxusOrderId: string } & Record<string, unknown>>;
+  /** StxPurchaseUnit.galaxusOrderId is the external Galaxus order ref. */
+  stxUnits: Array<{ galaxusOrderId: string } & Record<string, unknown>>;
+}): Map<string, number> {
+  const linesByOrderId = new Map<string, any[]>();
+  for (const line of params.lines ?? []) {
+    const oid = String(line?.orderId ?? "").trim();
+    if (!oid) continue;
+    const arr = linesByOrderId.get(oid) ?? [];
+    arr.push(line);
+    linesByOrderId.set(oid, arr);
+  }
+  const matchesByOrderId = new Map<string, any[]>();
+  for (const m of params.stockxMatches ?? []) {
+    const oid = String(m?.galaxusOrderId ?? "").trim();
+    if (!oid) continue;
+    const arr = matchesByOrderId.get(oid) ?? [];
+    arr.push(m);
+    matchesByOrderId.set(oid, arr);
+  }
+  const unitsByOrderRef = new Map<string, any[]>();
+  for (const u of params.stxUnits ?? []) {
+    const ref = String(u?.galaxusOrderId ?? "").trim();
+    if (!ref) continue;
+    const arr = unitsByOrderRef.get(ref) ?? [];
+    arr.push(u);
+    unitsByOrderRef.set(ref, arr);
+  }
+
+  const out = new Map<string, number>();
+  for (const order of params.orders ?? []) {
+    const id = String(order?.id ?? "").trim();
+    if (!id) continue;
+    const ref = String(order?.galaxusOrderId ?? "").trim();
+    out.set(
+      id,
+      countLinkedLinesForList(
+        linesByOrderId.get(id) ?? [],
+        matchesByOrderId.get(id) ?? [],
+        unitsByOrderRef.get(ref) ?? [],
+        null
+      )
+    );
+  }
+  return out;
+}
