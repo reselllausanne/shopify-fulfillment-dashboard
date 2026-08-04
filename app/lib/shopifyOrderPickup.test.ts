@@ -38,4 +38,32 @@ describe("parseShopifyOrderPickup", () => {
     });
     expect(info.isStorePickup).toBe(false);
   });
+
+  it("does not treat LOCAL delivery or stock assignedLocation as store pickup", () => {
+    const info = parseShopifyOrderPickup({
+      shippingLines: [{ title: "Livraison locale", isRemoved: false }],
+      fulfillmentOrders: [
+        {
+          deliveryMethod: { methodType: "LOCAL", presentedName: "Local delivery" },
+          assignedLocation: {
+            name: "THE LAB CONCEPT STORE",
+            location: { id: "gid://shopify/Location/111267250562", name: "THE LAB CONCEPT STORE" },
+          },
+        },
+      ],
+    });
+    expect(info.isStorePickup).toBe(false);
+  });
+
+  it("does not treat SHIPPING + store assignedLocation as pickup", () => {
+    const info = parseShopifyOrderPickup({
+      fulfillmentOrders: [
+        {
+          deliveryMethod: { methodType: "SHIPPING", presentedName: "Standard" },
+          assignedLocation: { name: "Warehouse Bussigny" },
+        },
+      ],
+    });
+    expect(info.isStorePickup).toBe(false);
+  });
 });

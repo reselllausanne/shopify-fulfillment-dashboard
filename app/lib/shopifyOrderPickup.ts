@@ -73,10 +73,11 @@ function pickupFromFulfillmentOrders(orders: FulfillmentOrderInput[]): ShopifyPi
     const loc = fo.assignedLocation?.location;
     const locationId = cleanLabel(loc?.id);
     const locationAddress = loc?.address ?? null;
+    // PICK_UP only — Shopify LOCAL = local delivery to customer, not store pickup.
+    // assignedLocation alone must NEVER trigger this (stock can sit in a store for ship orders).
     const isPickup =
       methodType === "PICK_UP" ||
       methodType === "PICKUP" ||
-      methodType === "LOCAL" ||
       Boolean(presentedName && PICKUP_TITLE_RE.test(presentedName));
     if (!isPickup) continue;
     const locationName = assignedName ?? cleanLabel(loc?.name) ?? presentedName;
