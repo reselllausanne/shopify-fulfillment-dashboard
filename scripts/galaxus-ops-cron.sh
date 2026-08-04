@@ -15,6 +15,8 @@
 #   GALAXUS_OPS_MASTER_WAIT_SEC     default 14400 (master-specs max wait; export+SFTP is slow)
 #   GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC default 5400 (max wait for image-sync before feeds; ~90m)
 #   GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS default 0 — when 1, abort full-flow if image-sync still busy
+#   GALAXUS_OPS_SNAPSHOT_WAIT_SEC     default 4500 (max wait for async snapshot rebuild; ~75m — rebuild often 35–45m)
+#   GALAXUS_OPS_MASTER_NONBLOCKING    default 1 — full-flow WARN+continue if master-specs fails
 #
 set -euo pipefail
 
@@ -25,6 +27,8 @@ WAIT_SEC="${GALAXUS_OPS_WAIT_SEC:-3600}"
 MASTER_WAIT_SEC="${GALAXUS_OPS_MASTER_WAIT_SEC:-14400}"
 IMAGE_SYNC_WAIT_SEC="${GALAXUS_OPS_IMAGE_SYNC_WAIT_SEC:-5400}"
 IMAGE_SYNC_BLOCK_FEEDS="${GALAXUS_OPS_IMAGE_SYNC_BLOCK_FEEDS:-0}"
+SNAPSHOT_WAIT_SEC="${GALAXUS_OPS_SNAPSHOT_WAIT_SEC:-4500}"
+MASTER_NONBLOCKING="${GALAXUS_OPS_MASTER_NONBLOCKING:-1}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/galaxus-ops-cron.log"
 LOCK_FILE="/tmp/galaxus-ops-cron.lock"
@@ -161,6 +165,53 @@ const p=new PrismaClient();
   return 1
 }
 
+wait_feed_snapshot_rebuild() {
+  local since_iso="$1"
+  local max_wait="${2:-$SNAPSHOT_WAIT_SEC}"
+  local deadline=$((SECONDS + max_wait))
+  while (( SECONDS < deadline )); do
+    local result
+    result="$(
+      docker compose -f /opt/resell/docker-compose.yml exec -T web node -e "
+const {PrismaClient}=require('@prisma/client');
+const p=new PrismaClient();
+(async()=>{
+  const since=new Date(process.argv[1]);
+  const run=await p.galaxusJobRun.findFirst({
+    where:{jobName:'ops-feed-snapshot-rebuild', startedAt:{gte:since}},
+    orderBy:{startedAt:'desc'},
+  });
+  if(!run){process.stdout.write('pending');return;}
+  const startedMs=new Date(run.startedAt).getTime();
+  const finishedMs=new Date(run.finishedAt).getTime();
+  if(finishedMs<=startedMs){process.stdout.write('running');return;}
+  process.stdout.write(run.success?'ok':'fail:'+(run.errorMessage||'unknown'));
+  await p.\$disconnect();
+})().catch(e=>{process.stdout.write('err:'+e.message);});
+" "$since_iso" 2>/dev/null || echo "err"
+    )"
+    case "$result" in
+      ok)
+        return 0
+        ;;
+      fail:*)
+        log "ERROR: feed snapshot rebuild failed: ${result#fail:}"
+        return 1
+        ;;
+      pending|running)
+        log "waiting feed snapshot rebuild status=$result elapsed=$((max_wait - (deadline - SECONDS)))s"
+        sleep 30
+        ;;
+      *)
+        log "WARN: feed snapshot rebuild poll=$result"
+        sleep 30
+        ;;
+    esac
+  done
+  log "ERROR: timed out waiting for feed snapshot rebuild after ${max_wait}s (since=$since_iso)"
+  return 1
+}
+
 wait_image_sync_idle() {
   local deadline=$((SECONDS + IMAGE_SYNC_WAIT_SEC))
   while (( SECONDS < deadline )); do
@@ -231,10 +282,22 @@ cd /opt/resell
 case "$ACTION" in
   full-flow)
     run_image_sync_full || true
-    log "START full-flow sequential (stock -> price -> master-specs)"
+    log "START full-flow sequential (rebuild snapshots -> stock -> price -> master-specs)"
+    snapshot_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if ! post_json '{"action":"rebuild-feed-snapshots"}' >/dev/null; then
+      log "WARN: rebuild-feed-snapshots rejected — continuing with existing snapshots"
+    elif ! wait_feed_snapshot_rebuild "$snapshot_started"; then
+      # Night of 2026-08-04: rebuild finished ~37m but wait was 30m → aborted stock/price/master.
+      # Never hard-stop nightly feeds on snapshot wait alone when prior snapshots may still be valid.
+      log "WARN: rebuild-feed-snapshots wait failed — continuing full-flow with best-available snapshots"
+    fi
     run_push "push-stock"
     run_push "push-price"
-    run_push "push-master-specs"
+    if [[ "$MASTER_NONBLOCKING" == "1" ]]; then
+      run_push "push-master-specs" || log "WARN: push-master-specs failed (non-blocking); stock+price already pushed"
+    else
+      run_push "push-master-specs"
+    fi
     log "DONE full-flow"
     ;;
   push-master-specs)
