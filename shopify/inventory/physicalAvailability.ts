@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { cleanGtin, gtinCandidates } from "@/shopify/restock/gtinNormalize";
 
 /**
  * Phase 2 — availability resolver (physical side).
@@ -16,11 +17,32 @@ import { prisma } from "@/app/lib/prisma";
  * mirror row would double-count.
  *
  * Zero-count semantics: a missing key = 0. Never returns negatives.
+ * GTIN lookups are padding-tolerant (UPC-A / EAN-13 / GTIN-14 leading zeros).
  *
  * Feature-flag gate: callers should only merge when `RESOLVER_MERGE_PHYSICAL`
  * is enabled, so we can ship code first, verify with a diff, and cut over
  * after the THE_ purge migration lands.
  */
+
+/** Digits-only GTIN with leading zeros stripped — used to merge padded aliases. */
+function gtinNormKey(raw: string): string {
+  const clean = cleanGtin(raw);
+  if (!clean) return "";
+  return clean.replace(/^0+/, "") || "0";
+}
+
+function expandGtinQuerySet(gtins: string[]): {
+  requested: string[];
+  candidates: string[];
+} {
+  const requested = Array.from(
+    new Set(gtins.map((g) => String(g ?? "").trim()).filter((g) => g.length > 0))
+  );
+  const candidates = Array.from(
+    new Set(requested.flatMap((g) => gtinCandidates(g)))
+  );
+  return { requested, candidates };
+}
 
 const FLAG_ENV = "RESOLVER_MERGE_PHYSICAL";
 
@@ -54,11 +76,15 @@ export type PhysicalStockMap = Map<string, PhysicalStockRow>;
  *
  * Only rows with `sourceType='physical'` and `available > 0` are aggregated.
  * Empty input → empty map (single trip avoided).
+ *
+ * Lookup is padding-tolerant: requesting `196…` also finds mirror rows stored
+ * as `0196…` / `00196…`. Results are keyed by each *requested* GTIN (and by
+ * the stored mirror GTIN forms found) so callers can `.get(inputGtin)`.
  */
 export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<PhysicalStockMap> {
-  const clean = Array.from(new Set(gtins.filter((g): g is string => !!g && g.length > 0)));
+  const { requested, candidates } = expandGtinQuerySet(gtins);
   const out: PhysicalStockMap = new Map();
-  if (clean.length === 0) return out;
+  if (candidates.length === 0) return out;
 
   const rows = await prisma.$queryRaw<
     Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }>
@@ -71,18 +97,45 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
     FROM "public"."ShopifyVariantLocationStock" s
     WHERE s."sourceType" = 'physical'
       AND s."available"  > 0
-      AND s."gtin"       = ANY(${clean}::text[])
+      AND s."gtin"       = ANY(${candidates}::text[])
     GROUP BY s."gtin"
   `;
 
+  // Merge padded aliases under one norm key so dual-stored rows never double-count.
+  const byNorm = new Map<
+    string,
+    { qty: number; preferredLocationId: string | null; preferredLocationName: string | null; storeGtins: string[] }
+  >();
   for (const r of rows) {
+    const stored = String(r.gtin ?? "").trim();
     const qty = Number(r.qty ?? 0);
-    if (qty <= 0) continue;
-    out.set(r.gtin, {
-      qty,
-      preferredLocationId: r.loc_id,
-      preferredLocationName: r.loc_name,
-    });
+    if (!stored || qty <= 0) continue;
+    const norm = gtinNormKey(stored);
+    if (!norm) continue;
+    const existing = byNorm.get(norm);
+    if (!existing) {
+      byNorm.set(norm, {
+        qty,
+        preferredLocationId: r.loc_id,
+        preferredLocationName: r.loc_name,
+        storeGtins: [stored],
+      });
+      continue;
+    }
+    existing.qty += qty;
+    existing.storeGtins.push(stored);
+  }
+
+  for (const g of requested) {
+    const row = byNorm.get(gtinNormKey(g));
+    if (!row || row.qty <= 0) continue;
+    const entry: PhysicalStockRow = {
+      qty: row.qty,
+      preferredLocationId: row.preferredLocationId,
+      preferredLocationName: row.preferredLocationName,
+    };
+    out.set(g, entry);
+    for (const stored of row.storeGtins) out.set(stored, entry);
   }
   return out;
 }
@@ -92,7 +145,14 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
  */
 export async function getPhysicalStockForGtin(gtin: string): Promise<PhysicalStockRow> {
   const m = await loadPhysicalMirrorStockByGtin([gtin]);
-  return m.get(gtin) ?? { qty: 0, preferredLocationId: null, preferredLocationName: null };
+  return (
+    m.get(gtin) ??
+    m.get(gtinNormKey(gtin)) ?? {
+      qty: 0,
+      preferredLocationId: null,
+      preferredLocationName: null,
+    }
+  );
 }
 
 /**
@@ -133,12 +193,13 @@ export async function loadAllPhysicalMirrorStockByGtin(): Promise<PhysicalStockM
 /**
  * Per-location mirror rows for a GTIN, priority order (Bussigny first).
  * Used by marketplace sale routing to decrement the correct shop.
+ * Padding-tolerant (same candidate set as batch physical load).
  */
 export async function loadPhysicalMirrorLocationRowsByGtin(
   gtin: string
 ): Promise<PhysicalLocationStockRow[]> {
-  const clean = String(gtin ?? "").trim();
-  if (!clean) return [];
+  const candidates = gtinCandidates(gtin);
+  if (candidates.length === 0) return [];
 
   const rows = await prisma.$queryRaw<
     Array<{
@@ -164,7 +225,7 @@ export async function loadPhysicalMirrorLocationRowsByGtin(
     FROM "public"."ShopifyVariantLocationStock" s
     WHERE s."sourceType" = 'physical'
       AND s."available"  > 0
-      AND s."gtin"       = ${clean}
+      AND s."gtin"       = ANY(${candidates}::text[])
     ORDER BY s."priority" ASC, s."available" DESC
   `;
 

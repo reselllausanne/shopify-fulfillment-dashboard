@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import { calcShopifySellPrice } from "@/shopify/pricing/calcShopifySellPrice";
+import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 
 export const EXPRESS_PRICE_METAFIELD = {
   namespace: "custom",
@@ -139,8 +140,10 @@ export async function syncLiquidationExpressPriceMetafield(input: {
 }
 
 async function resolveProductHandle(gtin: string): Promise<string | null> {
+  const cands = gtinCandidates(gtin);
+  if (cands.length === 0) return null;
   const kv = await prisma.kickDBVariant.findFirst({
-    where: { OR: [{ gtin }, { ean: gtin }] },
+    where: { OR: [{ gtin: { in: cands } }, { ean: { in: cands } }] },
     select: { product: { select: { urlKey: true } } },
     orderBy: { updatedAt: "desc" },
   });
@@ -151,10 +154,12 @@ async function resolveProductHandle(gtin: string): Promise<string | null> {
 export async function resolveStxExpressSellPriceChf(gtin: string): Promise<number | null> {
   const cleanGtin = String(gtin ?? "").trim();
   if (!cleanGtin) return null;
+  const cands = gtinCandidates(cleanGtin);
+  if (cands.length === 0) return null;
 
   const stxRow = await prisma.supplierVariant.findFirst({
     where: {
-      gtin: cleanGtin,
+      gtin: { in: cands },
       supplierVariantId: { startsWith: "stx_" },
     },
     orderBy: { updatedAt: "desc" },

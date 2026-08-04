@@ -41,6 +41,7 @@ import {
   restoreStxExpressPriceMetafield,
   syncLiquidationExpressPriceMetafield,
 } from "@/shopify/restock/liquidationExpressPrice";
+import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { LIQUIDATION_LOCATION_IDS, ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
@@ -83,12 +84,15 @@ function toNumber(x: unknown): number | null {
 /**
  * Owned physical qty across the liquidation lane (Bussigny + Lab + COLD BIEN).
  * Kept as `getBussignyQtyForGtin` for callers; drives liquidation eligibility.
+ * Padding-tolerant: STX `196…` must see mirror `0196…` / `00196…`.
  */
 async function getBussignyQtyForGtin(gtin: string): Promise<number> {
+  const candidates = gtinCandidates(gtin);
+  if (candidates.length === 0) return 0;
   const rows = await prisma.$queryRaw<Array<{ available: number }>>`
     SELECT COALESCE(SUM(s."available"), 0)::int AS available
     FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."gtin" = ${gtin}
+    WHERE s."gtin" = ANY(${candidates}::text[])
       AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
       AND s."sourceType" = 'physical'
       AND s."available" > 0
@@ -100,10 +104,12 @@ async function getBussignyQtyForGtin(gtin: string): Promise<number> {
 async function getHomeQtyForGtin(gtin: string): Promise<number> {
   const homeId = ONLINE_LOCATION?.id;
   if (!homeId) return 0;
+  const candidates = gtinCandidates(gtin);
+  if (candidates.length === 0) return 0;
   const rows = await prisma.$queryRaw<Array<{ available: number }>>`
     SELECT COALESCE(SUM(s."available"), 0)::int AS available
     FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."gtin" = ${gtin}
+    WHERE s."gtin" = ANY(${candidates}::text[])
       AND s."locationId" = ${homeId}
       AND s."available" > 0
   `;
@@ -317,6 +323,7 @@ export async function convergeVariant(
     };
   }
 
+  const gtinLookup = gtinCandidates(cleanGtin);
   const physicalMap = await loadPhysicalMirrorStockByGtin([cleanGtin]);
   const physical = physicalMap.get(cleanGtin);
   const physicalQty = physical?.qty ?? 0;
@@ -325,7 +332,7 @@ export async function convergeVariant(
 
   const stxRow = await prisma.supplierVariant.findFirst({
     where: {
-      gtin: cleanGtin,
+      gtin: { in: gtinLookup.length > 0 ? gtinLookup : [cleanGtin] },
       supplierVariantId: { startsWith: "stx_" },
     },
     select: {
@@ -699,10 +706,11 @@ export async function convergeAll(options: { sampleSize?: number } = {}): Promis
           AND NOT EXISTS (
             SELECT 1
             FROM "public"."ShopifyVariantLocationStock" s
-            WHERE s."gtin" = sv."gtin"
-              AND s."sourceType" = 'physical'
+            WHERE s."sourceType" = 'physical'
               AND s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
               AND s."available" > 0
+              AND NULLIF(REGEXP_REPLACE(COALESCE(s."gtin", ''), '^0+', ''), '')
+                = NULLIF(REGEXP_REPLACE(COALESCE(sv."gtin", ''), '^0+', ''), '')
           )
         )
       )

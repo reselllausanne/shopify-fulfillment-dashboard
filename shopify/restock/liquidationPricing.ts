@@ -15,6 +15,7 @@ import {
 import {
   syncLiquidationExpressPriceMetafield,
 } from "@/shopify/restock/liquidationExpressPrice";
+import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -134,9 +135,10 @@ export async function applyLiquidationSaleDisplay(input: {
 
   // DB manual lock for marketplace export resolver.
   try {
+    const cands = gtinCandidates(input.gtin);
     const stxRow = await prisma.supplierVariant.findFirst({
       where: {
-        gtin: input.gtin,
+        gtin: { in: cands.length > 0 ? cands : [input.gtin] },
         supplierVariantId: { startsWith: "stx_" },
       },
       select: { id: true, manualLock: true, manualPrice: true },
