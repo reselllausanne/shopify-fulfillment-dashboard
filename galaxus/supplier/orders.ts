@@ -85,7 +85,7 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
           type: "GLD_AUTO_ORDER_SKIPPED",
           payloadJson: {
             reason: "golden_manual_only",
-            lineIds: skippedGolden.map((line) => line.lineId),
+            lineIds: skippedGolden.map((entry) => entry.line.id),
             count: skippedGolden.length,
           },
         },
