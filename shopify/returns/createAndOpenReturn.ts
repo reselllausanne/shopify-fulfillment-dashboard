@@ -10,6 +10,10 @@ import {
   filterReturnableLinesByWindow,
   type FulfillmentDeliveryHint,
 } from "@/shopify/returns/returnWindow";
+import {
+  splitReturnableByEligibility,
+  type ReturnExcludeReason,
+} from "@/shopify/returns/returnEligibility";
 
 export type ReturnFormReason =
   | "WRONG_SIZE"
@@ -70,6 +74,11 @@ type ReturnableLine = {
   lineItemId: string | null;
   unitAmount: number | null;
   currencyCode: string | null;
+  compareAtPrice: number | null;
+  delivery48h: string | null;
+  priceLocked: string | null;
+  productTags: string[];
+  collectionHandles: string[];
 };
 
 type SelectedReturnLine = {
@@ -96,6 +105,10 @@ export type ShopifyReturnableItem = {
   quantity: number;
   unitAmount: number | null;
   currencyCode: string | null;
+};
+
+export type ShopifyExcludedReturnItem = ShopifyReturnableItem & {
+  excludeReason: ReturnExcludeReason;
 };
 
 type ShopifyReturnUserError = {
@@ -162,6 +175,25 @@ query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
                     shopMoney {
                       amount
                       currencyCode
+                    }
+                  }
+                  variant {
+                    id
+                    compareAtPrice
+                    delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
+                      value
+                    }
+                    priceLocked: metafield(namespace: "custom", key: "price_locked") {
+                      value
+                    }
+                    product {
+                      id
+                      tags
+                      collections(first: 20) {
+                        nodes {
+                          handle
+                        }
+                      }
                     }
                   }
                 }
@@ -503,6 +535,40 @@ function enforcePublicReturnWindow(order: ShopifyOrderNode, lines: ReturnableLin
   return lines;
 }
 
+function toPublicReturnableItem(line: ReturnableLine): ShopifyReturnableItem {
+  return {
+    fulfillmentLineItemId: line.fulfillmentLineItemId,
+    lineItemId: line.lineItemId,
+    sku: line.sku,
+    title: line.title,
+    quantity: line.quantity,
+    unitAmount: line.unitAmount,
+    currencyCode: line.currencyCode,
+  };
+}
+
+function enforcePublicReturnPolicy(lines: ReturnableLine[]): {
+  allowed: ReturnableLine[];
+  excluded: Array<ReturnableLine & { excludeReason: ReturnExcludeReason }>;
+} {
+  const { allowed, excluded } = splitReturnableByEligibility(lines);
+  if (allowed.length > 0) return { allowed, excluded };
+  if (excluded.length > 0) {
+    throw new ShopifyReturnRequestError(
+      "RETURN_POLICY_EXCLUDED",
+      "No returnable items under the return policy (sale/promo or price over limit).",
+      422,
+      {
+        excluded: excluded.map((line) => ({
+          ...toPublicReturnableItem(line),
+          excludeReason: line.excludeReason,
+        })),
+      }
+    );
+  }
+  return { allowed, excluded };
+}
+
 async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[]> {
   const { data, errors } = await shopifyGraphQL<{
     returnableFulfillments: {
@@ -520,6 +586,17 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
                     sku?: string | null;
                     originalUnitPriceSet?: {
                       shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
+                    } | null;
+                    variant?: {
+                      id?: string | null;
+                      compareAtPrice?: string | null;
+                      delivery48h?: { value?: string | null } | null;
+                      priceLocked?: { value?: string | null } | null;
+                      product?: {
+                        id?: string | null;
+                        tags?: string[] | null;
+                        collections?: { nodes?: Array<{ handle?: string | null } | null> | null } | null;
+                      } | null;
                     } | null;
                   } | null;
                 };
@@ -552,6 +629,14 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
 
       const lineItem = edge.node.fulfillmentLineItem.lineItem;
       const amountRaw = Number(lineItem?.originalUnitPriceSet?.shopMoney?.amount ?? NaN);
+      const compareAtRaw = Number(lineItem?.variant?.compareAtPrice ?? NaN);
+      const collectionHandles = (lineItem?.variant?.product?.collections?.nodes ?? [])
+        .map((node) => String(node?.handle ?? "").trim())
+        .filter(Boolean);
+      const productTags = Array.isArray(lineItem?.variant?.product?.tags)
+        ? lineItem!.variant!.product!.tags!.map((tag) => String(tag))
+        : [];
+
       lines.push({
         fulfillmentLineItemId,
         quantity,
@@ -560,6 +645,11 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
         lineItemId: lineItem?.id ?? null,
         unitAmount: Number.isFinite(amountRaw) ? amountRaw : null,
         currencyCode: lineItem?.originalUnitPriceSet?.shopMoney?.currencyCode ?? null,
+        compareAtPrice: Number.isFinite(compareAtRaw) ? compareAtRaw : null,
+        delivery48h: lineItem?.variant?.delivery48h?.value ?? null,
+        priceLocked: lineItem?.variant?.priceLocked?.value ?? null,
+        productTags,
+        collectionHandles,
       });
     }
   }
@@ -705,6 +795,7 @@ type ReturnableItemsResult = {
   orderId: string;
   orderName: string;
   items: ShopifyReturnableItem[];
+  excludedItems?: ShopifyExcludedReturnItem[];
 };
 
 export async function getReturnableItemsForOrder(input: {
@@ -722,19 +813,16 @@ export async function getReturnableItemsForOrder(input: {
   }
 
   const order = await findOrderByNumberAndEmail(orderNumber, email);
-  const lines = enforcePublicReturnWindow(order, await listReturnableLineItems(order.id));
+  const windowLines = enforcePublicReturnWindow(order, await listReturnableLineItems(order.id));
+  const { allowed, excluded } = enforcePublicReturnPolicy(windowLines);
   return {
     success: true,
     orderId: order.id,
     orderName: order.name,
-    items: lines.map((line) => ({
-      fulfillmentLineItemId: line.fulfillmentLineItemId,
-      lineItemId: line.lineItemId,
-      sku: line.sku,
-      title: line.title,
-      quantity: line.quantity,
-      unitAmount: line.unitAmount,
-      currencyCode: line.currencyCode,
+    items: allowed.map(toPublicReturnableItem),
+    excludedItems: excluded.map((line) => ({
+      ...toPublicReturnableItem(line),
+      excludeReason: line.excludeReason,
     })),
   };
 }
@@ -758,15 +846,8 @@ export async function getReturnableItemsForOrderAdmin(input: {
     success: true,
     orderId: order.id,
     orderName: order.name,
-    items: lines.map((line) => ({
-      fulfillmentLineItemId: line.fulfillmentLineItemId,
-      lineItemId: line.lineItemId,
-      sku: line.sku,
-      title: line.title,
-      quantity: line.quantity,
-      unitAmount: line.unitAmount,
-      currencyCode: line.currencyCode,
-    })),
+    items: lines.map(toPublicReturnableItem),
+    excludedItems: [],
   };
 }
 
@@ -776,10 +857,13 @@ export async function createAndOpenReturnFromFormData(
 ): Promise<CreateAndOpenResult> {
   const validated = validateInput(input);
   const order = await findOrderByNumberAndEmail(validated.orderNumber, validated.email);
-  // Public portal sends email; staff admin form does not — only enforce window for customers.
-  const enforceWindow = options.enforceReturnWindow ?? Boolean(validated.email);
+  // Public portal sends email; staff admin form does not — only enforce window/policy for customers.
+  const enforcePublicRules = options.enforceReturnWindow ?? Boolean(validated.email);
   const listed = await listReturnableLineItems(order.id);
-  const allReturnableLines = enforceWindow ? enforcePublicReturnWindow(order, listed) : listed;
+  const windowed = enforcePublicRules ? enforcePublicReturnWindow(order, listed) : listed;
+  const allReturnableLines = enforcePublicRules
+    ? enforcePublicReturnPolicy(windowed).allowed
+    : windowed;
   const defaultReason = mapFormReasonToShopify(validated.reason);
   const selectedLines = pickRequestedLines(
     allReturnableLines,

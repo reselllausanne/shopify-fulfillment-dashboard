@@ -24,6 +24,7 @@ function messageForPublicError(
     return copy.lookupFailed;
   }
   if (code === "NO_RETURNABLE_ITEMS") return copy.noEligibleProducts;
+  if (code === "RETURN_POLICY_EXCLUDED") return copy.returnPolicyExcluded;
   const raw = String(apiMessage ?? "").trim();
   return raw || copy.lookupFailed;
 }
@@ -50,6 +51,10 @@ type ReturnableItem = {
   quantity: number;
   unitAmount: number | null;
   currencyCode: string | null;
+};
+
+type ExcludedReturnItem = ReturnableItem & {
+  excludeReason: "PRICE_OVER_LIMIT" | "SALE_OR_PROMO";
 };
 
 type FlowStep = 1 | 2 | 3 | 4;
@@ -93,12 +98,18 @@ function PublicReturnsWizard() {
   const [details, setDetails] = useState("");
   const [loadingItems, setLoadingItems] = useState(false);
   const [returnableItems, setReturnableItems] = useState<ReturnableItem[]>([]);
+  const [excludedItems, setExcludedItems] = useState<ExcludedReturnItem[]>([]);
   const [selectedItems, setSelectedItems] = useState<
     Record<string, { checked: boolean; quantity: number }>
   >({});
   const [submitState, setSubmitState] = useState<SubmitState>({ type: "idle" });
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
+
+  function excludeReasonMessage(reason: ExcludedReturnItem["excludeReason"]): string {
+    if (reason === "PRICE_OVER_LIMIT") return copy.excludedPriceOverLimit;
+    return copy.excludedSaleOrPromo;
+  }
 
   const orderNumber = formatPublicOrderNumberFromDigits(orderDigits);
 
@@ -135,6 +146,7 @@ function PublicReturnsWizard() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.success) {
         setReturnableItems([]);
+        setExcludedItems([]);
         setSelectedItems({});
         const code = String(data?.error ?? "");
         setSubmitState({
@@ -145,7 +157,11 @@ function PublicReturnsWizard() {
         return;
       }
       const items = Array.isArray(data?.items) ? (data.items as ReturnableItem[]) : [];
+      const excluded = Array.isArray(data?.excludedItems)
+        ? (data.excludedItems as ExcludedReturnItem[])
+        : [];
       setReturnableItems(items);
+      setExcludedItems(excluded);
       const defaults: Record<string, { checked: boolean; quantity: number }> = {};
       for (const item of items) {
         defaults[item.fulfillmentLineItemId] = { checked: items.length === 1, quantity: 1 };
@@ -154,6 +170,7 @@ function PublicReturnsWizard() {
       setStep(2);
     } catch (error: any) {
       setReturnableItems([]);
+      setExcludedItems([]);
       setSelectedItems({});
       setSubmitState({
         type: "error",
@@ -220,6 +237,7 @@ function PublicReturnsWizard() {
       setReason("SIZE_CHANGE");
       setDetails("");
       setReturnableItems([]);
+      setExcludedItems([]);
       setSelectedItems({});
       setOrderNumberError(null);
       setEmailError(null);
@@ -258,6 +276,7 @@ function PublicReturnsWizard() {
     setReason("SIZE_CHANGE");
     setDetails("");
     setReturnableItems([]);
+    setExcludedItems([]);
     setSelectedItems({});
     setOrderNumberError(null);
     setEmailError(null);
@@ -489,6 +508,25 @@ function PublicReturnsWizard() {
                     })}
                   </div>
                 )}
+
+                {excludedItems.length > 0 ? (
+                  <div className="mt-5 space-y-3">
+                    <h4 className="text-base font-semibold text-neutral-900">{copy.excludedTitle}</h4>
+                    {excludedItems.map((item) => (
+                      <div
+                        key={`excluded-${item.fulfillmentLineItemId}`}
+                        className="rounded-sm border border-amber-200 bg-amber-50 p-4"
+                      >
+                        <p className="text-base font-medium text-neutral-900">
+                          {item.title ?? item.sku ?? item.lineItemId ?? "—"}
+                        </p>
+                        <p className="mt-1 text-sm font-medium text-amber-900">
+                          {excludeReasonMessage(item.excludeReason)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <label className="block">

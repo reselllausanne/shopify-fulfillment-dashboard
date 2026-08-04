@@ -20,6 +20,10 @@ export type ReturnsCopy = {
   productsTitle: string;
   productsHint: string;
   noEligibleProducts: string;
+  excludedTitle: string;
+  excludedSaleOrPromo: string;
+  excludedPriceOverLimit: string;
+  returnPolicyExcluded: string;
   quantity: string;
   max: string;
   reasonLabel: string;
@@ -96,6 +100,12 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     productsTitle: "Quel article voulez-vous retourner ?",
     productsHint: "Cochez le ou les produits concernés.",
     noEligibleProducts: "Aucun article disponible pour un retour sur cette commande.",
+    excludedTitle: "Articles non eligibles au retour",
+    excludedSaleOrPromo:
+      "Article Soldes / promo (prix barre) — retour non accepte en ligne.",
+    excludedPriceOverLimit: "Article a plus de CHF 650.– — retour non accepte en ligne.",
+    returnPolicyExcluded:
+      "Aucun article de cette commande n'est eligible au retour en ligne (Soldes/promo ou prix > CHF 650).",
     quantity: "Quantite",
     max: "max",
     reasonLabel: "Pourquoi retournez-vous ?",
@@ -156,6 +166,11 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     productsTitle: "Which item do you want to return?",
     productsHint: "Tick the product(s) concerned.",
     noEligibleProducts: "No returnable items found for this order.",
+    excludedTitle: "Items not eligible for return",
+    excludedSaleOrPromo: "Sale / promo item (compare-at price) — online return not accepted.",
+    excludedPriceOverLimit: "Item over CHF 650 — online return not accepted.",
+    returnPolicyExcluded:
+      "No item on this order is eligible for an online return (sale/promo or price over CHF 650).",
     quantity: "Quantity",
     max: "max",
     reasonLabel: "Why are you returning?",
@@ -216,6 +231,11 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     productsTitle: "Welchen Artikel wollen Sie zuruecksenden?",
     productsHint: "Produkt(e) ankreuzen.",
     noEligibleProducts: "Keine rueckgabefaehigen Artikel fuer diese Bestellung.",
+    excludedTitle: "Nicht rueckgabefaehige Artikel",
+    excludedSaleOrPromo: "Sale-/Promo-Artikel (Streichpreis) — Online-Retoure nicht moeglich.",
+    excludedPriceOverLimit: "Artikel ueber CHF 650 — Online-Retoure nicht moeglich.",
+    returnPolicyExcluded:
+      "Kein Artikel dieser Bestellung ist online rueckgabefaehig (Sale/Promo oder Preis > CHF 650).",
     quantity: "Menge",
     max: "max",
     reasonLabel: "Warum senden Sie zurueck?",

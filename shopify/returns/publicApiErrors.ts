@@ -16,5 +16,8 @@ export function toPublicReturnsErrorMessage(
   if (error.code === "RETURN_WINDOW_EXPIRED") {
     return "The 14-day return window after delivery has passed for this order.";
   }
+  if (error.code === "RETURN_POLICY_EXCLUDED") {
+    return "These items cannot be returned online (sale/promo or price over CHF 650).";
+  }
   return error.message || fallback;
 }
