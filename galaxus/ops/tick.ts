@@ -4,9 +4,9 @@ import { listJobDefinitions, updateJobDefinition } from "./jobDefinitions";
 import { checkGalaxusPriceFeedHealth, drainFeedPushQueue } from "./feedPipeline";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
 import { runStxPriceStockRefresh, runStxSync } from "@/galaxus/jobs/stxSync";
-import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
 import { runEdiInPipeline } from "./orderPipeline";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
+import { startGldRefreshAsync } from "@/galaxus/ops/gldRefreshPush";
 import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";
@@ -80,8 +80,18 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
     );
   }
   if (jobKey === "gld-refresh") {
-    // Full Golden assortment price/stock pull (same source as /supplier/sync?mode=stock).
-    return runOpsJob(jobKey, async () => runStockPriceSync());
+    // Heavy Golden fetch — enqueue ops-background worker; never run on web.
+    return runOpsJob(jobKey, async () => {
+      const started = await startGldRefreshAsync();
+      if (!started.ok) {
+        // Already queued/running is fine for schedule — do not fail the tick.
+        if (started.status === 409) {
+          return { enqueued: false, skipped: "already_queued" as const };
+        }
+        throw new Error(started.error ?? "Failed to enqueue gld-refresh");
+      }
+      return { enqueued: true, accepted: true };
+    });
   }
   if (jobKey === "edi-in") {
     return runOpsJob(jobKey, async () => runEdiInPipeline());

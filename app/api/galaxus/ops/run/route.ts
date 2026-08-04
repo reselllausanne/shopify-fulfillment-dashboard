@@ -106,11 +106,17 @@ export async function POST(request: Request) {
     }
 
     if (action === "gld-refresh") {
+      // Enqueues ops-background worker (see tick executeJob) — never runs Golden fetch on web.
       const data = await runOpsTick(origin, {
         force: true,
         only: ["gld-refresh"],
       });
-      return NextResponse.json({ ok: true, data });
+      const gld = (data as any)?.results?.["gld-refresh"] ?? (data as any)?.["gld-refresh"];
+      const err = gld?.lastError ?? null;
+      if (err && !String(err).includes("already")) {
+        return NextResponse.json({ ok: false, error: err, data }, { status: 500 });
+      }
+      return NextResponse.json({ ok: true, accepted: true, data }, { status: 202 });
     }
 
     if (action === "edi-in") {
