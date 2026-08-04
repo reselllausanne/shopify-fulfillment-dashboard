@@ -103,8 +103,8 @@ export function accumulateBestCandidates(
     if (!variant) continue;
     const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
 
-    // GLD (Golden) and TRM are permanently blocked from all marketplace exports.
-    if (supplierKey === "golden" || supplierKey === "gld" || supplierKey === "trm") {
+    // TRM permanently blocked. GLD (Golden) is allowed — MOQ 3, DD=0, 15% landed pricing.
+    if (supplierKey === "trm") {
       options?.onExclude?.({ reason: "SUPPLIER_BLOCKED", supplierKey, mapping, variant });
       continue;
     }
