@@ -2,8 +2,8 @@
 /**
  * Galaxus image sync (full) — VPS cron entrypoint (no after() on web).
  */
-import { countImageSyncBacklog, resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
-import { runOpsJob } from "@/galaxus/ops/jobRunner";
+import { countImageSyncBacklog, resolveImageSyncSupplierKeys } from "@/galaxus/jobs/imageSync";
+import { runImageSyncFullDirect } from "@/galaxus/ops/imageSyncPush";
 
 async function main() {
   const supplierKeys = resolveImageSyncSupplierKeys();
@@ -13,25 +13,12 @@ async function main() {
   const initialBacklog = await countImageSyncBacklog({ supplierKeys });
   console.info("[image-sync][full] initial backlog", initialBacklog);
 
-  const res = await runOpsJob("image-sync", () =>
-    runImageSync({
-      full: true,
-      limit: 2000,
-      concurrency: 8,
-      supplierKeys,
-    })
-  );
-
-  const remaining = await countImageSyncBacklog({ supplierKeys });
-  console.info("[image-sync][full] done", {
-    ok: res.success,
-    result: res.result,
-    error: res.error,
-    remaining,
-    wallMs: Date.now() - wallStarted,
-  });
-
-  if (!res.success) {
+  try {
+    await runImageSyncFullDirect();
+    const remaining = await countImageSyncBacklog({ supplierKeys });
+    console.info("[image-sync][full] done", { remaining, wallMs: Date.now() - wallStarted });
+  } catch (error) {
+    console.error("[image-sync][full] failed", error);
     process.exitCode = 1;
   }
 }

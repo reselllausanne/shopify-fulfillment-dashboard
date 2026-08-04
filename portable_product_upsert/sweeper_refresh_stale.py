@@ -28,7 +28,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stockXAPI
 
-DB_API_DEFAULT = os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3000")
+DB_API_DEFAULT = os.environ.get("KICKDB_BUFFER_BASE", os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3002"))
 
 
 def _auth_headers():

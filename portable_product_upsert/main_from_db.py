@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import main as main_mod
 from shopifyAPI_GQL import get_all_products, probe_shopify_capacity, RateLimitException
 
-DB_API_DEFAULT = os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3000")
+DB_API_DEFAULT = os.environ.get("KICKDB_BUFFER_BASE", os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3002"))
 CATALOG_CACHE_FILE = Path(__file__).resolve().parent / ".shopify_catalog_cache.json"
 CATALOG_CACHE_TTL_SEC = 3600  # refetching 20k products every cron run is pointless
 # Written ONLY when Shopify returns daily variant-create limit — not a counter.

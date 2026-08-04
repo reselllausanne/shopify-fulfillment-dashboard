@@ -15,7 +15,7 @@ flock -n 9 || exit 0
 cd "${ROOT}"
 {
   echo "=== $(date -Is) sweeper run ==="
-  "${PYTHON}" sweeper_refresh_stale.py --db-api "${RESELL_API_BASE:-http://127.0.0.1:3000}" \
+  "${PYTHON}" sweeper_refresh_stale.py --db-api "${KICKDB_BUFFER_BASE:-${RESELL_API_BASE:-http://127.0.0.1:3002}}" \
     --max-age-days 7 --limit 3000
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1

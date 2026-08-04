@@ -42,7 +42,7 @@ import stockXAPI
 BASE_DIR = Path(__file__).resolve().parent
 PROGRESS_FILE = BASE_DIR / "backfill_progress.json"
 REVIEW_FILE = BASE_DIR / "backfill_review.txt"
-DB_API_DEFAULT = os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3000")
+DB_API_DEFAULT = os.environ.get("KICKDB_BUFFER_BASE", os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3002"))
 
 
 def _auth_headers():

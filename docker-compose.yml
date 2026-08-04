@@ -111,17 +111,32 @@ services:
     depends_on:
       - web
 
-  worker-kickdb-upsert:
+  worker-kickdb-buffer:
     build: .
     env_file:
       - .env
     environment:
-      - NODE_OPTIONS=${KICKDB_UPSERT_NODE_OPTIONS:---max-old-space-size=4096}
-      - KICKDB_UPSERT_PORT=3002
-      - KICKDB_UPSERT_HOST=0.0.0.0
-    command: ["npx", "tsx", "scripts/workers/kickdbUpsertServer.ts"]
+      - NODE_OPTIONS=${KICKDB_BUFFER_NODE_OPTIONS:---max-old-space-size=4096}
+      - KICKDB_BUFFER_PORT=3002
+      - KICKDB_BUFFER_HOST=0.0.0.0
+    command: ["npx", "tsx", "scripts/workers/kickdbBufferServer.ts"]
     ports:
       - "3002:3002"
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped
+
+  worker-ops-background:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=4096}
+      - WORKER_POLL_MS=${OPS_BACKGROUND_POLL_MS:-3000}
+      - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
+    command: ["npx", "tsx", "scripts/workers/opsBackgroundWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+    depends_on:
+      - web

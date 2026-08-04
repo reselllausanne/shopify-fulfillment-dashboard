@@ -17,6 +17,6 @@ flock -n 9 || exit 0
 cd "${ROOT}"
 {
   echo "=== $(date -Is) sse consumer run ==="
-  "${PYTHON}" main_from_db.py --db-api "${RESELL_API_BASE:-http://127.0.0.1:3000}" --limit 100
+  "${PYTHON}" main_from_db.py --db-api "${KICKDB_BUFFER_BASE:-${RESELL_API_BASE:-http://127.0.0.1:3002}}" --limit 100
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1

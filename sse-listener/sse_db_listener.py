@@ -15,7 +15,7 @@ bursts would otherwise drop the connection).
 
 Usage:
     python3 sse_db_listener.py --topics price:stockx:ch \
-        --upsert-url http://127.0.0.1:3002/upsert
+        --upsert-url http://127.0.0.1:3002/api/kickdb/upsert
 
 Env:
     KICKSDB_API_KEY         KicksDB API key
@@ -39,7 +39,7 @@ import requests
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SSE_URL = "https://sse.kicks.dev/v1/stream"
 DEFAULT_TOPICS = os.environ.get("KICKSDB_SSE_TOPICS", "price:stockx:ch")
-DEFAULT_UPSERT_URL = "http://127.0.0.1:3002/upsert"
+DEFAULT_UPSERT_URL = "http://127.0.0.1:3002/api/kickdb/upsert"
 DEFAULT_REFETCH_INTERVAL = 12 * 3600  # 12h: max ~2 refreshes per product per day
 DEFAULT_WORKERS = 4
 

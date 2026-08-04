@@ -1,7 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
-import { after } from "next/server";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
+import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
 import { runOpsJob } from "./jobRunner";
+import { OPS_IMAGE_SYNC_JOB } from "@/galaxus/ops/opsBackgroundJobs";
 
 const JOB_NAME = "ops-image-sync";
 
@@ -29,7 +30,6 @@ export function isImageSyncJobRunning(run: ImageSyncRunRow | null | undefined): 
   const startedMs = new Date(run.startedAt).getTime();
   const finishedMs = new Date(run.finishedAt).getTime();
   if (finishedMs > startedMs) return false;
-  // Crash before runJob updated the row: create-only stub (success=false, no result).
   if (
     run.success === false &&
     !run.errorMessage &&
@@ -38,7 +38,6 @@ export function isImageSyncJobRunning(run: ImageSyncRunRow | null | undefined): 
   ) {
     return false;
   }
-  // Still "open" but too old → treat as not running so cron/UI can recover.
   if (Date.now() - startedMs > IMAGE_SYNC_STALE_MS) return false;
   return true;
 }
@@ -54,18 +53,17 @@ export async function startImageSyncFullAsync(): Promise<{
     return { ok: false, error: "Image sync already running", status: 409 };
   }
 
-  after(() => {
-    void runOpsJob("image-sync", () =>
-      runImageSync({
-        full: true,
-        limit: 2000,
-        concurrency: 8,
-        supplierKeys: resolveImageSyncSupplierKeys(),
-      })
-    ).catch((err) => {
-      console.error("[GALAXUS][IMAGE-SYNC][ASYNC] Background sync failed:", err);
-    });
-  });
+  return enqueueOpsBackgroundJob({ jobType: OPS_IMAGE_SYNC_JOB, groupKey: OPS_IMAGE_SYNC_JOB });
+}
 
-  return { ok: true, accepted: true };
+/** Direct run for cron tsx scripts — not via web/queue. */
+export async function runImageSyncFullDirect(): Promise<void> {
+  await runOpsJob("image-sync", () =>
+    runImageSync({
+      full: true,
+      limit: 2000,
+      concurrency: 8,
+      supplierKeys: resolveImageSyncSupplierKeys(),
+    })
+  );
 }

@@ -1,11 +1,12 @@
 import { createHash } from "crypto";
-import { after } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { GALAXUS_PRICE_CURRENCY, GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { toCsv } from "@/galaxus/exports/csv";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
 import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
+import { enqueueOpsBackgroundJob } from "@/galaxus/ops/enqueueOpsBackgroundJob";
 import { runOpsJob } from "@/galaxus/ops/jobRunner";
+import { OPS_SNAPSHOT_REBUILD_JOB } from "@/galaxus/ops/opsBackgroundJobs";
 
 export const GALAXUS_STOCK_CSV_HEADERS = [
   "ProviderKey",
@@ -71,15 +72,11 @@ export async function startFeedSnapshotRebuildAsync(origin: string): Promise<{
     return { ok: false, error: "Feed snapshot rebuild already running", status: 409 };
   }
 
-  after(() => {
-    void runOpsJob("feed-snapshot-rebuild", () => rebuildFeedSnapshotFromExports(origin)).catch(
-      (err) => {
-        console.error("[GALAXUS][FEED][SNAPSHOT][ASYNC] Background rebuild failed:", err);
-      }
-    );
+  return enqueueOpsBackgroundJob({
+    jobType: OPS_SNAPSHOT_REBUILD_JOB,
+    origin,
+    groupKey: OPS_SNAPSHOT_REBUILD_JOB,
   });
-
-  return { ok: true, accepted: true };
 }
 
 export function defaultOfferCsvHeaders(): string[] {
