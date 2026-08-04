@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import { RETURNS_LOCALES } from "@/app/returns/copy";
+import { useReturnsEmbed } from "@/app/returns/EmbedBootstrap";
 import { useReturnsLocale } from "@/app/returns/locale";
 import {
   digitsFromPublicOrderInput,
@@ -47,6 +48,23 @@ function isValidEmail(value: string) {
 }
 
 export default function PublicReturnsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="returns-shell min-h-screen bg-neutral-50 text-neutral-900">
+          <div className="returns-shell-inner mx-auto w-full max-w-3xl px-5 py-8 md:px-8 md:py-12">
+            <div className="returns-wizard rounded-sm border border-neutral-200 bg-white p-6 shadow-sm md:p-8" />
+          </div>
+        </main>
+      }
+    >
+      <PublicReturnsWizard />
+    </Suspense>
+  );
+}
+
+function PublicReturnsWizard() {
+  const embed = useReturnsEmbed();
   const { locale, setLocale, copy } = useReturnsLocale();
   const [step, setStep] = useState<FlowStep>(1);
   const [orderDigits, setOrderDigits] = useState("");
@@ -233,37 +251,59 @@ export default function PublicReturnsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-50 text-neutral-900">
-      <div className="mx-auto w-full max-w-3xl px-5 py-8 md:px-8 md:py-12">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm font-semibold tracking-wide text-neutral-500">{copy.brand}</p>
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-neutral-500">{copy.langLabel}</span>
-            {RETURNS_LOCALES.map((code) => (
-              <button
-                key={code}
-                type="button"
-                onClick={() => setLocale(code)}
-                className={`min-h-10 rounded-sm px-3 uppercase ${
-                  locale === code
-                    ? "bg-neutral-900 text-white"
-                    : "border border-neutral-300 bg-white text-neutral-700"
-                }`}
-              >
-                {code}
-              </button>
-            ))}
-          </div>
-        </div>
+    <main
+      className={
+        embed
+          ? "returns-shell bg-white text-neutral-900"
+          : "returns-shell min-h-screen bg-neutral-50 text-neutral-900"
+      }
+    >
+      <div
+        className={
+          embed
+            ? "returns-shell-inner w-full"
+            : "returns-shell-inner mx-auto w-full max-w-3xl px-5 py-8 md:px-8 md:py-12"
+        }
+      >
+        {!embed ? (
+          <>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm font-semibold tracking-wide text-neutral-500">{copy.brand}</p>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-neutral-500">{copy.langLabel}</span>
+                {RETURNS_LOCALES.map((code) => (
+                  <button
+                    key={code}
+                    type="button"
+                    onClick={() => setLocale(code)}
+                    className={`min-h-10 rounded-sm px-3 uppercase ${
+                      locale === code
+                        ? "bg-neutral-900 text-white"
+                        : "border border-neutral-300 bg-white text-neutral-700"
+                    }`}
+                  >
+                    {code}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-        <header className="mb-8">
-          <h1 className="text-[3rem] font-semibold leading-[1.1] tracking-normal text-neutral-900 md:text-[4.5rem]">
-            {copy.pageTitle}
-          </h1>
-          <p className="mt-3 text-lg leading-relaxed text-neutral-600">{copy.pageSubtitle}</p>
-        </header>
+            <header className="mb-8">
+              <h1 className="text-[3rem] font-semibold leading-[1.1] tracking-normal text-neutral-900 md:text-[4.5rem]">
+                {copy.pageTitle}
+              </h1>
+              <p className="mt-3 text-lg leading-relaxed text-neutral-600">{copy.pageSubtitle}</p>
+            </header>
+          </>
+        ) : null}
 
-        <section className="rounded-sm border border-neutral-200 bg-white p-6 shadow-sm md:p-8">
+        <section
+          className={
+            embed
+              ? "returns-wizard bg-white"
+              : "returns-wizard rounded-sm border border-neutral-200 bg-white p-6 shadow-sm md:p-8"
+          }
+        >
           <div className="flex flex-wrap gap-2 text-sm">
             {[
               { key: 1, label: copy.steps.order },

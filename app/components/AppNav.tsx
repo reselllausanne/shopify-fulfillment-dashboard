@@ -55,7 +55,6 @@ const NAV_GROUPS: NavGroup[] = [
       { label: "Scan", href: "/scan" },
       { label: "Scan stats", href: "/scan/stats" },
       { label: "Restock", href: "/restock" },
-      { label: "Returns", href: "/returns" },
     ],
   },
   {
@@ -72,7 +71,8 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 // Routes that render their own auth/portal chrome — no staff nav there.
-const HIDE_PREFIXES = ["/login", "/partners", "/track"];
+// /returns = public customer portal (Shopify embed + standalone), not ops dashboard.
+const HIDE_PREFIXES = ["/login", "/partners", "/track", "/returns"];
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/";
@@ -99,7 +99,10 @@ export default function AppNav() {
   };
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:border-slate-800 dark:bg-slate-950/85 dark:supports-[backdrop-filter]:bg-slate-950/70">
+    <header
+      data-admin-nav
+      className="sticky top-0 z-50 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:border-slate-800 dark:bg-slate-950/85 dark:supports-[backdrop-filter]:bg-slate-950/70"
+    >
       <nav className="mx-auto flex h-14 max-w-[1600px] items-center gap-1 px-4">
         <Link href="/" className="mr-2 flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold text-white">

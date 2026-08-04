@@ -18,7 +18,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("theme");var d=t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d)document.documentElement.classList.add("dark");}catch(e){}})();`,
+            __html: `(function(){try{var q=new URLSearchParams(location.search);var p=location.pathname||"";var isReturns=p==="/returns"||p.indexOf("/returns/")===0;if(q.get("embed")==="1")document.documentElement.dataset.embed="1";if(isReturns){document.documentElement.classList.remove("dark");return;}var t=localStorage.getItem("theme");var d=t==="dark"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(d)document.documentElement.classList.add("dark");}catch(e){}})();`,
           }}
         />
       </head>

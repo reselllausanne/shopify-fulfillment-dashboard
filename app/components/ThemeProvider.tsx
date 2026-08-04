@@ -19,6 +19,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
+    // Public returns portal (standalone + Shopify embed): always light.
+    // Ops dark theme in localStorage must not leak into customer UI / iframe.
+    const path = window.location.pathname || "";
+    const isReturns = path === "/returns" || path.startsWith("/returns/");
+    if (isReturns || document.documentElement.dataset.embed === "1") {
+      setTheme("light");
+      applyTheme("light");
+      return;
+    }
     const stored = localStorage.getItem("theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const initial: Theme = stored === "dark" || stored === "light" ? stored : prefersDark ? "dark" : "light";
@@ -27,6 +36,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const toggleTheme = () => {
+    if (typeof window !== "undefined") {
+      const path = window.location.pathname || "";
+      if (
+        path === "/returns" ||
+        path.startsWith("/returns/") ||
+        document.documentElement.dataset.embed === "1"
+      ) {
+        return;
+      }
+    }
     setTheme((prev) => {
       const next: Theme = prev === "light" ? "dark" : "light";
       localStorage.setItem("theme", next);

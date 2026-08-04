@@ -234,3 +234,38 @@
     color: rgb(203 213 225) !important;
   }
 }
+
+/* Public returns portal embedded in Shopify theme iframe (?embed=1) */
+html[data-embed="1"] header,
+html[data-embed="1"] .site-footer,
+html[data-embed="1"] [data-admin-nav] {
+  display: none !important;
+}
+
+html[data-embed="1"],
+html[data-embed="1"] body {
+  min-height: 0 !important;
+  height: auto !important;
+  background: #fff !important;
+  overflow-x: hidden;
+  color-scheme: light;
+}
+
+html[data-embed="1"] .returns-shell {
+  min-height: 0;
+  background: #fff;
+}
+
+html[data-embed="1"] .returns-shell-inner {
+  max-width: none;
+  padding: 0;
+  margin: 0;
+}
+
+html[data-embed="1"] .returns-wizard {
+  max-width: none;
+  padding: 0;
+  margin: 0;
+  border: none;
+  box-shadow: none;
+}
