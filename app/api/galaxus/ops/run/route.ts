@@ -8,6 +8,7 @@ import {
   reconcileStaleFeedTriggers,
   startFeedPushAsync,
 } from "@/galaxus/ops/feedPipeline";
+import { startFeedSnapshotRebuildAsync } from "@/galaxus/exports/feedSnapshot";
 import { startImageSyncFullAsync } from "@/galaxus/ops/imageSyncPush";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
 import { syncShopifyCatalog } from "@/shopify/catalog/sync";
@@ -43,6 +44,17 @@ export async function POST(request: Request) {
 
     // Cron-safe: reap zombie runs and start the oldest pending push. Keeps post-sale
     // price files flowing within minutes instead of waiting for the nightly full-flow.
+    if (action === "rebuild-feed-snapshots") {
+      const started = await startFeedSnapshotRebuildAsync(origin);
+      if (!started.ok) {
+        return NextResponse.json(
+          { ok: false, error: started.error ?? "Feed snapshot rebuild rejected" },
+          { status: started.status ?? 409 }
+        );
+      }
+      return NextResponse.json({ ok: true, accepted: true }, { status: 202 });
+    }
+
     if (action === "drain-queue") {
       const staleMinutes = Number(body?.staleMinutes);
       if (Number.isFinite(staleMinutes) && staleMinutes > 0) {

@@ -1,21 +1,42 @@
-import { countImageSyncBacklog, runImageSync } from "@/galaxus/jobs/imageSync";
+#!/usr/bin/env npx tsx
+/**
+ * Galaxus image sync (full) — VPS cron entrypoint (no after() on web).
+ */
+import { countImageSyncBacklog, resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
+import { runOpsJob } from "@/galaxus/ops/jobRunner";
 
 async function main() {
-  const initialBacklog = await countImageSyncBacklog({ supplierKeys: ["stx", "the"] });
+  const supplierKeys = resolveImageSyncSupplierKeys();
+  const wallStarted = Date.now();
+  console.info("[image-sync][full] start", { at: new Date().toISOString(), supplierKeys });
+
+  const initialBacklog = await countImageSyncBacklog({ supplierKeys });
   console.info("[image-sync][full] initial backlog", initialBacklog);
 
-  const result = await runImageSync({
-    full: true,
-    limit: 2000,
-    concurrency: 8,
-    supplierKeys: ["stx", "the"],
+  const res = await runOpsJob("image-sync", () =>
+    runImageSync({
+      full: true,
+      limit: 2000,
+      concurrency: 8,
+      supplierKeys,
+    })
+  );
+
+  const remaining = await countImageSyncBacklog({ supplierKeys });
+  console.info("[image-sync][full] done", {
+    ok: res.success,
+    result: res.result,
+    error: res.error,
+    remaining,
+    wallMs: Date.now() - wallStarted,
   });
 
-  const remaining = await countImageSyncBacklog({ supplierKeys: ["stx", "the"] });
-  console.info("[image-sync][full] finished", { ...result, remaining });
+  if (!res.success) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {
-  console.error("[image-sync][full] failed", error);
-  process.exit(1);
+  console.error("[image-sync][full] fatal", error instanceof Error ? error.message : error);
+  process.exitCode = 1;
 });

@@ -2,7 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { buildSupplierVariantId } from "@/app/lib/partnerImport";
 import { validateGtin } from "@/app/lib/normalize";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
-import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { requestFeedPush } from "@/galaxus/ops/feedPipelineCore";
 import { assertMappingIntegrity, buildProviderKey, normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 type PartnerEnrichOptions = {

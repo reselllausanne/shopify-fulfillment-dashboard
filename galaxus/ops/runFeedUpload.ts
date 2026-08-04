@@ -1,4 +1,3 @@
-import "server-only";
 import { randomUUID, createHash } from "crypto";
 import { prisma } from "@/app/lib/prisma";
 import {
@@ -22,6 +21,13 @@ import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
 import { countCriticalGtinIssues, collectCriticalGtinProviderKeys, filterCsvByProviderKeys } from "@/galaxus/exports/feedValidation";
+import { shouldSkipGalaxusFeedCheckAll } from "@/galaxus/feedExecutor";
+import {
+  rebuildFeedSnapshotFromExports,
+  tryExportCsvFromSnapshot,
+} from "@/galaxus/exports/feedSnapshot";
+import type { FeedTriggerSource } from "@/galaxus/ops/types";
+
 export type FeedUploadInput = {
   origin: string;
   type: string;
@@ -32,6 +38,7 @@ export type FeedUploadInput = {
   limit?: number | null;
   provider?: string | null;
   assortment?: string | null;
+  triggerSource?: FeedTriggerSource | string | null;
 };
 
 export type FeedUploadResult = {
@@ -249,10 +256,23 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       specsCount = combined.specsCount;
       report = combined.report;
     } else {
+      const stockFromSnapshot = needsStock
+        ? await tryExportCsvFromSnapshot({
+            scope: "stock",
+            triggerSource: input.triggerSource,
+          })
+        : null;
+      const offerFromSnapshot = needsOffer
+        ? await tryExportCsvFromSnapshot({
+            scope: "offer",
+            triggerSource: input.triggerSource,
+          })
+        : null;
+
       const [masterRes, stockRes, offerRes, specsRes] = await Promise.all([
         needsMaster ? runGalaxusExportGET(masterUrl) : Promise.resolve(null),
-        needsStock ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
-        needsOffer ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
+        needsStock && !stockFromSnapshot ? runGalaxusExportGET(stockUrl) : Promise.resolve(null),
+        needsOffer && !offerFromSnapshot ? runGalaxusExportGET(offerUrl) : Promise.resolve(null),
         needsSpecs ? runGalaxusExportGET(specsUrl) : Promise.resolve(null),
       ]);
 
@@ -275,17 +295,48 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
 
       [masterCsv, stockCsv, offerCsv, specsCsv] = await Promise.all([
         masterRes ? masterRes.text() : Promise.resolve(""),
-        stockRes ? stockRes.text() : Promise.resolve(""),
-        offerRes ? offerRes.text() : Promise.resolve(""),
+        stockFromSnapshot
+          ? Promise.resolve(stockFromSnapshot.csv)
+          : stockRes
+            ? stockRes.text()
+            : Promise.resolve(""),
+        offerFromSnapshot
+          ? Promise.resolve(offerFromSnapshot.csv)
+          : offerRes
+            ? offerRes.text()
+            : Promise.resolve(""),
         specsRes ? specsRes.text() : Promise.resolve(""),
       ]);
 
       masterCount = masterRes ? countCsvRows(masterCsv) : null;
-      stockCount = stockRes ? countCsvRows(stockCsv) : null;
-      offerCount = offerRes ? countCsvRows(offerCsv) : null;
+      stockCount = stockFromSnapshot
+        ? stockFromSnapshot.count
+        : stockRes
+          ? countCsvRows(stockCsv)
+          : null;
+      offerCount = offerFromSnapshot
+        ? offerFromSnapshot.count
+        : offerRes
+          ? countCsvRows(offerCsv)
+          : null;
       specsCount = specsRes ? countCsvRows(specsCsv) : null;
 
-      const shouldRunValidation = needsMaster || needsStock || needsSpecs;
+      const skipValidation = shouldSkipGalaxusFeedCheckAll({
+        triggerSource: input.triggerSource,
+        stockFromSnapshot: Boolean(stockFromSnapshot),
+        offerFromSnapshot: Boolean(offerFromSnapshot),
+        needsMaster,
+        needsSpecs,
+      });
+      if (skipValidation) {
+        console.info("[GALAXUS][FEEDS][UPLOAD] Skipping check-all", {
+          triggerSource: input.triggerSource,
+          stockFromSnapshot: Boolean(stockFromSnapshot),
+          offerFromSnapshot: Boolean(offerFromSnapshot),
+        });
+      }
+      const shouldRunValidation =
+        !skipValidation && (needsMaster || needsStock || needsSpecs);
       const validationScope = needsStock
         ? "all"
         : needsMaster && needsSpecs

@@ -1,12 +1,14 @@
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { runDecathlonPriceSync } from "@/decathlon/mirakl/sync";
-import { startFeedPushAsync } from "@/galaxus/ops/feedPipeline";
+import { startFeedPushAsync } from "@/galaxus/ops/feedPipelineCore";
+import { patchFeedSnapshotsForProviderKeys } from "@/galaxus/exports/feedSnapshot";
 
 /** Coalesce bursts (multi-line orders, 5-min cron batch) into one marketplace price push. */
 const DEBOUNCE_MS = 30_000;
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceOrigin: string | null = null;
+const debounceProviderKeys = new Set<string>();
 
 export type PostSalePricePushResult = {
   galaxus?: {
@@ -25,16 +27,26 @@ export type PostSalePricePushResult = {
  * Fire-and-forget Galaxus PriceData + Decathlon PRI01 after a sale refreshed DB prices.
  * Debounced so webhook + cron do not stampede SFTP/Mirakl.
  */
-export function schedulePostSaleMarketplacePricePush(origin?: string | null): void {
+export function schedulePostSaleMarketplacePricePush(
+  origin?: string | null,
+  providerKeys?: string[] | null
+): void {
   const resolved = resolveAppOriginForPartnerJobs(origin);
   if (resolved) debounceOrigin = resolved;
+
+  for (const key of providerKeys ?? []) {
+    const trimmed = String(key ?? "").trim();
+    if (trimmed) debounceProviderKeys.add(trimmed);
+  }
 
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     const appOrigin = debounceOrigin ?? resolveAppOriginForPartnerJobs(null) ?? "http://127.0.0.1:3000";
     debounceOrigin = null;
-    void runPostSaleMarketplacePricePush(appOrigin).catch((err) => {
+    const keys = Array.from(debounceProviderKeys);
+    debounceProviderKeys.clear();
+    void runPostSaleMarketplacePricePush(appOrigin, keys).catch((err) => {
       console.error("[post-sale][price-push] unhandled", err);
     });
   }, DEBOUNCE_MS);
@@ -42,10 +54,19 @@ export function schedulePostSaleMarketplacePricePush(origin?: string | null): vo
 
 /** Immediate push (tests / manual). Prefer {@link schedulePostSaleMarketplacePricePush} in production. */
 export async function runPostSaleMarketplacePricePush(
-  origin?: string | null
+  origin?: string | null,
+  providerKeys: string[] = []
 ): Promise<PostSalePricePushResult> {
   const appOrigin = resolveAppOriginForPartnerJobs(origin) ?? "http://127.0.0.1:3000";
   const out: PostSalePricePushResult = {};
+
+  if (providerKeys.length > 0) {
+    try {
+      await patchFeedSnapshotsForProviderKeys({ origin: appOrigin, providerKeys });
+    } catch (err: any) {
+      console.warn("[post-sale][price-push] snapshot patch failed", err?.message ?? err);
+    }
+  }
 
   try {
     out.galaxus = await startFeedPushAsync({
@@ -87,4 +108,5 @@ export function resetPostSalePricePushDebounceForTests(): void {
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = null;
   debounceOrigin = null;
+  debounceProviderKeys.clear();
 }

@@ -2361,6 +2361,37 @@ model GalaxusExportManifest {
   @@schema("public")
 }
 
+/// Pre-built stock/offer CSV rows — full catalog read for fast post-sale SFTP (still full file).
+model GalaxusFeedSnapshotMeta {
+  id               String    @id @default("default")
+  stockRowCount    Int       @default(0)
+  offerRowCount    Int       @default(0)
+  stockHeadersJson Json?
+  offerHeadersJson Json?
+  rebuiltAt        DateTime?
+  updatedAt        DateTime  @updatedAt
+
+  @@schema("public")
+}
+
+model GalaxusFeedStockSnapshot {
+  providerKey String   @id
+  rowJson     Json
+  updatedAt   DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@schema("public")
+}
+
+model GalaxusFeedOfferSnapshot {
+  providerKey String   @id
+  rowJson     Json
+  updatedAt   DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@schema("public")
+}
+
 model DecathlonExportRun {
   id             String    @id @default(uuid())
   runId          String    @unique

@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import { schedulePostSaleMarketplacePricePush } from "@/inventory/postSaleMarketplacePricePush";
+import { resolveProviderKeyForGtin } from "@/shopify/restock/channelListingState";
 import { processShopifyPaidPhysicalSale } from "@/shopify/localStock/processShopifyPaidPhysicalSale";
 import { refreshAfterShopifySale } from "@/shopify/orders/postSaleRefresh";
 import { markPaidLineProcessed } from "@/shopify/orders/paidLineState";
@@ -287,7 +288,12 @@ export async function processOrdersPaidPayload(
   }
 
   if (gtins.length > 0) {
-    schedulePostSaleMarketplacePricePush();
+    const providerKeys = new Set<string>();
+    for (const gtin of gtins) {
+      const { providerKey, synthetic } = await resolveProviderKeyForGtin(gtin);
+      if (!synthetic && providerKey) providerKeys.add(providerKey);
+    }
+    schedulePostSaleMarketplacePricePush(null, Array.from(providerKeys));
   }
 
   return { orderId, gtins, results };

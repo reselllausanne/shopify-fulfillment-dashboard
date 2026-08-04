@@ -55,6 +55,8 @@ const PUBLIC_PATHS = [
   "/api/inventory/physical-diff",
   // Phase 4 convergence trigger (15-min cron). Same shared-secret gate.
   "/api/inventory/convergence",
+  // Decathlon Mirakl order poll (10-min cron). Same shared-secret gate.
+  "/api/decathlon/orders/poll",
   // Phase 4 orphan reconciliation (physical stock without STX row).
   "/api/inventory/reconcile-orphans",
   "/api/tracking/token",

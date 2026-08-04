@@ -5,7 +5,11 @@ import {
   filterAlternativeProducts,
   loadAlternativeProductsForExport,
 } from "@/galaxus/exports/alternative";
-import { loadMasterAndSpecsExportCandidates, type FeedExportCandidate } from "@/galaxus/exports/feedMappingLoader";
+import {
+  hydrateExportCandidateKickdbRawJson,
+  loadMasterAndSpecsExportCandidates,
+  type FeedExportCandidate,
+} from "@/galaxus/exports/feedMappingLoader";
 import {
   buildMasterSpecsValidationReport,
   countCriticalGtinIssues,
@@ -341,6 +345,11 @@ export async function buildMasterSpecsFeedExport(params: {
       `ProviderKey/GTIN invariant failed (${loaded.invalidSupplierVariantIds.slice(0, 5).join(", ")})`
     );
   }
+
+  await Promise.all([
+    hydrateExportCandidateKickdbRawJson(loaded.masterExportCandidates),
+    hydrateExportCandidateKickdbRawJson(loaded.specsExportCandidates),
+  ]);
 
   const stockBySupplierVariantId = await attachAvailableStock(
     loaded.masterExportCandidates.map((candidate) => candidate.variant).filter(Boolean)

@@ -4,15 +4,18 @@
 # ShopifyVariantLocationStock so marketplace feeds + convergence see reality.
 set -euo pipefail
 cd /opt/resell
-TOKEN=$(grep '^KICKDB_INTERNAL_TOKEN=' .env | cut -d'"' -f2)
 LOG=/opt/resell/logs/location-mirror.log
+LOCK_FILE="/tmp/location-mirror-cron.lock"
 mkdir -p /opt/resell/logs
+
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "[$(date -Iseconds)] location-mirror-cron SKIP already running (lock $LOCK_FILE)" >> "$LOG"
+  exit 0
+fi
+
 {
   echo "[$(date -Iseconds)] location-mirror-cron start"
-  curl -sS --max-time 540 -X POST \
-    -H "x-internal-token: $TOKEN" \
-    -H 'content-type: application/json' \
-    'http://127.0.0.1:3000/api/inventory/locations/sync?method=bulk'
-  echo
+  docker compose exec -T web npx tsx scripts/run-location-mirror.ts
   echo "[$(date -Iseconds)] location-mirror-cron end"
 } >> "$LOG" 2>&1

@@ -5,6 +5,7 @@ services:
       - .env
     environment:
       - NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=6144}
+      - GALAXUS_FEED_RUN_ON=${GALAXUS_FEED_RUN_ON:-worker}
       - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
       - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
       - VNC_PASSWORD=${VNC_PASSWORD:-change-me-now}
@@ -87,6 +88,40 @@ services:
       - SHOPIFY_SOLD_CHECK_INTERVAL_MS=${SHOPIFY_SOLD_CHECK_INTERVAL_MS:-172800000}
       - SHOPIFY_SOLD_CHECK_INITIAL_DELAY_MS=${SHOPIFY_SOLD_CHECK_INITIAL_DELAY_MS:-60000}
     command: ["npx", "tsx", "scripts/workers/shopifySoldCheckWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
+  worker-galaxus-feed:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=${GALAXUS_FEED_NODE_OPTIONS:---max-old-space-size=10240}
+      - GALAXUS_FEED_RUN_ON=worker
+      - GALAXUS_FEED_WORKER=1
+      - GALAXUS_FEED_WORKER_POLL_MS=${GALAXUS_FEED_WORKER_POLL_MS:-30000}
+      - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
+      - GALAXUS_FEED_STALE_MINUTES=${GALAXUS_FEED_STALE_MINUTES:-45}
+      - GALAXUS_PAUSE_HEAVY_FEEDS=${GALAXUS_PAUSE_HEAVY_FEEDS:-0}
+    command: ["npx", "tsx", "scripts/workers/galaxusFeedWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+    depends_on:
+      - web
+
+  worker-kickdb-upsert:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=${KICKDB_UPSERT_NODE_OPTIONS:---max-old-space-size=4096}
+      - KICKDB_UPSERT_PORT=3002
+      - KICKDB_UPSERT_HOST=0.0.0.0
+    command: ["npx", "tsx", "scripts/workers/kickdbUpsertServer.ts"]
+    ports:
+      - "3002:3002"
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped

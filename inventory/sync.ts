@@ -1,5 +1,5 @@
 import { runDecathlonPriceSync, runDecathlonStockSync } from "@/decathlon/mirakl/sync";
-import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { requestFeedPush } from "@/galaxus/ops/feedPipelineCore";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { prisma } from "@/app/lib/prisma";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";

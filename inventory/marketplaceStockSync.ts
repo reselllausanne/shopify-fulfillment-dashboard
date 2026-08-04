@@ -1,7 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { runDecathlonStockSync } from "@/decathlon/mirakl/sync";
-import { startFeedPushAsync } from "@/galaxus/ops/feedPipeline";
+import { startFeedPushAsync } from "@/galaxus/ops/feedPipelineCore";
+import { patchFeedSnapshotsForProviderKeys } from "@/galaxus/exports/feedSnapshot";
 import { attachAvailableStock } from "@/inventory/availableStock";
 
 /**
@@ -108,6 +109,15 @@ export async function pushMarketplaceStockForProviderKeys(params: {
 
   const origin = resolveAppOriginForPartnerJobs(params.origin) ?? "http://127.0.0.1:3000";
   const out: MarketplaceStockSyncResult = { ok: true, providerKeys, listingsMarked: 0 };
+
+  try {
+    await patchFeedSnapshotsForProviderKeys({ origin, providerKeys });
+  } catch (err: any) {
+    console.warn("[inventory][marketplace-stock-sync] snapshot patch failed", {
+      providerKeys,
+      error: err?.message ?? err,
+    });
+  }
 
   try {
     await runDecathlonStockSync({ ensureProviderKeys: providerKeys });

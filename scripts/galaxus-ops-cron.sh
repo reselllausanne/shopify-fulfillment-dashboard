@@ -258,18 +258,22 @@ run_push() {
 }
 
 run_image_sync_full() {
-  log "START image-sync full"
-  wait_image_sync_idle || true
-  post_json '{"action":"image-sync","imageMode":"full"}' >/dev/null || true
-  if [[ "$IMAGE_SYNC_BLOCK_FEEDS" == "1" ]]; then
-    if ! wait_image_sync_idle; then
-      log "ERROR: image-sync still running after ${IMAGE_SYNC_WAIT_SEC}s — aborting feeds"
-      return 1
-    fi
-  elif ! wait_image_sync_idle; then
-    log "WARN: image-sync still running after ${IMAGE_SYNC_WAIT_SEC}s — continuing with stock/price/master feeds"
-  fi
+  log "START image-sync full (tsx, off web HTTP)"
+  docker compose exec -T web npx tsx scripts/run-image-sync-full.ts || {
+    log "WARN: image-sync tsx failed — continuing if non-blocking"
+    return 0
+  }
   log "DONE image-sync phase"
+}
+
+run_snapshot_rebuild() {
+  log "START rebuild-feed-snapshots (tsx, off web HTTP)"
+  snapshot_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if ! docker compose exec -T web npx tsx scripts/run-feed-snapshot-rebuild.ts; then
+    log "WARN: rebuild-feed-snapshots tsx failed — continuing with best-available snapshots"
+    return 0
+  fi
+  log "DONE rebuild-feed-snapshots"
 }
 
 if [[ -z "$ACTION" ]]; then
@@ -283,14 +287,7 @@ case "$ACTION" in
   full-flow)
     run_image_sync_full || true
     log "START full-flow sequential (rebuild snapshots -> stock -> price -> master-specs)"
-    snapshot_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    if ! post_json '{"action":"rebuild-feed-snapshots"}' >/dev/null; then
-      log "WARN: rebuild-feed-snapshots rejected — continuing with existing snapshots"
-    elif ! wait_feed_snapshot_rebuild "$snapshot_started"; then
-      # Night of 2026-08-04: rebuild finished ~37m but wait was 30m → aborted stock/price/master.
-      # Never hard-stop nightly feeds on snapshot wait alone when prior snapshots may still be valid.
-      log "WARN: rebuild-feed-snapshots wait failed — continuing full-flow with best-available snapshots"
-    fi
+    run_snapshot_rebuild || true
     run_push "push-stock"
     run_push "push-price"
     if [[ "$MASTER_NONBLOCKING" == "1" ]]; then

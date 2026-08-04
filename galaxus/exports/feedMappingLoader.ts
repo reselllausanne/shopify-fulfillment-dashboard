@@ -8,7 +8,7 @@ import {
   type TrmFeedExclusionStats,
 } from "@/galaxus/exports/trmExport";
 
-export const FEED_EXPORT_PAGE_SIZE = 2000;
+export const FEED_EXPORT_PAGE_SIZE = 5000;
 
 export const FEED_MAPPING_INCLUDE = {
   supplierVariant: {
@@ -42,12 +42,12 @@ export const FEED_MAPPING_INCLUDE = {
       id: true,
       product: {
         select: {
+          id: true,
           name: true,
           brand: true,
           description: true,
           styleId: true,
           traitsJson: true,
-          rawJson: true,
         },
       },
     },
@@ -310,4 +310,42 @@ export async function loadMasterAndSpecsExportCandidates(params: {
     exclusionStats,
     invalidSupplierVariantIds,
   };
+}
+
+const RAW_JSON_HYDRATE_CHUNK = 500;
+
+/** Load KickDB rawJson only for final export rows — keeps full-catalog scans out of heap. */
+export async function hydrateExportCandidateKickdbRawJson(
+  candidates: FeedExportCandidate[]
+): Promise<void> {
+  const productIds = Array.from(
+    new Set(
+      candidates
+        .map((candidate) => String((candidate.product as { id?: string })?.id ?? "").trim())
+        .filter(Boolean)
+    )
+  );
+  if (productIds.length === 0) return;
+
+  const rawByProductId = new Map<string, unknown>();
+  const prismaAny = prismaDirect as any;
+  for (let offset = 0; offset < productIds.length; offset += RAW_JSON_HYDRATE_CHUNK) {
+    const chunk = productIds.slice(offset, offset + RAW_JSON_HYDRATE_CHUNK);
+    const rows = await prismaAny.kickDBProduct.findMany({
+      where: { id: { in: chunk } },
+      select: { id: true, rawJson: true },
+    });
+    for (const row of rows ?? []) {
+      const id = String(row?.id ?? "").trim();
+      if (!id) continue;
+      rawByProductId.set(id, row?.rawJson ?? null);
+    }
+  }
+
+  for (const candidate of candidates) {
+    const product = candidate.product as { id?: string; rawJson?: unknown } | null;
+    const productId = String(product?.id ?? "").trim();
+    if (!product || !productId || !rawByProductId.has(productId)) continue;
+    product.rawJson = rawByProductId.get(productId);
+  }
 }

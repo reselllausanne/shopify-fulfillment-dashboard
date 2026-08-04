@@ -11,7 +11,7 @@ import {
   chunkArray,
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
-import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+import { requestFeedPush } from "@/galaxus/ops/feedPipelineCore";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { enqueueJob } from "@/galaxus/jobs/queue";
 
