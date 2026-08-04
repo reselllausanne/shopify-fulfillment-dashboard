@@ -101,12 +101,15 @@ const GALAXUS_GLD_SUPPLIER_KEYS = new Set(["golden", "gld"]);
 
 /** Golden PL→CH logistics defaults (overridable via env). */
 const GLD_DEFAULT_SHIP_EUR = 100;
-const GLD_DEFAULT_SHIP_PAIRS = 12;
+/** Conservative: amortize ship over 10 pairs (not full 12-box). */
+const GLD_DEFAULT_SHIP_PAIRS = 10;
 const GLD_DEFAULT_DOUANE_EUR = 20;
 const GLD_DEFAULT_DOUANE_PAIRS = 10;
 const GLD_DEFAULT_EURCHF = 0.94;
-/** Minimum net margin on landed cost (buy + ship + douane). */
-const GLD_DEFAULT_TARGET_MARGIN = 0.15;
+/** Swiss import VAT on (buy + ship). */
+const GLD_DEFAULT_IMPORT_VAT = 0.081;
+/** Markup on full landed: sell = landed × (1 + markup). */
+const GLD_DEFAULT_MARKUP = 0.15;
 
 function normalizeMarginFraction(value: number): number {
   return value > 1 ? value / 100 : value;
@@ -131,8 +134,8 @@ export function isGldGalaxusSupplierKey(supplierKey: string | null | undefined):
 }
 
 /**
- * Landed extras per pair for Golden (EUR logistics → CHF).
- * Defaults: ship 100€/12 pairs + douane 20€/10 pairs @ EURCHF 0.94.
+ * Logistics per pair for Golden (EUR → CHF).
+ * Defaults: ship 100€/10 pairs + douane 20€/box÷10 pairs @ EURCHF 0.94.
  */
 export function resolveGldLandedExtrasPerPairChf(): {
   shipPerPairChf: number;
@@ -149,14 +152,51 @@ export function resolveGldLandedExtrasPerPairChf(): {
   return {
     shipPerPairChf,
     douanePerPairChf,
+    /** Ship + douane only (no import VAT — VAT depends on buy). */
     extrasPerPairChf: shipPerPairChf + douanePerPairChf,
   };
 }
 
+export function resolveGldImportVatRate(): number {
+  const raw = readNumberEnv(
+    ["GALAXUS_GLD_IMPORT_VAT", "GALAXUS_PRICE_VAT_RATE", "GALAXUS_VAT_RATE"],
+    GLD_DEFAULT_IMPORT_VAT
+  );
+  const rate = normalizeMarginFraction(raw);
+  return Number.isFinite(rate) && rate >= 0 && rate < 0.5 ? rate : GLD_DEFAULT_IMPORT_VAT;
+}
+
+/**
+ * Full landed CHF per pair:
+ * buy + ship + Swiss import VAT on (buy+ship) + douane/box share.
+ */
+export function resolveGldLandedCostChf(buyPriceChf: number): {
+  buyChf: number;
+  shipPerPairChf: number;
+  importVatChf: number;
+  douanePerPairChf: number;
+  landedChf: number;
+} {
+  const { shipPerPairChf, douanePerPairChf } = resolveGldLandedExtrasPerPairChf();
+  const vatRate = resolveGldImportVatRate();
+  const importVatChf = (buyPriceChf + shipPerPairChf) * vatRate;
+  const landedChf = buyPriceChf + shipPerPairChf + importVatChf + douanePerPairChf;
+  return { buyChf: buyPriceChf, shipPerPairChf, importVatChf, douanePerPairChf, landedChf };
+}
+
+/** GLD markup fraction (0.15 → sell = landed × 1.15). */
+export function resolveGldMarkupFraction(): number {
+  const raw = readNumberEnv(
+    ["GALAXUS_GLD_MARKUP", "GALAXUS_GLD_TARGET_NET_MARGIN", "GALAXUS_GLD_TARGET_MARGIN"],
+    GLD_DEFAULT_MARKUP
+  );
+  const markup = normalizeMarginFraction(raw);
+  return isValidTargetMargin(markup) ? markup : GLD_DEFAULT_MARKUP;
+}
+
+/** @deprecated Use {@link resolveGldMarkupFraction}. */
 export function resolveGldTargetNetMargin(): number {
-  const raw = readNumberEnv(["GALAXUS_GLD_TARGET_NET_MARGIN", "GALAXUS_GLD_TARGET_MARGIN"], GLD_DEFAULT_TARGET_MARGIN);
-  const margin = normalizeMarginFraction(raw);
-  return isValidTargetMargin(margin) ? margin : GLD_DEFAULT_TARGET_MARGIN;
+  return resolveGldMarkupFraction();
 }
 
 /**
@@ -186,7 +226,7 @@ export function resolveGalaxusTargetNetMarginForSupplier(
  * Galaxus retail feed:
  * - `ner` / `the` = sell ex VAT equals partner buy (0% margin)
  * - other partners = +10% on buy ex VAT
- * - `golden` / `gld` = (buy + PL→CH ship + douane) / (1 − 15% min margin)
+ * - `golden` / `gld` = (buy + ship + CH import VAT + douane) × 1.15
  * - STX: (buy + outbound ship) / (1 − target net margin), default 12% + 2 CHF ship
  */
 export function resolveGalaxusSellExVatForChannel(
@@ -202,15 +242,12 @@ export function resolveGalaxusSellExVatForChannel(
     return roundUpToIncrement(buyPriceExVatCHF, roundTo);
   }
   if (isGldGalaxusSupplierKey(k)) {
-    const { extrasPerPairChf } = resolveGldLandedExtrasPerPairChf();
-    return computeGalaxusSellPriceExVat({
-      buyPriceExVatCHF,
-      shippingPerPairCHF: extrasPerPairChf,
-      targetNetMargin: resolveGldTargetNetMargin(),
-      bufferPerPairCHF: 0,
-      roundTo: defaults.roundTo,
-      vatRate: defaults.vatRate,
-    }).sellPriceExVatCHF;
+    if (!Number.isFinite(buyPriceExVatCHF) || buyPriceExVatCHF <= 0) {
+      throw new Error("buyPriceExVatCHF must be > 0");
+    }
+    const { landedChf } = resolveGldLandedCostChf(buyPriceExVatCHF);
+    const markup = resolveGldMarkupFraction();
+    return roundUpToIncrement(landedChf * (1 + markup), roundTo);
   }
   if (partnerKeysLower.has(k)) {
     return roundUpToIncrement(buyPriceExVatCHF * 1.10, roundTo);
