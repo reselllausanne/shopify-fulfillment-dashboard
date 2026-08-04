@@ -58,12 +58,18 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
   return lines.map((line) => {
     const qty = Math.max(Number(line.quantity ?? 1), 1);
     const whHint = galaxusLineWarehouseStockHint(line);
-    /** Own / partner stock (THE_/NER_ sku): not fulfilled via StockX buy link. */
+    /** Own / partner / Golden (THE_/NER_/GLD_): not fulfilled via StockX buy link. */
     if (whHint) {
+      const source =
+        whHint === "MAISON"
+          ? ("maison_stock" as const)
+          : whHint === "NER_STOCK"
+            ? ("ner_stock" as const)
+            : ("golden_manual" as const);
       const units = Array.from({ length: qty }, (_, i) => ({
         unitIndex: i,
         linked: true,
-        source: whHint === "MAISON" ? ("maison_stock" as const) : ("ner_stock" as const),
+        source,
         stockxOrderNumber: null as string | null,
         stockxOrderId: null as string | null,
         stockxAmount: null as number | null,
@@ -74,7 +80,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
         ...line,
         procurement: {
           ok: true,
-          source: units[0]?.source ?? null,
+          source,
           stockxOrderNumber: null,
           stockxOrderId: null,
           awb: null,

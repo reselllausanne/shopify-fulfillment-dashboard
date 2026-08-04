@@ -481,6 +481,10 @@ export default function WarehouseBulkPage() {
                                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 shrink-0">
                                     NER_ · partner stock
                                   </span>
+                                ) : proc?.warehouseStockHint === "GOLDEN" ? (
+                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950 shrink-0">
+                                    GLD · Golden — do not buy StockX
+                                  </span>
                                 ) : null}
                                 <PhysicalStockBadge
                                   physicalStock={line.physicalStock}
@@ -582,9 +586,13 @@ export default function WarehouseBulkPage() {
                                 </div>
                               ) : !linked ? (
                                 <div className="text-amber-800 text-[11px]">
-                                  {proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK" ? (
+                                  {proc?.warehouseStockHint === "MAISON" ||
+                                  proc?.warehouseStockHint === "NER_STOCK" ||
+                                  proc?.warehouseStockHint === "GOLDEN" ? (
                                     <span>
-                                      Supplier SKU THE_/the_ or NER_/ner_ — no StockX link. Mark shipped when ready.
+                                      {proc?.warehouseStockHint === "GOLDEN"
+                                        ? "GLD/Golden — do not buy on StockX. Order on Golden manually, then mark shipped."
+                                        : "Supplier SKU THE_/the_ or NER_/ner_ — no StockX link. Mark shipped when ready."}
                                     </span>
                                   ) : (
                                     <span>Sync or manual supplier entry to link, then you can mark shipped.</span>

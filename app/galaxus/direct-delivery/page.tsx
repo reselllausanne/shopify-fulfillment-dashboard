@@ -537,6 +537,10 @@ export default function GalaxusDirectDeliveryPage() {
                               <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950">
                                 NER_ · partner stock
                               </span>
+                            ) : proc?.warehouseStockHint === "GOLDEN" ? (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950">
+                                GLD · Golden — not direct delivery / no StockX
+                              </span>
                             ) : null}
                             <PhysicalStockBadge
                               physicalStock={line.physicalStock}
@@ -570,15 +574,17 @@ export default function GalaxusDirectDeliveryPage() {
                               <>
                           <div className={`font-medium ${procOk ? "text-green-700" : "text-red-600"}`}>
                             {procOk
-                              ? proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK"
-                                ? proc?.warehouseStockHint === "MAISON"
-                                  ? "THE_/the_ your stock (no StockX)"
-                                  : "NER_ partner stock (no StockX)"
-                                : proc?.source === "stx_sync"
-                                  ? `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`
-                                  : match
-                                    ? `Linked ${match.stockxOrderNumber}`
-                                    : "Linked"
+                              ? proc?.warehouseStockHint === "GOLDEN"
+                                ? "GLD/Golden — order manually (no StockX / no DD)"
+                                : proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK"
+                                  ? proc?.warehouseStockHint === "MAISON"
+                                    ? "THE_/the_ your stock (no StockX)"
+                                    : "NER_ partner stock (no StockX)"
+                                  : proc?.source === "stx_sync"
+                                    ? `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`
+                                    : match
+                                      ? `Linked ${match.stockxOrderNumber}`
+                                      : "Linked"
                               : "Not linked"}
                           </div>
                           <div className="text-gray-500">

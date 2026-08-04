@@ -11,6 +11,7 @@ import {
   extractLabelPayload,
   requestSwissPostLabelForGalaxusOrder,
 } from "@/galaxus/directDelivery/swissPostLabelFlow";
+import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export type DirectSwissPostLabelData = {
   base64: string;
@@ -121,6 +122,14 @@ export async function runDirectSwissPostLabelForOrder(
   }
   if (String(order.deliveryType ?? "").toLowerCase() !== "direct_delivery") {
     return { ok: false, error: "Order is not direct_delivery" };
+  }
+
+  const gldLines = (order.lines ?? []).filter((line: any) => isGalaxusGldSupplierLine(line));
+  if (gldLines.length > 0) {
+    return {
+      ok: false,
+      error: "Order has GLD/Golden lines — not eligible for Swiss direct delivery",
+    };
   }
 
   if (requireLinked) {

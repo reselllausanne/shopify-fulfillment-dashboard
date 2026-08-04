@@ -73,8 +73,24 @@ export async function placeSupplierOrderForGalaxusOrder(orderId: string): Promis
 
   try {
     const resolvedLines = await resolveLines(order.lines);
-    const goldenLines = resolvedLines.filter((line) => line.supplierKey === "golden");
+    // Golden/GLD: manual procurement only for now (ops places dropship later).
+    const goldenLines: typeof resolvedLines = [];
     const partnerLines = resolvedLines.filter((line) => line.supplierKey !== "golden");
+    const skippedGolden = resolvedLines.filter((line) => line.supplierKey === "golden");
+    if (skippedGolden.length > 0) {
+      await prisma.orderStatusEvent.create({
+        data: {
+          orderId: order.id,
+          source: "supplier",
+          type: "GLD_AUTO_ORDER_SKIPPED",
+          payloadJson: {
+            reason: "golden_manual_only",
+            lineIds: skippedGolden.map((line) => line.lineId),
+            count: skippedGolden.length,
+          },
+        },
+      });
+    }
     const deliveryAddress = buildDeliveryAddress(order);
     const { lineUpdates, ordrMode } = buildArrivalUpdates(resolvedLines);
 

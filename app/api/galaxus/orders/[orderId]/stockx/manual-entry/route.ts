@@ -15,6 +15,7 @@ import {
   reserveStxPurchaseUnitsForOrder,
   resolveSupplierVariantIdForGalaxusLine,
 } from "@/galaxus/stx/purchaseUnits";
+import { galaxusLineWarehouseStockHint } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,18 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     const line = (order.lines || []).find((l: any) => l.id === lineId);
     if (!line) {
       return NextResponse.json({ ok: false, error: "Line not found" }, { status: 404 });
+    }
+
+    const whHint = galaxusLineWarehouseStockHint(line as any);
+    if (whHint === "GOLDEN") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "GLD/Golden line — do not buy on StockX. Place order on Golden manually.",
+          reason: "supplier_GLD_golden",
+        },
+        { status: 400 }
+      );
     }
 
     const prismaAny = prisma as any;

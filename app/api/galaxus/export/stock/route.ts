@@ -29,6 +29,7 @@ import {
   meetsGalaxusStockMoq,
   resolveGalaxusStockMoq,
 } from "@/galaxus/exports/stockMoq";
+import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -379,6 +380,12 @@ export async function GET(request: Request) {
 
     const moqFields = formatGalaxusStockMoqFields(moq);
 
+    const isGld = isGalaxusGldSupplierLine({
+      supplierVariantId,
+      providerKey,
+      supplierPid: providerKey,
+    });
+
     rows.push({
       ProviderKey: providerKey,
       QuantityOnStock: Number.isFinite(stock) ? stock.toString() : "0",
@@ -388,7 +395,8 @@ export async function GET(request: Request) {
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: isStx ? "Switzerland" : "Poland",
-      DirectDeliverySupported: "1",
+      // GLD ships PL→CH in batches — never offer Swiss direct delivery.
+      DirectDeliverySupported: isGld ? "0" : "1",
     });
   });
     let finalRows = rows;

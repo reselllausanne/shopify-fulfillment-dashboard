@@ -9,10 +9,7 @@ import {
   fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
 } from "@/galaxus/stx/stockxClient";
-import {
-  galaxusLineWarehouseStockHint,
-  isGalaxusStxSupplierLine,
-} from "@/galaxus/warehouse/lineInventorySource";
+import { galaxusLineWarehouseStockHint } from "@/galaxus/warehouse/lineInventorySource";
 import {
   buildStockxOrderClaimIndex,
   registerStockxOrderClaim,
@@ -166,13 +163,20 @@ export async function POST(
     for (const line of order.lines) {
       const qty = Math.max(Number(line.quantity ?? 1), 1);
       const whSkip = galaxusLineWarehouseStockHint(line);
-      if (whSkip && isGalaxusStxSupplierLine(line)) {
+      // THE / NER / GLD — never auto-match to StockX buys.
+      if (whSkip) {
+        const reason =
+          whSkip === "MAISON"
+            ? "supplier_sku_THE_"
+            : whSkip === "NER_STOCK"
+              ? "supplier_sku_NER_"
+              : "supplier_GLD_golden";
         for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
           results.push({
             lineId: line.id,
             unitIndex,
             status: "skipped",
-            reason: whSkip === "MAISON" ? "supplier_sku_THE_" : "supplier_sku_NER_",
+            reason,
           });
         }
         continue;

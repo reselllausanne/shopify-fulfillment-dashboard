@@ -3,6 +3,8 @@ import {
   computeGalaxusSellPriceExVat,
   resolveGalaxusSellExVatForChannel,
   resolveGalaxusTargetNetMarginForSupplier,
+  resolveGldLandedExtrasPerPairChf,
+  resolveGldTargetNetMargin,
 } from "@/galaxus/exports/pricing";
 
 describe("Galaxus STX margin", () => {
@@ -15,6 +17,12 @@ describe("Galaxus STX margin", () => {
     delete process.env.GALAXUS_PRICE_BUFFER_CHF;
     delete process.env.GALAXUS_STX_TARGET_NET_MARGIN;
     delete process.env.GALAXUS_STX_MARGIN_ADJUSTMENT;
+    delete process.env.GALAXUS_GLD_TARGET_NET_MARGIN;
+    delete process.env.GALAXUS_GLD_SHIP_EUR;
+    delete process.env.GALAXUS_GLD_SHIP_PAIRS;
+    delete process.env.GALAXUS_GLD_DOUANE_EUR;
+    delete process.env.GALAXUS_GLD_DOUANE_PAIRS;
+    delete process.env.GALAXUS_GLD_EURCHF;
   });
 
   afterEach(() => {
@@ -62,3 +70,47 @@ describe("Galaxus STX margin", () => {
     expect(stxSell).toBeCloseTo(173.95, 2);
   });
 });
+
+describe("Galaxus GLD landed + 15% margin", () => {
+  const envSnapshot = { ...process.env };
+
+  beforeEach(() => {
+    delete process.env.GALAXUS_GLD_TARGET_NET_MARGIN;
+    delete process.env.GALAXUS_GLD_SHIP_EUR;
+    delete process.env.GALAXUS_GLD_SHIP_PAIRS;
+    delete process.env.GALAXUS_GLD_DOUANE_EUR;
+    delete process.env.GALAXUS_GLD_DOUANE_PAIRS;
+    delete process.env.GALAXUS_GLD_EURCHF;
+    delete process.env.GALAXUS_PRICE_ROUND_TO;
+  });
+
+  afterEach(() => {
+    process.env = { ...envSnapshot };
+  });
+
+  it("defaults to 15% margin and ~9.7 CHF logistics extras", () => {
+    expect(resolveGldTargetNetMargin()).toBeCloseTo(0.15, 5);
+    const extras = resolveGldLandedExtrasPerPairChf();
+    // 100/12*0.94 + 20/10*0.94
+    expect(extras.extrasPerPairChf).toBeCloseTo(100 / 12 * 0.94 + 20 / 10 * 0.94, 4);
+  });
+
+  it("sell = (buy + ship + douane) / (1 - 15%) for golden/gld", () => {
+    const buy = 62;
+    const extras = resolveGldLandedExtrasPerPairChf().extrasPerPairChf;
+    const expected = computeGalaxusSellPriceExVat({
+      buyPriceExVatCHF: buy,
+      shippingPerPairCHF: extras,
+      targetNetMargin: 0.15,
+      bufferPerPairCHF: 0,
+      roundTo: 0.05,
+    }).sellPriceExVatCHF;
+
+    expect(resolveGalaxusSellExVatForChannel(buy, "golden", new Set())).toBe(expected);
+    expect(resolveGalaxusSellExVatForChannel(buy, "gld", new Set())).toBe(expected);
+    // ~84.40 — not the thin ~72 landed-only price
+    expect(expected).toBeGreaterThan(80);
+    expect(expected).toBeCloseTo((buy + extras) / 0.85, 1);
+  });
+});
+

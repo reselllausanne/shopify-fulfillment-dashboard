@@ -1,57 +1,31 @@
 import { describe, expect, it } from "vitest";
 import {
   galaxusLineWarehouseStockHint,
-  resolveGalaxusLineOfferSupplierSku,
-} from "./lineInventorySource";
+  isGalaxusGldSupplierLine,
+  isGalaxusStxSupplierLine,
+} from "@/galaxus/warehouse/lineInventorySource";
 
-describe("galaxusLineWarehouseStockHint", () => {
-  it("detects NER from providerKey when supplierSku is catalog style id", () => {
-    expect(
-      galaxusLineWarehouseStockHint({
-        supplierSku: "U990VR6",
-        providerKey: "NER_7612345678901",
-        offerSupplierSku: "NER_7612345678901",
-      })
-    ).toBe("NER_STOCK");
+describe("GLD / Golden line detection", () => {
+  it("detects GLD provider / golden variant ids", () => {
+    expect(isGalaxusGldSupplierLine({ providerKey: "GLD_4067907638404" })).toBe(true);
+    expect(isGalaxusGldSupplierLine({ supplierPid: "GLD_123" })).toBe(true);
+    expect(isGalaxusGldSupplierLine({ supplierVariantId: "golden:15456" })).toBe(true);
+    expect(isGalaxusGldSupplierLine({ supplierSku: "GLD_foo" })).toBe(true);
+    expect(isGalaxusGldSupplierLine({ providerKey: "STX_abc" })).toBe(false);
   });
 
-  it("detects NER from raw EDI supplierSku", () => {
+  it("never treats GLD as StockX", () => {
     expect(
-      galaxusLineWarehouseStockHint({
-        supplierSku: "NER_7612345678901",
-        providerKey: "NER_7612345678901",
+      isGalaxusStxSupplierLine({
+        providerKey: "GLD_4067",
+        supplierVariantId: "golden:1",
       })
-    ).toBe("NER_STOCK");
+    ).toBe(false);
   });
 
-  it("detects THE from providerKey", () => {
-    expect(
-      galaxusLineWarehouseStockHint({
-        supplierSku: "BQ6546-011",
-        providerKey: "THE_7612345678901",
-        offerSupplierSku: "THE_7612345678901",
-      })
-    ).toBe("MAISON");
-  });
-
-  it("returns null for STX style sku without warehouse prefix", () => {
-    expect(
-      galaxusLineWarehouseStockHint({
-        supplierSku: "U9060ASP",
-        providerKey: "STX_7612345678901",
-        offerSupplierSku: "STX_7612345678901",
-      })
-    ).toBeNull();
-  });
-});
-
-describe("resolveGalaxusLineOfferSupplierSku", () => {
-  it("prefers NER_/THE_ raw line sku over providerKey", () => {
-    expect(
-      resolveGalaxusLineOfferSupplierSku({
-        supplierSku: "NER_123",
-        providerKey: "NER_456",
-      })
-    ).toBe("NER_123");
+  it("surfaces GOLDEN warehouse hint", () => {
+    expect(galaxusLineWarehouseStockHint({ providerKey: "GLD_4067" })).toBe("GOLDEN");
+    expect(galaxusLineWarehouseStockHint({ supplierVariantId: "golden:9" })).toBe("GOLDEN");
+    expect(galaxusLineWarehouseStockHint({ supplierSku: "THE_x" })).toBe("MAISON");
   });
 });
