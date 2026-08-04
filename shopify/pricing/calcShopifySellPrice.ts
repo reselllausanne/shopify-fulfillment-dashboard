@@ -40,7 +40,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
 
   const PSP = 0.032;
   const VAT = 0.023;
-  const ADS_PCT = 0.13;
+  const ADS_PCT = 0.19;
   const CPA_CAP = 17.0;
   const CM2_TARGET = 0.19;
   const SHIP_F = isExpress ? 15.0 : 7.0;

@@ -16,10 +16,7 @@ query VerifyVariant($id: ID!) {
     priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
     delivery48h: metafield(namespace: "custom", key: "delivery_48h") { value }
     expressPrice: metafield(namespace: "custom", key: "express_price") { value }
-    product {
-      id
-      soldes48h: metafield(namespace: "custom", key: "soldes_48h") { value }
-    }
+    product { id }
   }
 }
 `;
@@ -72,7 +69,6 @@ async function main() {
     const compareAt = shopify?.compareAtPrice != null ? Number(shopify.compareAtPrice) : null;
     const priceLocked = String(shopify?.priceLocked?.value ?? "").toLowerCase() === "true";
     const delivery48h = String(shopify?.delivery48h?.value ?? "").toLowerCase() === "true";
-    const soldes48h = String(shopify?.product?.soldes48h?.value ?? "").toLowerCase() === "true";
     const onSale = compareAt != null && price != null && compareAt > price;
 
     const liqOk = manualLock && manualPrice != null && manualPrice > 0 && onSale && priceLocked && delivery48h;
@@ -88,14 +84,13 @@ async function main() {
     if (!onSale) blockers.push("shopify_not_on_sale");
     if (!priceLocked) blockers.push("price_locked_false");
     if (!delivery48h) blockers.push("delivery_48h_false");
-    if (!soldes48h) blockers.push("soldes_48h_false");
 
     if (blockers.length) {
       galaxusBlockers.push(`${row.gtin} (${row.locationName}): ${blockers.join(", ")}`);
     }
     if (!liqOk) {
       issues.push(
-        `${row.gtin} lock=${manualLock} mp=${manualPrice} price=${price} compare=${compareAt} 48h=${delivery48h} soldes=${soldes48h}`
+        `${row.gtin} lock=${manualLock} mp=${manualPrice} price=${price} compare=${compareAt} 48h=${delivery48h}`
       );
     }
   }

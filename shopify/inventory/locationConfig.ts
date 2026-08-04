@@ -39,7 +39,7 @@ export const ONLINE_LOCATION = LOCATIONS.find((l) => l.sourceType === "online") 
 
 /**
  * Physical locations whose owned stock participates in the liquidation /
- * soldes 48h lane (drives manualLock, delivery_48h, soldes_48h). Antica is a
+ * soldes 48h lane (drives manualLock, delivery_48h + soldes collection). Antica is a
  * physical location but not part of liquidation. Chemin (online) is dropship
  * and never eligible.
  */

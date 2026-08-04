@@ -10,6 +10,11 @@ import {
   mergeLineItemCustomAttributes,
   parseShopifyLineItemDelivery,
 } from "@/app/lib/shopifyLineItemDelivery";
+import { parseShopifyOrderPickup } from "@/app/lib/shopifyOrderPickup";
+import {
+  buildPhysicalStockByGtinMap,
+  resolvePhysicalStockForGtin,
+} from "@/shopify/inventory/orderLinePhysicalStock";
 
 export const runtime = "nodejs";
 
@@ -25,6 +30,25 @@ query OrderByName($first: Int!, $query: String!) {
         displayFinancialStatus
         displayFulfillmentStatus
         customer { displayName }
+        shippingLines(first: 5) {
+          edges {
+            node {
+              title
+              isRemoved
+            }
+          }
+        }
+        fulfillmentOrders(first: 10) {
+          nodes {
+            deliveryMethod {
+              methodType
+              presentedName
+            }
+            assignedLocation {
+              name
+            }
+          }
+        }
         risk {
           recommendation
           assessments {
@@ -51,6 +75,7 @@ query OrderByName($first: Int!, $query: String!) {
                 }
               }
               variant {
+                barcode
                 expressAvailable: metafield(namespace: "custom", key: "express_available") {
                   value
                 }
@@ -107,7 +132,26 @@ export async function POST(req: Request) {
 
     const riskNorm = normalizeOrderRisk(node.risk);
 
+    const orderShippingLines = (node.shippingLines?.edges ?? [])
+      .map((edge: any) => edge?.node)
+      .filter(Boolean)
+      .map((nodeLine: any) => ({
+        title: nodeLine.title ?? null,
+        isRemoved: Boolean(nodeLine.isRemoved),
+      }));
+    const orderFulfillmentOrders = (node.fulfillmentOrders?.nodes ?? []).map((fo: any) => ({
+      deliveryMethod: fo.deliveryMethod ?? null,
+      assignedLocation: fo.assignedLocation ?? null,
+    }));
+    const pickupInfo = parseShopifyOrderPickup({
+      shippingLines: orderShippingLines,
+      fulfillmentOrders: orderFulfillmentOrders,
+    });
+
     const liEdges = (node.lineItems?.edges ?? []).filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
+    const physicalStockByGtin = await buildPhysicalStockByGtinMap(
+      liEdges.map((liE: any) => String(liE?.node?.variant?.barcode ?? "").trim()).filter(Boolean)
+    );
     const lineItems = liEdges.map((liE: any) => {
       const li = liE.node;
       const unit = li.originalUnitPriceSet?.shopMoney;
@@ -130,6 +174,9 @@ export async function POST(req: Request) {
         expressAvailableMetafield: li?.variant?.expressAvailable?.value ?? null,
         expressPriceMetafield: li?.variant?.expressPrice?.value ?? null,
       });
+
+      const gtin = String(li?.variant?.barcode ?? "").trim() || null;
+      const physicalStock = gtin ? resolvePhysicalStockForGtin(gtin, physicalStockByGtin) : null;
 
       return {
         shopifyOrderId: node.id,
@@ -157,6 +204,12 @@ export async function POST(req: Request) {
         expressAvailable: deliveryInfo.expressAvailable,
         expressPrice: deliveryInfo.expressPrice,
         variantExpressPrice: deliveryInfo.variantExpressPrice,
+        gtin,
+        physicalStockQty: physicalStock?.qty ?? null,
+        physicalStockLocation: physicalStock?.locationName ?? null,
+        isStorePickup: pickupInfo.isStorePickup,
+        pickupLocation: pickupInfo.locationName,
+        pickupLabel: pickupInfo.label,
       };
     });
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
+import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
 
@@ -501,7 +502,13 @@ export default function GalaxusDirectDeliveryPage() {
                   return (
                     <div
                       key={line.id}
-                      className={`border rounded p-3 text-xs ${procOk ? "border-green-400 bg-green-50/40" : ""}`}
+                      className={`border rounded p-3 text-xs ${
+                        procOk
+                          ? "border-green-400 bg-green-50/40"
+                          : line.physicalStock
+                            ? "border-green-400 bg-green-50/30"
+                            : ""
+                      }`}
                     >
                       <div className="flex items-center justify-between">
                         <div className="space-y-2">
@@ -531,7 +538,15 @@ export default function GalaxusDirectDeliveryPage() {
                                 NER_ · partner stock
                               </span>
                             ) : null}
+                            <PhysicalStockBadge
+                              physicalStock={line.physicalStock}
+                              avoidStockxHint={!procOk}
+                            />
                           </div>
+                          <PhysicalStockHintText
+                            physicalStock={line.physicalStock}
+                            avoidStockxHint={!procOk}
+                          />
                           <div className="text-gray-500">
                             Supplier PID: {line.supplierPid ?? "—"}
                           </div>
@@ -625,6 +640,7 @@ export default function GalaxusDirectDeliveryPage() {
         isOpen={manualEntryModal.isOpen}
         mode={manualEntryModal.mode}
         initialData={manualEntryModal.initialData}
+        stockxLookupOrderId={manualEntryModal.orderId ?? selectedOrderId ?? null}
         shopifyItem={{
           orderName: manualEntryModal.initialData?.shopifyOrderName ?? "",
           title: manualEntryModal.initialData?.shopifyProductTitle ?? "",

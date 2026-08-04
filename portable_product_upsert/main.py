@@ -61,6 +61,10 @@ from stockx_images import (
     urls_to_add_for_gallery_sync,
     should_auto_rebuild_product_images,
 )
+from admin_only_products import (
+    admin_only_skip_reason,
+    is_in_stock_fixed_price_product,
+)
 
 # Set True via --full-360 CLI flag (kept for backward compat with scan create).
 # Also honors env SHOPIFY_CREATE_FULL_360=1. In the new default create policy
@@ -1026,6 +1030,14 @@ def process_partial_product(url, product_id, pending_skus, completed_skus, actio
     print(f"[INFO] Processing partial {action_type} for {url}, pending SKUs: {pending_skus}")
     
     try:
+        if is_in_stock_fixed_price_product(product_id=product_id):
+            reason = admin_only_skip_reason()
+            print(
+                f"[ADMIN ONLY SKIP] partial {action_type} blocked for {product_id} ({reason})"
+            )
+            log_event(url, action_type, "skipped", reason=reason, details={"product_id": product_id})
+            return True
+
         # Fetch fresh product data from StockX
         product_data = process_url(url, 0)
         if not product_data:
@@ -1491,6 +1503,30 @@ def update_product_enhanced(url, title, product_info, existing_product):
             return False
         
         product_id = existing_product["id"]
+
+        # HARD SKIP: Essentials / Bape / AP×Travis in-store fixed price.
+        # Never apply StockX sell/express/qty — admin price is sacred.
+        sample_sku = None
+        try:
+            for v in product_info.get("variants") or []:
+                if isinstance(v, dict) and v.get("sku"):
+                    sample_sku = v.get("sku")
+                    break
+        except Exception:
+            sample_sku = None
+        if is_in_stock_fixed_price_product(
+            product_id=product_id,
+            title=title or existing_product.get("title"),
+            sku=sample_sku,
+        ):
+            reason = admin_only_skip_reason()
+            print(
+                f"[ADMIN ONLY SKIP] {title} ({product_id}): "
+                f"hard-skip StockX price/express/stock update ({reason})"
+            )
+            log_event(url, "update", "skipped", reason=reason, details={"product_id": product_id})
+            return True
+
         product_variants = get_product_variants(product_id, include_lock=True)
         variants_to_update = []
         variants_to_create = []

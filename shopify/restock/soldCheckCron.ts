@@ -22,7 +22,7 @@ import { convergeVariant } from "@/shopify/inventory/convergence";
  *   2. marketplace stock push: Decathlon STO01 + Galaxus StockData (any provider key)
  *   3. unlock `price_locked` metafield (pricing automation resumes)
  *   4. re-upsert the product slug (refresh variants with live pricing)
- *   5. convergeVariant: clear delivery_48h + product soldes_48h when physical=0
+ *   5. convergeVariant: clear delivery_48h when physical=0
  *   6. mark listing SOLD_OUT
  *
  * Idempotent and dry-run aware.
@@ -97,7 +97,7 @@ async function processSold(input: {
     if (!refresh.ok) warnings.push(`Slug refresh failed: ${refresh.error ?? "unknown"}`);
   }
 
-  // 5. Converge: clear delivery_48h + product soldes_48h + unlock if mirror shows physical=0
+  // 5. Converge: clear delivery_48h + unlock if mirror shows physical=0
   if (input.gtin) {
     try {
       const conv = await convergeVariant(input.gtin);

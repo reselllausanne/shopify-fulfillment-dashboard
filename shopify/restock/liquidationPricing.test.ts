@@ -25,10 +25,11 @@ vi.mock("@/shopify/restock/shopifyRestockInventory", () => ({
 vi.mock("@/shopify/restock/bussignyDeliveryMetafield", () => ({
   readShopifyDelivery48h: vi.fn().mockResolvedValue(false),
   writeShopifyDelivery48h: vi.fn().mockResolvedValue(undefined),
+  ensureDelivery48hMetafieldDefinition: vi.fn().mockResolvedValue({ ok: true, created: false, id: "def-d48" }),
 }));
 
-vi.mock("@/shopify/restock/bussignySoldesMetafield", () => ({
-  syncSoldes48hProductMetafield: vi.fn().mockResolvedValue(undefined),
+vi.mock("@/shopify/restock/liquidationExpressPrice", () => ({
+  syncLiquidationExpressPriceMetafield: vi.fn().mockResolvedValue({ expressPrice: 149.9, changed: true }),
 }));
 
 import { prisma } from "@/app/lib/prisma";
@@ -36,7 +37,7 @@ import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
 import { applyVariantSalePrice } from "@/shopify/restock/shopifyRestockInventory";
 import { writeShopifyDelivery48h } from "@/shopify/restock/bussignyDeliveryMetafield";
-import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
+import { syncLiquidationExpressPriceMetafield } from "@/shopify/restock/liquidationExpressPrice";
 import { applyLiquidationSaleDisplay } from "@/shopify/restock/liquidationPricing";
 
 const mockedPricing = resolvePhysicalRestockPricing as unknown as ReturnType<typeof vi.fn>;
@@ -45,7 +46,7 @@ const mockedGraphQL = shopifyGraphQL as unknown as ReturnType<typeof vi.fn>;
 const mockedStxFindFirst = prisma.supplierVariant.findFirst as unknown as ReturnType<typeof vi.fn>;
 const mockedStxUpdate = prisma.supplierVariant.update as unknown as ReturnType<typeof vi.fn>;
 const mockedWrite48h = writeShopifyDelivery48h as unknown as ReturnType<typeof vi.fn>;
-const mockedSoldes48h = syncSoldes48hProductMetafield as unknown as ReturnType<typeof vi.fn>;
+const mockedExpressSync = syncLiquidationExpressPriceMetafield as unknown as ReturnType<typeof vi.fn>;
 
 const GTIN = "4550330121471";
 const VARIANT = {
@@ -136,7 +137,10 @@ describe("applyLiquidationSaleDisplay — hard gate on pricing", () => {
       })
     );
     expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
-    expect(mockedSoldes48h).toHaveBeenCalledWith("gid://shopify/Product/1", [], expect.any(Array));
+    expect(mockedExpressSync).toHaveBeenCalledWith({
+      variantId: "gid://shopify/ProductVariant/1",
+      liquidationPriceChf: 129.9,
+    });
   });
 
   it("warns loudly when no stx_ SupplierVariant exists for the DB lock", async () => {

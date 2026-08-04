@@ -24,6 +24,11 @@ import {
   mergePhysicalWithDropship,
   type PhysicalStockMap,
 } from "@/shopify/inventory/physicalAvailability";
+import {
+  formatGalaxusStockMoqFields,
+  meetsGalaxusStockMoq,
+  resolveGalaxusStockMoq,
+} from "@/galaxus/exports/stockMoq";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -342,6 +347,16 @@ export async function GET(request: Request) {
       return;
     }
 
+    const moq = resolveGalaxusStockMoq({
+      supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+      supplierVariantId,
+      providerKey,
+    });
+    // GLD (and any MOQ>1 supplier): do not list variants that cannot fill a min order.
+    if (!meetsGalaxusStockMoq(stock, moq)) {
+      return;
+    }
+
     let restockDate = "";
     let restockTime = "";
     const gtin = String(candidate?.mapping?.gtin ?? "").trim();
@@ -362,13 +377,14 @@ export async function GET(request: Request) {
       }
     }
 
+    const moqFields = formatGalaxusStockMoqFields(moq);
+
     rows.push({
       ProviderKey: providerKey,
       QuantityOnStock: Number.isFinite(stock) ? stock.toString() : "0",
       RestockTime: restockTime,
       RestockDate: restockDate,
-      MinimumOrderQuantity: "1",
-      OrderQuantitySteps: "1",
+      ...moqFields,
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: isStx ? "Switzerland" : "Poland",

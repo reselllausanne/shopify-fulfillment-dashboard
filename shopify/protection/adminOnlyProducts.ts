@@ -5,16 +5,25 @@
  * Env override:
  *   SHOPIFY_ADMIN_ONLY_PRODUCT_IDS=15340410732930,...
  *   SHOPIFY_ADMIN_ONLY_VARIANT_IDS=56670660067714
+ *
+ * Includes fixed-price in-stock lane (Essentials / Bape / AP×Travis).
+ * Python SSE/StockX path mirrors this list in
+ * `portable_product_upsert/admin_only_products.py` (hard-skip update).
  */
 const HARDCODED_PRODUCT_IDS = new Set([
-  "15340410732930",
-  "15115016733058",
-  "15115016831362",
-  "15340411617666",
-  "15340410896770",
-  "15349630501250",
-  "15340410831234",
-  "15369534538114",
+  // Essentials
+  "15340410732930", // Shorts Stretch Limo
+  "15340410831234", // Shorts Dark Oatmeal
+  "15340410896770", // Shorts Light Oatmeal
+  "15340411617666", // Tee Stretch Limo
+  "15349630501250", // Tee Light Oatmeal
+  "15369534538114", // Tee Dark Oatmeal
+  // Audemars × Travis
+  "15115016733058", // Vintage Tee Black
+  "15115016831362", // Watch Face Tee Green
+  // Bape
+  "15356478325122", // Check by Bathing Tee
+  "15356478357890", // Big Ape Head Tee
 ]);
 
 const HARDCODED_VARIANT_IDS = new Set([

@@ -3,12 +3,29 @@
  *
  * Same 48h physical ship as liquidation; price is manual — never StockX −30%.
  * Match by productId first (sizes share one product), then SKU base, then title.
+ *
+ * Essentials storefront (sacred — never StockX):
+ *   sell = 59 CHF, express = 89 CHF
  */
+
+/** Essentials in-stock Shopify sell price (CHF). Never overwritten by StockX. */
+export const ESSENTIALS_SELL_CHF = 59;
+/** Essentials express metafield price (CHF). Never overwritten by StockX. */
+export const ESSENTIALS_EXPRESS_CHF = 89;
+
+/** Audemars × Travis in-stock Shopify sell price (CHF). Never overwritten by StockX. */
+export const AUDEMARS_TRAVIS_SELL_CHF = 89;
+/** Audemars × Travis express metafield (CHF). Only when physical location stock > 0. */
+export const AUDEMARS_TRAVIS_EXPRESS_CHF = 109;
 
 export type InStockFixedPriceConfig = {
   costChf: number;
   label: string;
   matchReason: string;
+  /** Shopify sell price when this lane is listed (Essentials = 59). */
+  sellChf?: number;
+  /** Shopify custom.express_price when this lane is listed (Essentials = 89). */
+  expressChf?: number;
 };
 
 export type InStockFixedPriceRule = InStockFixedPriceConfig & {
@@ -22,15 +39,19 @@ export type InStockFixedPriceRule = InStockFixedPriceConfig & {
 export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   {
     costChf: 42,
+    sellChf: ESSENTIALS_SELL_CHF,
+    expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (auto 42 CHF)",
+    matchReason: "Essential Hoodie (fixed 59/89)",
     skuBases: ["192HO246258F", "192HO246250F"],
     titlePatterns: [/^Essentials Hoodie\b/i, /Fear of God Essentials.*Hoodie\b/i],
   },
   {
     costChf: 26,
+    sellChf: ESSENTIALS_SELL_CHF,
+    expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential T-Shirt (in stock)",
-    matchReason: "Essential T-Shirt (auto 26 CHF)",
+    matchReason: "Essential T-Shirt (fixed 59/89)",
     productIds: [
       "15340411617666", // Tee Stretch Limo SS22
       "15349630501250", // Tee Light Oatmeal (SS22)
@@ -44,8 +65,10 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   },
   {
     costChf: 26,
+    sellChf: ESSENTIALS_SELL_CHF,
+    expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Shorts (in stock)",
-    matchReason: "Essential Shorts (auto 26 CHF)",
+    matchReason: "Essential Shorts (fixed 59/89)",
     productIds: [
       "15340410732930", // Shorts Stretch Limo (SS22)
       "15340410831234", // Shorts Dark Oatmeal (SS22)
@@ -70,8 +93,10 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   },
   {
     costChf: 40,
+    sellChf: AUDEMARS_TRAVIS_SELL_CHF,
+    expressChf: AUDEMARS_TRAVIS_EXPRESS_CHF,
     label: "Audemars x Travis Tee (in stock)",
-    matchReason: "Audemars x Travis Tee (auto 40 CHF)",
+    matchReason: "Audemars x Travis Tee (fixed 89/109)",
     productIds: [
       "15115016733058", // Vintage Tee Black
       "15115016831362", // Watch Face Tee Green
@@ -145,7 +170,14 @@ export function resolveInStockFixedPrice(input: {
     costChf: rule.costChf,
     label: rule.label,
     matchReason: rule.matchReason,
+    sellChf: rule.sellChf,
+    expressChf: rule.expressChf,
   };
+}
+
+/** True when rule is Essentials lane (fixed 59 / express 89). */
+export function isEssentialsFixedSellRule(rule: InStockFixedPriceConfig | null | undefined): boolean {
+  return rule?.sellChf === ESSENTIALS_SELL_CHF && rule?.expressChf === ESSENTIALS_EXPRESS_CHF;
 }
 
 export function isInStockFixedPriceProduct(input: {

@@ -25,10 +25,10 @@ import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProduct
  * After a paid web sale, post-sale passes afterWebSale — revert to dropship only when
  * liquidation-lane stock hits 0; partial sales keep liquidation on remaining units.
  *
- * delivery_48h / soldes_48h metafields are coupled to a REAL liquidation lock
- * (manualLock + liquidation-lane qty), never to quantity alone: a pair whose
- * price was not actually changed must not appear in the soldes collection.
- * Liquidation qty = 0 still clears both flags.
+ * custom.delivery_48h (variant) drives the soldes-48h smart collection and
+ * storefront 48h delivery UI. Set only with a REAL liquidation lock
+ * (manualLock + liquidation-lane qty), never on quantity alone.
+ * Liquidation qty = 0 clears the flag.
  */
 
 import { resolvePhysicalRestockPricing } from "@/shopify/restock/physicalRestockPricing";
@@ -36,7 +36,6 @@ import {
   readShopifyDelivery48h,
   writeShopifyDelivery48h,
 } from "@/shopify/restock/bussignyDeliveryMetafield";
-import { syncSoldes48hProductMetafield } from "@/shopify/restock/bussignySoldesMetafield";
 import {
   readLiquidationExpressSurchargeChf,
   restoreStxExpressPriceMetafield,
@@ -214,7 +213,7 @@ export type ConvergeVariantOptions = {
   afterWebSale?: boolean;
   /**
    * Scan restock into a liquidation-lane location just completed — keep/set
-   * liquidation (price, manualLock, delivery_48h, soldes_48h) even when the
+   * liquidation (price, manualLock, delivery_48h) even when the
    * mirror or DB lock was not pre-existing. Prevents post-scan revert to dropship.
    */
   postPhysicalRestock?: boolean;
@@ -640,7 +639,6 @@ export async function convergeVariant(
   // already requires Bussigny qty > 0 + manualLock). Dropship always clears.
   const liquidationLockActive = desired === "liquidation";
   await syncBussignyDelivery48h(shopifyVariant, cleanGtin, liquidationLockActive, changes, warnings);
-  await syncSoldes48hProductMetafield(shopifyVariant?.productId, changes, warnings);
 
   return {
     gtin: cleanGtin,

@@ -14,10 +14,7 @@ query VariantLocks($id: ID!) {
     sku
     price
     compareAtPrice
-    product {
-      id
-      soldes48h: metafield(namespace: "custom", key: "soldes_48h") { value }
-    }
+    product { id }
     priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
     delivery48h: metafield(namespace: "custom", key: "delivery_48h") { value }
   }
@@ -54,8 +51,6 @@ async function main() {
   let dbManualLock = 0;
   let missingDelivery48h = 0;
   let missingPriceLock = 0;
-  let soldes48hMetafield = 0;
-  let missingSoldes48hMetafield = 0;
 
   for (const row of rows) {
     const pricing = await resolvePhysicalRestockPricing(row.gtin);
@@ -91,7 +86,7 @@ async function main() {
             sku: string | null;
             price: string | null;
             compareAtPrice: string | null;
-            product: { id: string; soldes48h: { value: string | null } | null } | null;
+            product: { id: string } | null;
             priceLocked: { value: string | null } | null;
             delivery48h: { value: string | null } | null;
           } | null;
@@ -100,14 +95,10 @@ async function main() {
         const v = data?.productVariant;
         const locked = String(v?.priceLocked?.value ?? "").toLowerCase() === "true";
         const d48 = String(v?.delivery48h?.value ?? "").toLowerCase() === "true";
-        const mf48 =
-          String(v?.product?.soldes48h?.value ?? "").toLowerCase() === "true";
         if (locked) priceLocked += 1;
         else missingPriceLock += 1;
         if (d48) delivery48h += 1;
         else missingDelivery48h += 1;
-        if (mf48) soldes48hMetafield += 1;
-        else missingSoldes48hMetafield += 1;
 
         record = {
           ...record,
@@ -116,7 +107,6 @@ async function main() {
           shopify_compare_at: v?.compareAtPrice,
           price_locked: locked,
           delivery_48h: d48,
-          soldes_48h: mf48,
           ambiguous_gtin: ambiguous,
         };
       }
@@ -133,8 +123,6 @@ async function main() {
     shopify_missing_price_lock: missingPriceLock,
     shopify_delivery_48h: delivery48h,
     shopify_missing_delivery_48h: missingDelivery48h,
-    shopify_soldes_48h: soldes48hMetafield,
-    shopify_missing_soldes_48h: missingSoldes48hMetafield,
     resolver_has_pricing: pricingOk,
     resolver_no_pricing: rows.length - pricingOk,
     db_manual_lock: dbManualLock,
@@ -153,7 +141,6 @@ async function main() {
     "has_pricing",
     "price_locked",
     "delivery_48h",
-    "soldes_48h",
     "db_manual_lock",
     "pricing_source",
     "stx_rows",

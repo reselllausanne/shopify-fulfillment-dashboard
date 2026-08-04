@@ -15,9 +15,13 @@ os.environ.setdefault("API_VERSION_SHOPIFY", "2026-07")
 from shopifyAPI_GQL import derive_taxonomy_category  # noqa: E402
 from stockx_taxonomy_map import (  # noqa: E402
     GID_ACTIVEWEAR_TSHIRTS,
+    GID_BOOTS,
     GID_HOODIES,
+    GID_OUTFIT_SETS,
+    GID_SPORTS_FAN_ACCESSORIES,
     GID_SWEATPANTS,
     GID_SWEATSHIRTS,
+    GID_WALLETS,
 )
 
 
@@ -109,6 +113,98 @@ class DeriveTaxonomyTests(unittest.TestCase):
             ),
         }
         self.assertEqual(derive_taxonomy_category(data), GID_ACTIVEWEAR_TSHIRTS)
+
+    def test_sets_and_bundles_to_outfit_sets(self):
+        data = {
+            "title": "Nike Tech Fleece Tracksuit Black",
+            "product_type": "streetwear",
+            "breadcrumbs": _bc(
+                ("apparel", "Apparel"),
+                ("other-apparel", "Other Apparel"),
+                ("sets-and-bundles", "Sets And Bundles"),
+            ),
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_OUTFIT_SETS)
+
+    def test_sets_and_bundles_display_value_only(self):
+        data = {
+            "title": "Nike Tech Fleece Tracksuit Black",
+            "product_type": "streetwear",
+            "breadcrumbs": [
+                {"level": 1, "value": "Apparel"},
+                {"level": 2, "value": "Other Apparel"},
+                {"level": 3, "value": "Sets And Bundles"},
+            ],
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_OUTFIT_SETS)
+
+    def test_sports_equipment_to_sports_fan_accessories(self):
+        data = {
+            "title": "Wilson NBA Official Game Ball",
+            "product_type": "collectibles",
+            "breadcrumbs": _bc(
+                ("collectibles", "Collectibles"),
+                ("sports-equipment", "Sports Equipment"),
+            ),
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_SPORTS_FAN_ACCESSORIES)
+
+    def test_sports_equipment_display_value_only(self):
+        data = {
+            "title": "Wilson NBA Official Game Ball",
+            "product_type": "collectibles",
+            "breadcrumbs": [
+                {"level": 1, "value": "Collectibles"},
+                {"level": 2, "value": "Sports Equipment"},
+            ],
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_SPORTS_FAN_ACCESSORIES)
+
+    def test_wallets_leaf(self):
+        data = {
+            "title": "Gucci GG Marmont Wallet",
+            "product_type": "accessories",
+            "breadcrumbs": _bc(
+                ("accessories", "Accessories"),
+                ("wallets-and-card-holders", "Wallets And Card Holders"),
+                ("wallets", "Wallets"),
+            ),
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_WALLETS)
+
+    def test_wallets_display_value_only(self):
+        data = {
+            "title": "Gucci GG Marmont Wallet",
+            "product_type": "accessories",
+            "breadcrumbs": [
+                {"level": 1, "value": "Accessories"},
+                {"level": 2, "value": "Wallets And Card Holders"},
+                {"level": 3, "value": "Wallets"},
+            ],
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_WALLETS)
+
+    def test_boots_leaf_beats_shoes_sneakers(self):
+        data = {
+            "title": "Timberland 6 Inch Premium Boot Wheat",
+            "product_type": "sneakers",
+            "breadcrumbs": _bc(
+                ("shoes", "Shoes"),
+                ("boots", "Boots"),
+            ),
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_BOOTS)
+
+    def test_boots_display_value_only(self):
+        data = {
+            "title": "Timberland 6 Inch Premium Boot Wheat",
+            "product_type": "sneakers",
+            "breadcrumbs": [
+                {"level": 1, "value": "Shoes"},
+                {"level": 2, "value": "Boots"},
+            ],
+        }
+        self.assertEqual(derive_taxonomy_category(data), GID_BOOTS)
 
 
 if __name__ == "__main__":

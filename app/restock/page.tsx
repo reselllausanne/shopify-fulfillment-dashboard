@@ -303,7 +303,7 @@ export default function RestockScanPage() {
 
   async function runApply(body: Record<string, unknown>, busyLabel: string) {
     if (!locationId) {
-      setError("Choisir un emplacement (Bussigny / Antica / THE LAB) avant restock");
+      setError("Choisir un emplacement (Bussigny / Antica / THE LAB / COLD BIEN) avant restock");
       return;
     }
     setBusy(busyLabel);

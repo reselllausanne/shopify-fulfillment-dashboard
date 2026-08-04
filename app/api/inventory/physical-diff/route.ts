@@ -14,7 +14,7 @@ export const maxDuration = 60;
  * `RESOLVER_MERGE_PHYSICAL` flag were flipped ON. No feed writes, no mutations.
  *
  * Shows, per GTIN present in the physical mirror:
- *   - physical qty (Σ Bussigny/Antica/Bienne)
+ *   - physical qty (Σ Bussigny/Antica/Lab/COLD BIEN)
  *   - which STX/THE SupplierVariant rows exist for the same GTIN (feed impact)
  *   - the preferred location (lowest priority number).
  *

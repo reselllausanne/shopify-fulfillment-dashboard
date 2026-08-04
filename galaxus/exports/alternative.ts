@@ -10,6 +10,11 @@ import {
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
 import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
+import {
+  formatGalaxusStockMoqFields,
+  meetsGalaxusStockMoq,
+  resolveGalaxusStockMoq,
+} from "@/galaxus/exports/stockMoq";
 
 type ExportRow = Record<string, string>;
 
@@ -291,19 +296,21 @@ export function buildGalaxusAlternativeStockRows(products: AlternativeProductRec
   for (const product of products) {
     const stock = Number.isFinite(product.stock) ? product.stock : 0;
     if (stock <= 0) continue;
+    const moq = resolveGalaxusStockMoq({ providerKey: product.providerKey });
+    if (!meetsGalaxusStockMoq(stock, moq)) continue;
     let restockTime = "";
     let restockDate = "";
     if (product.leadTimeDays !== null && Number.isFinite(product.leadTimeDays)) {
       restockTime = String(product.leadTimeDays);
       restockDate = toIsoDate(addDays(new Date(), product.leadTimeDays));
     }
+    const moqFields = formatGalaxusStockMoqFields(moq);
     rows.push({
       ProviderKey: product.providerKey,
       QuantityOnStock: String(stock),
       RestockTime: restockTime,
       RestockDate: restockDate,
-      MinimumOrderQuantity: "1",
-      OrderQuantitySteps: "1",
+      ...moqFields,
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: "Poland",

@@ -14,7 +14,86 @@ const ensureSessionDir = async (filePath: string) => {
   await fs.mkdir(dir, { recursive: true });
 };
 
+const isPersistentProfileLockError = (error: unknown): boolean => {
+  const message = String((error as any)?.message || error || "").toLowerCase();
+  return (
+    message.includes("processsingleton") ||
+    message.includes("singletonlock") ||
+    message.includes("profile is already in use") ||
+    message.includes("failed to create a processsingleton") ||
+    message.includes("browser has been closed")
+  );
+};
+
+const clearStaleChromeProfileLocks = async (userDataDir: string) => {
+  const lockNames = [
+    "SingletonLock",
+    "SingletonCookie",
+    "SingletonSocket",
+    "RunningChromeVersion",
+  ];
+  for (const name of lockNames) {
+    try {
+      await fs.unlink(path.join(userDataDir, name));
+    } catch {
+      // ignore missing
+    }
+  }
+};
+
+const createEphemeralContext = async ({
+  browser,
+  sessionFile,
+  userAgent,
+  forceLogin,
+}: {
+  browser: Browser;
+  sessionFile: string;
+  userAgent: string;
+  forceLogin: boolean;
+}): Promise<BrowserContext> => {
+  if (forceLogin) {
+    try {
+      await fs.unlink(sessionFile);
+      console.log("[GOAT-PW] Deleted existing session (force login)");
+    } catch {
+      // ignore missing file
+    }
+    console.log("[GOAT-PW] Force login: fresh context");
+    return browser.newContext({ userAgent });
+  }
+
+  try {
+    await fs.access(sessionFile);
+    console.log("[GOAT-PW] Loaded existing session");
+    return browser.newContext({ storageState: sessionFile, userAgent });
+  } catch {
+    console.log("[GOAT-PW] No session found, fresh context");
+    return browser.newContext({ userAgent });
+  }
+};
+
+const closeBrowserResources = async (
+  persistentUsed: boolean,
+  context: BrowserContext | null,
+  browser: Browser | null
+) => {
+  try {
+    if (persistentUsed) {
+      await context?.close();
+    } else {
+      await browser?.close();
+    }
+  } catch {
+    // ignore close races
+  }
+};
+
 export async function POST(req: NextRequest) {
+  let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
+  let usedPersistentContext = false;
+
   try {
     const body = await req.json().catch(() => ({}));
     const headless = Boolean(body?.headless ?? true);
@@ -38,47 +117,59 @@ export async function POST(req: NextRequest) {
       ? ["--no-sandbox", "--disable-setuid-sandbox"]
       : [];
     const antiBotArgs = ["--disable-blink-features=AutomationControlled"];
+    const launchOptions = {
+      headless,
+      slowMo: 50,
+      args: [...launchArgs, ...antiBotArgs],
+    };
 
-    let browser: Browser | null = null;
-    let context: BrowserContext;
+    let persistentFallback = false;
 
     if (persistent) {
       await fs.mkdir(userDataDir, { recursive: true });
-      context = await chromium.launchPersistentContext(userDataDir, {
-        headless,
-        slowMo: 50,
-        args: [...launchArgs, ...antiBotArgs],
-        locale: "fr-FR",
-        timezoneId: "Europe/Paris",
-        userAgent,
-      });
-      browser = context.browser();
-      console.log("[GOAT-PW] Using persistent context");
+      // Stale locks from crashed Chromium often leave Singleton* files behind.
+      await clearStaleChromeProfileLocks(userDataDir);
+
+      try {
+        context = await chromium.launchPersistentContext(userDataDir, {
+          ...launchOptions,
+          locale: "fr-FR",
+          timezoneId: "Europe/Paris",
+          userAgent,
+        });
+        browser = context.browser();
+        usedPersistentContext = true;
+        console.log("[GOAT-PW] Using persistent context");
+      } catch (error: any) {
+        if (!isPersistentProfileLockError(error)) throw error;
+        persistentFallback = true;
+        console.warn(
+          "[GOAT-PW] Persistent profile busy; fallback to ephemeral context:",
+          error?.message || error
+        );
+        await clearStaleChromeProfileLocks(userDataDir);
+        browser =
+          browserType === "chromium"
+            ? await chromium.launch(launchOptions)
+            : await firefox.launch({ headless, slowMo: 50, args: launchArgs });
+        context = await createEphemeralContext({
+          browser,
+          sessionFile,
+          userAgent,
+          forceLogin,
+        });
+      }
     } else {
       browser =
         browserType === "chromium"
-          ? await chromium.launch({ headless, slowMo: 50, args: [...launchArgs, ...antiBotArgs] })
+          ? await chromium.launch(launchOptions)
           : await firefox.launch({ headless, slowMo: 50, args: launchArgs });
-
-      if (forceLogin) {
-        try {
-          await fs.unlink(sessionFile);
-          console.log("[GOAT-PW] Deleted existing session (force login)");
-        } catch {
-          // ignore missing file
-        }
-        context = await browser.newContext({ userAgent });
-        console.log("[GOAT-PW] Force login: fresh context");
-      } else {
-        try {
-          await fs.access(sessionFile);
-          context = await browser.newContext({ storageState: sessionFile, userAgent });
-          console.log("[GOAT-PW] Loaded existing session");
-        } catch {
-          context = await browser.newContext({ userAgent });
-          console.log("[GOAT-PW] No session found, fresh context");
-        }
-      }
+      context = await createEphemeralContext({
+        browser,
+        sessionFile,
+        userAgent,
+        forceLogin,
+      });
     }
 
     await context.addInitScript(() => {
@@ -147,15 +238,12 @@ export async function POST(req: NextRequest) {
       } catch {
         // ignore html capture failures
       }
-      if (persistent) {
-        await context.close();
-      } else {
-        await browser?.close();
-      }
+      await closeBrowserResources(usedPersistentContext, context, browser);
       return NextResponse.json(
         {
           ok: false,
           error: "No GOAT orders detected. Login required.",
+          persistentFallback,
           debug: {
             lastUrl: page.url(),
             screenshotPath,
@@ -170,9 +258,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!persistent) {
+    // Always persist storageState so fallback / non-persistent runs keep cookies.
+    try {
       await context.storageState({ path: sessionFile });
       console.log("[GOAT-PW] Session saved");
+    } catch (error: any) {
+      console.warn("[GOAT-PW] Failed to save session:", error?.message || error);
     }
 
     // Pagination via fetch inside browser context (keeps cookies)
@@ -194,11 +285,7 @@ export async function POST(req: NextRequest) {
       await page.waitForTimeout(200);
     }
 
-    if (persistent) {
-      await context.close();
-    } else {
-      await browser?.close();
-    }
+    await closeBrowserResources(usedPersistentContext, context, browser);
 
     const normalized = allOrdersRaw
       .map((raw) => normalizeGoatOrder(raw))
@@ -218,14 +305,22 @@ export async function POST(req: NextRequest) {
       count: deduped.length,
       orders: deduped,
       sessionFile,
+      persistentFallback,
       rawOrders: includeRaw ? allOrdersRaw : undefined,
     });
   } catch (error: any) {
+    await closeBrowserResources(usedPersistentContext, context, browser);
     console.error("[GOAT-PW] Error:", error?.message || error);
+    const profileLocked = isPersistentProfileLockError(error);
     return NextResponse.json(
-      { ok: false, error: error?.message || "Playwright failure" },
+      {
+        ok: false,
+        error: profileLocked
+          ? "GOAT browser profile is locked (another Chrome instance). Retry — auto-fallback should handle it."
+          : error?.message || "Playwright failure",
+        profileLocked,
+      },
       { status: 500 }
     );
   }
 }
-

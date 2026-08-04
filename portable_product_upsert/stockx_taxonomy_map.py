@@ -15,7 +15,9 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 GID_SNEAKERS = "gid://shopify/TaxonomyCategory/aa-8-8"
+GID_BOOTS = "gid://shopify/TaxonomyCategory/aa-8-3"  # Shoes > Boots
 GID_CLOTHING = "gid://shopify/TaxonomyCategory/aa-1"
+GID_OUTFIT_SETS = "gid://shopify/TaxonomyCategory/aa-1-11"  # Clothing > Outfit Sets
 GID_CLOTHING_TOPS = "gid://shopify/TaxonomyCategory/aa-1-13"
 GID_PANTS = "gid://shopify/TaxonomyCategory/aa-1-12"
 GID_SHORTS = "gid://shopify/TaxonomyCategory/aa-1-14"
@@ -24,6 +26,8 @@ GID_OUTERWEAR = "gid://shopify/TaxonomyCategory/aa-1-10"
 GID_ACCESSORIES = "gid://shopify/TaxonomyCategory/aa-2"
 GID_HATS = "gid://shopify/TaxonomyCategory/aa-2-17"
 GID_BAGS = "gid://shopify/TaxonomyCategory/aa-5"
+GID_WALLETS = "gid://shopify/TaxonomyCategory/aa-5-5-7"  # Handbags… > Wallets & Money Clips > Wallets
+GID_WALLETS_AND_MONEY_CLIPS = "gid://shopify/TaxonomyCategory/aa-5-5"
 
 # Activewear — matches Shopify Admin suggestions for streetwear hoodies / sweats
 GID_ACTIVEWEAR = "gid://shopify/TaxonomyCategory/aa-1-1"
@@ -46,6 +50,7 @@ GID_TANKS = "gid://shopify/TaxonomyCategory/aa-1-13-9"
 GID_LEGO = "gid://shopify/TaxonomyCategory/tg-5-7-12"
 GID_TRADING_CARDS = "gid://shopify/TaxonomyCategory/ae-2-2-3"
 GID_SPORTS_TRADING_CARDS = "gid://shopify/TaxonomyCategory/ae-2-2-3-4"
+GID_SPORTS_FAN_ACCESSORIES = "gid://shopify/TaxonomyCategory/ae-2-2-10-1"  # Sports Collectibles > Sports Fan Accessories
 GID_JERSEYS = "gid://shopify/TaxonomyCategory/ae-2-2-10-1-8"
 GID_POSTERS = "gid://shopify/TaxonomyCategory/hg-3-4-2-1"
 GID_WATCHES = "gid://shopify/TaxonomyCategory/aa-6-11"
@@ -105,6 +110,12 @@ STOCKX_LEAF_ALIAS_TO_GID: dict[str, str] = {
     "bag": GID_BAGS,
     "backpack": GID_BAGS,
     "backpacks": GID_BAGS,
+    # Accessories > Wallets And Card Holders > Wallets
+    "wallets": GID_WALLETS,
+    "wallet": GID_WALLETS,
+    "wallets-and-card-holders": GID_WALLETS_AND_MONEY_CLIPS,
+    "card-holders": GID_WALLETS_AND_MONEY_CLIPS,
+    "card-holder": GID_WALLETS_AND_MONEY_CLIPS,
     "watches": GID_WATCHES,
     "watch": GID_WATCHES,
     "jerseys": GID_JERSEYS,
@@ -113,9 +124,19 @@ STOCKX_LEAF_ALIAS_TO_GID: dict[str, str] = {
     "slides": GID_SANDALS,
     "slides-and-sandals": GID_SANDALS,
     "cleats": GID_SOCCER_SHOES,
+    # Sets / bundles (StockX: Apparel > Other Apparel > Sets And Bundles)
+    "sets-and-bundles": GID_OUTFIT_SETS,
+    "outfit-sets": GID_OUTFIT_SETS,
+    "outfit-set": GID_OUTFIT_SETS,
+    # Collectibles (StockX: Collectibles > Sports Equipment)
+    "sports-equipment": GID_SPORTS_FAN_ACCESSORIES,
+    "sports-fan-accessories": GID_SPORTS_FAN_ACCESSORIES,
     # Footwear
     "sneakers": GID_SNEAKERS,
     "shoes": GID_SNEAKERS,
+    # Shoes > Boots (must beat L1 shoes → sneakers)
+    "boots": GID_BOOTS,
+    "boot": GID_BOOTS,
 }
 
 # Mid-level StockX aliases — only used when no leaf matched.
@@ -175,6 +196,19 @@ VALUE_SYNONYMS: dict[str, str] = {
     "slides and sandals": "slides-and-sandals",
     "slides sandals": "slides-and-sandals",
     "slides-sandals": "slides-and-sandals",
+    "sets & bundles": "sets-and-bundles",
+    "sets and bundles": "sets-and-bundles",
+    "sets bundles": "sets-and-bundles",
+    "sets-bundles": "sets-and-bundles",
+    "outfit sets": "outfit-sets",
+    "other apparel": "other-apparel",
+    "sports equipment": "sports-equipment",
+    "sports fan accessories": "sports-fan-accessories",
+    "wallets & card holders": "wallets-and-card-holders",
+    "wallets and card holders": "wallets-and-card-holders",
+    "wallets card holders": "wallets-and-card-holders",
+    "wallets-card-holders": "wallets-and-card-holders",
+    "card holders": "card-holders",
     "t-shirts": "t-shirts",
     "sweatpants": "sweatpants",
     "jogging pants": "sweatpants",
@@ -206,6 +240,7 @@ TITLE_KEYWORD_TO_GID: list[tuple[str, str]] = [
     ("jersey", GID_JERSEYS),
     ("lego", GID_LEGO),
     ("sneaker", GID_SNEAKERS),
+    ("boots", GID_BOOTS),
 ]
 
 

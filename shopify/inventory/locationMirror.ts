@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { PHYSICAL_LOCATIONS, type LocationConfig } from "@/shopify/inventory/locationConfig";
+import { schedulePhysicalInStockSyncForVariant } from "@/shopify/inventory/physicalInStockMetafield";
 
 /**
  * Phase 1 — visibility. Mirror Shopify per-location inventory into
@@ -178,6 +179,7 @@ export async function upsertLocationStockRow(
       "lastSeenAt"      = EXCLUDED."lastSeenAt",
       "updatedAt"       = EXCLUDED."updatedAt"
   `;
+  schedulePhysicalInStockSyncForVariant(row.shopifyVariantId);
 }
 
 async function upsertRow(location: LocationConfig, row: SeenRow, now: Date): Promise<void> {
@@ -185,20 +187,42 @@ async function upsertRow(location: LocationConfig, row: SeenRow, now: Date): Pro
 }
 
 async function zeroOutUnseen(location: LocationConfig, seenIds: string[], now: Date): Promise<number> {
+  const toZero =
+    seenIds.length > 0
+      ? await prisma.shopifyVariantLocationStock.findMany({
+          where: {
+            locationId: location.id,
+            available: { gt: 0 },
+            shopifyVariantId: { notIn: seenIds },
+          },
+          select: { shopifyVariantId: true },
+        })
+      : await prisma.shopifyVariantLocationStock.findMany({
+          where: { locationId: location.id, available: { gt: 0 } },
+          select: { shopifyVariantId: true },
+        });
+
+  let affected = 0;
   if (seenIds.length > 0) {
-    return prisma.$executeRaw`
+    affected = await prisma.$executeRaw`
       UPDATE "public"."ShopifyVariantLocationStock"
       SET "available" = 0, "lastSeenAt" = ${now}, "updatedAt" = ${now}
       WHERE "locationId" = ${location.id}
         AND "available" > 0
         AND "shopifyVariantId" != ALL(${seenIds}::text[])
     `;
+  } else {
+    affected = await prisma.$executeRaw`
+      UPDATE "public"."ShopifyVariantLocationStock"
+      SET "available" = 0, "lastSeenAt" = ${now}, "updatedAt" = ${now}
+      WHERE "locationId" = ${location.id} AND "available" > 0
+    `;
   }
-  return prisma.$executeRaw`
-    UPDATE "public"."ShopifyVariantLocationStock"
-    SET "available" = 0, "lastSeenAt" = ${now}, "updatedAt" = ${now}
-    WHERE "locationId" = ${location.id} AND "available" > 0
-  `;
+
+  for (const row of toZero) {
+    schedulePhysicalInStockSyncForVariant(row.shopifyVariantId);
+  }
+  return affected;
 }
 
 /**
@@ -232,6 +256,11 @@ export async function syncAllLocations(options: {
       capped,
     });
   }
+
+  const { reconcilePhysicalInStockMetafields } = await import(
+    "@/shopify/inventory/physicalInStockMetafield"
+  );
+  void reconcilePhysicalInStockMetafields().catch(() => {});
 
   return { ok: true, locations: results, ms: Date.now() - startedAt };
 }
@@ -433,6 +462,11 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
       capped: false,
     });
   }
+
+  const { reconcilePhysicalInStockMetafields } = await import(
+    "@/shopify/inventory/physicalInStockMetafield"
+  );
+  void reconcilePhysicalInStockMetafields().catch(() => {});
 
   return { ok: true, locations: results, variantsSeen, ms: Date.now() - startedAt };
 }

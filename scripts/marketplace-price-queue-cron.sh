@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# Drain the Galaxus feed push queue (every 10 min on VPS cron).
+# Drain the Galaxus feed push queue (VPS cron: every 5 min recommended).
 #
-# Post-sale price pushes enqueue a trigger when a feed run is already active. Without
-# this drain the queue only moved when another push finished or at the 02:00 full-flow,
-# so a sale could sit hours behind a stale PriceData file. Also reaps zombie runs
-# (container restart mid-push leaves finishedAt=null and blocks every later push).
+# Reaps zombie runs + coalesces pending triggers. When GALAXUS_FEED_RUN_ON=worker,
+# execution happens in worker-galaxus-feed; this cron only reconciles on web.
 set -euo pipefail
 
 BASE_URL="${GALAXUS_OPS_BASE_URL:-http://127.0.0.1:3000}"

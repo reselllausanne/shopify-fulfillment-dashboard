@@ -41,10 +41,7 @@ vi.mock("@/shopify/restock/bussignyDeliveryMetafield", () => ({
   BUSSIGNY_LOCATION_ID: "gid://shopify/Location/111267971458",
   readShopifyDelivery48h: vi.fn(),
   writeShopifyDelivery48h: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/shopify/restock/bussignySoldesMetafield", () => ({
-  syncSoldes48hProductMetafield: vi.fn().mockResolvedValue(undefined),
+  ensureDelivery48hMetafieldDefinition: vi.fn().mockResolvedValue({ ok: true, created: false, id: "def-d48" }),
 }));
 
 vi.mock("@/shopify/restock/liquidationExpressPrice", () => ({

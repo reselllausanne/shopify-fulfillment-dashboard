@@ -18,7 +18,6 @@ query Probe($id: ID!) {
     product {
       handle
       title
-      soldes48h: metafield(namespace: "custom", key: "soldes_48h") { value }
     }
     priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
     delivery48h: metafield(namespace: "custom", key: "delivery_48h") { value }
@@ -68,7 +67,6 @@ async function main() {
         compareAt: node?.compareAtPrice,
         price_locked: (node as any)?.priceLocked?.value,
         delivery_48h: (node as any)?.delivery48h?.value,
-        soldes_48h: (node?.product as any)?.soldes48h?.value,
         inventory: (node as any)?.inventoryItem?.inventoryLevels?.nodes,
         pricing,
         stx,

@@ -1,31 +1,47 @@
 /**
- * Set custom.delivery_48h (variant) for Bussigny stock.
+ * Backfill custom.express_price = liquidation price + 20 CHF for warehouse stock.
+ *
+ * Runs convergeVariant per GTIN (liquidation lane qty > 0) so price, flags, and
+ * express metafield stay aligned.
  *
  * Usage:
- *   npx tsx scripts/backfill-bussigny-delivery-48h.ts           # dry-run
- *   npx tsx scripts/backfill-bussigny-delivery-48h.ts --write
+ *   npx tsx scripts/backfill-liquidation-express-price.ts           # dry-run
+ *   npx tsx scripts/backfill-liquidation-express-price.ts --write
  */
 import { prisma } from "../app/lib/prisma";
 import { convergeVariant } from "../shopify/inventory/convergence";
-import { BUSSIGNY_LOCATION_ID } from "../shopify/restock/bussignyDeliveryMetafield";
+import { LIQUIDATION_LOCATION_IDS } from "../shopify/inventory/locationConfig";
+import { readLiquidationExpressSurchargeChf } from "../shopify/restock/liquidationExpressPrice";
 
 async function main() {
   const write = process.argv.includes("--write");
   const rows = await prisma.$queryRaw<Array<{ gtin: string; available: number; sku: string | null }>>`
-    SELECT DISTINCT ON (s."gtin")
+    SELECT
       s."gtin" AS gtin,
-      s."available" AS available,
-      s."sku" AS sku
+      SUM(s."available")::int AS available,
+      MAX(s."sku") AS sku
     FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."locationId" = ${BUSSIGNY_LOCATION_ID}
+    WHERE s."locationId" = ANY(${LIQUIDATION_LOCATION_IDS}::text[])
       AND s."sourceType" = 'physical'
       AND s."available" > 0
       AND s."gtin" IS NOT NULL
       AND length(trim(s."gtin")) > 0
-    ORDER BY s."gtin", s."priority" ASC, s."updatedAt" DESC
+    GROUP BY s."gtin"
+    ORDER BY s."gtin"
   `;
 
-  console.log(JSON.stringify({ bussignyLocationId: BUSSIGNY_LOCATION_ID, gtins: rows.length, write }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        liquidationLocations: LIQUIDATION_LOCATION_IDS,
+        gtins: rows.length,
+        expressSurchargeChf: readLiquidationExpressSurchargeChf(),
+        write,
+      },
+      null,
+      2
+    )
+  );
 
   if (!write) {
     for (const r of rows.slice(0, 20)) {
@@ -44,6 +60,8 @@ async function main() {
       if (res.error) {
         errors += 1;
         console.error(r.gtin, res.error);
+      } else if (res.changed) {
+        console.log(r.gtin, res.changes.join("; "));
       }
     } catch (err: any) {
       errors += 1;

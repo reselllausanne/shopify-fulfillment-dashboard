@@ -443,7 +443,7 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     # ---- Tunables (update monthly if needed) ----
     PSP = 0.032         # payment fee %
     VAT = 0.023         # VAT %
-    ADS_PCT = 0.13      # ads as % of revenue (~13% observed; was 9%)
+    ADS_PCT = 0.19      # ads as % of revenue (~19 CHF per 100 CHF CA on low AOV; was 13%)
     CPA_CAP = 17.0      # CHF per order (flat piece in CPA branch; Q4 updated)
     CM2_TARGET = 0.19   # ~19% CM2 to land ~12% EBITDA at 35-37k CA band
     SHIP_F_STANDARD = 7.0
@@ -942,7 +942,7 @@ _TAXONOMY = {
     "art": GID_POSTERS,
     "electronics": "gid://shopify/TaxonomyCategory/el",
     "tech": "gid://shopify/TaxonomyCategory/el",
-    "wallet": STOCKX_LEAF_ALIAS_TO_GID["bags"],
+    "wallet": STOCKX_LEAF_ALIAS_TO_GID["wallet"],
 }
 
 # Sporting Goods > Athletics > Basketball > Basketball Shoes (Shopify Standard Product Taxonomy)

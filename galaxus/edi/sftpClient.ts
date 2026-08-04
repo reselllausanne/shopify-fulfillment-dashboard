@@ -1,4 +1,3 @@
-import "server-only";
 import SftpClient from "ssh2-sftp-client";
 
 type SftpConfig = {

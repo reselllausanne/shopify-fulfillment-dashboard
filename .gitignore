@@ -26,6 +26,9 @@ yarn-error.log*
 .env
 .env*.local
 
+# Cursor MCP with real tokens (use .cursor/mcp.json.example as template)
+.cursor/mcp.json
+
 # vercel
 .vercel
 
