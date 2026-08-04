@@ -25,12 +25,13 @@ export type ReturnsCopy = {
   reasonLabel: string;
   reasons: Record<string, string>;
   commentLabel: string;
+  commentHint: string;
   commentPlaceholder: string;
-  commentRequired: string;
   consentLabel: string;
   consentRequiredError: string;
   policyLinkLabel: string;
   policyLinkHref: string;
+  returnWindowExpired: string;
   validateReturn: string;
   validating: string;
   selectOneProduct: string;
@@ -99,14 +100,16 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     max: "max",
     reasonLabel: "Pourquoi retournez-vous ?",
     reasons: REASONS_FR,
-    commentLabel: "Petite explication (obligatoire)",
-    commentPlaceholder: "Exemple : trop petit, trop grand, mauvais modele...",
-    commentRequired: "Ecrivez une courte explication pour continuer.",
+    commentLabel: "Remarque",
+    commentHint: "Facultatif",
+    commentPlaceholder: "Ex. trop petit, trop grand…",
     consentLabel:
-      "J'ai pris connaissance des conditions de retour et je ne renverrai aucun produit sans validation préalable du support.",
+      "J'ai pris connaissance des conditions de retour et j'accepte de suivre la procedure en ligne.",
     consentRequiredError: "Vous devez accepter les conditions de retour pour continuer.",
-    policyLinkLabel: "Conditions de retour",
-    policyLinkHref: "https://www.resell-lausanne.ch/policies/refund-policy",
+    policyLinkLabel: "Voir les conditions de retour",
+    policyLinkHref: "https://www.resell-lausanne.ch/pages/faq?category=echanges-et-retours",
+    returnWindowExpired:
+      "Le delai de retour de 14 jours apres livraison est depasse pour cette commande.",
     validateReturn: "Valider mon retour",
     validating: "Envoi en cours...",
     selectOneProduct: "Cochez au moins un article.",
@@ -157,14 +160,16 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     max: "max",
     reasonLabel: "Why are you returning?",
     reasons: REASONS_EN,
-    commentLabel: "Short explanation (required)",
-    commentPlaceholder: "Example: too small, too big, wrong model...",
-    commentRequired: "Please write a short explanation to continue.",
+    commentLabel: "Note",
+    commentHint: "Optional",
+    commentPlaceholder: "e.g. too small, too big…",
     consentLabel:
-      "I have read the return conditions and I will not send any product without prior support approval.",
+      "I have read the return conditions and I agree to follow the online return process.",
     consentRequiredError: "You must accept the return conditions to continue.",
-    policyLinkLabel: "Return policy",
-    policyLinkHref: "https://www.resell-lausanne.ch/policies/refund-policy",
+    policyLinkLabel: "View return FAQ",
+    policyLinkHref: "https://www.resell-lausanne.ch/en/pages/faq?category=echanges-et-retours",
+    returnWindowExpired:
+      "The 14-day return window after delivery has passed for this order.",
     validateReturn: "Confirm my return",
     validating: "Sending...",
     selectOneProduct: "Please select at least one item.",
@@ -215,14 +220,16 @@ export const RETURNS_COPY: Record<ReturnsLocale, ReturnsCopy> = {
     max: "max",
     reasonLabel: "Warum senden Sie zurueck?",
     reasons: REASONS_DE,
-    commentLabel: "Kurze Erklaerung (pflicht)",
-    commentPlaceholder: "Beispiel: zu klein, zu gross, falsches Modell...",
-    commentRequired: "Bitte kurze Erklaerung schreiben.",
+    commentLabel: "Bemerkung",
+    commentHint: "Optional",
+    commentPlaceholder: "z. B. zu klein, zu gross…",
     consentLabel:
-      "Ich habe die Retourenbedingungen gelesen und werde kein Produkt ohne vorherige Freigabe durch den Support zuruecksenden.",
+      "Ich habe die Retourenbedingungen gelesen und akzeptiere den Online-Retourenprozess.",
     consentRequiredError: "Sie muessen die Retourenbedingungen akzeptieren, um fortzufahren.",
-    policyLinkLabel: "Retourenbedingungen",
-    policyLinkHref: "https://www.resell-lausanne.ch/policies/refund-policy",
+    policyLinkLabel: "FAQ zu Retouren ansehen",
+    policyLinkHref: "https://www.resell-lausanne.ch/de/pages/faq?category=echanges-et-retours",
+    returnWindowExpired:
+      "Die 14-Tage-Retourenfrist nach Lieferung ist fuer diese Bestellung abgelaufen.",
     validateReturn: "Retoure bestaetigen",
     validating: "Wird gesendet...",
     selectOneProduct: "Bitte mindestens einen Artikel waehlen.",

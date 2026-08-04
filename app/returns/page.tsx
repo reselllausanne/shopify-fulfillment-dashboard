@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, Suspense, useState } from "react";
-import { RETURNS_LOCALES } from "@/app/returns/copy";
+import { RETURNS_LOCALES, type ReturnsCopy } from "@/app/returns/copy";
 import { useReturnsEmbed } from "@/app/returns/EmbedBootstrap";
 import { useReturnsLocale } from "@/app/returns/locale";
 import {
@@ -9,6 +9,24 @@ import {
   formatPublicOrderNumberFromDigits,
   parseStrictPublicOrderNumber,
 } from "@/shopify/returns/publicOrderNumber";
+
+function messageForPublicError(
+  code: string,
+  apiMessage: unknown,
+  copy: ReturnsCopy
+): string {
+  if (code === "RETURN_WINDOW_EXPIRED") return copy.returnWindowExpired;
+  if (
+    code === "ORDER_NOT_FOUND" ||
+    code === "EMAIL_MISMATCH" ||
+    code === "INVALID_ORDER_NUMBER"
+  ) {
+    return copy.lookupFailed;
+  }
+  if (code === "NO_RETURNABLE_ITEMS") return copy.noEligibleProducts;
+  const raw = String(apiMessage ?? "").trim();
+  return raw || copy.lookupFailed;
+}
 
 type ReturnReason =
   | "SIZE_CHANGE"
@@ -118,10 +136,11 @@ function PublicReturnsWizard() {
       if (!response.ok || !data?.success) {
         setReturnableItems([]);
         setSelectedItems({});
+        const code = String(data?.error ?? "");
         setSubmitState({
           type: "error",
-          message: String(data?.message ?? copy.lookupFailed),
-          code: String(data?.error ?? ""),
+          message: messageForPublicError(code, data?.message, copy),
+          code,
         });
         return;
       }
@@ -153,10 +172,6 @@ function PublicReturnsWizard() {
       return;
     }
     setConsentError(null);
-    if (!details.trim()) {
-      setSubmitState({ type: "error", code: "VALIDATION_ERROR", message: copy.commentRequired });
-      return;
-    }
     setSubmitState({ type: "loading" });
     try {
       const chosenItems = Object.entries(selectedItems)
@@ -186,10 +201,11 @@ function PublicReturnsWizard() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.success) {
+        const code = String(data?.error ?? "");
         setSubmitState({
           type: "error",
-          message: String(data?.message ?? copy.lookupFailed),
-          code: String(data?.error ?? ""),
+          message: messageForPublicError(code, data?.message, copy),
+          code,
         });
         return;
       }
@@ -507,14 +523,16 @@ function PublicReturnsWizard() {
                 {orderNumber} · {orderEmail}
               </div>
               <label className="block">
-                <span className="mb-2 block text-base font-medium">{copy.commentLabel}</span>
+                <span className="mb-1.5 flex items-baseline gap-2">
+                  <span className="text-sm font-medium text-neutral-700">{copy.commentLabel}</span>
+                  <span className="text-xs text-neutral-400">{copy.commentHint}</span>
+                </span>
                 <textarea
                   value={details}
                   onChange={(e) => setDetails(e.target.value)}
                   placeholder={copy.commentPlaceholder}
-                  required
-                  rows={4}
-                  className="w-full rounded-sm border border-neutral-300 px-4 py-3 text-base outline-none focus:border-neutral-900 focus:ring-2 focus:ring-neutral-900/15"
+                  rows={3}
+                  className="w-full rounded-sm border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 focus:ring-2 focus:ring-neutral-900/15"
                 />
               </label>
 

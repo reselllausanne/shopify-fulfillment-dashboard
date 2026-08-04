@@ -4,6 +4,12 @@ import { generateShopifyReturnLabel } from "@/shopify/returns/label";
 import { fetchShopifyReturnLineItems } from "@/shopify/returns/returnLineItemsForReceipt";
 import { defaultReturnRestockingFeeInput } from "@/shopify/returns/restockingFee";
 import { parseStrictPublicOrderNumber } from "@/shopify/returns/publicOrderNumber";
+import {
+  PUBLIC_RETURN_WINDOW_DAYS,
+  buildFulfillmentLineDeliveryMap,
+  filterReturnableLinesByWindow,
+  type FulfillmentDeliveryHint,
+} from "@/shopify/returns/returnWindow";
 
 export type ReturnFormReason =
   | "WRONG_SIZE"
@@ -36,6 +42,7 @@ type ShopifyOrderNode = {
   id: string;
   name: string;
   email?: string | null;
+  createdAt?: string | null;
   customer?: {
     id?: string | null;
     email?: string | null;
@@ -43,6 +50,16 @@ type ShopifyOrderNode = {
   } | null;
   displayFinancialStatus?: string | null;
   displayFulfillmentStatus?: string | null;
+  fulfillments?: Array<{
+    id?: string | null;
+    status?: string | null;
+    displayStatus?: string | null;
+    createdAt?: string | null;
+    deliveredAt?: string | null;
+    fulfillmentLineItems?: {
+      edges?: Array<{ node?: { id?: string | null } | null } | null> | null;
+    } | null;
+  }> | null;
 };
 
 type ReturnableLine = {
@@ -95,6 +112,7 @@ query OrderLookupForReturn($first: Int!, $query: String!) {
         id
         name
         email
+        createdAt
         customer {
           id
           email
@@ -104,6 +122,20 @@ query OrderLookupForReturn($first: Int!, $query: String!) {
         }
         displayFinancialStatus
         displayFulfillmentStatus
+        fulfillments(first: 20) {
+          id
+          status
+          displayStatus
+          createdAt
+          deliveredAt
+          fulfillmentLineItems(first: 100) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -357,13 +389,6 @@ function validateInput(input: ShopifyReturnRequestInput) {
       400
     );
   }
-  if (!details) {
-    throw new ShopifyReturnRequestError(
-      "VALIDATION_ERROR",
-      "Missing details",
-      400
-    );
-  }
   if (!reason) {
     throw new ShopifyReturnRequestError(
       "VALIDATION_ERROR",
@@ -447,6 +472,35 @@ async function findOrderByNumberAndEmail(orderNumber: string, email?: string | n
   }
 
   return emailMatch;
+}
+
+function fulfillmentDeliveryHintsFromOrder(order: ShopifyOrderNode): FulfillmentDeliveryHint[] {
+  return (order.fulfillments ?? []).map((fulfillment) => ({
+    deliveredAt: fulfillment.deliveredAt ?? null,
+    createdAt: fulfillment.createdAt ?? null,
+    fulfillmentLineItemIds: (fulfillment.fulfillmentLineItems?.edges ?? [])
+      .map((edge) => edge?.node?.id ?? null)
+      .filter((id): id is string => Boolean(id)),
+  }));
+}
+
+/**
+ * Public portal only: drop lines delivered more than 14 days ago.
+ * Throws when every returnable line is outside the window.
+ */
+function enforcePublicReturnWindow(order: ShopifyOrderNode, lines: ReturnableLine[]): ReturnableLine[] {
+  const deliveryByLineId = buildFulfillmentLineDeliveryMap(fulfillmentDeliveryHintsFromOrder(order));
+  const { allowed, expired } = filterReturnableLinesByWindow(lines, deliveryByLineId);
+  if (allowed.length > 0) return allowed;
+  if (expired.length > 0) {
+    throw new ShopifyReturnRequestError(
+      "RETURN_WINDOW_EXPIRED",
+      `Return window closed: more than ${PUBLIC_RETURN_WINDOW_DAYS} days since delivery.`,
+      422,
+      { windowDays: PUBLIC_RETURN_WINDOW_DAYS, expiredCount: expired.length }
+    );
+  }
+  return lines;
 }
 
 async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[]> {
@@ -668,7 +722,7 @@ export async function getReturnableItemsForOrder(input: {
   }
 
   const order = await findOrderByNumberAndEmail(orderNumber, email);
-  const lines = await listReturnableLineItems(order.id);
+  const lines = enforcePublicReturnWindow(order, await listReturnableLineItems(order.id));
   return {
     success: true,
     orderId: order.id,
@@ -689,6 +743,7 @@ export async function getReturnableItemsForOrder(input: {
  * Admin variant: look up returnable line items by order number only (no email,
  * no public API key). Used by the staff/admin return-opening form so the operator
  * can pick which line items to return when an order has multiple products.
+ * Does not enforce the public 14-day delivery window.
  */
 export async function getReturnableItemsForOrderAdmin(input: {
   orderNumber: string;
@@ -717,11 +772,14 @@ export async function getReturnableItemsForOrderAdmin(input: {
 
 export async function createAndOpenReturnFromFormData(
   input: ShopifyReturnRequestInput,
-  options: { publicBaseUrl?: string } = {}
+  options: { publicBaseUrl?: string; enforceReturnWindow?: boolean } = {}
 ): Promise<CreateAndOpenResult> {
   const validated = validateInput(input);
   const order = await findOrderByNumberAndEmail(validated.orderNumber, validated.email);
-  const allReturnableLines = await listReturnableLineItems(order.id);
+  // Public portal sends email; staff admin form does not — only enforce window for customers.
+  const enforceWindow = options.enforceReturnWindow ?? Boolean(validated.email);
+  const listed = await listReturnableLineItems(order.id);
+  const allReturnableLines = enforceWindow ? enforcePublicReturnWindow(order, listed) : listed;
   const defaultReason = mapFormReasonToShopify(validated.reason);
   const selectedLines = pickRequestedLines(
     allReturnableLines,
