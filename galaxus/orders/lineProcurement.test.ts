@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildLinkedCountByOrderId, countLinkedLinesForList } from "@/galaxus/orders/lineProcurement";
+import {
+  attachProcurementToLines,
+  buildLinkedCountByOrderId,
+  countLinkedLinesForList,
+} from "@/galaxus/orders/lineProcurement";
 
 describe("countLinkedLinesForList", () => {
   it("counts stx_sync purchase units even when GalaxusStockxMatch is missing", () => {
@@ -68,5 +72,51 @@ describe("buildLinkedCountByOrderId", () => {
       ],
     });
     expect(map.get("uuid-1")).toBe(1);
+  });
+});
+
+describe("attachProcurementToLines", () => {
+  it("surfaces cost/ETA from StxPurchaseUnit when GalaxusStockxMatch missing (Linked sync)", () => {
+    const eta = new Date("2026-08-07T00:00:00.000Z");
+    const lines = [
+      {
+        id: "line-1",
+        gtin: "198686324128",
+        quantity: 1,
+        supplierPid: "STX_198686324128",
+        supplierVariantId: "stx_abc",
+        providerKey: "STX",
+      },
+    ];
+    const stx = {
+      buckets: [
+        {
+          gtin: "198686324128",
+          supplierVariantId: "stx_abc",
+          needed: 1,
+          linked: 1,
+        },
+      ],
+    };
+    const stxUnits = [
+      {
+        gtin: "198686324128",
+        supplierVariantId: "stx_abc",
+        stockxOrderId: "01-W9AQV85TWT",
+        stockxOrderNumber: "01-W9AQV85TWT",
+        stockxSettledAmount: 131.79,
+        stockxSettledCurrency: "CHF",
+        etaMin: eta,
+        etaMax: eta,
+        awb: null,
+        cancelledAt: null,
+      },
+    ];
+
+    const [row] = attachProcurementToLines(lines, stx, [], stxUnits);
+    expect(row.procurement.ok).toBe(true);
+    expect(row.procurement.source).toBe("stx_sync");
+    expect(row.procurement.stockxCostChf).toBe(131.79);
+    expect(row.procurement.stockxEstimatedDelivery).toEqual(eta);
   });
 });

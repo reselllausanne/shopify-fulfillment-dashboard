@@ -106,6 +106,8 @@ async function ensureGalaxusStockxMatchesFromLinkedUnits(
           ? Number(unit.stockxSettledAmount)
           : null,
       stockxCurrencyCode: unit.stockxSettledCurrency ?? null,
+      stockxEstimatedDelivery: unit.etaMin ?? null,
+      stockxLatestEstimatedDelivery: unit.etaMax ?? null,
       stockxAwb: unit.awb ?? null,
       matchType: "DB_RECONCILE",
       matchReasons: JSON.stringify(["Linked StxPurchaseUnit persisted on order fetch"]),

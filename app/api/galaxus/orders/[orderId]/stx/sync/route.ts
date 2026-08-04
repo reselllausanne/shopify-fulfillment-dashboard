@@ -777,6 +777,13 @@ export async function POST(
     );
 
     const status = await getStxLinkStatusForOrder(reservation.galaxusOrderId);
+    // Reconcile again after linking: pre-sync ensure runs too early (units not linked yet).
+    const postLinkReconcile = await reconcileGalaxusOrderProcurement(reservation.galaxusOrderId, {
+      skipAutoLink: true,
+    }).catch((err) => {
+      console.warn("[GALAXUS][STX][SYNC] post-link procurement reconcile skipped:", err?.message ?? err);
+      return null;
+    });
     return NextResponse.json({
       ok: true,
       galaxusOrderId: reservation.galaxusOrderId,
@@ -804,6 +811,7 @@ export async function POST(
         savedMatchAttempts,
         savedMatchSkipped,
         awbBackfilled,
+        ensuredMatches: postLinkReconcile?.ensuredMatches ?? 0,
       },
       status,
     });

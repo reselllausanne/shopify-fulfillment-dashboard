@@ -252,12 +252,21 @@ export default function GalaxusDirectDeliveryPage() {
       return;
     }
     const match = matchesByLine.get(line.id) ?? null;
+    const proc = line.procurement;
     const priceRaw = line.priceLineAmount ?? line.lineNetAmount ?? null;
     const priceNumber = typeof priceRaw === "number" ? priceRaw : Number(priceRaw);
+    const unitsList: any[] = proc?.units ?? [];
+    const totalUnitCost = unitsList
+      .filter((u: any) => u.linked && u.stockxAmount != null)
+      .reduce((sum: number, u: any) => sum + Number(u.stockxAmount), 0);
     const savedCost =
       match?.stockxAmount != null
         ? Number(match.stockxAmount)
-        : null;
+        : totalUnitCost > 0
+          ? totalUnitCost
+          : proc?.stockxCostChf != null
+            ? Number(proc.stockxCostChf)
+            : null;
     const resolvedCost = Number.isFinite(savedCost as number) ? (savedCost as number) : null;
     const marginAmount =
       Number.isFinite(priceNumber) && resolvedCost != null ? priceNumber - resolvedCost : null;
@@ -280,19 +289,21 @@ export default function GalaxusDirectDeliveryPage() {
       shopifySizeEU: sizePrefill || "N/A",
       shopifyTotalPrice: Number.isFinite(priceNumber) ? priceNumber : null,
       shopifyCurrencyCode: selectedOrder?.currencyCode ?? "CHF",
-      stockxOrderNumber: match?.stockxOrderNumber ?? "",
+      stockxOrderNumber: match?.stockxOrderNumber ?? proc?.stockxOrderNumber ?? "",
       // Reuse Chain ID field in the modal as "Supplier PID" (do not persist in DB)
       stockxChainId: String(line.supplierPid ?? "").trim(),
-      stockxOrderId: match?.stockxOrderId ?? "",
+      stockxOrderId: match?.stockxOrderId ?? proc?.stockxOrderId ?? "",
       stockxProductName: match?.stockxProductName ?? "",
       stockxSizeEU: match?.stockxSizeEU ?? "",
       stockxSkuKey: match?.stockxSkuKey ?? "",
       stockxPurchaseDate: match?.stockxPurchaseDate ?? null,
       stockxStatus: match?.stockxStatus ?? "MANUAL",
-      stockxAwb: match?.stockxAwb ?? "",
+      stockxAwb: match?.stockxAwb ?? proc?.awb ?? "",
       stockxTrackingUrl: match?.stockxTrackingUrl ?? "",
-      stockxEstimatedDelivery: match?.stockxEstimatedDelivery ?? null,
-      stockxLatestEstimatedDelivery: match?.stockxLatestEstimatedDelivery ?? null,
+      stockxEstimatedDelivery:
+        match?.stockxEstimatedDelivery ?? proc?.stockxEstimatedDelivery ?? null,
+      stockxLatestEstimatedDelivery:
+        match?.stockxLatestEstimatedDelivery ?? proc?.stockxLatestEstimatedDelivery ?? null,
       stockxCheckoutType: match?.stockxCheckoutType ?? "",
       stockxStates: match?.stockxStates ?? null,
       stockxAmount: resolvedCost,
@@ -566,10 +577,26 @@ export default function GalaxusDirectDeliveryPage() {
                           {(() => {
                             const sellRaw = line.priceLineAmount ?? line.lineNetAmount ?? null;
                             const sell = typeof sellRaw === "number" ? sellRaw : Number(sellRaw);
-                            const cost = Number(match?.stockxAmount ?? NaN);
+                            const unitsList: any[] = proc?.units ?? [];
+                            const totalUnitCost = unitsList
+                              .filter((u: any) => u.linked && u.stockxAmount != null)
+                              .reduce((sum: number, u: any) => sum + Number(u.stockxAmount), 0);
+                            const costFromMatch =
+                              match?.stockxAmount != null ? Number(match.stockxAmount) : NaN;
+                            const cost =
+                              Number.isFinite(costFromMatch)
+                                ? costFromMatch
+                                : totalUnitCost > 0
+                                  ? totalUnitCost
+                                  : proc?.stockxCostChf != null &&
+                                      Number.isFinite(Number(proc.stockxCostChf))
+                                    ? Number(proc.stockxCostChf)
+                                    : NaN;
                             const hasMargin = Number.isFinite(sell) && Number.isFinite(cost);
                             const margin = hasMargin ? sell - cost : null;
                             const marginPct = hasMargin && sell > 0 ? ((sell - cost) / sell) * 100 : null;
+                            const etaRaw =
+                              match?.stockxEstimatedDelivery ?? proc?.stockxEstimatedDelivery ?? null;
                             return (
                               <>
                           <div className={`font-medium ${procOk ? "text-green-700" : "text-red-600"}`}>
@@ -588,10 +615,10 @@ export default function GalaxusDirectDeliveryPage() {
                               : "Not linked"}
                           </div>
                           <div className="text-gray-500">
-                            ETA: {match?.stockxEstimatedDelivery ? new Date(match.stockxEstimatedDelivery).toLocaleDateString("fr-CH") : "—"}
+                            ETA: {etaRaw ? new Date(etaRaw).toLocaleDateString("fr-CH") : "—"}
                           </div>
                           <div className="text-gray-500">
-                            Cost: {match?.stockxAmount != null ? `CHF ${match.stockxAmount}` : "—"}
+                            Cost: {Number.isFinite(cost) ? `CHF ${cost.toFixed(2)}` : "—"}
                           </div>
                           <div className="text-gray-500">
                             Margin: {margin != null ? `CHF ${margin.toFixed(2)}` : "—"}

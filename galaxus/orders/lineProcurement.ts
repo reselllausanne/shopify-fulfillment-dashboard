@@ -15,6 +15,14 @@ function unitMatchesLine(line: any, unit: any): boolean {
   return Boolean(lineSv && unitSv && lineSv === unitSv);
 }
 
+/** Prefer saved match ETA; fall back to StxPurchaseUnit etaMin/etaMax (Linked sync). */
+function resolveStockxEta(match: any, unit: any) {
+  return {
+    stockxEstimatedDelivery: match?.stockxEstimatedDelivery ?? unit?.etaMin ?? null,
+    stockxLatestEstimatedDelivery: match?.stockxLatestEstimatedDelivery ?? unit?.etaMax ?? null,
+  };
+}
+
 export function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
   const gtin = String(line?.gtin ?? "").trim();
   const sv = String(line?.supplierVariantId ?? "").trim();
@@ -86,6 +94,8 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           awb: null,
           stockxCostChf: null,
           stockxCostCurrency: null,
+          stockxEstimatedDelivery: null,
+          stockxLatestEstimatedDelivery: null,
           units,
           warehouseStockHint: whHint,
         },
@@ -104,6 +114,8 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     let awb: string | null = null;
     let stockxCostChf: number | null = null;
     let stockxCostCurrency: string | null = null;
+    let stockxEstimatedDelivery: Date | string | null = null;
+    let stockxLatestEstimatedDelivery: Date | string | null = null;
 
     if (orderNum) {
       ok = true;
@@ -117,6 +129,9 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           match?.stockxCurrencyCode != null ? String(match.stockxCurrencyCode).trim() : null;
       }
       const unit = pickStxPurchaseUnitForLine(line, stxUnits);
+      const eta = resolveStockxEta(match, unit);
+      stockxEstimatedDelivery = eta.stockxEstimatedDelivery;
+      stockxLatestEstimatedDelivery = eta.stockxLatestEstimatedDelivery;
       if (unit) {
         if (!awb && unit.awb != null) awb = String(unit.awb);
         if (!stockxOrderId && unit.stockxOrderId != null) stockxOrderId = String(unit.stockxOrderId);
@@ -158,6 +173,9 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
         stockxOrderNumber =
           (buLoose?.stockxOrderNumber != null && String(buLoose.stockxOrderNumber).trim()) ||
           stockxOrderId;
+        const eta = resolveStockxEta(null, buLoose);
+        stockxEstimatedDelivery = eta.stockxEstimatedDelivery;
+        stockxLatestEstimatedDelivery = eta.stockxLatestEstimatedDelivery;
       }
     }
 
@@ -210,6 +228,29 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     const allLinked = units.every((u) => u.linked);
     const lineOk = allLinked || ok;
 
+    // When buckets missing but units already linked (list/count path), still surface cost/ETA.
+    if (
+      lineOk &&
+      (stockxEstimatedDelivery == null || stockxCostChf == null) &&
+      relevantStxUnits.length > 0
+    ) {
+      const fallbackUnit = relevantStxUnits[0];
+      if (stockxCostChf == null && fallbackUnit?.stockxSettledAmount != null) {
+        const n = Number(fallbackUnit.stockxSettledAmount);
+        if (Number.isFinite(n)) {
+          stockxCostChf = n;
+          stockxCostCurrency =
+            fallbackUnit.stockxSettledCurrency != null
+              ? String(fallbackUnit.stockxSettledCurrency).trim()
+              : stockxCostCurrency;
+        }
+      }
+      if (stockxEstimatedDelivery == null) stockxEstimatedDelivery = fallbackUnit?.etaMin ?? null;
+      if (stockxLatestEstimatedDelivery == null) {
+        stockxLatestEstimatedDelivery = fallbackUnit?.etaMax ?? null;
+      }
+    }
+
     const sumLinkedUnitAmounts = units
       .filter((u: any) => u.linked && u.stockxAmount != null && Number.isFinite(Number(u.stockxAmount)))
       .reduce((s: number, u: any) => s + Math.max(0, Number(u.stockxAmount)), 0);
@@ -230,6 +271,8 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
         awb,
         stockxCostChf: resolvedStockxCostChf,
         stockxCostCurrency,
+        stockxEstimatedDelivery,
+        stockxLatestEstimatedDelivery,
         units,
       },
     };
