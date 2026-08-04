@@ -1,24 +1,49 @@
 /** Public customer portal: returns allowed within N days of delivery. */
 export const PUBLIC_RETURN_WINDOW_DAYS = 14;
 
+/** When Shopify has no deliveredAt, estimate delivery = fulfilled + N business days. */
+export const PUBLIC_RETURN_FULFILL_TO_DELIVERY_BUSINESS_DAYS = 3;
+
 export type FulfillmentDeliveryHint = {
   deliveredAt?: string | null;
   createdAt?: string | null;
   fulfillmentLineItemIds?: string[];
 };
 
+function parseDate(raw: string | null | undefined): Date | null {
+  const value = String(raw ?? "").trim();
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+/** Add N Mon–Fri business days (skips Sat/Sun). */
+export function addBusinessDays(start: Date, businessDays: number): Date {
+  const result = new Date(start.getTime());
+  let remaining = Math.max(0, Math.floor(businessDays));
+  while (remaining > 0) {
+    result.setUTCDate(result.getUTCDate() + 1);
+    const day = result.getUTCDay(); // 0=Sun … 6=Sat
+    if (day !== 0 && day !== 6) remaining -= 1;
+  }
+  return result;
+}
+
 /**
- * Anchor date for the 14-day window: Shopify `deliveredAt` when present,
- * else fulfillment `createdAt` (shipped / handed off — best available signal).
+ * Anchor for the 14-day window:
+ * - Shopify `deliveredAt` when present
+ * - else fulfilledAt (`createdAt`) + 3 business days (we rarely get deliveredAt)
  */
 export function resolveFulfillmentDeliveryAnchor(fulfillment: {
   deliveredAt?: string | null;
   createdAt?: string | null;
 }): Date | null {
-  const raw = String(fulfillment.deliveredAt ?? "").trim() || String(fulfillment.createdAt ?? "").trim();
-  if (!raw) return null;
-  const date = new Date(raw);
-  return Number.isFinite(date.getTime()) ? date : null;
+  const delivered = parseDate(fulfillment.deliveredAt);
+  if (delivered) return delivered;
+
+  const fulfilled = parseDate(fulfillment.createdAt);
+  if (!fulfilled) return null;
+  return addBusinessDays(fulfilled, PUBLIC_RETURN_FULFILL_TO_DELIVERY_BUSINESS_DAYS);
 }
 
 export function isOutsideReturnWindow(
@@ -53,7 +78,7 @@ export function buildFulfillmentLineDeliveryMap(
 
 /**
  * Drop lines whose fulfillment was delivered more than the window ago.
- * Lines with no delivery signal stay (not delivered yet / unknown).
+ * Lines with no delivery signal stay (not fulfilled yet / unknown).
  */
 export function filterReturnableLinesByWindow<T extends { fulfillmentLineItemId: string }>(
   lines: T[],
