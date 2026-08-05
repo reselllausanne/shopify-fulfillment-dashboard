@@ -24,6 +24,7 @@ import {
   parseOptionalDate,
   resolveStockxDeliveredForMatches,
 } from "@/lib/fulfillmentTiming";
+import { normalizeInboundHomeAwb } from "@/app/lib/stockxInboundHomeRoutes";
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -430,15 +431,7 @@ type FulfillStatus =
   | "INVALID"
   | "SHOPIFY_ERROR";
 
-const normalizeAwb = (code?: string | null) => {
-  if (!code) return "";
-  const trimmed = String(code).trim();
-  const cleaned = trimmed.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "");
-  if (/^\d{13,}$/.test(cleaned)) {
-    return cleaned.slice(-12);
-  }
-  return cleaned;
-};
+const normalizeAwb = (code?: string | null) => normalizeInboundHomeAwb(code);
 
 export async function POST(req: NextRequest) {
   const requestStartedAt = new Date();
@@ -651,20 +644,14 @@ export async function POST(req: NextRequest) {
           orderHasTrackingNumber(shopifyOrderId, awb)
         );
         if (hasTracking || existing) {
-          if (!allowAlreadyFulfilled) {
-            return NextResponse.json(
-              {
-                ok: true,
-                status: "ALREADY_FULFILLED" as FulfillStatus,
-                awb,
-                fulfillmentId: null,
-                shopifyOrderId,
-              },
-              { status: 200 }
-            );
-          }
+          // Still generate Swiss Post label — warehouse needs print even when Shopify
+          // already has this AWB as tracking (common for UPS inbound numbers).
           skipShopifyFulfillment = true;
-          warnings.push("Force fulfill: order already fulfilled; generating label only.");
+          warnings.push(
+            allowAlreadyFulfilled
+              ? "Force fulfill: order already fulfilled; generating label only."
+              : "Order already has this tracking; generating Swiss Post label only."
+          );
         }
       }
 

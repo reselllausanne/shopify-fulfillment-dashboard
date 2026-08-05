@@ -67,10 +67,21 @@ type ScanMatchPayload = {
   shopifyOrder?: ScanShopifyOrderExtras;
 };
 
+type ScanDemoChannel = "decathlon" | "galaxus";
+
+type ScanDemoDocument = {
+  parcelIndex: number;
+  type: "label" | "packing_slip" | "delivery_note";
+  base64: string;
+  mimeType: string;
+  filename: string;
+};
+
 type ScanResult = {
   ok: boolean;
   status: ScanStatus;
   awb: string;
+  fulfillmentDemo?: ScanDemoChannel | null;
   match: ScanMatchPayload | null;
   decathlon?: {
     matchId?: string | null;
@@ -444,6 +455,76 @@ export default function ScanPage() {
   const resolveDecathlonOrderRef = (match: ScanResult["decathlon"]) =>
     match?.orderId || match?.orderDbId || "";
 
+  const runFulfillmentDemoFromScan = async (scan: ScanResult) => {
+    if (!scan.fulfillmentDemo || !scan.awb) return;
+    setFulfillLoading(true);
+    setFulfillResult(null);
+    try {
+      const res = await fetch("/api/scan-fulfillment-demo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code: scan.awb }),
+      });
+      const data: {
+        ok?: boolean;
+        error?: string;
+        channel?: ScanDemoChannel;
+        documents?: ScanDemoDocument[];
+        browserPrintConfig?: BrowserPrintConfig;
+      } = await res.json();
+      if (!res.ok || !data.ok || !data.documents?.length) {
+        throw new Error(data.error || "Demo document generation failed");
+      }
+
+      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      let openedLabels = 0;
+      for (const doc of data.documents) {
+        if (doc.type === "label") {
+          const opened = browserPrintEnabled
+            ? openLabelPrintDialog(
+                { base64: doc.base64, mimeType: doc.mimeType },
+                data.browserPrintConfig
+              )
+            : openLabelPreview({ base64: doc.base64, mimeType: doc.mimeType });
+          if (opened) openedLabels += 1;
+        } else {
+          await downloadPdfFromBase64(doc.base64, doc.mimeType, doc.filename);
+        }
+      }
+
+      const labelCount = data.documents.filter((doc) => doc.type === "label").length;
+      const slipCount = data.documents.filter(
+        (doc) => doc.type === "packing_slip" || doc.type === "delivery_note"
+      ).length;
+      const channelLabel = data.channel === "decathlon" ? "Decathlon (T4 long)" : "Galaxus direct";
+      window.alert(
+        `${channelLabel} demo ${scan.awb}\n` +
+          `${openedLabels}/${labelCount} label print dialog(s) opened.\n` +
+          `${slipCount} packing/delivery PDF(s) downloaded.\n` +
+          `No Mirakl, Galaxus EDI, or Swiss Post API calls were made.`
+      );
+      setFulfillResult({ ok: true, status: "DEMO" });
+    } catch (error: any) {
+      setFulfillResult({ ok: false, error: error?.message || "Demo failed" });
+      window.alert(error?.message || "Demo document generation failed");
+    } finally {
+      setFulfillLoading(false);
+    }
+  };
+
+  const downloadPdfFromBase64 = async (base64: string, mimeType: string, filename: string) => {
+    const blob = toBlobFromBase64(base64, mimeType || "application/pdf");
+    const urlObj = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = urlObj;
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(urlObj);
+  };
+
   const autoHandleDecathlon = async (match: ScanResult["decathlon"], awb: string) => {
     const orderRef = resolveDecathlonOrderRef(match);
     if (!orderRef) return;
@@ -502,6 +583,10 @@ export default function ScanPage() {
   };
 
   const handleChannelActions = async (scan: ScanResult) => {
+    if (scan.fulfillmentDemo) {
+      await runFulfillmentDemoFromScan(scan);
+      return;
+    }
     if (scan.inboundHome && ENABLE_AUTO_HOME_RETURN) {
       await runReturnToHomeFromScan(scan);
       return;
@@ -609,6 +694,16 @@ export default function ScanPage() {
     return `${min}m ${rem.toFixed(0)}s`;
   };
 
+  const formatFulfillErrorMessage = (data: { ok?: boolean; status?: string; error?: string } | null) => {
+    if (!data || data.ok) return "";
+    const err = String(data.error || "").toLowerCase();
+    const st = String(data.status || "");
+    if (st === "SHOPIFY_ERROR" && err.includes("order not found")) {
+      return "login to shopify order not found, manual search";
+    }
+    return String(data.error || "");
+  };
+
   const runReturnToHomeFromScan = async (scan: ScanResult) => {
     if (!scan?.inboundHome) return;
     const code = scan.awb || scan.inboundHome.stockxAwb || scan.inboundHome.stockxOrderNumber;
@@ -675,9 +770,23 @@ export default function ScanPage() {
         if (!opened) {
           window.alert("Label generated but popup blocked. Allow popups for this page, then scan again.");
         }
+      } else if (!res.ok || !data.ok) {
+        window.alert(
+          formatFulfillErrorMessage(data) ||
+            data.error ||
+            data.userErrors?.[0]?.message ||
+            `Label/fulfill failed (${data.status || res.status})`
+        );
+      } else if (!data.labelData?.base64) {
+        window.alert(
+          data.status === "ALREADY_FULFILLED"
+            ? "Order already fulfilled — no new Swiss Post label. Use Force fulfill to print label only."
+            : "Match OK but Swiss Post label missing from response. Try Force fulfill."
+        );
       }
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
+      window.alert(err?.message || "Fulfill network error");
     } finally {
       setFulfillLoading(false);
     }
@@ -706,16 +815,6 @@ export default function ScanPage() {
     if (s === "ERROR") return "bg-red-50 border-red-200 text-red-800";
     return "bg-gray-50 border-gray-200 text-gray-800";
   }, [result?.status]);
-
-  const formatFulfillErrorMessage = (data: { ok?: boolean; status?: string; error?: string } | null) => {
-    if (!data || data.ok) return "";
-    const err = String(data.error || "").toLowerCase();
-    const st = String(data.status || "");
-    if (st === "SHOPIFY_ERROR" && err.includes("order not found")) {
-      return "login to shopify order not found, manual search";
-    }
-    return String(data.error || "");
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
@@ -755,7 +854,7 @@ export default function ScanPage() {
                 handleSubmit();
               }
             }}
-            placeholder="Scan or paste AWB / barcode and press Enter"
+            placeholder="Scan AWB / barcode (demo: 1000 Decathlon, 1001 Galaxus)"
             className="w-full text-center text-xl px-4 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
           />
           <div className="flex gap-2">
@@ -811,7 +910,29 @@ export default function ScanPage() {
                 </button>
               </div>
             )}
-            {result.galaxus && (
+            {result.fulfillmentDemo && (
+              <div className="mt-4 rounded-lg border border-indigo-300 bg-indigo-50 p-4 text-indigo-950">
+                <div className="font-semibold text-indigo-900">Fulfillment demo mode</div>
+                <p className="text-sm mt-1">
+                  Code <span className="font-mono">{result.awb}</span> ·{" "}
+                  {result.fulfillmentDemo === "decathlon"
+                    ? "Decathlon T4 long (2 parcels: label + packing slip each)"
+                    : "Galaxus direct delivery (label + delivery note)"}
+                </p>
+                <p className="text-xs mt-1 text-indigo-800">
+                  Offline demo — no Mirakl, Galaxus EDI, or live Swiss Post calls.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void runFulfillmentDemoFromScan(result)}
+                  disabled={fulfillLoading}
+                  className="mt-2 px-3 py-1.5 rounded bg-indigo-800 text-white text-sm disabled:opacity-50"
+                >
+                  {fulfillLoading ? "Generating…" : "Run demo documents again"}
+                </button>
+              </div>
+            )}
+            {result.galaxus && !result.fulfillmentDemo && (
               <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-950">
                 <div className="font-semibold text-teal-900">
                   Galaxus {result.galaxus.isDirectDelivery ? "direct delivery" : "marketplace"}

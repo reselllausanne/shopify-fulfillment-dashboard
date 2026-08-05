@@ -39,9 +39,15 @@ function normalizeShopifyOrderName(value: string | null | undefined): string {
 function normalizeAwb(value: string | null | undefined): string {
   const trimmed = String(value ?? "").trim();
   if (!trimmed) return "";
-  const cleaned = trimmed.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "");
-  if (/^\d{13,}$/.test(cleaned)) return cleaned.slice(-12);
-  return cleaned.toUpperCase();
+  // Scanners often inject spaces / AIM prefixes (e.g. "]C1") around UPS 1Z codes.
+  const compact = trimmed.replace(/[^a-zA-Z0-9]/gi, "").toUpperCase();
+  if (!compact) return "";
+
+  const ups = compact.match(/1Z[0-9A-Z]{16}/);
+  if (ups) return ups[0];
+
+  if (/^\d{13,}$/.test(compact)) return compact.slice(-12);
+  return compact;
 }
 
 function normalizeScanCode(value: string | null | undefined): string {

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { findStockxInboundHomeRouteByCode, findStockxInboundHomeRouteByShopifyOrderName } from "@/app/lib/stockxInboundHomeRoutes";
+import {
+  findStockxInboundHomeRouteByCode,
+  findStockxInboundHomeRouteByShopifyOrderName,
+  normalizeInboundHomeAwb,
+} from "@/app/lib/stockxInboundHomeRoutes";
 import { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
+import { buildScanDemoScanPayload, resolveScanDemoChannel } from "@/lib/scanFulfillmentDemo";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,16 +101,7 @@ async function enrichOrderMatchFromShopify(match: {
   }
 }
 
-const normalizeCode = (code?: string | null) => {
-  if (!code) return "";
-  const trimmed = code.trim();
-  // remove leading/trailing non-alphanumeric chars
-  const cleaned = trimmed.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "");
-  if (/^\d{13,}$/.test(cleaned)) {
-    return cleaned.slice(-12);
-  }
-  return cleaned;
-};
+const normalizeCode = (code?: string | null) => normalizeInboundHomeAwb(code);
 
 export async function GET(req: NextRequest) {
   try {
@@ -186,6 +182,11 @@ export async function POST(req: NextRequest) {
         { ok: false, status: "UNMATCHED", awb: "", match: null, error: { message: "Missing code" } },
         { status: 400 }
       );
+    }
+
+    const demoChannel = resolveScanDemoChannel(rawClean || awb);
+    if (demoChannel) {
+      return NextResponse.json(buildScanDemoScanPayload(demoChannel), { status: 200 });
     }
 
     let inboundHomeRoute = await findStockxInboundHomeRouteByCode(rawClean || awb);
@@ -355,10 +356,17 @@ export async function POST(req: NextRequest) {
       };
     }
 
+    // Prefer DB-canonical AWB so fulfill-from-awb exact lookup matches (UPS scanners often
+    // return spaced / prefixed 1Z payloads that still matched via loose candidates).
+    const canonicalAwb =
+      (typeof match?.stockxAwb === "string" && match.stockxAwb.trim()) ||
+      (typeof inboundHomeRoute?.stockxAwb === "string" && inboundHomeRoute.stockxAwb.trim()) ||
+      awb;
+
     const response = {
       ok: hasAnyMatch,
       status,
-      awb,
+      awb: canonicalAwb,
       match: shopifyMatchPayload,
       decathlon: decathlonMatch
         ? {
