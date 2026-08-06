@@ -100,7 +100,7 @@ function asBigInt(value: unknown): bigint {
   if (typeof value === "bigint") return value;
   if (typeof value === "number") return BigInt(Math.round(value));
   if (typeof value === "string" && /^-?\d+$/.test(value.trim())) return BigInt(value.trim());
-  return 0n;
+  return BigInt(0);
 }
 
 function asNumber(value: unknown): number {
