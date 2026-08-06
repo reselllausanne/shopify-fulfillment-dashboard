@@ -13,6 +13,8 @@ export type OrderPaidLineItem = {
   variant_id?: number | string | null;
   sku?: string | null;
   barcode?: string | null;
+  title?: string | null;
+  variant_title?: string | null;
   quantity?: number | null;
   price?: string | number | null;
 };
@@ -67,6 +69,84 @@ function normalizeGtin(raw: string | null | undefined): string | null {
   return value;
 }
 
+function normalizeSizeToken(raw: string | null | undefined): string | null {
+  const input = String(raw ?? "").trim().toUpperCase();
+  if (!input) return null;
+  const cleaned = input
+    .replace(/\s+/g, "")
+    .replace(/^EU/, "")
+    .replace(",", ".")
+    .trim();
+  if (!cleaned) return null;
+  if (!/^\d{1,2}(?:\.\d+)?$/.test(cleaned)) return null;
+  return cleaned.replace(/\.0+$/, "");
+}
+
+function parseSkuBaseAndSize(
+  rawSku: string | null | undefined
+): { baseSku: string; sizeToken: string } | null {
+  const sku = String(rawSku ?? "").trim().toUpperCase();
+  if (!sku) return null;
+  // Common Shopify format: DQ3977-100-40 (style-color-sizeEU)
+  const match = sku.match(/^(.+)-(\d{1,2}(?:[.,]\d+)?)$/);
+  if (!match) return null;
+  const baseSku = match[1]?.trim();
+  const sizeToken = normalizeSizeToken(match[2]);
+  if (!baseSku || !sizeToken) return null;
+  return { baseSku, sizeToken };
+}
+
+async function resolveGtinFromPaidHistoryByVariant(
+  variantGid: string | null
+): Promise<string | null> {
+  if (!variantGid) return null;
+  const row = await (prisma as any).shopifyPaidLineState.findFirst({
+    where: {
+      variantId: variantGid,
+      ok: true,
+      gtin: { not: null },
+    },
+    orderBy: { updatedAt: "desc" },
+    select: { gtin: true },
+  });
+  return normalizeGtin(row?.gtin ?? null);
+}
+
+async function resolveGtinFromSkuAndSize(
+  sku: string | null | undefined
+): Promise<string | null> {
+  const parsed = parseSkuBaseAndSize(sku);
+  if (!parsed) return null;
+  const { baseSku, sizeToken } = parsed;
+  const sizeCandidates = Array.from(
+    new Set([`EU ${sizeToken}`, `EU${sizeToken}`, sizeToken])
+  );
+  const rows = await prisma.supplierVariant.findMany({
+    where: {
+      supplierSku: baseSku,
+      gtin: { not: null },
+      OR: sizeCandidates.map((sizeRaw) => ({ sizeRaw })),
+    },
+    select: {
+      gtin: true,
+      sizeRaw: true,
+      stock: true,
+      updatedAt: true,
+    },
+    orderBy: [{ stock: "desc" }, { updatedAt: "desc" }],
+    take: 10,
+  });
+  if (rows.length === 0) return null;
+
+  const exact = rows.filter((r) => normalizeSizeToken(r.sizeRaw) === sizeToken);
+  const candidates = exact.length > 0 ? exact : rows;
+  const uniqueGtins = Array.from(
+    new Set(candidates.map((r) => normalizeGtin(r.gtin)).filter(Boolean))
+  );
+  if (uniqueGtins.length === 1) return uniqueGtins[0]!;
+  return null;
+}
+
 const VARIANT_BARCODES_QUERY = /* GraphQL */ `
 query OrdersPaidVariantBarcodes($ids: [ID!]!) {
   nodes(ids: $ids) {
@@ -118,6 +198,14 @@ export async function resolveGtinsForLineItems(items: OrderPaidLineItem[]): Prom
     }
 
     if (gid) {
+      const fromPaidHistory = await resolveGtinFromPaidHistoryByVariant(gid);
+      if (fromPaidHistory) {
+        out.add(fromPaidHistory);
+        continue;
+      }
+    }
+
+    if (gid) {
       const rows = await prisma.$queryRaw<Array<{ gtin: string | null }>>`
         SELECT DISTINCT "gtin"
         FROM "public"."ShopifyVariantLocationStock"
@@ -146,6 +234,14 @@ export async function resolveGtinsForLineItems(items: OrderPaidLineItem[]): Prom
       const scopedGtin = normalizeGtin(rows[0]?.gtin ?? null);
       if (scopedGtin) {
         out.add(scopedGtin);
+        continue;
+      }
+    }
+
+    if (sku) {
+      const fromSkuAndSize = await resolveGtinFromSkuAndSize(sku);
+      if (fromSkuAndSize) {
+        out.add(fromSkuAndSize);
         continue;
       }
     }
