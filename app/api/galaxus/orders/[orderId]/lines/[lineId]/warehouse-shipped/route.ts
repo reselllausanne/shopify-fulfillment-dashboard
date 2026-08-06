@@ -8,6 +8,10 @@ import {
   deductTheCatalogStockForGalaxusLines,
   isTheWarehouseGalaxusLine,
 } from "@/galaxus/warehouse/theCatalogStock";
+import {
+  buildPhysicalStockByGtinMap,
+  resolvePhysicalStockForGtin,
+} from "@/shopify/inventory/orderLinePhysicalStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,12 +38,21 @@ async function isLineReadyToShip(
 
   const match = await (prisma as any).galaxusStockxMatch.findFirst({
     where: { galaxusOrderLineId: line.id },
-    select: { stockxOrderNumber: true },
+    select: { stockxOrderNumber: true, matchType: true },
   });
-  if (match && String(match.stockxOrderNumber ?? "").trim()) return true;
+  if (
+    match &&
+    (String(match.stockxOrderNumber ?? "").trim() || String(match.matchType ?? "").trim() === "LOCAL_STOCK")
+  ) {
+    return true;
+  }
 
   const gtin = String(line.gtin ?? "").trim();
   if (!gtin) return false;
+
+  const stockMap = await buildPhysicalStockByGtinMap([gtin]).catch(() => new Map());
+  const localStock = resolvePhysicalStockForGtin(gtin, stockMap);
+  if ((localStock?.qty ?? 0) > 0) return true;
 
   const stx = await getStxLinkStatusForOrder(order.galaxusOrderId).catch(() => null);
   const bucket = stx?.buckets?.find((b: any) => String(b?.gtin ?? "") === gtin);

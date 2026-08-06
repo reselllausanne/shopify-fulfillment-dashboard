@@ -5,6 +5,15 @@ import {
 import { sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { expandGtinsForDbLookup } from "@/galaxus/stx/purchaseUnits";
 
+function isLikelyStockxOrderRef(value: unknown): boolean {
+  const ref = String(value ?? "").trim();
+  if (!ref) return false;
+  if (/^LOCAL-STOCK-/i.test(ref)) return false;
+  if (/^MANUAL-/i.test(ref)) return false;
+  // StockX refs should be compact identifiers; reject prose placeholders like "in stock ?".
+  return /^[A-Z0-9-]{6,}$/i.test(ref);
+}
+
 function unitMatchesLine(line: any, unit: any): boolean {
   if (!unit?.stockxOrderId || unit?.cancelledAt) return false;
   const gtinKeys = expandGtinsForDbLookup([String(line?.gtin ?? "")]);
@@ -108,7 +117,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     const orderNum = match ? String(match.stockxOrderNumber ?? "").trim() : "";
 
     let ok = false;
-    let source: "galaxus_match" | "stx_sync" | null = null;
+    let source: "galaxus_match" | "stx_sync" | "manual_reference" | null = null;
     let stockxOrderNumber: string | null = orderNum || null;
     let stockxOrderId: string | null = null;
     let awb: string | null = null;
@@ -117,7 +126,13 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     let stockxEstimatedDelivery: Date | string | null = null;
     let stockxLatestEstimatedDelivery: Date | string | null = null;
 
-    if (orderNum) {
+    const hasStockxOrderId = String(match?.stockxOrderId ?? "").trim().length > 0;
+    const hasStockxIdentity =
+      hasStockxOrderId ||
+      isLikelyStockxOrderRef(orderNum) ||
+      String(match?.stockxSkuKey ?? "").trim().length > 0;
+
+    if (orderNum && hasStockxIdentity) {
       ok = true;
       source = "galaxus_match";
       awb = match?.stockxAwb != null ? String(match.stockxAwb) : null;
@@ -144,6 +159,16 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           }
         }
       }
+    } else if (orderNum && !hasStockxIdentity) {
+      // Keep line operationally linked, but do not treat it as a real StockX purchase.
+      ok = true;
+      source = "manual_reference";
+      stockxOrderId = null;
+      awb = null;
+      stockxCostChf = null;
+      stockxCostCurrency = null;
+      stockxEstimatedDelivery = null;
+      stockxLatestEstimatedDelivery = null;
     } else if (gtin && stx?.buckets?.length && isGalaxusStxSupplierLine(line)) {
       const sv = String(line?.supplierVariantId ?? "").trim();
       const bucket =
@@ -260,13 +285,22 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
         : stockxCostChf != null && Number.isFinite(stockxCostChf) && stockxCostChf > 0
           ? stockxCostChf
           : null;
+    const localPhysicalQty = Number((line as any)?.physicalStock?.qty ?? 0);
+    const hasLocalPhysicalStock = Number.isFinite(localPhysicalQty) && localPhysicalQty > 0;
+    const localStockRef = `LOCAL-STOCK-${String((line as any)?.providerKey ?? "line").trim()}-${String(
+      (line as any)?.lineNumber ?? 0
+    ).trim()}`;
 
     return {
       ...line,
       procurement: {
-        ok: lineOk,
-        source: allLinked ? (units[0]?.source ?? source) : source,
-        stockxOrderNumber,
+        ok: lineOk || hasLocalPhysicalStock,
+        source: hasLocalPhysicalStock
+          ? ("local_stock" as const)
+          : allLinked
+            ? (units[0]?.source ?? source)
+            : source,
+        stockxOrderNumber: stockxOrderNumber ?? (hasLocalPhysicalStock ? localStockRef : null),
         stockxOrderId,
         awb,
         stockxCostChf: resolvedStockxCostChf,

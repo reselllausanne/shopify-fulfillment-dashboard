@@ -451,6 +451,18 @@ export default function WarehouseBulkPage() {
                         linked && revenueChf != null && costChf != null
                           ? galaxusProfitFromRevenueAndStockxCost(revenueChf, costChf)
                           : null;
+                      const stockxLinkedSource =
+                        proc?.source === "galaxus_match" || proc?.source === "stx_sync";
+                      const sourceLabel =
+                        proc?.source === "galaxus_match"
+                          ? "Saved match"
+                          : proc?.source === "stx_sync"
+                            ? "StockX sync"
+                            : proc?.source === "local_stock"
+                              ? "Local stock"
+                              : proc?.source === "manual_reference"
+                                ? "Manual reference"
+                                : "StockX sync";
                       return (
                         <div
                           key={line.id}
@@ -529,7 +541,7 @@ export default function WarehouseBulkPage() {
                               {linked && proc ? (
                                 <div className="text-green-800 text-[11px] space-y-0.5">
                                   <div>
-                                    {proc.source === "galaxus_match" ? "Saved match" : "StockX sync"} · AWB:{" "}
+                                    {sourceLabel} · AWB:{" "}
                                     {proc.awb ?? "—"}
                                   </div>
                                   {profitRow ? (
@@ -541,7 +553,7 @@ export default function WarehouseBulkPage() {
                                         ? ` (${profitRow.profitPercentOfRevenue.toFixed(1)}% of net line)`
                                         : ""}
                                     </div>
-                                  ) : linked && revenueChf != null && costChf == null ? (
+                                  ) : linked && stockxLinkedSource && revenueChf != null && costChf == null ? (
                                     <div className="text-amber-900">
                                       StockX cost not stored: add amount in manual supplier, or run{" "}
                                       <span className="font-medium">Sync orders + AWB</span> (needs buys visible in
