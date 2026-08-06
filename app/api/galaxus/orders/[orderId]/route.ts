@@ -470,7 +470,7 @@ export async function GET(
         }
         if (catalogPriceByGtin[canon] == null) {
           const p = selectCatalogDisplayBuyPrice(mapping);
-          if (Number.isFinite(p) && p > 0) catalogPriceByGtin[canon] = p;
+          if (p != null && Number.isFinite(p) && p > 0) catalogPriceByGtin[canon] = p;
         }
       }
     }
