@@ -77,8 +77,10 @@ function resolvePhysicalLocation(
 }
 
 /**
- * When FO lineItems are missing from the GraphQL payload, still surface the
- * assigned physical location for every line on that order.
+ * @deprecated Do not use for order UI. Mixed orders have multiple FOs; painting
+ * every line with the first physical FO location is wrong (e.g. Antica shorts +
+ * website sneakers). Prefer `buildPhysicalStockFromFulfillmentOrders` keyed by
+ * lineItemId only. Kept for one-off diagnostics.
  */
 export function firstPhysicalFulfillmentStock(
   fulfillmentOrders: FoNode[] | null | undefined
@@ -99,7 +101,10 @@ export function firstPhysicalFulfillmentStock(
   return null;
 }
 
-/** Mirror available stock wins; else fall back to FO-assigned physical location. */
+/**
+ * Mirror available>0 wins (in-stock badge). Else FO assignment for that line
+ * only — never invent an order-level physical location for unmatched lines.
+ */
 export function coalescePhysicalStock(
   mirror: OrderLinePhysicalStock | null | undefined,
   fromFulfillment: OrderLinePhysicalStock | null | undefined

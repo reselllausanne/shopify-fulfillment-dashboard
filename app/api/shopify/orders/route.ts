@@ -24,7 +24,6 @@ import {
 import {
   buildPhysicalStockFromFulfillmentOrders,
   coalescePhysicalStock,
-  firstPhysicalFulfillmentStock,
 } from "@/shopify/inventory/fulfillmentAssignedPhysicalStock";
 import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 import { upsertPackageProtectionMatches } from "@/shopify/protection/upsertPackageProtectionMatches";
@@ -566,12 +565,10 @@ export async function POST(req: Request) {
         shippingLines: orderShippingLines,
         fulfillmentOrders: orderFulfillmentOrders,
       });
+      // Per lineItemId only — never stamp first physical FO on whole order.
       const foPhysicalByLine = includePhysicalStock
         ? buildPhysicalStockFromFulfillmentOrders(foNodes)
         : new Map();
-      const foPhysicalOrderFallback = includePhysicalStock
-        ? firstPhysicalFulfillmentStock(foNodes)
-        : null;
 
       const liEdgesAll = o.lineItems?.edges ?? [];
       const liEdges = liEdgesAll.filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
@@ -631,9 +628,7 @@ export async function POST(req: Request) {
         const mirrorPhysical =
           includePhysicalStock && gtin ? resolvePhysicalStockForGtin(gtin, physicalStockByGtin) : null;
         const foPhysical =
-          includePhysicalStock && li?.id
-            ? foPhysicalByLine.get(li.id) ?? foPhysicalOrderFallback
-            : foPhysicalOrderFallback;
+          includePhysicalStock && li?.id ? foPhysicalByLine.get(li.id) ?? null : null;
         const physicalStock = coalescePhysicalStock(mirrorPhysical, foPhysical);
 
         const row = {
