@@ -354,7 +354,7 @@ export default function DashboardPage() {
             {clearing ? "⏳ Clearing..." : "🗑️ Clear All Orders"}
           </button>
           <button
-            onClick={fetchMetrics}
+            onClick={() => fetchMetrics()}
             className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 font-medium"
           >
             🔄 Refresh Metrics
