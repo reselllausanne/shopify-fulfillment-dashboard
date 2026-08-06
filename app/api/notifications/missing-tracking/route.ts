@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { isInStockEssentialLine } from "@/app/utils/matching";
+import { isInStockEssentialLine, isPackageProtectionShopifyLine } from "@/app/utils/matching";
 
 export const runtime = "nodejs";
 
@@ -35,6 +35,7 @@ const isExcludedNoTracking = (
   stockxStatus?: string | null
 ) => {
   if (isInStockEssentialLine(sku, title)) return true;
+  if (isPackageProtectionShopifyLine(title, sku)) return true;
   if (stockxStatus && NO_TRACKING_STATUSES.has(stockxStatus)) return true;
   return false;
 };

@@ -15,6 +15,12 @@ import {
   buildPhysicalStockByGtinMap,
   resolvePhysicalStockForGtin,
 } from "@/shopify/inventory/orderLinePhysicalStock";
+import {
+  buildPhysicalStockFromFulfillmentOrders,
+  coalescePhysicalStock,
+} from "@/shopify/inventory/fulfillmentAssignedPhysicalStock";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
+import { upsertPackageProtectionMatches } from "@/shopify/protection/upsertPackageProtectionMatches";
 
 export const runtime = "nodejs";
 
@@ -40,12 +46,21 @@ query OrderByName($first: Int!, $query: String!) {
         }
         fulfillmentOrders(first: 10) {
           nodes {
+            status
             deliveryMethod {
               methodType
               presentedName
             }
             assignedLocation {
               name
+              location { id name }
+            }
+            lineItems(first: 50) {
+              nodes {
+                remainingQuantity
+                totalQuantity
+                lineItem { id }
+              }
             }
           }
         }
@@ -139,7 +154,8 @@ export async function POST(req: Request) {
         title: nodeLine.title ?? null,
         isRemoved: Boolean(nodeLine.isRemoved),
       }));
-    const orderFulfillmentOrders = (node.fulfillmentOrders?.nodes ?? []).map((fo: any) => ({
+    const foNodes = node.fulfillmentOrders?.nodes ?? [];
+    const orderFulfillmentOrders = foNodes.map((fo: any) => ({
       deliveryMethod: fo.deliveryMethod ?? null,
       assignedLocation: fo.assignedLocation ?? null,
     }));
@@ -147,12 +163,15 @@ export async function POST(req: Request) {
       shippingLines: orderShippingLines,
       fulfillmentOrders: orderFulfillmentOrders,
     });
+    const foPhysicalByLine = buildPhysicalStockFromFulfillmentOrders(foNodes);
 
     const liEdges = (node.lineItems?.edges ?? []).filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
     const physicalStockByGtin = await buildPhysicalStockByGtinMap(
       liEdges.map((liE: any) => String(liE?.node?.variant?.barcode ?? "").trim()).filter(Boolean)
     );
-    const lineItems = liEdges.map((liE: any) => {
+    const protectionToPersist: Parameters<typeof upsertPackageProtectionMatches>[0] = [];
+    const lineItems = [];
+    for (const liE of liEdges) {
       const li = liE.node;
       const unit = li.originalUnitPriceSet?.shopMoney;
       const total = li.discountedTotalSet?.shopMoney;
@@ -164,7 +183,25 @@ export async function POST(req: Request) {
         (qty > 0 ? String(Number(totalAmount) / qty) : "0");
 
       const variantTitle = li.variantTitle ?? null;
-      const sizeEU = extractEUSize(variantTitle) ?? extractEUSize(li.title);
+      const title = li.title ?? "—";
+      const sizeEU = extractEUSize(variantTitle) ?? extractEUSize(title);
+
+      if (isPackageProtectionShopifyLine(title, li.sku ?? null)) {
+        protectionToPersist.push({
+          shopifyOrderId: node.id,
+          shopifyOrderName: node.name,
+          shopifyLineItemId: li.id,
+          shopifyProductTitle: title,
+          shopifySku: li.sku ?? null,
+          shopifyTotalPrice: Number.parseFloat(String(totalAmount)) || 0,
+          shopifyCurrencyCode: currencyCode,
+          shopifyCreatedAt: node.createdAt,
+          shopifyCustomerEmail: null,
+          shopifyCustomerFirstName: null,
+          shopifyCustomerLastName: null,
+        });
+        continue;
+      }
 
       const deliveryInfo = parseShopifyLineItemDelivery({
         customAttributes: mergeLineItemCustomAttributes(
@@ -176,9 +213,11 @@ export async function POST(req: Request) {
       });
 
       const gtin = String(li?.variant?.barcode ?? "").trim() || null;
-      const physicalStock = gtin ? resolvePhysicalStockForGtin(gtin, physicalStockByGtin) : null;
+      const mirrorPhysical = gtin ? resolvePhysicalStockForGtin(gtin, physicalStockByGtin) : null;
+      const foPhysical = li?.id ? foPhysicalByLine.get(li.id) ?? null : null;
+      const physicalStock = coalescePhysicalStock(mirrorPhysical, foPhysical);
 
-      return {
+      lineItems.push({
         shopifyOrderId: node.id,
         orderId: node.id,
         orderName: node.name,
@@ -187,7 +226,7 @@ export async function POST(req: Request) {
         displayFulfillmentStatus: node.displayFulfillmentStatus ?? null,
         customerName: node.customer?.displayName ?? null,
         lineItemId: li.id,
-        title: li.title ?? "—",
+        title,
         sku: li.sku ?? null,
         variantTitle,
         sizeEU,
@@ -210,8 +249,14 @@ export async function POST(req: Request) {
         isStorePickup: pickupInfo.isStorePickup,
         pickupLocation: pickupInfo.locationName,
         pickupLabel: pickupInfo.label,
-      };
-    });
+      });
+    }
+
+    if (protectionToPersist.length > 0) {
+      await upsertPackageProtectionMatches(protectionToPersist).catch((err) => {
+        console.warn("[SHOPIFY] package protection upsert failed", err);
+      });
+    }
 
     console.log(`[SHOPIFY] Found order ${orderName} with ${lineItems.length} line items`);
 

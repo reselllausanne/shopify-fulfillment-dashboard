@@ -144,22 +144,53 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
       : offer;
   });
 
-  // Hard delete sold-out partner offers (stock <= 0) so they don't leak into Galaxus feeds.
+  // Zero-out sold-out partner offers instead of deleting: keeps the SV + mapping
+  // alive so physical warehouse stock (Bussigny / Antica / Lab / COLD BIEN) can
+  // still merge onto the Galaxus feed via `mergePhysicalWithDropship` when the
+  // partner has no dropship qty. Skip anything that is manualLock (soldes) or
+  // still has physical mirror stock > 0.
   for (const batch of chunkArray(zeroStockPairs, 500)) {
     const pairs = batch.map((o) => Prisma.sql`(${o.providerKey}, ${o.gtin})`);
-    const found = await prisma.$queryRaw<Array<{ supplierVariantId: string }>>(
+    const rows = await prisma.$queryRaw<
+      Array<{ supplierVariantId: string; gtin: string; hasPhysical: boolean }>
+    >(
       Prisma.sql`
-        SELECT "supplierVariantId"
-        FROM "public"."SupplierVariant"
-        WHERE ("providerKey","gtin") IN (${Prisma.join(pairs)})
+        SELECT
+          sv."supplierVariantId",
+          sv."gtin",
+          EXISTS (
+            SELECT 1
+            FROM "public"."ShopifyVariantLocationStock" s
+            WHERE s."sourceType" = 'physical'
+              AND s."available"  > 0
+              AND regexp_replace(COALESCE(s."gtin", ''), '^0+', '') = regexp_replace(sv."gtin", '^0+', '')
+          ) AS "hasPhysical"
+        FROM "public"."SupplierVariant" sv
+        WHERE (sv."providerKey", sv."gtin") IN (${Prisma.join(pairs)})
+          AND sv."manualLock" IS NOT TRUE
       `
     );
-    const ids = (found ?? []).map((r) => r.supplierVariantId);
-    if (ids.length === 0) continue;
-    const res = await prisma.supplierVariant.deleteMany({
-      where: { supplierVariantId: { in: ids }, manualLock: { not: true } },
-    });
-    removedZeroStock += res.count;
+    const idsToZero = rows
+      .filter((r) => r.hasPhysical)
+      .map((r) => r.supplierVariantId);
+    const idsToDelete = rows
+      .filter((r) => !r.hasPhysical)
+      .map((r) => r.supplierVariantId);
+
+    if (idsToZero.length > 0) {
+      const zero = await prisma.supplierVariant.updateMany({
+        where: { supplierVariantId: { in: idsToZero } },
+        data: { stock: 0, updatedAt: now },
+      });
+      // Count zeroed rows toward "removed" so metrics keep working.
+      removedZeroStock += zero.count;
+    }
+    if (idsToDelete.length > 0) {
+      const res = await prisma.supplierVariant.deleteMany({
+        where: { supplierVariantId: { in: idsToDelete } },
+      });
+      removedZeroStock += res.count;
+    }
   }
 
   for (const batch of chunkArray(normalizedOffers, 500)) {

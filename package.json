@@ -17,7 +17,8 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
     "prisma:deploy": "prisma migrate deploy && prisma generate",
-    "returns:sync": "tsx scripts/sync-decathlon-returns.ts"
+    "returns:sync": "tsx scripts/sync-decathlon-returns.ts",
+    "ads": "tsx scripts/ads-analytics.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

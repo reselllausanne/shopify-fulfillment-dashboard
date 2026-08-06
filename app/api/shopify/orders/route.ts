@@ -21,6 +21,12 @@ import {
   buildPhysicalStockByGtinMap,
   resolvePhysicalStockForGtin,
 } from "@/shopify/inventory/orderLinePhysicalStock";
+import {
+  buildPhysicalStockFromFulfillmentOrders,
+  coalescePhysicalStock,
+} from "@/shopify/inventory/fulfillmentAssignedPhysicalStock";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
+import { upsertPackageProtectionMatches } from "@/shopify/protection/upsertPackageProtectionMatches";
 
 export const runtime = "nodejs";
 
@@ -241,14 +247,23 @@ query OrderHeaders($first: Int!, $after: String, $orderQuery: String) {
           }
         }
 
-        fulfillmentOrders(first: 3) {
+        fulfillmentOrders(first: 5) {
           nodes {
+            status
             deliveryMethod {
               methodType
               presentedName
             }
             assignedLocation {
               name
+              location { id name }
+            }
+            lineItems(first: 50) {
+              nodes {
+                remainingQuantity
+                totalQuantity
+                lineItem { id }
+              }
             }
           }
         }
@@ -504,6 +519,7 @@ export async function POST(req: Request) {
 
     const lineItems: ShopifyLineItem[] = [];
     const seenLineItemIds = new Set<string>();
+    const protectionToPersist: Parameters<typeof upsertPackageProtectionMatches>[0] = [];
 
     for (const e of edges) {
       const o = e.node;
@@ -540,7 +556,8 @@ export async function POST(req: Request) {
           title: node.title ?? null,
           isRemoved: Boolean(node.isRemoved),
         }));
-      const orderFulfillmentOrders = (o.fulfillmentOrders?.nodes ?? []).map((node: any) => ({
+      const foNodes = o.fulfillmentOrders?.nodes ?? [];
+      const orderFulfillmentOrders = foNodes.map((node: any) => ({
         deliveryMethod: node.deliveryMethod ?? null,
         assignedLocation: node.assignedLocation ?? null,
       }));
@@ -548,6 +565,9 @@ export async function POST(req: Request) {
         shippingLines: orderShippingLines,
         fulfillmentOrders: orderFulfillmentOrders,
       });
+      const foPhysicalByLine = includePhysicalStock
+        ? buildPhysicalStockFromFulfillmentOrders(foNodes)
+        : new Map();
 
       const liEdgesAll = o.lineItems?.edges ?? [];
       const liEdges = liEdgesAll.filter((liE: any) => lineFulfillableQuantity(liE?.node) > 0);
@@ -604,10 +624,12 @@ export async function POST(req: Request) {
         });
 
         const gtin = String(li?.variant?.barcode ?? "").trim() || null;
-        const physicalStock =
+        const mirrorPhysical =
           includePhysicalStock && gtin ? resolvePhysicalStockForGtin(gtin, physicalStockByGtin) : null;
+        const foPhysical = includePhysicalStock && li?.id ? foPhysicalByLine.get(li.id) ?? null : null;
+        const physicalStock = coalescePhysicalStock(mirrorPhysical, foPhysical);
 
-        lineItems.push({
+        const row = {
           shopifyOrderId: orderId,
           orderId,
           orderName,
@@ -645,9 +667,35 @@ export async function POST(req: Request) {
           isStorePickup: pickupInfo.isStorePickup,
           pickupLocation: pickupInfo.locationName,
           pickupLabel: pickupInfo.label,
-        });
+        };
+
+        // Persist for margin; never surface on matching UI.
+        if (isPackageProtectionShopifyLine(productName, li.sku ?? null)) {
+          protectionToPersist.push({
+            shopifyOrderId: orderId,
+            shopifyOrderName: orderName,
+            shopifyLineItemId: li.id,
+            shopifyProductTitle: productName,
+            shopifySku: li.sku ?? null,
+            shopifyTotalPrice: Number(totalPrice) || Number(lineDiscountedAmount) || 0,
+            shopifyCurrencyCode: orderCurrency,
+            shopifyCreatedAt: createdAt,
+            shopifyCustomerEmail: customerEmail,
+            shopifyCustomerFirstName: customerFirstName,
+            shopifyCustomerLastName: customerLastName,
+          });
+          continue;
+        }
+
+        lineItems.push(row);
       }
 
+    }
+
+    if (protectionToPersist.length > 0) {
+      await upsertPackageProtectionMatches(protectionToPersist).catch((err) => {
+        console.warn("[SHOPIFY] package protection upsert failed", err);
+      });
     }
 
     console.log(

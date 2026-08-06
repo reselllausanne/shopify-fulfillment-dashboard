@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
+import { upsertPackageProtectionMatches } from "@/shopify/protection/upsertPackageProtectionMatches";
 
 type ShopifyOrdersSyncData = {
   orders: {
@@ -24,6 +25,7 @@ type ShopifyOrdersSyncData = {
               sku: string | null;
               variantTitle: string | null;
               quantity: number;
+              discountedTotalSet?: { shopMoney: { amount: string; currencyCode: string } } | null;
             };
           }>;
         };
@@ -68,6 +70,12 @@ query OrdersForSync($first: Int!, $query: String!, $after: String) {
               sku
               variantTitle
               quantity
+              discountedTotalSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
             }
           }
         }
@@ -88,6 +96,10 @@ export type ShopifyOrderSyncResult = {
   skipped: number;
   errors: number;
   startDateIso: string;
+  packageProtection: {
+    considered: number;
+    upserted: number;
+  };
   inventory: {
     applied: number;
     alreadyProcessed: number;
@@ -120,6 +132,10 @@ export async function runShopifyOrdersSync(options?: {
     alreadyProcessed: 0,
     unresolved: 0,
     invalid: 0,
+  };
+  const packageProtection = {
+    considered: 0,
+    upserted: 0,
   };
 
   while (hasNextPage) {
@@ -187,9 +203,22 @@ export async function runShopifyOrdersSync(options?: {
         synced += 1;
 
         const lineEdges = order?.lineItems?.edges ?? [];
+        const protectionLines = [];
         for (const lineEdge of lineEdges) {
           const line = lineEdge?.node;
           if (!line?.id) continue;
+          const lineTotal = Number.parseFloat(line.discountedTotalSet?.shopMoney?.amount ?? "0");
+          const lineCurrency = line.discountedTotalSet?.shopMoney?.currencyCode || currencyCode;
+          protectionLines.push({
+            shopifyOrderId: order.id,
+            shopifyOrderName: order.name,
+            shopifyLineItemId: line.id,
+            shopifyProductTitle: line.title || "Package protection",
+            shopifySku: line.sku ?? null,
+            shopifyTotalPrice: Number.isFinite(lineTotal) ? lineTotal : 0,
+            shopifyCurrencyCode: lineCurrency,
+            shopifyCreatedAt: orderDate,
+          });
           const inventoryResult = await applyInventoryOrderLine({
             channel: "SHOPIFY",
             externalOrderId: order.id,
@@ -210,6 +239,9 @@ export async function runShopifyOrdersSync(options?: {
           else if (inventoryResult.reason === "unresolved_variant") inventory.unresolved += 1;
           else inventory.invalid += 1;
         }
+        const pp = await upsertPackageProtectionMatches(protectionLines);
+        packageProtection.considered += pp.considered;
+        packageProtection.upserted += pp.upserted;
       } catch (error) {
         errorsCount += 1;
         console.error("[SHOPIFY-SYNC] Failed order sync", {
@@ -230,6 +262,7 @@ export async function runShopifyOrdersSync(options?: {
     skipped,
     errors: errorsCount,
     startDateIso: iso,
+    packageProtection,
     inventory,
   };
 }

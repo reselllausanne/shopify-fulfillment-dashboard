@@ -157,9 +157,11 @@ export default function AdsSpendManager() {
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">📢 Manual ads spend</h2>
+          <h2 className="text-xl font-semibold text-gray-900">📢 Ads spend</h2>
           <p className="text-sm text-gray-500">
-            One row per day in the database. Pick a range or month, then add, edit, or delete entries.
+            One row per day. Google channel is filled automatically from the Google Ads API
+            (notes <code className="text-xs">google-ads-api</code>) and daily cron overwrites those
+            rows. Manual edits are temporary until the next sync.
           </p>
         </div>
         <button

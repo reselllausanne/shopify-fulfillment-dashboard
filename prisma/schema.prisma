@@ -2477,6 +2477,100 @@ model DecathlonOfferSync {
   @@schema("public")
 }
 
+/// Phase 1 Google Ads analytics POC — read-only ingestion of Google Ads history.
+/// Tables are snake_case (mapped) because they form an isolated analytics domain
+/// queried mostly through raw SQL; the rest of the schema stays PascalCase.
+model AdsSyncRun {
+  id         String    @id @default(uuid())
+  command    String
+  /// running | succeeded | failed
+  status     String    @default("running")
+  paramsJson Json?     @map("params_json")
+  statsJson  Json?     @map("stats_json")
+  error      String?
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([command, startedAt], map: "ads_sync_runs_command_started_at_idx")
+  @@index([status], map: "ads_sync_runs_status_idx")
+  @@map("ads_sync_runs")
+  @@schema("public")
+}
+
+/// Official campaign totals, one row per campaign per day.
+model AdsCampaignDaily {
+  id              String   @id @default(uuid())
+  date            DateTime @db.Date
+  campaignId      BigInt   @map("campaign_id")
+  campaignName    String   @default("") @map("campaign_name")
+  campaignStatus  String   @default("") @map("campaign_status")
+  channelType     String   @default("") @map("channel_type")
+  impressions     BigInt   @default(0)
+  clicks          BigInt   @default(0)
+  costMicros      BigInt   @default(0) @map("cost_micros")
+  conversions     Decimal  @default(0) @db.Decimal(18, 6)
+  conversionValue Decimal  @default(0) @map("conversion_value") @db.Decimal(18, 6)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([date, campaignId], map: "ads_campaign_daily_key")
+  @@index([campaignId, date], map: "ads_campaign_daily_campaign_id_date_idx")
+  @@map("ads_campaign_daily")
+  @@schema("public")
+}
+
+/// Product-level performance from shopping_performance_view.
+/// Every column of the canonical key is NOT NULL with an empty-string / zero
+/// default: in Postgres a NULL breaks unique-index matching, which would silently
+/// turn every upsert into an insert.
+model AdsProductDaily {
+  id           String   @id @default(uuid())
+  date         DateTime @db.Date
+  campaignId   BigInt   @map("campaign_id")
+  merchantId   BigInt   @default(0) @map("merchant_id")
+  feedLabel    String   @default("") @map("feed_label")
+  languageCode String   @default("") @map("language_code")
+  offerId      String   @default("") @map("offer_id")
+
+  campaignName String @default("") @map("campaign_name")
+  title        String @default("")
+  brand        String @default("")
+  productType  String @default("") @map("product_type")
+  customAttr0  String @default("") @map("custom_attr0")
+  customAttr1  String @default("") @map("custom_attr1")
+  customAttr2  String @default("") @map("custom_attr2")
+  customAttr3  String @default("") @map("custom_attr3")
+  customAttr4  String @default("") @map("custom_attr4")
+
+  impressions     BigInt  @default(0)
+  clicks          BigInt  @default(0)
+  costMicros      BigInt  @default(0) @map("cost_micros")
+  conversions     Decimal @default(0) @db.Decimal(18, 6)
+  conversionValue Decimal @default(0) @map("conversion_value") @db.Decimal(18, 6)
+
+  /// Filled only when offer_id parses as shopify_<country>_<productId>_<variantId>.
+  shopifyProductId BigInt? @map("shopify_product_id")
+  shopifyVariantId BigInt? @map("shopify_variant_id")
+
+  /// True when the API returned several rows for this key with diverging product
+  /// attributes (metrics were summed, attributes resolved deterministically).
+  attributeConflict Boolean @default(false) @map("attribute_conflict")
+
+  sourceRows Int      @default(1) @map("source_rows")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([date, campaignId, merchantId, feedLabel, languageCode, offerId], map: "ads_product_daily_key")
+  @@index([date], map: "ads_product_daily_date_idx")
+  @@index([campaignId, date], map: "ads_product_daily_campaign_id_date_idx")
+  @@index([offerId], map: "ads_product_daily_offer_id_idx")
+  @@index([shopifyProductId], map: "ads_product_daily_shopify_product_id_idx")
+  @@map("ads_product_daily")
+  @@schema("public")
+}
+
 model DecathlonImportRun {
   id               String                @id @default(uuid())
   runId            String                @unique

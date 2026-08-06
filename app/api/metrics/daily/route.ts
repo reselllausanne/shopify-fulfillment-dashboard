@@ -174,12 +174,12 @@ export async function GET(req: NextRequest) {
     };
 
     for (const m of matches) {
-      if (isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku)) {
-        continue;
-      }
-
+      const isProtection = isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku);
       const sellDateRaw = m.shopifyCreatedAt;
-      const cost = toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
+      // Package protection = digital add-on, 100% margin (cost forced to 0).
+      const cost = isProtection
+        ? 0
+        : toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
       const baseRevenue =
         toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
       const returnFeePercent = toNumberSafe(m.returnFeePercent, 0);
@@ -190,7 +190,7 @@ export async function GET(req: NextRequest) {
           )
         : 0;
       const revenue = m.returnReason ? returnFeeAmount : baseRevenue;
-      const returnedStockValue = toNumberSafe(m.returnedStockValueChf, 0);
+      const returnedStockValue = isProtection ? 0 : toNumberSafe(m.returnedStockValueChf, 0);
 
       if (!sellDateRaw) {
         ensureDay("missing_sell_date").missingSellDateCount += 1;
@@ -208,7 +208,8 @@ export async function GET(req: NextRequest) {
         day.ordersCount = set.size;
       }
 
-      if (!m.returnReason && (cost <= 0 || revenue <= 0)) {
+      // Protection with cost 0 is valid margin; other lines still need cost + revenue.
+      if (!isProtection && !m.returnReason && (cost <= 0 || revenue <= 0)) {
         day.missingCostCount += 1;
         continue;
       }

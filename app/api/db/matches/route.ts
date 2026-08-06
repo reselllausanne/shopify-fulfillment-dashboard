@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
+import { PACKAGE_PROTECTION_MATCH_TYPE } from "@/shopify/protection/upsertPackageProtectionMatches";
 
 export const dynamic = 'force-dynamic';
 
@@ -10,12 +12,14 @@ export const dynamic = 'force-dynamic';
  * Query params:
  *   - synced: "true" | "false" | undefined (filter by metafields sync status)
  *   - confidence: "high" | "medium" | "low" (filter by match confidence)
+ *   - includeProtection: "true" to include package-protection auto rows (hidden by default)
  */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = req.nextUrl;
     const syncedFilter = searchParams.get("synced");
     const confidenceFilter = searchParams.get("confidence");
+    const includeProtection = searchParams.get("includeProtection") === "true";
     const limitParam = searchParams.get("limit");
     const limit =
       limitParam != null && limitParam !== ""
@@ -34,6 +38,10 @@ export async function GET(req: NextRequest) {
       where.matchConfidence = confidenceFilter;
     }
 
+    if (!includeProtection) {
+      where.matchType = { not: PACKAGE_PROTECTION_MATCH_TYPE };
+    }
+
     console.log(`[DB] Fetching matches with filters:`, where);
 
     const matches = await prisma.orderMatch.findMany({
@@ -42,10 +50,17 @@ export async function GET(req: NextRequest) {
       ...(limit != null ? { take: limit } : {}),
     });
 
-    console.log(`[DB] Found ${matches.length} matches`);
+    // Belt-and-suspenders: hide any legacy protection rows without matchType set.
+    const visible = includeProtection
+      ? matches
+      : matches.filter(
+          (m) => !isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku)
+        );
+
+    console.log(`[DB] Found ${visible.length} matches`);
 
     // Parse matchReasons back to array
-    const parsedMatches = matches.map((match: (typeof matches)[number]) => ({
+    const parsedMatches = visible.map((match: (typeof matches)[number]) => ({
       ...match,
       matchReasons: match.matchReasons ? JSON.parse(match.matchReasons) : [],
     }));

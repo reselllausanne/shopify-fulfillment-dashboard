@@ -61,12 +61,8 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    const rows = matches
-      .filter(
-        (m: (typeof matches)[number]) =>
-          !isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku)
-      )
-      .map((m: (typeof matches)[number]) => {
+    const rows = matches.map((m: (typeof matches)[number]) => {
+      const isProtection = isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku);
       const baseRevenue =
         toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
       const returnFeePercent = toNumberSafe(m.returnFeePercent, 0);
@@ -77,7 +73,9 @@ export async function GET(req: NextRequest) {
           )
         : 0;
       const revenue = m.returnReason ? returnFeeAmount : baseRevenue;
-      const cost = toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
+      const cost = isProtection
+        ? 0
+        : toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
       const margin = revenue - cost;
 
       return {
