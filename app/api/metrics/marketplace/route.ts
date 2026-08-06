@@ -3,6 +3,11 @@ import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
 import { decathlonGrossLineAmount } from "@/decathlon/orders/margin";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
+import {
+  isNerDecathlonMarketplaceLine,
+  isNerGalaxusMarketplaceLine,
+  nerMarginFromCaChf,
+} from "@/galaxus/orders/nerMarketplaceMargin";
 import { isStockxMatchLinked } from "@/galaxus/stx/allocateGalaxusStxCost";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { toZonedTime } from "date-fns-tz";
@@ -92,7 +97,11 @@ export async function GET(request: NextRequest) {
           quantity: true,
           lineTotal: true,
           unitPrice: true,
-          order: { select: { orderDate: true } },
+          offerSku: true,
+          providerKey: true,
+          supplierSku: true,
+          partnerKey: true,
+          order: { select: { orderDate: true, partnerKey: true } },
           stockxMatch: {
             select: {
               stockxAmount: true,
@@ -119,6 +128,9 @@ export async function GET(request: NextRequest) {
           lineNetAmount: true,
           priceLineAmount: true,
           gtin: true,
+          supplierSku: true,
+          providerKey: true,
+          supplierPid: true,
           supplierVariantId: true,
           order: { select: { orderDate: true, galaxusOrderId: true } },
           stockxMatches: {
@@ -170,20 +182,32 @@ export async function GET(request: NextRequest) {
     };
 
     for (const line of decathlonLines) {
-      const match = line.stockxMatch;
-      if (!match || !isStockxMatchLinked(match)) continue;
-      const cost = toNumberSafe(match.stockxAmount, 0);
-      if (cost <= 0) continue;
       const grossLine = decathlonGrossLineAmount({
         lineTotal: line.lineTotal,
         unitPrice: line.unitPrice,
         quantity: line.quantity,
       });
       if (grossLine == null) continue;
-      const revenue = grossLine;
-      const margin = revenue - cost;
       const orderDate = line.order?.orderDate;
       if (!orderDate) continue;
+      const isNer = isNerDecathlonMarketplaceLine({
+        offerSku: line.offerSku,
+        providerKey: line.providerKey,
+        supplierSku: line.supplierSku,
+        partnerKey: line.partnerKey,
+        orderPartnerKey: line.order?.partnerKey,
+      });
+      let margin: number;
+      if (isNer) {
+        margin = nerMarginFromCaChf(grossLine);
+      } else {
+        const match = line.stockxMatch;
+        if (!match || !isStockxMatchLinked(match)) continue;
+        const cost = toNumberSafe(match.stockxAmount, 0);
+        if (cost <= 0) continue;
+        margin = grossLine - cost;
+      }
+      const revenue = grossLine;
 
       const dateKey = orderDate.toISOString().split("T")[0];
       const day = ensureDay(dateKey);
@@ -200,14 +224,19 @@ export async function GET(request: NextRequest) {
     }
 
     for (const line of galaxusLines) {
-      const cost = galaxusLineCostById.get(line.id) ?? 0;
-      if (cost <= 0) continue;
       const revenue = galaxusLineNetRevenueChf({
         lineNetAmount: line.lineNetAmount,
         priceLineAmount: line.priceLineAmount,
       });
       if (revenue == null) continue;
-      const margin = revenue - cost;
+      let margin: number;
+      if (isNerGalaxusMarketplaceLine(line)) {
+        margin = nerMarginFromCaChf(revenue);
+      } else {
+        const cost = galaxusLineCostById.get(line.id) ?? 0;
+        if (cost <= 0) continue;
+        margin = revenue - cost;
+      }
       const orderDate = line.order?.orderDate;
       if (!orderDate) continue;
 

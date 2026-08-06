@@ -14,7 +14,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { formatMoneyCHF, formatPercent } from "@/app/utils/numbers";
-import { getJson, postJson } from "@/app/lib/api";
+import { getJson } from "@/app/lib/api";
 
 interface DailyRow {
   date: string;
@@ -121,7 +121,6 @@ export default function DashboardPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState(30);
-  const [clearing, setClearing] = useState(false);
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [detailsByDate, setDetailsByDate] = useState<Record<string, DailyDetailRow[]>>({});
   const [detailsLoading, setDetailsLoading] = useState<Record<string, boolean>>({});
@@ -129,60 +128,6 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchMetrics();
   }, [range]);
-
-  const clearAllOrders = async () => {
-    // Double confirmation for safety
-    const confirmed = window.confirm(
-      "⚠️ WARNING: This will delete ALL Shopify orders and order matches!\n\n" +
-      "This action cannot be undone.\n\n" +
-      "This will clear:\n" +
-      "  • All synced Shopify orders\n" +
-      "  • All supplier order matches\n\n" +
-      "It will KEEP:\n" +
-      "  • Expenses\n" +
-      "  • Ads Spend\n" +
-      "  • Variable Costs\n\n" +
-      "Are you sure you want to continue?"
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    // Second confirmation
-    const doubleConfirm = window.confirm(
-      "⚠️ LAST CHANCE!\n\n" +
-      "You are about to delete all orders and matches.\n" +
-      "This is irreversible.\n\n" +
-      "Click OK to proceed, or Cancel to abort."
-    );
-
-    if (!doubleConfirm) {
-      return;
-    }
-
-    try {
-      setClearing(true);
-      const response = await postJson<any>("/api/db/clear-orders", {});
-      if (response.ok) {
-        const deleted = response.data?.deleted || {};
-        alert(
-          `✅ Database cleared!\n\n` +
-          `Deleted:\n` +
-          `  • ${deleted.shopifyOrders || 0} Shopify orders\n` +
-          `  • ${deleted.orderMatches || 0} order matches\n\n` +
-          `Next: Reload your data from the main matching flow.`
-        );
-        fetchMetrics(); // Refresh metrics (will show empty)
-      } else {
-        alert(`❌ Clear failed: ${response.data?.error || "Unknown error"}`);
-      }
-    } catch (err: any) {
-      alert(`❌ Error: ${err.message}`);
-    } finally {
-      setClearing(false);
-    }
-  };
 
   const fetchMetrics = async (opts?: { soft?: boolean }) => {
     const soft = Boolean(opts?.soft);
@@ -346,16 +291,8 @@ export default function DashboardPage() {
             </button>
           ))}
           <button
-            onClick={clearAllOrders}
-            disabled={clearing}
-            className="ml-auto px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Clear all Shopify orders and order matches (keeps expenses, ads spend, etc.)"
-          >
-            {clearing ? "⏳ Clearing..." : "🗑️ Clear All Orders"}
-          </button>
-          <button
             onClick={() => fetchMetrics()}
-            className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 font-medium"
+            className="ml-auto px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 font-medium"
           >
             🔄 Refresh Metrics
           </button>
