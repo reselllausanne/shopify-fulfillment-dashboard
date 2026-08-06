@@ -4,6 +4,7 @@ import {
   GALAXUS_DELR_SHIP_OVER_CHF,
   GALAXUS_DELR_SHIP_UNDER_CHF,
   galaxusDelrFeeBreakdown,
+  isNerGalaxusDelrShipment,
 } from "@/galaxus/warehouse/delrFulfillmentExpenses";
 
 describe("galaxusDelrFeeBreakdown", () => {
@@ -26,5 +27,37 @@ describe("galaxusDelrFeeBreakdown", () => {
       totalChf: 14,
       tier: "over",
     });
+  });
+});
+
+describe("isNerGalaxusDelrShipment", () => {
+  it("detects shipment.providerKey NER", () => {
+    expect(isNerGalaxusDelrShipment({ providerKey: "NER" })).toBe(true);
+    expect(isNerGalaxusDelrShipment({ providerKey: "ner" })).toBe(true);
+    expect(isNerGalaxusDelrShipment({ providerKey: "STX" })).toBe(false);
+  });
+
+  it("detects pure NER_STOCK items via supplierPid", () => {
+    expect(
+      isNerGalaxusDelrShipment({
+        providerKey: null,
+        items: [{ supplierPid: "NER_1234567890123" }, { supplierPid: "NER_999" }],
+      })
+    ).toBe(true);
+  });
+
+  it("does not treat maison/STX parcels as NER", () => {
+    expect(
+      isNerGalaxusDelrShipment({
+        providerKey: null,
+        items: [{ supplierPid: "THE_123" }, { supplierPid: "STX_456" }],
+      })
+    ).toBe(false);
+    expect(
+      isNerGalaxusDelrShipment({
+        providerKey: null,
+        items: [{ supplierPid: "NER_1" }, { supplierPid: "STX_2" }],
+      })
+    ).toBe(false);
   });
 });

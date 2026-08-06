@@ -556,6 +556,7 @@ export async function uploadDelrForShipment(
     });
 
     // Auto Business pack+ship cost per DELR (idempotent; recoverable via note marker).
+    // NER partner DELRs are skipped — partner fulfills those parcels.
     const delrUnits = dispatchItems.reduce(
       (sum, item) => sum + Math.max(0, Number(item?.quantity ?? 0)),
       0
@@ -567,6 +568,10 @@ export async function uploadDelrForShipment(
       dispatchNotificationId: shipment.dispatchNotificationId,
       delrFileName: dispatch.filename,
       shipmentLabel: shipment.shipmentId ?? shipment.id,
+      shipmentHint: {
+        providerKey: shipment.providerKey,
+        items: dispatchItems.map((it) => ({ supplierPid: it.supplierPid ?? null })),
+      },
     }).catch((err: any) => {
       console.error("[galaxus][delr] fulfillment expense upsert failed", {
         shipmentId: shipment.id,

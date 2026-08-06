@@ -1,6 +1,12 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { ALTERNATIVE_PARTNER_KEY } from "@/app/lib/alternativeProducts";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import {
+  galaxusLineWarehouseStockHint,
+  isNerWarehouseSupplierSku,
+} from "@/galaxus/warehouse/lineInventorySource";
 
 /** Packing always. Shipping tier by unit count in DELR. */
 export const GALAXUS_DELR_PACK_CHF = 4.5;
@@ -28,6 +34,48 @@ export function extractGalaxusDelrShipmentIdFromNote(note?: string | null): stri
   if (!note) return null;
   const m = note.match(/\[SYSTEM:GALAXUS_DELR_(?:PACK|SHIP):([^\]]+)\]/);
   return m?.[1] ?? null;
+}
+
+/**
+ * NER partner fulfillments — maison does not pack/ship these boxes.
+ * Detect via shipment.providerKey=NER, NER_ offer SKU, or all items NER_STOCK.
+ */
+export function isNerGalaxusDelrShipment(shipment: {
+  providerKey?: string | null;
+  items?: Array<{ supplierPid?: string | null }>;
+}): boolean {
+  const pk = normalizeProviderKey(shipment.providerKey ?? null);
+  if (pk === ALTERNATIVE_PARTNER_KEY) return true;
+  if (isNerWarehouseSupplierSku(shipment.providerKey)) return true;
+
+  const items = shipment.items ?? [];
+  if (items.length === 0) return false;
+
+  let known = 0;
+  let ner = 0;
+  for (const item of items) {
+    const pid = String(item.supplierPid ?? "").trim();
+    if (!pid) continue;
+    const hint = galaxusLineWarehouseStockHint({
+      supplierSku: pid,
+      providerKey: pid,
+      supplierPid: pid,
+    });
+    if (hint === "NER_STOCK" || isNerWarehouseSupplierSku(pid)) {
+      known += 1;
+      ner += 1;
+      continue;
+    }
+    if (hint === "MAISON" || hint === "GOLDEN") {
+      known += 1;
+      continue;
+    }
+    const itemPk = normalizeProviderKey(pid);
+    if (itemPk === "STX" || itemPk === "THE" || itemPk === "GLD" || itemPk === "TRM") {
+      known += 1;
+    }
+  }
+  return known > 0 && ner === known;
 }
 
 export function galaxusDelrShipAmountChf(unitCount: number): number {
@@ -81,9 +129,10 @@ export type UpsertGalaxusDelrFeesResult = {
   units: number;
   packChf: number;
   shipChf: number;
-  pack: "created" | "updated" | "unchanged";
-  ship: "created" | "updated" | "unchanged";
+  pack: "created" | "updated" | "unchanged" | "skipped";
+  ship: "created" | "updated" | "unchanged" | "skipped";
   eventDate: string;
+  skippedReason?: "ner";
 };
 
 async function upsertExpenseLine(args: {
@@ -186,6 +235,7 @@ async function upsertExpenseLine(args: {
 /**
  * Idempotent: one Business pack expense + one Business ship expense per uploaded DELR.
  * Recoverable year-end via note markers / ManualFinanceEvent sourceId.
+ * NER partner DELRs are skipped (and any prior auto rows removed).
  */
 export async function upsertGalaxusDelrFulfillmentExpenses(args: {
   shipmentDbId: string;
@@ -194,7 +244,37 @@ export async function upsertGalaxusDelrFulfillmentExpenses(args: {
   dispatchNotificationId?: string | null;
   delrFileName?: string | null;
   shipmentLabel?: string | null;
+  /** When already loaded (upload/sync path); otherwise fetched. */
+  shipmentHint?: {
+    providerKey?: string | null;
+    items?: Array<{ supplierPid?: string | null }>;
+  } | null;
 }): Promise<UpsertGalaxusDelrFeesResult> {
+  const shipment =
+    args.shipmentHint ??
+    (await prisma.shipment.findUnique({
+      where: { id: args.shipmentDbId },
+      select: {
+        providerKey: true,
+        items: { select: { supplierPid: true } },
+      },
+    }));
+
+  if (shipment && isNerGalaxusDelrShipment(shipment)) {
+    await removeGalaxusDelrFulfillmentExpenses(args.shipmentDbId);
+    const eventDate = toUtcDateOnly(args.delrSentAt ?? new Date());
+    return {
+      shipmentDbId: args.shipmentDbId,
+      units: Math.max(0, Math.floor(args.unitCount)),
+      packChf: 0,
+      shipChf: 0,
+      pack: "skipped",
+      ship: "skipped",
+      eventDate: eventDate.toISOString().slice(0, 10),
+      skippedReason: "ner",
+    };
+  }
+
   const breakdown = galaxusDelrFeeBreakdown(args.unitCount);
   const eventDate = toUtcDateOnly(args.delrSentAt ?? new Date());
   const [packCategoryId, shipCategoryId, accountId] = await Promise.all([
@@ -281,6 +361,7 @@ export async function syncGalaxusDelrFulfillmentExpensesForUploaded(options?: {
   created: number;
   updated: number;
   unchanged: number;
+  skippedNer: number;
   errors: Array<{ shipmentDbId: string; message: string }>;
 }> {
   const where: any = {
@@ -292,10 +373,11 @@ export async function syncGalaxusDelrFulfillmentExpensesForUploaded(options?: {
     select: {
       id: true,
       shipmentId: true,
+      providerKey: true,
       dispatchNotificationId: true,
       delrSentAt: true,
       delrFileName: true,
-      items: { select: { quantity: true } },
+      items: { select: { quantity: true, supplierPid: true } },
     },
     orderBy: [{ delrSentAt: "asc" }, { createdAt: "asc" }],
     take: options?.limit && options.limit > 0 ? options.limit : undefined,
@@ -304,6 +386,7 @@ export async function syncGalaxusDelrFulfillmentExpensesForUploaded(options?: {
   let created = 0;
   let updated = 0;
   let unchanged = 0;
+  let skippedNer = 0;
   const errors: Array<{ shipmentDbId: string; message: string }> = [];
 
   for (const s of shipments) {
@@ -316,7 +399,12 @@ export async function syncGalaxusDelrFulfillmentExpensesForUploaded(options?: {
         dispatchNotificationId: s.dispatchNotificationId,
         delrFileName: s.delrFileName,
         shipmentLabel: s.shipmentId,
+        shipmentHint: { providerKey: s.providerKey, items: s.items },
       });
+      if (res.skippedReason === "ner") {
+        skippedNer += 1;
+        continue;
+      }
       for (const st of [res.pack, res.ship]) {
         if (st === "created") created += 1;
         else if (st === "updated") updated += 1;
@@ -327,5 +415,72 @@ export async function syncGalaxusDelrFulfillmentExpensesForUploaded(options?: {
     }
   }
 
-  return { scanned: shipments.length, created, updated, unchanged, errors };
+  return { scanned: shipments.length, created, updated, unchanged, skippedNer, errors };
+}
+
+/** Delete auto pack/ship Business expenses that were wrongly created for NER DELRs. */
+export async function cleanupNerGalaxusDelrFulfillmentExpenses(): Promise<{
+  shipmentCount: number;
+  deletedExpenses: number;
+  deletedManualEvents: number;
+  amountChf: number;
+  shipmentIds: string[];
+}> {
+  const expenses = await prisma.personalExpense.findMany({
+    where: {
+      OR: [
+        { note: { contains: GALAXUS_DELR_PACK_MARKER_PREFIX } },
+        { note: { contains: GALAXUS_DELR_SHIP_MARKER_PREFIX } },
+      ],
+    },
+    select: { id: true, amount: true, note: true },
+  });
+
+  const shipmentIds = new Set<string>();
+  for (const row of expenses) {
+    const id = extractGalaxusDelrShipmentIdFromNote(row.note);
+    if (id) shipmentIds.add(id);
+  }
+
+  if (shipmentIds.size === 0) {
+    return {
+      shipmentCount: 0,
+      deletedExpenses: 0,
+      deletedManualEvents: 0,
+      amountChf: 0,
+      shipmentIds: [],
+    };
+  }
+
+  const shipments = await prisma.shipment.findMany({
+    where: { id: { in: Array.from(shipmentIds) } },
+    select: {
+      id: true,
+      providerKey: true,
+      items: { select: { supplierPid: true } },
+    },
+  });
+
+  const nerIds = shipments.filter((s) => isNerGalaxusDelrShipment(s)).map((s) => s.id);
+  // Orphan markers whose shipment is gone but note looked NER-tagged via supplierPid in note — skip;
+  // only delete for confirmed NER shipment rows.
+  let deletedExpenses = 0;
+  let deletedManualEvents = 0;
+  let amountChf = 0;
+
+  for (const shipmentDbId of nerIds) {
+    const before = expenses.filter((e) => extractGalaxusDelrShipmentIdFromNote(e.note) === shipmentDbId);
+    for (const e of before) amountChf += toNumberSafe(e.amount, 0);
+    const removed = await removeGalaxusDelrFulfillmentExpenses(shipmentDbId);
+    deletedExpenses += removed.deletedExpenses;
+    deletedManualEvents += removed.deletedManualEvents;
+  }
+
+  return {
+    shipmentCount: nerIds.length,
+    deletedExpenses,
+    deletedManualEvents,
+    amountChf: Number(amountChf.toFixed(2)),
+    shipmentIds: nerIds,
+  };
 }
