@@ -305,21 +305,25 @@ export async function GET(request: Request) {
         : manualLock && manualStock !== null
           ? manualStock
           : baseStock;
-    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+    const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
+    const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
+    const hasPhysicalStock = Boolean(mergePhysical && physical && physical.qty > 0);
+    const isStxPublishableByDelivery = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
       slug: productHandle || null,
       product: kickdbProduct,
       productName,
     });
+    // Physical stock must always stay sellable on Galaxus, even when STX lane
+    // is non-express/standard and would be delisted for dropship.
+    const isPublishableStx = isStxPublishableByDelivery || hasPhysicalStock;
     const dropshipDelisted = isStx && !isPublishableStx;
-    const dropshipStock = isStx && isPublishableStx
+    const dropshipStock = isStx && isStxPublishableByDelivery
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0
         : rawStock;
     let effectiveStock = dropshipStock;
     if (mergePhysical) {
-      const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
-      const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
       if (physical && physical.qty > 0) {
         const merged = mergePhysicalWithDropship({
           dropshipStock,

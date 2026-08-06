@@ -20,6 +20,12 @@ import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+  mergePhysicalWithDropship,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
+import {
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
@@ -364,6 +370,14 @@ export async function GET(request: Request) {
       .map((candidate: any) => candidate?.variant)
       .filter((variant: any) => Boolean(variant))
   );
+  const mergePhysical = isPhysicalMergeEnabled();
+  let physicalByGtin: PhysicalStockMap = new Map();
+  if (mergePhysical) {
+    const gtins = exportCandidates
+      .map((c: any) => String(c?.mapping?.gtin ?? "").trim())
+      .filter((g: string) => g.length > 0);
+    physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+  }
   for (const candidate of exportCandidates) {
     const mapping = candidate.mapping;
     const supplierVariant = candidate.variant as any;
@@ -398,16 +412,29 @@ export async function GET(request: Request) {
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
-    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+    const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
+    const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
+    const hasPhysicalStock = Boolean(mergePhysical && physical && physical.qty > 0);
+    const isStxPublishableByDelivery = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
       slug: product?.urlKey ?? null,
       product,
       productName: supplierVariant?.supplierProductName ?? product?.name ?? null,
     });
-    const effectiveStock = isStx && isPublishableStx
+    const dropshipDelisted = isStx && !(isStxPublishableByDelivery || hasPhysicalStock);
+    const dropshipStock = isStx && isStxPublishableByDelivery
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0
         : rawStock;
+    let effectiveStock = dropshipStock;
+    if (mergePhysical && physical && physical.qty > 0) {
+      const merged = mergePhysicalWithDropship({
+        dropshipStock,
+        physicalQty: physical.qty,
+        dropshipDelisted,
+      });
+      effectiveStock = merged.finalStock;
+    }
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) continue;
 
     const supplierName = sanitizeText(

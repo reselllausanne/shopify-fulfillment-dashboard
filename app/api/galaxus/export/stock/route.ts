@@ -318,13 +318,18 @@ export async function GET(request: Request) {
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
     const kickdbProduct = (candidate as any)?.product ?? (candidate as any)?.kickdbVariant?.product ?? null;
-    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+    const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
+    const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
+    const hasPhysicalStock = Boolean(mergePhysical && physical && physical.qty > 0);
+    const isStxPublishableByDelivery = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
       slug: kickdbProduct?.urlKey ?? null,
       product: kickdbProduct,
       productName: variant?.supplierProductName ?? kickdbProduct?.name ?? null,
     });
+    // Keep physical pairs live even when STX delivery lane is not publishable.
+    const isPublishableStx = isStxPublishableByDelivery || hasPhysicalStock;
     const dropshipDelisted = isStx && !isPublishableStx;
-    const dropshipStock = isStx && isPublishableStx
+    const dropshipStock = isStx && isStxPublishableByDelivery
       ? publishStxStockFromAsks(rawStock)
       : isStx
         ? 0
@@ -332,8 +337,6 @@ export async function GET(request: Request) {
 
     let stock = dropshipStock;
     if (mergePhysical) {
-      const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
-      const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
       if (physical && physical.qty > 0) {
         const merged = mergePhysicalWithDropship({
           dropshipStock,

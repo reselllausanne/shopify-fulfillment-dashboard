@@ -25,6 +25,12 @@ import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
 import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 import { parseSupplierKeyFromVariantId } from "@/galaxus/exports/supplierKey";
 import { attachAvailableStock } from "@/inventory/availableStock";
+import {
+  isPhysicalMergeEnabled,
+  loadPhysicalMirrorStockByGtin,
+  mergePhysicalWithDropship,
+  type PhysicalStockMap,
+} from "@/shopify/inventory/physicalAvailability";
 
 type ExportRow = Record<string, string>;
 
@@ -127,7 +133,9 @@ function pickTrait(traits: any, keys: string[]) {
 function buildMasterRowsFromCandidates(
   exportCandidates: FeedExportCandidate[],
   stockBySupplierVariantId: Map<string, number>,
-  includeWeight: boolean
+  includeWeight: boolean,
+  mergePhysical: boolean,
+  physicalByGtin: PhysicalStockMap
 ): ExportRow[] {
   const rows: ExportRow[] = [];
   for (const candidate of exportCandidates) {
@@ -160,17 +168,30 @@ function buildMasterRowsFromCandidates(
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(supplierVariant?.deliveryType ?? "");
-    const isPublishableStx = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
+    const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
+    const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
+    const hasPhysicalStock = Boolean(mergePhysical && physical && physical.qty > 0);
+    const isStxPublishableByDelivery = !isStx || isStxMarketplacePublishableDeliveryType(deliveryType, {
       slug: product?.urlKey ?? null,
       product,
       productName: supplierVariant?.supplierProductName ?? product?.name ?? null,
     });
-    const effectiveStock =
-      isStx && isPublishableStx
+    const dropshipDelisted = isStx && !(isStxPublishableByDelivery || hasPhysicalStock);
+    const dropshipStock =
+      isStx && isStxPublishableByDelivery
         ? publishStxStockFromAsks(rawStock)
         : isStx
           ? 0
           : rawStock;
+    let effectiveStock = dropshipStock;
+    if (mergePhysical && physical && physical.qty > 0) {
+      const merged = mergePhysicalWithDropship({
+        dropshipStock,
+        physicalQty: physical.qty,
+        dropshipDelisted,
+      });
+      effectiveStock = merged.finalStock;
+    }
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) continue;
 
     const images = pickGalaxusProductImageList(supplierVariant ?? {});
@@ -354,11 +375,21 @@ export async function buildMasterSpecsFeedExport(params: {
   const stockBySupplierVariantId = await attachAvailableStock(
     loaded.masterExportCandidates.map((candidate) => candidate.variant).filter(Boolean)
   );
+  const mergePhysical = isPhysicalMergeEnabled();
+  let physicalByGtin: PhysicalStockMap = new Map();
+  if (mergePhysical) {
+    const gtins = loaded.masterExportCandidates
+      .map((candidate) => String(candidate?.mapping?.gtin ?? "").trim())
+      .filter((g) => g.length > 0);
+    physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
+  }
 
   let masterRows = buildMasterRowsFromCandidates(
     loaded.masterExportCandidates,
     stockBySupplierVariantId,
-    includeWeight
+    includeWeight,
+    mergePhysical,
+    physicalByGtin
   );
   let specsRows = buildSpecsRowsFromCandidates(loaded.specsExportCandidates);
 
