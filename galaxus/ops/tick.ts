@@ -10,6 +10,7 @@ import { startGldRefreshAsync } from "@/galaxus/ops/gldRefreshPush";
 import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";
+import { recoverPhysicalStockForGalaxus } from "@/galaxus/jobs/physicalStockRecovery";
 
 type TickJobResult = {
   due: boolean;
@@ -71,7 +72,14 @@ export type OpsTickOptions = {
 
 async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTickOptions) {
   if (jobKey === "partner-stock-sync") {
-    return runOpsJob(jobKey, async () => runPartnerSyncAll(tickOptions?.partnerKey));
+    return runOpsJob(jobKey, async () => {
+      const partnerSync = await runPartnerSyncAll(tickOptions?.partnerKey);
+      const physicalRecovery = await recoverPhysicalStockForGalaxus({
+        dryRun: false,
+        triggerFeedPush: true,
+      });
+      return { partnerSync, physicalRecovery };
+    });
   }
   if (jobKey === "stx-refresh") {
     const mode = tickOptions?.stxRefreshMode === "full" ? "full" : "price";
