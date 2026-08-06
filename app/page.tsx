@@ -1132,13 +1132,67 @@ export default function Home() {
       
       const modeText = isEditMode ? "updated" : "saved";
       const changedCount = isEditMode ? (saveData as any).__changedFieldsCount || 0 : 0;
+      const savedSupplierNumber = String(
+        saveData.stockxOrderNumber || data.stockxOrderNumber || ""
+      );
+      const savedLineItemId = String(data.shopifyLineItemId || "");
+      if (savedLineItemId) {
+        setMatchResults((prev) =>
+          prev.map((r) => {
+            if (r.shopifyItem.lineItemId !== savedLineItemId) return r;
+            const supplierOrder = r.bestMatch?.supplierOrder;
+            return {
+              ...r,
+              alreadySaved: true,
+              bestMatch: {
+                supplierOrder: supplierOrder
+                  ? {
+                      ...supplierOrder,
+                      supplierOrderNumber:
+                        savedSupplierNumber || supplierOrder.supplierOrderNumber,
+                      totalTTC: supplierCost,
+                      offerAmount: supplierCost,
+                    }
+                  : {
+                      chainId: "",
+                      orderId: savedSupplierNumber,
+                      supplierOrderNumber: savedSupplierNumber || `MANUAL-${Date.now()}`,
+                      supplierSource: "STOCKX" as const,
+                      purchaseDate: r.shopifyItem.createdAt,
+                      offerAmount: supplierCost,
+                      totalTTC: supplierCost,
+                      productTitle: r.shopifyItem.title,
+                      skuKey: r.shopifyItem.sku || "",
+                      sizeEU: r.shopifyItem.sizeEU,
+                      statusKey: "SAVED",
+                      statusTitle: "Saved match",
+                      currencyCode: r.shopifyItem.currencyCode || "CHF",
+                    },
+                score: 1000,
+                confidence: "high" as const,
+                reasons: ["✓ Already saved in DB", "manual"],
+                timeDiffHours: 0,
+                overThreshold: true,
+              },
+              allCandidates: r.allCandidates,
+            };
+          })
+        );
+        if (savedSupplierNumber) {
+          setConfirmedMatches((prev) => ({
+            ...prev,
+            [savedLineItemId]: savedSupplierNumber,
+          }));
+        }
+      }
       alert(
         `✅ Manual entry ${modeText}!\n\n` +
         `Order: ${data.shopifyOrderName}\n` +
-        `Supplier Order: ${saveData.stockxOrderNumber || data.stockxOrderNumber}\n` +
+        `Supplier Order: ${savedSupplierNumber}\n` +
         `Cost: CHF ${supplierCost.toFixed(2)}\n` +
         `Margin: CHF ${marginAmount.toFixed(2)} (${marginPercent.toFixed(1)}%)\n\n` +
-        (isEditMode && changedCount > 0 ? `${changedCount} field(s) modified` : "")
+        (isEditMode && changedCount > 0 ? `${changedCount} field(s) modified\n` : "") +
+        `Stays green on reload until fulfilled.`
       );
       
       // Close modal and reload

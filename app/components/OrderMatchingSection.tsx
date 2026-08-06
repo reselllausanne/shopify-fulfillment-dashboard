@@ -53,7 +53,10 @@ export default function OrderMatchingSection({
   openManualEntryModal,
 }: Props) {
   const highMatchableCount = matchResults.filter(
-    (r) => r.bestMatch?.confidence === "high" && !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
+    (r) =>
+      r.bestMatch?.confidence === "high" &&
+      !r.alreadySaved &&
+      !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
   ).length;
 
   return (
@@ -102,6 +105,7 @@ export default function OrderMatchingSection({
           {matchResults.map((result: MatchResult, idx: number) => {
             const shopify = result.shopifyItem;
             const match = result.bestMatch;
+            const alreadySaved = Boolean(result.alreadySaved);
             const isLocalStockMatch = isLocalStockSupplierOrder(match?.supplierOrder);
             const localStockLot = match?.supplierOrder.localStockLot ?? null;
             const isRefunded = isShopifyFinancialRefunded(shopify.displayFinancialStatus);
@@ -139,6 +143,8 @@ export default function OrderMatchingSection({
                     ? "border-red-600 bg-red-50 ring-2 ring-red-400"
                     : fraudTone === "warn"
                     ? "border-amber-400 bg-amber-50 ring-1 ring-amber-200"
+                    : alreadySaved
+                    ? "border-green-500 bg-green-50 ring-2 ring-green-300"
                     : isLocalStockMatch
                     ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200"
                     : isInStockEssential
@@ -159,6 +165,11 @@ export default function OrderMatchingSection({
                     <div className="flex flex-wrap items-center gap-2 mb-2">
                       <h3 className="font-semibold text-sm text-gray-700">📦 Shopify Order: {shopify.orderName}</h3>
                       <PhysicalStockBadge physicalStock={physicalStockDisplay} />
+                      {alreadySaved ? (
+                        <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-green-700 text-white shrink-0">
+                          Saved · wait fulfill
+                        </span>
+                      ) : null}
                       {isLocalStockMatch ? (
                         <span className="inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-emerald-700 text-white shrink-0">
                           Local stock
@@ -474,10 +485,16 @@ export default function OrderMatchingSection({
                             className={`w-full px-3 py-2 text-sm font-medium rounded ${
                               isRefunded
                                 ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+                                : alreadySaved
+                                ? "bg-green-700 text-white hover:bg-green-800"
                                 : "bg-purple-600 text-white hover:bg-purple-700"
                             }`}
                           >
-                            {isLocalStockMatch ? "🏬 Save Local Stock Match" : "📝 Set Metafields on Shopify"}
+                            {alreadySaved
+                              ? "✓ Saved — re-save if needed"
+                              : isLocalStockMatch
+                              ? "🏬 Save Local Stock Match"
+                              : "📝 Set Metafields on Shopify"}
                           </button>
                           <button
                             onClick={() => openManualEntryModal(shopify)}

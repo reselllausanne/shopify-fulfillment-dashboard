@@ -1,10 +1,12 @@
 import { useState } from "react";
 import {
   matchShopifyToSupplier,
+  matchResultFromDbSaved,
   isLocalStockSupplierOrder,
   type NormalizedSupplierOrder,
   type ShopifyLineItem,
   type MatchResult,
+  type DbSavedMatchRow,
   resolveInStockEssential,
   isShopifyFinancialRefunded,
 } from "@/app/utils/matching";
@@ -155,6 +157,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     const highMatches = results.filter(
       (r) =>
         r.bestMatch?.confidence === "high" &&
+        !r.alreadySaved &&
         !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
     );
 
@@ -306,6 +309,20 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     return { successCount, failCount, total: highMatches.length };
   };
 
+  const loadDbSavedMatchesByLineId = async (): Promise<Map<string, DbSavedMatchRow>> => {
+    const out = new Map<string, DbSavedMatchRow>();
+    try {
+      const dbRes = await getJson<{ matches?: DbSavedMatchRow[] }>("/api/db/matches");
+      if (!dbRes.ok) return out;
+      for (const row of dbRes.data?.matches ?? []) {
+        if (row?.shopifyLineItemId) out.set(row.shopifyLineItemId, row);
+      }
+    } catch (err) {
+      console.warn("Error fetching DB matches", err);
+    }
+    return out;
+  };
+
   const runMatching = async (items: ShopifyLineItem[]): Promise<MatchResult[]> => {
     setShopifyItems(items);
 
@@ -361,34 +378,37 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     const withSupplierCostB = normalizedSupplier.filter((o) => o.totalTTC !== null).length;
     console.log(`[MATCHING] ${withSupplierCostB}/${normalizedSupplier.length} orders have totalTTC (Query B supplier cost)`);
 
-    // 🔒 Filter out already matched supplier orders (DB)
-    let availableSupplier = normalizedSupplier;
-    try {
-      const dbRes = await getJson<any>("/api/db/matches");
-      if (dbRes.ok) {
-        const usedSupplierNumbers = new Set(dbRes.data?.matches?.map((m: any) => m.supplierOrderNumber));
-        availableSupplier = normalizedSupplier.filter((order) => !usedSupplierNumbers.has(order.supplierOrderNumber));
-        const filteredOut = normalizedSupplier.filter((order) => usedSupplierNumbers.has(order.supplierOrderNumber));
-        console.log(
-          `🔒 Filtered out ${filteredOut.length} already-matched Supplier orders:`,
-          filteredOut.map((o) => o.supplierOrderNumber).join(", ")
-        );
-      } else {
-        console.warn("Failed to fetch DB matches for filtering");
-      }
-    } catch (err) {
-      console.warn("Error fetching DB matches, proceeding without filtering", err);
+    const dbByLineId = await loadDbSavedMatchesByLineId();
+    const usedSupplierFromDb = new Set<string>();
+    for (const row of dbByLineId.values()) {
+      if (row.stockxOrderNumber) usedSupplierFromDb.add(row.stockxOrderNumber);
     }
+    const availableSupplier = normalizedSupplier.filter(
+      (order) => !usedSupplierFromDb.has(order.supplierOrderNumber)
+    );
+    console.log(
+      `🔒 Filtered out ${usedSupplierFromDb.size} already-matched Supplier orders; restoring ${dbByLineId.size} saved Shopify lines`
+    );
 
     // Enforce 1:1 matching across Shopify items (FIFO by order time)
-    const usedSupplierNumbers = new Set<string>();
+    const usedSupplierNumbers = new Set<string>(usedSupplierFromDb);
     const sortedItems = [...items].sort(
       (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
     const resultsById = new Map<string, MatchResult>();
     const localStockBySku = await loadAvailableLocalStockBySku(sortedItems);
+    let restoredCount = 0;
 
     for (const item of sortedItems) {
+      const saved = dbByLineId.get(item.lineItemId);
+      if (saved) {
+        const restored = matchResultFromDbSaved(item, saved);
+        resultsById.set(item.lineItemId, restored);
+        restoredCount += 1;
+        const matchedNumber = restored.bestMatch?.supplierOrder?.supplierOrderNumber;
+        if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+        continue;
+      }
       const localLot = takeLocalStockLot(localStockBySku, item.sku);
       const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers, localLot);
       const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
@@ -402,8 +422,27 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       allCandidates: [],
     });
 
+    const savedMeta: Record<string, { timestamp: string; supplierOrderNumber: string }> = {};
+    for (const r of results) {
+      if (!r.alreadySaved || !r.bestMatch) continue;
+      savedMeta[r.shopifyItem.lineItemId] = {
+        timestamp: new Date().toISOString(),
+        supplierOrderNumber: r.bestMatch.supplierOrder.supplierOrderNumber,
+      };
+    }
+    if (Object.keys(savedMeta).length) {
+      setMetafieldsSet((prev) => ({ ...prev, ...savedMeta }));
+      setConfirmedMatches((prev) => {
+        const next = { ...prev };
+        for (const [lineId, meta] of Object.entries(savedMeta)) {
+          next[lineId] = meta.supplierOrderNumber;
+        }
+        return next;
+      });
+    }
+
     setMatchResults(results);
-    console.log(`Matched ${results.length} Shopify items`);
+    console.log(`Matched ${results.length} Shopify items (restored ${restoredCount} from DB)`);
     return results;
   };
 
@@ -461,19 +500,16 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       };
     });
 
-    // Filter out already matched supplier orders (DB)
-    let availableSupplier = normalizedSupplier;
-    try {
-      const dbRes = await getJson<any>("/api/db/matches");
-      if (dbRes.ok) {
-        const usedSupplierNumbers = new Set(dbRes.data?.matches?.map((m: any) => m.supplierOrderNumber));
-        availableSupplier = normalizedSupplier.filter((order) => !usedSupplierNumbers.has(order.supplierOrderNumber));
-      }
-    } catch (err) {
-      console.warn("Error fetching DB matches, proceeding without filtering", err);
+    const dbByLineId = await loadDbSavedMatchesByLineId();
+    const usedSupplierFromDb = new Set<string>();
+    for (const row of dbByLineId.values()) {
+      if (row.stockxOrderNumber) usedSupplierFromDb.add(row.stockxOrderNumber);
     }
+    const availableSupplier = normalizedSupplier.filter(
+      (order) => !usedSupplierFromDb.has(order.supplierOrderNumber)
+    );
 
-    const usedSupplierNumbers = new Set<string>();
+    const usedSupplierNumbers = new Set<string>(usedSupplierFromDb);
     for (const result of matchResults) {
       const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
       if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
@@ -482,6 +518,13 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     reserveExistingLocalMatches(localStockBySku, matchResults);
 
     const newMatchResults = fetchedLineItems.map((item) => {
+      const saved = dbByLineId.get(item.lineItemId);
+      if (saved) {
+        const restored = matchResultFromDbSaved(item, saved);
+        const matchedNumber = restored.bestMatch?.supplierOrder?.supplierOrderNumber;
+        if (matchedNumber) usedSupplierNumbers.add(matchedNumber);
+        return restored;
+      }
       const localLot = takeLocalStockLot(localStockBySku, item.sku);
       const result = matchShopifyToSupplier(item, availableSupplier, usedSupplierNumbers, localLot);
       const matchedNumber = result.bestMatch?.supplierOrder?.supplierOrderNumber;
@@ -500,6 +543,25 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       const uniqueNew = newMatchResults.filter((r) => !existingIds.has(r.shopifyItem.lineItemId));
       return uniqueNew.length ? [...prev, ...uniqueNew] : prev;
     });
+
+    const savedMeta: Record<string, { timestamp: string; supplierOrderNumber: string }> = {};
+    for (const r of newMatchResults) {
+      if (!r.alreadySaved || !r.bestMatch) continue;
+      savedMeta[r.shopifyItem.lineItemId] = {
+        timestamp: new Date().toISOString(),
+        supplierOrderNumber: r.bestMatch.supplierOrder.supplierOrderNumber,
+      };
+    }
+    if (Object.keys(savedMeta).length) {
+      setMetafieldsSet((prev) => ({ ...prev, ...savedMeta }));
+      setConfirmedMatches((prev) => {
+        const next = { ...prev };
+        for (const [lineId, meta] of Object.entries(savedMeta)) {
+          next[lineId] = meta.supplierOrderNumber;
+        }
+        return next;
+      });
+    }
   };
 
   const markExchangeReturnedLines = async (
@@ -1343,13 +1405,38 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
             shopifyMetafieldsSynced: true,
             syncTracking: true,
           });
+
+          setMetafieldsSet((prev) => ({
+            ...prev,
+            [lineItemId]: { timestamp: new Date().toISOString(), supplierOrderNumber },
+          }));
+          setConfirmedMatches((prev) => ({ ...prev, [lineItemId]: supplierOrderNumber }));
+          setMatchResults((prev) =>
+            prev.map((r) => {
+              if (r.shopifyItem.lineItemId !== lineItemId) return r;
+              return {
+                ...r,
+                alreadySaved: true,
+                bestMatch: r.bestMatch
+                  ? {
+                      ...r.bestMatch,
+                      confidence: "high",
+                      score: Math.max(r.bestMatch.score, 1000),
+                      reasons: ["✓ Already saved in DB", ...(r.bestMatch.reasons || [])],
+                      overThreshold: true,
+                    }
+                  : r.bestMatch,
+              };
+            })
+          );
         } catch (dbError) {
           console.error("[METAFIELDS] Database save error:", dbError);
         }
 
         alert(
           `✅ Match saved to database.\n\n` +
-            `${shopifyItem.orderName} → ${supplierOrderNumber}`
+            `${shopifyItem.orderName} → ${supplierOrderNumber}\n\n` +
+            `Stays green on reload until fulfilled.`
         );
       } catch (error: any) {
         console.error("[MATCH] Error:", error);

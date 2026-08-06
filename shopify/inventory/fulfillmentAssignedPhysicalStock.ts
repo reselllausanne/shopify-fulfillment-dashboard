@@ -76,6 +76,29 @@ function resolvePhysicalLocation(
   return hit ? { id: hit.id, name: hit.name } : null;
 }
 
+/**
+ * When FO lineItems are missing from the GraphQL payload, still surface the
+ * assigned physical location for every line on that order.
+ */
+export function firstPhysicalFulfillmentStock(
+  fulfillmentOrders: FoNode[] | null | undefined
+): OrderLinePhysicalStock | null {
+  for (const fo of fulfillmentOrders ?? []) {
+    const status = String(fo.status ?? "").toUpperCase();
+    if (status && status !== "OPEN" && status !== "IN_PROGRESS" && status !== "SCHEDULED") {
+      continue;
+    }
+    const locationId = String(fo.assignedLocation?.location?.id ?? "").trim();
+    const locationName = String(
+      fo.assignedLocation?.location?.name ?? fo.assignedLocation?.name ?? ""
+    ).trim();
+    const physical = resolvePhysicalLocation(locationId, locationName);
+    if (!physical) continue;
+    return { qty: 1, locationName: physical.name, locationId: physical.id };
+  }
+  return null;
+}
+
 /** Mirror available stock wins; else fall back to FO-assigned physical location. */
 export function coalescePhysicalStock(
   mirror: OrderLinePhysicalStock | null | undefined,

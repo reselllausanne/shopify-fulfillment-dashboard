@@ -111,6 +111,85 @@ export interface MatchResult {
   shopifyItem: ShopifyLineItem;
   bestMatch: MatchCandidate | null;
   allCandidates: MatchCandidate[];
+  /** OrderMatch already in DB — keep green on reload until Shopify fulfills. */
+  alreadySaved?: boolean;
+}
+
+/** Minimal DB row shape used to restore a saved match into the matching UI. */
+export type DbSavedMatchRow = {
+  shopifyLineItemId: string;
+  stockxOrderNumber?: string | null;
+  stockxChainId?: string | null;
+  stockxOrderId?: string | null;
+  stockxProductName?: string | null;
+  stockxSkuKey?: string | null;
+  stockxSizeEU?: string | null;
+  stockxStatus?: string | null;
+  stockxAwb?: string | null;
+  stockxTrackingUrl?: string | null;
+  stockxPurchaseDate?: string | Date | null;
+  shopifyCreatedAt?: string | Date | null;
+  supplierSource?: "STOCKX" | "MANUAL" | "LOCAL" | "OTHER" | null;
+  supplierCost?: number | string | null;
+  manualCostOverride?: number | string | null;
+  matchType?: string | null;
+  timeDiffHours?: number | string | null;
+};
+
+function toIsoOrNull(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+
+function toNumberOrNull(value: number | string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Rebuild MatchResult from an existing OrderMatch so reload stays green until fulfilled. */
+export function matchResultFromDbSaved(
+  shopifyItem: ShopifyLineItem,
+  row: DbSavedMatchRow
+): MatchResult {
+  const cost =
+    toNumberOrNull(row.manualCostOverride) ?? toNumberOrNull(row.supplierCost) ?? 0;
+  const purchaseDate =
+    toIsoOrNull(row.stockxPurchaseDate) ||
+    toIsoOrNull(row.shopifyCreatedAt) ||
+    shopifyItem.createdAt;
+  const supplierOrder: NormalizedSupplierOrder = {
+    chainId: row.stockxChainId || "",
+    orderId: row.stockxOrderId || row.stockxOrderNumber || "",
+    supplierOrderNumber: row.stockxOrderNumber || `SAVED-${shopifyItem.lineItemId}`,
+    supplierSource: row.supplierSource || "STOCKX",
+    purchaseDate,
+    offerAmount: cost,
+    totalTTC: cost,
+    productTitle: row.stockxProductName || shopifyItem.title,
+    skuKey: row.stockxSkuKey || shopifyItem.sku || "",
+    sizeEU: row.stockxSizeEU || shopifyItem.sizeEU || null,
+    statusKey: row.stockxStatus || "SAVED",
+    statusTitle: "Saved match",
+    currencyCode: shopifyItem.currencyCode || "CHF",
+    awb: row.stockxAwb ?? null,
+    trackingUrl: row.stockxTrackingUrl ?? null,
+  };
+  const bestMatch: MatchCandidate = {
+    supplierOrder,
+    score: 1000,
+    confidence: "high",
+    reasons: ["✓ Already saved in DB", row.matchType || "manual"],
+    timeDiffHours: toNumberOrNull(row.timeDiffHours) ?? 0,
+    overThreshold: true,
+  };
+  return {
+    shopifyItem,
+    bestMatch,
+    allCandidates: [bestMatch],
+    alreadySaved: true,
+  };
 }
 
 const THRESHOLD_HOURS = 96; // 4 days (default)
