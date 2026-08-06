@@ -492,18 +492,21 @@ async function fetchShopifyFulfilledOrdersSince(since: Date): Promise<ShopifyFul
     }
   `;
 
+  type OrdersPage = {
+    orders: {
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      edges: Array<{ node: ShopifyFulfilledOrderNode }>;
+    };
+  };
+
   for (const q of queries) {
     let cursor: string | null = null;
     for (let page = 0; page < 80; page += 1) {
-      const { data, errors } = await shopifyGraphQL<{
-        orders: {
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          edges: Array<{ node: ShopifyFulfilledOrderNode }>;
-        };
-      }>(gql, { q, cursor });
-      if (errors?.length) {
+      const result = await shopifyGraphQL<OrdersPage>(gql, { q, cursor });
+      const data: OrdersPage = result.data;
+      if (result.errors?.length) {
         throw new Error(
-          `Shopify fulfill-fee order query failed: ${errors.map((e) => e.message).join("; ")}`
+          `Shopify fulfill-fee order query failed: ${result.errors.map((e) => e.message).join("; ")}`
         );
       }
       for (const edge of data.orders.edges) {
