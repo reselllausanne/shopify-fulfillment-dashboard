@@ -3,9 +3,11 @@ import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
 import {
   isEssentialStockMatch,
+  isLocalStockMatch,
   isPackageProtectionShopifyLine,
 } from "@/app/utils/matching";
 import { isEssentialsProduct } from "@/shopify/inventory/essentialsProduct";
+import { getLocationConfig, PHYSICAL_LOCATIONS } from "@/shopify/inventory/locationConfig";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
 /** Flat fees per fulfilled Shopify order that has ≥1 shoe line. */
@@ -56,22 +58,80 @@ export type ShopifyFulfillLineHint = {
   shopifySizeEU?: string | null;
   stockxStatus?: string | null;
   stockxOrderNumber?: string | null;
+  supplierSource?: string | null;
+  matchType?: string | null;
+  matchReasons?: string | null;
+  /** True when FO / fulfillment location is Warehouse Bussigny / Antica / Lab / COLD BIEN. */
+  fulfilledFromPhysical?: boolean | null;
 };
+
+/** Manual "in stock" / shop refs saved on OrderMatch (FO may still say Website stock). */
+export function isShopifyManualInStockRef(line: {
+  stockxOrderNumber?: string | null;
+  stockxStatus?: string | null;
+  matchType?: string | null;
+  matchReasons?: string | null;
+}): boolean {
+  const hay = [
+    line.stockxOrderNumber,
+    line.stockxStatus,
+    line.matchType,
+    line.matchReasons,
+  ]
+    .map((v) => String(v ?? "").trim().toLowerCase())
+    .filter(Boolean)
+    .join(" | ");
+  if (!hay) return false;
+  if (/\bin\s*-?\s*stock\b/.test(hay) || hay.includes("instock")) return true;
+  if (/\b(bussigny|antica|cold\s*bien|the\s*lab|rare\s*bienne|warehouse)\b/.test(hay)) {
+    return true;
+  }
+  if (/\bphysical\s*stock\b/.test(hay) || /\blocal\s*stock\b/.test(hay)) return true;
+  return false;
+}
+
+export function isPhysicalShopifyLocation(
+  locationId?: string | null,
+  locationName?: string | null
+): boolean {
+  const id = String(locationId ?? "").trim();
+  if (id) {
+    const cfg = getLocationConfig(id);
+    if (cfg?.sourceType === "physical") return true;
+    if (cfg?.sourceType === "online") return false;
+  }
+  const name = String(locationName ?? "").trim().toLowerCase();
+  if (!name) return false;
+  return PHYSICAL_LOCATIONS.some(
+    (l) => name.includes(l.name.toLowerCase()) || l.name.toLowerCase().includes(name)
+  );
+}
 
 export function isShopifyEssentialsOrFixedInStockLine(line: ShopifyFulfillLineHint): boolean {
   if (isEssentialStockMatch(line)) return true;
   return isEssentialsProduct(line.shopifySku, line.shopifyProductTitle);
 }
 
+/** Warehouse / shop owned stock — no Post pack+fulfill fee (already on shelf). */
+export function isShopifyPhysicalInStockFulfillmentLine(line: ShopifyFulfillLineHint): boolean {
+  if (line.fulfilledFromPhysical === true) return true;
+  if (isLocalStockMatch(line)) return true;
+  if (isShopifyManualInStockRef(line)) return true;
+  if (isShopifyEssentialsOrFixedInStockLine(line)) return true;
+  return false;
+}
+
 /**
- * Shoe line that needs maison fulfill+ship cost.
- * Ignores package protection; excludes Essentials / fixed in-stock apparel lane; excludes clear non-shoe SKUs.
+ * Shoe product line (ignores protection / essentials / local / physical warehouse).
+ * Used for classifying "would be a shoe fee" before physical skip.
  */
-export function isShopifyShoeFulfillmentLine(line: ShopifyFulfillLineHint): boolean {
+export function isShopifyShoeProductLine(line: ShopifyFulfillLineHint): boolean {
   const title = String(line.shopifyProductTitle ?? "").trim();
   const sku = String(line.shopifySku ?? "").trim();
   if (isPackageProtectionShopifyLine(title, sku)) return false;
   if (isShopifyEssentialsOrFixedInStockLine(line)) return false;
+  if (isLocalStockMatch(line)) return false;
+  if (isShopifyManualInStockRef(line)) return false;
 
   const hay = `${title} ${sku}`;
   if (FOOTWEAR_RE.test(hay)) return true;
@@ -84,9 +144,40 @@ export function isShopifyShoeFulfillmentLine(line: ShopifyFulfillLineHint): bool
   return false;
 }
 
-/** One fee per order if ≥1 shoe line (after ignoring protection). */
+/**
+ * Dropship shoe that needs maison fulfill+ship cost (StockX / online location).
+ * Skips package protection, Essentials, LOCAL lots, and Bussigny/shop physical FO lines.
+ */
+export function isShopifyShoeFulfillmentLine(line: ShopifyFulfillLineHint): boolean {
+  if (!isShopifyShoeProductLine(line)) return false;
+  if (line.fulfilledFromPhysical === true) return false;
+  return true;
+}
+
+/** One fee per order if ≥1 dropship shoe line (not warehouse/shop in-stock). */
 export function orderNeedsShopifyFulfillmentFees(lines: ShopifyFulfillLineHint[]): boolean {
   return lines.some((line) => isShopifyShoeFulfillmentLine(line));
+}
+
+/** True when order has shoe product lines but all are physical/local/essentials. */
+export function orderIsPhysicalInStockShoeOnly(lines: ShopifyFulfillLineHint[]): boolean {
+  const productLines = lines.filter(
+    (l) => !isPackageProtectionShopifyLine(l.shopifyProductTitle, l.shopifySku)
+  );
+  const shoeProducts = productLines.filter((l) => {
+    // Re-check footwear without physical skip — include LOCAL/physical shoes.
+    const title = String(l.shopifyProductTitle ?? "").trim();
+    const sku = String(l.shopifySku ?? "").trim();
+    if (isPackageProtectionShopifyLine(title, sku)) return false;
+    if (isShopifyEssentialsOrFixedInStockLine(l)) return false;
+    const hay = `${title} ${sku}`;
+    if (FOOTWEAR_RE.test(hay)) return true;
+    const sizeEU = String(l.shopifySizeEU ?? "").trim();
+    const hasSize = Boolean(sizeEU) || SIZE_IN_TITLE_RE.test(title);
+    return hasSize && !NON_SHOE_RE.test(hay);
+  });
+  if (!shoeProducts.length) return false;
+  return shoeProducts.every((l) => isShopifyPhysicalInStockFulfillmentLine(l));
 }
 
 export function shopifyFulfillFeeBreakdown(): {
@@ -140,7 +231,12 @@ export type UpsertShopifyFulfillFeesResult = {
   ship: "created" | "updated" | "unchanged" | "skipped";
   fee: "created" | "updated" | "unchanged" | "skipped";
   eventDate: string;
-  skippedReason?: "no_shoe" | "cancelled" | "essentials_only" | "no_lines";
+  skippedReason?:
+    | "no_shoe"
+    | "cancelled"
+    | "essentials_only"
+    | "physical_stock_only"
+    | "no_lines";
 };
 
 async function upsertExpenseLine(args: {
@@ -289,6 +385,9 @@ export async function upsertShopifyFulfillmentExpenses(args: {
         shopifySizeEU: true,
         stockxStatus: true,
         stockxOrderNumber: true,
+        supplierSource: true,
+        matchType: true,
+        matchReasons: true,
       },
     });
   }
@@ -325,7 +424,19 @@ export async function upsertShopifyFulfillmentExpenses(args: {
     };
   }
 
-  if (!orderNeedsShopifyFulfillmentFees(lines)) {
+  // Warehouse Bussigny / Antica / Lab / COLD BIEN / LOCAL lot shoes — no Post fee.
+  if (orderIsPhysicalInStockShoeOnly(lines) || !orderNeedsShopifyFulfillmentFees(lines)) {
+    const physicalOnly = orderIsPhysicalInStockShoeOnly(lines);
+    const hasAnyShoeProduct = productLines.some((l) => {
+      const title = String(l.shopifyProductTitle ?? "").trim();
+      const sku = String(l.shopifySku ?? "").trim();
+      if (isPackageProtectionShopifyLine(title, sku)) return false;
+      if (isShopifyEssentialsOrFixedInStockLine(l)) return false;
+      const hay = `${title} ${sku}`;
+      if (FOOTWEAR_RE.test(hay)) return true;
+      const sizeEU = String(l.shopifySizeEU ?? "").trim();
+      return (Boolean(sizeEU) || SIZE_IN_TITLE_RE.test(title)) && !NON_SHOE_RE.test(hay);
+    });
     await removeShopifyFulfillmentExpenses(shopifyOrderId);
     return {
       shopifyOrderId,
@@ -334,7 +445,7 @@ export async function upsertShopifyFulfillmentExpenses(args: {
       ship: "skipped",
       fee: "skipped",
       eventDate: eventDateIso,
-      skippedReason: "no_shoe",
+      skippedReason: physicalOnly && hasAnyShoeProduct ? "physical_stock_only" : "no_shoe",
     };
   }
 
@@ -347,7 +458,7 @@ export async function upsertShopifyFulfillmentExpenses(args: {
 
   const orderLabel =
     String(args.shopifyOrderName ?? "").trim() || shopifyOrderId;
-  const common = `Shopify fulfill ${orderLabel} · shoe order · ship CHF ${breakdown.shipChf.toFixed(2)} + fee CHF ${breakdown.feeChf.toFixed(2)}`;
+  const common = `Shopify fulfill ${orderLabel} · dropship shoe · ship CHF ${breakdown.shipChf.toFixed(2)} + fee CHF ${breakdown.feeChf.toFixed(2)}`;
 
   const shipMarker = shopifyFulfillShipMarker(shopifyOrderId);
   const feeMarker = shopifyFulfillFeeMarker(shopifyOrderId);
@@ -420,6 +531,8 @@ type SyncOrderHint = {
   fulfilledAt: Date;
   cancelledAt?: Date | null;
   lineHints?: ShopifyFulfillLineHint[];
+  /** All Shopify fulfillments / FOs assigned to physical warehouse/shop locations. */
+  allFulfillmentsPhysical?: boolean;
   source: "awb_record" | "shopify_api";
 };
 
@@ -429,11 +542,80 @@ type ShopifyFulfilledOrderNode = {
   createdAt: string;
   cancelledAt: string | null;
   displayFulfillmentStatus: string | null;
-  fulfillments: Array<{ createdAt: string }>;
+  fulfillments: Array<{
+    createdAt: string;
+    location?: { id?: string | null; name?: string | null } | null;
+  }>;
+  fulfillmentOrders?: {
+    nodes?: Array<{
+      status?: string | null;
+      assignedLocation?: {
+        name?: string | null;
+        location?: { id?: string | null; name?: string | null } | null;
+      } | null;
+      lineItems?: {
+        nodes?: Array<{
+          lineItem?: { id?: string | null; title?: string | null; sku?: string | null } | null;
+        } | null> | null;
+      } | null;
+    } | null> | null;
+  } | null;
   lineItems: {
-    edges: Array<{ node: { title: string; sku: string | null } }>;
+    edges: Array<{
+      node: { id?: string | null; title: string; sku: string | null };
+    }>;
   };
 };
+
+function lineHintsFromShopifyNode(node: ShopifyFulfilledOrderNode): {
+  lineHints: ShopifyFulfillLineHint[];
+  allFulfillmentsPhysical: boolean;
+} {
+  const physicalByLineItemId = new Map<string, boolean>();
+  for (const fo of node.fulfillmentOrders?.nodes ?? []) {
+    const locId = String(fo?.assignedLocation?.location?.id ?? "").trim();
+    const locName = String(
+      fo?.assignedLocation?.location?.name ?? fo?.assignedLocation?.name ?? ""
+    ).trim();
+    const physical = isPhysicalShopifyLocation(locId, locName);
+    for (const li of fo?.lineItems?.nodes ?? []) {
+      const id = String(li?.lineItem?.id ?? "").trim();
+      if (!id) continue;
+      // Any physical FO assignment marks the line physical.
+      if (physical || !physicalByLineItemId.has(id)) {
+        physicalByLineItemId.set(id, physical);
+      }
+    }
+  }
+
+  const fulfillmentLocs = (node.fulfillments ?? [])
+    .map((f) => ({
+      id: String(f.location?.id ?? "").trim(),
+      name: String(f.location?.name ?? "").trim(),
+    }))
+    .filter((l) => l.id || l.name);
+  const allFulfillmentsPhysical =
+    fulfillmentLocs.length > 0 &&
+    fulfillmentLocs.every((l) => isPhysicalShopifyLocation(l.id, l.name));
+
+  // Order-level physical when all fulfillments are physical (no online dropship leg).
+  const orderLevelPhysical = allFulfillmentsPhysical;
+
+  const lineHints = (node.lineItems?.edges ?? []).map((e) => {
+    const id = String(e.node.id ?? "").trim();
+    const fromFo = id ? physicalByLineItemId.get(id) : undefined;
+    return {
+      shopifyProductTitle: e.node.title,
+      shopifySku: e.node.sku,
+      shopifySizeEU: null,
+      stockxStatus: null,
+      stockxOrderNumber: null,
+      fulfilledFromPhysical: fromFo === true || (fromFo == null && orderLevelPhysical),
+    };
+  });
+
+  return { lineHints, allFulfillmentsPhysical };
+}
 
 function isShopifyFulfilledStatus(status: string | null | undefined): boolean {
   const st = String(status ?? "").toUpperCase();
@@ -477,10 +659,36 @@ async function fetchShopifyFulfilledOrdersSince(since: Date): Promise<ShopifyFul
             displayFulfillmentStatus
             fulfillments(first: 10) {
               createdAt
+              location {
+                id
+                name
+              }
+            }
+            fulfillmentOrders(first: 10) {
+              nodes {
+                status
+                assignedLocation {
+                  name
+                  location {
+                    id
+                    name
+                  }
+                }
+                lineItems(first: 50) {
+                  nodes {
+                    lineItem {
+                      id
+                      title
+                      sku
+                    }
+                  }
+                }
+              }
             }
             lineItems(first: 50) {
               edges {
                 node {
+                  id
                   title
                   sku
                 }
@@ -543,15 +751,42 @@ function mergeSyncOrderHint(
   }
   const fulfilledAt =
     hint.fulfilledAt < prev.fulfilledAt ? hint.fulfilledAt : prev.fulfilledAt;
+  const prevHints = prev.lineHints ?? [];
+  const nextHints = hint.lineHints ?? [];
+  // Prefer richer hints (physical FO flags); merge physical=true onto matching titles.
+  let lineHints = prevHints.length ? prevHints : nextHints;
+  if (prevHints.length && nextHints.length) {
+    lineHints = prevHints.map((p) => {
+      const match = nextHints.find(
+        (n) =>
+          String(n.shopifyProductTitle ?? "") === String(p.shopifyProductTitle ?? "") &&
+          String(n.shopifySku ?? "") === String(p.shopifySku ?? "")
+      );
+      if (!match) return p;
+      return {
+        ...p,
+        fulfilledFromPhysical:
+          p.fulfilledFromPhysical === true || match.fulfilledFromPhysical === true
+            ? true
+            : p.fulfilledFromPhysical ?? match.fulfilledFromPhysical,
+      };
+    });
+  } else if (!prevHints.length && nextHints.length) {
+    lineHints = nextHints;
+  }
+
   byOrder.set(shopifyOrderId, {
     shopifyOrderName: hint.shopifyOrderName ?? prev.shopifyOrderName,
     fulfilledAt,
     cancelledAt: hint.cancelledAt ?? prev.cancelledAt ?? null,
-    lineHints: prev.lineHints?.length ? prev.lineHints : hint.lineHints,
+    lineHints,
+    allFulfillmentsPhysical:
+      Boolean(prev.allFulfillmentsPhysical) || Boolean(hint.allFulfillmentsPhysical),
     // Keep awb_record if either source was AWB (for stats); else shopify_api.
-    source: prev.source === "awb_record" || hint.source === "awb_record"
-      ? "awb_record"
-      : "shopify_api",
+    source:
+      prev.source === "awb_record" || hint.source === "awb_record"
+        ? "awb_record"
+        : "shopify_api",
   });
 }
 
@@ -566,6 +801,7 @@ export async function syncShopifyFulfillmentExpenses(options?: {
   skipped: number;
   skippedNoShoe: number;
   skippedEssentials: number;
+  skippedPhysicalStock: number;
   skippedCancelled: number;
   skippedNoLines: number;
   fromAwbRecords: number;
@@ -609,17 +845,13 @@ export async function syncShopifyFulfillmentExpenses(options?: {
     // Skip ancient fulfills that only appear because updated_at bumped (note/tag edit).
     // Keep if already in AWB set (merge dates) OR fulfillment itself is in window.
     if (fulfilledAt < since && !byOrder.has(node.id)) continue;
+    const { lineHints, allFulfillmentsPhysical } = lineHintsFromShopifyNode(node);
     mergeSyncOrderHint(byOrder, node.id, {
       shopifyOrderName: node.name,
       fulfilledAt,
       cancelledAt: node.cancelledAt ? new Date(node.cancelledAt) : null,
-      lineHints: (node.lineItems?.edges ?? []).map((e) => ({
-        shopifyProductTitle: e.node.title,
-        shopifySku: e.node.sku,
-        shopifySizeEU: null,
-        stockxStatus: null,
-        stockxOrderNumber: null,
-      })),
+      lineHints,
+      allFulfillmentsPhysical,
       source: "shopify_api",
     });
   }
@@ -640,6 +872,9 @@ export async function syncShopifyFulfillmentExpenses(options?: {
         shopifySizeEU: true,
         stockxStatus: true,
         stockxOrderNumber: true,
+        supplierSource: true,
+        matchType: true,
+        matchReasons: true,
       },
     }),
     prisma.shopifyOrder.findMany({
@@ -667,6 +902,7 @@ export async function syncShopifyFulfillmentExpenses(options?: {
   let skipped = 0;
   let skippedNoShoe = 0;
   let skippedEssentials = 0;
+  let skippedPhysicalStock = 0;
   let skippedCancelled = 0;
   let skippedNoLines = 0;
   let chargedOrders = 0;
@@ -680,8 +916,33 @@ export async function syncShopifyFulfillmentExpenses(options?: {
     try {
       const meta = orderMeta.get(shopifyOrderId);
       const dbLines = linesByOrder.get(shopifyOrderId);
-      // Prefer OrderMatch (has sizeEU / ESS status); fall back to Shopify line titles.
-      const lines = dbLines?.length ? dbLines : hint.lineHints ?? [];
+      const apiHints = hint.lineHints ?? [];
+      // Prefer OrderMatch (sizeEU / ESS / LOCAL) + stamp physical FO flags from Shopify.
+      let lines: ShopifyFulfillLineHint[] = dbLines?.length ? [...dbLines] : [...apiHints];
+      if (dbLines?.length && apiHints.length) {
+        lines = dbLines.map((m) => {
+          const hit = apiHints.find(
+            (h) =>
+              String(h.shopifyProductTitle ?? "") === String(m.shopifyProductTitle ?? "") &&
+              String(h.shopifySku ?? "") === String(m.shopifySku ?? "")
+          );
+          return {
+            ...m,
+            fulfilledFromPhysical:
+              hit?.fulfilledFromPhysical === true || hint.allFulfillmentsPhysical === true
+                ? true
+                : hit?.fulfilledFromPhysical ?? null,
+          };
+        });
+      } else if (!dbLines?.length && hint.allFulfillmentsPhysical) {
+        lines = apiHints.map((h) => ({ ...h, fulfilledFromPhysical: true }));
+      }
+
+      // Whole order fulfilled only from physical locations → never charge Post fees.
+      if (hint.allFulfillmentsPhysical) {
+        lines = lines.map((l) => ({ ...l, fulfilledFromPhysical: true }));
+      }
+
       const res = await upsertShopifyFulfillmentExpenses({
         shopifyOrderId,
         shopifyOrderName: hint.shopifyOrderName ?? meta?.orderName ?? null,
@@ -695,6 +956,7 @@ export async function syncShopifyFulfillmentExpenses(options?: {
         skipped += 1;
         if (res.skippedReason === "no_shoe") skippedNoShoe += 1;
         else if (res.skippedReason === "essentials_only") skippedEssentials += 1;
+        else if (res.skippedReason === "physical_stock_only") skippedPhysicalStock += 1;
         else if (res.skippedReason === "cancelled") skippedCancelled += 1;
         else if (res.skippedReason === "no_lines") skippedNoLines += 1;
         continue;
@@ -723,6 +985,7 @@ export async function syncShopifyFulfillmentExpenses(options?: {
     skipped,
     skippedNoShoe,
     skippedEssentials,
+    skippedPhysicalStock,
     skippedCancelled,
     skippedNoLines,
     fromAwbRecords,

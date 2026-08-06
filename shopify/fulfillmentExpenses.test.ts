@@ -4,7 +4,10 @@ import {
   SHOPIFY_FULFILL_SHIP_CHF,
   SHOPIFY_FULFILL_TOTAL_CHF,
   extractShopifyOrderIdFromFulfillExpenseNote,
+  isPhysicalShopifyLocation,
+  isShopifyManualInStockRef,
   isShopifyShoeFulfillmentLine,
+  orderIsPhysicalInStockShoeOnly,
   orderNeedsShopifyFulfillmentFees,
   shopifyFulfillFeeBreakdown,
   shopifyFulfillFeeMarker,
@@ -64,6 +67,40 @@ describe("isShopifyShoeFulfillmentLine", () => {
         stockxOrderNumber: "ESS-6573",
       })
     ).toBe(false);
+  });
+
+  it("skips LOCAL / physical warehouse FO / manual in-stock refs", () => {
+    expect(
+      isShopifyShoeFulfillmentLine({
+        shopifyProductTitle: "Nike Dunk Low Retro White Black - 42",
+        shopifySku: "DD1391-100-42",
+        shopifySizeEU: "42",
+        supplierSource: "LOCAL",
+        stockxStatus: "LOCAL_STOCK",
+        stockxOrderNumber: "LOCAL-abc",
+      })
+    ).toBe(false);
+    expect(
+      isShopifyShoeFulfillmentLine({
+        shopifyProductTitle: "adidas Samba OG White - 42",
+        shopifySku: "B75806-42",
+        shopifySizeEU: "42",
+        stockxStatus: "AC_SHIPPED",
+        stockxOrderNumber: "03-X",
+        fulfilledFromPhysical: true,
+      })
+    ).toBe(false);
+    expect(
+      isShopifyShoeFulfillmentLine({
+        shopifyProductTitle: "On Running Cloudtilt Black Ivory - 46",
+        shopifySizeEU: "46",
+        stockxStatus: "MANUAL",
+        stockxOrderNumber: "in stock ",
+        matchType: "MANUAL",
+        matchReasons: '["Manual entry"]',
+      })
+    ).toBe(false);
+    expect(isShopifyManualInStockRef({ stockxOrderNumber: "in stock " })).toBe(true);
   });
 
   it("skips LEGO / jersey / backpack", () => {
@@ -130,5 +167,45 @@ describe("orderNeedsShopifyFulfillmentFees", () => {
         },
       ])
     ).toBe(false);
+  });
+
+  it("skips physical-warehouse shoe-only orders", () => {
+    const lines = [
+      {
+        shopifyProductTitle: "Nike Dunk Low Retro White Black - 42",
+        shopifySku: "DD1391-100-42",
+        shopifySizeEU: "42",
+        fulfilledFromPhysical: true,
+      },
+    ];
+    expect(orderIsPhysicalInStockShoeOnly(lines)).toBe(true);
+    expect(orderNeedsShopifyFulfillmentFees(lines)).toBe(false);
+  });
+
+  it("still charges when dropship shoe + physical shoe mixed", () => {
+    expect(
+      orderNeedsShopifyFulfillmentFees([
+        {
+          shopifyProductTitle: "Nike Dunk Low Retro White Black - 42",
+          fulfilledFromPhysical: true,
+        },
+        {
+          shopifyProductTitle: "Nike Shox TL Light Army (Women's) - 38.5",
+          shopifySku: "AR3566-006-38.5",
+          shopifySizeEU: "EU 38.5",
+          stockxStatus: "AC_SHIPPED",
+          stockxOrderNumber: "03-X",
+          fulfilledFromPhysical: false,
+        },
+      ])
+    ).toBe(true);
+  });
+});
+
+describe("isPhysicalShopifyLocation", () => {
+  it("detects Bussigny / Lab by name", () => {
+    expect(isPhysicalShopifyLocation(null, "Warehouse Bussigny")).toBe(true);
+    expect(isPhysicalShopifyLocation(null, "THE LAB CONCEPT STORE")).toBe(true);
+    expect(isPhysicalShopifyLocation(null, "Chemin de Bas-de-Plan 6")).toBe(false);
   });
 });
