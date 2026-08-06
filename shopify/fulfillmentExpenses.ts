@@ -6,6 +6,7 @@ import {
   isPackageProtectionShopifyLine,
 } from "@/app/utils/matching";
 import { isEssentialsProduct } from "@/shopify/inventory/essentialsProduct";
+import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
 /** Flat fees per fulfilled Shopify order that has ≥1 shoe line. */
 export const SHOPIFY_FULFILL_SHIP_CHF = 6.5;
@@ -414,6 +415,143 @@ export async function removeShopifyFulfillmentExpenses(shopifyOrderId: string): 
   };
 }
 
+type SyncOrderHint = {
+  shopifyOrderName: string | null;
+  fulfilledAt: Date;
+  cancelledAt?: Date | null;
+  lineHints?: ShopifyFulfillLineHint[];
+  source: "awb_record" | "shopify_api";
+};
+
+type ShopifyFulfilledOrderNode = {
+  id: string;
+  name: string;
+  createdAt: string;
+  cancelledAt: string | null;
+  displayFulfillmentStatus: string | null;
+  fulfillments: Array<{ createdAt: string }>;
+  lineItems: {
+    edges: Array<{ node: { title: string; sku: string | null } }>;
+  };
+};
+
+function isShopifyFulfilledStatus(status: string | null | undefined): boolean {
+  const st = String(status ?? "").toUpperCase();
+  return st === "FULFILLED" || st === "PARTIAL" || st === "PARTIALLY_FULFILLED";
+}
+
+function earliestShopifyFulfillmentAt(node: ShopifyFulfilledOrderNode): Date | null {
+  const times = (node.fulfillments ?? [])
+    .map((f) => new Date(f.createdAt).getTime())
+    .filter((t) => Number.isFinite(t));
+  if (!times.length) return null;
+  return new Date(Math.min(...times));
+}
+
+/**
+ * Shopify Admin: paid/any orders created or updated since `since` that are fulfilled.
+ * Catches Swiss Post / manual fulfills that never wrote ShopifyFulfillmentRecord (AWB path).
+ */
+async function fetchShopifyFulfilledOrdersSince(since: Date): Promise<ShopifyFulfilledOrderNode[]> {
+  const sinceIso = since.toISOString();
+  const queries = [
+    `created_at:>=${sinceIso} status:any`,
+    // Late fulfills of older orders (non-AWB path) — updated when fulfillment posts.
+    `updated_at:>=${sinceIso} fulfillment_status:shipped status:any`,
+  ];
+
+  const byId = new Map<string, ShopifyFulfilledOrderNode>();
+  const gql = /* GraphQL */ `
+    query ShopifyFulfillFeeOrders($q: String!, $cursor: String) {
+      orders(first: 100, after: $cursor, query: $q, sortKey: UPDATED_AT, reverse: true) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        edges {
+          node {
+            id
+            name
+            createdAt
+            cancelledAt
+            displayFulfillmentStatus
+            fulfillments(first: 10) {
+              createdAt
+            }
+            lineItems(first: 50) {
+              edges {
+                node {
+                  title
+                  sku
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  for (const q of queries) {
+    let cursor: string | null = null;
+    for (let page = 0; page < 80; page += 1) {
+      const { data, errors } = await shopifyGraphQL<{
+        orders: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          edges: Array<{ node: ShopifyFulfilledOrderNode }>;
+        };
+      }>(gql, { q, cursor });
+      if (errors?.length) {
+        throw new Error(
+          `Shopify fulfill-fee order query failed: ${errors.map((e) => e.message).join("; ")}`
+        );
+      }
+      for (const edge of data.orders.edges) {
+        const node = edge.node;
+        if (!isShopifyFulfilledStatus(node.displayFulfillmentStatus)) continue;
+        if (!earliestShopifyFulfillmentAt(node)) continue;
+        const prev = byId.get(node.id);
+        if (!prev) {
+          byId.set(node.id, node);
+          continue;
+        }
+        // Prefer node with more fulfillments / line items if duplicate across queries.
+        if ((node.fulfillments?.length ?? 0) > (prev.fulfillments?.length ?? 0)) {
+          byId.set(node.id, node);
+        }
+      }
+      if (!data.orders.pageInfo.hasNextPage) break;
+      cursor = data.orders.pageInfo.endCursor;
+    }
+  }
+
+  return [...byId.values()];
+}
+
+function mergeSyncOrderHint(
+  byOrder: Map<string, SyncOrderHint>,
+  shopifyOrderId: string,
+  hint: SyncOrderHint
+): void {
+  const prev = byOrder.get(shopifyOrderId);
+  if (!prev) {
+    byOrder.set(shopifyOrderId, hint);
+    return;
+  }
+  const fulfilledAt =
+    hint.fulfilledAt < prev.fulfilledAt ? hint.fulfilledAt : prev.fulfilledAt;
+  byOrder.set(shopifyOrderId, {
+    shopifyOrderName: hint.shopifyOrderName ?? prev.shopifyOrderName,
+    fulfilledAt,
+    cancelledAt: hint.cancelledAt ?? prev.cancelledAt ?? null,
+    lineHints: prev.lineHints?.length ? prev.lineHints : hint.lineHints,
+    // Keep awb_record if either source was AWB (for stats); else shopify_api.
+    source: prev.source === "awb_record" || hint.source === "awb_record"
+      ? "awb_record"
+      : "shopify_api",
+  });
+}
+
 export async function syncShopifyFulfillmentExpenses(options?: {
   since?: Date | null;
   limit?: number;
@@ -427,6 +565,8 @@ export async function syncShopifyFulfillmentExpenses(options?: {
   skippedEssentials: number;
   skippedCancelled: number;
   skippedNoLines: number;
+  fromAwbRecords: number;
+  fromShopifyApi: number;
   shipChf: number;
   feeChf: number;
   totalChf: number;
@@ -447,19 +587,38 @@ export async function syncShopifyFulfillmentExpenses(options?: {
   });
 
   // One fee per order; earliest fulfillment date wins.
-  const byOrder = new Map<
-    string,
-    { shopifyOrderName: string | null; fulfilledAt: Date }
-  >();
+  // Sources: AWB/label path (ShopifyFulfillmentRecord) ∪ Shopify Admin fulfillments
+  // (manual / Swiss Post / any path that never wrote an AWB record).
+  const byOrder = new Map<string, SyncOrderHint>();
   for (const r of records) {
     const fulfilledAt = r.labelGeneratedAt ?? r.createdAt;
-    const prev = byOrder.get(r.shopifyOrderId);
-    if (!prev || fulfilledAt < prev.fulfilledAt) {
-      byOrder.set(r.shopifyOrderId, {
-        shopifyOrderName: r.shopifyOrderName,
-        fulfilledAt,
-      });
-    }
+    mergeSyncOrderHint(byOrder, r.shopifyOrderId, {
+      shopifyOrderName: r.shopifyOrderName,
+      fulfilledAt,
+      source: "awb_record",
+    });
+  }
+
+  const shopifyNodes = await fetchShopifyFulfilledOrdersSince(since);
+  for (const node of shopifyNodes) {
+    const fulfilledAt = earliestShopifyFulfillmentAt(node);
+    if (!fulfilledAt) continue;
+    // Skip ancient fulfills that only appear because updated_at bumped (note/tag edit).
+    // Keep if already in AWB set (merge dates) OR fulfillment itself is in window.
+    if (fulfilledAt < since && !byOrder.has(node.id)) continue;
+    mergeSyncOrderHint(byOrder, node.id, {
+      shopifyOrderName: node.name,
+      fulfilledAt,
+      cancelledAt: node.cancelledAt ? new Date(node.cancelledAt) : null,
+      lineHints: (node.lineItems?.edges ?? []).map((e) => ({
+        shopifyProductTitle: e.node.title,
+        shopifySku: e.node.sku,
+        shopifySizeEU: null,
+        stockxStatus: null,
+        stockxOrderNumber: null,
+      })),
+      source: "shopify_api",
+    });
   }
 
   let orderEntries = [...byOrder.entries()];
@@ -508,6 +667,8 @@ export async function syncShopifyFulfillmentExpenses(options?: {
   let skippedCancelled = 0;
   let skippedNoLines = 0;
   let chargedOrders = 0;
+  let fromAwbRecords = 0;
+  let fromShopifyApi = 0;
   let shipChf = 0;
   let feeChf = 0;
   const errors: Array<{ shopifyOrderId: string; message: string }> = [];
@@ -515,13 +676,16 @@ export async function syncShopifyFulfillmentExpenses(options?: {
   for (const [shopifyOrderId, hint] of orderEntries) {
     try {
       const meta = orderMeta.get(shopifyOrderId);
+      const dbLines = linesByOrder.get(shopifyOrderId);
+      // Prefer OrderMatch (has sizeEU / ESS status); fall back to Shopify line titles.
+      const lines = dbLines?.length ? dbLines : hint.lineHints ?? [];
       const res = await upsertShopifyFulfillmentExpenses({
         shopifyOrderId,
         shopifyOrderName: hint.shopifyOrderName ?? meta?.orderName ?? null,
         fulfilledAt: hint.fulfilledAt,
         orderCreatedAt: meta?.createdAt ?? null,
-        cancelledAt: meta?.cancelledAt ?? null,
-        lines: linesByOrder.get(shopifyOrderId) ?? [],
+        cancelledAt: hint.cancelledAt ?? meta?.cancelledAt ?? null,
+        lines,
       });
 
       if (res.skippedReason) {
@@ -534,6 +698,8 @@ export async function syncShopifyFulfillmentExpenses(options?: {
       }
 
       chargedOrders += 1;
+      if (hint.source === "awb_record") fromAwbRecords += 1;
+      else fromShopifyApi += 1;
       shipChf += res.shipChf;
       feeChf += res.feeChf;
       for (const st of [res.ship, res.fee]) {
@@ -556,6 +722,8 @@ export async function syncShopifyFulfillmentExpenses(options?: {
     skippedEssentials,
     skippedCancelled,
     skippedNoLines,
+    fromAwbRecords,
+    fromShopifyApi,
     shipChf: Number(shipChf.toFixed(2)),
     feeChf: Number(feeChf.toFixed(2)),
     totalChf: Number((shipChf + feeChf).toFixed(2)),

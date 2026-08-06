@@ -5,7 +5,9 @@
  *   npx tsx scripts/sync-shopify-fulfillment-expenses.ts --since 2026-06-01
  *   npm run shopify:fulfill-fees
  *
- * Default window: last 2 months (fulfillment record createdAt).
+ * Default window: last 2 months.
+ * Sources: ShopifyFulfillmentRecord (AWB/label path) ∪ Shopify Admin fulfillments
+ * (catches Swiss Post / manual fulfills that never wrote an AWB record).
  */
 import "dotenv/config";
 import {
