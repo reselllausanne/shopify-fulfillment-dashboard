@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getStorageAdapterForUrl } from "@/galaxus/storage/storage";
+import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ documentId: string }> }
 ) {
+  const staffRole = await getStaffRoleFromRequest(request);
+  if (!staffRole) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   const { documentId } = await params;
   const document = await prisma.document.findUnique({
     where: { id: documentId },

@@ -1,7 +1,7 @@
 import { jwtVerify, SignJWT } from "jose";
 import type { NextRequest } from "next/server";
 
-type PartnerSession = {
+export type PartnerSession = {
   partnerId: string;
   partnerKey: string;
   role: string;
@@ -61,3 +61,14 @@ export async function getPartnerSession(req: NextRequest): Promise<PartnerSessio
 }
 
 export const partnerAuthCookieName = COOKIE_NAME;
+
+export function isPartnerRoleAllowed(
+  role: unknown,
+  allowed: ReadonlyArray<string> = ["partner", "manager", "admin"]
+): boolean {
+  const value = String(role ?? "")
+    .trim()
+    .toLowerCase();
+  if (!value) return false;
+  return allowed.some((entry) => String(entry).trim().toLowerCase() === value);
+}

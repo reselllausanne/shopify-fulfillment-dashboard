@@ -1,18 +1,24 @@
 import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import {
   applySuccessfulSwissPostLabelToShipment,
   requestSwissPostLabelForOrderWithTrackingHint,
 } from "@/galaxus/directDelivery/swissPostLabelFlow";
+import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
+    const staffRole = await getStaffRoleFromRequest(request);
+    if (!staffRole) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
     const { shipmentId } = await params;
     const shipment = await (prisma as any).shipment.findUnique({
       where: { id: shipmentId },

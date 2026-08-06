@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { DocumentService } from "@/galaxus/documents/DocumentService";
-import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { requirePartnerSelfFulfillAccess } from "@/app/api/partners/galaxus/_auth";
+import { loadPartnerShipment } from "@/app/api/partners/galaxus/shipments/_utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,11 +13,16 @@ export async function GET(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
-    const staffRole = await getStaffRoleFromRequest(request);
-    if (!staffRole) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requirePartnerSelfFulfillAccess(request);
+    if (!auth.access) return auth.response!;
+    const access = auth.access;
+
     const { shipmentId } = await params;
+    const shipment = await loadPartnerShipment(shipmentId, access.providerKey);
+    if (!shipment) {
+      return NextResponse.json({ ok: false, error: "Shipment not found" }, { status: 404 });
+    }
+
     const { searchParams } = new URL(request.url);
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
     const formatParam = (searchParams.get("format") ?? "").toLowerCase();
@@ -33,7 +38,7 @@ export async function GET(
         return NextResponse.json({
           ok: true,
           documentId: existing.id,
-          url: `/api/galaxus/documents/${existing.id}`,
+          url: `/api/partners/galaxus/documents/${existing.id}`,
         });
       }
     }
@@ -51,10 +56,9 @@ export async function GET(
     return NextResponse.json({
       ok: true,
       documentId: created.id,
-      url: `/api/galaxus/documents/${created.id}`,
+      url: `/api/partners/galaxus/documents/${created.id}`,
     });
   } catch (error: any) {
-    console.error("[GALAXUS][SHIPMENT][DELIVERY_NOTE] Failed:", error);
     return NextResponse.json({ ok: false, error: error?.message ?? "Failed" }, { status: 500 });
   }
 }

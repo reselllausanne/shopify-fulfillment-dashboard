@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
+import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
@@ -10,6 +11,12 @@ export async function GET(req: NextRequest) {
   const session = await getPartnerSession(req);
   if (!session) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isPartnerRoleAllowed(session.role)) {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  if (!isPartnerSelfFulfillEnabled(session.partnerKey)) {
+    return NextResponse.json({ ok: false, error: "Partner self-fulfill disabled" }, { status: 403 });
   }
 
   const { searchParams } = new URL(req.url);
@@ -53,7 +60,9 @@ export async function GET(req: NextRequest) {
     return {
       ...shipment,
       deliveryNotePdfUrl: deliveryNote?.storageUrl ?? null,
-      shippingLabelPdfUrl: shippingLabelDoc ? `/api/galaxus/documents/${shippingLabelDoc.id}` : null,
+      shippingLabelPdfUrl: shippingLabelDoc
+        ? `/api/partners/galaxus/documents/${shippingLabelDoc.id}`
+        : null,
     };
   });
 

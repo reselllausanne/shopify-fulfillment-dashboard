@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const staffRole = await getStaffRoleFromRequest(request);
+    if (!staffRole) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
     const body = await request.json().catch(() => ({}));
     const orderId = body?.orderId ? String(body.orderId) : null;
     const partnerId = body?.partnerId ? String(body.partnerId) : null;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
+import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
 
@@ -14,6 +15,12 @@ export async function POST(
   const session = await getPartnerSession(req);
   if (!session) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  if (!isPartnerRoleAllowed(session.role)) {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+  if (!isPartnerSelfFulfillEnabled(session.partnerKey)) {
+    return NextResponse.json({ ok: false, error: "Partner self-fulfill disabled" }, { status: 403 });
   }
 
   const { shipmentId } = await params;
@@ -50,7 +57,10 @@ export async function POST(
     },
   });
 
-  const delr = await uploadDelrForShipment(shipmentId, { force });
+  const delr = await uploadDelrForShipment(shipmentId, {
+    force,
+    actor: { type: "partner", partnerId: session.partnerId, partnerKey: session.partnerKey },
+  });
   if (delr.status === "error") {
     return NextResponse.json({ ok: false, error: delr.message ?? "DELR upload failed", delr }, { status: 409 });
   }

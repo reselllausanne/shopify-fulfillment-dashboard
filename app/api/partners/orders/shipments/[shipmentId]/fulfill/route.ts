@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
+import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { deductStockForPartnerOrderFulfillment } from "@/galaxus/partners/partnerOrderStock";
@@ -175,6 +176,12 @@ export async function POST(
     if (!session) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    if (!isPartnerRoleAllowed(session.role)) {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    if (!isPartnerSelfFulfillEnabled(session.partnerKey)) {
+      return NextResponse.json({ ok: false, error: "Partner self-fulfill disabled" }, { status: 403 });
+    }
 
     const { shipmentId } = await params;
     const body = await req.json().catch(() => ({}));
@@ -214,7 +221,10 @@ export async function POST(
       },
     });
 
-    const delr = await uploadDelrForShipment(shipmentId, { force: forceDelr });
+    const delr = await uploadDelrForShipment(shipmentId, {
+      force: forceDelr,
+      actor: { type: "partner", partnerId: session.partnerId, partnerKey: session.partnerKey },
+    });
     if (delr.status === "error") {
       return NextResponse.json({ ok: false, error: delr.message ?? "DELR upload failed", delr }, { status: 409 });
     }
@@ -249,7 +259,7 @@ export async function POST(
       orderBy: { createdAt: "desc" },
     });
     if (existingShipping && !forceLabels) {
-      shippingLabelUrl = `/api/galaxus/documents/${existingShipping.id}`;
+      shippingLabelUrl = `/api/partners/galaxus/documents/${existingShipping.id}`;
     } else {
       const payload = buildSwissPostPayload(
         shipment.order,
@@ -290,7 +300,7 @@ export async function POST(
           checksum: null,
         },
       });
-      shippingLabelUrl = `/api/galaxus/documents/${document.id}`;
+      shippingLabelUrl = `/api/partners/galaxus/documents/${document.id}`;
     }
 
     const partnerOrder = await (prisma as any).partnerOrder.findFirst({

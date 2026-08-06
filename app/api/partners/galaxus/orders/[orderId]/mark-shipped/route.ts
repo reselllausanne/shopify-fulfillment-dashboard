@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
+import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { deductStockForPartnerOrderFulfillment } from "@/galaxus/partners/partnerOrderStock";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
@@ -21,6 +22,12 @@ export async function POST(
   try {
     const session = await getPartnerSession(req);
     if (!session) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!isPartnerRoleAllowed(session.role)) {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    if (!isPartnerSelfFulfillEnabled(session.partnerKey)) {
+      return NextResponse.json({ ok: false, error: "Partner self-fulfill disabled" }, { status: 403 });
+    }
     const pk = normalizeProviderKey(session.partnerKey);
     if (!pk) return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
     const { orderId } = await params;

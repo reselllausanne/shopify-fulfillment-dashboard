@@ -15,6 +15,8 @@ const NAV_ITEMS = [
   { href: "/partners/dashboard", label: "Dashboard" },
   { href: "/partners/catalog", label: "Catalog" },
   { href: "/partners/orders", label: "Orders" },
+  { href: "/partners/galaxus-shipments", label: "Galaxus Shipments" },
+  { href: "/partners/galaxus-direct-delivery", label: "Galaxus Direct" },
   { href: "/partners/invoices", label: "Invoices" },
 ];
 

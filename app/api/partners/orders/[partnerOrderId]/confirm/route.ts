@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
+import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
 import { createShipmentsForOrder } from "@/galaxus/warehouse/shipments";
 import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
 import { deductStockForPartnerOrderFulfillment } from "@/galaxus/partners/partnerOrderStock";
@@ -18,6 +19,12 @@ export async function POST(
     const session = await getPartnerSession(request);
     if (!session) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+    if (!isPartnerRoleAllowed(session.role)) {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    if (!isPartnerSelfFulfillEnabled(session.partnerKey)) {
+      return NextResponse.json({ ok: false, error: "Partner self-fulfill disabled" }, { status: 403 });
     }
 
     const { partnerOrderId } = await params;
@@ -67,7 +74,12 @@ export async function POST(
 
     const delrResults = [];
     for (const shipment of shipmentsResult.shipments ?? []) {
-      delrResults.push(await uploadDelrForShipment(shipment.id, { force: Boolean(body?.forceDelr) }));
+      delrResults.push(
+        await uploadDelrForShipment(shipment.id, {
+          force: Boolean(body?.forceDelr),
+          actor: { type: "partner", partnerId: session.partnerId, partnerKey: session.partnerKey },
+        })
+      );
     }
 
     const partnerKeyLower = String(session.partnerKey ?? "").toLowerCase();

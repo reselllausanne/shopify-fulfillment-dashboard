@@ -358,7 +358,7 @@ export default function PartnerOrdersPage() {
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Partner Orders</h1>
           <p className="text-sm text-slate-500">
-            Decathlon orders are actionable; Galaxus orders are read-only. All orders are filtered to your products.
+            Decathlon orders are actionable. Galaxus advanced fulfillment lives in the Galaxus Shipments / Galaxus Direct tabs.
           </p>
         </div>
         <button

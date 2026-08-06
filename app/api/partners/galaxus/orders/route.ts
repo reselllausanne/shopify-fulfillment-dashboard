@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { getPartnerSession } from "@/app/lib/partnerAuth";
+import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
+import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDispatch";
 import {
@@ -16,16 +17,26 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getPartnerSession(req);
     if (!session) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (!isPartnerRoleAllowed(session.role)) {
+      return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    }
+    if (!isPartnerSelfFulfillEnabled(session.partnerKey)) {
+      return NextResponse.json({ ok: false, error: "Partner self-fulfill disabled" }, { status: 403 });
+    }
     const pk = normalizeProviderKey(session.partnerKey);
     if (!pk) return NextResponse.json({ ok: false, error: "Partner key missing" }, { status: 400 });
 
     const { searchParams } = new URL(req.url);
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const deliveryTypeFilter = String(searchParams.get("deliveryType") ?? "").trim().toLowerCase();
 
     const partnerGtins = await loadPartnerMappedGtins(pk);
     const partnerGtinSet = new Set(partnerGtins);
     const where = buildPartnerGalaxusOrderWhere(pk, partnerGtins);
+    if (deliveryTypeFilter === "direct_delivery" || deliveryTypeFilter === "warehouse_delivery") {
+      where.deliveryType = deliveryTypeFilter;
+    }
 
     const orders = await prisma.galaxusOrder.findMany({
       where,

@@ -305,7 +305,11 @@ export async function requestSwissPostLabelForGalaxusOrder(order: any) {
  */
 export async function applySuccessfulSwissPostLabelToShipment(
   shipmentId: string,
-  swissData: any
+  swissData: any,
+  options: {
+    documentUrlBase?: "/api/galaxus/documents" | "/api/partners/galaxus/documents";
+    delrActor?: { type: "partner"; partnerId: string; partnerKey: string } | { type: "staff" };
+  } = {}
 ): Promise<{
   documentId: string;
   url: string;
@@ -376,7 +380,7 @@ export async function applySuccessfulSwissPostLabelToShipment(
     }));
   }
 
-  const delrResult = await uploadDelrForShipment(shipmentId).catch((error: any) => ({
+  const delrResult = await uploadDelrForShipment(shipmentId, { actor: options.delrActor }).catch((error: any) => ({
     shipmentId,
     status: "error",
     message: error?.message ?? "DELR upload failed",
@@ -386,9 +390,10 @@ export async function applySuccessfulSwissPostLabelToShipment(
       ? { ...delrResult, shipmentId: swissPostLabelId }
       : delrResult;
 
+  const documentUrlBase = options.documentUrlBase ?? "/api/galaxus/documents";
   return {
     documentId: document.id,
-    url: `/api/galaxus/documents/${document.id}`,
+    url: `${documentUrlBase}/${document.id}`,
     version: nextVersion,
     delr: delrPayload,
     ordr,

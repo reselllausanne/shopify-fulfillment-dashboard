@@ -1,17 +1,23 @@
 import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { DocumentType } from "@prisma/client";
 import { DocumentService } from "@/galaxus/documents/DocumentService";
 import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
 import { prisma } from "@/app/lib/prisma";
+import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
+    const staffRole = await getStaffRoleFromRequest(request);
+    if (!staffRole) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
     const { shipmentId } = await params;
     const { searchParams } = new URL(request.url);
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());

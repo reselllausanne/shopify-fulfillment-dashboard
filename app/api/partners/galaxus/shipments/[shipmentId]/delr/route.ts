@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { buildDelrXmlForShipment, uploadDelrForShipment } from "@/galaxus/warehouse/delr";
-import { NextRequest } from "next/server";
-import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { requirePartnerSelfFulfillAccess } from "@/app/api/partners/galaxus/_auth";
+import { loadPartnerShipment } from "@/app/api/partners/galaxus/shipments/_utils";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,11 +11,14 @@ export async function GET(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
-    const staffRole = await getStaffRoleFromRequest(request);
-    if (!staffRole) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requirePartnerSelfFulfillAccess(request);
+    if (!auth.access) return auth.response!;
+    const access = auth.access;
     const { shipmentId } = await params;
+    const shipment = await loadPartnerShipment(shipmentId, access.providerKey);
+    if (!shipment) {
+      return NextResponse.json({ ok: false, error: "Shipment not found" }, { status: 404 });
+    }
     const { searchParams } = new URL(request.url);
     const download = ["1", "true", "yes"].includes((searchParams.get("download") ?? "").toLowerCase());
     if (!download) {
@@ -30,11 +33,7 @@ export async function GET(
       },
     });
   } catch (error: any) {
-    console.error("[GALAXUS][SHIPMENT][DELR][DOWNLOAD] Failed:", error);
-    return NextResponse.json(
-      { ok: false, error: error?.message ?? "Failed to build DELR" },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: error?.message ?? "Failed to build DELR" }, { status: 500 });
   }
 }
 
@@ -43,19 +42,27 @@ export async function POST(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
-    const staffRole = await getStaffRoleFromRequest(request);
-    if (!staffRole) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requirePartnerSelfFulfillAccess(request);
+    if (!auth.access) return auth.response!;
+    const access = auth.access;
     const { shipmentId } = await params;
-    await request.json().catch(() => ({}));
+    const shipment = await loadPartnerShipment(shipmentId, access.providerKey);
+    if (!shipment) {
+      return NextResponse.json({ ok: false, error: "Shipment not found" }, { status: 404 });
+    }
     const { searchParams } = new URL(request.url);
     const force = ["1", "true", "yes"].includes((searchParams.get("force") ?? "").toLowerCase());
-    const result = await uploadDelrForShipment(shipmentId, { force });
+    const result = await uploadDelrForShipment(shipmentId, {
+      force,
+      actor: {
+        type: "partner",
+        partnerId: access.session.partnerId,
+        partnerKey: access.session.partnerKey,
+      },
+    });
     const status = result.httpStatus ?? (result.status === "error" ? 500 : 200);
     return NextResponse.json({ ok: result.status !== "error", result }, { status });
   } catch (error: any) {
-    console.error("[GALAXUS][SHIPMENT][DELR] Failed:", error);
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: error?.message ?? "Failed to upload DELR" }, { status: 500 });
   }
 }

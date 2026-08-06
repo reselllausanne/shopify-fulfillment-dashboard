@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { createCompositeWarehouseShipment } from "@/galaxus/warehouse/shipments";
+import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,8 +14,12 @@ type Body = {
   carrierFinal?: string | null;
 };
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const staffRole = await getStaffRoleFromRequest(request);
+    if (!staffRole) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
     const body = (await request.json().catch(() => ({}))) as Body;
     const anchorOrderId = String(body?.anchorOrderId ?? "").trim();
     if (!anchorOrderId) {
