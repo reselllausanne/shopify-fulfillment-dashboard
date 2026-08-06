@@ -38,7 +38,12 @@ export function webhookSigningSecrets(): string[] {
   const out: string[] = [];
   for (const key of keys) {
     const value = String(process.env[key] ?? "").trim();
-    if (value && !out.includes(value)) out.push(value);
+    if (!value) continue;
+    // Allow secret rotation windows: comma/newline-separated list in env.
+    for (const part of value.split(/[,\n]/)) {
+      const secret = part.trim();
+      if (secret && !out.includes(secret)) out.push(secret);
+    }
   }
   return out;
 }
