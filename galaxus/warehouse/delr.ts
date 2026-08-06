@@ -18,7 +18,12 @@ import { GALAXUS_SHIPMENT_CARRIER_ALLOWLIST } from "@/galaxus/config";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
 import { deductTheCatalogStockForGalaxusLines } from "@/galaxus/warehouse/theCatalogStock";
+import {
+  removeGalaxusDelrFulfillmentExpenses,
+  upsertGalaxusDelrFulfillmentExpenses,
+} from "@/galaxus/warehouse/delrFulfillmentExpenses";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
+import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
 
 type UploadResult = {
@@ -227,7 +232,10 @@ async function loadStockxMatchesForOrders(orders: any[]) {
 
 export async function uploadDelrForShipment(
   shipmentId: string,
-  options: { force?: boolean } = {}
+  options: {
+    force?: boolean;
+    actor?: { type: "partner"; partnerId: string; partnerKey: string } | { type: "staff" };
+  } = {}
 ): Promise<UploadResult> {
   assertSftpConfig();
 
@@ -239,6 +247,18 @@ export async function uploadDelrForShipment(
 
   if (!shipment || !shipment.order) {
     return { shipmentId, status: "error", message: "Shipment not found" };
+  }
+  if (options.actor?.type === "partner") {
+    const expectedKey = normalizeProviderKey(options.actor.partnerKey);
+    const shipmentProviderKey = normalizeProviderKey(shipment.providerKey ?? null);
+    if (!expectedKey || !shipmentProviderKey || expectedKey !== shipmentProviderKey) {
+      return {
+        shipmentId,
+        status: "error",
+        httpStatus: 403,
+        message: "Shipment is outside partner scope",
+      };
+    }
   }
 
   shipment.order = await refreshOrderRecipientFromOrdp(shipment.order);
@@ -491,6 +511,24 @@ export async function uploadDelrForShipment(
           },
         },
       }).catch(() => undefined);
+      if (options.actor?.type === "partner") {
+        await prismaAny.orderStatusEvent
+          .create({
+            data: {
+              orderId: shipment.orderId,
+              source: "PARTNER_DELR",
+              type: "UPDATED",
+              payloadJson: {
+                shipmentId: shipment.id,
+                dispatchFilename: dispatch.filename,
+                sentAt: now.toISOString(),
+                partnerId: options.actor.partnerId,
+                partnerKey: normalizeProviderKey(options.actor.partnerKey),
+              },
+            },
+          })
+          .catch(() => undefined);
+      }
     }
 
     await upsertEdiFile({
@@ -515,6 +553,25 @@ export async function uploadDelrForShipment(
           orderReferenceId: item.orderReferenceId,
         })),
       },
+    });
+
+    // Auto Business pack+ship cost per DELR (idempotent; recoverable via note marker).
+    const delrUnits = dispatchItems.reduce(
+      (sum, item) => sum + Math.max(0, Number(item?.quantity ?? 0)),
+      0
+    );
+    await upsertGalaxusDelrFulfillmentExpenses({
+      shipmentDbId: shipment.id,
+      unitCount: delrUnits,
+      delrSentAt: now,
+      dispatchNotificationId: shipment.dispatchNotificationId,
+      delrFileName: dispatch.filename,
+      shipmentLabel: shipment.shipmentId ?? shipment.id,
+    }).catch((err: any) => {
+      console.error("[galaxus][delr] fulfillment expense upsert failed", {
+        shipmentId: shipment.id,
+        message: err?.message ?? String(err),
+      });
     });
 
     // Auto-invoicing removed — invoices are sent manually from the dedicated invoice page.
@@ -711,6 +768,14 @@ export async function resetDelrForShipment(
       })
       .catch(() => undefined);
   }
+
+  // 4. Drop auto pack/ship Business expenses for this DELR (year-end markers).
+  await removeGalaxusDelrFulfillmentExpenses(shipment.id).catch((err: any) => {
+    console.error("[galaxus][reset-delr] fulfillment expense remove failed", {
+      shipmentId: shipment.id,
+      message: err?.message ?? String(err),
+    });
+  });
 
   console.info("[galaxus][reset-delr] done", { shipmentId, linesReset });
 

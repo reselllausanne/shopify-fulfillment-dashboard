@@ -18,7 +18,8 @@
     "db:studio": "prisma studio",
     "prisma:deploy": "prisma migrate deploy && prisma generate",
     "returns:sync": "tsx scripts/sync-decathlon-returns.ts",
-    "ads": "tsx scripts/ads-analytics.ts"
+    "ads": "tsx scripts/ads-analytics.ts",
+    "galaxus:delr-fees": "tsx scripts/sync-galaxus-delr-fulfillment-expenses.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
