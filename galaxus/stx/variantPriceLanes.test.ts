@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectStxStandardOffer } from "@/galaxus/stx/offerSelection";
+import { selectStxActiveOffer, selectStxStandardOffer } from "@/galaxus/stx/offerSelection";
 import { buildStxDualPriceFields, isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 
 describe("selectStxStandardOffer", () => {
@@ -10,6 +10,17 @@ describe("selectStxStandardOffer", () => {
       { type: "express_standard", price: 410, asks: 9 },
     ]);
     expect(selected).toEqual({ deliveryType: "standard", price: 375, asks: 21 });
+  });
+});
+
+describe("selectStxActiveOffer", () => {
+  it("treats express_shipped as express lane", () => {
+    const selected = selectStxActiveOffer([
+      { type: "standard", price: 60, asks: 227 },
+      { type: "express_shipped", price: 70, asks: 116 },
+      { type: "express_expedited", price: 77, asks: 1 },
+    ]);
+    expect(selected).toEqual({ deliveryType: "express_standard", price: 70, asks: 116 });
   });
 });
 

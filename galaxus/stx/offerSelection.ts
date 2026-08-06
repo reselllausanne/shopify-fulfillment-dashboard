@@ -1,5 +1,7 @@
 /**
- * express_standard / express_expedited — real express lanes (published on marketplaces).
+ * express_standard / express_expedited / express_shipped — real express lanes
+ * (published on marketplaces). KickDB switched many products to `express_shipped`;
+ * keep mapping this to express_standard so downstream feed rules still treat it as express.
  * standard — non-express fallback (forceImport only). Marketplace feeds must NOT
  * publish this as a dropship row; physical (liquidation) stock still routes through
  * the mirror resolver.
@@ -39,6 +41,7 @@ function toInt(value: unknown): number | null {
 function normalizeDeliveryType(value: unknown): StxDeliveryType | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
+  if (normalized === "express_shipped") return "express_standard";
   if (normalized === "express_standard") return "express_standard";
   if (normalized === "express_expedited") return "express_expedited";
   return null;
