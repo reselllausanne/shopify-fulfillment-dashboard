@@ -13,6 +13,7 @@ export const dynamic = 'force-dynamic';
  *   - synced: "true" | "false" | undefined (filter by metafields sync status)
  *   - confidence: "high" | "medium" | "low" (filter by match confidence)
  *   - includeProtection: "true" to include package-protection auto rows (hidden by default)
+ *   - lineItemIds: comma-separated Shopify line item GIDs (targeted restore for matching UI)
  */
 export async function GET(req: NextRequest) {
   try {
@@ -20,6 +21,11 @@ export async function GET(req: NextRequest) {
     const syncedFilter = searchParams.get("synced");
     const confidenceFilter = searchParams.get("confidence");
     const includeProtection = searchParams.get("includeProtection") === "true";
+    const lineItemIds = String(searchParams.get("lineItemIds") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 500);
     const limitParam = searchParams.get("limit");
     const limit =
       limitParam != null && limitParam !== ""
@@ -38,11 +44,18 @@ export async function GET(req: NextRequest) {
       where.matchConfidence = confidenceFilter;
     }
 
+    if (lineItemIds.length > 0) {
+      where.shopifyLineItemId = { in: lineItemIds };
+    }
+
     if (!includeProtection) {
       where.matchType = { not: PACKAGE_PROTECTION_MATCH_TYPE };
     }
 
-    console.log(`[DB] Fetching matches with filters:`, where);
+    console.log(`[DB] Fetching matches with filters:`, {
+      ...where,
+      shopifyLineItemId: lineItemIds.length ? { in: `${lineItemIds.length} ids` } : undefined,
+    });
 
     const matches = await prisma.orderMatch.findMany({
       where,
@@ -59,11 +72,16 @@ export async function GET(req: NextRequest) {
 
     console.log(`[DB] Found ${visible.length} matches`);
 
-    // Parse matchReasons back to array
-    const parsedMatches = visible.map((match: (typeof matches)[number]) => ({
-      ...match,
-      matchReasons: match.matchReasons ? JSON.parse(match.matchReasons) : [],
-    }));
+    // Parse matchReasons back to array (never fail the whole list on one bad row)
+    const parsedMatches = visible.map((match: (typeof matches)[number]) => {
+      let matchReasons: unknown = [];
+      try {
+        matchReasons = match.matchReasons ? JSON.parse(match.matchReasons) : [];
+      } catch {
+        matchReasons = match.matchReasons ? [match.matchReasons] : [];
+      }
+      return { ...match, matchReasons };
+    });
 
     return NextResponse.json({ matches: parsedMatches }, { status: 200 });
   } catch (error: any) {

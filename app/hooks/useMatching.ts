@@ -309,11 +309,25 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     return { successCount, failCount, total: highMatches.length };
   };
 
-  const loadDbSavedMatchesByLineId = async (): Promise<Map<string, DbSavedMatchRow>> => {
+  const loadDbSavedMatchesByLineId = async (
+    lineItemIds?: string[]
+  ): Promise<Map<string, DbSavedMatchRow>> => {
     const out = new Map<string, DbSavedMatchRow>();
     try {
-      const dbRes = await getJson<{ matches?: DbSavedMatchRow[] }>("/api/db/matches");
-      if (!dbRes.ok) return out;
+      const ids = Array.from(
+        new Set((lineItemIds ?? []).map((id) => String(id || "").trim()).filter(Boolean))
+      );
+      // Targeted lookup when we know the Shopify lines — avoids huge /api/db/matches payloads
+      // and reliably restores manual matches on refresh.
+      const url =
+        ids.length > 0
+          ? `/api/db/matches?lineItemIds=${encodeURIComponent(ids.join(","))}`
+          : "/api/db/matches";
+      const dbRes = await getJson<{ matches?: DbSavedMatchRow[] }>(url);
+      if (!dbRes.ok) {
+        console.warn("[MATCHING] DB matches fetch failed", dbRes.status);
+        return out;
+      }
       for (const row of dbRes.data?.matches ?? []) {
         if (row?.shopifyLineItemId) out.set(row.shopifyLineItemId, row);
       }
@@ -378,7 +392,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     const withSupplierCostB = normalizedSupplier.filter((o) => o.totalTTC !== null).length;
     console.log(`[MATCHING] ${withSupplierCostB}/${normalizedSupplier.length} orders have totalTTC (Query B supplier cost)`);
 
-    const dbByLineId = await loadDbSavedMatchesByLineId();
+    const dbByLineId = await loadDbSavedMatchesByLineId(items.map((i) => i.lineItemId));
     const usedSupplierFromDb = new Set<string>();
     for (const row of dbByLineId.values()) {
       if (row.stockxOrderNumber) usedSupplierFromDb.add(row.stockxOrderNumber);
@@ -500,7 +514,9 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       };
     });
 
-    const dbByLineId = await loadDbSavedMatchesByLineId();
+    const dbByLineId = await loadDbSavedMatchesByLineId(
+      fetchedLineItems.map((i) => i.lineItemId)
+    );
     const usedSupplierFromDb = new Set<string>();
     for (const row of dbByLineId.values()) {
       if (row.stockxOrderNumber) usedSupplierFromDb.add(row.stockxOrderNumber);
@@ -533,15 +549,36 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     });
 
     setShopifyItems((prev) => {
-      const existingIds = new Set(prev.map((p) => p.lineItemId));
-      const uniqueNew = fetchedLineItems.filter((item) => !existingIds.has(item.lineItemId));
-      return uniqueNew.length ? [...prev, ...uniqueNew] : prev;
+      const byId = new Map(prev.map((p) => [p.lineItemId, p]));
+      for (const item of fetchedLineItems) byId.set(item.lineItemId, item);
+      const seen = new Set<string>();
+      const out: ShopifyLineItem[] = [];
+      for (const item of prev) {
+        out.push(byId.get(item.lineItemId)!);
+        seen.add(item.lineItemId);
+      }
+      for (const item of fetchedLineItems) {
+        if (!seen.has(item.lineItemId)) out.push(item);
+      }
+      return out;
     });
 
+    // Upsert by lineItemId — re-fetch must replace stale "no match" with DB-restored green.
     setMatchResults((prev) => {
-      const existingIds = new Set(prev.map((p) => p.shopifyItem.lineItemId));
-      const uniqueNew = newMatchResults.filter((r) => !existingIds.has(r.shopifyItem.lineItemId));
-      return uniqueNew.length ? [...prev, ...uniqueNew] : prev;
+      const byId = new Map(prev.map((r) => [r.shopifyItem.lineItemId, r]));
+      for (const r of newMatchResults) {
+        byId.set(r.shopifyItem.lineItemId, r);
+      }
+      const seen = new Set<string>();
+      const out: MatchResult[] = [];
+      for (const r of prev) {
+        out.push(byId.get(r.shopifyItem.lineItemId)!);
+        seen.add(r.shopifyItem.lineItemId);
+      }
+      for (const r of newMatchResults) {
+        if (!seen.has(r.shopifyItem.lineItemId)) out.push(r);
+      }
+      return out;
     });
 
     const savedMeta: Record<string, { timestamp: string; supplierOrderNumber: string }> = {};

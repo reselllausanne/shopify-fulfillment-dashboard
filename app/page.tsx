@@ -910,6 +910,7 @@ export default function Home() {
       matchType: "MANUAL",
       matchReasons: "Manual entry",
       timeDiffHours: 0,
+      supplierSource: "MANUAL",
       
       // Optional fields
       manualCostOverride: "",
@@ -1106,6 +1107,7 @@ export default function Home() {
           supplierCost: supplierCost || 0,
           marginAmount,
           marginPercent,
+          supplierSource: data.supplierSource || "MANUAL",
           // Convert empty strings to null
           stockxOrderNumber: data.stockxOrderNumber || `MANUAL-${Date.now()}`,
           stockxChainId: data.stockxChainId || null,
@@ -1135,7 +1137,12 @@ export default function Home() {
       const savedSupplierNumber = String(
         saveData.stockxOrderNumber || data.stockxOrderNumber || ""
       );
-      const savedLineItemId = String(data.shopifyLineItemId || "");
+      const savedLineItemId = String(
+        data.shopifyLineItemId || manualEntryModal.shopifyItem?.lineItemId || ""
+      );
+      const savedSupplierSource =
+        (data.supplierSource as "STOCKX" | "MANUAL" | "LOCAL" | "OTHER" | undefined) ||
+        "MANUAL";
       if (savedLineItemId) {
         setMatchResults((prev) =>
           prev.map((r) => {
@@ -1150,21 +1157,25 @@ export default function Home() {
                       ...supplierOrder,
                       supplierOrderNumber:
                         savedSupplierNumber || supplierOrder.supplierOrderNumber,
+                      supplierSource: savedSupplierSource,
                       totalTTC: supplierCost,
                       offerAmount: supplierCost,
+                      statusKey: data.stockxStatus || supplierOrder.statusKey || "MANUAL",
+                      statusTitle: "Saved match",
                     }
                   : {
                       chainId: "",
                       orderId: savedSupplierNumber,
                       supplierOrderNumber: savedSupplierNumber || `MANUAL-${Date.now()}`,
-                      supplierSource: "STOCKX" as const,
+                      supplierSource: savedSupplierSource,
                       purchaseDate: r.shopifyItem.createdAt,
                       offerAmount: supplierCost,
                       totalTTC: supplierCost,
-                      productTitle: r.shopifyItem.title,
+                      productTitle:
+                        data.stockxProductName || r.shopifyItem.title,
                       skuKey: r.shopifyItem.sku || "",
                       sizeEU: r.shopifyItem.sizeEU,
-                      statusKey: "SAVED",
+                      statusKey: data.stockxStatus || "MANUAL",
                       statusTitle: "Saved match",
                       currencyCode: r.shopifyItem.currencyCode || "CHF",
                     },
