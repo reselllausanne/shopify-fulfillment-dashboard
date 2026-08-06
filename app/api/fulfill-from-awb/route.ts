@@ -25,6 +25,7 @@ import {
   resolveStockxDeliveredForMatches,
 } from "@/lib/fulfillmentTiming";
 import { normalizeInboundHomeAwb } from "@/app/lib/stockxInboundHomeRoutes";
+import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses";
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -966,6 +967,18 @@ export async function POST(req: NextRequest) {
         swissPostResponse: swissPostResult?.data || null,
         ...timingFields,
       },
+    });
+
+    // Auto Business ship+fulfill cost for shoe orders (idempotent; recoverable via note marker).
+    await upsertShopifyFulfillmentExpenses({
+      shopifyOrderId,
+      shopifyOrderName: map.order.name,
+      fulfilledAt: record.labelGeneratedAt ?? record.createdAt,
+    }).catch((err: any) => {
+      console.error("[FULFILL-FROM-AWB] fulfillment expense upsert failed", {
+        shopifyOrderId,
+        message: err?.message ?? String(err),
+      });
     });
 
     return NextResponse.json(
