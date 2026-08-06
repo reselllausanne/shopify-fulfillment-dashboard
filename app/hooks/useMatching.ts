@@ -606,7 +606,8 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         returnReason: "EXCHANGE",
         returnFeePercent: 0,
         manualRevenueAdjustment: -revenue,
-        returnedStockValueChf: supplierCost > 0 ? supplierCost : revenue,
+        // Full-margin / ALREADY_EXPENSED warehouse: stock value 0 (not sell price).
+        returnedStockValueChf: supplierCost > 0 ? supplierCost : 0,
         manualNote: `Auto: exchange return ${label}`,
       });
 

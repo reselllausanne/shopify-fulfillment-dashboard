@@ -184,11 +184,13 @@ export default function DashboardPage() {
     }
   };
 
-  const fetchMetrics = async () => {
+  const fetchMetrics = async (opts?: { soft?: boolean }) => {
+    const soft = Boolean(opts?.soft);
     try {
-      setLoading(true);
+      if (!soft) setLoading(true);
       setError(null);
       // Metrics are grouped by Shopify sell date (Europe/Zurich) with costs from OrderMatch.
+      // shopifyCreatedAt is stored as Zurich wall-clock-as-UTC — date key = ISO UTC date.
       const response = await getJson<DailyMetrics>(`/api/metrics/daily?range=${range}`);
       if (!response.ok) {
         const data = response.data as any;
@@ -197,11 +199,14 @@ export default function DashboardPage() {
       }
 
       setMetrics(response.data);
+      // Drop cached drilldowns so expand always matches latest rollup.
+      setDetailsByDate({});
+      if (!soft) setExpandedDate(null);
     } catch (err: any) {
       console.error("[DASHBOARD] Error:", err);
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (!soft) setLoading(false);
     }
   };
 
@@ -212,16 +217,22 @@ export default function DashboardPage() {
     }
 
     setExpandedDate(date);
-    if (detailsByDate[date]) return;
-
     setDetailsLoading((prev) => ({ ...prev, [date]: true }));
-    const res = await getJson<{ rows: DailyDetailRow[] }>(
-      `/api/metrics/daily-details?date=${date}`
-    );
-    if (res.ok) {
-      setDetailsByDate((prev) => ({ ...prev, [date]: res.data.rows || [] }));
+
+    // Soft-refresh rollup + details together. Avoids stale parent row (Shopify 0)
+    // after matches were saved while the dashboard stayed open.
+    const [detailsRes, metricsRes] = await Promise.all([
+      getJson<{ rows: DailyDetailRow[] }>(`/api/metrics/daily-details?date=${date}`),
+      getJson<DailyMetrics>(`/api/metrics/daily?range=${range}`),
+    ]);
+
+    if (metricsRes.ok) {
+      setMetrics(metricsRes.data);
+    }
+    if (detailsRes.ok) {
+      setDetailsByDate({ [date]: detailsRes.data.rows || [] });
     } else {
-      setDetailsByDate((prev) => ({ ...prev, [date]: [] }));
+      setDetailsByDate({ [date]: [] });
     }
     setDetailsLoading((prev) => ({ ...prev, [date]: false }));
   };
@@ -542,7 +553,13 @@ export default function DashboardPage() {
                                   {(detailsByDate[row.date] || []).map((d) => (
                                     <tr key={`${d.shopifyOrderId}-${d.shopifyProductTitle}`} className="border-t">
                                       <td className="px-3 py-2 font-mono">
-                                        {new Date(d.shopifyCreatedAt).toLocaleTimeString("de-CH")}
+                                        {/* shopifyCreatedAt stored as Zurich wall-as-UTC — render UTC clock */}
+                                        {new Date(d.shopifyCreatedAt).toLocaleTimeString("de-CH", {
+                                          timeZone: "UTC",
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                          second: "2-digit",
+                                        })}
                                       </td>
                                       <td className="px-3 py-2 font-medium">{d.shopifyOrderName}</td>
                                       <td className="px-3 py-2">

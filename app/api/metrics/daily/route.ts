@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
-import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
+import {
+  isPackageProtectionShopifyLine,
+  resolveOrderMatchCost,
+} from "@/app/utils/matching";
 import { decathlonGrossLineAmount } from "@/decathlon/orders/margin";
 import { galaxusLineNetRevenueChf } from "@/galaxus/orders/margin";
 import { isStockxMatchLinked } from "@/galaxus/stx/allocateGalaxusStxCost";
 import { galaxusLineStockxCostChfByLineId } from "@/galaxus/orders/galaxusLineStockxCostMetrics";
 import { toZonedTime } from "date-fns-tz";
+import { shopifySellDateKey, SHOPIFY_SELL_TIMEZONE } from "@/app/utils/shopifySellDate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TIMEZONE = "Europe/Zurich";
+const TIMEZONE = SHOPIFY_SELL_TIMEZONE;
 
 type DailyRow = {
   date: string;
@@ -77,6 +81,9 @@ export async function GET(req: NextRequest) {
           manualRevenueAdjustment: true,
           supplierCost: true,
           manualCostOverride: true,
+          supplierSource: true,
+          stockxStatus: true,
+          stockxOrderNumber: true,
           returnReason: true,
           returnFeePercent: true,
           returnFeeAmountChf: true,
@@ -176,10 +183,7 @@ export async function GET(req: NextRequest) {
     for (const m of matches) {
       const isProtection = isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku);
       const sellDateRaw = m.shopifyCreatedAt;
-      // Package protection = digital add-on, 100% margin (cost forced to 0).
-      const cost = isProtection
-        ? 0
-        : toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
+      const { cost, fullMargin } = resolveOrderMatchCost(m);
       const baseRevenue =
         toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
       const returnFeePercent = toNumberSafe(m.returnFeePercent, 0);
@@ -190,14 +194,17 @@ export async function GET(req: NextRequest) {
           )
         : 0;
       const revenue = m.returnReason ? returnFeeAmount : baseRevenue;
-      const returnedStockValue = isProtection ? 0 : toNumberSafe(m.returnedStockValueChf, 0);
+      // Full-margin owned stock: no acquisition COGS to recover on return.
+      const returnedStockValue =
+        isProtection || fullMargin ? 0 : toNumberSafe(m.returnedStockValueChf, 0);
 
       if (!sellDateRaw) {
         ensureDay("missing_sell_date").missingSellDateCount += 1;
         continue;
       }
 
-      const dateKey = sellDateRaw.toISOString().split("T")[0];
+      // Stored as Zurich wall-as-UTC — ISO UTC date == Zurich sell day.
+      const dateKey = shopifySellDateKey(sellDateRaw);
       const day = ensureDay(dateKey);
       day.lineItemsCount += 1;
 
@@ -208,8 +215,8 @@ export async function GET(req: NextRequest) {
         day.ordersCount = set.size;
       }
 
-      // Protection with cost 0 is valid margin; other lines still need cost + revenue.
-      if (!isProtection && !m.returnReason && (cost <= 0 || revenue <= 0)) {
+      // Full-margin (protection / ESS / LOCAL ALREADY_EXPENSED) may have cost 0.
+      if (!fullMargin && !m.returnReason && (cost <= 0 || revenue <= 0)) {
         day.missingCostCount += 1;
         continue;
       }

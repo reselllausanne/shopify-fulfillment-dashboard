@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { resolveOrderMatchCost } from "@/app/utils/matching";
 import { toZonedTime } from "date-fns-tz";
 
 export const runtime = "nodejs";
@@ -239,9 +240,14 @@ export async function GET(req: NextRequest) {
             shopifyOrderId: true,
             shopifyCreatedAt: true,
             shopifyTotalPrice: true,
+            shopifyProductTitle: true,
+            shopifySku: true,
             manualRevenueAdjustment: true,
             supplierCost: true,
             manualCostOverride: true,
+            supplierSource: true,
+            stockxStatus: true,
+            stockxOrderNumber: true,
             returnReason: true,
             returnFeePercent: true,
             returnFeeAmountChf: true,
@@ -284,9 +290,8 @@ export async function GET(req: NextRequest) {
         const revenue = m.returnReason ? returnFeeAmount : baseRevenue;
         row.salesChf += revenue;
 
-        const cost =
-          toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
-        if (cost > 0) {
+        const { cost, fullMargin } = resolveOrderMatchCost(m);
+        if (fullMargin || cost > 0) {
           row.salesWithCogsChf += revenue;
           row.cogsChf += cost;
           row.marginChf += revenue - cost;

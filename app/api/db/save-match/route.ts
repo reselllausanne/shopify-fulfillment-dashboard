@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { orderMatchHasLocalStockLotIdField, prisma } from "@/app/lib/prisma";
-import { formatInTimeZone } from "date-fns-tz";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
 import { detectMilestone } from "@/app/lib/stockxStatus";
 import { getMailer } from "@/app/lib/mailer";
 import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
-
-const TIMEZONE = "Europe/Zurich";
+import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 // Auto-send is disabled by default; only manual send should deliver emails.
 const AUTO_SEND_EMAILS = true;
 // Date handling helpers live in this file
@@ -361,8 +359,7 @@ export async function POST(req: Request) {
       const raw = parseFlexibleDate(shopifyCreatedAt);
       if (!raw) return null;
       // Store Zurich-local wall time as UTC (no extra offset on display/grouping)
-      const localStr = formatInTimeZone(raw, TIMEZONE, "yyyy-MM-dd'T'HH:mm:ss");
-      return new Date(`${localStr}.000Z`);
+      return toShopifyCreatedAtStorage(raw);
     })();
     const shouldUpdateStates =
       resolvedStatesHash != null && resolvedStatesHash !== existingMatch?.stockxStatesHash;

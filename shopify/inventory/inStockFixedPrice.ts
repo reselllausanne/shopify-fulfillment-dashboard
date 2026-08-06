@@ -4,8 +4,8 @@
  * Same 48h physical ship as liquidation; price is manual — never StockX −30%.
  * Match by productId first (sizes share one product), then SKU base, then title.
  *
- * Essentials storefront (sacred — never StockX):
- *   sell = 59 CHF, express = 89 CHF
+ * COGS: already-expensed owned stock → costChf 0 (full margin on dashboard).
+ * Sell prices stay fixed (Essentials 59/89, Bape 69/99, AP×Travis 89/109).
  */
 
 /** Essentials in-stock Shopify sell price (CHF). Never overwritten by StockX. */
@@ -41,22 +41,25 @@ export type InStockFixedPriceRule = InStockFixedPriceConfig & {
   titlePatterns?: RegExp[];
 };
 
+/** Owned warehouse / Lab stock — already expensed; margin = full sell price. */
+const OWNED_WAREHOUSE_COST_CHF = 0;
+
 export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   {
-    costChf: 42,
+    costChf: OWNED_WAREHOUSE_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (fixed 59/89)",
+    matchReason: "Essential Hoodie (fixed 59/89, full margin)",
     skuBases: ["192HO246258F", "192HO246250F"],
     titlePatterns: [/^Essentials Hoodie\b/i, /Fear of God Essentials.*Hoodie\b/i],
   },
   {
-    costChf: 26,
+    costChf: OWNED_WAREHOUSE_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential T-Shirt (in stock)",
-    matchReason: "Essential T-Shirt (fixed 59/89)",
+    matchReason: "Essential T-Shirt (fixed 59/89, full margin)",
     productIds: [
       "15340411617666", // Tee Stretch Limo SS22
       "15349630501250", // Tee Light Oatmeal (SS22)
@@ -69,11 +72,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
   },
   {
-    costChf: 26,
+    costChf: OWNED_WAREHOUSE_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Shorts (in stock)",
-    matchReason: "Essential Shorts (fixed 59/89)",
+    matchReason: "Essential Shorts (fixed 59/89, full margin)",
     productIds: [
       "15340410732930", // Shorts Stretch Limo (SS22)
       "15340410831234", // Shorts Dark Oatmeal (SS22)
@@ -83,11 +86,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     titlePatterns: [/^Essentials Shorts\b/i, /Fear of God Essentials.*Shorts\b/i],
   },
   {
-    costChf: 35,
+    costChf: OWNED_WAREHOUSE_COST_CHF,
     sellChf: BAPE_SELL_CHF,
     expressChf: BAPE_EXPRESS_CHF,
     label: "Bape Tee (in stock)",
-    matchReason: "Bape Tee (fixed 69/99)",
+    matchReason: "Bape Tee (fixed 69/99, full margin)",
     productIds: [
       "15356478325122", // Check by Bathing Tee White/Beige
       "15356478357890", // Big Ape Head Tee White
@@ -99,11 +102,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
   },
   {
-    costChf: 40,
+    costChf: OWNED_WAREHOUSE_COST_CHF,
     sellChf: AUDEMARS_TRAVIS_SELL_CHF,
     expressChf: AUDEMARS_TRAVIS_EXPRESS_CHF,
     label: "Audemars x Travis Tee (in stock)",
-    matchReason: "Audemars x Travis Tee (fixed 89/109)",
+    matchReason: "Audemars x Travis Tee (fixed 89/109, full margin)",
     productIds: [
       "15115016733058", // Vintage Tee Black
       "15115016831362", // Watch Face Tee Green

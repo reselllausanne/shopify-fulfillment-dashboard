@@ -98,6 +98,76 @@ export function isPackageProtectionShopifyLine(
   return false;
 }
 
+/** In-stock Essentials/Bape/AP lane (ESS-*) — owned warehouse, already expensed → full margin. */
+export function isEssentialStockMatch(m: {
+  stockxStatus?: string | null;
+  stockxOrderNumber?: string | null;
+}): boolean {
+  const status = String(m.stockxStatus ?? "").trim();
+  const num = String(m.stockxOrderNumber ?? "").trim();
+  return status === "ESSENTIAL_STOCK" || num.startsWith("ESS-");
+}
+
+/** LOCAL lot sale (or LOCAL-* ref). ACQUISITION lots keep real cost; ALREADY_EXPENSED is cost 0. */
+export function isLocalStockMatch(m: {
+  supplierSource?: string | null;
+  stockxStatus?: string | null;
+  stockxOrderNumber?: string | null;
+}): boolean {
+  if (m.supplierSource === "LOCAL") return true;
+  const status = String(m.stockxStatus ?? "").trim();
+  const num = String(m.stockxOrderNumber ?? "").trim();
+  return status === "LOCAL_STOCK" || num.startsWith("LOCAL-");
+}
+
+export type OrderMatchCostInput = {
+  shopifyProductTitle?: string | null;
+  shopifySku?: string | null;
+  supplierSource?: string | null;
+  stockxStatus?: string | null;
+  stockxOrderNumber?: string | null;
+  manualCostOverride?: unknown;
+  supplierCost?: unknown;
+};
+
+/**
+ * COGS for margin metrics.
+ * - Package protection / ESSENTIAL_STOCK / ESS-* → 0 (full margin, already expensed)
+ * - LOCAL ALREADY_EXPENSED → 0 (allow zero; do not treat as missing cost)
+ * - LOCAL ACQUISITION / StockX → stored cost (manualCostOverride wins, including explicit 0)
+ */
+export function resolveOrderMatchCost(m: OrderMatchCostInput): {
+  cost: number;
+  fullMargin: boolean;
+} {
+  if (isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku)) {
+    return { cost: 0, fullMargin: true };
+  }
+  if (isEssentialStockMatch(m)) {
+    return { cost: 0, fullMargin: true };
+  }
+
+  const hasOverride =
+    m.manualCostOverride !== null &&
+    m.manualCostOverride !== undefined &&
+    m.manualCostOverride !== "";
+  if (hasOverride) {
+    const override = Number(m.manualCostOverride);
+    const safeCost = Number.isFinite(override) ? override : 0;
+    // Explicit 0 is intentional (ALREADY_EXPENSED / free) — not "missing cost".
+    return { cost: safeCost, fullMargin: safeCost <= 0 };
+  }
+
+  const raw = Number(m.supplierCost);
+  const safeCost = Number.isFinite(raw) ? raw : 0;
+
+  if (isLocalStockMatch(m) && safeCost <= 0) {
+    return { cost: 0, fullMargin: true };
+  }
+
+  return { cost: safeCost, fullMargin: false };
+}
+
 export interface MatchCandidate {
   supplierOrder: NormalizedSupplierOrder;
   score: number;
@@ -761,7 +831,7 @@ export function matchShopifyToSupplier(
 
   if (inStockEssential) {
     console.log(
-      `[AUTO] ${inStockEssential.label} → auto ${inStockEssential.costChf} CHF (SKU ${shopifyItem.sku || "n/a"})`
+      `[AUTO] ${inStockEssential.label} → auto full-margin cost ${inStockEssential.costChf} CHF (SKU ${shopifyItem.sku || "n/a"})`
     );
     const supplierOrderNumber = `ESS-${shopifyItem.orderName.replace("#", "")}`;
     const syntheticSupplier: NormalizedSupplierOrder = {

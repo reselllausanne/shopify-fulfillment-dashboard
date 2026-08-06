@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { resolveOrderMatchCost } from "@/app/utils/matching";
 import { toZonedTime } from "date-fns-tz";
 
 export const runtime = "nodejs";
@@ -65,7 +66,11 @@ export async function GET(request: NextRequest) {
         marginAmount: true,
         marginPercent: true,
         shopifyCurrencyCode: true,
+        shopifyProductTitle: true,
+        shopifySku: true,
         stockxOrderNumber: true,
+        stockxStatus: true,
+        supplierSource: true,
         manualRevenueAdjustment: true,
         manualCaseStatus: true,
         returnReason: true,
@@ -108,7 +113,7 @@ export async function GET(request: NextRequest) {
       // Convert Prisma Decimals to numbers for calculations
       const revenue = toNumberSafe(match.shopifyTotalPrice, 0);
       const revenueAdjustment = toNumberSafe(match.manualRevenueAdjustment, 0);
-      const cost = toNumberSafe(match.manualCostOverride, 0) || toNumberSafe(match.supplierCost, 0);
+      const { cost } = resolveOrderMatchCost(match);
       const returnFeePercent = toNumberSafe(match.returnFeePercent, 0);
       const returnFeeAmount =
         match.returnReason

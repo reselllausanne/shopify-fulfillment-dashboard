@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
+import { resolveOrderMatchCost } from "@/app/utils/matching";
 import type { Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -52,7 +53,13 @@ export async function GET(req: NextRequest) {
       select: {
         createdAt: true,
         shopifyTotalPrice: true,
+        shopifyProductTitle: true,
+        shopifySku: true,
         supplierCost: true,
+        manualCostOverride: true,
+        supplierSource: true,
+        stockxStatus: true,
+        stockxOrderNumber: true,
         marginAmount: true,
         manualRevenueAdjustment: true,
         returnReason: true,
@@ -123,7 +130,7 @@ export async function GET(req: NextRequest) {
 
       const revenue = toNumberSafe(match.shopifyTotalPrice, 0);
       const adjustment = toNumberSafe(match.manualRevenueAdjustment, 0);
-      const cost = toNumberSafe(match.supplierCost, 0);
+      const { cost, fullMargin } = resolveOrderMatchCost(match);
       const returnFeePercent = toNumberSafe(match.returnFeePercent, 0);
       const returnFeeAmount =
         match.returnReason
@@ -133,7 +140,7 @@ export async function GET(req: NextRequest) {
             )
           : 0;
       const effectiveRevenue = match.returnReason ? returnFeeAmount : revenue + adjustment;
-      const returnedStockValue = toNumberSafe(match.returnedStockValueChf, 0);
+      const returnedStockValue = fullMargin ? 0 : toNumberSafe(match.returnedStockValueChf, 0);
       if (!match.returnReason && effectiveRevenue <= 0) continue;
 
       row.salesChf += effectiveRevenue;

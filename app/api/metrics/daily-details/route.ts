@@ -1,36 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { toNumberSafe } from "@/app/utils/numbers";
-import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
+import { resolveOrderMatchCost } from "@/app/utils/matching";
+import { shopifySellDateUtcWindow } from "@/app/utils/shopifySellDate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const parseYmd = (value: string | null): { y: number; m: number; d: number } | null => {
-  if (!value) return null;
-  const parts = value.split("-");
-  if (parts.length !== 3) return null;
-  const [y, m, d] = parts.map((p) => Number(p));
-  if (!y || !m || !d) return null;
-  return { y, m, d };
-};
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const dateStr = searchParams.get("date");
-    const parsed = parseYmd(dateStr);
+    const window = shopifySellDateUtcWindow(dateStr || "");
 
-    if (!parsed) {
+    if (!window) {
       return NextResponse.json(
         { error: "Missing or invalid date. Use YYYY-MM-DD" },
         { status: 400 }
       );
     }
 
-    const { y, m, d } = parsed;
-    const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
-    const end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+    const { start, end } = window;
 
     const matches = await prisma.orderMatch.findMany({
       where: {
@@ -57,12 +47,12 @@ export async function GET(req: NextRequest) {
         returnFeeAmountChf: true,
         shopifyCreatedAt: true,
         stockxOrderNumber: true,
+        stockxStatus: true,
         supplierSource: true,
       },
     });
 
     const rows = matches.map((m: (typeof matches)[number]) => {
-      const isProtection = isPackageProtectionShopifyLine(m.shopifyProductTitle, m.shopifySku);
       const baseRevenue =
         toNumberSafe(m.shopifyTotalPrice, 0) + toNumberSafe(m.manualRevenueAdjustment, 0);
       const returnFeePercent = toNumberSafe(m.returnFeePercent, 0);
@@ -73,9 +63,7 @@ export async function GET(req: NextRequest) {
           )
         : 0;
       const revenue = m.returnReason ? returnFeeAmount : baseRevenue;
-      const cost = isProtection
-        ? 0
-        : toNumberSafe(m.manualCostOverride, 0) || toNumberSafe(m.supplierCost, 0);
+      const { cost } = resolveOrderMatchCost(m);
       const margin = revenue - cost;
 
       return {

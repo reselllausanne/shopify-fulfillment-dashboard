@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
+import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 
 export const PACKAGE_PROTECTION_MATCH_TYPE = "package_protection";
 export const PACKAGE_PROTECTION_STATUS = "PACKAGE_PROTECTION";
@@ -25,7 +26,9 @@ export type UpsertPackageProtectionResult = {
 };
 
 function toDate(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value);
+  const raw = value instanceof Date ? value : new Date(value);
+  // Match save-match: Zurich wall-clock stored as UTC for sell-date grouping.
+  return toShopifyCreatedAtStorage(raw);
 }
 
 function supplierRef(lineItemId: string): string {
