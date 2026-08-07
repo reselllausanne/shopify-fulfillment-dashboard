@@ -274,12 +274,12 @@ export async function syncShopifyCatalog(
   const locationId = dryRun ? null : await getPrimaryLocationId();
 
   for (const candidate of candidates) {
+    const listing = listingByProviderKey.get(candidate.providerKey) ?? null;
+    let action: ShopifyCatalogSyncRowResult["action"] = "updated";
+    let productId = listing?.externalProductId ?? null;
+    let variantId = listing?.externalVariantId ?? null;
+    let inventoryItemId = listing?.externalInventoryItemId ?? null;
     try {
-      const listing = listingByProviderKey.get(candidate.providerKey) ?? null;
-      let action: ShopifyCatalogSyncRowResult["action"] = "updated";
-      let productId = listing?.externalProductId ?? null;
-      let variantId = listing?.externalVariantId ?? null;
-      let inventoryItemId = listing?.externalInventoryItemId ?? null;
       const shouldCheckExisting = !dryRun || checkExistingOnDryRun;
       const found = !variantId && shouldCheckExisting ? await findVariantBySku(candidate.providerKey) : null;
 
@@ -502,6 +502,9 @@ export async function syncShopifyCatalog(
           providerKey: candidate.providerKey,
           supplierVariantId: candidate.supplierVariantId,
           gtin: candidate.gtin,
+          productId,
+          variantId,
+          inventoryItemId,
           stock: candidate.availableStock,
           price: candidate.targetPrice,
           status: "ERROR",

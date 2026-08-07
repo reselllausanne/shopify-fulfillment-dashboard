@@ -79,6 +79,20 @@ mutation ProductVariantsBulkUpdatePricing($productId: ID!, $variants: [ProductVa
 }
 `;
 
+const INVENTORY_ACTIVATE_MUTATION = /* GraphQL */ `
+mutation CatalogInventoryActivate($inventoryItemId: ID!, $locationId: ID!, $available: Int, $idempotencyKey: String!) {
+  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, available: $available) @idempotent(key: $idempotencyKey) {
+    inventoryLevel {
+      id
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
 const INVENTORY_SET_QUANTITIES_MUTATION = /* GraphQL */ `
 mutation InventorySetQuantities($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
   inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
@@ -89,6 +103,11 @@ mutation InventorySetQuantities($input: InventorySetQuantitiesInput!, $idempoten
   }
 }
 `;
+
+function isAlreadyActivatedError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("already activated") || lower.includes("already stocked");
+}
 
 const PRODUCT_ARCHIVE_MUTATION = /* GraphQL */ `
 mutation ProductArchive($input: ProductInput!) {
@@ -270,6 +289,7 @@ export async function updateVariantPricingAndIdentity(input: {
     price: input.price.toFixed(2),
     inventoryItem: {
       sku: input.sku,
+      tracked: true,
     },
   };
   if (input.barcode) {
@@ -303,17 +323,49 @@ export async function updateVariantPricingAndIdentity(input: {
   };
 }
 
+async function activateInventoryAtLocation(input: {
+  inventoryItemId: string;
+  locationId: string;
+}): Promise<void> {
+  const { data, errors } = await shopifyGraphQL<{
+    inventoryActivate: {
+      inventoryLevel: { id: string } | null;
+      userErrors: ShopifyUserError[];
+    };
+  }>(INVENTORY_ACTIVATE_MUTATION, {
+    inventoryItemId: input.inventoryItemId,
+    locationId: input.locationId,
+    available: 0,
+    idempotencyKey: crypto.randomUUID(),
+  });
+  if (errors?.length) {
+    const msg = errors.map((e) => e.message).join("; ");
+    if (isAlreadyActivatedError(msg)) return;
+    throw new Error(`Shopify inventoryActivate failed: ${msg}`);
+  }
+  const userErrors = data?.inventoryActivate?.userErrors ?? [];
+  if (userErrors.length) {
+    const msg = userErrors.map((e) => e.message).join("; ");
+    if (isAlreadyActivatedError(msg)) return;
+    throw new Error(`inventoryActivate failed: ${msg}`);
+  }
+}
+
 export async function setInventoryQuantity(input: {
   inventoryItemId: string;
   locationId: string;
   quantity: number;
 }) {
-  // API 2026-07: changeFromQuantity is mandatory on each quantity row
-  // (int or explicit null). null + ignoreCompareQuantity skips CAS.
+  // API 2026-07: changeFromQuantity is mandatory (int or explicit null).
+  // ignoreCompareQuantity was removed from InventorySetQuantitiesInput — null skips CAS.
+  await activateInventoryAtLocation({
+    inventoryItemId: input.inventoryItemId,
+    locationId: input.locationId,
+  });
+
   const payload = {
     name: "available",
     reason: "correction",
-    ignoreCompareQuantity: true,
     quantities: [
       {
         inventoryItemId: input.inventoryItemId,
