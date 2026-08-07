@@ -341,8 +341,6 @@ export async function GET(request: Request) {
           dropshipStock,
           physicalQty: physical.qty,
           dropshipDelisted,
-          // manualLock = soldes price — do not stack STX ask qty on top.
-          liquidationLocked: manualLock,
         });
         effectiveStock = merged.finalStock;
       }
