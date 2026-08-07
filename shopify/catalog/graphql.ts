@@ -1,4 +1,5 @@
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { LOCATIONS } from "@/shopify/inventory/locationConfig";
 
 type ShopifyUserError = {
   field?: string[] | null;
@@ -7,7 +8,7 @@ type ShopifyUserError = {
 
 const PRIMARY_LOCATION_QUERY = /* GraphQL */ `
 query PrimaryLocation {
-  locations(first: 1, sortKey: NAME) {
+  locations(first: 50, sortKey: NAME) {
     nodes {
       id
       name
@@ -131,6 +132,14 @@ function assertNoUserErrors(userErrors: ShopifyUserError[] | undefined, action: 
 }
 
 export async function getPrimaryLocationId(): Promise<string | null> {
+  // Prefer Warehouse Bussigny (THE / Maison own stock). Never pick first-by-name
+  // (that resolves to Antica Bottegas and misplaces catalog qty).
+  const preferred =
+    LOCATIONS.find((l) => l.sourceType === "physical" && /bussigny/i.test(l.name)) ??
+    LOCATIONS.find((l) => l.sourceType === "physical") ??
+    null;
+  if (preferred?.id) return preferred.id;
+
   const { data, errors } = await shopifyGraphQL<{
     locations: {
       nodes: Array<{ id: string; name: string }>;
@@ -139,7 +148,9 @@ export async function getPrimaryLocationId(): Promise<string | null> {
   if (errors?.length) {
     throw new Error(`Shopify locations query failed: ${errors.map((e) => e.message).join("; ")}`);
   }
-  return data?.locations?.nodes?.[0]?.id ?? null;
+  const nodes = data?.locations?.nodes ?? [];
+  const byName = nodes.find((n) => /bussigny/i.test(n.name));
+  return byName?.id ?? nodes[0]?.id ?? null;
 }
 
 type VariantSearchNode = {

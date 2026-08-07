@@ -237,7 +237,7 @@ async function upsertListingState(input: {
       status: input.status,
       soldOutAt: input.soldOutAt ?? undefined,
       archivedAt: input.archivedAt ?? undefined,
-      lastError: input.lastError ?? undefined,
+      lastError: input.lastError === undefined ? undefined : input.lastError,
       metadataJson: input.metadataJson ?? undefined,
     },
   });
