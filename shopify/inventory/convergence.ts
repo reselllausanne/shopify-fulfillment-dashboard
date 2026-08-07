@@ -508,9 +508,16 @@ export async function convergeVariant(
         "postPhysicalRestock set but desired=dropship — skipping dropship revert (unexpected)"
       );
     } else {
-    // Bussigny empty → clear liquidation lock even if other warehouses still hold stock.
+    // Bussigny empty → clear Shopify-lane liquidation lock even if other warehouses still hold stock.
+    // Never wipe operator Galaxus liquidation notes (e.g. mq2-liquidation) — those are feed prices, not Bussigny soldes.
+    const note = String(stxRow?.manualNote ?? "");
+    const preserveGalaxusLiquidation = /mq2-liquidation/i.test(note) || /galaxus-liquidation/i.test(note);
     const hadDbLiquidation = Boolean(stxRow?.manualLock);
-    if (stxRow && (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)) {
+    if (
+      stxRow &&
+      !preserveGalaxusLiquidation &&
+      (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)
+    ) {
       await prisma.supplierVariant.update({
         where: { id: stxRow.id },
         data: {
@@ -522,6 +529,8 @@ export async function convergeVariant(
         },
       });
       changes.push("DB manualLock=false, cleared manual overrides");
+    } else if (stxRow && preserveGalaxusLiquidation) {
+      warnings.push(`preserved Galaxus liquidation lock (${note || "named"})`);
     }
 
     if (shopifyVariant?.variantId && shopifyVariant.productId) {

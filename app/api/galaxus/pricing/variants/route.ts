@@ -120,10 +120,11 @@ export async function GET(request: Request) {
     let galaxusPriceExVat: number | null = null;
     let galaxusPriceIncVat: number | null = null;
     if (manualLock && manualPrice && manualPrice > 0) {
-      galaxusPriceIncVat = manualPrice;
+      // manualPrice = final Galaxus PurchasePriceExclVat (operator-stated), not TTC.
+      galaxusPriceExVat = manualPrice;
       const defaults = getDefaultPricing();
       const vatRate = defaults.vatRate;
-      galaxusPriceExVat = manualPrice / (1 + vatRate);
+      galaxusPriceIncVat = manualPrice * (1 + vatRate);
     } else if (buyPrice && buyPrice > 0) {
       if (isMerchant) {
         galaxusPriceExVat = buyPrice;

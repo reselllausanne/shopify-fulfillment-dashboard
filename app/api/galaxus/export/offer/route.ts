@@ -244,8 +244,9 @@ export async function GET(request: Request) {
     const manualStockRaw = variant?.manualStock;
     const manualStock =
       manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
-    const manualPriceExVat =
-      manualLock && manualPrice && manualPrice > 0 ? manualPrice / (1 + (vatRate ?? 0)) : null;
+    // manualPrice is the final Galaxus PurchasePriceExclVat — never strip VAT / never re-margin.
+    const lockedFinalExVat =
+      manualLock && manualPrice && manualPrice > 0 ? manualPrice : null;
     const channelClassification = classifyProductPricingKind({
       title: candidate?.product?.name ?? variant?.supplierProductName ?? null,
       sizeRaw: variant?.sizeRaw ?? null,
@@ -254,15 +255,15 @@ export async function GET(request: Request) {
       sizeUs: candidate?.kickdbVariant?.sizeUs ?? null,
     });
     // Galaxus feed price must use margin-adjusted sell (from gtinSelection), not raw DB buy.
-    const baseForChannel =
-      manualPriceExVat && manualPriceExVat > 0
-        ? manualPriceExVat
-        : sellPrice;
-    const channelAdjustedPrice = computeChannelVariantPrice({
-      channel: "GALAXUS",
-      basePrice: baseForChannel,
-      classification: channelClassification,
-    });
+    // Locked manual price is already final — skip channel multipliers.
+    const baseForChannel = lockedFinalExVat && lockedFinalExVat > 0 ? lockedFinalExVat : sellPrice;
+    const channelAdjustedPrice = lockedFinalExVat
+      ? lockedFinalExVat
+      : computeChannelVariantPrice({
+          channel: "GALAXUS",
+          basePrice: baseForChannel,
+          classification: channelClassification,
+        });
     const priceValue =
       channelAdjustedPrice && channelAdjustedPrice > 0
         ? channelAdjustedPrice
@@ -340,6 +341,8 @@ export async function GET(request: Request) {
           dropshipStock,
           physicalQty: physical.qty,
           dropshipDelisted,
+          // manualLock = soldes price — do not stack STX ask qty on top.
+          liquidationLocked: manualLock,
         });
         effectiveStock = merged.finalStock;
       }
