@@ -18,6 +18,7 @@ export default function HealthDebugPage() {
   const [data, setData] = useState<DebugPayload | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [mfpFiles, setMfpFiles] = useState<FileList | null>(null);
 
   const load = useCallback(async () => {
     const res = await fetch("/api/health/ops");
@@ -148,39 +149,97 @@ export default function HealthDebugPage() {
         </button>
       </div>
 
-      {message ? <p className="mb-3 text-sm text-zinc-700 dark:text-zinc-300">{message}</p> : null}
+      {message ? (
+        <pre className="mb-3 whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
+          {message}
+        </pre>
+      ) : null}
       {busy ? <p className="mb-3 text-sm text-zinc-500">Running {busy}…</p> : null}
 
       <section className="mb-6 rounded border border-zinc-200 p-4 dark:border-zinc-700">
-        <h2 className="mb-2 font-medium">Import MyFitnessPal CSV</h2>
-        <input
-          type="file"
-          accept=".csv,text/csv"
-          className="text-sm"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            void (async () => {
-              setBusy("mfp");
-              try {
-                const form = new FormData();
-                form.append("file", file);
-                const res = await fetch("/api/health/nutrition/import", {
-                  method: "POST",
-                  body: form,
-                });
-                const json = await res.json();
-                setMessage(
-                  res.ok
-                    ? `MFP import: ${json.upserted} rows`
-                    : json.error ?? "MFP import failed"
-                );
-              } finally {
-                setBusy(null);
-              }
-            })();
-          }}
-        />
+        <h2 className="mb-2 font-medium">Import MyFitnessPal export</h2>
+        <p className="mb-2 text-xs text-zinc-500">
+          From{" "}
+          <a
+            className="underline"
+            href="https://www.myfitnesspal.com/fr/reports/export"
+            target="_blank"
+            rel="noreferrer"
+          >
+            MFP → Reports → Export
+          </a>{" "}
+          (Premium). Zip has 3 CSVs:
+        </p>
+        <ul className="mb-3 list-disc space-y-1 pl-5 text-xs text-zinc-600 dark:text-zinc-300">
+          <li>
+            <strong>Nutrition-Summary-*.csv</strong> — YES (calories + macros, meals summed per day)
+          </li>
+          <li>
+            <strong>Measurement-Summary-*.csv</strong> — YES (weight)
+          </li>
+          <li>
+            <strong>Exercise-Summary-*.csv</strong> — NO (skip — WHOOP already has workouts)
+          </li>
+        </ul>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            Select file(s)
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              multiple
+              className="mt-1 block text-sm"
+              onChange={(e) => setMfpFiles(e.target.files)}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!!busy || !mfpFiles?.length}
+            className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+            onClick={() => {
+              if (!mfpFiles?.length) return;
+              void (async () => {
+                setBusy("mfp");
+                setMessage(null);
+                try {
+                  const form = new FormData();
+                  for (const file of Array.from(mfpFiles)) {
+                    form.append("file", file);
+                  }
+                  const res = await fetch("/api/health/nutrition/import", {
+                    method: "POST",
+                    body: form,
+                  });
+                  const json = await res.json();
+                  if (!res.ok) {
+                    setMessage(json.error ?? "MFP import failed");
+                    return;
+                  }
+                  setMessage(
+                    [
+                      `MFP OK — ${json.nutritionDays ?? 0} nutrition days`,
+                      `${json.mealEvents ?? 0} meals`,
+                      `${json.weights ?? 0} weights`,
+                      ...(json.ingested ?? []).map((s: string) => `· ${s}`),
+                      ...(json.skipped ?? []).map((s: string) => `· skipped ${s}`),
+                    ].join("\n")
+                  );
+                  setMfpFiles(null);
+                  await load();
+                } finally {
+                  setBusy(null);
+                }
+              })();
+            }}
+          >
+            Save / import to DB
+          </button>
+        </div>
+        {mfpFiles?.length ? (
+          <p className="mt-2 text-xs text-zinc-500">
+            Selected: {Array.from(mfpFiles).map((f) => f.name).join(", ")}
+          </p>
+        ) : null}
       </section>
 
       <section className="mb-6">
