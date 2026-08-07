@@ -164,7 +164,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
                 .then((u: { id: string } | null) => Boolean(u))
             : false;
         if (!sameGalaxusMatch && !sameGalaxusUnit) {
-          let ownerHint = claim.channel;
+          let ownerHint: string = claim.channel;
           if (claim.channel === "galaxus" && !claim.matchId.startsWith("stx_unit:")) {
             const owner = await (prisma as any).galaxusStockxMatch
               .findUnique({
