@@ -384,6 +384,7 @@ export async function GET(request: Request) {
       supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
       supplierVariantId,
       providerKey,
+      manualNote: variant?.manualNote ?? null,
     });
     // GLD (and any MOQ>1 supplier): do not list variants that cannot fill a min order.
     // Also omit literal 0 — never push zero-stock rows (master/offer already gated).

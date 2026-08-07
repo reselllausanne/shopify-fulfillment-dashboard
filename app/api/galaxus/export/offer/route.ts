@@ -366,6 +366,7 @@ export async function GET(request: Request) {
         supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
         supplierVariantId,
         providerKey,
+        manualNote: variant?.manualNote ?? null,
       })
     ) {
       continue;

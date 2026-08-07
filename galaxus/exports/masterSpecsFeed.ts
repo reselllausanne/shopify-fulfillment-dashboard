@@ -190,6 +190,7 @@ function buildMasterRowsFromCandidates(
         dropshipStock,
         physicalQty: physical.qty,
         dropshipDelisted,
+        liquidationLocked: manualLock,
       });
       effectiveStock = merged.finalStock;
     }
@@ -200,6 +201,7 @@ function buildMasterRowsFromCandidates(
         supplierKey: mapping?.supplierKey ?? null,
         supplierVariantId,
         providerKey,
+        manualNote: supplierVariant?.manualNote ?? null,
       })
     ) {
       continue;

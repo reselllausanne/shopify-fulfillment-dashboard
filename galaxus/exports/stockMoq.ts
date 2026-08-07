@@ -30,11 +30,33 @@ function normalizeSupplierKey(raw?: string | null): string | null {
   return key || null;
 }
 
+/** Parse `moq=10` / `oqs=10` tokens from operator notes (e.g. mq2-liquidation). */
+export function parseMoqFromManualNote(manualNote?: string | null): GalaxusStockMoq | null {
+  const note = String(manualNote ?? "");
+  const moqMatch = note.match(/\bmoq\s*=\s*(\d+)\b/i);
+  if (!moqMatch) return null;
+  const minimumOrderQuantity = Number.parseInt(moqMatch[1]!, 10);
+  if (!Number.isFinite(minimumOrderQuantity) || minimumOrderQuantity < 1) return null;
+  const oqsMatch = note.match(/\boqs\s*=\s*(\d+)\b/i);
+  const orderQuantitySteps = oqsMatch
+    ? Number.parseInt(oqsMatch[1]!, 10)
+    : minimumOrderQuantity;
+  if (!Number.isFinite(orderQuantitySteps) || orderQuantitySteps < 1) {
+    return { minimumOrderQuantity, orderQuantitySteps: minimumOrderQuantity };
+  }
+  return { minimumOrderQuantity, orderQuantitySteps };
+}
+
 export function resolveGalaxusStockMoq(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
   providerKey?: string | null;
+  /** Operator note override, e.g. `mq2-liquidation unit=67 moq=10 oqs=10`. */
+  manualNote?: string | null;
 }): GalaxusStockMoq {
+  const fromNote = parseMoqFromManualNote(input.manualNote);
+  if (fromNote) return fromNote;
+
   const fromKey = normalizeSupplierKey(input.supplierKey);
   if (fromKey && SUPPLIER_STOCK_MOQ[fromKey]) {
     return SUPPLIER_STOCK_MOQ[fromKey];

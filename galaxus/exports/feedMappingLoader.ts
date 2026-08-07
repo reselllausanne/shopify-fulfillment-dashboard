@@ -34,6 +34,7 @@ export const FEED_MAPPING_INCLUDE = {
       manualPrice: true,
       manualStock: true,
       manualLock: true,
+      manualNote: true,
       deliveryType: true,
     },
   },

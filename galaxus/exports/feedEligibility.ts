@@ -36,6 +36,7 @@ export function resolveGalaxusFeedMoq(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
   providerKey?: string | null;
+  manualNote?: string | null;
 }): GalaxusStockMoq {
   return resolveGalaxusStockMoq(input);
 }
@@ -47,6 +48,7 @@ export function isGalaxusSellableStock(
     supplierKey?: string | null;
     supplierVariantId?: string | null;
     providerKey?: string | null;
+    manualNote?: string | null;
     moq?: GalaxusStockMoq;
   }
 ): boolean {

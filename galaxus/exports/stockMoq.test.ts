@@ -21,6 +21,21 @@ describe("resolveGalaxusStockMoq", () => {
     });
   });
 
+  it("parses moq/oqs from manualNote ahead of supplier defaults", () => {
+    expect(
+      resolveGalaxusStockMoq({
+        supplierKey: "stx",
+        manualNote: "mq2-liquidation unit=67 moq=10 oqs=10",
+      })
+    ).toEqual({ minimumOrderQuantity: 10, orderQuantitySteps: 10 });
+    expect(
+      resolveGalaxusStockMoq({
+        supplierKey: "golden",
+        manualNote: "mq2-liquidation unit=67 moq=10",
+      })
+    ).toEqual({ minimumOrderQuantity: 10, orderQuantitySteps: 10 });
+  });
+
   it("applies MOQ 3 for Golden / GLD", () => {
     expect(resolveGalaxusStockMoq({ supplierKey: "golden" })).toEqual({
       minimumOrderQuantity: 3,
