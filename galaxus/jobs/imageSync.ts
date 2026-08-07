@@ -40,9 +40,10 @@ type ImageSyncResult = ImageSyncBatchResult & {
   complete?: boolean;
 };
 
-const DEFAULT_SUPPLIER_KEYS = ["stx"] as const;
+/** `ner` = physically stocked rows; they need hosted images to clear the Galaxus catalog gate. */
+const DEFAULT_SUPPLIER_KEYS = ["stx", "ner"] as const;
 
-/** STX plus legacy THE when enabled, and any configured SCRAPER_SHOPS keys (e.g. wel). */
+/** STX + physical, plus legacy THE when enabled, and any configured SCRAPER_SHOPS keys (e.g. wel). */
 export function resolveImageSyncSupplierKeys(extra?: string[]): string[] {
   const keys = new Set<string>([...DEFAULT_SUPPLIER_KEYS]);
   if (isTheSupplierEnabled()) keys.add("the");

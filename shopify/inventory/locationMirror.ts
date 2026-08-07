@@ -18,6 +18,18 @@ import { schedulePhysicalInStockSyncForVariant } from "@/shopify/inventory/physi
 // `first` inflates the GraphQL query cost and trips Shopify throttling.
 const LEVELS_PAGE_SIZE = 100;
 
+/**
+ * Legacy `THE_*` partner variants still exist in Shopify. Their DB rows were purged,
+ * so mirroring them only re-seeds catalog entries the purge was meant to remove.
+ */
+const RETIRED_SKU_PREFIXES = ["THE_"] as const;
+
+export function isRetiredSupplierSku(sku: string | null | undefined): boolean {
+  const value = String(sku ?? "").trim().toUpperCase();
+  if (!value) return false;
+  return RETIRED_SKU_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
 const LOCATION_LEVELS_QUERY = /* GraphQL */ `
 query LocationLevels($loc: ID!, $cur: String, $n: Int!) {
   location(id: $loc) {
@@ -120,10 +132,12 @@ async function pageLocationLevels(
       if (!variant?.id || !node.item?.id) continue;
       const available = node.quantities?.find((q) => q.name === "available")?.quantity ?? 0;
       if (available <= 0) continue; // keep only stocked rows
+      const sku = variant.sku ?? node.item.sku ?? null;
+      if (isRetiredSupplierSku(sku)) continue;
       rows.push({
         shopifyVariantId: variant.id,
         inventoryItemId: node.item.id,
-        sku: variant.sku ?? node.item.sku ?? null,
+        sku,
         gtin: variant.barcode ?? null,
         available,
       });
@@ -423,6 +437,7 @@ export async function syncAllLocationsBulk(options: { timeoutMs?: number } = {})
       if (available <= 0) return;
       const variant = variantById.get(obj.__parentId);
       if (!variant) return;
+      if (isRetiredSupplierSku(variant.sku)) return;
       const location = PHYSICAL_LOCATIONS.find((l) => l.id === locId)!;
       await upsertRow(location, {
         shopifyVariantId: variant.variantId,

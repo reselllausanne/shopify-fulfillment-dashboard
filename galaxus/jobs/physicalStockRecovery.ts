@@ -1,6 +1,8 @@
 import { prisma } from "@/app/lib/prisma";
 import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
+import { isGalaxusCatalogReady } from "@/galaxus/exports/feedEligibility";
+import { resolvePhysicalCatalogIdentity } from "@/galaxus/jobs/physicalCatalogHydrate";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
 const VAT_DIVISOR = 1.081;
@@ -28,6 +30,12 @@ type RecoverPhysicalStockResult = {
   supplierVariantsCreated: number;
   supplierVariantsUpdated: number;
   supplierVariantsSkipped: number;
+  /** Redundant `ner:` rows removed because a catalog-ready row already covers the GTIN. */
+  duplicateNerRowsRemoved: number;
+  /** Existing `ner:` rows that gained brand + images from KickDB. */
+  catalogRowsHydrated: number;
+  /** GTINs where neither local KickDB nor the API could supply brand + images. */
+  catalogUnhydrated: string[];
   feedTriggerId?: string | null;
   feedTriggerCreated?: boolean;
 };
@@ -94,6 +102,148 @@ async function fetchShopifyVariant(shopifyVariantId: string): Promise<ShopifyVar
     sizeTitle: v.title,
     productTitle: v.product?.title ?? null,
   };
+}
+
+/**
+ * Repair `ner:` rows that already exist but never got catalog identity.
+ *
+ * Rows created before hydration existed carry only Shopify fields, so they fail
+ * `isGalaxusCatalogReady` forever — the GTIN has a mapping and looks healthy, but the
+ * pair is silently absent from every feed. Local KickDB covers almost all of them.
+ */
+async function hydrateIncompletePhysicalRows(
+  normalizedGtins: string[],
+  unhydrated: string[]
+): Promise<number> {
+  if (normalizedGtins.length === 0) return 0;
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      normalized_gtin: string;
+      supplierVariantId: string;
+      providerKey: string | null;
+      images: unknown;
+      sourceImageUrl: string | null;
+      hostedImageUrl: string | null;
+      supplierProductName: string | null;
+      supplierBrand: string | null;
+      supplierSku: string | null;
+    }>
+  >`
+    SELECT
+      regexp_replace(sv."gtin", '^0+', '') AS normalized_gtin,
+      sv."supplierVariantId",
+      sv."providerKey",
+      sv."images",
+      sv."sourceImageUrl",
+      sv."hostedImageUrl",
+      sv."supplierProductName",
+      sv."supplierBrand",
+      sv."supplierSku"
+    FROM "public"."SupplierVariant" sv
+    WHERE regexp_replace(sv."gtin", '^0+', '') = ANY(${normalizedGtins}::text[])
+      AND sv."providerKey" LIKE 'NER_%'
+  `;
+
+  let hydrated = 0;
+  for (const row of rows) {
+    if (isGalaxusCatalogReady(row)) continue;
+
+    const identity = await resolvePhysicalCatalogIdentity(row.normalized_gtin);
+    if (!identity.brand || identity.images.length === 0) {
+      unhydrated.push(row.normalized_gtin);
+      continue;
+    }
+
+    await prisma.supplierVariant.update({
+      where: { supplierVariantId: row.supplierVariantId },
+      data: {
+        supplierBrand: identity.brand,
+        images: identity.images,
+        sourceImageUrl: identity.images[0],
+        ...(identity.name ? { supplierProductName: identity.name } : {}),
+        updatedAt: new Date(),
+      },
+    });
+    hydrated += 1;
+  }
+
+  if (hydrated > 0) {
+    console.info("[galaxus][physical-recovery] hydrated catalog identity", { hydrated });
+  }
+  return hydrated;
+}
+
+/**
+ * A `ner:` row is only ever a stand-in for a GTIN the catalog did not have yet.
+ * When the real catalog row shows up later (StockX SSE upsert, partner import), the
+ * stand-in becomes a second ProviderKey for one physical pair — Galaxus then sees two
+ * competing offers. Retire the stand-in and let the catalog row carry the stock.
+ */
+async function removeRedundantPhysicalRows(normalizedGtins: string[]): Promise<number> {
+  if (normalizedGtins.length === 0) return 0;
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      normalized_gtin: string;
+      supplierVariantId: string;
+      providerKey: string | null;
+      images: unknown;
+      sourceImageUrl: string | null;
+      hostedImageUrl: string | null;
+      supplierProductName: string | null;
+      supplierBrand: string | null;
+      supplierSku: string | null;
+    }>
+  >`
+    SELECT
+      regexp_replace(sv."gtin", '^0+', '') AS normalized_gtin,
+      sv."supplierVariantId",
+      sv."providerKey",
+      sv."images",
+      sv."sourceImageUrl",
+      sv."hostedImageUrl",
+      sv."supplierProductName",
+      sv."supplierBrand",
+      sv."supplierSku"
+    FROM "public"."SupplierVariant" sv
+    WHERE regexp_replace(sv."gtin", '^0+', '') = ANY(${normalizedGtins}::text[])
+  `;
+
+  const byGtin = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = byGtin.get(row.normalized_gtin) ?? [];
+    list.push(row);
+    byGtin.set(row.normalized_gtin, list);
+  }
+
+  const redundant: string[] = [];
+  for (const list of byGtin.values()) {
+    if (list.length < 2) continue;
+    const keeper = list.find(
+      (row) => !String(row.providerKey ?? "").startsWith("NER_") && isGalaxusCatalogReady(row)
+    );
+    if (!keeper) continue;
+    for (const row of list) {
+      if (row.supplierVariantId === keeper.supplierVariantId) continue;
+      if (!String(row.providerKey ?? "").startsWith("NER_")) continue;
+      redundant.push(row.supplierVariantId);
+    }
+  }
+
+  if (redundant.length === 0) return 0;
+
+  await prisma.variantMapping.deleteMany({
+    where: { supplierVariantId: { in: redundant } },
+  });
+  const deleted = await prisma.supplierVariant.deleteMany({
+    where: { supplierVariantId: { in: redundant } },
+  });
+
+  console.info("[galaxus][physical-recovery] removed redundant ner rows", {
+    count: deleted.count,
+  });
+  return deleted.count;
 }
 
 export async function recoverPhysicalStockForGalaxus(
@@ -265,6 +415,9 @@ export async function recoverPhysicalStockForGalaxus(
   let supplierVariantsCreated = 0;
   let supplierVariantsUpdated = 0;
   let supplierVariantsSkipped = 0;
+  let duplicateNerRowsRemoved = 0;
+  let catalogRowsHydrated = 0;
+  const catalogUnhydrated: string[] = [];
 
   if (!dryRun) {
     for (const row of needMapping) {
@@ -322,7 +475,21 @@ export async function recoverPhysicalStockForGalaxus(
         const sizeRaw = String(info?.sizeTitle ?? "").trim() || "OS";
         const sizeNormalized = normalizeSize(sizeRaw) ?? sizeRaw;
         const priceExVat = normalizePriceExVat(info?.price ?? null);
-        const productTitle = String(info?.productTitle ?? "").trim() || null;
+
+        // Physical rows must carry the same catalog identity as the dropship catalog,
+        // otherwise `isGalaxusCatalogReady` rejects them and they never reach the feed.
+        const identity = await resolvePhysicalCatalogIdentity(orphan.normalized);
+        const productTitle =
+          identity.name ?? (String(info?.productTitle ?? "").trim() || null);
+        const catalogFields = {
+          supplierBrand: identity.brand,
+          ...(identity.images.length > 0
+            ? { images: identity.images, sourceImageUrl: identity.images[0] }
+            : {}),
+        };
+        if (!identity.brand || identity.images.length === 0) {
+          catalogUnhydrated.push(orphan.normalized);
+        }
 
         const supplierVariantId = `ner:${sanitizeIdPart(sku)}-${sanitizeIdPart(sizeNormalized || "OS")}`;
         const providerKey = buildProviderKey(orphan.normalized, supplierVariantId);
@@ -344,6 +511,7 @@ export async function recoverPhysicalStockForGalaxus(
               sizeRaw,
               sizeNormalized,
               supplierProductName: productTitle,
+              ...catalogFields,
               lastSyncAt: now,
               updatedAt: now,
             },
@@ -361,6 +529,7 @@ export async function recoverPhysicalStockForGalaxus(
               sizeRaw,
               sizeNormalized,
               supplierProductName: productTitle,
+              ...catalogFields,
               lastSyncAt: now,
             },
           });
@@ -399,8 +568,19 @@ export async function recoverPhysicalStockForGalaxus(
     }
   }
 
+  if (!dryRun) {
+    // Dedupe first so we never spend a KickDB lookup on a row we are about to delete.
+    duplicateNerRowsRemoved = await removeRedundantPhysicalRows(normalizedGtins);
+    catalogRowsHydrated = await hydrateIncompletePhysicalRows(normalizedGtins, catalogUnhydrated);
+  }
+
   const changedRows =
-    mappingInsertedOrUpdated + mappingRealigned + supplierVariantsCreated + supplierVariantsUpdated;
+    mappingInsertedOrUpdated +
+    mappingRealigned +
+    supplierVariantsCreated +
+    supplierVariantsUpdated +
+    duplicateNerRowsRemoved +
+    catalogRowsHydrated;
   let feedTriggerId: string | null = null;
   let feedTriggerCreated = false;
   if (!dryRun && shouldTriggerFeedPush && changedRows > 0) {
@@ -423,6 +603,9 @@ export async function recoverPhysicalStockForGalaxus(
     supplierVariantsCreated,
     supplierVariantsUpdated,
     supplierVariantsSkipped,
+    duplicateNerRowsRemoved,
+    catalogRowsHydrated,
+    catalogUnhydrated,
     feedTriggerId,
     feedTriggerCreated,
   };

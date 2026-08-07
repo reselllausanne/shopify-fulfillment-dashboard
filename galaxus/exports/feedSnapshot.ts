@@ -197,6 +197,36 @@ async function bulkReplaceSnapshotRows(params: {
   }
 }
 
+/** Clear `rebuiltAt` so the snapshot path is skipped and exports fall back to live. */
+export async function invalidateFeedSnapshot(): Promise<void> {
+  await (prisma as any).galaxusFeedSnapshotMeta.updateMany({
+    where: { id: SNAPSHOT_META_ID },
+    data: { rebuiltAt: null, stockRowCount: 0, offerRowCount: 0 },
+  });
+}
+
+/**
+ * Chunked `createMany` can silently land fewer rows than parsed (duplicate ProviderKeys
+ * are skipped, a chunk can fail). Publishing a short feed is worse than publishing none.
+ */
+async function assertSnapshotRowCounts(expected: {
+  stockExpected: number;
+  offerExpected: number;
+}): Promise<void> {
+  const prismaAny = prisma as any;
+  const [stockCount, offerCount] = await Promise.all([
+    prismaAny.galaxusFeedStockSnapshot.count(),
+    prismaAny.galaxusFeedOfferSnapshot.count(),
+  ]);
+
+  const shortfall = (actual: number, target: number) => target > 0 && actual < target * 0.99;
+  if (shortfall(stockCount, expected.stockExpected) || shortfall(offerCount, expected.offerExpected)) {
+    throw new Error(
+      `Snapshot rebuild incomplete — stock ${stockCount}/${expected.stockExpected}, offer ${offerCount}/${expected.offerExpected}. Snapshot left invalid; exports stay on the live path.`
+    );
+  }
+}
+
 async function fetchExportCsv(origin: string, path: string): Promise<string> {
   const url = `${origin}${path}`;
   const res = await runGalaxusExportGET(url);
@@ -223,6 +253,18 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
   const offerHeaders =
     offerParsed.headers.length > 0 ? offerParsed.headers : defaultOfferCsvHeaders();
 
+  if (stockParsed.rows.length === 0 || offerParsed.rows.length === 0) {
+    throw new Error(
+      `Refusing to rebuild snapshot from empty export (stock=${stockParsed.rows.length}, offer=${offerParsed.rows.length})`
+    );
+  }
+
+  // Invalidate before wiping. The rebuild is delete-then-insert across two tables and
+  // cannot be one transaction at this row count, so a crash mid-rebuild would otherwise
+  // leave truncated tables still flagged ready by the previous run's `rebuiltAt` —
+  // and a truncated offer CSV delists every product missing from it.
+  await invalidateFeedSnapshot();
+
   await bulkReplaceSnapshotRows({
     table: "stock",
     headers: [...GALAXUS_STOCK_CSV_HEADERS],
@@ -232,6 +274,11 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
     table: "offer",
     headers: offerHeaders,
     rows: offerParsed.rows,
+  });
+
+  await assertSnapshotRowCounts({
+    stockExpected: stockParsed.rows.length,
+    offerExpected: offerParsed.rows.length,
   });
 
   const now = new Date();
