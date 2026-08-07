@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { isTheSupplierEnabled } from "@/galaxus/supplier/theSupplierPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +28,12 @@ export async function POST(
         return NextResponse.json({ ok: false, error: "Invalid partner key" }, { status: 400 });
       }
       if (normalized === "THE") {
+        if (!isTheSupplierEnabled()) {
+          return NextResponse.json(
+            { ok: false, error: "THE supplier is disabled; assign a marketplace partner instead" },
+            { status: 400 }
+          );
+        }
         partnerKey = normalized;
       } else {
         const partner = await prismaAny.partner.findFirst({

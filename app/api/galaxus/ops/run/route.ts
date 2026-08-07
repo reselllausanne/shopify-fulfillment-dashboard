@@ -11,7 +11,7 @@ import {
 import { startFeedSnapshotRebuildAsync } from "@/galaxus/exports/feedSnapshot";
 import { startImageSyncFullAsync } from "@/galaxus/ops/imageSyncPush";
 import { GALAXUS_FEED_UPLOADS_DISABLED } from "@/galaxus/config";
-import { syncShopifyCatalog } from "@/shopify/catalog/sync";
+import { gatePartnerSyncForTheSupplier } from "@/galaxus/supplier/theSupplierPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,20 +79,26 @@ export async function POST(request: Request) {
     }
 
     if (action === "partner-sync") {
-      const partnerScope = partnerKey || "THE";
+      const partnerScope = partnerKey.trim();
+      if (!partnerScope) {
+        return NextResponse.json(
+          { ok: false, error: "partnerKey is required (THE supplier sync is disabled)" },
+          { status: 400 }
+        );
+      }
+      const partnerGate = gatePartnerSyncForTheSupplier(partnerScope);
+      if (!partnerGate.allowed) {
+        return NextResponse.json({ ok: false, error: partnerGate.reason }, { status: 400 });
+      }
       const data = await runOpsTick(origin, {
         force: true,
         only: ["partner-stock-sync"],
         partnerKey: partnerScope,
       });
-      const shopifyCatalog = await syncShopifyCatalog({
-        limit: 5000,
-        supplierKey: partnerScope.toLowerCase(),
-        inStockOnly: true,
-        missingOnly: false,
-        dryRun: false,
-      });
-      return NextResponse.json({ ok: true, partnerKey: partnerScope, data, shopifyCatalog });
+      // Never auto-create Shopify products from partner-sync. That path used
+      // providerKey as title when KickDB/name missing → junk THE_<gtin> products
+      // with 0 sales channels. Catalog create stays on restock / explicit catalog sync.
+      return NextResponse.json({ ok: true, partnerKey: partnerScope, data });
     }
 
     if (action === "stx-refresh") {

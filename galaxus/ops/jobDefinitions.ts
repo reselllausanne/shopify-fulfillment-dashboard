@@ -9,7 +9,7 @@ export const DEFAULT_JOBS: Array<{
   intervalMs: number;
   enabled: boolean;
 }> = [
-  { jobKey: "partner-stock-sync", intervalMs: 5 * HOUR_MS, enabled: true },
+  { jobKey: "partner-stock-sync", intervalMs: 5 * HOUR_MS, enabled: true }, // physical recovery; THE partner rows skipped unless THE_SUPPLIER_ENABLED=true
   /** KickDB → STX price/stock; manual runs are always allowed from ops UI. */
   { jobKey: "stx-refresh", intervalMs: 6 * HOUR_MS, enabled: true },
   /** Golden (GLD) assortment price/stock refresh. */

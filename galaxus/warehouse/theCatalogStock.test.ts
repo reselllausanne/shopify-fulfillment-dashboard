@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { isTheSupplierVariantId, isTheWarehouseGalaxusLine } from "./theCatalogStock";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyTheCatalogStockDeltaInTx, isTheSupplierVariantId, isTheWarehouseGalaxusLine } from "./theCatalogStock";
 
 describe("isTheWarehouseGalaxusLine", () => {
   it("detects THE warehouse lines from providerKey", () => {
@@ -33,5 +33,23 @@ describe("isTheSupplierVariantId", () => {
     expect(isTheSupplierVariantId("ner:IM4002-100-40")).toBe(false);
     expect(isTheSupplierVariantId("stx_abc")).toBe(false);
     expect(isTheSupplierVariantId(null)).toBe(false);
+  });
+});
+
+describe("applyTheCatalogStockDeltaInTx", () => {
+  afterEach(() => {
+    delete process.env.THE_SUPPLIER_ENABLED;
+  });
+
+  it("no-ops when THE supplier is disabled", async () => {
+    const tx = {
+      supplierVariant: {
+        findUnique: vi.fn(),
+        update: vi.fn(),
+      },
+    };
+    const changed = await applyTheCatalogStockDeltaInTx(tx, "the:IM4002-100-40", -1, "test");
+    expect(changed).toBe(false);
+    expect(tx.supplierVariant.findUnique).not.toHaveBeenCalled();
   });
 });

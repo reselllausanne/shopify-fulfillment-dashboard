@@ -9,6 +9,11 @@ import {
   chunkArray,
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
+import {
+  gatePartnerSyncForTheSupplier,
+  isThePartnerUploadProviderKey,
+  isTheSupplierEnabled,
+} from "@/galaxus/supplier/theSupplierPolicy";
 
 type PartnerSyncOptions = {
   limit?: number;
@@ -35,11 +40,29 @@ function buildSupplierVariantId(providerKey: string, sku: string, sizeNormalized
   return `${cleanKey}:${cleanSku}-${cleanSize}`;
 }
 
+const emptyPartnerSyncResult = (startedAt: number): PartnerSyncResult => ({
+  scanned: 0,
+  processed: 0,
+  created: 0,
+  updated: 0,
+  skippedInvalid: 0,
+  removedZeroStock: 0,
+  mappingInserted: 0,
+  mappingUpdated: 0,
+  durationMs: Date.now() - startedAt,
+});
+
 export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<PartnerSyncResult> {
   const limit = Math.min(Math.max(options.limit ?? 500, 1), 2000);
   const offset = Math.max(options.offset ?? 0, 0);
   const partnerKeyFilter = normalizeProviderKey(options.partnerKey);
   const startedAt = Date.now();
+
+  const partnerGate = gatePartnerSyncForTheSupplier(partnerKeyFilter);
+  if (!partnerGate.allowed) {
+    console.info("[galaxus][sync:partner] skipped", { reason: partnerGate.reason, partnerKeyFilter });
+    return emptyPartnerSyncResult(startedAt);
+  }
 
   const rows = await (prisma as any).partnerUploadRow.findMany({
     where: {
@@ -77,6 +100,10 @@ export async function runPartnerSync(options: PartnerSyncOptions = {}): Promise<
   const seenSupplierVariantIds = new Set<string>();
   for (const row of rows) {
     const supplierCode = normalizeProviderKey(row.providerKey);
+    if (!isTheSupplierEnabled() && isThePartnerUploadProviderKey(row.providerKey)) {
+      skippedInvalid += 1;
+      continue;
+    }
     const gtin = validateGtin(row.gtinResolved) ? row.gtinResolved : null;
     if (!supplierCode || !gtin) {
       skippedInvalid += 1;

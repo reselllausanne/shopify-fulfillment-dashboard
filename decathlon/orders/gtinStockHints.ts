@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { normalizeGtinKey } from "@/galaxus/stx/purchaseUnits";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { isTheSupplierEnabled } from "@/galaxus/supplier/theSupplierPolicy";
 import { pickMiraklLineGtin } from "@/decathlon/mirakl/orderLineFields";
 
 export type DecathlonLineStockHint = {
@@ -60,7 +61,9 @@ export async function buildDecathlonLineStockHints(
       .map((k) => normalizeProviderKey(k))
       .filter((k): k is string => Boolean(k))
   );
-  allowedKeys.add("THE");
+  if (isTheSupplierEnabled()) {
+    allowedKeys.add("THE");
+  }
 
   const rows = await prisma.supplierVariant.findMany({
     where: { gtin: { in: gtinList } },
@@ -100,8 +103,20 @@ export async function buildDecathlonLineStockHints(
     const hints = byGtin.get(g) ?? [];
     if (hints.length === 0) continue;
     hints.sort((a, b) => {
-      if (a.partnerKey === "THE" && b.partnerKey !== "THE") return -1;
-      if (b.partnerKey === "THE" && a.partnerKey !== "THE") return 1;
+      if (
+        isTheSupplierEnabled() &&
+        a.partnerKey === "THE" &&
+        b.partnerKey !== "THE"
+      ) {
+        return -1;
+      }
+      if (
+        isTheSupplierEnabled() &&
+        b.partnerKey === "THE" &&
+        a.partnerKey !== "THE"
+      ) {
+        return 1;
+      }
       return b.stock - a.stock;
     });
     out.set(lineId, hints);

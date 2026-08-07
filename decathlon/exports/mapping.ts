@@ -2,6 +2,12 @@ import { prisma } from "@/app/lib/prisma";
 import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier/providerKey";
 import { attachAvailableStock } from "@/inventory/availableStock";
+import {
+  isTheSupplierEnabled,
+  isTheSupplierProviderKey,
+  isTheSupplierVariantId,
+} from "@/galaxus/supplier/theSupplierPolicy";
+import { extractDecathlonOfferSupplierKey } from "./stxOfferPolicy";
 import { isAllowedDecathlonBrand } from "./brands";
 import type {
   DecathlonExclusion,
@@ -223,6 +229,30 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
         recordDecathlonExclusion(summary, {
           reason: "INVALID_PROVIDER_KEY",
           message: "ProviderKey format invalid",
+          supplierVariantId,
+          providerKey,
+          gtin,
+        });
+        continue;
+      }
+
+      const supplierKey = extractDecathlonOfferSupplierKey({
+        providerKey,
+        variant,
+        mapping,
+        kickdbVariant: mapping?.kickdbVariant ?? null,
+        product: mapping?.kickdbVariant?.product ?? null,
+        gtin,
+      });
+      if (
+        !isTheSupplierEnabled() &&
+        (isTheSupplierVariantId(supplierVariantId) ||
+          isTheSupplierProviderKey(providerKey) ||
+          supplierKey === "the")
+      ) {
+        recordDecathlonExclusion(summary, {
+          reason: "MISSING_STOCK",
+          message: "THE supplier disabled",
           supplierVariantId,
           providerKey,
           gtin,

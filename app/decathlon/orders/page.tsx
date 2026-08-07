@@ -1718,7 +1718,6 @@ export default function DecathlonOrdersPage() {
                                 }
                               >
                                 <option value="">None</option>
-                                <option value="THE">THE (stock)</option>
                                 {partners.map((partner) => (
                                   <option key={partner.id} value={partner.key}>
                                     {partner.name} ({partner.key})

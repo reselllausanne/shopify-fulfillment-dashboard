@@ -2054,13 +2054,6 @@ export function GalaxusWarehouseDashboard() {
               <div className="text-xs font-medium text-gray-700">Manual actions</div>
               <div className="flex flex-wrap gap-2">
                 <button
-                  className="px-3 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
-                  onClick={() => runOpsAction("partner-sync")}
-                  disabled={opsBusy !== null}
-                >
-                  {opsBusy === "ops-partner-sync" ? "Running…" : "Run partner sync now"}
-                </button>
-                <button
                   className="px-3 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
                   onClick={() => runOpsAction("stx-refresh")}
                   disabled={opsBusy !== null}

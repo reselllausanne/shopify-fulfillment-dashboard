@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runJob } from "@/galaxus/jobs/jobRunner";
 import { runPartnerSync } from "@/galaxus/jobs/partnerSync";
+import { gatePartnerSyncForTheSupplier } from "@/galaxus/supplier/theSupplierPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +13,10 @@ export async function POST(request: Request) {
     const limit = Math.min(Number(searchParams.get("limit") ?? "500"), 2000);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
     const partnerKey = String(searchParams.get("partnerKey") ?? "").trim();
+    const partnerGate = gatePartnerSyncForTheSupplier(partnerKey || undefined);
+    if (!partnerGate.allowed) {
+      return NextResponse.json({ ok: false, error: partnerGate.reason }, { status: 400 });
+    }
 
     if (all) {
       const batchSize = 1000;

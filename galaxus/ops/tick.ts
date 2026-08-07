@@ -11,6 +11,9 @@ import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";
 import { recoverPhysicalStockForGalaxus } from "@/galaxus/jobs/physicalStockRecovery";
+import {
+  gatePartnerSyncForTheSupplier,
+} from "@/galaxus/supplier/theSupplierPolicy";
 
 type TickJobResult = {
   due: boolean;
@@ -73,7 +76,20 @@ export type OpsTickOptions = {
 async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTickOptions) {
   if (jobKey === "partner-stock-sync") {
     return runOpsJob(jobKey, async () => {
-      const partnerSync = await runPartnerSyncAll(tickOptions?.partnerKey);
+      const partnerGate = gatePartnerSyncForTheSupplier(tickOptions?.partnerKey);
+      const partnerSync = partnerGate.allowed
+        ? await runPartnerSyncAll(tickOptions?.partnerKey)
+        : {
+            skipped: partnerGate.reason,
+            scanned: 0,
+            processed: 0,
+            created: 0,
+            updated: 0,
+            skippedInvalid: 0,
+            removedZeroStock: 0,
+            mappingInserted: 0,
+            mappingUpdated: 0,
+          };
       const physicalRecovery = await recoverPhysicalStockForGalaxus({
         dryRun: false,
         triggerFeedPush: true,

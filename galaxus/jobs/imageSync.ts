@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { parseScraperShops } from "@/app/lib/scraperShops";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { hostSupplierImage } from "@/galaxus/images/imageHosting";
+import { isTheSupplierEnabled } from "@/galaxus/supplier/theSupplierPolicy";
 
 type ImageSyncStatus = "PENDING" | "SYNCED" | "FAILED" | "NO_SOURCE";
 
@@ -39,11 +40,12 @@ type ImageSyncResult = ImageSyncBatchResult & {
   complete?: boolean;
 };
 
-const DEFAULT_SUPPLIER_KEYS = ["stx", "the"] as const;
+const DEFAULT_SUPPLIER_KEYS = ["stx"] as const;
 
-/** STX/THE plus any configured SCRAPER_SHOPS keys (e.g. wel). */
+/** STX plus legacy THE when enabled, and any configured SCRAPER_SHOPS keys (e.g. wel). */
 export function resolveImageSyncSupplierKeys(extra?: string[]): string[] {
   const keys = new Set<string>([...DEFAULT_SUPPLIER_KEYS]);
+  if (isTheSupplierEnabled()) keys.add("the");
   for (const shop of parseScraperShops()) keys.add(shop.key);
   for (const raw of extra ?? []) {
     const k = String(raw).trim().toLowerCase();

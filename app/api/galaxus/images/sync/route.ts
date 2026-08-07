@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { runImageSync } from "@/galaxus/jobs/imageSync";
+import { runImageSync, resolveImageSyncSupplierKeys } from "@/galaxus/jobs/imageSync";
 import { prisma } from "@/app/lib/prisma";
 
 function normalizeSupplierVariantId(value: string): string {
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       supplierVariantId,
       limit,
       ...(concurrency ? { concurrency } : {}),
-      ...(supplierVariantId ? {} : { supplierKeys: ["stx", "the"] }),
+      ...(supplierVariantId ? {} : { supplierKeys: resolveImageSyncSupplierKeys() }),
       force: true,
     });
     return NextResponse.json({ ok: true, result });

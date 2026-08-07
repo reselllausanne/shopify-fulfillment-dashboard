@@ -5,6 +5,7 @@ import {
   isTheWarehouseSupplierSku,
   resolveGalaxusLineOfferSupplierSku,
 } from "@/galaxus/warehouse/lineInventorySource";
+import { isTheSupplierEnabled } from "@/galaxus/supplier/theSupplierPolicy";
 
 export type GalaxusLineStockInput = {
   id?: string | null;
@@ -91,6 +92,7 @@ export async function applyTheCatalogStockDeltaInTx(
   lineRef: string,
   details: string[] = []
 ): Promise<boolean> {
+  if (!isTheSupplierEnabled()) return false;
   if (!isTheSupplierVariantId(targetId)) return false;
   const delta = Math.trunc(Number(quantityDelta));
   if (!Number.isFinite(delta) || delta === 0) return false;
@@ -161,6 +163,9 @@ export async function deductTheCatalogStockForGalaxusLines(params: {
   lines: Array<{ line: GalaxusLineStockInput; quantity?: number }>;
 }): Promise<{ adjusted: number; details: string[] }> {
   const details: string[] = [];
+  if (!isTheSupplierEnabled()) {
+    return { adjusted: 0, details: ["THE supplier disabled"] };
+  }
   if (!params.lines.length) {
     return { adjusted: 0, details: ["no lines"] };
   }
