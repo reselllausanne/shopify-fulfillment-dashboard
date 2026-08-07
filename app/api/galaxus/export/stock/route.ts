@@ -149,6 +149,7 @@ export async function GET(request: Request) {
             manualPrice: true,
             manualStock: true,
             manualLock: true,
+            manualNote: true,
             leadTimeDays: true,
             updatedAt: true,
             deliveryType: true,
