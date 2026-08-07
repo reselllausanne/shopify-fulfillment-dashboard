@@ -12,6 +12,8 @@ import {
   buildPhysicalStockByGtinMap,
   resolvePhysicalStockForGtin,
 } from "@/shopify/inventory/orderLinePhysicalStock";
+import { upsertGalaxusLocalStockMatch } from "@/galaxus/orders/localStockMatch";
+import { isGalaxusStxSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +91,31 @@ export async function POST(
         { ok: false, error: "Line must be linked (StockX sync or manual match) before marking shipped" },
         { status: 400 }
       );
+    }
+
+    // Persist LOCAL_STOCK match when shipping from physical stock without a saved match.
+    if (isGalaxusStxSupplierLine(line as any)) {
+      const existingMatch = await (prisma as any).galaxusStockxMatch.findFirst({
+        where: { galaxusOrderLineId: line.id },
+        select: { id: true, stockxOrderNumber: true, matchType: true },
+      });
+      const hasRef = String(existingMatch?.stockxOrderNumber ?? "").trim().length > 0;
+      if (!hasRef) {
+        const gtin = String(line.gtin ?? "").trim();
+        const stockMap = gtin
+          ? await buildPhysicalStockByGtinMap([gtin]).catch(() => new Map())
+          : new Map();
+        const localStock = gtin ? resolvePhysicalStockForGtin(gtin, stockMap) : null;
+        const localQty = Number(localStock?.qty ?? 0);
+        if (Number.isFinite(localQty) && localQty > 0) {
+          await upsertGalaxusLocalStockMatch({
+            order: order as any,
+            line: line as any,
+            stockxAmount: 0,
+            reason: "LOCAL_PHYSICAL_STOCK_ON_WAREHOUSE_SHIP",
+          });
+        }
+      }
     }
 
     const updated = await prisma.galaxusOrderLine.update({

@@ -117,7 +117,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     const orderNum = match ? String(match.stockxOrderNumber ?? "").trim() : "";
 
     let ok = false;
-    let source: "galaxus_match" | "stx_sync" | "manual_reference" | null = null;
+    let source: "galaxus_match" | "stx_sync" | "manual_reference" | "local_stock" | null = null;
     let stockxOrderNumber: string | null = orderNum || null;
     let stockxOrderId: string | null = null;
     let awb: string | null = null;
@@ -131,6 +131,10 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
       hasStockxOrderId ||
       isLikelyStockxOrderRef(orderNum) ||
       String(match?.stockxSkuKey ?? "").trim().length > 0;
+    const isLocalStockMatch =
+      String(match?.matchType ?? "").trim().toUpperCase() === "LOCAL_STOCK" ||
+      String(match?.stockxStatus ?? "").trim().toUpperCase() === "LOCAL_STOCK" ||
+      /^LOCAL-STOCK-/i.test(orderNum);
 
     if (orderNum && hasStockxIdentity) {
       ok = true;
@@ -159,14 +163,34 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           }
         }
       }
+    } else if (orderNum && isLocalStockMatch) {
+      ok = true;
+      source = "local_stock";
+      stockxOrderId = null;
+      awb = null;
+      const amt = match?.stockxAmount != null ? Number(match.stockxAmount) : null;
+      if (amt != null && Number.isFinite(amt)) {
+        stockxCostChf = amt;
+        stockxCostCurrency =
+          match?.stockxCurrencyCode != null ? String(match.stockxCurrencyCode).trim() : null;
+      }
+      stockxEstimatedDelivery = null;
+      stockxLatestEstimatedDelivery = null;
     } else if (orderNum && !hasStockxIdentity) {
       // Keep line operationally linked, but do not treat it as a real StockX purchase.
       ok = true;
       source = "manual_reference";
       stockxOrderId = null;
       awb = null;
-      stockxCostChf = null;
-      stockxCostCurrency = null;
+      const amt = match?.stockxAmount != null ? Number(match.stockxAmount) : null;
+      if (amt != null && Number.isFinite(amt)) {
+        stockxCostChf = amt;
+        stockxCostCurrency =
+          match?.stockxCurrencyCode != null ? String(match.stockxCurrencyCode).trim() : null;
+      } else {
+        stockxCostChf = null;
+        stockxCostCurrency = null;
+      }
       stockxEstimatedDelivery = null;
       stockxLatestEstimatedDelivery = null;
     } else if (gtin && stx?.buckets?.length && isGalaxusStxSupplierLine(line)) {
@@ -208,13 +232,26 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
       ? stxUnits.filter((u: any) => unitMatchesLine(line, u) && u?.stockxOrderId && !u?.cancelledAt)
       : [];
 
+    const matchUnitSource = (m: any): "galaxus_match" | "local_stock" | "manual_reference" => {
+      const num = String(m?.stockxOrderNumber ?? "").trim();
+      const type = String(m?.matchType ?? "").trim().toUpperCase();
+      const status = String(m?.stockxStatus ?? "").trim().toUpperCase();
+      if (type === "LOCAL_STOCK" || status === "LOCAL_STOCK" || /^LOCAL-STOCK-/i.test(num)) {
+        return "local_stock";
+      }
+      if (!isLikelyStockxOrderRef(num) && !String(m?.stockxOrderId ?? "").trim()) {
+        return "manual_reference";
+      }
+      return "galaxus_match";
+    };
+
     const units = Array.from({ length: qty }, (_, i) => {
       const unitMatch = lineMatches.find((m: any) => Number(m?.unitIndex ?? 0) === i) ?? null;
       if (unitMatch) {
         return {
           unitIndex: i,
           linked: true,
-          source: "galaxus_match" as const,
+          source: matchUnitSource(unitMatch),
           stockxOrderNumber: unitMatch.stockxOrderNumber ?? null,
           stockxOrderId: unitMatch.stockxOrderId ?? null,
           stockxAmount: unitMatch.stockxAmount != null ? Number(unitMatch.stockxAmount) : null,
@@ -226,7 +263,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
         return {
           unitIndex: i,
           linked: true,
-          source: "galaxus_match" as const,
+          source: matchUnitSource(match),
           stockxOrderNumber: match.stockxOrderNumber ?? null,
           stockxOrderId: match.stockxOrderId ?? null,
           stockxAmount: match.stockxAmount != null ? Number(match.stockxAmount) : null,
@@ -279,10 +316,11 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     const sumLinkedUnitAmounts = units
       .filter((u: any) => u.linked && u.stockxAmount != null && Number.isFinite(Number(u.stockxAmount)))
       .reduce((s: number, u: any) => s + Math.max(0, Number(u.stockxAmount)), 0);
+    // Allow explicit 0 (LOCAL ALREADY_EXPENSED). Only treat null/NaN as missing.
     const resolvedStockxCostChf =
       sumLinkedUnitAmounts > 0
         ? sumLinkedUnitAmounts
-        : stockxCostChf != null && Number.isFinite(stockxCostChf) && stockxCostChf > 0
+        : stockxCostChf != null && Number.isFinite(stockxCostChf)
           ? stockxCostChf
           : null;
     const localPhysicalQty = Number((line as any)?.physicalStock?.qty ?? 0);

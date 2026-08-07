@@ -12,6 +12,7 @@ import {
   galaxusLineWarehouseStockHint,
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
+import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
 
 function isUnknownCancelledAtArg(error: unknown): boolean {
   const message = String((error as any)?.message ?? "");
@@ -146,6 +147,11 @@ export async function reconcileGalaxusOrderProcurement(
   await repairGalaxusStockxMatchLineRefs(order.id);
   const migrated = await migrateLinkedStxUnitsToCurrentNeeds(orderIdOrRef);
   await reserveStxPurchaseUnitsForOrder(orderIdOrRef);
+  // Physical in-stock STX lines → LOCAL_STOCK match at ingest (before stock hits 0).
+  const localStock = await ensureLocalStockMatchesForOrder({
+    order,
+    reason: "LOCAL_PHYSICAL_STOCK_ON_INGEST",
+  });
   const autoLinked = options?.skipAutoLink
     ? { linked: 0, reason: "skipped" as const }
     : await autoLinkUnclaimedStockxBuysForGalaxusOrder(orderIdOrRef, { skipReserve: true });
@@ -155,6 +161,7 @@ export async function reconcileGalaxusOrderProcurement(
     ok: true as const,
     galaxusOrderId: order.galaxusOrderId,
     migratedUnits: migrated.updated,
+    localStockMatches: localStock.created,
     autoLinkedBuys: autoLinked.linked,
     ensuredMatches: ensured.upserted,
   };

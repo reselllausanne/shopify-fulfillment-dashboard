@@ -80,13 +80,25 @@ export async function buildStockxOrderClaimIndex(args: {
       },
     }),
     (prisma as any).stxPurchaseUnit.findMany({
-      where,
+      where: {
+        AND: [where, { cancelledAt: null }],
+      },
       select: {
         id: true,
         stockxOrderId: true,
         stockxOrderNumber: true,
       },
-    }),
+    }).catch(async () =>
+      // Older DBs without cancelledAt: fall back to unfiltered unit claims.
+      (prisma as any).stxPurchaseUnit.findMany({
+        where,
+        select: {
+          id: true,
+          stockxOrderId: true,
+          stockxOrderNumber: true,
+        },
+      })
+    ),
   ]);
 
   for (const row of decathlonRows) {

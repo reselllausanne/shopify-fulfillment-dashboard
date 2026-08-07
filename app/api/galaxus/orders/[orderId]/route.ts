@@ -5,16 +5,14 @@ import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { digitsOnlyGtin, sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { attachProcurementToLines } from "@/galaxus/orders/lineProcurement";
 import { reserveStxPurchaseUnitsForOrder } from "@/galaxus/stx/purchaseUnits";
-import {
-  isGalaxusStxSupplierLine,
-  resolveGalaxusLineOfferSupplierSku,
-} from "@/galaxus/warehouse/lineInventorySource";
+import { resolveGalaxusLineOfferSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
 import {
   attachPhysicalStockToLines,
   buildPhysicalStockByGtinMap,
 } from "@/shopify/inventory/orderLinePhysicalStock";
 import { isLegoStxProduct } from "@/galaxus/stx/legoProduct";
+import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -194,71 +192,6 @@ async function loadGalaxusOrderShipments(orderDbId: string, includeDocuments: bo
       ...(includeDocuments ? { documents: { select: shipmentDocumentSelect } } : {}),
     },
   });
-}
-
-async function ensureLocalStockMatchRows(params: {
-  order: any;
-  lines: any[];
-  stockxMatches: any[];
-}) {
-  const prismaAny = prisma as any;
-  const existingByLine = new Map<string, any[]>();
-  for (const match of params.stockxMatches ?? []) {
-    const lineId = String(match?.galaxusOrderLineId ?? "").trim();
-    if (!lineId) continue;
-    const arr = existingByLine.get(lineId) ?? [];
-    arr.push(match);
-    existingByLine.set(lineId, arr);
-  }
-
-  for (const line of params.lines ?? []) {
-    if (!isGalaxusStxSupplierLine(line)) continue;
-    const localQty = Number(line?.physicalStock?.qty ?? 0);
-    if (!Number.isFinite(localQty) || localQty <= 0) continue;
-    const lineId = String(line?.id ?? "").trim();
-    if (!lineId) continue;
-    const hasMatch = (existingByLine.get(lineId) ?? []).some(
-      (m: any) => String(m?.stockxOrderNumber ?? "").trim().length > 0
-    );
-    if (hasMatch) continue;
-
-    const localRef = `LOCAL-STOCK-${String(params.order?.galaxusOrderId ?? "").trim()}-${String(
-      line?.lineNumber ?? "0"
-    ).trim()}`;
-    const payload = {
-      galaxusOrderId: params.order.id,
-      galaxusOrderRef: params.order.galaxusOrderId ?? null,
-      galaxusOrderDate: params.order.orderDate ?? null,
-      galaxusOrderLineId: line.id,
-      unitIndex: 0,
-      galaxusLineNumber: line.lineNumber ?? null,
-      galaxusProductName: line.productName ?? "Item",
-      galaxusDescription: line.description ?? null,
-      galaxusSize: line.size ?? null,
-      galaxusGtin: line.gtin ?? null,
-      galaxusProviderKey: line.providerKey ?? null,
-      galaxusSupplierSku: line.supplierSku ?? null,
-      galaxusQuantity: Math.max(1, Number(line.quantity ?? 1)),
-      galaxusUnitNetPrice: line.unitNetPrice,
-      galaxusLineNetAmount: line.lineNetAmount,
-      galaxusVatRate: line.vatRate,
-      galaxusCurrencyCode: params.order.currencyCode ?? "CHF",
-      stockxOrderNumber: localRef,
-      stockxStatus: "LOCAL_STOCK",
-      matchConfidence: "high",
-      matchScore: 1,
-      matchType: "LOCAL_STOCK",
-      matchReasons: JSON.stringify(["LOCAL_PHYSICAL_STOCK_RESERVED"]),
-    };
-    await prismaAny.galaxusStockxMatch.upsert({
-      where: { galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex: 0 } },
-      update: {
-        ...payload,
-        updatedAt: new Date(),
-      },
-      create: payload,
-    });
-  }
 }
 
 export async function GET(
@@ -491,23 +424,34 @@ export async function GET(
     const enrichedLines = (orderRow.lines ?? []).map((line: any) =>
       enrichGalaxusOrderLine(line, skuByGtin, sizeByGtin, sizeRawByGtin, productNameByGtin, catalogPriceByGtin)
     );
-    const linesWithProcurement = attachProcurementToLines(enrichedLines, stx, stockxMatches, stxUnits);
     const physicalStockByGtin = await buildPhysicalStockByGtinMap(
-      linesWithProcurement.map((line: { gtin?: string | null }) => line.gtin)
+      enrichedLines.map((line: { gtin?: string | null }) => line.gtin)
     );
-    const linesWithPhysicalStock = attachPhysicalStockToLines(linesWithProcurement, physicalStockByGtin);
-    await ensureLocalStockMatchRows({
-      order: orderRow,
-      lines: linesWithPhysicalStock,
-      stockxMatches,
+    const linesWithPhysicalStock = attachPhysicalStockToLines(enrichedLines, physicalStockByGtin);
+    const localEnsure = await ensureLocalStockMatchesForOrder({
+      order: { ...orderRow, lines: linesWithPhysicalStock },
+      reason: "LOCAL_PHYSICAL_STOCK_ON_ORDER_FETCH",
     });
+    let matchesForResponse = stockxMatches;
+    if (localEnsure.created > 0) {
+      matchesForResponse = await (prisma as any).galaxusStockxMatch.findMany({
+        where: { galaxusOrderId: orderRow.id },
+        orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
+      });
+    }
+    const linesWithProcurement = attachProcurementToLines(
+      linesWithPhysicalStock,
+      stx,
+      matchesForResponse,
+      stxUnits
+    );
 
     const normalized = {
       ...orderRow,
-      lines: linesWithPhysicalStock,
+      lines: linesWithProcurement,
       stx,
       stxUnits,
-      stockxMatches,
+      stockxMatches: matchesForResponse,
       shipments: orderRow.shipments.map((shipment: any) => {
         const isStxShipment = String(shipment?.providerKey ?? "").toUpperCase() === "STX";
         const stxShipmentStatus = isStxShipment

@@ -10,6 +10,7 @@ import {
   findStockxOrderClaim,
 } from "@/app/lib/stockxCrossChannelClaims";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
+import { isLocalOrManualStockxRef } from "@/galaxus/orders/localStockMatch";
 import {
   linkOldestPendingStxUnit,
   reserveStxPurchaseUnitsForOrder,
@@ -136,35 +137,70 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     const stockxOrderIdFinal =
       trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null;
 
-    const claimIndex = await buildStockxOrderClaimIndex({
-      stockxOrderIds: [stockxOrderIdFinal],
-      stockxOrderNumbers: [stockxOrderNumberFinal],
-    });
-    const claim = findStockxOrderClaim(claimIndex, stockxOrderIdFinal, stockxOrderNumberFinal);
-    if (claim) {
-      const sameGalaxusMatch =
-        claim.channel === "galaxus" &&
-        !claim.matchId.startsWith("stx_unit:") &&
-        claim.matchId === String(existing?.id ?? "");
-      const sameGalaxusUnit =
-        claim.channel === "galaxus" &&
-        claim.matchId.startsWith("stx_unit:") &&
-        stockxOrderIdFinal
-          ? await (prisma as any).stxPurchaseUnit
-              .findFirst({
-                where: { stockxOrderId: stockxOrderIdFinal, galaxusOrderId: order.galaxusOrderId },
-                select: { id: true },
+    // LOCAL-/MANUAL- refs are not real StockX buys — skip cross-channel claim gate.
+    const claimableRef =
+      !isLocalOrManualStockxRef(stockxOrderNumberFinal) &&
+      (Boolean(stockxOrderIdFinal) || looksLikeStockxOrderNumber(stockxOrderNumberFinal));
+    if (claimableRef) {
+      const claimIndex = await buildStockxOrderClaimIndex({
+        stockxOrderIds: [stockxOrderIdFinal],
+        stockxOrderNumbers: [stockxOrderNumberFinal],
+      });
+      const claim = findStockxOrderClaim(claimIndex, stockxOrderIdFinal, stockxOrderNumberFinal);
+      if (claim) {
+        const sameGalaxusMatch =
+          claim.channel === "galaxus" &&
+          !claim.matchId.startsWith("stx_unit:") &&
+          claim.matchId === String(existing?.id ?? "");
+        const sameGalaxusUnit =
+          claim.channel === "galaxus" &&
+          claim.matchId.startsWith("stx_unit:") &&
+          stockxOrderIdFinal
+            ? await (prisma as any).stxPurchaseUnit
+                .findFirst({
+                  where: { stockxOrderId: stockxOrderIdFinal, galaxusOrderId: order.galaxusOrderId },
+                  select: { id: true },
+                })
+                .then((u: { id: string } | null) => Boolean(u))
+            : false;
+        if (!sameGalaxusMatch && !sameGalaxusUnit) {
+          let ownerHint = claim.channel;
+          if (claim.channel === "galaxus" && !claim.matchId.startsWith("stx_unit:")) {
+            const owner = await (prisma as any).galaxusStockxMatch
+              .findUnique({
+                where: { id: claim.matchId },
+                select: {
+                  galaxusOrderRef: true,
+                  galaxusProductName: true,
+                  galaxusGtin: true,
+                  stockxOrderNumber: true,
+                },
               })
-              .then((u: { id: string } | null) => Boolean(u))
-          : false;
-      if (!sameGalaxusMatch && !sameGalaxusUnit) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `StockX order is already linked on ${claim.channel}.`,
-          },
-          { status: 409 }
-        );
+              .catch(() => null);
+            if (owner) {
+              ownerHint = `galaxus order ${owner.galaxusOrderRef ?? "?"} (${owner.galaxusProductName ?? "item"}, GTIN ${owner.galaxusGtin ?? "?"}, ref ${owner.stockxOrderNumber ?? claim.stockxOrderNumber ?? "?"})`;
+            }
+          } else if (claim.channel === "galaxus" && claim.matchId.startsWith("stx_unit:")) {
+            const unitId = claim.matchId.slice("stx_unit:".length);
+            const owner = await (prisma as any).stxPurchaseUnit
+              .findUnique({
+                where: { id: unitId },
+                select: { galaxusOrderId: true, gtin: true, stockxOrderNumber: true },
+              })
+              .catch(() => null);
+            if (owner) {
+              ownerHint = `galaxus order ${owner.galaxusOrderId} (GTIN ${owner.gtin ?? "?"}, ref ${owner.stockxOrderNumber ?? claim.stockxOrderNumber ?? "?"})`;
+            }
+          }
+          return NextResponse.json(
+            {
+              ok: false,
+              error: `StockX order is already linked on ${ownerHint}. Use a different buy, or leave order # empty for local/manual stock.`,
+              claim,
+            },
+            { status: 409 }
+          );
+        }
       }
     }
 
