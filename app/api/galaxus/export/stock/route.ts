@@ -29,6 +29,10 @@ import {
   meetsGalaxusStockMoq,
   resolveGalaxusStockMoq,
 } from "@/galaxus/exports/stockMoq";
+import {
+  isGalaxusCatalogReady,
+  resolveGalaxusDirectDeliverySupported,
+} from "@/galaxus/exports/feedEligibility";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
@@ -148,6 +152,14 @@ export async function GET(request: Request) {
             leadTimeDays: true,
             updatedAt: true,
             deliveryType: true,
+            // Catalog-ready gate (must match master eligibility).
+            supplierProductName: true,
+            supplierBrand: true,
+            supplierSku: true,
+            images: true,
+            hostedImageUrl: true,
+            sourceImageUrl: true,
+            imageSyncStatus: true,
           },
         },
       },
@@ -351,13 +363,20 @@ export async function GET(request: Request) {
       return;
     }
 
+    // Never stock-publish incomplete catalog rows (no image/name/brand).
+    // Stock-only ProviderKeys → Galaxus "Add" + "GTIN is missing" (NER shell products).
+    if (!isGalaxusCatalogReady(variant)) {
+      return;
+    }
+
     const moq = resolveGalaxusStockMoq({
       supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
       supplierVariantId,
       providerKey,
     });
     // GLD (and any MOQ>1 supplier): do not list variants that cannot fill a min order.
-    if (!meetsGalaxusStockMoq(stock, moq)) {
+    // Also omit literal 0 — never push zero-stock rows (master/offer already gated).
+    if (!meetsGalaxusStockMoq(stock, moq) || stock <= 0) {
       return;
     }
 
@@ -398,8 +417,13 @@ export async function GET(request: Request) {
       TradeUnit: "",
       LogisticUnit: "",
       WarehouseCountry: isStx ? "Switzerland" : "Poland",
-      // GLD ships PL→CH in batches — never offer Swiss direct delivery.
-      DirectDeliverySupported: isGld ? "0" : "1",
+      // GLD: no DD. STX standard dropship: no DD (warehouse delivery only).
+      DirectDeliverySupported: resolveGalaxusDirectDeliverySupported({
+        isGld,
+        isStx,
+        deliveryType,
+        hasPhysicalStock,
+      }),
     });
   });
     let finalRows = rows;

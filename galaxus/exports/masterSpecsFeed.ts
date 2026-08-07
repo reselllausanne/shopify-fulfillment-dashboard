@@ -17,6 +17,7 @@ import {
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
+import { isGalaxusSellableStock } from "@/galaxus/exports/feedEligibility";
 import {
   resolveGalaxusDescription,
   resolveGalaxusProductCategoryPath,
@@ -193,6 +194,16 @@ function buildMasterRowsFromCandidates(
       effectiveStock = merged.finalStock;
     }
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) continue;
+    // GLD MOQ 3: never add assortment rows that cannot fill a min order (stock 1–2 → Galaxus OOS).
+    if (
+      !isGalaxusSellableStock(effectiveStock, {
+        supplierKey: mapping?.supplierKey ?? null,
+        supplierVariantId,
+        providerKey,
+      })
+    ) {
+      continue;
+    }
 
     const images = pickGalaxusProductImageList(supplierVariant ?? {});
     if (!images.length) continue;
@@ -209,6 +220,7 @@ function buildMasterRowsFromCandidates(
     const supplierBrand = normalizeBrand(
       supplierVariant?.supplierBrand ?? product?.brand ?? ""
     );
+    if (!supplierBrand) continue;
     const resolvedGtin = String(candidate.gtin ?? mapping.gtin ?? supplierVariant?.gtin ?? "").trim();
     const payload =
       product?.name || product?.brand || product?.description

@@ -25,6 +25,10 @@ import {
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import {
+  isGalaxusCatalogReady,
+  isGalaxusSellableStock,
+} from "@/galaxus/exports/feedEligibility";
+import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
   mergePhysicalWithDropship,
@@ -140,6 +144,13 @@ export async function GET(request: Request) {
             deliveryType: true,
             suggestedRetailPriceInclVat: true,
             supplierProductName: true,
+            // Catalog-ready gate (must match master eligibility).
+            supplierBrand: true,
+            supplierSku: true,
+            images: true,
+            hostedImageUrl: true,
+            sourceImageUrl: true,
+            imageSyncStatus: true,
           },
         },
         kickdbVariant: {
@@ -334,6 +345,20 @@ export async function GET(request: Request) {
       }
     }
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) {
+      continue;
+    }
+    // Incomplete catalog (esp. NER without image/name/brand) must not price-publish —
+    // stock/offer-only keys make Galaxus attempt Add → "GTIN is missing".
+    if (!isGalaxusCatalogReady(variant)) {
+      continue;
+    }
+    if (
+      !isGalaxusSellableStock(effectiveStock, {
+        supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+        supplierVariantId,
+        providerKey,
+      })
+    ) {
       continue;
     }
 

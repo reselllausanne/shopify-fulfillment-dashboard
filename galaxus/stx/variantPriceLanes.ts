@@ -66,7 +66,14 @@ export function allowsStxStandardImport(payload: unknown, slug?: string | null):
   return isStxForceImportSlug(handle) || isLegoStxSlug(handle) || isLegoStxProduct(payload as object);
 }
 
-/** Galaxus/Decathlon feeds: express always; standard only for LEGO / force-import slugs. */
+/**
+ * Galaxus/Decathlon marketplace publish gate.
+ *
+ * - express_* → always
+ * - standard → allowed when `GALAXUS_STX_ALLOW_STANDARD_SHIPPING` is not `0`/`false`/`no`
+ *   (default ON — restores pre-2026-07-31 volume). Set env to `0` to limit standard
+ *   dropship to LEGO / force-import slugs only.
+ */
 export function isStxMarketplacePublishableDeliveryType(
   deliveryType: string,
   options?: {
@@ -78,6 +85,9 @@ export function isStxMarketplacePublishableDeliveryType(
   const normalized = String(deliveryType ?? "").trim();
   if (normalized.startsWith("express_")) return true;
   if (normalized === "standard") {
+    const raw = String(process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING ?? "1").toLowerCase();
+    const allowAllStandard = !["0", "false", "no"].includes(raw);
+    if (allowAllStandard) return true;
     return allowsStxStandardImport(
       options?.product ?? (options?.productName ? { title: options.productName } : null),
       options?.slug

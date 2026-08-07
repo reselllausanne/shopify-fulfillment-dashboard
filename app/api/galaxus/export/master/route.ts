@@ -19,6 +19,7 @@ import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
+import { isGalaxusSellableStock } from "@/galaxus/exports/feedEligibility";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -436,6 +437,15 @@ export async function GET(request: Request) {
       effectiveStock = merged.finalStock;
     }
     if (!Number.isFinite(effectiveStock) || effectiveStock <= 0) continue;
+    if (
+      !isGalaxusSellableStock(effectiveStock, {
+        supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+        supplierVariantId,
+        providerKey,
+      })
+    ) {
+      continue;
+    }
 
     const supplierName = sanitizeText(
       supplierVariant?.supplierProductName ?? supplierVariant?.productName ?? ""
@@ -451,6 +461,7 @@ export async function GET(request: Request) {
     const supplierBrand = normalizeBrand(
       supplierVariant?.supplierBrand ?? supplierVariant?.brand ?? product?.brand ?? ""
     );
+    if (!supplierBrand) continue;
     const images = pickGalaxusProductImageList(supplierVariant ?? {});
     if (!images.length) continue;
     const resolvedGtin = String(candidate.gtin ?? mapping.gtin ?? supplierVariant?.gtin ?? "").trim();

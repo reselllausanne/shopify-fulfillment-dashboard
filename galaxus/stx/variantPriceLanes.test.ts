@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { selectStxActiveOffer, selectStxStandardOffer } from "@/galaxus/stx/offerSelection";
 import { buildStxDualPriceFields, isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 
@@ -56,11 +56,29 @@ describe("buildStxDualPriceFields", () => {
 });
 
 describe("isStxMarketplacePublishableDeliveryType", () => {
+  const prev = process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING;
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING;
+    else process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING = prev;
+  });
+
   it("allows express for any product", () => {
     expect(isStxMarketplacePublishableDeliveryType("express_expedited")).toBe(true);
   });
 
-  it("blocks standard-only sneakers from marketplace feeds", () => {
+  it("allows standard sneakers by default (volume restore)", () => {
+    delete process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING;
+    expect(
+      isStxMarketplacePublishableDeliveryType("standard", {
+        slug: "asics-gel-1130-neon-pack-pink",
+        productName: "ASICS Gel-1130",
+      })
+    ).toBe(true);
+  });
+
+  it("blocks standard sneakers when GALAXUS_STX_ALLOW_STANDARD_SHIPPING=0", () => {
+    process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING = "0";
     expect(
       isStxMarketplacePublishableDeliveryType("standard", {
         slug: "asics-gel-1130-neon-pack-pink",
@@ -69,7 +87,8 @@ describe("isStxMarketplacePublishableDeliveryType", () => {
     ).toBe(false);
   });
 
-  it("allows standard for LEGO slugs", () => {
+  it("allows standard for LEGO slugs even when standard gate is off", () => {
+    process.env.GALAXUS_STX_ALLOW_STANDARD_SHIPPING = "0";
     expect(
       isStxMarketplacePublishableDeliveryType("standard", {
         slug: "lego-lion-knights-castle-set-10305",
