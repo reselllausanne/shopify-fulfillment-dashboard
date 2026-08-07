@@ -249,6 +249,8 @@ export async function loadPhysicalMirrorLocationRowsByGtin(
  *  - physicalQty: from mirror
  *  - dropshipDelisted: true if STX would have delisted this row (0 stock forced
  *    by non-express/price-cap etc.)
+ *  - liquidationLocked: soldes/manualLock price is live — never add StockX ask
+ *    depth on top (Galaxus buys N @ liquidation while only 1 unit sits in warehouse).
  *
  * Returns the final qty to publish. Callers still apply their own price + row
  * skip rules; this only decides the number.
@@ -257,10 +259,18 @@ export function mergePhysicalWithDropship(args: {
   dropshipStock: number;
   physicalQty: number;
   dropshipDelisted?: boolean;
+  /** Liquidation / manualLock sell price — publish physical qty only. */
+  liquidationLocked?: boolean;
 }): { finalStock: number; kept: boolean; source: "dropship" | "physical" | "combined" | "empty" } {
   const dropship = Math.max(0, Math.floor(args.dropshipStock ?? 0));
   const physical = Math.max(0, Math.floor(args.physicalQty ?? 0));
   const delisted = args.dropshipDelisted === true;
+  const liquidationLocked = args.liquidationLocked === true;
+
+  // Soldes price must not advertise StockX depth. Physical units only.
+  if (liquidationLocked && physical > 0) {
+    return { finalStock: physical, kept: true, source: "physical" };
+  }
 
   if (delisted) {
     if (physical > 0) return { finalStock: physical, kept: true, source: "physical" };
