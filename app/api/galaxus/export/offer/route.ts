@@ -311,11 +311,16 @@ export async function GET(request: Request) {
       ? stockBySupplierVariantId.get(supplierVariantId)
       : undefined;
     const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    // Operator liquidation qty is final — do not let inventory events / STX ask caps override it.
+    const lockedManualStock =
+      manualLock && manualStock !== null && Number.isFinite(manualStock) && manualStock >= 0
+        ? manualStock
+        : null;
     const rawStock =
-      availableStock !== undefined
-        ? availableStock
-        : manualLock && manualStock !== null
-          ? manualStock
+      lockedManualStock !== null
+        ? lockedManualStock
+        : availableStock !== undefined
+          ? availableStock
           : baseStock;
     const gtinKey = String(candidate?.mapping?.gtin ?? "").trim();
     const physical = gtinKey ? physicalByGtin.get(gtinKey) : undefined;
@@ -329,11 +334,14 @@ export async function GET(request: Request) {
     // is non-express/standard and would be delisted for dropship.
     const isPublishableStx = isStxPublishableByDelivery || hasPhysicalStock;
     const dropshipDelisted = isStx && !isPublishableStx;
-    const dropshipStock = isStx && isStxPublishableByDelivery
-      ? publishStxStockFromAsks(rawStock)
-      : isStx
-        ? 0
-        : rawStock;
+    const dropshipStock =
+      lockedManualStock !== null
+        ? lockedManualStock
+        : isStx && isStxPublishableByDelivery
+          ? publishStxStockFromAsks(rawStock)
+          : isStx
+            ? 0
+            : rawStock;
     let effectiveStock = dropshipStock;
     if (mergePhysical) {
       if (physical && physical.qty > 0) {

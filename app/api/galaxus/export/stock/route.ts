@@ -321,11 +321,16 @@ export async function GET(request: Request) {
     const manualStock =
       manualStockRaw === null || manualStockRaw === undefined ? null : Number.parseInt(String(manualStockRaw), 10);
     const baseStock = Number.parseInt(String(variant?.stock ?? 0), 10);
+    // Operator liquidation qty is final — do not let inventory events / STX ask caps override it.
+    const lockedManualStock =
+      manualLock && manualStock !== null && Number.isFinite(manualStock) && manualStock >= 0
+        ? manualStock
+        : null;
     const rawStock =
-      availableStock !== undefined
-        ? availableStock
-        : manualLock && manualStock !== null
-          ? manualStock
+      lockedManualStock !== null
+        ? lockedManualStock
+        : availableStock !== undefined
+          ? availableStock
           : baseStock;
     const isStx = supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
     const deliveryType = String(variant?.deliveryType ?? "");
@@ -341,11 +346,14 @@ export async function GET(request: Request) {
     // Keep physical pairs live even when STX delivery lane is not publishable.
     const isPublishableStx = isStxPublishableByDelivery || hasPhysicalStock;
     const dropshipDelisted = isStx && !isPublishableStx;
-    const dropshipStock = isStx && isStxPublishableByDelivery
-      ? publishStxStockFromAsks(rawStock)
-      : isStx
-        ? 0
-        : rawStock;
+    const dropshipStock =
+      lockedManualStock !== null
+        ? lockedManualStock
+        : isStx && isStxPublishableByDelivery
+          ? publishStxStockFromAsks(rawStock)
+          : isStx
+            ? 0
+            : rawStock;
 
     let stock = dropshipStock;
     if (mergePhysical) {
@@ -354,6 +362,9 @@ export async function GET(request: Request) {
           dropshipStock,
           physicalQty: physical.qty,
           dropshipDelisted,
+          // Shelf/soldes price — physical qty only, never stack STX asks.
+          liquidationLocked:
+            manualLock || (Boolean(variant?.manualPrice) && Number(variant.manualPrice) > 0),
         });
         stock = merged.finalStock;
       }
