@@ -107,7 +107,11 @@ mutation InventorySetQuantities($input: InventorySetQuantitiesInput!, $idempoten
 
 function isAlreadyActivatedError(message: string): boolean {
   const lower = message.toLowerCase();
-  return lower.includes("already activated") || lower.includes("already stocked");
+  return (
+    lower.includes("already activated") ||
+    lower.includes("already stocked") ||
+    lower.includes("already active at the location")
+  );
 }
 
 const PRODUCT_ARCHIVE_MUTATION = /* GraphQL */ `
