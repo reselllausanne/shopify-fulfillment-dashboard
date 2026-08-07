@@ -342,6 +342,7 @@ export async function convergeVariant(
       manualLock: true,
       manualPrice: true,
       manualStock: true,
+      manualNote: true,
     },
   });
 
