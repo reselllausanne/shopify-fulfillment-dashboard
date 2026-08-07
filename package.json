@@ -20,7 +20,8 @@
     "returns:sync": "tsx scripts/sync-decathlon-returns.ts",
     "ads": "tsx scripts/ads-analytics.ts",
     "galaxus:delr-fees": "tsx scripts/sync-galaxus-delr-fulfillment-expenses.ts",
-    "shopify:fulfill-fees": "tsx scripts/sync-shopify-fulfillment-expenses.ts"
+    "shopify:fulfill-fees": "tsx scripts/sync-shopify-fulfillment-expenses.ts",
+    "health": "tsx scripts/health-data.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

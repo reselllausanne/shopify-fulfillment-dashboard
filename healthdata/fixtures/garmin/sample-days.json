@@ -1,0 +1,463 @@
+{
+  "providerUserId": "mock-garmin-user-1",
+  "days": [
+    {
+      "localDate": "2026-07-27",
+      "sleep": {
+        "id": "sleep-2026-07-27",
+        "startAt": "2026-07-26T22:00:00.000Z",
+        "endAt": "2026-07-27T06:10:00.000Z",
+        "durationMin": 460,
+        "timeInBedMin": 490,
+        "sleepScore": 86,
+        "lightMin": 230,
+        "deepMin": 110,
+        "remMin": 100,
+        "awakeMin": 20
+      },
+      "health": {
+        "id": "health-2026-07-27",
+        "restingHr": 46,
+        "hrvMs": 70,
+        "stressAvg": 20,
+        "bodyBatteryMax": 92,
+        "bodyBatteryMin": 28,
+        "spo2Avg": 97,
+        "respirationAvg": 13.8,
+        "steps": 7800,
+        "caloriesTotal": 2550,
+        "intensityMin": 30
+      },
+      "body": {
+        "id": "body-2026-07-27",
+        "measuredAt": "2026-07-27T06:20:00.000Z",
+        "weightKg": 74.1,
+        "bodyFatPct": 12.0
+      },
+      "activities": [
+        {
+          "id": "act-run-2026-07-27",
+          "sport": "running",
+          "startAt": "2026-07-27T16:00:00.000Z",
+          "endAt": "2026-07-27T16:50:00.000Z",
+          "durationSec": 3000,
+          "distanceM": 10000,
+          "caloriesKcal": 650,
+          "hrAvg": 148,
+          "hrMax": 168,
+          "trainingLoad": 70
+        }
+      ]
+    },
+    {
+      "localDate": "2026-07-28",
+      "sleep": {
+        "id": "sleep-2026-07-28",
+        "startAt": "2026-07-27T22:15:00.000Z",
+        "endAt": "2026-07-28T06:05:00.000Z",
+        "durationMin": 430,
+        "timeInBedMin": 470,
+        "sleepScore": 78,
+        "lightMin": 210,
+        "deepMin": 95,
+        "remMin": 90,
+        "awakeMin": 35
+      },
+      "health": {
+        "id": "health-2026-07-28",
+        "restingHr": 48,
+        "hrvMs": 62,
+        "stressAvg": 28,
+        "bodyBatteryMax": 82,
+        "bodyBatteryMin": 24,
+        "spo2Avg": 96,
+        "respirationAvg": 14.2,
+        "steps": 8200,
+        "caloriesTotal": 2650,
+        "intensityMin": 42
+      },
+      "body": {
+        "id": "body-2026-07-28",
+        "measuredAt": "2026-07-28T06:20:00.000Z",
+        "weightKg": 74.2,
+        "bodyFatPct": 12.1
+      },
+      "activities": [
+        {
+          "id": "act-run-2026-07-28",
+          "sport": "running",
+          "startAt": "2026-07-28T16:00:00.000Z",
+          "endAt": "2026-07-28T17:05:00.000Z",
+          "durationSec": 3900,
+          "distanceM": 12000,
+          "caloriesKcal": 780,
+          "hrAvg": 152,
+          "hrMax": 174,
+          "cadenceAvg": 174,
+          "speedAvgMps": 3.08,
+          "elevationGainM": 120,
+          "trainingEffect": 3.2,
+          "trainingLoad": 95,
+          "laps": [
+            { "lapIndex": 0, "durationSec": 1950, "distanceM": 6000, "hrAvg": 148 },
+            { "lapIndex": 1, "durationSec": 1950, "distanceM": 6000, "hrAvg": 156 }
+          ]
+        }
+      ]
+    },
+    {
+      "localDate": "2026-07-29",
+      "sleep": {
+        "id": "sleep-2026-07-29",
+        "startAt": "2026-07-28T23:00:00.000Z",
+        "endAt": "2026-07-29T05:40:00.000Z",
+        "durationMin": 370,
+        "timeInBedMin": 400,
+        "sleepScore": 62,
+        "lightMin": 190,
+        "deepMin": 70,
+        "remMin": 75,
+        "awakeMin": 35
+      },
+      "health": {
+        "id": "health-2026-07-29",
+        "restingHr": 52,
+        "hrvMs": 48,
+        "stressAvg": 41,
+        "bodyBatteryMax": 68,
+        "bodyBatteryMin": 18,
+        "spo2Avg": 95,
+        "respirationAvg": 14.8,
+        "steps": 5400,
+        "caloriesTotal": 2400,
+        "intensityMin": 18
+      },
+      "body": {
+        "id": "body-2026-07-29",
+        "measuredAt": "2026-07-29T05:55:00.000Z",
+        "weightKg": 74.6,
+        "bodyFatPct": 12.2
+      },
+      "activities": [
+        {
+          "id": "act-bike-2026-07-29",
+          "sport": "cycling",
+          "startAt": "2026-07-29T06:30:00.000Z",
+          "endAt": "2026-07-29T08:00:00.000Z",
+          "durationSec": 5400,
+          "distanceM": 42000,
+          "caloriesKcal": 920,
+          "hrAvg": 138,
+          "hrMax": 165,
+          "powerAvg": 210,
+          "powerMax": 380,
+          "powerNormalized": 225,
+          "cadenceAvg": 88,
+          "speedAvgMps": 7.78,
+          "elevationGainM": 450,
+          "trainingEffect": 3.5,
+          "trainingLoad": 120,
+          "temperatureC": 18
+        }
+      ]
+    },
+    {
+      "localDate": "2026-07-30",
+      "sleep": {
+        "id": "sleep-2026-07-30",
+        "startAt": "2026-07-29T22:30:00.000Z",
+        "endAt": "2026-07-30T06:30:00.000Z",
+        "durationMin": 450,
+        "timeInBedMin": 480,
+        "sleepScore": 84,
+        "lightMin": 220,
+        "deepMin": 110,
+        "remMin": 100,
+        "awakeMin": 20
+      },
+      "health": {
+        "id": "health-2026-07-30",
+        "restingHr": 46,
+        "hrvMs": 71,
+        "stressAvg": 22,
+        "bodyBatteryMax": 90,
+        "bodyBatteryMin": 30,
+        "spo2Avg": 97,
+        "respirationAvg": 13.9,
+        "steps": 9100,
+        "caloriesTotal": 2500,
+        "intensityMin": 35
+      },
+      "body": {
+        "id": "body-2026-07-30",
+        "measuredAt": "2026-07-30T06:40:00.000Z",
+        "weightKg": 74.0,
+        "bodyFatPct": 12.0
+      },
+      "activities": [
+        {
+          "id": "act-swim-2026-07-30",
+          "sport": "swimming",
+          "startAt": "2026-07-30T17:00:00.000Z",
+          "endAt": "2026-07-30T18:00:00.000Z",
+          "durationSec": 3600,
+          "distanceM": 2500,
+          "caloriesKcal": 510,
+          "hrAvg": 132,
+          "hrMax": 155,
+          "trainingEffect": 2.8,
+          "trainingLoad": 70
+        },
+        {
+          "id": "act-strength-2026-07-30",
+          "sport": "strength_training",
+          "startAt": "2026-07-30T18:30:00.000Z",
+          "endAt": "2026-07-30T19:20:00.000Z",
+          "durationSec": 3000,
+          "caloriesKcal": 280,
+          "hrAvg": 118,
+          "hrMax": 148,
+          "trainingLoad": 40
+        }
+      ]
+    },
+    {
+      "localDate": "2026-08-01",
+      "sleep": {
+        "id": "sleep-2026-08-01",
+        "startAt": "2026-07-31T23:30:00.000Z",
+        "endAt": "2026-08-01T05:20:00.000Z",
+        "durationMin": 330,
+        "timeInBedMin": 350,
+        "sleepScore": 55,
+        "lightMin": 170,
+        "deepMin": 60,
+        "remMin": 60,
+        "awakeMin": 40
+      },
+      "health": {
+        "id": "health-2026-08-01",
+        "restingHr": 54,
+        "hrvMs": 42,
+        "stressAvg": 45,
+        "bodyBatteryMax": 60,
+        "bodyBatteryMin": 15,
+        "spo2Avg": 95,
+        "respirationAvg": 15.1,
+        "steps": 4200,
+        "caloriesTotal": 2300,
+        "intensityMin": 12
+      },
+      "body": {
+        "id": "body-2026-08-01",
+        "measuredAt": "2026-08-01T05:40:00.000Z",
+        "weightKg": 75.1,
+        "bodyFatPct": 12.3
+      },
+      "activities": [
+        {
+          "id": "act-bike-2026-08-01",
+          "sport": "cycling",
+          "startAt": "2026-08-01T07:00:00.000Z",
+          "endAt": "2026-08-01T09:30:00.000Z",
+          "durationSec": 9000,
+          "distanceM": 70000,
+          "caloriesKcal": 1400,
+          "hrAvg": 145,
+          "hrMax": 172,
+          "powerAvg": 230,
+          "powerNormalized": 245,
+          "trainingLoad": 160
+        }
+      ]
+    },
+    {
+      "localDate": "2026-08-02",
+      "sleep": {
+        "id": "sleep-2026-08-02",
+        "startAt": "2026-08-01T23:40:00.000Z",
+        "endAt": "2026-08-02T05:30:00.000Z",
+        "durationMin": 340,
+        "timeInBedMin": 360,
+        "sleepScore": 58,
+        "lightMin": 180,
+        "deepMin": 55,
+        "remMin": 65,
+        "awakeMin": 40
+      },
+      "health": {
+        "id": "health-2026-08-02",
+        "restingHr": 53,
+        "hrvMs": 44,
+        "stressAvg": 40,
+        "bodyBatteryMax": 64,
+        "bodyBatteryMin": 16,
+        "spo2Avg": 95,
+        "respirationAvg": 14.9,
+        "steps": 6100,
+        "caloriesTotal": 2450,
+        "intensityMin": 20
+      },
+      "body": {
+        "id": "body-2026-08-02",
+        "measuredAt": "2026-08-02T05:45:00.000Z",
+        "weightKg": 74.9,
+        "bodyFatPct": 12.2
+      },
+      "activities": [
+        {
+          "id": "act-run-2026-08-02",
+          "sport": "running",
+          "startAt": "2026-08-02T17:00:00.000Z",
+          "endAt": "2026-08-02T18:10:00.000Z",
+          "durationSec": 4200,
+          "distanceM": 14000,
+          "caloriesKcal": 900,
+          "hrAvg": 158,
+          "hrMax": 178,
+          "trainingLoad": 110
+        }
+      ]
+    },
+    {
+      "localDate": "2026-08-03",
+      "sleep": {
+        "id": "sleep-2026-08-03",
+        "startAt": "2026-08-02T23:20:00.000Z",
+        "endAt": "2026-08-03T05:10:00.000Z",
+        "durationMin": 320,
+        "timeInBedMin": 350,
+        "sleepScore": 52,
+        "lightMin": 160,
+        "deepMin": 50,
+        "remMin": 55,
+        "awakeMin": 55
+      },
+      "health": {
+        "id": "health-2026-08-03",
+        "restingHr": 55,
+        "hrvMs": 40,
+        "stressAvg": 48,
+        "bodyBatteryMax": 55,
+        "bodyBatteryMin": 12,
+        "spo2Avg": 94,
+        "respirationAvg": 15.2,
+        "steps": 5000,
+        "caloriesTotal": 2350,
+        "intensityMin": 15
+      },
+      "body": {
+        "id": "body-2026-08-03",
+        "measuredAt": "2026-08-03T05:30:00.000Z",
+        "weightKg": 74.8,
+        "bodyFatPct": 12.2
+      },
+      "activities": [
+        {
+          "id": "act-swim-2026-08-03",
+          "sport": "swimming",
+          "startAt": "2026-08-03T06:30:00.000Z",
+          "endAt": "2026-08-03T07:40:00.000Z",
+          "durationSec": 4200,
+          "distanceM": 3000,
+          "caloriesKcal": 560,
+          "hrAvg": 135,
+          "trainingLoad": 80
+        }
+      ]
+    },
+    {
+      "localDate": "2026-08-04",
+      "sleep": {
+        "id": "sleep-2026-08-04",
+        "startAt": "2026-08-03T23:10:00.000Z",
+        "endAt": "2026-08-04T05:00:00.000Z",
+        "durationMin": 310,
+        "timeInBedMin": 340,
+        "sleepScore": 50,
+        "lightMin": 155,
+        "deepMin": 48,
+        "remMin": 52,
+        "awakeMin": 55
+      },
+      "health": {
+        "id": "health-2026-08-04",
+        "restingHr": 56,
+        "hrvMs": 38,
+        "stressAvg": 50,
+        "bodyBatteryMax": 52,
+        "bodyBatteryMin": 10,
+        "spo2Avg": 94,
+        "respirationAvg": 15.4,
+        "steps": 4800,
+        "caloriesTotal": 2200,
+        "intensityMin": 10
+      },
+      "body": {
+        "id": "body-2026-08-04",
+        "measuredAt": "2026-08-04T05:20:00.000Z",
+        "weightKg": 75.0,
+        "bodyFatPct": 12.3
+      },
+      "activities": [
+        {
+          "id": "act-run-2026-08-04",
+          "sport": "running",
+          "startAt": "2026-08-04T16:30:00.000Z",
+          "endAt": "2026-08-04T17:40:00.000Z",
+          "durationSec": 4200,
+          "distanceM": 13000,
+          "caloriesKcal": 850,
+          "hrAvg": 155,
+          "trainingLoad": 105
+        }
+      ]
+    },
+    {
+      "localDate": "2026-08-05",
+      "sleep": {
+        "id": "sleep-2026-08-05",
+        "startAt": "2026-08-04T22:50:00.000Z",
+        "endAt": "2026-08-05T05:15:00.000Z",
+        "durationMin": 350,
+        "timeInBedMin": 385,
+        "sleepScore": 60,
+        "lightMin": 185,
+        "deepMin": 65,
+        "remMin": 70,
+        "awakeMin": 30
+      },
+      "health": {
+        "id": "health-2026-08-05",
+        "restingHr": 51,
+        "hrvMs": 50,
+        "stressAvg": 35,
+        "bodyBatteryMax": 70,
+        "bodyBatteryMin": 20,
+        "spo2Avg": 96,
+        "respirationAvg": 14.5,
+        "steps": 7000,
+        "caloriesTotal": 2480,
+        "intensityMin": 25
+      },
+      "body": {
+        "id": "body-2026-08-05",
+        "measuredAt": "2026-08-05T05:30:00.000Z",
+        "weightKg": 74.4,
+        "bodyFatPct": 12.1
+      },
+      "activities": [
+        {
+          "id": "act-strength-2026-08-05",
+          "sport": "strength_training",
+          "startAt": "2026-08-05T18:00:00.000Z",
+          "endAt": "2026-08-05T19:00:00.000Z",
+          "durationSec": 3600,
+          "caloriesKcal": 300,
+          "hrAvg": 120,
+          "trainingLoad": 45
+        }
+      ]
+    }
+  ]
+}

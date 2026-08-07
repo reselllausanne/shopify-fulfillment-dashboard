@@ -14,6 +14,7 @@ const NAV_GROUPS: NavGroup[] = [
     links: [
       { label: "Orders (Home)", href: "/" },
       { label: "Dashboard", href: "/dashboard" },
+      { label: "Health", href: "/health", badge: "new" },
       { label: "Scraped websites", href: "/scraper", badge: "new" },
     ],
   },

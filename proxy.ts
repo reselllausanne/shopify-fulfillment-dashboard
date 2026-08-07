@@ -49,6 +49,8 @@ const PUBLIC_PATHS = [
   // Internal machine-to-machine buffer routes (SSE listener/consumer/bootstrap).
   // Own shared-secret gate via KICKDB_INTERNAL_TOKEN (app/api/kickdb/auth.ts).
   "/api/kickdb",
+  // Health provider webhooks (Garmin/WHOOP). Verified via HEALTH_WEBHOOK_SECRET.
+  "/api/health/integrations/webhook",
   // Shopify per-location inventory mirror (cron). Same shared-secret gate.
   "/api/inventory/locations",
   // Phase 2 resolver dry-run diff. Same shared-secret gate.
@@ -156,8 +158,21 @@ export async function proxy(req: NextRequest) {
       return NextResponse.next();
     }
 
-    // Logistics is staff (not partner) → allow normal staff routes.
+    // Logistics is staff (not partner) → allow normal staff routes,
+    // except personal health data (admin-only).
     if (role === "logistics") {
+      if (pathname.startsWith("/health") || pathname.startsWith("/api/health/")) {
+        if (pathname.startsWith("/api/health/integrations/webhook")) {
+          return NextResponse.next();
+        }
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json(
+            { ok: false, error: "Forbidden", details: "Health module is admin-only." },
+            { status: 403 }
+          );
+        }
+        return NextResponse.redirect(new URL("/", req.url));
+      }
       return NextResponse.next();
     }
 

@@ -2571,6 +2571,189 @@ model AdsProductDaily {
   @@schema("public")
 }
 
+/// Current inventory snapshot from Google Ads shopping_product (account scope),
+/// enriched with campaign inclusion union from per-campaign scope pulls.
+model AdsShoppingProductCurrent {
+  id             String   @id @default(uuid())
+  merchantId     BigInt   @map("merchant_id")
+  channel        String
+  languageCode   String   @map("language_code")
+  feedLabel      String   @map("feed_label")
+  offerId        String   @map("offer_id")
+  title          String   @default("")
+  brand          String   @default("")
+  productType    String   @default("") @map("product_type")
+  customAttr0    String   @default("") @map("custom_attr0")
+  customAttr1    String   @default("") @map("custom_attr1")
+  customAttr2    String   @default("") @map("custom_attr2")
+  customAttr3    String   @default("") @map("custom_attr3")
+  customAttr4    String   @default("") @map("custom_attr4")
+  status         String   @default("")
+  availability   String   @default("")
+  shopifyProductId BigInt? @map("shopify_product_id")
+  shopifyVariantId BigInt? @map("shopify_variant_id")
+  targetedCampaignIds String[] @default([]) @map("targeted_campaign_ids")
+  targetedCampaignNames String[] @default([]) @map("targeted_campaign_names")
+  lastSeenRunId  String   @map("last_seen_run_id")
+  lastSeenAt     DateTime @map("last_seen_at") @db.Timestamptz(3)
+  isCurrent      Boolean  @default(true) @map("is_current")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([merchantId, channel, languageCode, feedLabel, offerId], map: "ads_shopping_product_current_key")
+  @@index([shopifyProductId], map: "ads_shopping_product_current_shopify_product_id_idx")
+  @@index([shopifyVariantId], map: "ads_shopping_product_current_shopify_variant_id_idx")
+  @@index([isCurrent], map: "ads_shopping_product_current_is_current_idx")
+  @@index([lastSeenRunId], map: "ads_shopping_product_current_last_seen_run_id_idx")
+  @@index([targetedCampaignIds], type: Gin, map: "ads_shopping_product_current_targeted_campaign_ids_gin_idx")
+  @@map("ads_shopping_product_current")
+  @@schema("public")
+}
+
+/// Daily aggregated inventory/performance funnel snapshot by granularity and window.
+model AdsInventoryFunnelDaily {
+  id                     String   @id @default(uuid())
+  date                   DateTime @db.Date
+  granularity            String
+  windowDays             Int      @default(30) @map("window_days")
+  periodStart            DateTime @map("period_start") @db.Date
+  periodEnd              DateTime @map("period_end") @db.Date
+  total                  Int
+  targeted               Int
+  notTargeted            Int      @map("not_targeted")
+  withImpressions7d      Int      @map("with_impressions_7d")
+  withImpressions30d     Int      @map("with_impressions_30d")
+  withClicks7d           Int      @map("with_clicks_7d")
+  withClicks30d          Int      @map("with_clicks_30d")
+  withSpend30d           Int      @map("with_spend_30d")
+  withConversions30d     Int      @map("with_conversions_30d")
+  spendZeroConversion30d Decimal  @default(0) @map("spend_zero_conversion_30d") @db.Decimal(14, 2)
+  unmapped               Int
+  statsJson              Json?    @map("stats_json")
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([date, granularity, windowDays], map: "ads_inventory_funnel_daily_key")
+  @@index([date, granularity], map: "ads_inventory_funnel_daily_date_granularity_idx")
+  @@map("ads_inventory_funnel_daily")
+  @@schema("public")
+}
+
+/// Daily campaign setting snapshot used by diagnosis and dashboard.
+model AdsCampaignSettingsDaily {
+  id                  String   @id @default(uuid())
+  snapshotDate        DateTime @map("snapshot_date") @db.Date
+  campaignId          BigInt   @map("campaign_id")
+  campaignName        String   @default("") @map("campaign_name")
+  status              String   @default("")
+  channelType         String   @default("") @map("channel_type")
+  budgetMicros        BigInt?  @map("budget_micros")
+  biddingStrategy     String?  @map("bidding_strategy")
+  targetRoas          Decimal? @map("target_roas") @db.Decimal(12, 6)
+  merchantId          BigInt?  @map("merchant_id")
+  feedLabel           String?  @map("feed_label")
+  listingGroupFilters Json?    @map("listing_group_filters")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([snapshotDate, campaignId], map: "ads_campaign_settings_daily_key")
+  @@index([snapshotDate], map: "ads_campaign_settings_daily_snapshot_date_idx")
+  @@index([campaignId], map: "ads_campaign_settings_daily_campaign_id_idx")
+  @@map("ads_campaign_settings_daily")
+  @@schema("public")
+}
+
+/// Explorer long-tail batch orchestration state (phase 2).
+model AdsExplorerBatch {
+  id                     String    @id @default(uuid())
+  status                 String
+  modelCount             Int       @map("model_count")
+  offerCount             Int       @map("offer_count")
+  dailyBudgetMicros      BigInt    @map("daily_budget_micros")
+  maxCpcMicros           BigInt    @map("max_cpc_micros")
+  plannedAt              DateTime? @map("planned_at") @db.Timestamptz(3)
+  activatedAt            DateTime? @map("activated_at") @db.Timestamptz(3)
+  endsAt                 DateTime? @map("ends_at") @db.Timestamptz(3)
+  googleCampaignId       String?   @map("google_campaign_id")
+  merchantDataSourceName String?   @map("merchant_data_source_name")
+  planHash               String    @map("plan_hash")
+  statsJson              Json?     @map("stats_json")
+  error                  String?
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([status], map: "ads_explorer_batches_status_idx")
+  @@index([plannedAt], map: "ads_explorer_batches_planned_at_idx")
+  @@index([activatedAt], map: "ads_explorer_batches_activated_at_idx")
+  @@map("ads_explorer_batches")
+  @@schema("public")
+}
+
+model AdsExplorerBatchModel {
+  id                 String   @id @default(uuid())
+  batchId            String   @map("batch_id")
+  shopifyProductId   BigInt   @map("shopify_product_id")
+  sourceCampaignId   String   @map("source_campaign_id")
+  sourceCampaignName String   @map("source_campaign_name")
+  brand              String
+  lifecycleStatus    String   @map("lifecycle_status")
+  activeOfferCount   Int      @map("active_offer_count")
+  startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
+  exitedAt           DateTime? @map("exited_at") @db.Timestamptz(3)
+  exitReason         String?  @map("exit_reason")
+  impressions        BigInt   @default(0)
+  clicks             BigInt   @default(0)
+  costMicros         BigInt   @default(0) @map("cost_micros")
+  conversions        Decimal  @default(0) @db.Decimal(18, 6)
+  conversionValue    Decimal  @default(0) @map("conversion_value") @db.Decimal(18, 6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([batchId, shopifyProductId], map: "ads_explorer_batch_models_batch_model_key")
+  @@index([batchId, lifecycleStatus], map: "ads_explorer_batch_models_batch_status_idx")
+  @@index([sourceCampaignId], map: "ads_explorer_batch_models_source_campaign_idx")
+  @@index([shopifyProductId], map: "ads_explorer_batch_models_shopify_product_idx")
+  @@map("ads_explorer_batch_models")
+  @@schema("public")
+}
+
+model AdsExplorerOfferWrite {
+  id              String    @id @default(uuid())
+  batchId         String    @map("batch_id")
+  shopifyProductId BigInt   @map("shopify_product_id")
+  offerId         String    @map("offer_id")
+  contentLanguage String    @map("content_language")
+  feedLabel       String    @map("feed_label")
+  operation       String
+  status          String
+  attempts        Int       @default(0)
+  lastError       String?   @map("last_error")
+  processedAt     DateTime? @map("processed_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([batchId, offerId, contentLanguage, feedLabel, operation], map: "ads_explorer_offer_writes_key")
+  @@index([batchId, status], map: "ads_explorer_offer_writes_batch_status_idx")
+  @@index([shopifyProductId], map: "ads_explorer_offer_writes_shopify_product_idx")
+  @@map("ads_explorer_offer_writes")
+  @@schema("public")
+}
+
+model AdsExplorerListingBackup {
+  id           String   @id @default(uuid())
+  batchId      String   @map("batch_id")
+  campaignId   String   @map("campaign_id")
+  assetGroupId String   @map("asset_group_id")
+  capturedAt   DateTime @map("captured_at") @db.Timestamptz(3)
+  treeJson     Json     @map("tree_json")
+  treeHash     String   @map("tree_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([batchId], map: "ads_explorer_listing_backups_batch_idx")
+  @@index([campaignId], map: "ads_explorer_listing_backups_campaign_idx")
+  @@index([capturedAt], map: "ads_explorer_listing_backups_captured_idx")
+  @@map("ads_explorer_listing_backups")
+  @@schema("public")
+}
+
 model DecathlonImportRun {
   id               String                @id @default(uuid())
   runId            String                @unique
@@ -2594,5 +2777,376 @@ model DecathlonImportRun {
 
   @@index([flow, startedAt])
   @@index([importId])
+  @@schema("public")
+}
+
+// ---------------------------------------------------------------------------
+// Personal health / triathlon tracking (admin-only). New tables only.
+// Tokens stored encrypted (AES-GCM); never log plaintext OAuth material.
+// ---------------------------------------------------------------------------
+
+model HealthIntegrationAccount {
+  id              String    @id @default(uuid())
+  provider        String
+  providerUserId  String    @map("provider_user_id")
+  displayName     String?   @map("display_name")
+  status          String    @default("connected")
+  accessTokenEnc  String    @map("access_token_enc")
+  refreshTokenEnc String?   @map("refresh_token_enc")
+  tokenExpiresAt  DateTime? @map("token_expires_at") @db.Timestamptz(3)
+  scope           String?
+  watermarkAt     DateTime? @map("watermark_at") @db.Timestamptz(3)
+  lastSyncAt      DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  lastError       String?   @map("last_error")
+  metaJson        Json?     @map("meta_json")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  syncRuns HealthIntegrationSyncRun[]
+
+  @@unique([provider, providerUserId], map: "health_integration_accounts_provider_user_key")
+  @@index([provider, status], map: "health_integration_accounts_provider_status_idx")
+  @@map("health_integration_accounts")
+  @@schema("public")
+}
+
+model HealthIntegrationSyncRun {
+  id         String    @id @default(uuid())
+  accountId  String?   @map("account_id")
+  provider   String
+  command    String
+  status     String    @default("running")
+  paramsJson Json?     @map("params_json")
+  statsJson  Json?     @map("stats_json")
+  error      String?
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  account HealthIntegrationAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([provider, startedAt], map: "health_integration_sync_runs_provider_started_idx")
+  @@index([status], map: "health_integration_sync_runs_status_idx")
+  @@map("health_integration_sync_runs")
+  @@schema("public")
+}
+
+model HealthRawProviderEvent {
+  id               String    @id @default(uuid())
+  provider         String
+  providerUserId   String    @map("provider_user_id")
+  providerRecordId String    @map("provider_record_id")
+  resourceType     String    @map("resource_type")
+  sourceUpdatedAt  DateTime? @map("source_updated_at") @db.Timestamptz(3)
+  occurredAt       DateTime? @map("occurred_at") @db.Timestamptz(3)
+  syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(3)
+  payloadJson      Json      @map("payload_json")
+  transformVersion String    @default("1") @map("transform_version")
+  syncRunId        String?   @map("sync_run_id")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([provider, providerUserId, resourceType, providerRecordId], map: "health_raw_provider_events_key")
+  @@index([provider, resourceType, occurredAt], map: "health_raw_provider_events_type_occurred_idx")
+  @@index([syncRunId], map: "health_raw_provider_events_sync_run_idx")
+  @@map("health_raw_provider_events")
+  @@schema("public")
+}
+
+model HealthSleepSession {
+  id               String    @id @default(uuid())
+  provider         String
+  providerUserId   String    @map("provider_user_id")
+  providerRecordId String    @map("provider_record_id")
+  sourceUpdatedAt  DateTime? @map("source_updated_at") @db.Timestamptz(3)
+  syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(3)
+  startAt          DateTime  @map("start_at") @db.Timestamptz(3)
+  endAt            DateTime  @map("end_at") @db.Timestamptz(3)
+  localDate        DateTime  @map("local_date") @db.Date
+  durationMin      Float?    @map("duration_min")
+  timeInBedMin     Float?    @map("time_in_bed_min")
+  sleepScore       Float?    @map("sleep_score")
+  lightMin         Float?    @map("light_min")
+  deepMin          Float?    @map("deep_min")
+  remMin           Float?    @map("rem_min")
+  awakeMin         Float?    @map("awake_min")
+  transformVersion String    @default("1") @map("transform_version")
+  rawPayload       Json?     @map("raw_payload")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([provider, providerUserId, providerRecordId], map: "health_sleep_sessions_key")
+  @@index([localDate], map: "health_sleep_sessions_local_date_idx")
+  @@map("health_sleep_sessions")
+  @@schema("public")
+}
+
+model HealthActivity {
+  id               String    @id @default(uuid())
+  provider         String
+  providerUserId   String    @map("provider_user_id")
+  providerRecordId String    @map("provider_record_id")
+  sourceUpdatedAt  DateTime? @map("source_updated_at") @db.Timestamptz(3)
+  syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(3)
+  sport            String
+  startAt          DateTime  @map("start_at") @db.Timestamptz(3)
+  endAt            DateTime? @map("end_at") @db.Timestamptz(3)
+  localDate        DateTime  @map("local_date") @db.Date
+  durationSec      Int?      @map("duration_sec")
+  distanceM        Float?    @map("distance_m")
+  caloriesKcal     Float?    @map("calories_kcal")
+  hrAvg            Float?    @map("hr_avg")
+  hrMax            Float?    @map("hr_max")
+  powerAvg         Float?    @map("power_avg")
+  powerMax         Float?    @map("power_max")
+  powerNormalized  Float?    @map("power_normalized")
+  cadenceAvg       Float?    @map("cadence_avg")
+  speedAvgMps      Float?    @map("speed_avg_mps")
+  elevationGainM   Float?    @map("elevation_gain_m")
+  trainingEffect   Float?    @map("training_effect")
+  trainingLoad     Float?    @map("training_load")
+  temperatureC     Float?    @map("temperature_c")
+  rpe              Float?
+  notes            String?
+  transformVersion String    @default("1") @map("transform_version")
+  rawPayload       Json?     @map("raw_payload")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  laps HealthActivityLap[]
+
+  @@unique([provider, providerUserId, providerRecordId], map: "health_activities_key")
+  @@index([localDate, sport], map: "health_activities_local_date_sport_idx")
+  @@index([startAt], map: "health_activities_start_at_idx")
+  @@map("health_activities")
+  @@schema("public")
+}
+
+model HealthActivityLap {
+  id          String    @id @default(uuid())
+  activityId  String    @map("activity_id")
+  lapIndex    Int       @map("lap_index")
+  startAt     DateTime? @map("start_at") @db.Timestamptz(3)
+  durationSec Int?      @map("duration_sec")
+  distanceM   Float?    @map("distance_m")
+  hrAvg       Float?    @map("hr_avg")
+  powerAvg    Float?    @map("power_avg")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  activity HealthActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, lapIndex], map: "health_activity_laps_key")
+  @@map("health_activity_laps")
+  @@schema("public")
+}
+
+model HealthBodyMeasurement {
+  id               String    @id @default(uuid())
+  provider         String
+  providerUserId   String    @default("") @map("provider_user_id")
+  providerRecordId String    @map("provider_record_id")
+  sourceUpdatedAt  DateTime? @map("source_updated_at") @db.Timestamptz(3)
+  syncedAt         DateTime  @default(now()) @map("synced_at") @db.Timestamptz(3)
+  measuredAt       DateTime  @map("measured_at") @db.Timestamptz(3)
+  localDate        DateTime  @map("local_date") @db.Date
+  weightKg         Float?    @map("weight_kg")
+  bodyFatPct       Float?    @map("body_fat_pct")
+  muscleMassKg     Float?    @map("muscle_mass_kg")
+  transformVersion String    @default("1") @map("transform_version")
+  rawPayload       Json?     @map("raw_payload")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([provider, providerUserId, providerRecordId], map: "health_body_measurements_key")
+  @@index([localDate], map: "health_body_measurements_local_date_idx")
+  @@map("health_body_measurements")
+  @@schema("public")
+}
+
+model HealthNutritionDaily {
+  id             String   @id @default(uuid())
+  localDate      DateTime @map("local_date") @db.Date
+  source         String   @default("manual")
+  caloriesKcal   Float?   @map("calories_kcal")
+  carbsG         Float?   @map("carbs_g")
+  proteinG       Float?   @map("protein_g")
+  fatG           Float?   @map("fat_g")
+  fiberG         Float?   @map("fiber_g")
+  sodiumMg       Float?   @map("sodium_mg")
+  waterMl        Float?   @map("water_ml")
+  caffeineMg     Float?   @map("caffeine_mg")
+  importBatchId  String?  @map("import_batch_id")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([localDate, source], map: "health_nutrition_daily_key")
+  @@index([localDate], map: "health_nutrition_daily_local_date_idx")
+  @@map("health_nutrition_daily")
+  @@schema("public")
+}
+
+model HealthNutritionEvent {
+  id            String    @id @default(uuid())
+  localDate     DateTime  @map("local_date") @db.Date
+  occurredAt    DateTime? @map("occurred_at") @db.Timestamptz(3)
+  mealLabel     String?   @map("meal_label")
+  source        String    @default("manual")
+  caloriesKcal  Float?    @map("calories_kcal")
+  carbsG        Float?    @map("carbs_g")
+  proteinG      Float?    @map("protein_g")
+  fatG          Float?    @map("fat_g")
+  fiberG        Float?    @map("fiber_g")
+  sodiumMg      Float?    @map("sodium_mg")
+  waterMl       Float?    @map("water_ml")
+  caffeineMg    Float?    @map("caffeine_mg")
+  activityId    String?   @map("activity_id")
+  timingTag     String?   @map("timing_tag")
+  importBatchId String?   @map("import_batch_id")
+  notes         String?
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([localDate], map: "health_nutrition_events_local_date_idx")
+  @@index([activityId], map: "health_nutrition_events_activity_idx")
+  @@map("health_nutrition_events")
+  @@schema("public")
+}
+
+model HealthSubjectiveCheckin {
+  id             String   @id @default(uuid())
+  localDate      DateTime @map("local_date") @db.Date
+  hunger         Int?
+  fatigue        Int?
+  motivation     Int?
+  pain           Int?
+  illness        Boolean  @default(false)
+  rpeSession     Float?   @map("rpe_session")
+  activityId     String?  @map("activity_id")
+  freeText       String?  @map("free_text")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([localDate], map: "health_subjective_checkins_local_date_key")
+  @@map("health_subjective_checkins")
+  @@schema("public")
+}
+
+model HealthHydrationTest {
+  id                    String   @id @default(uuid())
+  testedAt              DateTime @map("tested_at") @db.Timestamptz(3)
+  localDate             DateTime @map("local_date") @db.Date
+  sport                 String
+  intensity             String?
+  durationHours         Float    @map("duration_hours")
+  weightBeforeKg        Float    @map("weight_before_kg")
+  weightAfterKg         Float    @map("weight_after_kg")
+  fluidConsumedL        Float    @map("fluid_consumed_l")
+  urineProducedL        Float    @map("urine_produced_l")
+  temperatureC          Float?   @map("temperature_c")
+  humidityPct           Float?   @map("humidity_pct")
+  sodiumConsumedMg      Float?   @map("sodium_consumed_mg")
+  sweatSodiumMgPerL     Float?   @map("sweat_sodium_mg_per_l")
+  sweatLossL            Float    @map("sweat_loss_l")
+  sweatRateLPerHour     Float    @map("sweat_rate_l_per_hour")
+  formulaVersion        String   @default("sweat_loss_v1") @map("formula_version")
+  notes                 String?
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([localDate], map: "health_hydration_tests_local_date_idx")
+  @@map("health_hydration_tests")
+  @@schema("public")
+}
+
+model HealthDailyMetrics {
+  id               String   @id @default(uuid())
+  localDate        DateTime @unique @map("local_date") @db.Date
+  sleepMin         Float?   @map("sleep_min")
+  sleepScore       Float?   @map("sleep_score")
+  restingHr        Float?   @map("resting_hr")
+  hrvMs            Float?   @map("hrv_ms")
+  recoveryScore    Float?   @map("recovery_score")
+  stressAvg        Float?   @map("stress_avg")
+  bodyBatteryMax   Float?   @map("body_battery_max")
+  weightKg         Float?   @map("weight_kg")
+  steps            Int?
+  caloriesBurned   Float?   @map("calories_burned")
+  caloriesConsumed Float?   @map("calories_consumed")
+  carbsG           Float?   @map("carbs_g")
+  proteinG         Float?   @map("protein_g")
+  fatG             Float?   @map("fat_g")
+  trainingLoad     Float?   @map("training_load")
+  rpeAvg           Float?   @map("rpe_avg")
+  activityCount    Int      @default(0) @map("activity_count")
+  sourcesJson      Json?    @map("sources_json")
+  computedAt       DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("health_daily_metrics")
+  @@schema("public")
+}
+
+model HealthDailyTrainingLoad {
+  id            String   @id @default(uuid())
+  localDate     DateTime @unique @map("local_date") @db.Date
+  loadSum       Float    @default(0) @map("load_sum")
+  durationSec   Int      @default(0) @map("duration_sec")
+  activityCount Int      @default(0) @map("activity_count")
+  acute7d       Float?   @map("acute_7d")
+  chronic28d    Float?   @map("chronic_28d")
+  ratio         Float?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("health_daily_training_load")
+  @@schema("public")
+}
+
+model HealthPersonalBaseline {
+  id            String   @id @default(uuid())
+  metricKey     String   @map("metric_key")
+  windowDays    Int      @map("window_days")
+  asOfDate      DateTime @map("as_of_date") @db.Date
+  sampleCount   Int      @map("sample_count")
+  mean          Float?
+  median        Float?
+  stddev        Float?
+  trendSlope    Float?   @map("trend_slope")
+  metaJson      Json?    @map("meta_json")
+  computedAt    DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([metricKey, windowDays, asOfDate], map: "health_personal_baselines_key")
+  @@index([metricKey, asOfDate], map: "health_personal_baselines_metric_date_idx")
+  @@map("health_personal_baselines")
+  @@schema("public")
+}
+
+model HealthGeneratedInsight {
+  id                  String    @id @default(uuid())
+  insightKey          String    @map("insight_key")
+  title               String
+  periodFrom          DateTime  @map("period_from") @db.Date
+  periodTo            DateTime  @map("period_to") @db.Date
+  factualObservation  String    @map("factual_observation")
+  hypothesis          String
+  confidence          String
+  dataUsedJson        Json      @map("data_used_json")
+  limitations         String
+  cautiousAction      String    @map("cautious_action")
+  medicalDisclaimer   String    @map("medical_disclaimer")
+  feedback            String?
+  generatedAt         DateTime  @default(now()) @map("generated_at") @db.Timestamptz(3)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([periodTo, insightKey], map: "health_generated_insights_period_key_idx")
+  @@index([feedback], map: "health_generated_insights_feedback_idx")
+  @@map("health_generated_insights")
   @@schema("public")
 }
