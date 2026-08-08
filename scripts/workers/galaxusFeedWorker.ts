@@ -5,6 +5,10 @@
  * Web sets GALAXUS_FEED_RUN_ON=worker and only enqueues triggers. This worker drains
  * the queue, runs exports with a large heap, and finalizes triggers when done.
  *
+ * Drains every tick even when a feed is already running: locks are per-scope, so
+ * stock/price/master-specs can run in parallel. Gating on "any active run" used to
+ * leave PENDING triggers stuck behind a single zombie for hours.
+ *
  * Env:
  *   GALAXUS_FEED_WORKER=1            required (marks this process as executor)
  *   GALAXUS_FEED_RUN_ON=worker       same as web
@@ -42,13 +46,9 @@ async function tick() {
   await reconcileStaleFeedTriggers();
   const coalesced = await coalesceDuplicatePendingTriggers().catch(() => 0);
   const pendingBefore = await countPendingFeedPushTriggers();
+  // Always drain: tryStartPendingFeedPush skips scopes that already have an active run.
+  const drained = await drainFeedPushQueue(ORIGIN);
   const active = await getActiveFeedRun();
-  let drained: Awaited<ReturnType<typeof drainFeedPushQueue>> | null = null;
-
-  if (!active) {
-    drained = await drainFeedPushQueue(ORIGIN);
-  }
-
   const pendingAfter = await countPendingFeedPushTriggers();
   console.info("[WORKER][GALAXUS_FEED] tick", {
     startedAt,

@@ -286,15 +286,21 @@ cd /opt/resell
 case "$ACTION" in
   full-flow)
     run_image_sync_full || true
-    log "START full-flow sequential (rebuild snapshots -> stock -> price -> master-specs)"
+    log "START full-flow (rebuild snapshots -> stock + price + master-specs; stock/price failure must not skip master)"
     run_snapshot_rebuild || true
-    run_push "push-stock"
-    run_push "push-price"
-    if [[ "$MASTER_NONBLOCKING" == "1" ]]; then
-      run_push "push-master-specs" || log "WARN: push-master-specs failed (non-blocking); stock+price already pushed"
-    else
-      run_push "push-master-specs"
-    fi
+    # Enqueue all three up front so the per-scope worker can run them in parallel.
+    # Then wait sequentially for verification. Never abort before master — new ProviderKeys
+    # only land via master, and a stuck stock wait used to skip it for a whole night.
+    step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    post_json '{"action":"push-stock"}' >/dev/null || log "WARN: enqueue push-stock failed"
+    post_json '{"action":"push-price"}' >/dev/null || log "WARN: enqueue push-price failed"
+    post_json '{"action":"push-master-specs"}' >/dev/null || log "WARN: enqueue push-master-specs failed"
+    wait_scope_success "stock" "$step_started" "$WAIT_SEC" \
+      || log "WARN: stock failed/timed out — continuing (master already queued)"
+    wait_scope_success "price" "$step_started" "$WAIT_SEC" \
+      || log "WARN: price failed/timed out — continuing (master already queued)"
+    wait_scope_success "master-specs" "$step_started" "$MASTER_WAIT_SEC" \
+      || log "WARN: push-master-specs failed/timed out"
     log "DONE full-flow"
     ;;
   push-master-specs)

@@ -52,10 +52,14 @@ export type FeedPushStartResult = {
 
 /** After container kill/redeploy, finishedAt stays null — keep short so night cron recovers. */
 const STALE_FEED_RUN_MS = 90 * 60 * 1000;
-/** Master+specs export/upload can run 2–3h on large catalogs; do not reap mid-flight. */
-const STALE_MASTER_SPECS_RUN_MS = 6 * 60 * 60 * 1000;
-/** Stock/price full-catalog export+SFTP can exceed 90m on ~300k rows. */
-const STALE_STOCK_PRICE_RUN_MS = 4 * 60 * 60 * 1000;
+/** Master+specs export/upload can run long on large catalogs; do not reap mid-flight. */
+const STALE_MASTER_SPECS_RUN_MS = 3 * 60 * 60 * 1000;
+/**
+ * Stock/price usually finish in minutes. Was 4h — zombie runs then blocked the worker
+ * for a whole nightly window (stock stayed PENDING, cron aborted before master).
+ * Healthy pushes finish well under 90m; anything longer is a dead run.
+ */
+const STALE_STOCK_PRICE_RUN_MS = 90 * 60 * 1000;
 
 /** Triggers that may upload even when GALAXUS_FEED_UPLOADS_MANUAL_ONLY is on. */
 function feedTriggerAllowsUpload(triggerSource?: FeedTriggerSource): boolean {
@@ -155,7 +159,8 @@ export async function reconcileStaleFeedRuns(maxAgeMs = STALE_FEED_RUN_MS) {
   });
 }
 
-const STALE_FEED_TRIGGER_MS = 2 * 60 * 60 * 1000;
+/** RUNNING triggers with no finish — reaped so a dead worker cannot block a scope. */
+const STALE_FEED_TRIGGER_MS = 90 * 60 * 1000;
 
 /** Reset zombie RUNNING triggers; re-queue recent ones if no active feed. */
 export async function reconcileStaleFeedTriggers() {
