@@ -252,6 +252,9 @@ export async function loadMasterAndSpecsExportCandidates(params: {
     }
   };
 
+  const scanStarted = Date.now();
+  let pages = 0;
+  let mappingsScanned = 0;
   do {
     const baseWhere = {
       ...mappingsWhere,
@@ -277,6 +280,8 @@ export async function loadMasterAndSpecsExportCandidates(params: {
     });
 
     lastBatch = mappings.length;
+    pages += 1;
+    mappingsScanned += lastBatch;
     if (all && mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
       cursorUpdatedAt = last.updatedAt ?? null;
@@ -292,6 +297,16 @@ export async function loadMasterAndSpecsExportCandidates(params: {
 
     accumulateBestCandidates(mappings, bestByGtinMaster, { ...accumulateOpts, requireImage: true });
     accumulateBestCandidates(mappings, bestByGtinSpecs, { ...accumulateOpts, requireImage: false });
+
+    if (pages % 10 === 0 || lastBatch < pageSize) {
+      console.info("[GALAXUS][MASTER] mapping scan progress", {
+        pages,
+        mappingsScanned,
+        masterGtins: bestByGtinMaster.size,
+        specsGtins: bestByGtinSpecs.size,
+        ms: Date.now() - scanStarted,
+      });
+    }
 
     currentOffset += pageSize;
   } while (all && lastBatch === pageSize);
@@ -313,12 +328,18 @@ export async function loadMasterAndSpecsExportCandidates(params: {
   };
 }
 
-const RAW_JSON_HYDRATE_CHUNK = 500;
+const RAW_JSON_HYDRATE_CHUNK = 2000;
 
-/** Load KickDB rawJson only for final export rows — keeps full-catalog scans out of heap. */
+/**
+ * Load KickDB rawJson only for final export rows — keeps full-catalog scans out of heap.
+ * Pass every candidate set in one call (master∪specs): product IDs are deduped so we
+ * never double-fetch the same blob (was ~2× Postgres IO before).
+ */
 export async function hydrateExportCandidateKickdbRawJson(
-  candidates: FeedExportCandidate[]
-): Promise<void> {
+  ...candidateSets: FeedExportCandidate[][]
+): Promise<{ productIds: number; chunks: number; ms: number }> {
+  const started = Date.now();
+  const candidates = candidateSets.flat();
   const productIds = Array.from(
     new Set(
       candidates
@@ -326,12 +347,14 @@ export async function hydrateExportCandidateKickdbRawJson(
         .filter(Boolean)
     )
   );
-  if (productIds.length === 0) return;
+  if (productIds.length === 0) return { productIds: 0, chunks: 0, ms: 0 };
 
   const rawByProductId = new Map<string, unknown>();
   const prismaAny = prismaDirect as any;
+  let chunks = 0;
   for (let offset = 0; offset < productIds.length; offset += RAW_JSON_HYDRATE_CHUNK) {
     const chunk = productIds.slice(offset, offset + RAW_JSON_HYDRATE_CHUNK);
+    chunks += 1;
     const rows = await prismaAny.kickDBProduct.findMany({
       where: { id: { in: chunk } },
       select: { id: true, rawJson: true },
@@ -341,6 +364,13 @@ export async function hydrateExportCandidateKickdbRawJson(
       if (!id) continue;
       rawByProductId.set(id, row?.rawJson ?? null);
     }
+    if (chunks % 10 === 0 || offset + RAW_JSON_HYDRATE_CHUNK >= productIds.length) {
+      console.info("[GALAXUS][MASTER] hydrate rawJson progress", {
+        loaded: Math.min(offset + chunk.length, productIds.length),
+        total: productIds.length,
+        ms: Date.now() - started,
+      });
+    }
   }
 
   for (const candidate of candidates) {
@@ -349,4 +379,6 @@ export async function hydrateExportCandidateKickdbRawJson(
     if (!product || !productId || !rawByProductId.has(productId)) continue;
     product.rawJson = rawByProductId.get(productId);
   }
+
+  return { productIds: productIds.length, chunks, ms: Date.now() - started };
 }

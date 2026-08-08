@@ -595,6 +595,8 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         password: GALAXUS_SFTP_PASSWORD,
       },
       async (client) => {
+        const sftpStarted = Date.now();
+        // One SFTP client — ops must stay sequential (ssh2-sftp is not concurrent-safe).
         if (needsMaster) {
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, masterName, masterCsv);
           const masterSize = csvByteLength(masterCsv);
@@ -610,6 +612,10 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
             name: masterName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
             size: masterSize,
+          });
+          console.info("[GALAXUS][FEEDS][UPLOAD] sftp master done", {
+            bytes: masterSize,
+            ms: Date.now() - sftpStarted,
           });
         }
 
@@ -646,6 +652,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           });
         }
         if (needsSpecs) {
+          const specsUploadStarted = Date.now();
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, specsName, specsCsv);
           const specsSize = csvByteLength(specsCsv);
           uploads.push({
@@ -661,7 +668,12 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
             size: specsSize,
           });
+          console.info("[GALAXUS][FEEDS][UPLOAD] sftp specs done", {
+            bytes: specsSize,
+            ms: Date.now() - specsUploadStarted,
+          });
         }
+        console.info("[GALAXUS][FEEDS][UPLOAD] sftp all done", { ms: Date.now() - sftpStarted });
       }
     );
 

@@ -371,11 +371,23 @@ export async function buildMasterSpecsFeedExport(params: {
 }): Promise<MasterSpecsFeedExportResult> {
   const { supplier, limit, providerKeys = [], includeWeight = false } = params;
   const all = !limit;
+  const wallStarted = Date.now();
+  const mark = (step: string, extra?: Record<string, unknown>) => {
+    console.info("[GALAXUS][MASTER] step", { step, ms: Date.now() - wallStarted, ...extra });
+  };
+
+  mark("load-candidates:start");
   const loaded = await loadMasterAndSpecsExportCandidates({
     supplier,
     all,
     limit: limit ?? undefined,
     providerKeys,
+    // Production push: skip TRM diagnostic WHERE bloat — exclusions still applied in accumulate.
+    includeTrmDiagnostics: false,
+  });
+  mark("load-candidates:done", {
+    master: loaded.masterExportCandidates.length,
+    specs: loaded.specsExportCandidates.length,
   });
 
   if (loaded.invalidSupplierVariantIds.length > 0) {
@@ -384,14 +396,19 @@ export async function buildMasterSpecsFeedExport(params: {
     );
   }
 
-  await Promise.all([
-    hydrateExportCandidateKickdbRawJson(loaded.masterExportCandidates),
-    hydrateExportCandidateKickdbRawJson(loaded.specsExportCandidates),
-  ]);
+  // One hydrate over the union — master∩specs share almost all KickDB product IDs.
+  mark("hydrate-rawJson:start");
+  const hydrate = await hydrateExportCandidateKickdbRawJson(
+    loaded.masterExportCandidates,
+    loaded.specsExportCandidates
+  );
+  mark("hydrate-rawJson:done", hydrate);
 
+  mark("attach-stock:start");
   const stockBySupplierVariantId = await attachAvailableStock(
     loaded.masterExportCandidates.map((candidate) => candidate.variant).filter(Boolean)
   );
+  mark("attach-stock:done", { stocked: stockBySupplierVariantId.size });
   const mergePhysical = isPhysicalMergeEnabled();
   let physicalByGtin: PhysicalStockMap = new Map();
   if (mergePhysical) {
@@ -401,6 +418,7 @@ export async function buildMasterSpecsFeedExport(params: {
     physicalByGtin = await loadPhysicalMirrorStockByGtin(gtins);
   }
 
+  mark("build-rows:start");
   let masterRows = buildMasterRowsFromCandidates(
     loaded.masterExportCandidates,
     stockBySupplierVariantId,
@@ -409,6 +427,7 @@ export async function buildMasterSpecsFeedExport(params: {
     physicalByGtin
   );
   let specsRows = buildSpecsRowsFromCandidates(loaded.specsExportCandidates);
+  mark("build-rows:done", { masterRows: masterRows.length, specsRows: specsRows.length });
 
   const allowAlternatives = !supplier || supplier.toLowerCase() === "ner";
   if (allowAlternatives) {
@@ -467,12 +486,24 @@ export async function buildMasterSpecsFeedExport(params: {
         "ImageUrl_2",
       ];
   const specsHeaders = ["ProviderKey", "SpecificationKey", "SpecificationValue"];
+  mark("validate:start");
   const report = buildMasterSpecsValidationReport(masterRows, specsRows);
+  mark("validate:done");
+
+  mark("csv:start");
+  // Buffer — full-string join blows past V8's max string length on this catalog size.
+  const masterCsv = toCsvBuffer(masterHeaders, masterRows);
+  const specsCsv = toCsvBuffer(specsHeaders, specsRows);
+  mark("csv:done", {
+    masterBytes: masterCsv.length,
+    specsBytes: specsCsv.length,
+    masterRows: masterRows.length,
+    specsRows: specsRows.length,
+  });
 
   return {
-    // Buffer — full-string join blows past V8's max string length on this catalog size.
-    masterCsv: toCsvBuffer(masterHeaders, masterRows),
-    specsCsv: toCsvBuffer(specsHeaders, specsRows),
+    masterCsv,
+    specsCsv,
     masterHeaders,
     specsHeaders,
     masterRows,
