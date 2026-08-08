@@ -19,6 +19,7 @@ import {
 } from "@/galaxus/edi/config";
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
+import { toCsvBuffer } from "@/galaxus/exports/csv";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
 import { countCriticalGtinIssues, collectCriticalGtinProviderKeys, filterCsvByProviderKeys } from "@/galaxus/exports/feedValidation";
 import { shouldSkipGalaxusFeedCheckAll } from "@/galaxus/feedExecutor";
@@ -91,8 +92,12 @@ function hashContent(value: string | Buffer): string {
   return hash.digest("hex");
 }
 
-function extractSupplierKeysFromCsv(csv: string): string[] {
-  const lines = csv.split(/\r?\n/).filter((line) => line.trim().length > 0);
+function extractSupplierKeysFromCsv(csv: string | Buffer): string[] {
+  // Never materialize a multi-hundred-MB Buffer as one string — sample is enough for prefixes.
+  const text = Buffer.isBuffer(csv)
+    ? csv.subarray(0, Math.min(csv.length, 2_000_000)).toString("utf8")
+    : csv;
+  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length <= 1) return [];
   const suppliers = new Set<string>();
   for (let i = 1; i < lines.length; i += 1) {
@@ -104,6 +109,10 @@ function extractSupplierKeysFromCsv(csv: string): string[] {
     if (supplierKey) suppliers.add(supplierKey);
   }
   return Array.from(suppliers.values()).sort();
+}
+
+function csvByteLength(csv: string | Buffer): number {
+  return Buffer.isBuffer(csv) ? csv.length : Buffer.byteLength(csv);
 }
 
 /** Provider keys present in a CSV (first column, header stripped). */
@@ -230,15 +239,19 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       },
     }))?.id ?? null;
 
-    let masterCsv = "";
+    let masterCsv: string | Buffer = "";
     let stockCsv = "";
     let offerCsv = "";
-    let specsCsv = "";
+    let specsCsv: string | Buffer = "";
     let masterCount: number | null = null;
     let stockCount: number | null = null;
     let offerCount: number | null = null;
     let specsCount: number | null = null;
     let report: any = null;
+    let masterHeaders: string[] | null = null;
+    let specsHeaders: string[] | null = null;
+    let masterRowsForFilter: Array<Record<string, string>> | null = null;
+    let specsRowsForFilter: Array<Record<string, string>> | null = null;
 
     if (useSinglePassMasterSpecs) {
       const providerKeys = providerKeysRaw
@@ -252,6 +265,10 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       });
       masterCsv = combined.masterCsv;
       specsCsv = combined.specsCsv;
+      masterHeaders = combined.masterHeaders;
+      specsHeaders = combined.specsHeaders;
+      masterRowsForFilter = combined.masterRows;
+      specsRowsForFilter = combined.specsRows;
       masterCount = combined.masterCount;
       specsCount = combined.specsCount;
       report = combined.report;
@@ -361,22 +378,48 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
     const blockedProviderKeys = collectCriticalGtinProviderKeys(report ?? {});
     const omittedByFeed: Record<string, number> = {};
     if (blockedProviderKeys.size > 0) {
-      const masterFiltered = filterCsvByProviderKeys(masterCsv, blockedProviderKeys);
-      masterCsv = masterFiltered.filteredCsv;
-      omittedByFeed.master = masterFiltered.omittedRows;
-      const stockFiltered = filterCsvByProviderKeys(stockCsv, blockedProviderKeys);
-      stockCsv = stockFiltered.filteredCsv;
-      omittedByFeed.stock = stockFiltered.omittedRows;
-      const offerFiltered = filterCsvByProviderKeys(offerCsv, blockedProviderKeys);
-      offerCsv = offerFiltered.filteredCsv;
-      omittedByFeed.offer = offerFiltered.omittedRows;
-      const specsFiltered = filterCsvByProviderKeys(specsCsv, blockedProviderKeys);
-      specsCsv = specsFiltered.filteredCsv;
-      omittedByFeed.specs = specsFiltered.omittedRows;
-      masterCount = masterCount != null ? Math.max(0, masterCount - (omittedByFeed.master ?? 0)) : null;
-      stockCount = stockCount != null ? Math.max(0, stockCount - (omittedByFeed.stock ?? 0)) : null;
-      offerCount = offerCount != null ? Math.max(0, offerCount - (omittedByFeed.offer ?? 0)) : null;
-      specsCount = specsCount != null ? Math.max(0, specsCount - (omittedByFeed.specs ?? 0)) : null;
+      // Prefer row-level filter + Buffer re-serialize for master-specs (string filter OOMs).
+      if (
+        useSinglePassMasterSpecs &&
+        masterRowsForFilter &&
+        specsRowsForFilter &&
+        masterHeaders &&
+        specsHeaders
+      ) {
+        const filteredMaster = masterRowsForFilter.filter(
+          (row) => !blockedProviderKeys.has(String(row.ProviderKey ?? "").trim())
+        );
+        const filteredSpecs = specsRowsForFilter.filter(
+          (row) => !blockedProviderKeys.has(String(row.ProviderKey ?? "").trim())
+        );
+        omittedByFeed.master = masterRowsForFilter.length - filteredMaster.length;
+        omittedByFeed.specs = specsRowsForFilter.length - filteredSpecs.length;
+        masterCsv = toCsvBuffer(masterHeaders, filteredMaster);
+        specsCsv = toCsvBuffer(specsHeaders, filteredSpecs);
+        masterCount = filteredMaster.length;
+        specsCount = filteredSpecs.length;
+      } else {
+        if (typeof masterCsv === "string") {
+          const masterFiltered = filterCsvByProviderKeys(masterCsv, blockedProviderKeys);
+          masterCsv = masterFiltered.filteredCsv;
+          omittedByFeed.master = masterFiltered.omittedRows;
+        }
+        const stockFiltered = filterCsvByProviderKeys(stockCsv, blockedProviderKeys);
+        stockCsv = stockFiltered.filteredCsv;
+        omittedByFeed.stock = stockFiltered.omittedRows;
+        const offerFiltered = filterCsvByProviderKeys(offerCsv, blockedProviderKeys);
+        offerCsv = offerFiltered.filteredCsv;
+        omittedByFeed.offer = offerFiltered.omittedRows;
+        if (typeof specsCsv === "string") {
+          const specsFiltered = filterCsvByProviderKeys(specsCsv, blockedProviderKeys);
+          specsCsv = specsFiltered.filteredCsv;
+          omittedByFeed.specs = specsFiltered.omittedRows;
+        }
+        masterCount = masterCount != null ? Math.max(0, masterCount - (omittedByFeed.master ?? 0)) : null;
+        stockCount = stockCount != null ? Math.max(0, stockCount - (omittedByFeed.stock ?? 0)) : null;
+        offerCount = offerCount != null ? Math.max(0, offerCount - (omittedByFeed.offer ?? 0)) : null;
+        specsCount = specsCount != null ? Math.max(0, specsCount - (omittedByFeed.specs ?? 0)) : null;
+      }
       console.info("[GALAXUS][FEEDS][UPLOAD] Omitted critical-GTIN rows", {
         blockedProviderKeys: Array.from(blockedProviderKeys),
         omittedByFeed,
@@ -537,7 +580,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
     const uploads: UploadedFile[] = [];
     const manifestEntries: Array<{
       exportType: string;
-      csv: string;
+      csv: string | Buffer;
       count: number | null;
       name: string;
       path: string;
@@ -554,10 +597,11 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       async (client) => {
         if (needsMaster) {
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, masterName, masterCsv);
+          const masterSize = csvByteLength(masterCsv);
           uploads.push({
             name: masterName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
-            size: Buffer.byteLength(masterCsv),
+            size: masterSize,
           });
           manifestEntries.push({
             exportType: "master",
@@ -565,7 +609,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
             count: masterCount ?? null,
             name: masterName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
-            size: Buffer.byteLength(masterCsv),
+            size: masterSize,
           });
         }
 
@@ -603,10 +647,11 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         }
         if (needsSpecs) {
           await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, specsName, specsCsv);
+          const specsSize = csvByteLength(specsCsv);
           uploads.push({
             name: specsName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
-            size: Buffer.byteLength(specsCsv),
+            size: specsSize,
           });
           manifestEntries.push({
             exportType: "specs",
@@ -614,7 +659,7 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
             count: specsCount ?? null,
             name: specsName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
-            size: Buffer.byteLength(specsCsv),
+            size: specsSize,
           });
         }
       }

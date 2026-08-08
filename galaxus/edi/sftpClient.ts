@@ -57,6 +57,6 @@ export async function uploadTempThenRename(
   const tempName = `tmp_${filename}`;
   const tempPath = `${dir}/${tempName}`;
   const finalPath = `${dir}/${filename}`;
-  await client.put(Buffer.from(content), tempPath);
+  await client.put(Buffer.isBuffer(content) ? content : Buffer.from(content), tempPath);
   await client.rename(tempPath, finalPath);
 }

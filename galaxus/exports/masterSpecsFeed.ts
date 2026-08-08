@@ -1,4 +1,4 @@
-import { toCsv } from "@/galaxus/exports/csv";
+import { toCsvBuffer } from "@/galaxus/exports/csv";
 import {
   buildGalaxusAlternativeMasterRows,
   buildGalaxusAlternativeSpecRows,
@@ -349,8 +349,11 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
 }
 
 export type MasterSpecsFeedExportResult = {
-  masterCsv: string;
-  specsCsv: string;
+  /** Buffer — string join hits V8 max length on full catalog. */
+  masterCsv: Buffer;
+  specsCsv: Buffer;
+  masterHeaders: string[];
+  specsHeaders: string[];
   masterRows: ExportRow[];
   specsRows: ExportRow[];
   masterCount: number;
@@ -467,8 +470,11 @@ export async function buildMasterSpecsFeedExport(params: {
   const report = buildMasterSpecsValidationReport(masterRows, specsRows);
 
   return {
-    masterCsv: toCsv(masterHeaders, masterRows),
-    specsCsv: toCsv(specsHeaders, specsRows),
+    // Buffer — full-string join blows past V8's max string length on this catalog size.
+    masterCsv: toCsvBuffer(masterHeaders, masterRows),
+    specsCsv: toCsvBuffer(specsHeaders, specsRows),
+    masterHeaders,
+    specsHeaders,
     masterRows,
     specsRows,
     masterCount: masterRows.length,
