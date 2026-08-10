@@ -20,7 +20,7 @@ export async function withSftp<T>(
 ): Promise<T> {
   const client = new SftpClient();
   try {
-    await client.connect(config);
+    await client.connect({ ...config, readyTimeout: 20_000 });
     return await handler(client);
   } finally {
     await client.end().catch(() => undefined);

@@ -300,6 +300,68 @@ export async function requestSwissPostLabelForGalaxusOrder(order: any) {
   return requestSwissPostLabelForOrderWithTrackingHint(order, hint);
 }
 
+export type PostLabelApplyResult = {
+  documentId: string | null;
+  url: string | null;
+  version: number | null;
+  delr: any;
+  ordr: any;
+  trackingNumber: string;
+  alreadyFulfilled?: boolean;
+};
+
+/**
+ * Idempotent fast path: DELR already uploaded — return latest shipping label without re-calling Swiss Post.
+ */
+export async function resolveExistingFulfilledPostLabelResponse(
+  shipmentId: string,
+  options: {
+    documentUrlBase?: "/api/galaxus/documents" | "/api/partners/galaxus/documents";
+  } = {}
+): Promise<PostLabelApplyResult | null> {
+  const prismaAny = prisma as any;
+  const shipment = await prismaAny.shipment.findUnique({
+    where: { id: shipmentId },
+    select: {
+      id: true,
+      trackingNumber: true,
+      delrSentAt: true,
+      delrStatus: true,
+      delrFileName: true,
+    },
+  });
+  if (!shipment?.delrSentAt) return null;
+  const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
+  if (delrStatus !== "UPLOADED" && delrStatus !== "SENT") return null;
+
+  const existingDoc = await prisma.document.findFirst({
+    where: {
+      shipmentId,
+      type: DocumentType.LABEL,
+      storageUrl: { contains: "shipping-labels" },
+    },
+    orderBy: { version: "desc" },
+    select: { id: true, version: true },
+  });
+
+  const documentUrlBase = options.documentUrlBase ?? "/api/galaxus/documents";
+  const trackingNumber = String(shipment.trackingNumber ?? "").trim();
+  return {
+    documentId: existingDoc?.id ?? null,
+    url: existingDoc ? `${documentUrlBase}/${existingDoc.id}` : null,
+    version: existingDoc?.version ?? null,
+    delr: {
+      shipmentId,
+      status: "skipped",
+      message: "already sent",
+      filename: shipment.delrFileName ?? undefined,
+    },
+    ordr: null,
+    trackingNumber,
+    alreadyFulfilled: true,
+  };
+}
+
 /**
  * Persist label, tracking, optional ORDR, DELR (+ INVO via delr). Assumes swissData is a successful API body.
  */
@@ -310,14 +372,7 @@ export async function applySuccessfulSwissPostLabelToShipment(
     documentUrlBase?: "/api/galaxus/documents" | "/api/partners/galaxus/documents";
     delrActor?: { type: "partner"; partnerId: string; partnerKey: string } | { type: "staff" };
   } = {}
-): Promise<{
-  documentId: string;
-  url: string;
-  version: number;
-  delr: any;
-  ordr: any;
-  trackingNumber: string;
-}> {
+): Promise<PostLabelApplyResult> {
   const prismaAny = prisma as any;
   const shipment = await prismaAny.shipment.findUnique({
     where: { id: shipmentId },

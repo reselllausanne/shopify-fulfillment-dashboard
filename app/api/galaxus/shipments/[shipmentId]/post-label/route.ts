@@ -4,6 +4,7 @@ import { prisma } from "@/app/lib/prisma";
 import {
   applySuccessfulSwissPostLabelToShipment,
   requestSwissPostLabelForOrderWithTrackingHint,
+  resolveExistingFulfilledPostLabelResponse,
 } from "@/galaxus/directDelivery/swissPostLabelFlow";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
@@ -27,6 +28,20 @@ export async function POST(
     if (!shipment || !shipment.order) {
       return NextResponse.json({ ok: false, error: "Shipment not found" }, { status: 404 });
     }
+
+    const existing = await resolveExistingFulfilledPostLabelResponse(shipmentId);
+    if (existing) {
+      return NextResponse.json({
+        ok: true,
+        url: existing.url,
+        version: existing.version,
+        delr: existing.delr,
+        ordr: existing.ordr,
+        trackingNumber: existing.trackingNumber,
+        alreadyFulfilled: true,
+      });
+    }
+
     const body = (await request.json().catch(() => ({}))) as { trackingNumber?: string };
     const trackingNumber = String(body?.trackingNumber ?? "").trim() ||
       String(shipment.trackingNumber ?? shipment.order.galaxusOrderId ?? "").trim() ||

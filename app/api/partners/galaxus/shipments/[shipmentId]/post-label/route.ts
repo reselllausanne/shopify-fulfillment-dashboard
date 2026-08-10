@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requestSwissPostLabelForOrderWithTrackingHint, applySuccessfulSwissPostLabelToShipment } from "@/galaxus/directDelivery/swissPostLabelFlow";
+import {
+  applySuccessfulSwissPostLabelToShipment,
+  requestSwissPostLabelForOrderWithTrackingHint,
+  resolveExistingFulfilledPostLabelResponse,
+} from "@/galaxus/directDelivery/swissPostLabelFlow";
 import { requirePartnerSelfFulfillAccess } from "@/app/api/partners/galaxus/_auth";
 import { loadPartnerShipment } from "@/app/api/partners/galaxus/shipments/_utils";
 import { prisma } from "@/app/lib/prisma";
@@ -20,6 +24,21 @@ export async function POST(
     const shipment = await loadPartnerShipment(shipmentId, access.providerKey);
     if (!shipment || !shipment.order) {
       return NextResponse.json({ ok: false, error: "Shipment not found" }, { status: 404 });
+    }
+
+    const existing = await resolveExistingFulfilledPostLabelResponse(shipmentId, {
+      documentUrlBase: "/api/partners/galaxus/documents",
+    });
+    if (existing) {
+      return NextResponse.json({
+        ok: true,
+        url: existing.url,
+        version: existing.version,
+        delr: existing.delr,
+        ordr: existing.ordr,
+        trackingNumber: existing.trackingNumber,
+        alreadyFulfilled: true,
+      });
     }
 
     const body = (await request.json().catch(() => ({}))) as { trackingNumber?: string };

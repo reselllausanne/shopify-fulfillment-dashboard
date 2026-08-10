@@ -136,6 +136,7 @@ export async function getSwissPostToken(options: TokenOptions = {}) {
       accept: "application/json",
     },
     body,
+    signal: AbortSignal.timeout(30_000),
   });
 
   const json = (await res.json().catch(() => ({}))) as SwissPostToken | Record<string, any>;
@@ -172,6 +173,7 @@ export async function requestSwissPostLabel(payload: Record<string, any>) {
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(45_000),
   });
 
   const data = await res.json().catch(() => ({}));
