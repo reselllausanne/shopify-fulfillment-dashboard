@@ -9,6 +9,7 @@ vi.mock("@/app/lib/prisma", () => ({
 import { prisma } from "@/app/lib/prisma";
 import {
   getPhysicalStockForGtin,
+  loadPhysicalMirrorStockByGtinAtEveryLocation,
   loadPhysicalMirrorLocationRowsByGtin,
   loadPhysicalMirrorStockByGtin,
 } from "@/shopify/inventory/physicalAvailability";
@@ -68,5 +69,27 @@ describe("loadPhysicalMirrorStockByGtin — GTIN padding", () => {
     const rows = await loadPhysicalMirrorLocationRowsByGtin("196123456789");
     expect(rows).toHaveLength(1);
     expect(rows[0]?.gtin).toBe("0196123456789");
+  });
+
+  it("returns only stock held at every required location", async () => {
+    mockedQuery.mockResolvedValue([
+      {
+        gtin: "0196123456789",
+        qty: 3n,
+        loc_id: "gid://shopify/Location/bussigny",
+        loc_name: "Warehouse Bussigny",
+      },
+    ]);
+
+    const map = await loadPhysicalMirrorStockByGtinAtEveryLocation([
+      "gid://shopify/Location/bussigny",
+      "gid://shopify/Location/lab",
+    ]);
+
+    expect(map.get("0196123456789")).toMatchObject({
+      qty: 3,
+      preferredLocationName: "Warehouse Bussigny",
+    });
+    expect(mockedQuery).toHaveBeenCalledOnce();
   });
 });
