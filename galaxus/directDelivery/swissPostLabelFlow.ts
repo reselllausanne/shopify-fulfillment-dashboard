@@ -301,13 +301,22 @@ export async function requestSwissPostLabelForGalaxusOrder(order: any) {
 }
 
 export type PostLabelApplyResult = {
+  documentId: string;
+  url: string;
+  version: number;
+  delr: any;
+  ordr: any;
+  trackingNumber: string;
+};
+
+export type ExistingFulfilledPostLabelResponse = {
   documentId: string | null;
   url: string | null;
   version: number | null;
   delr: any;
   ordr: any;
   trackingNumber: string;
-  alreadyFulfilled?: boolean;
+  alreadyFulfilled: true;
 };
 
 /**
@@ -318,7 +327,7 @@ export async function resolveExistingFulfilledPostLabelResponse(
   options: {
     documentUrlBase?: "/api/galaxus/documents" | "/api/partners/galaxus/documents";
   } = {}
-): Promise<PostLabelApplyResult | null> {
+): Promise<ExistingFulfilledPostLabelResponse | null> {
   const prismaAny = prisma as any;
   const shipment = await prismaAny.shipment.findUnique({
     where: { id: shipmentId },
@@ -358,7 +367,7 @@ export async function resolveExistingFulfilledPostLabelResponse(
     },
     ordr: null,
     trackingNumber,
-    alreadyFulfilled: true,
+    alreadyFulfilled: true as const,
   };
 }
 
