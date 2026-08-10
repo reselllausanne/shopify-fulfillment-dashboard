@@ -22,6 +22,17 @@ ACTION="${1:-}"
 BASE_URL="${DECATHLON_OPS_BASE_URL:-http://127.0.0.1:3000}"
 LOG_DIR="${DECATHLON_OPS_LOG_DIR:-/var/log/resell}"
 CURL_MAX="${DECATHLON_OPS_CURL_MAX:-7200}"
+CRON_TOKEN="${DECATHLON_OPS_CRON_TOKEN:-}"
+
+if [[ -z "$CRON_TOKEN" && -f /opt/resell/.env ]]; then
+  CRON_TOKEN="$(awk -F= '/^DECATHLON_OPS_CRON_TOKEN=/{print substr($0, index($0, "=") + 1); exit}' /opt/resell/.env)"
+fi
+
+if [[ -z "$CRON_TOKEN" ]]; then
+  echo "DECATHLON_OPS_CRON_TOKEN is required" >&2
+  exit 2
+fi
+
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/decathlon-ops-cron.log"
 
@@ -41,6 +52,7 @@ post_json() {
       curl -sS -o /tmp/decathlon-ops-cron-body.json -w "%{http_code}" \
         -X POST "$BASE_URL/api/decathlon/ops/run" \
         -H "content-type: application/json" \
+        -H "x-decathlon-ops-token: $CRON_TOKEN" \
         -d "$body" \
         --max-time "$CURL_MAX" || echo "000"
     )"

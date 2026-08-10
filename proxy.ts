@@ -23,6 +23,13 @@ function isPartnerDecathlonApiRequest(pathname: string, searchParams: URLSearchP
   return String(searchParams.get("scope") ?? "").trim().toLowerCase() === "partner";
 }
 
+function isDecathlonOpsCronRequest(req: NextRequest) {
+  if (req.nextUrl.pathname !== "/api/decathlon/ops/run") return false;
+  const expected = String(process.env.DECATHLON_OPS_CRON_TOKEN ?? "").trim();
+  const supplied = String(req.headers.get("x-decathlon-ops-token") ?? "").trim();
+  return expected.length > 0 && supplied === expected;
+}
+
 function isShopifyInstallRequest(pathname: string, searchParams: URLSearchParams): boolean {
   if (pathname !== "/") return false;
   const shop = String(searchParams.get("shop") ?? "").trim();
@@ -118,6 +125,7 @@ export async function proxy(req: NextRequest) {
     isPartnerPortalPath(pathname) ||
     isPartnerApiPath(pathname) ||
     isPartnerDecathlonApiRequest(pathname, searchParams) ||
+    isDecathlonOpsCronRequest(req) ||
     PUBLIC_PATHS.some((path) => pathname.startsWith(path))
   ) {
     return NextResponse.next();
