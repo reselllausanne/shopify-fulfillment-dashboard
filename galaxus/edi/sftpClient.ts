@@ -16,13 +16,29 @@ type RemoteFile = {
 
 export async function withSftp<T>(
   config: SftpConfig,
-  handler: (client: SftpClient) => Promise<T>
+  handler: (client: SftpClient) => Promise<T>,
+  options: { timeoutMs?: number } = {}
 ): Promise<T> {
+  // Hard cap so warehouse Swiss Post label never waits forever on hung Galaxus SFTP.
+  const timeoutMs = Math.max(5_000, Number(options.timeoutMs ?? 45_000));
   const client = new SftpClient();
+  let timer: ReturnType<typeof setTimeout> | null = null;
   try {
-    await client.connect({ ...config, readyTimeout: 20_000 });
-    return await handler(client);
+    const work = (async () => {
+      await client.connect({
+        ...config,
+        readyTimeout: Math.min(20_000, timeoutMs),
+      });
+      return await handler(client);
+    })();
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`SFTP operation timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+    return await Promise.race([work, timeout]);
   } finally {
+    if (timer) clearTimeout(timer);
     await client.end().catch(() => undefined);
   }
 }

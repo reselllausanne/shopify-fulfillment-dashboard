@@ -158,6 +158,18 @@ export async function getSwissPostToken(options: TokenOptions = {}) {
   return token;
 }
 
+function isSwissPostConnectTimeout(err: unknown): boolean {
+  const anyErr = err as { name?: string; code?: string; cause?: { code?: string; name?: string } };
+  const code = String(anyErr?.cause?.code ?? anyErr?.code ?? "");
+  const name = String(anyErr?.cause?.name ?? anyErr?.name ?? "");
+  return (
+    code === "UND_ERR_CONNECT_TIMEOUT" ||
+    code === "ETIMEDOUT" ||
+    name.includes("Timeout") ||
+    name.includes("ConnectTimeout")
+  );
+}
+
 export async function requestSwissPostLabel(payload: Record<string, any>) {
   const endpoint = getLabelEndpoint();
   if (!endpoint) {
@@ -165,23 +177,52 @@ export async function requestSwissPostLabel(payload: Record<string, any>) {
   }
 
   const token = await getSwissPostToken();
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(45_000),
-  });
+  const startedAt = Date.now();
+  let lastError: unknown = null;
 
-  const data = await res.json().catch(() => ({}));
-  return {
-    ok: res.ok,
-    status: res.status,
-    data,
-  };
+  // One quick retry — VPS occasionally hits UND_ERR_CONNECT_TIMEOUT to dcapi.apis.post.ch.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const attemptStartedAt = Date.now();
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45_000),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      console.log("[SWISS POST] label request", {
+        attempt,
+        ok: res.ok,
+        status: res.status,
+        ms: Date.now() - attemptStartedAt,
+        totalMs: Date.now() - startedAt,
+      });
+      return {
+        ok: res.ok,
+        status: res.status,
+        data,
+      };
+    } catch (err) {
+      lastError = err;
+      console.error("[SWISS POST] label request failed", {
+        attempt,
+        ms: Date.now() - startedAt,
+        message: err instanceof Error ? err.message : String(err),
+        code: (err as any)?.cause?.code ?? (err as any)?.code ?? null,
+      });
+      if (attempt >= 2 || !isSwissPostConnectTimeout(err)) {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Swiss Post label failed"));
 }
 
 type SwissPostTrackingResponse = {

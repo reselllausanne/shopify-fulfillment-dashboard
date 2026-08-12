@@ -701,7 +701,9 @@ export default function GalaxusWarehouseShipmentsPage() {
         preOpen.close();
       }
       setLabelResult(
-        `Swiss Post label generated - tracking ${data?.trackingNumber ?? "unknown"} - DELR ${data?.delr?.status ?? "ok"}`
+        `Swiss Post label ready - tracking ${data?.trackingNumber ?? "unknown"} - DELR ${
+          data?.delr?.status ?? "pending"
+        }${data?.delr?.status === "pending" ? " (sending in background)" : ""}`
       );
       await loadOrders();
       if (selectedOrderId) await loadEligibility(selectedOrderId);

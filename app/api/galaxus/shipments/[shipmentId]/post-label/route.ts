@@ -47,7 +47,14 @@ export async function POST(
       String(shipment.trackingNumber ?? shipment.order.galaxusOrderId ?? "").trim() ||
       `GALAXUS-${shipment.id}`;
 
+    const startedAt = Date.now();
     const swissRes = await requestSwissPostLabelForOrderWithTrackingHint(shipment.order, trackingNumber);
+    console.log("[GALAXUS][SHIPMENT][POST-LABEL] swiss post", {
+      shipmentId,
+      ok: swissRes.ok,
+      status: swissRes.status,
+      ms: Date.now() - startedAt,
+    });
     if (!swissRes.ok) {
       return NextResponse.json(
         { ok: false, error: "Swiss Post label generation failed", swissPost: swissRes.data },
@@ -56,7 +63,15 @@ export async function POST(
     }
 
     try {
+      const persistStartedAt = Date.now();
       const result = await applySuccessfulSwissPostLabelToShipment(shipmentId, swissRes.data);
+      console.log("[GALAXUS][SHIPMENT][POST-LABEL] persist", {
+        shipmentId,
+        trackingNumber: result.trackingNumber,
+        delrStatus: result.delr?.status ?? null,
+        ms: Date.now() - persistStartedAt,
+        totalMs: Date.now() - startedAt,
+      });
       return NextResponse.json({
         ok: true,
         url: result.url,

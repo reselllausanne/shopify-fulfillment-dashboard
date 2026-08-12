@@ -232,6 +232,10 @@ export async function resolveExistingFulfilledPostLabelResponse(
 
 /**
  * Persist label, tracking, optional ORDR, DELR (+ INVO via delr). Assumes swissData is a successful API body.
+ *
+ * Default: return as soon as the Swiss Post label is stored. ORDR/DELR run in background so the
+ * warehouse UI is not blocked on Galaxus SFTP (that path was taking minutes when SFTP hung).
+ * Pass `waitForEdi: true` only when the caller must know DELR outcome before responding.
  */
 export async function applySuccessfulSwissPostLabelToShipment(
   shipmentId: string,
@@ -239,8 +243,10 @@ export async function applySuccessfulSwissPostLabelToShipment(
   options: {
     documentUrlBase?: "/api/galaxus/documents" | "/api/partners/galaxus/documents";
     delrActor?: { type: "partner"; partnerId: string; partnerKey: string } | { type: "staff" };
+    waitForEdi?: boolean;
   } = {}
 ): Promise<PostLabelApplyResult> {
+  const startedAt = Date.now();
   const prismaAny = prisma as any;
   const shipment = await prismaAny.shipment.findUnique({
     where: { id: shipmentId },
@@ -288,8 +294,68 @@ export async function applySuccessfulSwissPostLabelToShipment(
       carrierFinal,
       carrierRaw: carrierFinal,
       shippedAt: shipment.shippedAt ?? new Date(),
+      delrStatus: shipment.delrSentAt ? shipment.delrStatus : "PENDING",
+      delrError: null,
     },
   });
+
+  const documentUrlBase = options.documentUrlBase ?? "/api/galaxus/documents";
+  const baseResult: PostLabelApplyResult = {
+    documentId: document.id,
+    url: `${documentUrlBase}/${document.id}`,
+    version: nextVersion,
+    delr: {
+      shipmentId: swissPostLabelId,
+      status: "pending",
+      message: "DELR queued after Swiss Post label",
+    },
+    ordr: { status: "pending" },
+    trackingNumber: swissPostLabelId,
+  };
+
+  console.log("[POST-LABEL] label persisted", {
+    shipmentId,
+    trackingNumber: swissPostLabelId,
+    ms: Date.now() - startedAt,
+    waitForEdi: Boolean(options.waitForEdi),
+  });
+
+  if (options.waitForEdi) {
+    const edi = await finalizeShipmentEdiAfterLabel(shipmentId, swissPostLabelId, options);
+    return {
+      ...baseResult,
+      delr: edi.delr,
+      ordr: edi.ordr,
+    };
+  }
+
+  void finalizeShipmentEdiAfterLabel(shipmentId, swissPostLabelId, options).catch((error: any) => {
+    console.error("[POST-LABEL] background ORDR/DELR failed", {
+      shipmentId,
+      trackingNumber: swissPostLabelId,
+      message: error?.message ?? String(error),
+    });
+  });
+
+  return baseResult;
+}
+
+async function finalizeShipmentEdiAfterLabel(
+  shipmentId: string,
+  swissPostLabelId: string,
+  options: {
+    delrActor?: { type: "partner"; partnerId: string; partnerKey: string } | { type: "staff" };
+  } = {}
+): Promise<{ delr: any; ordr: any }> {
+  const startedAt = Date.now();
+  const prismaAny = prisma as any;
+  const shipment = await prismaAny.shipment.findUnique({
+    where: { id: shipmentId },
+    select: { orderId: true },
+  });
+  if (!shipment?.orderId) {
+    throw new Error("Shipment not found for EDI finalize");
+  }
 
   const freshOrder = await prisma.galaxusOrder.findUnique({
     where: { id: shipment.orderId },
@@ -297,31 +363,51 @@ export async function applySuccessfulSwissPostLabelToShipment(
   });
   let ordr = null as any;
   if (freshOrder && !freshOrder.ordrSentAt) {
+    const ordrStartedAt = Date.now();
     ordr = await sendOutgoingEdi({ orderId: freshOrder.id, types: ["ORDR"], force: true }).catch((error: any) => ({
       ok: false,
       error: error?.message ?? "ORDR send failed",
     }));
+    console.log("[POST-LABEL] ORDR done", {
+      shipmentId,
+      ms: Date.now() - ordrStartedAt,
+      ok: !ordr?.error,
+    });
   }
 
-  const delrResult = await uploadDelrForShipment(shipmentId, { actor: options.delrActor }).catch((error: any) => ({
+  const delrStartedAt = Date.now();
+  const delrResult = await uploadDelrForShipment(shipmentId, { actor: options.delrActor }).catch(
+    async (error: any) => {
+      const message = error?.message ?? "DELR upload failed";
+      await prismaAny.shipment
+        .update({
+          where: { id: shipmentId },
+          data: {
+            delrStatus: "ERROR",
+            delrError: message,
+          },
+        })
+        .catch(() => undefined);
+      return {
+        shipmentId,
+        status: "error",
+        message,
+      };
+    }
+  );
+  console.log("[POST-LABEL] DELR done", {
     shipmentId,
-    status: "error",
-    message: error?.message ?? "DELR upload failed",
-  }));
+    ms: Date.now() - delrStartedAt,
+    totalMs: Date.now() - startedAt,
+    status: (delrResult as any)?.status ?? null,
+  });
+
   const delrPayload =
     delrResult && typeof delrResult === "object"
       ? { ...delrResult, shipmentId: swissPostLabelId }
       : delrResult;
 
-  const documentUrlBase = options.documentUrlBase ?? "/api/galaxus/documents";
-  return {
-    documentId: document.id,
-    url: `${documentUrlBase}/${document.id}`,
-    version: nextVersion,
-    delr: delrPayload,
-    ordr,
-    trackingNumber: swissPostLabelId,
-  };
+  return { delr: delrPayload, ordr };
 }
 
 /** Remove non-finalized parcels so a new label attempt does not skip createShipments. */

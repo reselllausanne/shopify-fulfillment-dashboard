@@ -477,7 +477,11 @@ export async function POST(req: NextRequest) {
     const requestedShopifyLineItemId = String(body?.shopifyLineItemId ?? "").trim() || null;
     const trackingCompany = body?.trackingCompany ? String(body.trackingCompany).trim() : null;
     const trackingUrlFromBody = body?.trackingUrl ? String(body.trackingUrl).trim() : null;
-    const notifyCustomer = Boolean(body?.notifyCustomer ?? false);
+    // Default ON: Shopify shipping confirmation must include Swiss Post tracking.
+    const notifyCustomer =
+      body?.notifyCustomer === undefined || body?.notifyCustomer === null
+        ? true
+        : Boolean(body.notifyCustomer);
     const swissPostEnabled = Boolean(body?.swissPostEnabled ?? false);
     const swissPostPayload = body?.swissPostPayload ?? null;
     const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
