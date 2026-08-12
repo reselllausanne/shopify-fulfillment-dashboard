@@ -44,6 +44,7 @@ export default function AwbBackfillPage() {
     missingAwb: number;
     missingAwbInTransit: number;
     stockxMatches: number;
+    storedToken: { source: string; expiresAt: string | null } | null;
   } | null>(null);
 
   const loadStats = async (windowDays: number) => {
@@ -55,6 +56,7 @@ export default function AwbBackfillPage() {
           missingAwb: data.missingAwb,
           missingAwbInTransit: data.missingAwbInTransit,
           stockxMatches: data.stockxMatches,
+          storedToken: data.storedToken ?? null,
         });
       }
     } catch {
@@ -67,7 +69,7 @@ export default function AwbBackfillPage() {
   }, [days]);
 
   const run = async () => {
-    if (!token.trim()) {
+    if (!token.trim() && !stats?.storedToken) {
       window.alert("Paste a StockX bearer token first.");
       return;
     }
@@ -106,6 +108,19 @@ export default function AwbBackfillPage() {
             without AWB (these are the ones the warehouse will scan) ·{" "}
             <strong>{stats.missingAwb}</strong> total without AWB out of{" "}
             <strong>{stats.stockxMatches}</strong> StockX matches.
+            <div className="mt-2 text-xs text-gray-600">
+              {stats.storedToken?.expiresAt ? (
+                <>
+                  Hourly auto-sync token ({stats.storedToken.source}) valid until{" "}
+                  <strong>{new Date(stats.storedToken.expiresAt).toLocaleString("fr-CH")}</strong>.
+                </>
+              ) : (
+                <span className="text-red-700">
+                  No valid stored token — the hourly auto-sync cannot run. Paste one below (it gets
+                  saved for the job) or log in on the server.
+                </span>
+              )}
+            </div>
           </div>
         )}
 
