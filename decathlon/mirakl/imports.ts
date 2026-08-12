@@ -914,6 +914,7 @@ export async function runP41Import(params?: {
   limit?: number;
   offset?: number;
   gtins?: string[];
+  skipStatusLookup?: boolean;
   useAiEnrichment?: boolean;
 }) {
   const limit = params?.limit ?? (DECATHLON_MIRAKL_TEST_MODE ? DECATHLON_MIRAKL_TEST_LIMIT : undefined);
@@ -924,6 +925,7 @@ export async function runP41Import(params?: {
     limit,
     offset,
     gtins: params?.gtins,
+    skipStatusLookup: params?.skipStatusLookup,
     useAiEnrichment,
   });
   const rows: ProductSyncRow[] = payload.rows.map((row) => ({
@@ -943,7 +945,7 @@ export async function runP41Import(params?: {
 
 /**
  * P41 for physical liquidation lane only (Bussigny + Lab + Rare/COLD BIEN).
- * Avoids full-catalog CSV blow-ups that crash Node string limits.
+ * Avoids full-catalog CSV / CM11 status export blow-ups that crash Node.
  */
 export async function runPhysicalLiquidationP41Import(params?: {
   limit?: number;
@@ -960,6 +962,7 @@ export async function runPhysicalLiquidationP41Import(params?: {
   }
   return runP41Import({
     gtins,
+    skipStatusLookup: true,
     useAiEnrichment: params?.useAiEnrichment,
   });
 }

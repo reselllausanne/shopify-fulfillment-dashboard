@@ -338,6 +338,11 @@ export async function prepareProductOnboarding(params?: {
   offset?: number;
   gtins?: string[];
   /**
+   * Skip Mirakl full CM11 status export (can OOM / exceed Node string limits).
+   * Unknown status → still onboard (Mirakl will no-op if already live).
+   */
+  skipStatusLookup?: boolean;
+  /**
    * If true, rows failing the PM11 required-attribute precheck are still included in the CSV.
    * The Mirakl import call can then enable AI_CONVERTER to enrich missing fields server-side.
    */
@@ -384,8 +389,12 @@ export async function prepareProductOnboarding(params?: {
     limited = candidates.slice(sliceStart);
   }
 
-  const statusLookup = await fetchProductStatusLookup();
-  await persistProductStatuses(limited, statusLookup);
+  const statusLookup = params?.skipStatusLookup
+    ? { byProductId: new Map<string, string>(), byEan: new Map<string, string>() }
+    : await fetchProductStatusLookup();
+  if (!params?.skipStatusLookup) {
+    await persistProductStatuses(limited, statusLookup);
+  }
 
   const cache: RequiredAttributesCache = new Map();
   const rows: ProductOnboardingRow[] = [];
