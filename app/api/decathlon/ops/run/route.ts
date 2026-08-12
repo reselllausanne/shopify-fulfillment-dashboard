@@ -5,6 +5,7 @@ import {
   runDecathlonOfferSync,
   runDecathlonOfferOnlySync,
   runDecathlonPhysicalLiquidationOfferSync,
+  runDecathlonPhysicalLiquidationProductSync,
   runDecathlonPriceSync,
   runDecathlonStockSync,
 } from "@/decathlon/mirakl/sync";
@@ -43,6 +44,24 @@ export async function POST(request: Request) {
       const result = await runDecathlonPhysicalLiquidationOfferSync({
         limit,
         mode: mode ?? "NORMAL",
+      });
+      return NextResponse.json({ ok: true, result });
+    }
+    if (action === "physical-product-sync") {
+      const rawAi = body?.useAiEnrichment ?? body?.ai_enrichment;
+      let useAiEnrichment: boolean | undefined;
+      if (rawAi === false || rawAi === 0) {
+        useAiEnrichment = false;
+      } else if (typeof rawAi === "string") {
+        const s = rawAi.trim().toLowerCase();
+        if (s === "false" || s === "0" || s === "no") useAiEnrichment = false;
+        else if (s === "true" || s === "1" || s === "yes") useAiEnrichment = true;
+      } else if (rawAi === true || rawAi === 1) {
+        useAiEnrichment = true;
+      }
+      const result = await runDecathlonPhysicalLiquidationProductSync({
+        limit,
+        useAiEnrichment,
       });
       return NextResponse.json({ ok: true, result });
     }

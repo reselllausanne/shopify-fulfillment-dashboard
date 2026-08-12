@@ -72,7 +72,10 @@ export function parseDecimal(value: unknown): number | null {
   return null;
 }
 
-export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary) {
+export async function loadDecathlonCandidates(
+  summary: DecathlonExclusionSummary,
+  params?: { gtins?: string[] }
+) {
   const prismaAny = prisma as any;
   const candidates: DecathlonExportCandidate[] = [];
   let scanned = 0;
@@ -80,11 +83,14 @@ export async function loadDecathlonCandidates(summary: DecathlonExclusionSummary
   let cursorUpdatedAt: Date | null = null;
   let cursorId: string | null = null;
   let lastBatch = 0;
+  const gtinFilter = Array.from(
+    new Set((params?.gtins ?? []).map((g) => String(g ?? "").trim()).filter(Boolean))
+  );
 
   do {
     const whereClause: Record<string, unknown> = {
       status: { in: ELIGIBLE_MAPPING_STATUSES as unknown as string[] },
-      gtin: { not: null },
+      gtin: gtinFilter.length > 0 ? { in: gtinFilter } : { not: null },
       ...(cursorUpdatedAt && cursorId
         ? {
             OR: [

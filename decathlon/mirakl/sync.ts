@@ -5,6 +5,7 @@ import {
   runOf01Import,
   runP41Import,
   runPhysicalLiquidationOf01Import,
+  runPhysicalLiquidationP41Import,
   runPri01Import,
   runSto01Import,
 } from "./imports";
@@ -31,6 +32,17 @@ export async function runDecathlonPhysicalLiquidationOfferSync(params?: {
   return runPhysicalLiquidationOf01Import({
     limit: params?.limit,
     mode: params?.mode,
+  });
+}
+
+/** P41 for Bussigny + Lab + Rare (COLD BIEN) in-stock GTINs only. */
+export async function runDecathlonPhysicalLiquidationProductSync(params?: {
+  limit?: number;
+  useAiEnrichment?: boolean;
+}) {
+  return runPhysicalLiquidationP41Import({
+    limit: params?.limit,
+    useAiEnrichment: params?.useAiEnrichment,
   });
 }
 

@@ -3,13 +3,15 @@
 # Decathlon scheduled ops (VPS cron).
 #
 # Usage:
-#   bash scripts/decathlon-ops-cron.sh daily-catalog   # P41 product → physical liquidation OF01
-#   bash scripts/decathlon-ops-cron.sh product-sync    # P41 only
+#   bash scripts/decathlon-ops-cron.sh daily-catalog   # P41 physical → OF01 physical
+#   bash scripts/decathlon-ops-cron.sh product-sync    # legacy full P41
+#   bash scripts/decathlon-ops-cron.sh physical-product-sync  # P41 Bussigny/Lab/Rare only
 #   bash scripts/decathlon-ops-cron.sh offer-sync      # legacy full OF01
 #   bash scripts/decathlon-ops-cron.sh physical-offer-sync  # physical location stock OF01
 #
 # Suggested crontab (after Galaxus full-flow ~04:30 UTC):
 #   0 5 * * * /opt/resell/scripts/decathlon-ops-cron.sh daily-catalog
+#   0 1 * * * /opt/resell/scripts/decathlon-ops-cron.sh physical-product-sync
 #
 # Env overrides:
 #   DECATHLON_OPS_BASE_URL   default http://127.0.0.1:3000
@@ -84,7 +86,7 @@ run_step() {
 }
 
 if [[ -z "$ACTION" ]]; then
-  log "ERROR: missing action (daily-catalog | product-sync | offer-sync | physical-offer-sync)"
+  log "ERROR: missing action (daily-catalog | product-sync | physical-product-sync | offer-sync | physical-offer-sync)"
   exit 2
 fi
 
@@ -92,13 +94,18 @@ cd /opt/resell
 
 case "$ACTION" in
   daily-catalog)
-    # Physical location stock only (Bussigny/Antica/Lab/COLD BIEN). No full-catalog wipe.
+    # Bussigny + Lab + Rare (COLD BIEN): onboard products then publish offers.
+    run_step "physical-product-sync"
     run_step "physical-offer-sync"
     log "DONE daily-catalog"
     ;;
   product-sync)
     run_step "product-sync"
     log "DONE product-sync"
+    ;;
+  physical-product-sync)
+    run_step "physical-product-sync"
+    log "DONE physical-product-sync"
     ;;
   offer-sync)
     run_step "offer-sync"

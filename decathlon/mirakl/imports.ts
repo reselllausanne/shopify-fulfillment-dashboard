@@ -910,12 +910,22 @@ export async function runPri01Import(params?: { limit?: number }) {
   });
 }
 
-export async function runP41Import(params?: { limit?: number; offset?: number; useAiEnrichment?: boolean }) {
+export async function runP41Import(params?: {
+  limit?: number;
+  offset?: number;
+  gtins?: string[];
+  useAiEnrichment?: boolean;
+}) {
   const limit = params?.limit ?? (DECATHLON_MIRAKL_TEST_MODE ? DECATHLON_MIRAKL_TEST_LIMIT : undefined);
   const offset = params?.offset ?? 0;
   // Always enabled by default: Mirakl AI_CONVERTER can fill missing required fields.
   const useAiEnrichment = params?.useAiEnrichment ?? true;
-  const payload = await prepareProductOnboarding({ limit, offset, useAiEnrichment });
+  const payload = await prepareProductOnboarding({
+    limit,
+    offset,
+    gtins: params?.gtins,
+    useAiEnrichment,
+  });
   const rows: ProductSyncRow[] = payload.rows.map((row) => ({
     providerKey: row.providerKey,
     gtin: row.gtin,
@@ -928,6 +938,29 @@ export async function runP41Import(params?: { limit?: number; offset?: number; u
     mode: DECATHLON_MIRAKL_TEST_MODE ? "TEST" : "NORMAL",
     summary: payload.summary,
     aiEnrichmentWanted: useAiEnrichment,
+  });
+}
+
+/**
+ * P41 for physical liquidation lane only (Bussigny + Lab + Rare/COLD BIEN).
+ * Avoids full-catalog CSV blow-ups that crash Node string limits.
+ */
+export async function runPhysicalLiquidationP41Import(params?: {
+  limit?: number;
+  useAiEnrichment?: boolean;
+}) {
+  const { LIQUIDATION_LOCATION_IDS } = await import("@/shopify/inventory/locationConfig");
+  const { loadPhysicalMirrorStockByGtinAtAnyLocation } = await import(
+    "@/shopify/inventory/physicalAvailability"
+  );
+  const physical = await loadPhysicalMirrorStockByGtinAtAnyLocation(LIQUIDATION_LOCATION_IDS);
+  let gtins = [...physical.keys()].sort();
+  if (params?.limit && Number.isFinite(params.limit) && params.limit > 0) {
+    gtins = gtins.slice(0, Math.floor(params.limit));
+  }
+  return runP41Import({
+    gtins,
+    useAiEnrichment: params?.useAiEnrichment,
   });
 }
 

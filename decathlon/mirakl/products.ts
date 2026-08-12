@@ -336,6 +336,7 @@ function isMissingAttribute(row: Record<string, string>, attributeCode: string):
 export async function prepareProductOnboarding(params?: {
   limit?: number;
   offset?: number;
+  gtins?: string[];
   /**
    * If true, rows failing the PM11 required-attribute precheck are still included in the CSV.
    * The Mirakl import call can then enable AI_CONVERTER to enrich missing fields server-side.
@@ -343,7 +344,33 @@ export async function prepareProductOnboarding(params?: {
   useAiEnrichment?: boolean;
 }) {
   const summary = createDecathlonExclusionSummary();
-  const { candidates, scanned } = await loadDecathlonCandidates(summary);
+  const gtinFilter = Array.from(
+    new Set((params?.gtins ?? []).map((g) => String(g ?? "").trim()).filter(Boolean))
+  );
+  if (params?.gtins && gtinFilter.length === 0) {
+    return {
+      rows: [] as ProductOnboardingRow[],
+      csv: toCsv(PRODUCTS_HEADERS, []),
+      summary,
+      counts: {
+        scanned: 0,
+        eligible: 0,
+        sent: 0,
+        skippedLive: 0,
+        missingRequiredAttributes: 0,
+        unknownStatus: 0,
+        notLive: 0,
+        candidatesTotal: 0,
+        candidateOffset: 0,
+        candidateWindowEnd: 0,
+        gtinFilterEmpty: 1,
+      },
+    };
+  }
+  const { candidates, scanned } = await loadDecathlonCandidates(
+    summary,
+    gtinFilter.length > 0 ? { gtins: gtinFilter } : undefined
+  );
   const limit = params?.limit ?? (DECATHLON_MIRAKL_TEST_MODE ? DECATHLON_MIRAKL_TEST_LIMIT : undefined);
   const useAiEnrichment = params?.useAiEnrichment ?? false;
   const offsetRaw = params?.offset ?? 0;

@@ -1,16 +1,15 @@
 import { prisma } from "@/app/lib/prisma";
 import { decathlonListPriceFromTargetPayout } from "@/decathlon/exports/physicalLiquidationPricing";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
-import { loadPhysicalMirrorStockByGtinAtEveryLocation } from "@/shopify/inventory/physicalAvailability";
+import { LIQUIDATION_LOCATION_IDS } from "@/shopify/inventory/locationConfig";
+import { loadPhysicalMirrorStockByGtinAtAnyLocation } from "@/shopify/inventory/physicalAvailability";
 
 const ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
 /** Physical liquidation ships ~48h — same leadtime band as THE warehouse. */
 const PHYSICAL_LEADTIME_TO_SHIP = "2";
 const OFFER_STATE = "11";
-const DECATHLON_REQUIRED_LOCATION_IDS = [
-  (process.env.SHOPIFY_LOC_BUSSIGNY ?? "").trim() || "gid://shopify/Location/111267971458",
-  (process.env.SHOPIFY_LOC_LAB ?? "").trim() || "gid://shopify/Location/111267250562",
-];
+/** Bussigny + Lab + Rare (COLD BIEN). Antica excluded. */
+const DECATHLON_PHYSICAL_LOCATION_IDS = LIQUIDATION_LOCATION_IDS;
 
 export type PhysicalLiquidationOfferRow = {
   providerKey: string;
@@ -182,14 +181,14 @@ async function resolveOfferIdentityByGtin(
 }
 
 /**
- * Build full OF01 rows only for GTINs stocked in both Bussigny and Lab.
- * The published quantity is the combined stock of those two locations.
+ * Build full OF01 rows for GTINs stocked in Bussigny, Lab, or Rare (COLD BIEN).
+ * Quantity = sum of stock across those locations only (Antica excluded).
  * Price: liquidation/website sell (target payout) grossed up for Decathlon fees.
  */
 export async function buildPhysicalLiquidationOfferRows(params?: {
   limit?: number;
 }): Promise<PhysicalLiquidationOfferBuildResult> {
-  const physical = await loadPhysicalMirrorStockByGtinAtEveryLocation(DECATHLON_REQUIRED_LOCATION_IDS);
+  const physical = await loadPhysicalMirrorStockByGtinAtAnyLocation(DECATHLON_PHYSICAL_LOCATION_IDS);
   let gtins = [...physical.keys()].sort();
   if (params?.limit && Number.isFinite(params.limit) && params.limit > 0) {
     gtins = gtins.slice(0, Math.floor(params.limit));
