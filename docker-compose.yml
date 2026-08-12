@@ -11,7 +11,8 @@ services:
       - VNC_PASSWORD=${VNC_PASSWORD:-change-me-now}
     ports:
       - "3000:3000"
-      - "6080:6080"
+      # Remote desktop reaches the internet only through the TLS-terminated /stockx-vnc/ proxy.
+      - "127.0.0.1:6080:6080"
     volumes:
       - ./.data:/app/.data
       # Host `.env` on disk (same as `env_file`) so `next start` always sees PARTNER_* etc.
