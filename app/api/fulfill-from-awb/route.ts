@@ -493,19 +493,42 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const matches = (await prisma.orderMatch.findMany({
+    const matchSelect = {
+      id: true,
+      shopifyOrderId: true,
+      shopifyOrderName: true,
+      shopifyLineItemId: true,
+      shopifySku: true,
+      shopifyProductTitle: true,
+      shopifySizeEU: true,
+      stockxTrackingUrl: true,
+    } as const;
+
+    let matches = (await prisma.orderMatch.findMany({
       where: { stockxAwb: awb },
-      select: {
-        id: true,
-        shopifyOrderId: true,
-        shopifyOrderName: true,
-        shopifyLineItemId: true,
-        shopifySku: true,
-        shopifyProductTitle: true,
-        shopifySizeEU: true,
-        stockxTrackingUrl: true,
-      },
+      select: matchSelect,
     })) as OrderMatchSelection[];
+
+    // The scan page resolves the order by AWB, tracking URL or StockX order number, so it can
+    // hand us a line item whose match row never received an AWB (StockX detail sync gaps).
+    // Fall back to that line item and store the scanned AWB so the next scan hits directly.
+    if (matches.length === 0 && requestedShopifyLineItemId) {
+      const byLineItem = (await prisma.orderMatch.findMany({
+        where: { shopifyLineItemId: requestedShopifyLineItemId },
+        select: matchSelect,
+      })) as OrderMatchSelection[];
+      if (byLineItem.length > 0) {
+        matches = byLineItem;
+        await prisma.orderMatch
+          .updateMany({
+            where: { shopifyLineItemId: requestedShopifyLineItemId, stockxAwb: null },
+            data: { stockxAwb: awb },
+          })
+          .catch((err: any) => {
+            console.error("[FULFILL-FROM-AWB] AWB persist failed:", err?.message || err);
+          });
+      }
+    }
 
     if (matches.length === 0) {
       return NextResponse.json(

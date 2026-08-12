@@ -950,8 +950,12 @@ export async function POST(request: NextRequest) {
       }
       return null;
     };
+    // getBuyOrder carries the tracking URL that feeds scan AWBs; when the direct gateway call is
+    // blocked (403 / HTML challenge) the browser session is the only way to still read it.
     const shouldUsePlaywrightFallback =
-      opName === "Buying" || opName === STOCKX_PERSISTED_OPERATION_NAME;
+      opName === "Buying" ||
+      opName === STOCKX_PERSISTED_OPERATION_NAME ||
+      opName === "getBuyOrder";
     const tryBuyingCompatJson = async (): Promise<
       | {
           status: number;
@@ -1067,7 +1071,8 @@ export async function POST(request: NextRequest) {
             authSource
           );
         }
-      } else {
+      }
+      if (opName === "getBuyOrder") {
         return applyUpstreamDebugHeaders(
           NextResponse.json(
             {
