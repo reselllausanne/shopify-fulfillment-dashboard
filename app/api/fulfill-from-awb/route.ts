@@ -14,6 +14,7 @@ import {
   orderHasTrackingNumber,
 } from "@/lib/shopifyFulfillment";
 import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
+import { buildSwissPostRecipientNameFields } from "@/lib/swissPostRecipient";
 import { pickLineDeliveryMode, resolveSwissPostPrzl } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
@@ -236,9 +237,11 @@ type OrderMatchSelection = {
 };
 
 type SwissPostRecipient = {
+  personallyAddressed?: boolean;
   name1?: string | null;
   firstName?: string | null;
   name2?: string | null;
+  name3?: string | null;
   street?: string | null;
   zip?: string | null;
   city?: string | null;
@@ -313,11 +316,19 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
   const rawPhone =
     [address?.phone, orderInfo?.phone].map((p) => String(p || "").trim()).find(Boolean) || null;
   const phone = normalizeSwissPostRecipientPhone(rawPhone, country);
+  const names = buildSwissPostRecipientNameFields({
+    company,
+    personName: fullName,
+    firstName: address?.firstName ?? null,
+    lastName: address?.lastName ?? null,
+  });
 
   return {
-    name1: company || fullName,
-    firstName: null,
-    name2: company ? fullName : null,
+    personallyAddressed: names.personallyAddressed,
+    name1: names.name1 || fullName,
+    firstName: names.firstName,
+    name2: names.name2,
+    name3: names.name3,
     street,
     zip: zip || null,
     city: city || null,

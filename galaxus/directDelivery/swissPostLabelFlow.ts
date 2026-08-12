@@ -2,6 +2,7 @@ import "server-only";
 
 import { prisma } from "@/app/lib/prisma";
 import { requestSwissPostLabel } from "@/lib/swissPost";
+import { buildSwissPostRecipientFromGalaxusOrder } from "@/lib/swissPostRecipient";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
 import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
@@ -58,163 +59,21 @@ export function extractSwissPostTracking(response: any): string | null {
   return null;
 }
 
-function normalizeCountryCode(value: unknown): string | null {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  const upper = raw.toUpperCase();
-  if (/^[A-Z]{2}$/.test(upper)) return upper;
-  const lower = raw.toLowerCase();
-  if (["schweiz", "suisse", "svizzera", "switzerland", "swiss"].includes(lower)) return "CH";
-  if (["deutschland", "germany"].includes(lower)) return "DE";
-  if (["france"].includes(lower)) return "FR";
-  if (["italy", "italia"].includes(lower)) return "IT";
-  if (["austria", "österreich", "osterreich"].includes(lower)) return "AT";
-  return null;
-}
-
-function normalizePostalCode(value: unknown): string | null {
-  const raw = String(value ?? "").trim();
-  if (!raw) return null;
-  return raw.replace(/^CH[\s-]*/i, "").trim();
-}
-
-function normalizeSwissPostText(value: unknown): string {
-  return String(value ?? "")
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function sanitizeStreetForSwissPost(baseStreet: unknown, extraStreet?: unknown): string {
-  const base = normalizeSwissPostText(baseStreet);
-  const extra = normalizeSwissPostText(extraStreet);
-  let street = base;
-
-  if (!street && extra) {
-    street = extra;
-  }
-
-  // Some marketplaces append department/notes after a comma. Swiss Post street pattern rejects this.
-  if (street.includes(",")) {
-    street = street.split(",")[0]?.trim() ?? street;
-  }
-
-  if (!/\d/.test(street) && extra && /\d/.test(extra)) {
-    street = `${street} ${extra}`.trim();
-  }
-
-  street = street
-    .replace(/[^\p{L}\p{N}\s.\-/'’]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return street;
-}
-
-function looksLikeBusinessName(name: string): boolean {
-  const normalized = name.toLowerCase();
-  return [
-    " ag",
-    " gmbh",
-    " sa",
-    " sarl",
-    " ltd",
-    " llc",
-    " inc",
-    " company",
-    " shop",
-    " digitec",
-    " galaxus",
-  ].some((needle) => normalized.includes(needle));
-}
-
-function splitSwissPostName(rawName: string) {
-  const cleaned = normalizeSwissPostText(rawName);
-  if (!cleaned) {
-    return { firstName: null as string | null, name1: "" };
-  }
-  if (looksLikeBusinessName(cleaned)) {
-    return { firstName: null as string | null, name1: cleaned };
-  }
-  const parts = cleaned.split(" ").filter(Boolean);
-  if (parts.length < 2) {
-    return { firstName: null as string | null, name1: cleaned };
-  }
-  const firstName = parts[0];
-  const name1 = parts.slice(1).join(" ").trim();
-  if (!name1) {
-    return { firstName: null as string | null, name1: cleaned };
-  }
-  return { firstName, name1 };
-}
-
-function buildSwissPostRecipient(
-  values: {
-    name?: unknown;
-    address1?: unknown;
-    address2?: unknown;
-    postalCode?: unknown;
-    city?: unknown;
-    countryCodeOrName?: unknown;
-    email?: unknown;
-    phone?: unknown;
-    contactName?: unknown;
-  }
-) {
-  const country = normalizeCountryCode(values.countryCodeOrName) ?? "CH";
-  const zip = normalizePostalCode(values.postalCode) ?? "";
-  const rawName = normalizeSwissPostText(values.name) || "";
-  const parsedName = splitSwissPostName(rawName);
-  const baseStreet = normalizeSwissPostText(values.address1);
-  const extraStreet = normalizeSwissPostText(values.address2);
-  const street = sanitizeStreetForSwissPost(baseStreet, extraStreet);
-  const contactName = normalizeSwissPostText(values.contactName);
-  const name2 = contactName || (extraStreet && extraStreet !== street ? extraStreet : null);
-
-  return {
-    name1: parsedName.name1 || rawName,
-    firstName: parsedName.firstName,
-    name2,
-    street,
-    zip,
-    city: normalizeSwissPostText(values.city) || "",
-    country,
-    phone: normalizeSwissPostText(values.phone) || null,
-    email: normalizeSwissPostText(values.email) || null,
-  };
-}
-
 function buildRecipient(order: any) {
-  const hasRecipient =
-    Boolean(order.recipientName) ||
-    Boolean(order.recipientAddress1) ||
-    Boolean(order.recipientPostalCode) ||
-    Boolean(order.recipientCity) ||
-    Boolean(order.recipientCountry);
-  if (hasRecipient) {
-    return buildSwissPostRecipient({
-      name: order.recipientName,
-      address1: order.recipientAddress1,
-      address2: order.recipientAddress2,
-      postalCode: order.recipientPostalCode,
-      city: order.recipientCity,
-      countryCodeOrName: order.recipientCountryCode ?? order.recipientCountry,
-      email: order.recipientEmail ?? order.customerEmail ?? null,
-      phone: order.recipientPhone ?? null,
-      contactName: order.referencePerson ?? null,
-    });
-  }
-  return buildSwissPostRecipient({
-    name: order.customerName,
-    address1: order.customerAddress1,
-    address2: order.customerAddress2,
-    postalCode: order.customerPostalCode,
-    city: order.customerCity,
-    countryCodeOrName: order.customerCountryCode ?? order.customerCountry,
-    email: order.customerEmail ?? null,
-    phone: order.recipientPhone ?? null,
-    contactName: order.referencePerson ?? null,
-  });
+  const recipient = buildSwissPostRecipientFromGalaxusOrder(order);
+  return {
+    personallyAddressed: recipient.personallyAddressed,
+    name1: recipient.name1,
+    firstName: recipient.firstName,
+    name2: recipient.name2,
+    name3: recipient.name3,
+    street: recipient.street,
+    zip: recipient.zip,
+    city: recipient.city,
+    country: recipient.country,
+    phone: recipient.phone,
+    email: recipient.email,
+  };
 }
 
 function buildSwissPostPayload(order: any, trackingNumber: string) {

@@ -10,6 +10,7 @@ import { uploadDelrForShipment } from "@/galaxus/warehouse/delr";
 import { generateSsccLabelPdf } from "@/galaxus/labels/ssccLabel";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
+import { buildSwissPostRecipientFromGalaxusOrder } from "@/lib/swissPostRecipient";
 import { DocumentType } from "@prisma/client";
 import {
   getStaffRoleFromRequest,
@@ -52,37 +53,20 @@ function extractLabelPayload(response: any) {
 }
 
 function buildRecipient(order: any) {
-  const hasRecipient =
-    Boolean(order?.recipientName) ||
-    Boolean(order?.recipientAddress1) ||
-    Boolean(order?.recipientPostalCode) ||
-    Boolean(order?.recipientCity) ||
-    Boolean(order?.recipientCountry);
-  if (hasRecipient) {
-    const country = order.recipientCountryCode ?? order.recipientCountry ?? "CH";
-    return {
-      name1: order.recipientName ?? order.customerName ?? "",
-      firstName: null,
-      name2: null,
-      street: order.recipientAddress1 ?? "",
-      zip: order.recipientPostalCode ?? "",
-      city: order.recipientCity ?? "",
-      country,
-      phone: normalizeSwissPostRecipientPhone(order.recipientPhone ?? null, country),
-      email: order.recipientEmail ?? order.customerEmail ?? null,
-    };
-  }
-  const country = order.customerCountryCode ?? order.customerCountry ?? "CH";
+  const recipient = buildSwissPostRecipientFromGalaxusOrder(order);
+  const phone = normalizeSwissPostRecipientPhone(recipient.phone, recipient.country);
   return {
-    name1: order.customerName ?? "",
-    firstName: null,
-    name2: null,
-    street: order.customerAddress1 ?? "",
-    zip: order.customerPostalCode ?? "",
-    city: order.customerCity ?? "",
-    country,
-    phone: normalizeSwissPostRecipientPhone(order.customerPhone ?? null, country),
-    email: order.customerEmail ?? null,
+    personallyAddressed: recipient.personallyAddressed,
+    name1: recipient.name1,
+    firstName: recipient.firstName,
+    name2: recipient.name2,
+    name3: recipient.name3,
+    street: recipient.street,
+    zip: recipient.zip,
+    city: recipient.city,
+    country: recipient.country,
+    phone,
+    email: recipient.email,
   };
 }
 

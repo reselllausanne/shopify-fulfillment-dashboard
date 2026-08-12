@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import { fetchOrderIdByName, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { requestSwissPostLabel } from "@/lib/swissPost";
+import { buildSwissPostRecipientNameFields } from "@/lib/swissPostRecipient";
 import { pickLineDeliveryMode, resolveSwissPostPrzl } from "@/lib/swissPostShipping";
 import {
   getStaffRoleFromRequest,
@@ -154,9 +155,11 @@ function extractLabelPayload(response: any) {
 }
 
 type SwissPostRecipient = {
+  personallyAddressed?: boolean;
   name1?: string | null;
   firstName?: string | null;
   name2?: string | null;
+  name3?: string | null;
   street?: string | null;
   zip?: string | null;
   city?: string | null;
@@ -236,11 +239,19 @@ function toRecipient(orderInfo: Awaited<ReturnType<typeof fetchOrderShippingInfo
   );
   const street = buildStreetLine(address, ignore);
   const { zip, city } = normalizePostalCity(address);
+  const names = buildSwissPostRecipientNameFields({
+    company,
+    personName: fullName,
+    firstName: address?.firstName ?? null,
+    lastName: address?.lastName ?? null,
+  });
 
   return {
-    name1: company || fullName,
-    firstName: null,
-    name2: company ? fullName : null,
+    personallyAddressed: names.personallyAddressed,
+    name1: names.name1 || fullName,
+    firstName: names.firstName,
+    name2: names.name2,
+    name3: names.name3,
     street,
     zip: zip || null,
     city: city || null,

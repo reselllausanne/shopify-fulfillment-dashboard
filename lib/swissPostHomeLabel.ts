@@ -1,5 +1,6 @@
 import { resolveFulfillmentHomeAddress } from "@/app/lib/fulfillmentHomeAddress";
 import { normalizeSwissPostRecipientPhone } from "@/lib/swissPost";
+import { buildSwissPostRecipientNameFields } from "@/lib/swissPostRecipient";
 
 function getLabelFileExtension(format?: string) {
   const cleaned = String(format || "pdf").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -65,10 +66,16 @@ export function buildSwissPostPayloadToHome(params: {
     logoVerticalAlign: process.env.SWISS_POST_CUSTOMER_LOGO_VALIGN || "TOP",
   };
 
+  const names = buildSwissPostRecipientNameFields({
+    company: home.name1,
+    personName: home.name2,
+  });
   const recipient = {
-    name1: home.name1,
-    firstName: null,
-    name2: home.name2,
+    personallyAddressed: names.personallyAddressed,
+    name1: names.name1 || home.name1,
+    firstName: names.firstName,
+    name2: names.name2 || home.name2,
+    name3: names.name3,
     street: home.street,
     zip: home.zip,
     city: home.city,
