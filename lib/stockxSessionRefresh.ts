@@ -103,7 +103,8 @@ export async function refreshStockxToken(
       forceLogin: false,
       reuseTokenFile: !force,
       autoNavigate: true,
-      browser: "firefox",
+      // Only Chromium is installed in the container image.
+      browser: "chromium",
       startUrl: "https://stockx.com/buying/orders",
       maxWaitMs: Math.min(Number(options.maxWaitMs ?? 120000), 300000),
     }),
