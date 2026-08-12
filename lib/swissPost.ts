@@ -1,3 +1,9 @@
+import {
+  formatSwissPostNetworkError,
+  isSwissPostConnectTimeout,
+  swissPostHttpsJsonWithRetry,
+} from "@/lib/swissPostHttp";
+
 type SwissPostToken = {
   access_token: string;
   token_type: string;
@@ -30,6 +36,8 @@ const COUNTRY_DIAL_CODES: Record<string, string> = {
   IT: "39",
   AT: "43",
 };
+
+export { formatSwissPostNetworkError, isSwissPostConnectTimeout };
 
 export function normalizeSwissPostRecipientPhone(
   rawPhone: unknown,
@@ -129,23 +137,30 @@ export async function getSwissPostToken(options: TokenOptions = {}) {
   body.set("client_id", clientId);
   body.set("client_secret", clientSecret);
 
-  const res = await fetch(tokenUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      accept: "application/json",
-    },
-    body,
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  const json = (await res.json().catch(() => ({}))) as SwissPostToken | Record<string, any>;
-  if (!res.ok) {
-    throw new Error(`Swiss Post token error ${res.status}: ${JSON.stringify(json)}`);
+  let result;
+  try {
+    result = await swissPostHttpsJsonWithRetry({
+      url: tokenUrl,
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body: body.toString(),
+      timeoutMs: 30_000,
+      attempts: 3,
+      label: "token",
+    });
+  } catch (err) {
+    throw new Error(formatSwissPostNetworkError(err));
   }
 
-  const token = (json as SwissPostToken).access_token;
-  const expiresIn = (json as SwissPostToken).expires_in || 300;
+  if (!result.ok) {
+    throw new Error(`Swiss Post token error ${result.status}: ${JSON.stringify(result.data)}`);
+  }
+
+  const token = (result.data as SwissPostToken)?.access_token;
+  const expiresIn = (result.data as SwissPostToken)?.expires_in || 300;
   if (!token) {
     throw new Error("Swiss Post token missing access_token");
   }
@@ -158,18 +173,6 @@ export async function getSwissPostToken(options: TokenOptions = {}) {
   return token;
 }
 
-function isSwissPostConnectTimeout(err: unknown): boolean {
-  const anyErr = err as { name?: string; code?: string; cause?: { code?: string; name?: string } };
-  const code = String(anyErr?.cause?.code ?? anyErr?.code ?? "");
-  const name = String(anyErr?.cause?.name ?? anyErr?.name ?? "");
-  return (
-    code === "UND_ERR_CONNECT_TIMEOUT" ||
-    code === "ETIMEDOUT" ||
-    name.includes("Timeout") ||
-    name.includes("ConnectTimeout")
-  );
-}
-
 export async function requestSwissPostLabel(payload: Record<string, any>) {
   const endpoint = getLabelEndpoint();
   if (!endpoint) {
@@ -177,52 +180,28 @@ export async function requestSwissPostLabel(payload: Record<string, any>) {
   }
 
   const token = await getSwissPostToken();
-  const startedAt = Date.now();
-  let lastError: unknown = null;
-
-  // One quick retry — VPS occasionally hits UND_ERR_CONNECT_TIMEOUT to dcapi.apis.post.ch.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const attemptStartedAt = Date.now();
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(45_000),
-      });
-
-      const data = await res.json().catch(() => ({}));
-      console.log("[SWISS POST] label request", {
-        attempt,
-        ok: res.ok,
-        status: res.status,
-        ms: Date.now() - attemptStartedAt,
-        totalMs: Date.now() - startedAt,
-      });
-      return {
-        ok: res.ok,
-        status: res.status,
-        data,
-      };
-    } catch (err) {
-      lastError = err;
-      console.error("[SWISS POST] label request failed", {
-        attempt,
-        ms: Date.now() - startedAt,
-        message: err instanceof Error ? err.message : String(err),
-        code: (err as any)?.cause?.code ?? (err as any)?.code ?? null,
-      });
-      if (attempt >= 2 || !isSwissPostConnectTimeout(err)) {
-        throw err;
-      }
-    }
+  try {
+    const result = await swissPostHttpsJsonWithRetry({
+      url: endpoint,
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+      timeoutMs: 45_000,
+      attempts: 3,
+      label: "label",
+    });
+    return {
+      ok: result.ok,
+      status: result.status,
+      data: result.data,
+    };
+  } catch (err) {
+    throw new Error(formatSwissPostNetworkError(err));
   }
-
-  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Swiss Post label failed"));
 }
 
 type SwissPostTrackingResponse = {
@@ -247,16 +226,22 @@ async function swissPostTrackingFetch(path: string, language: string): Promise<S
   });
   const baseUrl = endpoint.replace(/\/$/, "");
   const url = `${baseUrl}${path}`;
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      "accept-language": language,
-    },
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+  try {
+    return await swissPostHttpsJsonWithRetry({
+      url,
+      method: "GET",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+        "accept-language": language,
+      },
+      timeoutMs: 30_000,
+      attempts: 2,
+      label: "tracking",
+    });
+  } catch (err) {
+    throw new Error(formatSwissPostNetworkError(err));
+  }
 }
 
 export async function fetchSwissPostMailpieceDetail(
@@ -280,4 +265,3 @@ export async function fetchSwissPostMailpieceEvents(
   }
   return swissPostTrackingFetch(`/mailpieces/${key}/events/`, language);
 }
-

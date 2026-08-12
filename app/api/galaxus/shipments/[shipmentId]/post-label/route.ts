@@ -98,6 +98,8 @@ export async function POST(
     }
   } catch (error: any) {
     console.error("[GALAXUS][SHIPMENT][POST-LABEL] Failed:", error);
-    return NextResponse.json({ ok: false, error: error?.message ?? "Failed to generate label" }, { status: 500 });
+    const message = String(error?.message ?? "Failed to generate label");
+    const status = /unreachable|timeout|fetch failed/i.test(message) ? 502 : 500;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

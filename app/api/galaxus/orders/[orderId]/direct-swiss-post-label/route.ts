@@ -43,6 +43,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json(result);
   } catch (error: any) {
     console.error("[GALAXUS][DIRECT-SWISS-POST-LABEL] Failed:", error);
-    return NextResponse.json({ ok: false, error: error?.message ?? "Failed" }, { status: 500 });
+    const message = String(error?.message ?? "Failed");
+    const status = /unreachable|timeout|fetch failed/i.test(message) ? 502 : 500;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

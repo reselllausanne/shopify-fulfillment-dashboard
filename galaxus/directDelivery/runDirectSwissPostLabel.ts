@@ -163,7 +163,15 @@ export async function runDirectSwissPostLabelForOrder(
   }
 
   const removedDrafts = await deleteDraftShipmentsForOrder(order.id);
-  const swissRes = await requestSwissPostLabelForGalaxusOrder(order);
+  let swissRes;
+  try {
+    swissRes = await requestSwissPostLabelForGalaxusOrder(order);
+  } catch (err: any) {
+    return {
+      ok: false,
+      error: err?.message ?? "Swiss Post API unreachable",
+    };
+  }
   if (!swissRes.ok) {
     return {
       ok: false,
