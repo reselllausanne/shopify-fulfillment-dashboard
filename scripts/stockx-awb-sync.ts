@@ -162,4 +162,6 @@ main()
   .finally(async () => {
     const { prisma } = await import("@/app/lib/prisma");
     await prisma.$disconnect().catch(() => undefined);
+    // A stray browser handle would otherwise keep this cron process alive forever.
+    process.exit(process.exitCode ?? 0);
   });

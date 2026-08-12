@@ -103,6 +103,7 @@ export async function refreshStockxToken(
       forceLogin: false,
       reuseTokenFile: !force,
       autoNavigate: true,
+      allowProfileReset: false,
       // Only Chromium is installed in the container image.
       browser: "chromium",
       startUrl: "https://stockx.com/buying/orders",

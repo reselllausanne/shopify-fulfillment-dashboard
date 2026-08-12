@@ -216,6 +216,8 @@ export async function POST(req: NextRequest) {
     const startUrl = String(body?.startUrl || "https://stockx.com/login");
     const reuseTokenFile = Boolean(body?.reuseTokenFile ?? true);
     const persistent = Boolean(body?.persistent ?? false);
+    // Scheduled refreshes must never throw away the logged-in profile: rebuilding it needs a human.
+    const allowProfileReset = Boolean(body?.allowProfileReset ?? true);
     const userDataDir = String(
       body?.userDataDir || path.join(process.cwd(), ".data", "stockx-profile")
     );
@@ -229,7 +231,7 @@ export async function POST(req: NextRequest) {
     if (tokenFile) await ensureSessionDir(tokenFile);
     await ensureSessionDir(persistedHashesFile);
 
-    if (tokenFile && !forceLogin) {
+    if (tokenFile && !forceLogin && allowProfileReset) {
       try {
         await fs.access(tokenFile);
       } catch {
@@ -446,16 +448,18 @@ export async function POST(req: NextRequest) {
       /cdn-cgi|challenges\.cloudflare\.com/i.test(currentUrl) ||
       /just a moment|cloudflare/i.test(pageTitle);
     if (cloudflareDetected) {
-      const cleanupTargets = [sessionFile];
-      if (usedPersistentContext) {
-        cleanupTargets.unshift(userDataDir);
-      }
-      if (tokenFile) cleanupTargets.push(tokenFile);
-      for (const target of cleanupTargets) {
-        try {
-          await fs.rm(target, { recursive: true, force: true });
-        } catch {
-          // ignore cleanup failures
+      if (allowProfileReset) {
+        const cleanupTargets = [sessionFile];
+        if (usedPersistentContext) {
+          cleanupTargets.unshift(userDataDir);
+        }
+        if (tokenFile) cleanupTargets.push(tokenFile);
+        for (const target of cleanupTargets) {
+          try {
+            await fs.rm(target, { recursive: true, force: true });
+          } catch {
+            // ignore cleanup failures
+          }
         }
       }
       if (usedPersistentContext) {
@@ -470,8 +474,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
-          error: "Cloudflare challenge detected. Profile reset; please retry login.",
-          reset: true,
+          error: allowProfileReset
+            ? "Cloudflare challenge detected. Profile reset; please retry login."
+            : "Cloudflare challenge detected. Profile kept; retry or log in again.",
+          reset: allowProfileReset,
           url: currentUrl,
           title: pageTitle,
         },
@@ -581,6 +587,18 @@ export async function POST(req: NextRequest) {
       } catch {
         // ignore html capture failures
       }
+      // Without this the browser keeps the process alive and a cron run never exits.
+      try {
+        if (usedPersistentContext) {
+          await context.close();
+        } else {
+          await browser?.close();
+        }
+      } catch {
+        // ignore close failures
+      }
+      cleanupContext = null;
+      cleanupBrowser = null;
       return NextResponse.json(
         {
           ok: false,
