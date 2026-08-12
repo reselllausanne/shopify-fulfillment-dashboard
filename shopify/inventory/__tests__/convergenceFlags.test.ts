@@ -63,6 +63,7 @@ vi.mock("@/shopify/inventory/locationConfig", () => ({
       "gid://shopify/Location/111267250562",
       "gid://shopify/Location/111272100226",
     ].includes(id),
+  isJmoneyPriceLockNote: () => false,
 }));
 
 import { prisma } from "@/app/lib/prisma";

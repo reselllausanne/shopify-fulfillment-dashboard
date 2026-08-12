@@ -148,12 +148,14 @@ export async function ensureManualSizeVariant(input: {
   const manualSell = input.manualSellPrice != null ? Number(input.manualSellPrice) : null;
   const manualCompare =
     input.manualCompareAtPrice != null ? Number(input.manualCompareAtPrice) : null;
+  const usedManualPrice = (!sellPrice || sellPrice <= 0) && manualSell != null && manualSell > 0;
 
-  if ((!sellPrice || sellPrice <= 0) && manualSell != null && manualSell > 0) {
+  if (usedManualPrice) {
     sellPrice = manualSell;
     compareAt =
       manualCompare != null && manualCompare > manualSell ? manualCompare : compareAt;
-    cost = cost ?? Math.round(manualSell * 0.8 * 100) / 100;
+    // Manual-price path: do not invent / overwrite inventory cost.
+    cost = null;
   }
 
   if (!sellPrice || sellPrice <= 0) {
@@ -175,6 +177,15 @@ export async function ensureManualSizeVariant(input: {
   const styleBase = styleSkuBase(siblings.map((v) => v.sku)) ?? "MANUAL";
   const sku = `${styleBase}-${sizeTitle}`;
 
+  const inventoryItem: Record<string, unknown> = {
+    sku,
+    tracked: true,
+  };
+  // Normal (STX-priced) create may stamp cost; manual-price omits cost entirely.
+  if (!usedManualPrice && cost != null && cost > 0) {
+    inventoryItem.cost = cost.toFixed(2);
+  }
+
   const { data: createData, errors: createErrors } = await shopifyGraphQL<{
     productVariantsBulkCreate: {
       productVariants: Array<{
@@ -192,11 +203,7 @@ export async function ensureManualSizeVariant(input: {
         price: sellPrice.toFixed(2),
         barcode: input.gtin,
         optionValues: [{ optionId, name: sizeTitle }],
-        inventoryItem: {
-          sku,
-          tracked: true,
-          cost: (cost ?? sellPrice * 0.8).toFixed(2),
-        },
+        inventoryItem,
       },
     ],
   });

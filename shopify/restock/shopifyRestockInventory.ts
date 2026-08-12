@@ -136,6 +136,26 @@ mutation RestockVariantSalePrice($productId: ID!, $variants: [ProductVariantsBul
 }
 `;
 
+const VARIANT_INVENTORY_COST_MUTATION = /* GraphQL */ `
+mutation RestockVariantInventoryCost($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+    productVariants {
+      id
+      inventoryItem {
+        id
+        unitCost {
+          amount
+        }
+      }
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+`;
+
 function assertNoUserErrors(userErrors: ShopifyUserError[] | undefined, action: string) {
   if (!userErrors || userErrors.length === 0) return;
   const messages = userErrors.map((item) => item.message).join("; ");
@@ -603,6 +623,40 @@ export async function applyVariantSalePrice(input: {
   assertNoUserErrors(data?.productVariantsBulkUpdate?.userErrors, "productVariantsBulkUpdate");
 }
 
+/** Set Shopify inventory item unit cost (CHF). Used by normal restock → cost 0. */
+export async function setVariantInventoryCost(input: {
+  productId: string;
+  variantId: string;
+  cost: number;
+}): Promise<void> {
+  if (isAdminOnlyShopifyVariant(input.variantId, input.productId)) {
+    return;
+  }
+  const cost = Number(input.cost);
+  if (!Number.isFinite(cost) || cost < 0) {
+    throw new Error(`Invalid inventory cost: ${input.cost}`);
+  }
+
+  const { data, errors } = await shopifyGraphQL<{
+    productVariantsBulkUpdate: {
+      productVariants: Array<{ id: string }>;
+      userErrors: ShopifyUserError[];
+    };
+  }>(VARIANT_INVENTORY_COST_MUTATION, {
+    productId: input.productId,
+    variants: [
+      {
+        id: input.variantId,
+        inventoryItem: { cost: cost.toFixed(2) },
+      },
+    ],
+  });
+  if (errors?.length) {
+    throw new Error(`Shopify inventory cost update failed: ${errors.map((e) => e.message).join("; ")}`);
+  }
+  assertNoUserErrors(data?.productVariantsBulkUpdate?.userErrors, "productVariantsBulkUpdate");
+}
+
 export type RestockShopifyResult = {
   found: boolean;
   dryRun: boolean;
@@ -770,14 +824,22 @@ export async function restockShopifyVariantByGtin(input: {
     warnings.push("Variant has no inventoryItem id — cannot set stock");
   }
 
+  // Normal restock → cost 0. Manual-price restock (salePrice set) → leave cost alone.
+  const setCostToZero = salePrice == null || !Number.isFinite(salePrice);
+
   if (dryRun) {
     actions.push(
       `[dry-run] would add +${quantity} stock at location ${locationId} for variant ${match.variantId}`
     );
-    actions.push(`[dry-run] would force Chemin online qty=0 for same inventory item`);
-    if (salePrice != null) {
+    actions.push(
+      `[dry-run] would zero Chemin dropship / Website stock for same inventory item`
+    );
+    if (setCostToZero) {
+      actions.push(`[dry-run] would set inventory cost=0 (normal restock)`);
+    } else {
+      actions.push(`[dry-run] would leave inventory cost unchanged (manual-price restock)`);
       actions.push(
-        `[dry-run] would set price=${salePrice.toFixed(2)}${
+        `[dry-run] would set price=${salePrice!.toFixed(2)}${
           compareAtPrice != null ? ` compareAt=${compareAtPrice.toFixed(2)}` : ""
         }`
       );
@@ -850,10 +912,9 @@ export async function restockShopifyVariantByGtin(input: {
 
     actions.push(`added +${quantity} stock at ${locationName ?? locationId} only`);
 
-    // SOLDES INVARIANT at restock time (not only on later main.py refresh):
-    // physical warehouse stock and dropship stock share one Shopify variant /
-    // one price. Leaving Chemin online > 0 while we hold a soldes pair lets
-    // checkout sell a StockX copy at the warehouse discount. Zero it now.
+    // Physical restock invariant: same variant must not keep dropship/Website
+    // (Chemin) qty > 0 — checkout would sell StockX stock while we hold physical.
+    // ONLINE_LOCATION is Chemin only (not Money Kickz).
     try {
       const { ONLINE_LOCATION } = await import("@/shopify/inventory/locationConfig");
       const onlineLoc = ONLINE_LOCATION;
@@ -873,10 +934,10 @@ export async function restockShopifyVariantByGtin(input: {
             referenceDocumentUri: `gid://resell-lausanne/ScanRestock/${gtin}`,
           });
           actions.push(
-            `zeroed Chemin online (${onlineLoc.name}): was ${onlineAvailable} → 0`
+            `zeroed dropship/Website (${onlineLoc.name}): was ${onlineAvailable} → 0`
           );
         } else {
-          actions.push(`Chemin online already 0 (${onlineLoc.name})`);
+          actions.push(`dropship/Website already 0 (${onlineLoc.name})`);
         }
         try {
           await upsertLocationStockRow(onlineLoc, {
@@ -886,14 +947,15 @@ export async function restockShopifyVariantByGtin(input: {
             gtin,
             available: 0,
           });
+          actions.push(`mirror updated: available=0 at ${onlineLoc.name}`);
         } catch (mirrorOnlineErr: any) {
           warnings.push(
-            `Online mirror zero failed (cron will catch up): ${mirrorOnlineErr?.message ?? mirrorOnlineErr}`
+            `Dropship mirror zero failed (cron will catch up): ${mirrorOnlineErr?.message ?? mirrorOnlineErr}`
           );
         }
       }
     } catch (err: any) {
-      warnings.push(`Chemin online zero failed: ${err?.message ?? err}`);
+      warnings.push(`Dropship/Website zero failed: ${err?.message ?? err}`);
     }
 
     // Write mirror immediately so convergence / marketplace feeds don't wait
@@ -920,6 +982,21 @@ export async function restockShopifyVariantByGtin(input: {
     } catch (err: any) {
       warnings.push(`Mirror update failed (cron will catch up): ${err?.message ?? err}`);
     }
+  }
+
+  if (setCostToZero && !isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
+    try {
+      await setVariantInventoryCost({
+        productId: match.productId,
+        variantId: match.variantId,
+        cost: 0,
+      });
+      actions.push("set inventory cost=0 (normal restock)");
+    } catch (err: any) {
+      warnings.push(`Inventory cost=0 failed: ${err?.message ?? err}`);
+    }
+  } else if (!setCostToZero) {
+    actions.push("inventory cost left unchanged (manual-price restock)");
   }
 
   if (salePrice != null && !isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
