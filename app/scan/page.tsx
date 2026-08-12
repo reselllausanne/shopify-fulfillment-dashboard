@@ -755,6 +755,8 @@ export default function ScanPage() {
           shopifyLineItemId: scan.match?.shopifyLineItemId || null,
           includeLabelData: true,
           allowAlreadyFulfilled,
+          // Clients need the Shopify shipping email with Swiss Post tracking.
+          notifyCustomer: true,
           scanSessionKey,
           scanStartedAt: options?.scanStartedAt ?? null,
           scanCompletedAt: options?.scanCompletedAt ?? null,

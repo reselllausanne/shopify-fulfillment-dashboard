@@ -6,6 +6,7 @@ import {
   buildStockxGetBuyOrderVariables,
 } from "@/app/lib/constants";
 import { POST as stockxProxy } from "@/app/api/stockx/route";
+import { sendMilestoneEmailForMatch } from "@/app/lib/notifications/stockxEmail";
 
 const DETAIL_DELAY_MS = 400;
 const MAX_CONSECUTIVE_AUTH_FAILURES = 3;
@@ -18,6 +19,8 @@ export type AwbBackfillItem = {
   awb?: string | null;
   carrier?: string | null;
   stockxStatus?: string | null;
+  emailSent?: boolean;
+  emailSkipped?: string | null;
   error?: string | null;
 };
 
@@ -26,6 +29,7 @@ export type AwbBackfillResult = {
   scanned: number;
   candidates: number;
   updated: number;
+  emailsSent: number;
   authFailures: number;
   abortedReason: string | null;
   items: AwbBackfillItem[];
@@ -76,8 +80,8 @@ async function fetchBuyOrder(token: string, chainId: string, orderId: string) {
 }
 
 /**
- * Boxes still travelling to the warehouse are the ones the scan page needs; an order that already
- * has a fulfillment record was shipped to the customer and no longer gets scanned.
+ * In-transit StockX buys: missing AWB first (warehouse scan), then rows that already have
+ * tracking but still need status/milestone emails until the warehouse fulfills them.
  */
 export async function selectAwbCandidates(args: {
   since: Date;
@@ -86,7 +90,6 @@ export async function selectAwbCandidates(args: {
 }) {
   const pool = await prisma.orderMatch.findMany({
     where: {
-      stockxAwb: null,
       stockxChainId: { not: null },
       stockxOrderId: { not: null },
       stockxOrderNumber: { startsWith: "0" },
@@ -100,21 +103,30 @@ export async function selectAwbCandidates(args: {
       stockxOrderNumber: true,
       stockxChainId: true,
       stockxOrderId: true,
+      stockxAwb: true,
       stockxStatesHash: true,
     },
     orderBy: { shopifyCreatedAt: "desc" },
     take: args.includeFulfilled ? args.limit : args.limit * CANDIDATE_POOL_MULTIPLIER,
   });
 
-  if (args.includeFulfilled) return pool.slice(0, args.limit);
-
   const orderIds = Array.from(new Set(pool.map((row) => row.shopifyOrderId).filter(Boolean)));
-  const fulfilled = await prisma.shopifyFulfillmentRecord.findMany({
-    where: { shopifyOrderId: { in: orderIds } },
-    select: { shopifyOrderId: true },
-  });
-  const fulfilledIds = new Set(fulfilled.map((row) => row.shopifyOrderId));
-  return pool.filter((row) => !fulfilledIds.has(row.shopifyOrderId)).slice(0, args.limit);
+  const fulfilledIds = new Set(
+    args.includeFulfilled
+      ? []
+      : (
+          await prisma.shopifyFulfillmentRecord.findMany({
+            where: { shopifyOrderId: { in: orderIds } },
+            select: { shopifyOrderId: true },
+          })
+        ).map((row) => row.shopifyOrderId)
+  );
+  // Missing AWB first so warehouse scans stay unblocked; then status refresh for the rest.
+  const open = pool.filter((row) => !fulfilledIds.has(row.shopifyOrderId));
+  return [
+    ...open.filter((row) => !row.stockxAwb),
+    ...open.filter((row) => Boolean(row.stockxAwb)),
+  ].slice(0, args.limit);
 }
 
 export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBackfillResult> {
@@ -131,6 +143,7 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
 
   const items: AwbBackfillItem[] = [];
   let updated = 0;
+  let emailsSent = 0;
   let authFailures = 0;
   let consecutiveAuthFailures = 0;
   let abortedReason: string | null = null;
@@ -172,37 +185,30 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
       const awb = extractAwbFromTrackingUrl(trackingUrl);
       const stockxStatus = buyOrder?.currentStatus?.key || null;
       const carrier = carrierFromTrackingUrl(trackingUrl);
-
-      if (!awb) {
-        // Still refresh the status so an order that has moved stops looking stuck at ORDER_CREATED.
-        if (!dryRun && stockxStatus) {
-          await prisma.orderMatch
-            .update({ where: { id: candidate.id }, data: { stockxStatus } })
-            .catch(() => undefined);
-        }
-        items.push({ ...label, status: "NO_TRACKING", stockxStatus });
-        continue;
-      }
-
-      if (dryRun) {
-        items.push({ ...label, status: "DRY_RUN", awb, carrier, stockxStatus });
-        continue;
-      }
-
       const states = buyOrder?.states ?? null;
       const statesHash = hashStockXStates(states as any);
       const estimatedDelivery = buyOrder?.estimatedDeliveryDateRange?.estimatedDeliveryDate || null;
       const latestEstimatedDelivery =
         buyOrder?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate || null;
 
+      if (dryRun) {
+        items.push({
+          ...label,
+          status: awb ? "DRY_RUN" : "NO_TRACKING",
+          awb,
+          carrier,
+          stockxStatus,
+        });
+        continue;
+      }
+
       await prisma.orderMatch.update({
         where: { id: candidate.id },
         data: {
-          stockxAwb: awb,
-          stockxTrackingUrl: trackingUrl,
+          ...(awb ? { stockxAwb: awb, stockxTrackingUrl: trackingUrl } : {}),
           ...(stockxStatus ? { stockxStatus } : {}),
           ...(buyOrder?.checkoutType ? { stockxCheckoutType: buyOrder.checkoutType } : {}),
-          ...(states && statesHash && statesHash !== candidate.stockxStatesHash
+          ...(states && statesHash
             ? { stockxStates: states, stockxStatesHash: statesHash }
             : {}),
           ...(estimatedDelivery ? { stockxEstimatedDelivery: new Date(estimatedDelivery) } : {}),
@@ -212,8 +218,47 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
         },
       });
 
-      updated += 1;
-      items.push({ ...label, status: "UPDATED", awb, carrier, stockxStatus });
+      // Status emails used to fire only on dashboard save-match; cron must advance them too.
+      let emailSent = false;
+      let emailSkipped: string | null = null;
+      try {
+        const emailResult = await sendMilestoneEmailForMatch({
+          matchId: candidate.id,
+          skipIfFulfilled: true,
+          skipIfEtaPassed: true,
+        });
+        if (emailResult.sent) {
+          emailSent = true;
+          emailsSent += 1;
+        } else if (emailResult.skipped) {
+          emailSkipped = emailResult.reason || "skipped";
+        } else if (emailResult.error) {
+          emailSkipped = emailResult.error;
+        }
+      } catch (emailError: any) {
+        emailSkipped = emailError?.message || "email_failed";
+      }
+
+      if (awb) {
+        updated += 1;
+        items.push({
+          ...label,
+          status: "UPDATED",
+          awb,
+          carrier,
+          stockxStatus,
+          emailSent,
+          emailSkipped,
+        });
+      } else {
+        items.push({
+          ...label,
+          status: "NO_TRACKING",
+          stockxStatus,
+          emailSent,
+          emailSkipped,
+        });
+      }
     } catch (error: any) {
       items.push({ ...label, status: "ERROR", error: error?.message || "Unknown error" });
     }
@@ -228,6 +273,7 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
     scanned: items.length,
     candidates: candidates.length,
     updated,
+    emailsSent,
     authFailures,
     abortedReason,
     items,

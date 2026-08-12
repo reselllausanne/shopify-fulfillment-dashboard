@@ -119,8 +119,13 @@ async function main(): Promise<void> {
 
   const result = await runAwbBackfill({ token, days, limit, dryRun, includeFulfilled: false });
   console.log(
-    `[STOCKX-AWB-SYNC] candidates=${result.candidates} scanned=${result.scanned} updated=${result.updated} authFailures=${result.authFailures}`
+    `[STOCKX-AWB-SYNC] candidates=${result.candidates} scanned=${result.scanned} updated=${result.updated} emailsSent=${result.emailsSent} authFailures=${result.authFailures}`
   );
+  for (const item of result.items.filter((entry) => entry.emailSent)) {
+    console.log(
+      `[STOCKX-AWB-SYNC] email ${item.shopifyOrderName ?? "?"} ${item.stockxOrderNumber}`
+    );
+  }
   for (const item of result.items.filter((entry) => entry.status === "UPDATED")) {
     console.log(
       `[STOCKX-AWB-SYNC] ${item.shopifyOrderName ?? "?"} ${item.stockxOrderNumber} -> ${item.awb} (${item.carrier ?? "?"})`

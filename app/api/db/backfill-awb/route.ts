@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
     180
   );
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const [inTransit, stored, missing, total] = await Promise.all([
+  const [inTransitPool, stored, missing, total] = await Promise.all([
     selectAwbCandidates({ since, limit: 500, includeFulfilled: false }),
     readServerStockxToken(),
     prisma.orderMatch.count({
@@ -103,7 +103,7 @@ export async function GET(req: NextRequest) {
     ok: true,
     days,
     missingAwb: missing,
-    missingAwbInTransit: inTransit.length,
+    missingAwbInTransit: inTransitPool.filter((row) => !row.stockxAwb).length,
     stockxMatches: total,
     storedToken: stored
       ? { source: stored.source, expiresAt: stored.expiresAt }
