@@ -20,9 +20,24 @@ type BackfillItem = {
   stockxOrderNumber: string;
   status: "UPDATED" | "NO_TRACKING" | "AUTH_FAILED" | "ERROR" | "DRY_RUN";
   awb?: string | null;
+  carrier?: string | null;
   stockxStatus?: string | null;
   error?: string | null;
 };
+
+function carrierFromTrackingUrl(trackingUrl: string | null): string | null {
+  if (!trackingUrl) return null;
+  const lowered = trackingUrl.toLowerCase();
+  if (lowered.includes("ups.com")) return "UPS";
+  if (lowered.includes("dhl")) return "DHL";
+  if (lowered.includes("fedex")) return "FedEx";
+  if (lowered.includes("post.ch")) return "Swiss Post";
+  try {
+    return new URL(trackingUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -44,6 +59,50 @@ async function fetchBuyOrder(token: string, chainId: string, orderId: string) {
     buyOrder: json?.data?.viewer?.order ?? null,
     error: json?.error ? `${json.error}: ${json.details ?? ""}`.trim() : null,
   };
+}
+
+const CANDIDATE_POOL_MULTIPLIER = 6;
+
+/**
+ * Boxes still travelling to the warehouse are the ones the scan page needs; an order that
+ * already has a fulfillment record was shipped to the customer and no longer gets scanned.
+ */
+async function selectCandidates(args: {
+  since: Date;
+  limit: number;
+  includeFulfilled: boolean;
+}) {
+  const pool = await prisma.orderMatch.findMany({
+    where: {
+      stockxAwb: null,
+      stockxChainId: { not: null },
+      stockxOrderId: { not: null },
+      stockxOrderNumber: { startsWith: "0" },
+      shopifyCreatedAt: { gte: args.since },
+      NOT: { stockxStatus: { in: ["CANCELLED", "REFUNDED"] } },
+    },
+    select: {
+      id: true,
+      shopifyOrderId: true,
+      shopifyOrderName: true,
+      stockxOrderNumber: true,
+      stockxChainId: true,
+      stockxOrderId: true,
+      stockxStatesHash: true,
+    },
+    orderBy: { shopifyCreatedAt: "desc" },
+    take: args.includeFulfilled ? args.limit : args.limit * CANDIDATE_POOL_MULTIPLIER,
+  });
+
+  if (args.includeFulfilled) return pool.slice(0, args.limit);
+
+  const orderIds = Array.from(new Set(pool.map((row) => row.shopifyOrderId).filter(Boolean)));
+  const fulfilled = await prisma.shopifyFulfillmentRecord.findMany({
+    where: { shopifyOrderId: { in: orderIds } },
+    select: { shopifyOrderId: true },
+  });
+  const fulfilledIds = new Set(fulfilled.map((row) => row.shopifyOrderId));
+  return pool.filter((row) => !fulfilledIds.has(row.shopifyOrderId)).slice(0, args.limit);
 }
 
 export async function POST(req: NextRequest) {
@@ -69,26 +128,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const includeFulfilled = Boolean((body as any)?.includeFulfilled ?? false);
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const candidates = await prisma.orderMatch.findMany({
-      where: {
-        stockxAwb: null,
-        stockxChainId: { not: null },
-        stockxOrderId: { not: null },
-        stockxOrderNumber: { startsWith: "0" },
-        shopifyCreatedAt: { gte: since },
-      },
-      select: {
-        id: true,
-        shopifyOrderName: true,
-        stockxOrderNumber: true,
-        stockxChainId: true,
-        stockxOrderId: true,
-        stockxStatesHash: true,
-      },
-      orderBy: { shopifyCreatedAt: "desc" },
-      take: limit,
-    });
+    const candidates = await selectCandidates({ since, limit, includeFulfilled });
 
     const items: BackfillItem[] = [];
     let updated = 0;
@@ -131,13 +173,15 @@ export async function POST(req: NextRequest) {
         const awb = extractAwbFromTrackingUrl(trackingUrl);
         const stockxStatus = buyOrder?.currentStatus?.key || null;
 
+        const carrier = carrierFromTrackingUrl(trackingUrl);
+
         if (!awb) {
           items.push({ ...label, status: "NO_TRACKING", stockxStatus });
           continue;
         }
 
         if (dryRun) {
-          items.push({ ...label, status: "DRY_RUN", awb, stockxStatus });
+          items.push({ ...label, status: "DRY_RUN", awb, carrier, stockxStatus });
           continue;
         }
 
@@ -165,7 +209,7 @@ export async function POST(req: NextRequest) {
         });
 
         updated += 1;
-        items.push({ ...label, status: "UPDATED", awb, stockxStatus });
+        items.push({ ...label, status: "UPDATED", awb, carrier, stockxStatus });
       } catch (error: any) {
         items.push({ ...label, status: "ERROR", error: error?.message || "Unknown error" });
       }
@@ -204,6 +248,7 @@ export async function GET(req: NextRequest) {
     180
   );
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const inTransit = await selectCandidates({ since, limit: 500, includeFulfilled: false });
   const [missing, total] = await Promise.all([
     prisma.orderMatch.count({
       where: {
@@ -222,5 +267,11 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  return NextResponse.json({ ok: true, days, missingAwb: missing, stockxMatches: total });
+  return NextResponse.json({
+    ok: true,
+    days,
+    missingAwb: missing,
+    missingAwbInTransit: inTransit.length,
+    stockxMatches: total,
+  });
 }

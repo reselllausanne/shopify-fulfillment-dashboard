@@ -7,6 +7,7 @@ type BackfillItem = {
   stockxOrderNumber: string;
   status: "UPDATED" | "NO_TRACKING" | "AUTH_FAILED" | "ERROR" | "DRY_RUN";
   awb?: string | null;
+  carrier?: string | null;
   stockxStatus?: string | null;
   error?: string | null;
 };
@@ -36,15 +37,26 @@ export default function AwbBackfillPage() {
   const [days, setDays] = useState(45);
   const [limit, setLimit] = useState(40);
   const [dryRun, setDryRun] = useState(true);
+  const [includeFulfilled, setIncludeFulfilled] = useState(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BackfillResponse | null>(null);
-  const [stats, setStats] = useState<{ missingAwb: number; stockxMatches: number } | null>(null);
+  const [stats, setStats] = useState<{
+    missingAwb: number;
+    missingAwbInTransit: number;
+    stockxMatches: number;
+  } | null>(null);
 
   const loadStats = async (windowDays: number) => {
     try {
       const res = await fetch(`/api/db/backfill-awb?days=${windowDays}`);
       const data = await res.json();
-      if (data?.ok) setStats({ missingAwb: data.missingAwb, stockxMatches: data.stockxMatches });
+      if (data?.ok) {
+        setStats({
+          missingAwb: data.missingAwb,
+          missingAwbInTransit: data.missingAwbInTransit,
+          stockxMatches: data.stockxMatches,
+        });
+      }
     } catch {
       setStats(null);
     }
@@ -65,7 +77,7 @@ export default function AwbBackfillPage() {
       const res = await fetch("/api/db/backfill-awb", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, days, limit, dryRun }),
+        body: JSON.stringify({ token, days, limit, dryRun, includeFulfilled }),
       });
       const data: BackfillResponse = await res.json();
       setResult(data);
@@ -90,8 +102,10 @@ export default function AwbBackfillPage() {
 
         {stats && (
           <div className="rounded-lg border bg-white p-4 text-sm text-gray-800">
-            Last {days} days: <strong>{stats.missingAwb}</strong> StockX matches without AWB out of{" "}
-            <strong>{stats.stockxMatches}</strong>.
+            Last {days} days: <strong>{stats.missingAwbInTransit}</strong> orders still in transit
+            without AWB (these are the ones the warehouse will scan) ·{" "}
+            <strong>{stats.missingAwb}</strong> total without AWB out of{" "}
+            <strong>{stats.stockxMatches}</strong> StockX matches.
           </div>
         )}
 
@@ -138,6 +152,14 @@ export default function AwbBackfillPage() {
               />
               Dry run (no DB write)
             </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={includeFulfilled}
+                onChange={(e) => setIncludeFulfilled(e.target.checked)}
+              />
+              Include already fulfilled orders
+            </label>
             <button
               onClick={run}
               disabled={running}
@@ -176,6 +198,7 @@ export default function AwbBackfillPage() {
                     <th className="py-1">StockX order</th>
                     <th className="py-1">Result</th>
                     <th className="py-1">AWB</th>
+                    <th className="py-1">Carrier</th>
                     <th className="py-1">StockX status</th>
                   </tr>
                 </thead>
@@ -193,6 +216,7 @@ export default function AwbBackfillPage() {
                         ) : null}
                       </td>
                       <td className="py-1 font-mono text-xs">{item.awb || "—"}</td>
+                      <td className="py-1 text-xs">{item.carrier || "—"}</td>
                       <td className="py-1 text-xs">{item.stockxStatus || "—"}</td>
                     </tr>
                   ))}
