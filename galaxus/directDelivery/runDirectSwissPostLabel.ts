@@ -4,12 +4,12 @@ import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { createShipmentsForOrder } from "@/galaxus/warehouse/shipments";
-import { getStorageAdapterForUrl } from "@/galaxus/storage/storage";
+import { getStorageAdapter, getStorageAdapterForUrl } from "@/galaxus/storage/storage";
 import {
   applySuccessfulSwissPostLabelToShipment,
-  deleteDraftShipmentsForOrder,
   extractLabelPayload,
-  requestSwissPostLabelForGalaxusOrder,
+  extractSwissPostTracking,
+  requestSwissPostLabelForOrderWithTrackingHint,
 } from "@/galaxus/directDelivery/swissPostLabelFlow";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
@@ -41,6 +41,13 @@ export type RunDirectSwissPostLabelResult = {
   labelData?: DirectSwissPostLabelData | null;
   browserPrintConfig?: BrowserPrintConfig;
   swissPost?: unknown;
+};
+
+type ShipmentRow = {
+  id: string;
+  delrSentAt: Date | null;
+  delrStatus: string | null;
+  trackingNumber: string | null;
 };
 
 function extensionToMimeType(extension: string) {
@@ -82,12 +89,18 @@ function toLabelData(base64: string, extension: string): DirectSwissPostLabelDat
   };
 }
 
-async function loadExistingShippingLabelData(orderDbId: string) {
+function isFinalizedShipment(s: ShipmentRow): boolean {
+  const status = String(s.delrStatus ?? "").toUpperCase();
+  return Boolean(s.delrSentAt) || status === "UPLOADED" || status === "SENT";
+}
+
+async function loadExistingShippingLabelData(orderDbId: string, shipmentId?: string | null) {
   const doc = await prisma.document.findFirst({
     where: {
       orderId: orderDbId,
       type: DocumentType.LABEL,
       storageUrl: { contains: "shipping-labels" },
+      ...(shipmentId ? { shipmentId } : {}),
     },
     orderBy: { version: "desc" },
   });
@@ -104,18 +117,81 @@ async function loadExistingShippingLabelData(orderDbId: string) {
   };
 }
 
+/** Last-resort: keep Post barcode PDF even if normal apply path blew up. */
+async function salvageSwissPostLabelToShipment(params: {
+  orderId: string;
+  galaxusOrderId: string;
+  shipmentId: string;
+  swissData: any;
+}): Promise<{ url: string; version: number; trackingNumber: string } | null> {
+  const tracking = extractSwissPostTracking(params.swissData);
+  const labelPayload = extractLabelPayload(params.swissData);
+  if (!tracking || !labelPayload?.base64) return null;
+
+  const buffer = Buffer.from(labelPayload.base64, "base64");
+  const storage = getStorageAdapter();
+  const existingDocs = await prisma.document.findMany({
+    where: {
+      shipmentId: params.shipmentId,
+      type: DocumentType.LABEL,
+      storageUrl: { contains: "shipping-labels" },
+    },
+    orderBy: { version: "desc" },
+    take: 1,
+  });
+  const nextVersion = existingDocs[0]?.version ? existingDocs[0].version + 1 : 1;
+  const key = `galaxus/${params.galaxusOrderId}/shipping-labels/${params.shipmentId}/v${nextVersion}.${labelPayload.extension}`;
+  const stored = await storage.uploadPdf(key, buffer);
+  const document = await prisma.document.create({
+    data: {
+      orderId: params.orderId,
+      shipmentId: params.shipmentId,
+      type: DocumentType.LABEL,
+      version: nextVersion,
+      storageUrl: stored.storageUrl,
+      checksum: null,
+    },
+  });
+  await (prisma as any).shipment.update({
+    where: { id: params.shipmentId },
+    data: {
+      trackingNumber: tracking,
+      carrierFinal: "swisspost",
+      carrierRaw: "swisspost",
+      shippedAt: new Date(),
+    },
+  });
+  return {
+    url: `/api/galaxus/documents/${document.id}`,
+    version: nextVersion,
+    trackingNumber: tracking,
+  };
+}
+
+/**
+ * Direct delivery Swiss Post label.
+ *
+ * NEVER mint a Post barcode until a shipment row exists.
+ * Prefer existing open/finalized shipments over creating new ones / burning barcodes.
+ */
 export async function runDirectSwissPostLabelForOrder(
   orderIdOrRef: string,
   options?: { includeLabelData?: boolean; allowReprint?: boolean; requireLinked?: boolean }
 ): Promise<RunDirectSwissPostLabelResult> {
-  const includeLabelData = Boolean(options?.includeLabelData);
+  const includeLabelData = Boolean(options?.includeLabelData ?? true);
   const allowReprint = Boolean(options?.allowReprint ?? true);
   const requireLinked = Boolean(options?.requireLinked ?? true);
   const browserPrintConfig = resolveBrowserPrintConfig();
 
   const order = await prisma.galaxusOrder.findFirst({
     where: { OR: [{ id: orderIdOrRef }, { galaxusOrderId: orderIdOrRef }] },
-    include: { lines: true, shipments: { select: { id: true, delrSentAt: true, delrStatus: true, trackingNumber: true } } },
+    include: {
+      lines: true,
+      shipments: {
+        select: { id: true, delrSentAt: true, delrStatus: true, trackingNumber: true },
+        orderBy: { createdAt: "asc" },
+      },
+    },
   });
   if (!order) {
     return { ok: false, error: "Order not found" };
@@ -139,37 +215,99 @@ export async function runDirectSwissPostLabelForOrder(
     }
   }
 
-  const alreadyFulfilled = (order.shipments ?? []).some(
-    (s) => Boolean(s.delrSentAt) || String(s.delrStatus ?? "").toUpperCase() === "UPLOADED"
-  );
-  if (alreadyFulfilled) {
-    if (allowReprint && includeLabelData) {
-      const existing = await loadExistingShippingLabelData(order.id);
+  const shipments = (order.shipments ?? []) as ShipmentRow[];
+  const finalized = shipments.filter(isFinalizedShipment);
+  const open = shipments.filter((s) => !isFinalizedShipment(s));
+
+  // 1) Finalized DELR → reprint only (no new Post barcode).
+  if (finalized.length > 0) {
+    const shipment = finalized.find((s) => String(s.trackingNumber ?? "").trim()) ?? finalized[0];
+    if (allowReprint) {
+      const existing = await loadExistingShippingLabelData(order.id, shipment.id);
       if (existing) {
-        const shipment = (order.shipments ?? []).find((s) => String(s.trackingNumber ?? "").trim());
         return {
           ok: true,
           status: "REPRINT",
           url: existing.url,
           version: existing.version,
-          trackingNumber: shipment?.trackingNumber ?? null,
-          shipmentId: shipment?.id,
-          labelData: existing.labelData,
+          trackingNumber: shipment.trackingNumber ?? null,
+          shipmentId: shipment.id,
+          labelData: includeLabelData ? existing.labelData : null,
           browserPrintConfig,
+          delr: {
+            shipmentId: shipment.id,
+            status: "skipped",
+            message: "already sent",
+          },
         };
       }
     }
-    return { ok: false, error: "Order already has a finalized shipment (DELR sent)" };
+    return {
+      ok: false,
+      error: "Order already has a finalized shipment (DELR sent)",
+      shipmentId: shipment.id,
+      trackingNumber: shipment.trackingNumber ?? null,
+      browserPrintConfig,
+    };
   }
 
-  const removedDrafts = await deleteDraftShipmentsForOrder(order.id);
+  // 2) Open shipment already has tracking → reprint stored label, do not remint.
+  const openWithTracking = open.find((s) => String(s.trackingNumber ?? "").trim());
+  if (openWithTracking) {
+    const existing = await loadExistingShippingLabelData(order.id, openWithTracking.id);
+    if (existing) {
+      return {
+        ok: true,
+        status: "REPRINT",
+        url: existing.url,
+        version: existing.version,
+        trackingNumber: openWithTracking.trackingNumber,
+        shipmentId: openWithTracking.id,
+        labelData: includeLabelData ? existing.labelData : null,
+        browserPrintConfig,
+      };
+    }
+  }
+
+  // 3) Ensure we have a shipment row BEFORE calling Swiss Post.
+  let targetShipmentId = open[0]?.id ?? null;
+  let createShipmentsStatus: string | undefined;
+
+  if (!targetShipmentId) {
+    const created = await createShipmentsForOrder({
+      orderId: order.id,
+      allowSplit: true,
+      maxPairsPerParcel: 1,
+      deliveryType: "direct_delivery",
+    });
+    createShipmentsStatus = created.status;
+    if (created.status === "error" || !created.shipments?.length) {
+      return {
+        ok: false,
+        error: created.message ?? "Create shipments failed",
+        createShipmentsStatus: created.status,
+        browserPrintConfig,
+      };
+    }
+    // create may return skipped+existing or created — either way use first row.
+    targetShipmentId = created.shipments[0].id;
+  }
+
+  const hint =
+    String(order.galaxusOrderId ?? "").trim() ||
+    String(targetShipmentId) ||
+    `GALAXUS-ORDER-${order.id}`;
+
   let swissRes;
   try {
-    swissRes = await requestSwissPostLabelForGalaxusOrder(order);
+    swissRes = await requestSwissPostLabelForOrderWithTrackingHint(order, hint);
   } catch (err: any) {
     return {
       ok: false,
       error: err?.message ?? "Swiss Post API unreachable",
+      shipmentId: targetShipmentId,
+      createShipmentsStatus,
+      browserPrintConfig,
     };
   }
   if (!swissRes.ok) {
@@ -177,46 +315,25 @@ export async function runDirectSwissPostLabelForOrder(
       ok: false,
       error: "Swiss Post label generation failed",
       swissPost: swissRes.data,
+      shipmentId: targetShipmentId,
+      createShipmentsStatus,
+      browserPrintConfig,
     };
   }
 
-  const created = await createShipmentsForOrder({
-    orderId: order.id,
-    allowSplit: true,
-    maxPairsPerParcel: 1,
-    deliveryType: "direct_delivery",
-  });
-
-  if (created.status === "skipped") {
-    return {
-      ok: false,
-      error: created.message ?? "Shipments already exist (unexpected after draft cleanup)",
-      swissPost: swissRes.data,
-    };
-  }
-  if (created.status === "error" || !created.shipments?.length) {
-    return {
-      ok: false,
-      error: created.message ?? "Create shipments failed after Swiss Post label succeeded",
-      swissPost: swissRes.data,
-    };
-  }
-
-  const first = created.shipments[0];
   try {
-    const result = await applySuccessfulSwissPostLabelToShipment(first.id, swissRes.data);
+    const result = await applySuccessfulSwissPostLabelToShipment(targetShipmentId, swissRes.data);
     const labelPayload = extractLabelPayload(swissRes.data);
     return {
       ok: true,
       status: "CREATED",
-      removedDraftShipments: removedDrafts,
-      createShipmentsStatus: created.status,
+      createShipmentsStatus,
       url: result.url,
       version: result.version,
       delr: result.delr,
       ordr: result.ordr,
       trackingNumber: result.trackingNumber,
-      shipmentId: first.id,
+      shipmentId: targetShipmentId,
       labelData:
         includeLabelData && labelPayload?.base64
           ? toLabelData(labelPayload.base64, labelPayload.extension)
@@ -225,11 +342,45 @@ export async function runDirectSwissPostLabelForOrder(
     };
   } catch (persistErr: any) {
     console.error("[GALAXUS][DIRECT-SWISS-POST-LABEL] Persist after label failed:", persistErr);
+    try {
+      const salvaged = await salvageSwissPostLabelToShipment({
+        orderId: order.id,
+        galaxusOrderId: order.galaxusOrderId,
+        shipmentId: targetShipmentId,
+        swissData: swissRes.data,
+      });
+      if (salvaged) {
+        const labelPayload = extractLabelPayload(swissRes.data);
+        return {
+          ok: true,
+          status: "CREATED",
+          createShipmentsStatus,
+          url: salvaged.url,
+          version: salvaged.version,
+          trackingNumber: salvaged.trackingNumber,
+          shipmentId: targetShipmentId,
+          delr: {
+            status: "error",
+            message: "Label saved; DELR not sent — retry DELR from warehouse/direct tools",
+          },
+          labelData:
+            includeLabelData && labelPayload?.base64
+              ? toLabelData(labelPayload.base64, labelPayload.extension)
+              : null,
+          browserPrintConfig,
+          swissPost: swissRes.data,
+        };
+      }
+    } catch (salvageErr: any) {
+      console.error("[GALAXUS][DIRECT-SWISS-POST-LABEL] Salvage failed:", salvageErr);
+    }
     return {
       ok: false,
       error: persistErr?.message ?? "Failed to persist label after Swiss Post success",
-      shipmentId: first.id,
+      shipmentId: targetShipmentId,
+      createShipmentsStatus,
       swissPost: swissRes.data,
+      browserPrintConfig,
     };
   }
 }

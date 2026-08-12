@@ -125,7 +125,7 @@ export async function swissPostHttpsJsonWithRetry(options: {
   attempts?: number;
   label?: string;
 }): Promise<SwissPostHttpResult> {
-  const attempts = Math.max(1, Number(options.attempts ?? 3));
+  const attempts = Math.max(1, Number(options.attempts ?? 2));
   const label = options.label || "swiss-post-http";
   const startedAt = Date.now();
   let lastError: unknown = null;

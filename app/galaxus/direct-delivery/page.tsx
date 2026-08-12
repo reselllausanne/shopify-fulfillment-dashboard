@@ -221,7 +221,7 @@ export default function GalaxusDirectDeliveryPage() {
     }
   };
 
-  /** Swiss Post first; Shipment rows are only created after a successful label (no orphan parcels on API error). */
+  /** Shipment row first, then Swiss Post label (never burn a barcode before parcel exists). */
   const generateDirectSwissPostLabel = async () => {
     if (!selectedOrderId) return;
     setError(null);
@@ -230,13 +230,20 @@ export default function GalaxusDirectDeliveryPage() {
       const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ includeLabelData: true, allowReprint: true }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Direct Swiss Post label failed");
       setOpsLog(JSON.stringify(data, null, 2));
+      // Fulfilled orders leave the "to process" list — keep them visible.
+      if (data.status === "CREATED" || data.status === "REPRINT" || data.status === "ALREADY_FULFILLED") {
+        setLeftTab("fulfilled");
+      }
       await loadOrders();
       if (selectedOrderId) await loadOrderDetail(selectedOrderId);
+      if (data?.url) {
+        window.open(String(data.url), "_blank", "noopener,noreferrer");
+      }
     } catch (err: any) {
       setError(err.message);
     }
@@ -549,8 +556,17 @@ export default function GalaxusDirectDeliveryPage() {
                                 NER_ · partner stock
                               </span>
                             ) : proc?.warehouseStockHint === "GOLDEN" ? (
-                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950">
-                                GLD · Golden — not direct delivery / no StockX
+                              <span
+                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950"
+                                title={proc?.buySourceOverride?.note ?? "Golden — no StockX / no DD"}
+                              >
+                                {proc?.buySourceOverride
+                                  ? `BUY GLD${
+                                      proc.buySourceOverride.buyPriceChf != null
+                                        ? ` @ ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
+                                        : ""
+                                    } — no StockX`
+                                  : "GLD · Golden — not direct delivery / no StockX"}
                               </span>
                             ) : null}
                             <PhysicalStockBadge
@@ -602,7 +618,13 @@ export default function GalaxusDirectDeliveryPage() {
                           <div className={`font-medium ${procOk ? "text-green-700" : "text-red-600"}`}>
                             {procOk
                               ? proc?.warehouseStockHint === "GOLDEN"
-                                ? "GLD/Golden — order manually (no StockX / no DD)"
+                                ? proc?.buySourceOverride
+                                  ? `BUY GLD ${proc.buySourceOverride.buySupplierVariantId}${
+                                      proc.buySourceOverride.buyPriceChf != null
+                                        ? ` @ CHF ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
+                                        : ""
+                                    } (no StockX)`
+                                  : "GLD/Golden — order manually (no StockX / no DD)"
                                 : proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK"
                                   ? proc?.warehouseStockHint === "MAISON"
                                     ? "THE_/the_ your stock (no StockX)"

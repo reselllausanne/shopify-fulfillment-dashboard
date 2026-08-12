@@ -147,8 +147,8 @@ export async function getSwissPostToken(options: TokenOptions = {}) {
         accept: "application/json",
       },
       body: body.toString(),
-      timeoutMs: 30_000,
-      attempts: 3,
+      timeoutMs: 12_000,
+      attempts: 2,
       label: "token",
     });
   } catch (err) {
@@ -190,8 +190,8 @@ export async function requestSwissPostLabel(payload: Record<string, any>) {
         authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(payload),
-      timeoutMs: 45_000,
-      attempts: 3,
+      timeoutMs: 15_000,
+      attempts: 2,
       label: "label",
     });
     return {
@@ -235,7 +235,7 @@ async function swissPostTrackingFetch(path: string, language: string): Promise<S
         authorization: `Bearer ${token}`,
         "accept-language": language,
       },
-      timeoutMs: 30_000,
+      timeoutMs: 12_000,
       attempts: 2,
       label: "tracking",
     });
