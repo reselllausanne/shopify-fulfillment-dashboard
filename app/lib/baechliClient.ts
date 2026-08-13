@@ -1,7 +1,8 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 
 const USER_AGENT =
-  process.env.SCRAPER_USER_AGENT || "LivioShopifyScraper/1.0 (+catalog sync)";
+  process.env.SCRAPER_USER_AGENT ||
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 export type BaechliVariant = {
   sku: string;
@@ -27,11 +28,51 @@ export function baechliConfig() {
     requestTimeoutMs: Number(process.env.SCRAPER_REQUEST_TIMEOUT_MS || 45_000),
     requestDelayMs: Math.max(
       0,
-      Number(process.env.SCRAPER_BAE_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 0)
+      Number(process.env.SCRAPER_BAE_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 80)
     ),
-    productConcurrency: Math.max(1, Number(process.env.SCRAPER_BAE_CONCURRENCY || 20)),
+    // Concurrency 20 hammered Rent-a-Shop into HTTP 503 storms.
+    productConcurrency: Math.max(1, Number(process.env.SCRAPER_BAE_CONCURRENCY || 6)),
     defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
+    skipIsbnGtins: String(process.env.SCRAPER_BAE_SKIP_ISBN ?? "1") !== "0",
+    excludePathPrefixes: parseBaechliExcludePrefixes(),
   };
+}
+
+function parseBaechliExcludePrefixes(): string[] {
+  const raw =
+    process.env.SCRAPER_BAE_EXCLUDE_PATH_PREFIXES ??
+    "/de/ausrustung/bucher-karten,/de/ausrustung/navigation-elektronik";
+  return raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+/** Bächli parent article id from URL slug, e.g. odlo-108363-foo → 108363. */
+export function extractBaechliArticleNumber(productUrl: string): string | null {
+  try {
+    const slug = new URL(productUrl).pathname.split("/").filter(Boolean).pop() ?? "";
+    const match = slug.match(/-(\d{5,6})(?:-|$)/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function isBaechliExcludedPath(pathname: string, prefixes = parseBaechliExcludePrefixes()): boolean {
+  const path = pathname.toLowerCase();
+  return prefixes.some((prefix) => path.startsWith(prefix.toLowerCase()));
+}
+
+export function isBaechliVariantSkuForArticle(sku: string, articleNumber: string | null): boolean {
+  if (!articleNumber) return false;
+  const normalized = String(sku ?? "").trim();
+  return normalized.startsWith(`${articleNumber}-`);
+}
+
+export function shouldSkipBaechliGtin(gtin: string, skipIsbn = baechliConfig().skipIsbnGtins): boolean {
+  if (!skipIsbn) return false;
+  return gtin.startsWith("978") || gtin.startsWith("979");
 }
 
 function sleep(ms: number) {
@@ -155,6 +196,9 @@ function parseBrand(html: string): string | null {
 }
 
 export function parseBaechliProductHtml(html: string, productUrl: string): BaechliProduct | null {
+  const articleNumber = extractBaechliArticleNumber(productUrl);
+  if (!articleNumber) return null;
+
   const jsonLdBySku = parseJsonLdProducts(html);
   const name =
     decodeHtml(html.match(/<h1[^>]*>([^<]+)</i)?.[1]?.trim() ?? "") ||
@@ -172,34 +216,38 @@ export function parseBaechliProductHtml(html: string, productUrl: string): Baech
     /<div[^>]*data-variantnumber="([^"]+)"[^>]*data-price="([^"]+)"[^>]*>/gi
   )) {
     const sku = match[1].trim();
-    if (!sku || seenSkus.has(sku)) continue;
+    if (!sku || seenSkus.has(sku) || !isBaechliVariantSkuForArticle(sku, articleNumber)) continue;
     seenSkus.add(sku);
     const block = match[0];
-    const sizeLabel =
+    const rawSize =
       block.match(/data-variantname="([^"]*)"/)?.[1]?.trim() ||
       jsonLdBySku.get(sku)?.sizeLabel ||
       null;
+    const sizeLabel = rawSize && rawSize !== "-" ? decodeHtml(rawSize) : null;
     const priceRaw = block.match(/data-price="([^"]+)"/)?.[1] ?? match[2];
     const priceChf = Number.parseFloat(String(priceRaw));
     const jsonLd = jsonLdBySku.get(sku);
+    const gtin = jsonLd?.gtin && !shouldSkipBaechliGtin(jsonLd.gtin) ? jsonLd.gtin : null;
     variants.push({
       sku,
-      sizeLabel: sizeLabel ? decodeHtml(sizeLabel) : null,
+      sizeLabel,
       priceChf: Number.isFinite(priceChf) && priceChf > 0 ? priceChf : jsonLd?.priceChf ?? null,
       inStock: jsonLd?.inStock ?? true,
-      gtin: jsonLd?.gtin ?? null,
-      gtinSource: jsonLd?.gtinSource ?? null,
+      gtin,
+      gtinSource: gtin ? jsonLd?.gtinSource ?? null : null,
       imageUrl: jsonLd?.imageUrl ?? null,
     });
   }
 
   if (!variants.length) {
     for (const [sku, jsonLd] of jsonLdBySku.entries()) {
-      if (seenSkus.has(sku)) continue;
+      if (seenSkus.has(sku) || !isBaechliVariantSkuForArticle(sku, articleNumber)) continue;
+      if (!jsonLd.gtin || shouldSkipBaechliGtin(jsonLd.gtin)) continue;
       seenSkus.add(sku);
+      const sizeLabel = jsonLd.sizeLabel && jsonLd.sizeLabel !== "-" ? jsonLd.sizeLabel : null;
       variants.push({
         sku,
-        sizeLabel: jsonLd.sizeLabel,
+        sizeLabel,
         priceChf: jsonLd.priceChf,
         inStock: jsonLd.inStock,
         gtin: jsonLd.gtin,
@@ -215,8 +263,14 @@ export function parseBaechliProductHtml(html: string, productUrl: string): Baech
 
 export function isBaechliProductUrl(url: string): boolean {
   try {
-    const path = new URL(url).pathname;
-    return /\/de\//.test(path) && /-\d{5,}/.test(path);
+    const { pathname } = new URL(url);
+    if (!/\/de\//.test(pathname)) return false;
+    if (isBaechliExcludedPath(pathname)) return false;
+    const segments = pathname.split("/").filter(Boolean);
+    // /de/<dept>/<cat>/<subcat>/<slug> minimum
+    if (segments.length < 5) return false;
+    if (!/-\d{5,6}(?:-|$)/.test(segments[segments.length - 1] ?? "")) return false;
+    return extractBaechliArticleNumber(url) !== null;
   } catch {
     return false;
   }
@@ -249,18 +303,18 @@ export class BaechliClient {
           signal: AbortSignal.timeout(cfg.requestTimeoutMs),
           redirect: "follow",
         });
-        if (res.status === 429) {
-          await sleep(Math.min(3000 * 2 ** attempt, 60_000));
-          lastErr = new Error("429");
+        if (res.status === 429 || res.status === 503 || res.status === 502) {
+          lastErr = new Error(`HTTP ${res.status}`);
+          await sleep(Math.min(4_000 * 2 ** attempt, 90_000));
           continue;
         }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const text = await res.text();
-        if (useDelay) await sleep(cfg.requestDelayMs);
+        if (useDelay) await sleep(cfg.requestDelayMs + Math.floor(Math.random() * 120));
         return text;
       } catch (err) {
         lastErr = err;
-        await sleep(Math.min(3000 * 2 ** attempt, 60_000));
+        await sleep(Math.min(4_000 * 2 ** attempt, 90_000));
       }
     }
     throw new Error(`GET failed ${url}: ${lastErr}`);
