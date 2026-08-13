@@ -66,6 +66,8 @@ const PUBLIC_PATHS = [
   "/api/inventory/convergence",
   // Decathlon Mirakl order poll (10-min cron). Same shared-secret gate.
   "/api/decathlon/orders/poll",
+  // StockX AWB/status cron. Route itself only accepts localhost Host or admin cookie.
+  "/api/admin/stockx-awb-sync",
   // Phase 4 orphan reconciliation (physical stock without STX row).
   "/api/inventory/reconcile-orphans",
   "/api/tracking/token",
