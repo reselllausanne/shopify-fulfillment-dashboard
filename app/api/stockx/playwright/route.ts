@@ -7,6 +7,7 @@ import {
   readStockxPersistedHashes,
   writeStockxPersistedHashes,
 } from "@/app/lib/stockxPersistedHashes";
+import { stockxCredentialsFromEnv, tryStockxCredentialLogin } from "@/lib/stockxAutoLogin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -218,6 +219,8 @@ export async function POST(req: NextRequest) {
     const persistent = Boolean(body?.persistent ?? false);
     // Scheduled refreshes must never throw away the logged-in profile: rebuilding it needs a human.
     const allowProfileReset = Boolean(body?.allowProfileReset ?? true);
+    // Unattended cron can fill STOCKX_EMAIL/PASSWORD from env when the session is cold.
+    const autoLogin = Boolean(body?.autoLogin ?? false);
     const userDataDir = String(
       body?.userDataDir || path.join(process.cwd(), ".data", "stockx-profile")
     );
@@ -506,6 +509,34 @@ export async function POST(req: NextRequest) {
       // ignore URL wait timeout
     }
 
+    let autoLoginNeedsOtp = false;
+    let autoLoginError: string | null = null;
+    if (autoLogin && !capturedToken) {
+      const creds = stockxCredentialsFromEnv();
+      if (creds) {
+        console.log("[STOCKX-PW] Attempting credential auto-login");
+        const result = await tryStockxCredentialLogin(page, creds);
+        autoLoginNeedsOtp = result.needsOtp;
+        autoLoginError = result.error;
+        if (result.needsOtp) {
+          console.warn("[STOCKX-PW] OTP / 2FA screen detected — human required");
+        }
+        // Warm buying page so a bearer appears in storage/network after password success.
+        if (!result.needsOtp && !result.error) {
+          try {
+            await page.goto("https://stockx.com/buying/orders", {
+              waitUntil: "domcontentloaded",
+              timeout: 30000,
+            });
+          } catch {
+            // ignore
+          }
+        }
+      } else {
+        autoLoginError = "STOCKX_EMAIL/STOCKX_PASSWORD not configured";
+      }
+    }
+
     const start = Date.now();
     let lastKick = 0;
     while (!capturedToken && Date.now() - start < maxWaitMs) {
@@ -616,7 +647,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
-          error: "StockX token not found. Login may be incomplete.",
+          error: autoLoginNeedsOtp
+            ? "StockX asked for OTP/2FA. Complete login once on /admin/stockx-login."
+            : autoLoginError
+              ? `StockX token not found (${autoLoginError}).`
+              : "StockX token not found. Login may be incomplete.",
+          needsOtp: autoLoginNeedsOtp,
           debug: {
             lastUrl: page.url(),
             screenshotPath,
