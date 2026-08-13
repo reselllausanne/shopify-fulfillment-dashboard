@@ -1,5 +1,37 @@
 import type { Page } from "playwright";
 
+async function waitForCloudflareClear(page: Page, timeoutMs = 90000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const url = page.url();
+    const title = await page.title().catch(() => "");
+    const body = (await page.locator("body").innerText().catch(() => "")) || "";
+    const blocked =
+      /cdn-cgi|challenges\.cloudflare/i.test(url) ||
+      /just a moment|un instant|vérification de sécurité|security check|cf-turnstile/i.test(
+        `${title}\n${body}`
+      );
+    const hasEmail = await page
+      .locator('input[type="email"], input[name="email"], input[name="username"]')
+      .first()
+      .isVisible({ timeout: 500 })
+      .catch(() => false);
+    if (hasEmail) return true;
+    if (!blocked && /stockx\.com/i.test(url)) {
+      // Challenge cleared but form not mounted yet.
+      await page.waitForTimeout(1000);
+      const again = await page
+        .locator('input[type="email"], input[name="email"], input[name="username"]')
+        .first()
+        .isVisible({ timeout: 2000 })
+        .catch(() => false);
+      if (again) return true;
+    }
+    await page.waitForTimeout(2000);
+  }
+  return false;
+}
+
 /**
  * Fills StockX's email → password login when env credentials exist.
  * Does not handle email OTP / authenticator — returns needsOtp if that screen appears.
@@ -18,6 +50,16 @@ export async function tryStockxCredentialLogin(
     // Already logged in / buying page with session cookies.
     if (/stockx\.com\/(buying|sell|account|profile)/i.test(page.url())) {
       return { attempted: false, needsOtp: false, error: null };
+    }
+
+    // accounts.stockx.com sits behind Cloudflare Turnstile ("Un instant…").
+    const cleared = await waitForCloudflareClear(page, 90000);
+    if (!cleared) {
+      return {
+        attempted: true,
+        needsOtp: false,
+        error: "Cloudflare challenge did not clear (Turnstile). Retry or login via /admin/stockx-login.",
+      };
     }
 
     const emailSelectors = [

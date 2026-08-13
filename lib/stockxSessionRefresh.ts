@@ -115,7 +115,7 @@ export async function refreshStockxToken(
       browser: "chromium",
       // Login page first so credential fill can run; then we navigate to buying/orders.
       startUrl: "https://stockx.com/login",
-      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 180000), 300000),
+      maxWaitMs: Math.min(Number(options.maxWaitMs ?? 240000), 300000),
     }),
   });
 

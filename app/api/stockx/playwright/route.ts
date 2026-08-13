@@ -458,13 +458,23 @@ export async function POST(req: NextRequest) {
       const failure = req.failure();
       requestFails.push(`${url} :: ${failure?.errorText || "failed"}`);
     });
+    // Warm stockx.com first so cf_clearance can land before accounts.stockx.com login.
+    if (autoLogin) {
+      try {
+        await page.goto("https://stockx.com/", { waitUntil: "domcontentloaded", timeout: 45000 });
+        await page.waitForTimeout(4000);
+      } catch {
+        // continue to startUrl
+      }
+    }
     await page.goto(startUrl, { waitUntil: "domcontentloaded" });
     const currentUrl = page.url();
     const pageTitle = await page.title().catch(() => "");
-    const cloudflareDetected =
-      /cdn-cgi|challenges\.cloudflare\.com/i.test(currentUrl) ||
-      /just a moment|cloudflare/i.test(pageTitle);
-    if (cloudflareDetected) {
+    // Soft Cloudflare / Turnstile pages often auto-pass on headed Xvfb — wait instead of aborting.
+    const cloudflareHardBlock =
+      /access denied|attention required/i.test(pageTitle) &&
+      /cdn-cgi|challenges\.cloudflare\.com/i.test(currentUrl);
+    if (cloudflareHardBlock && !autoLogin) {
       if (allowProfileReset) {
         const cleanupTargets = [sessionFile];
         if (usedPersistentContext) {
