@@ -4,7 +4,9 @@ services:
     env_file:
       - .env
     environment:
-      - NODE_OPTIONS=${NODE_OPTIONS:---max-old-space-size=6144}
+      # Do not inherit NODE_OPTIONS from .env — that 10GB cap is for the feed worker.
+      # Web + feed both at 10GB on a 15GB box is what OOM-killed next-server today.
+      - NODE_OPTIONS=${WEB_NODE_OPTIONS:---max-old-space-size=4096}
       - GALAXUS_FEED_RUN_ON=${GALAXUS_FEED_RUN_ON:-worker}
       - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
       - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}

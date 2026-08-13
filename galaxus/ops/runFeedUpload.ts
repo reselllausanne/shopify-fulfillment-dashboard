@@ -426,6 +426,10 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         omittedByFeed,
       });
     }
+    // Drop the in-memory row graphs before SFTP. Master CSV is ~680MB; keeping 663k
+    // product objects + 1.4M spec objects beside it is what pushed RSS to 12GB.
+    masterRowsForFilter = null;
+    specsRowsForFilter = null;
     const totalOmitted = Object.values(omittedByFeed).reduce((sum, value) => sum + value, 0);
     if (
       (useSinglePassMasterSpecs || needsMaster || needsStock || needsSpecs) &&
