@@ -9,6 +9,8 @@ services:
       - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
       - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
       - VNC_PASSWORD=${VNC_PASSWORD:-change-me-now}
+      # Needed so cron/exec Playwright headed refresh can find the entrypoint Xvfb.
+      - DISPLAY=${DISPLAY:-:99}
     ports:
       - "3000:3000"
       # Remote desktop reaches the internet only through the TLS-terminated /stockx-vnc/ proxy.

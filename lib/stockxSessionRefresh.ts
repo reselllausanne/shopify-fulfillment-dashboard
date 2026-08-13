@@ -94,11 +94,17 @@ export async function refreshStockxToken(
   }
 
   const snapshot = await backupAuthFiles();
+  // True Playwright headless is blocked by Cloudflare ("Just a moment" / Error page).
+  // Use a headed Chromium on the container Xvfb display instead — same path as phone login,
+  // no human needed when the saved profile session is still valid.
+  if (!process.env.DISPLAY) {
+    process.env.DISPLAY = ":99";
+  }
   const request = new NextRequest("http://internal/api/stockx/playwright", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      headless: true,
+      headless: false,
       persistent: true,
       forceLogin: false,
       reuseTokenFile: !force,

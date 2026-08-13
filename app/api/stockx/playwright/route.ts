@@ -264,12 +264,17 @@ export async function POST(req: NextRequest) {
       browserType === "chromium"
         ? ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"]
         : ["--no-sandbox", "--disable-setuid-sandbox"];
+    // Cron/exec shells often lack DISPLAY even though entrypoint started Xvfb on :99.
+    if (!process.env.DISPLAY) {
+      process.env.DISPLAY = ":99";
+    }
     const launchOptions = {
       headless,
       slowMo: headless ? 0 : 50,
       args: baseArgs,
       env: {
         ...process.env,
+        DISPLAY: process.env.DISPLAY || ":99",
         MOZ_DISABLE_CONTENT_SANDBOX: "1",
       },
     };
