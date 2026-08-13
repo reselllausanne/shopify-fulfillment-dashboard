@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Resell Ads freshness watchdog
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=resell-ads-explorer-watchdog.service
+
+[Install]
+WantedBy=timers.target

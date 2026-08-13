@@ -501,11 +501,19 @@ export async function periodSnapshot(range: DateRange) {
   });
 
   const coverage = await prisma.$queryRaw<
-    Array<{ cost_campaign: number; cost_product: number; value_campaign: number }>
+    Array<{
+      cost_campaign: number;
+      cost_product: number;
+      value_campaign: number;
+      value_product: number;
+      conv_campaign: number;
+      conv_product: number;
+    }>
   >(Prisma.sql`
     WITH prod AS (
       SELECT "date", "campaign_id",
              SUM("cost_micros")::float8 AS cost,
+             SUM("conversions")::float8 AS conv,
              SUM("conversion_value")::float8 AS value
       FROM "public"."ads_product_daily"
       WHERE "date" BETWEEN ${range.start}::date AND ${range.end}::date
@@ -514,7 +522,10 @@ export async function periodSnapshot(range: DateRange) {
     SELECT
       COALESCE(SUM(c."cost_micros"), 0)::float8 AS cost_campaign,
       COALESCE(SUM(p.cost), 0)::float8 AS cost_product,
-      COALESCE(SUM(c."conversion_value"), 0)::float8 AS value_campaign
+      COALESCE(SUM(c."conversion_value"), 0)::float8 AS value_campaign,
+      COALESCE(SUM(p.value), 0)::float8 AS value_product,
+      COALESCE(SUM(c."conversions"), 0)::float8 AS conv_campaign,
+      COALESCE(SUM(p.conv), 0)::float8 AS conv_product
     FROM "public"."ads_campaign_daily" c
     LEFT JOIN prod p ON p."date" = c."date" AND p."campaign_id" = c."campaign_id"
     WHERE c."date" BETWEEN ${range.start}::date AND ${range.end}::date
@@ -563,40 +574,106 @@ export async function periodSnapshot(range: DateRange) {
     ORDER BY cost DESC
   `);
 
-  const cov = coverage[0] ?? { cost_campaign: 0, cost_product: 0, value_campaign: 0 };
+  const cov = coverage[0] ?? {
+    cost_campaign: 0,
+    cost_product: 0,
+    value_campaign: 0,
+    value_product: 0,
+    conv_campaign: 0,
+    conv_product: 0,
+  };
+
+  const uncoveredCost = cov.cost_campaign - cov.cost_product;
+  const uncoveredValue = cov.value_campaign - cov.value_product;
+  const uncoveredConv = cov.conv_campaign - cov.conv_product;
+
+  const totalCampaign = {
+    spendChf: toChf(cov.cost_campaign),
+    valueChf: Number(cov.value_campaign.toFixed(2)),
+    conversions: Number(cov.conv_campaign.toFixed(2)),
+    roas: roas(cov.value_campaign, cov.cost_campaign),
+  };
+  const productAttributed = {
+    spendChf: toChf(cov.cost_product),
+    valueChf: Number(cov.value_product.toFixed(2)),
+    conversions: Number(cov.conv_product.toFixed(2)),
+    roas: roas(cov.value_product, cov.cost_product),
+    impressions: totalImpr,
+    clicks: totalClicks,
+    distinctShopifyModels: modelsFull.length,
+    cpc: cpc(totalCost, totalClicks),
+    ctr: ctr(totalClicks, totalImpr),
+    conversionRate: cvr(totalConv, totalClicks),
+    avgConversionValue: avgConvValue(totalValue, totalConv),
+  };
+  const uncovered = {
+    spendChf: toChf(uncoveredCost),
+    valueChf: Number(uncoveredValue.toFixed(2)),
+    conversions: Number(uncoveredConv.toFixed(2)),
+    roas: roas(uncoveredValue, uncoveredCost),
+  };
 
   return {
     range,
     decisionWindow: decision,
-    spendChf: toChf(totalCost),
-    revenueChf: Number(totalValue.toFixed(2)),
-    roas: roas(totalValue, totalCost),
+    /** Always prefer these three layers — do not treat product-attributed as overall. */
+    totalCampaign,
+    productAttributed,
+    uncovered,
+    // Backward-compat aliases (product-attributed). Prefer totalCampaign / productAttributed / uncovered.
+    spendChf: productAttributed.spendChf,
+    revenueChf: productAttributed.valueChf,
+    roas: productAttributed.roas,
     impressions: totalImpr,
     clicks: totalClicks,
-    cpc: cpc(totalCost, totalClicks),
-    ctr: ctr(totalClicks, totalImpr),
-    conversionRate: cvr(totalConv, totalClicks),
-    conversions: Number(totalConv.toFixed(2)),
-    avgConversionValue: avgConvValue(totalValue, totalConv),
+    cpc: productAttributed.cpc,
+    ctr: productAttributed.ctr,
+    conversionRate: productAttributed.conversionRate,
+    conversions: productAttributed.conversions,
+    avgConversionValue: productAttributed.avgConversionValue,
     distinctShopifyModels: modelsFull.length,
     zeroConversionCohorts: cohorts,
     zeroConversionSpendChf: toChf(zeroConv.reduce((s, m) => s + m.cost, 0)),
-    uncoveredSpendChf: toChf(cov.cost_campaign - cov.cost_product),
-    campaignSpendChf: toChf(cov.cost_campaign),
-    productAttributedSpendChf: toChf(cov.cost_product),
-    byCampaign: byCampaign.map((c) => ({
-      campaignId: c.campaign_id,
-      campaignName: c.campaign_name,
-      costCampaignChf: toChf(c.cost_campaign),
-      costProductChf: toChf(c.cost_product),
-      uncoveredCostChf: toChf(c.cost_campaign - c.cost_product),
-      campaignRoas: roas(c.value_campaign, c.cost_campaign),
-      productRoas: roas(c.value_product, c.cost_product),
-      conversionsCampaign: Number(c.conv_campaign.toFixed(2)),
-      conversionsProduct: Number(c.conv_product.toFixed(2)),
-      valueCampaign: Number(c.value_campaign.toFixed(2)),
-      valueProduct: Number(c.value_product.toFixed(2)),
-    })),
+    uncoveredSpendChf: uncovered.spendChf,
+    campaignSpendChf: totalCampaign.spendChf,
+    productAttributedSpendChf: productAttributed.spendChf,
+    byCampaign: byCampaign.map((c) => {
+      const uCost = c.cost_campaign - c.cost_product;
+      const uValue = c.value_campaign - c.value_product;
+      return {
+        campaignId: c.campaign_id,
+        campaignName: c.campaign_name,
+        channelType: c.channel_type,
+        totalCampaign: {
+          spendChf: toChf(c.cost_campaign),
+          valueChf: Number(c.value_campaign.toFixed(2)),
+          conversions: Number(c.conv_campaign.toFixed(2)),
+          roas: roas(c.value_campaign, c.cost_campaign),
+        },
+        productAttributed: {
+          spendChf: toChf(c.cost_product),
+          valueChf: Number(c.value_product.toFixed(2)),
+          conversions: Number(c.conv_product.toFixed(2)),
+          roas: roas(c.value_product, c.cost_product),
+        },
+        uncovered: {
+          spendChf: toChf(uCost),
+          valueChf: Number(uValue.toFixed(2)),
+          conversions: Number((c.conv_campaign - c.conv_product).toFixed(2)),
+          roas: roas(uValue, uCost),
+        },
+        // legacy flat fields
+        costCampaignChf: toChf(c.cost_campaign),
+        costProductChf: toChf(c.cost_product),
+        uncoveredCostChf: toChf(uCost),
+        campaignRoas: roas(c.value_campaign, c.cost_campaign),
+        productRoas: roas(c.value_product, c.cost_product),
+        conversionsCampaign: Number(c.conv_campaign.toFixed(2)),
+        conversionsProduct: Number(c.conv_product.toFixed(2)),
+        valueCampaign: Number(c.value_campaign.toFixed(2)),
+        valueProduct: Number(c.value_product.toFixed(2)),
+      };
+    }),
     byLanguage: byLanguage.map((r) => ({
       language: r.language_code || "(empty)",
       models: r.models,

@@ -1,4 +1,4 @@
-import type { AdsConfig } from "@/adsanalytics/config";
+import type { AdsConfig, MerchantOauthConfig } from "@/adsanalytics/config";
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 /** Refresh a little early so a long backfill never runs into a mid-flight expiry. */
@@ -18,7 +18,9 @@ export class GoogleAuthError extends Error {
   }
 }
 
-export async function getAccessToken(config: AdsConfig): Promise<string> {
+type OAuthLike = Pick<AdsConfig, "clientId" | "clientSecret" | "refreshToken"> | MerchantOauthConfig;
+
+export async function getAccessTokenForOAuth(config: OAuthLike): Promise<string> {
   const cacheKey = `${config.clientId}:${config.refreshToken.slice(-12)}`;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAtMs > Date.now()) return cached.accessToken;
@@ -49,6 +51,10 @@ export async function getAccessToken(config: AdsConfig): Promise<string> {
   });
 
   return parsed.access_token;
+}
+
+export async function getAccessToken(config: AdsConfig): Promise<string> {
+  return getAccessTokenForOAuth(config);
 }
 
 export function clearTokenCache(): void {

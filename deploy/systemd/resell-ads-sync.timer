@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Resell Ads daily sync
+
+[Timer]
+OnCalendar=*-*-* 02:20:00
+Persistent=true
+Unit=resell-ads-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -59,7 +59,7 @@ async function loadCompletedMonths(): Promise<Set<string>> {
   return new Set(rows.map((row) => row.month));
 }
 
-async function ingestCampaignMonth(config: AdsConfig, range: DateRange): Promise<{ rows: number; requests: number }> {
+export async function ingestCampaignMonth(config: AdsConfig, range: DateRange): Promise<{ rows: number; requests: number }> {
   const query = campaignDailyQuery(range.start, range.end);
   const buffer = [];
   // No maxRows: follow nextPageToken until exhausted.
@@ -76,7 +76,7 @@ async function ingestCampaignMonth(config: AdsConfig, range: DateRange): Promise
   return { rows: written, requests: stats.requests };
 }
 
-async function ingestProductMonth(
+export async function ingestProductMonth(
   config: AdsConfig,
   range: DateRange
 ): Promise<{

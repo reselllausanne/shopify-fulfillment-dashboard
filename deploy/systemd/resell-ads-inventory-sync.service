@@ -1,0 +1,10 @@
+[Unit]
+Description=Resell Ads inventory sync
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web npm run ads -- inventory:sync && docker compose exec -T web npm run ads -- funnel:snapshot --days=30'
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Resell Ads explorer monitor every 6h
+
+[Timer]
+OnCalendar=*-*-* 00/6:00:00
+Persistent=true
+Unit=resell-ads-explorer-monitor.service
+
+[Install]
+WantedBy=timers.target

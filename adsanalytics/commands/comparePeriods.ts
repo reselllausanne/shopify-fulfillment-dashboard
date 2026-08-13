@@ -10,6 +10,9 @@ const CURRENT: DateRange = { start: "2026-07-06", end: "2026-08-04" };
 const PRIOR_MONTH: DateRange = { start: "2026-06-06", end: "2026-07-05" };
 const YOY: DateRange = { start: "2025-07-06", end: "2025-08-04" };
 
+type Snapshot = Awaited<ReturnType<typeof periodSnapshot>>;
+type Layer = Snapshot["totalCampaign"];
+
 function delta(current: number | null | undefined, baseline: number | null | undefined) {
   if (current == null || baseline == null) return null;
   const abs = Number((current - baseline).toFixed(3));
@@ -18,58 +21,88 @@ function delta(current: number | null | undefined, baseline: number | null | und
   return { abs, pct };
 }
 
-function compareMetricBlock(
-  label: string,
-  current: Awaited<ReturnType<typeof periodSnapshot>>,
-  baseline: Awaited<ReturnType<typeof periodSnapshot>>
-) {
+function compareLayer(current: Layer, baseline: Layer) {
+  return {
+    spendChf: {
+      current: current.spendChf,
+      baseline: baseline.spendChf,
+      delta: delta(current.spendChf, baseline.spendChf),
+    },
+    valueChf: {
+      current: current.valueChf,
+      baseline: baseline.valueChf,
+      delta: delta(current.valueChf, baseline.valueChf),
+    },
+    conversions: {
+      current: current.conversions,
+      baseline: baseline.conversions,
+      delta: delta(current.conversions, baseline.conversions),
+    },
+    roas: { current: current.roas, baseline: baseline.roas, delta: delta(current.roas, baseline.roas) },
+  };
+}
+
+function compareMetricBlock(label: string, current: Snapshot, baseline: Snapshot) {
   return {
     label,
     currentPeriod: current.range,
     baselinePeriod: baseline.range,
-    spendChf: { current: current.spendChf, baseline: baseline.spendChf, delta: delta(current.spendChf, baseline.spendChf) },
-    revenueChf: {
-      current: current.revenueChf,
-      baseline: baseline.revenueChf,
-      delta: delta(current.revenueChf, baseline.revenueChf),
+    /** Campaign totals from ads_campaign_daily — overall account/campaign spend. */
+    totalCampaign: compareLayer(current.totalCampaign, baseline.totalCampaign),
+    /** Shopping-performance product rows — product-attributed only. */
+    productAttributed: {
+      ...compareLayer(current.productAttributed, baseline.productAttributed),
+      impressions: {
+        current: current.productAttributed.impressions,
+        baseline: baseline.productAttributed.impressions,
+        delta: delta(current.productAttributed.impressions, baseline.productAttributed.impressions),
+      },
+      clicks: {
+        current: current.productAttributed.clicks,
+        baseline: baseline.productAttributed.clicks,
+        delta: delta(current.productAttributed.clicks, baseline.productAttributed.clicks),
+      },
+      cpc: {
+        current: current.productAttributed.cpc,
+        baseline: baseline.productAttributed.cpc,
+        delta: delta(current.productAttributed.cpc, baseline.productAttributed.cpc),
+      },
+      ctr: {
+        current: current.productAttributed.ctr,
+        baseline: baseline.productAttributed.ctr,
+        delta: delta(current.productAttributed.ctr, baseline.productAttributed.ctr),
+      },
+      conversionRate: {
+        current: current.productAttributed.conversionRate,
+        baseline: baseline.productAttributed.conversionRate,
+        delta: delta(
+          current.productAttributed.conversionRate,
+          baseline.productAttributed.conversionRate
+        ),
+      },
+      avgConversionValue: {
+        current: current.productAttributed.avgConversionValue,
+        baseline: baseline.productAttributed.avgConversionValue,
+        delta: delta(
+          current.productAttributed.avgConversionValue,
+          baseline.productAttributed.avgConversionValue
+        ),
+      },
+      distinctShopifyModels: {
+        current: current.productAttributed.distinctShopifyModels,
+        baseline: baseline.productAttributed.distinctShopifyModels,
+        delta: delta(
+          current.productAttributed.distinctShopifyModels,
+          baseline.productAttributed.distinctShopifyModels
+        ),
+      },
     },
-    roas: { current: current.roas, baseline: baseline.roas, delta: delta(current.roas, baseline.roas) },
-    impressions: {
-      current: current.impressions,
-      baseline: baseline.impressions,
-      delta: delta(current.impressions, baseline.impressions),
-    },
-    clicks: {
-      current: current.clicks,
-      baseline: baseline.clicks,
-      delta: delta(current.clicks, baseline.clicks),
-    },
-    cpc: { current: current.cpc, baseline: baseline.cpc, delta: delta(current.cpc, baseline.cpc) },
-    ctr: { current: current.ctr, baseline: baseline.ctr, delta: delta(current.ctr, baseline.ctr) },
-    conversionRate: {
-      current: current.conversionRate,
-      baseline: baseline.conversionRate,
-      delta: delta(current.conversionRate, baseline.conversionRate),
-    },
-    avgConversionValue: {
-      current: current.avgConversionValue,
-      baseline: baseline.avgConversionValue,
-      delta: delta(current.avgConversionValue, baseline.avgConversionValue),
-    },
-    distinctShopifyModels: {
-      current: current.distinctShopifyModels,
-      baseline: baseline.distinctShopifyModels,
-      delta: delta(current.distinctShopifyModels, baseline.distinctShopifyModels),
-    },
+    /** Campaign − product-attributed (non-Shopping PMax channels, etc.). */
+    uncovered: compareLayer(current.uncovered, baseline.uncovered),
     zeroConversionSpendChf: {
       current: current.zeroConversionSpendChf,
       baseline: baseline.zeroConversionSpendChf,
       delta: delta(current.zeroConversionSpendChf, baseline.zeroConversionSpendChf),
-    },
-    uncoveredSpendChf: {
-      current: current.uncoveredSpendChf,
-      baseline: baseline.uncoveredSpendChf,
-      delta: delta(current.uncoveredSpendChf, baseline.uncoveredSpendChf),
     },
     zeroConversionCohorts: {
       current: current.zeroConversionCohorts,
@@ -98,7 +131,10 @@ export async function comparePeriodsCommand(options: { outDir?: string } = {}): 
       ]);
 
       const report = {
-        note: "Read-only comparison. Negative zero-conversion cohorts use a 7-day conversion-lag exclusion on each period. No exclusions recommended from offer-level keys.",
+        note:
+          "Read-only comparison. For every period, totalCampaign / productAttributed / uncovered are separate. " +
+          "Do not treat productAttributed as overall. Zero-conversion cohorts use 7-day lag exclusion. " +
+          "No exclusions recommended from offer-level keys.",
         periods: {
           current: current.range,
           priorMonth: priorMonth.range,
@@ -118,29 +154,35 @@ export async function comparePeriodsCommand(options: { outDir?: string } = {}): 
       await writeFile(outFile, stringifySafe(report, 2), "utf8");
 
       log("compare.vs_prior_month", {
-        spend: report.vsPriorMonth.spendChf,
-        revenue: report.vsPriorMonth.revenueChf,
-        roas: report.vsPriorMonth.roas,
-        models: report.vsPriorMonth.distinctShopifyModels,
+        totalCampaign: report.vsPriorMonth.totalCampaign,
+        productAttributed: {
+          spend: report.vsPriorMonth.productAttributed.spendChf,
+          value: report.vsPriorMonth.productAttributed.valueChf,
+          roas: report.vsPriorMonth.productAttributed.roas,
+          models: report.vsPriorMonth.productAttributed.distinctShopifyModels,
+        },
+        uncovered: report.vsPriorMonth.uncovered,
         zeroConvSpend: report.vsPriorMonth.zeroConversionSpendChf,
-        uncovered: report.vsPriorMonth.uncoveredSpendChf,
       });
       log("compare.vs_yoy", {
-        spend: report.vsYearOverYear.spendChf,
-        revenue: report.vsYearOverYear.revenueChf,
-        roas: report.vsYearOverYear.roas,
-        models: report.vsYearOverYear.distinctShopifyModels,
-        zeroConvSpend: report.vsYearOverYear.zeroConversionSpendChf,
-        uncovered: report.vsYearOverYear.uncoveredSpendChf,
+        totalCampaign: report.vsYearOverYear.totalCampaign,
+        productAttributed: {
+          spend: report.vsYearOverYear.productAttributed.spendChf,
+          value: report.vsYearOverYear.productAttributed.valueChf,
+          roas: report.vsYearOverYear.productAttributed.roas,
+          models: report.vsYearOverYear.productAttributed.distinctShopifyModels,
+        },
+        uncovered: report.vsYearOverYear.uncovered,
       });
       log("compare.report_written", { file: outFile });
 
       return {
         reportFile: outFile,
-        currentSpendChf: current.spendChf,
-        currentRoas: current.roas,
-        priorMonthRoas: priorMonth.roas,
-        yoyRoas: yoy.roas,
+        currentTotalSpendChf: current.totalCampaign.spendChf,
+        currentTotalRoas: current.totalCampaign.roas,
+        currentProductRoas: current.productAttributed.roas,
+        priorMonthTotalRoas: priorMonth.totalCampaign.roas,
+        yoyTotalRoas: yoy.totalCampaign.roas,
       };
     }
   );

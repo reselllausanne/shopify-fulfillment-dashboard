@@ -1,0 +1,12 @@
+[Unit]
+Description=Resell Ads explorer reconciler (metric sync, rules, Merchant, readback, commit)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+EnvironmentFile=-/etc/default/resell-ads
+# set BATCH_ID env before enabling timer
+ExecStart=/usr/bin/env bash -lc 'test -n "$BATCH_ID" && docker compose exec -T web npm run ads -- explorer:reconcile --batch="$BATCH_ID"'
+StandardOutput=journal
+StandardError=journal

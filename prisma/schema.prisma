@@ -2704,14 +2704,52 @@ model AdsExplorerBatchModel {
   costMicros         BigInt   @default(0) @map("cost_micros")
   conversions        Decimal  @default(0) @db.Decimal(18, 6)
   conversionValue    Decimal  @default(0) @map("conversion_value") @db.Decimal(18, 6)
+  ltImpressions      BigInt   @default(0) @map("lt_impressions")
+  ltClicks           BigInt   @default(0) @map("lt_clicks")
+  ltCostMicros       BigInt   @default(0) @map("lt_cost_micros")
+  ltConversions      Decimal  @default(0) @map("lt_conversions") @db.Decimal(18, 6)
+  ltConversionValue  Decimal  @default(0) @map("lt_conversion_value") @db.Decimal(18, 6)
+  metricsSyncedAt    DateTime? @map("metrics_synced_at") @db.Timestamptz(3)
+  /// Verified routing destination: CORE_ALL | EXPLORER_ALL | LONG_TAIL_ALL.
+  destination        String   @default("EXPLORER_ALL")
+  /// Destination requested by the rule engine, awaiting Merchant readback.
+  pendingDestination String?  @map("pending_destination")
+  destinationReason  String?  @map("destination_reason")
+  destinationAppliedAt DateTime? @map("destination_applied_at") @db.Timestamptz(3)
+  retestAt           DateTime? @map("retest_at") @db.Timestamptz(3)
+  cooldownUntil      DateTime? @map("cooldown_until") @db.Timestamptz(3)
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([batchId, shopifyProductId], map: "ads_explorer_batch_models_batch_model_key")
   @@index([batchId, lifecycleStatus], map: "ads_explorer_batch_models_batch_status_idx")
+  @@index([batchId, destination], map: "ads_explorer_batch_models_batch_destination_idx")
+  @@index([pendingDestination], map: "ads_explorer_batch_models_pending_destination_idx")
   @@index([sourceCampaignId], map: "ads_explorer_batch_models_source_campaign_idx")
   @@index([shopifyProductId], map: "ads_explorer_batch_models_shopify_product_idx")
   @@map("ads_explorer_batch_models")
+  @@schema("public")
+}
+
+/// Registry of the three routing campaigns (CORE_ALL PMax, Explorer All, Long Tail All).
+model AdsExplorerCampaign {
+  id                   String   @id @default(uuid())
+  role                 String
+  campaignId           String   @map("campaign_id")
+  campaignName         String   @map("campaign_name")
+  campaignResourceName String?  @map("campaign_resource_name")
+  adGroupId            String?  @map("ad_group_id")
+  adGroupResourceName  String?  @map("ad_group_resource_name")
+  adGroupAdResourceName String? @map("ad_group_ad_resource_name")
+  budgetResourceName   String?  @map("budget_resource_name")
+  includeLabel         String?  @map("include_label")
+  statsJson            Json?    @map("stats_json")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([role], map: "ads_explorer_campaigns_role_key")
+  @@index([campaignId], map: "ads_explorer_campaigns_campaign_idx")
+  @@map("ads_explorer_campaigns")
   @@schema("public")
 }
 
@@ -2751,6 +2789,22 @@ model AdsExplorerListingBackup {
   @@index([campaignId], map: "ads_explorer_listing_backups_campaign_idx")
   @@index([capturedAt], map: "ads_explorer_listing_backups_captured_idx")
   @@map("ads_explorer_listing_backups")
+  @@schema("public")
+}
+
+model AdsExplorerProductAge {
+  id                     String    @id @default(uuid())
+  shopifyProductId       BigInt    @map("shopify_product_id")
+  shopifyProductCreatedAt DateTime? @map("shopify_product_created_at") @db.Timestamptz(3)
+  source                 String
+  unknownReason          String?   @map("unknown_reason")
+  capturedAt             DateTime  @default(now()) @map("captured_at") @db.Timestamptz(3)
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([shopifyProductId], map: "ads_explorer_product_age_shopify_product_key")
+  @@index([capturedAt], map: "ads_explorer_product_age_captured_idx")
+  @@map("ads_explorer_product_age")
   @@schema("public")
 }
 

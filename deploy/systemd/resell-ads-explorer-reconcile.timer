@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Resell Ads explorer reconciler every 6 hours
+
+[Timer]
+OnCalendar=*-*-* 01,07,13,19:15:00
+Persistent=true
+Unit=resell-ads-explorer-reconcile.service
+
+[Install]
+WantedBy=timers.target

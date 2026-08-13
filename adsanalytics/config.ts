@@ -1,8 +1,10 @@
 /**
  * Phase 1 Google Ads analytics POC — configuration.
  *
- * Read-only: nothing in this domain ever mutates a Google Ads or Merchant
- * Center resource. Secrets come from the environment only, never from Git.
+ * Read-only by default for analytics commands. Explorer go-live commands
+ * (`explorer:core-exclusions`, `explorer:campaign:create`, `explorer:activate`)
+ * perform explicit confirmed mutations via adsClient helpers.
+ * Secrets come from the environment only, never from Git.
  */
 
 export type AdsConfig = {
@@ -16,6 +18,12 @@ export type AdsConfig = {
   customerId: string;
   apiVersion: string;
   timezone: string;
+};
+
+export type MerchantOauthConfig = {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
 };
 
 export const DEFAULT_ADS_API_VERSION = "v25";
@@ -71,6 +79,28 @@ export function resolveAdsConfig(): AdsConfig {
     apiVersion: readEnv("GOOGLE_ADS_API_VERSION") || DEFAULT_ADS_API_VERSION,
     timezone: readEnv("APP_TIMEZONE") || DEFAULT_TIMEZONE,
   };
+}
+
+/**
+ * Merchant OAuth uses dedicated refresh token when provided.
+ * Fallback keeps backward compatibility with existing Ads refresh token.
+ */
+export function resolveMerchantOauthConfig(): MerchantOauthConfig {
+  const clientId = readEnv("GOOGLE_ADS_CLIENT_ID");
+  const clientSecret = readEnv("GOOGLE_ADS_CLIENT_SECRET");
+  const merchantRefresh = readEnv("GOOGLE_MERCHANT_REFRESH_TOKEN");
+  const adsRefresh = readEnv("GOOGLE_ADS_REFRESH_TOKEN");
+  const refreshToken = merchantRefresh || adsRefresh;
+
+  const missing: string[] = [];
+  if (!clientId) missing.push("GOOGLE_ADS_CLIENT_ID");
+  if (!clientSecret) missing.push("GOOGLE_ADS_CLIENT_SECRET");
+  if (!refreshToken) missing.push("GOOGLE_MERCHANT_REFRESH_TOKEN or GOOGLE_ADS_REFRESH_TOKEN");
+  if (missing.length > 0) {
+    throw new AdsConfigError(missing);
+  }
+
+  return { clientId, clientSecret, refreshToken };
 }
 
 /** Never print a secret; only whether it is present and how long it is. */

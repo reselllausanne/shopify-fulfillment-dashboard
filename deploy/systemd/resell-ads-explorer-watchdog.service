@@ -1,0 +1,10 @@
+[Unit]
+Description=Resell Ads explorer freshness watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+ExecStart=/usr/bin/env bash -lc 'npm run ads -- validate --days=1'
+StandardOutput=journal
+StandardError=journal
