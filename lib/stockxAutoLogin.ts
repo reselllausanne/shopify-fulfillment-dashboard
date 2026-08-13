@@ -1,25 +1,40 @@
 import type { Page } from "playwright";
 
-async function waitForCloudflareClear(page: Page, timeoutMs = 90000): Promise<boolean> {
+async function waitForCloudflareClear(page: Page, timeoutMs = 120000): Promise<boolean> {
   const start = Date.now();
+  let reloads = 0;
   while (Date.now() - start < timeoutMs) {
     const url = page.url();
     const title = await page.title().catch(() => "");
     const body = (await page.locator("body").innerText().catch(() => "")) || "";
-    const blocked =
-      /cdn-cgi|challenges\.cloudflare/i.test(url) ||
-      /just a moment|un instant|vérification de sécurité|security check|cf-turnstile/i.test(
-        `${title}\n${body}`
-      );
     const hasEmail = await page
       .locator('input[type="email"], input[name="email"], input[name="username"]')
       .first()
       .isVisible({ timeout: 500 })
       .catch(() => false);
     if (hasEmail) return true;
+
+    const successStuck =
+      /vérification réussie|verification successful|waiting for.*accounts\.stockx/i.test(body);
+    const blocked =
+      /cdn-cgi|challenges\.cloudflare/i.test(url) ||
+      /just a moment|un instant|vérification de sécurité|security check|cf-turnstile/i.test(
+        `${title}\n${body}`
+      );
+
+    // Turnstile often says "success" then hangs — reload once onto login.
+    if (successStuck && reloads < 2) {
+      reloads += 1;
+      await page.goto("https://accounts.stockx.com/login", {
+        waitUntil: "domcontentloaded",
+        timeout: 45000,
+      }).catch(() => undefined);
+      await page.waitForTimeout(3000);
+      continue;
+    }
+
     if (!blocked && /stockx\.com/i.test(url)) {
-      // Challenge cleared but form not mounted yet.
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(1500);
       const again = await page
         .locator('input[type="email"], input[name="email"], input[name="username"]')
         .first()

@@ -46,6 +46,7 @@ export function startInteractiveStockxLogin(options: { reset?: boolean } = {}): 
       persistent: true,
       forceLogin: Boolean(options.reset),
       reuseTokenFile: false,
+      autoLogin: true,
       browser: "chromium",
       startUrl: "https://stockx.com/login",
       waitForUserClose: false,

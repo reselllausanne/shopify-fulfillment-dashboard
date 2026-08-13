@@ -161,9 +161,9 @@ export default function StockxLoginPage() {
         )}
 
         <div className="rounded-lg border bg-white p-4 text-xs text-gray-600">
-          After logging in, open <span className="font-mono">stockx.com/buying/orders</span> in that
-          browser so an authenticated request fires and the bearer is captured. The saved profile
-          then lets the hourly job mint new tokens on its own until StockX logs the session out.
+          Server has StockX email/password stored. After you pass Cloudflare (and OTP if asked),
+          the form auto-fills. Then open <span className="font-mono">buying/orders</span> so the
+          bearer is captured. Hourly/6h jobs reuse that session afterward.
         </div>
       </div>
     </div>
