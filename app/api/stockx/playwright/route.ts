@@ -294,6 +294,15 @@ export async function POST(req: NextRequest) {
         }
       }
       await fs.mkdir(userDataDir, { recursive: true });
+      // Stale Chromium Singleton* files from a crashed cron leave the profile unusable.
+      for (const lockName of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+        try {
+          await fs.rm(path.join(userDataDir, lockName), { force: true });
+          await fs.rm(path.join(userDataDir, "Default", lockName), { force: true });
+        } catch {
+          // ignore
+        }
+      }
       try {
         if (browserType === "chromium") {
           context = await chromium.launchPersistentContext(userDataDir, {
