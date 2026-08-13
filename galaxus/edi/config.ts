@@ -11,6 +11,14 @@ export const GALAXUS_PRICE_MODEL = process.env.GALAXUS_PRICE_MODEL ?? "retail";
 export const GALAXUS_PRICE_CURRENCY = process.env.GALAXUS_PRICE_CURRENCY ?? "CHF";
 export const GALAXUS_ASSORTMENT_FILE = process.env.GALAXUS_ASSORTMENT_FILE ?? "price";
 export const GALAXUS_SUPPLIER_ID = process.env.GALAXUS_SUPPLIER_ID ?? "";
+/**
+ * Feed uploads push hundreds of MB in one session (master + specs is ~2M rows), so the
+ * 45s default that guards interactive SFTP calls is far too short for them.
+ */
+export const GALAXUS_SFTP_FEED_UPLOAD_TIMEOUT_MS = Math.max(
+  60_000,
+  Number(process.env.GALAXUS_SFTP_FEED_UPLOAD_TIMEOUT_MS ?? 20 * 60 * 1000)
+);
 
 export function assertSftpConfig() {
   if (!GALAXUS_SFTP_USER || !GALAXUS_SFTP_PASSWORD || !GALAXUS_SUPPLIER_ID) {

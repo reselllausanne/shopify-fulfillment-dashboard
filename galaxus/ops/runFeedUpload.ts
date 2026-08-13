@@ -11,6 +11,7 @@ import {
   GALAXUS_SFTP_FEEDS_DIR,
   GALAXUS_SFTP_IN_DIR,
   GALAXUS_SFTP_OUT_DIR,
+  GALAXUS_SFTP_FEED_UPLOAD_TIMEOUT_MS,
   GALAXUS_SFTP_PASSWORD,
   GALAXUS_SFTP_PORT,
   GALAXUS_SFTP_USER,
@@ -674,7 +675,8 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           });
         }
         console.info("[GALAXUS][FEEDS][UPLOAD] sftp all done", { ms: Date.now() - sftpStarted });
-      }
+      },
+      { timeoutMs: GALAXUS_SFTP_FEED_UPLOAD_TIMEOUT_MS }
     );
 
     const destination = `sftp://${GALAXUS_SFTP_HOST}:${GALAXUS_SFTP_PORT}${GALAXUS_SFTP_FEEDS_DIR}`;

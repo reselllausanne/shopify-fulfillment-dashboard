@@ -184,6 +184,44 @@ export async function reconcileStaleFeedTriggers() {
   return (failed?.count ?? 0) + (reset?.count ?? 0);
 }
 
+/**
+ * The feed worker is the only executor, so any run still in flight when it boots died
+ * with the previous process (OOM kill, redeploy). Close those runs and re-queue their
+ * scope now instead of waiting out the stale window — a killed master-specs run used to
+ * hold the scope for 3h and skip the whole day.
+ */
+export async function recoverFeedRunsAfterExecutorRestart(): Promise<{
+  closedRuns: number;
+  requeuedScopes: FeedScope[];
+}> {
+  const prismaAny = prisma as any;
+  const inFlight: Array<{ id: string; scope: string }> = await prismaAny.galaxusFeedRun.findMany({
+    where: { finishedAt: null },
+    select: { id: true, scope: true },
+  });
+  if (inFlight.length === 0) return { closedRuns: 0, requeuedScopes: [] };
+
+  await prismaAny.galaxusFeedRun.updateMany({
+    where: { id: { in: inFlight.map((row) => row.id) } },
+    data: {
+      finishedAt: new Date(),
+      success: false,
+      errorMessage: "Feed executor restarted mid-run (crash recovery)",
+    },
+  });
+  await prismaAny.galaxusFeedTrigger.updateMany({
+    where: { status: "RUNNING" },
+    data: { status: "FAILED", consumedAt: new Date() },
+  });
+
+  const requeuedScopes: FeedScope[] = [];
+  for (const scope of new Set(inFlight.map((row) => row.scope as FeedScope))) {
+    await enqueueFeedPushTrigger({ scope, triggerSource: "manual" });
+    requeuedScopes.push(scope);
+  }
+  return { closedRuns: inFlight.length, requeuedScopes };
+}
+
 function feedPushLockKey(scope: FeedScope) {
   return `galaxus:feed-push:${scope}`;
 }
@@ -503,7 +541,12 @@ export async function startFeedPushAsync(params: {
   // Per-scope lock: stock/price/master can run in parallel (Galaxus accepts all 4 SFTP files).
   const locked = await withAdvisoryXactLock(feedPushLockKey(params.scope), async () => {
     const active = await getActiveFeedRun(params.scope);
-    if (active || delegateToWorker) {
+    const cooldown =
+      !active &&
+      params.scope === "price" &&
+      params.triggerSource === "shopify-post-sale" &&
+      (await postSalePriceFeedCoolingDown());
+    if (active || delegateToWorker || cooldown) {
       const queued = await enqueueFeedPushTrigger({
         scope: params.scope,
         triggerSource: params.triggerSource,
@@ -559,6 +602,18 @@ async function tryStartPendingFeedPush(
       where: { id: pending.id },
       data: { status: "RUNNING", consumedAt: new Date() },
     });
+
+    if (
+      scope === "price" &&
+      pending.triggerSource === "shopify-post-sale" &&
+      (await postSalePriceFeedCoolingDown())
+    ) {
+      await prismaAny.galaxusFeedTrigger.update({
+        where: { id: pending.id },
+        data: { status: "PENDING", consumedAt: null },
+      });
+      return null;
+    }
 
     return beginAsyncFeedRun({
       origin,
@@ -621,17 +676,18 @@ export async function requestFeedPush(params: {
   runNow?: boolean;
 }) {
   const { origin, triggerSource, runNow = true } = params;
-  const isPartnerSideEffect =
+  const isStockPriceSideEffect =
+    triggerSource === "manual-pricing" ||
     triggerSource === "partner-admin" ||
     triggerSource === "partner-order-fulfilled" ||
     triggerSource === "partner-shipment-fulfilled" ||
     triggerSource === "partner-sync";
 
-  // Heavy full catalog rebuild must not run inline on partner API requests.
+  // Price, stock, and partner edits do not change catalog content.
   const scope: FeedScope =
-    isPartnerSideEffect && params.scope === "full" ? "stock-price" : params.scope;
+    isStockPriceSideEffect && params.scope === "full" ? "stock-price" : params.scope;
 
-  if (runNow && isPartnerSideEffect) {
+  if (runNow && isStockPriceSideEffect) {
     return startFeedPushAsync({ origin, scope, triggerSource });
   }
 
@@ -655,6 +711,23 @@ export async function runPendingFeedTriggers(params: { origin: string; scope: Fe
 }
 
 const STALE_PRICE_FEED_MS = 6 * 60 * 60 * 1000;
+/** A whole PriceData file is ~620k rows; sales in a burst share one delayed upload. */
+const POST_SALE_PRICE_FEED_COOLDOWN_MS = 10 * 60 * 1000;
+
+async function postSalePriceFeedCoolingDown(): Promise<boolean> {
+  const latest = await (prisma as any).galaxusFeedRun.findFirst({
+    where: {
+      scope: "price",
+      triggerSource: "shopify-post-sale",
+      success: true,
+      finishedAt: { not: null },
+    },
+    orderBy: { finishedAt: "desc" },
+    select: { finishedAt: true },
+  });
+  const finishedAt = latest?.finishedAt ? new Date(latest.finishedAt).getTime() : 0;
+  return finishedAt > 0 && Date.now() - finishedAt < POST_SALE_PRICE_FEED_COOLDOWN_MS;
+}
 
 /**
  * Alert if no successful price / stock-price feed landed recently.
