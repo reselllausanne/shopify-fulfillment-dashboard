@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import {
+  awbLookupCandidates,
   findStockxInboundHomeRouteByCode,
   findStockxInboundHomeRouteByShopifyOrderName,
   normalizeInboundHomeAwb,
@@ -166,16 +167,16 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const rawCode = body?.code;
-    const awb = normalizeCode(rawCode);
     const rawClean = String(rawCode ?? "").trim();
-    const normalizedSearch = rawClean.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-    const awbCandidates = Array.from(new Set([awb, normalizedSearch].filter(Boolean)));
-    const trackingUrlFilters = awbCandidates
-      .filter((candidate) => candidate.length >= 6)
-      .map((candidate) => ({ stockxTrackingUrl: { contains: candidate } }));
-    const stockxOrderFilters = awbCandidates
-      .filter((candidate) => candidate.length >= 6)
-      .map((candidate) => ({ stockxOrderNumber: { contains: candidate, mode: "insensitive" as const } }));
+    // Include DHL JJD→10-digit AWB variants; StockX stores the short AWB, scanners often send JJD…
+    const awbCandidates = awbLookupCandidates(rawClean);
+    const awb = normalizeCode(rawClean) || awbCandidates[0] || "";
+    const trackingUrlFilters = awbCandidates.map((candidate) => ({
+      stockxTrackingUrl: { contains: candidate, mode: "insensitive" as const },
+    }));
+    const stockxOrderFilters = awbCandidates.map((candidate) => ({
+      stockxOrderNumber: { contains: candidate, mode: "insensitive" as const },
+    }));
 
     if (!awb) {
       return NextResponse.json(

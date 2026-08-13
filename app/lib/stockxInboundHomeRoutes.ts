@@ -46,8 +46,41 @@ function normalizeAwb(value: string | null | undefined): string {
   const ups = compact.match(/1Z[0-9A-Z]{16}/);
   if (ups) return ups[0];
 
+  // DHL Express labels often barcode as JJD/JD… while StockX stores the 10-digit AWB.
+  const dhlPrefixed = compact.match(/^(?:JJD|JD|JVGL|JJD0+)(\d{10,})$/);
+  if (dhlPrefixed) {
+    const digits = dhlPrefixed[1] || "";
+    if (digits.length >= 10) return digits.slice(-10);
+  }
+
   if (/^\d{13,}$/.test(compact)) return compact.slice(-12);
+  if (/^\d{10}$/.test(compact)) return compact;
   return compact;
+}
+
+/** Extra lookup keys for scan matching (label barcode ≠ DB AWB). */
+export function awbLookupCandidates(value: string | null | undefined): string[] {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return [];
+  const compact = trimmed.replace(/[^a-zA-Z0-9]/gi, "").toUpperCase();
+  const primary = normalizeAwb(trimmed);
+  const out = new Set<string>();
+  if (primary) out.add(primary);
+  if (compact) out.add(compact);
+
+  const digits = compact.replace(/\D/g, "");
+  if (digits.length >= 10) {
+    out.add(digits.slice(-10));
+    if (digits.length >= 12) out.add(digits.slice(-12));
+  }
+  // AIM Code 128 prefix "]C1" sometimes survives as a leading letter after cleanup.
+  const strippedAim = compact.replace(/^[A-Z]\d/, (m) => m.slice(1));
+  if (strippedAim && strippedAim !== compact) {
+    const again = normalizeAwb(strippedAim);
+    if (again) out.add(again);
+  }
+
+  return Array.from(out).filter((c) => c.length >= 6);
 }
 
 function normalizeScanCode(value: string | null | undefined): string {
