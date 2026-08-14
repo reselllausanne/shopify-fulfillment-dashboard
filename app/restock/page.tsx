@@ -112,6 +112,8 @@ const LOCATION_STORAGE_KEY = "restock.locationId";
 
 const AUTO_MODE_STORAGE_KEY = "restock.autoMode";
 
+const FIXED_PRICE_MODE_STORAGE_KEY = "restock.fixedPriceMode";
+
 type HistoryEntry = {
   id: string;
   gtin: string;
@@ -164,6 +166,9 @@ export default function RestockScanPage() {
   const [manualSizeEu, setManualSizeEu] = useState("");
   const [manualSellPrice, setManualSellPrice] = useState("");
   const [manualCompareAt, setManualCompareAt] = useState("");
+  const [fixedPriceMode, setFixedPriceMode] = useState(false);
+  const [fixedPrice, setFixedPrice] = useState("");
+  const [fixedCompareAt, setFixedCompareAt] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const lookupBusyRef = useRef(false);
 
@@ -232,6 +237,37 @@ export default function RestockScanPage() {
     }
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setFixedPriceMode(window.localStorage.getItem(FIXED_PRICE_MODE_STORAGE_KEY) === "1");
+  }, []);
+
+  function toggleFixedPriceMode(next: boolean) {
+    setFixedPriceMode(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(FIXED_PRICE_MODE_STORAGE_KEY, next ? "1" : "0");
+    }
+    if (!next) {
+      setFixedPrice("");
+      setFixedCompareAt("");
+    }
+    focusScanInput();
+  }
+
+  /** Prix fixe saisi (CHF) — null quand le mode est off ou la saisie invalide. */
+  function parsedFixedPrice(): number | null {
+    if (!fixedPriceMode) return null;
+    const value = Number(fixedPrice.trim().replace(",", "."));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  function parsedFixedCompareAt(sell: number): number | null {
+    const raw = fixedCompareAt.trim().replace(",", ".");
+    if (!raw) return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > sell ? value : null;
+  }
+
   function pushHistory(entry: Omit<HistoryEntry, "id" | "at">) {
     setHistory((prev) => [
       { id: Math.random().toString(36).slice(2), at: Date.now(), ...entry },
@@ -267,7 +303,13 @@ export default function RestockScanPage() {
     setBusy("Recherche…");
     try {
       const res = await fetch(`/api/restock/scan?gtin=${encodeURIComponent(cleaned)}`);
-      const data = await res.json();
+      const raw = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new Error(`Serveur indisponible (HTTP ${res.status}) — réessayer dans un instant`);
+      }
       if (!data.ok) {
         setError(data.error ?? "Recherche échouée");
         focusScanInput();
@@ -306,15 +348,25 @@ export default function RestockScanPage() {
       setError("Choisir un emplacement (Bussigny / Antica / THE LAB / COLD BIEN) avant restock");
       return;
     }
+    if (fixedPriceMode && parsedFixedPrice() == null) {
+      setError("Prix fixe activé — saisir un prix de vente valide (CHF) ou décocher");
+      return;
+    }
     setBusy(busyLabel);
     setError(null);
     try {
       const scannedGtin = gtin.trim();
       const currentLoc = currentLocationName ?? "?";
+      const sell = parsedFixedPrice();
+      const compare = sell != null ? parsedFixedCompareAt(sell) : null;
       const res = await fetch("/api/restock/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          // Fixed price first — an explicit per-action price in `body`
+          // (manual-price flow) still wins.
+          ...(sell != null ? { salePrice: sell } : {}),
+          ...(compare != null ? { compareAtPrice: compare } : {}),
           ...body,
           gtin: scannedGtin,
           quantity,
@@ -322,7 +374,15 @@ export default function RestockScanPage() {
           locationId,
         }),
       });
-      const data = (await res.json()) as ApplyResult;
+      const raw = await res.text();
+      let data: ApplyResult;
+      try {
+        data = JSON.parse(raw) as ApplyResult;
+      } catch {
+        throw new Error(
+          `Serveur indisponible (HTTP ${res.status}) — réessayer dans un instant`
+        );
+      }
       setApplyResult(data);
       if (
         (data.status === "size-confirmation-required" ||
@@ -485,6 +545,57 @@ export default function RestockScanPage() {
             Mode scanette (auto-restock si GTIN unique sur Shopify — sinon choix manuel)
           </span>
         </label>
+      </div>
+
+      <div className="mt-3 rounded-sm border border-gray-200 bg-white p-3">
+        <label className="inline-flex items-center gap-2 text-sm font-medium select-none">
+          <input
+            type="checkbox"
+            checked={fixedPriceMode}
+            onChange={(e) => toggleFixedPriceMode(e.target.checked)}
+            className="h-4 w-4"
+          />
+          <span>Prix fixe sur ce restock (garde le cost Shopify inchangé)</span>
+        </label>
+        {fixedPriceMode && (
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="text-xs font-medium text-gray-700">
+              Prix de vente (CHF) *
+              <input
+                value={fixedPrice}
+                onChange={(e) => setFixedPrice(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    focusScanInput();
+                  }
+                }}
+                placeholder="189"
+                inputMode="decimal"
+                className="mt-1 w-full rounded-sm border border-gray-400 px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+            </label>
+            <label className="text-xs font-medium text-gray-700">
+              Compare-at (CHF, optionnel)
+              <input
+                value={fixedCompareAt}
+                onChange={(e) => setFixedCompareAt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    focusScanInput();
+                  }
+                }}
+                placeholder="349"
+                inputMode="decimal"
+                className="mt-1 w-full rounded-sm border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+              />
+            </label>
+            <div className="sm:col-span-2 text-xs text-gray-500">
+              Sans prix fixe : restock normal → cost Shopify remis à 0.
+            </div>
+          </div>
+        )}
       </div>
 
       {locations.length > 0 && (
