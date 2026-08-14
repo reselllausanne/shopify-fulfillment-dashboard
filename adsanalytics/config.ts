@@ -82,20 +82,18 @@ export function resolveAdsConfig(): AdsConfig {
 }
 
 /**
- * Merchant OAuth uses dedicated refresh token when provided.
- * Fallback keeps backward compatibility with existing Ads refresh token.
+ * Merchant OAuth needs its own refresh token: the Ads token only carries the adwords scope,
+ * so falling back to it yields ACCESS_TOKEN_SCOPE_INSUFFICIENT at call time instead of here.
  */
 export function resolveMerchantOauthConfig(): MerchantOauthConfig {
   const clientId = readEnv("GOOGLE_ADS_CLIENT_ID");
   const clientSecret = readEnv("GOOGLE_ADS_CLIENT_SECRET");
-  const merchantRefresh = readEnv("GOOGLE_MERCHANT_REFRESH_TOKEN");
-  const adsRefresh = readEnv("GOOGLE_ADS_REFRESH_TOKEN");
-  const refreshToken = merchantRefresh || adsRefresh;
+  const refreshToken = readEnv("GOOGLE_MERCHANT_REFRESH_TOKEN");
 
   const missing: string[] = [];
   if (!clientId) missing.push("GOOGLE_ADS_CLIENT_ID");
   if (!clientSecret) missing.push("GOOGLE_ADS_CLIENT_SECRET");
-  if (!refreshToken) missing.push("GOOGLE_MERCHANT_REFRESH_TOKEN or GOOGLE_ADS_REFRESH_TOKEN");
+  if (!refreshToken) missing.push("GOOGLE_MERCHANT_REFRESH_TOKEN");
   if (missing.length > 0) {
     throw new AdsConfigError(missing);
   }
