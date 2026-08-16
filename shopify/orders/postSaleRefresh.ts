@@ -3,6 +3,7 @@ import { fetchStockxProductByIdOrSlugRaw, pickPersistedKickdbBarcodes } from "@/
 import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
 import { ingestStxFromRawPayload } from "@/galaxus/jobs/stxSync";
 import { scheduleMarketplaceStockPush } from "@/inventory/marketplaceStockSync";
+import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { convergeVariant, type ConvergeVariantResult } from "@/shopify/inventory/convergence";
 import {
   createProductFullFlow,
@@ -19,7 +20,7 @@ import {
   syncMirrorForGtinFromShopify,
 } from "@/shopify/orders/webSaleInventory";
 
-async function hasJmoneyPriceLock(gtin: string): Promise<boolean> {
+async function hasJmoneyPriceLockInDb(gtin: string): Promise<boolean> {
   const prismaAny = prisma as any;
   const row = await prismaAny.supplierVariant
     .findFirst({
@@ -30,6 +31,43 @@ async function hasJmoneyPriceLock(gtin: string): Promise<boolean> {
     .catch(() => null);
   if (!row) return false;
   return Boolean(row.manualLock) && isJmoneyPriceLockNote(row.manualNote);
+}
+
+/**
+ * Shopify-side lock signal. Survives DB manualNote drift (a past cleanup wiped
+ * jmoney notes causing post-sale flow to relist Chemin stock).
+ *
+ * Locked when EITHER:
+ *  - product tag includes `jmoney-kicks`, OR
+ *  - variant metafield `custom.price_locked` === "true".
+ */
+async function hasJmoneyPriceLockOnShopify(variantId: string | null | undefined): Promise<boolean> {
+  const id = String(variantId ?? "").trim();
+  if (!id) return false;
+  try {
+    const { data } = await shopifyGraphQL<{
+      productVariant: {
+        metafield: { value: string | null } | null;
+        product: { tags: string[] } | null;
+      } | null;
+    }>(
+      `query($id: ID!) {
+        productVariant(id: $id) {
+          metafield(namespace: "custom", key: "price_locked") { value }
+          product { tags }
+        }
+      }`,
+      { id }
+    );
+    const v = data?.productVariant;
+    if (!v) return false;
+    const tags = (v.product?.tags ?? []).map((t) => String(t ?? "").toLowerCase());
+    if (tags.includes("jmoney-kicks")) return true;
+    const raw = String(v.metafield?.value ?? "").toLowerCase();
+    return raw === "true" || raw === "1";
+  } catch {
+    return false;
+  }
 }
 
 export type PostSaleRefreshOptions = {
@@ -102,15 +140,21 @@ export async function refreshAfterShopifySale(
 
   let isEssentials = false;
   let isAdminOnly = false;
+  let shopifyMatchVariantId: string | null = null;
   try {
     const { match } = await findShopifyVariantByGtin(cleanGtin);
     isEssentials = isEssentialsShopifyVariant(match);
     isAdminOnly = isAdminOnlyShopifyVariant(match?.variantId, match?.productId);
+    shopifyMatchVariantId = match?.variantId ?? null;
   } catch {
     // Non-fatal — fall through to StockX refresh attempt.
   }
 
-  const jmoneyLocked = await hasJmoneyPriceLock(cleanGtin);
+  const [dbJmoneyLocked, shopifyJmoneyLocked] = await Promise.all([
+    hasJmoneyPriceLockInDb(cleanGtin),
+    hasJmoneyPriceLockOnShopify(preferredVariantId ?? shopifyMatchVariantId),
+  ]);
+  const jmoneyLocked = dbJmoneyLocked || shopifyJmoneyLocked;
   if (jmoneyLocked) {
     warnings.push("JMoney Kickz price lock — unlock/reprice skipped");
   } else if (!isAdminOnly) {
