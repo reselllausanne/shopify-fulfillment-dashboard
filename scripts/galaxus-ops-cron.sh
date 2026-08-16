@@ -3,7 +3,8 @@
 # Galaxus scheduled ops (VPS cron).
 #
 # Usage:
-#   bash scripts/galaxus-ops-cron.sh full-flow   # stock → price → master-specs (safe sequential)
+#   bash scripts/galaxus-ops-cron.sh stock-price-flow # snapshots → stock + price
+#   bash scripts/galaxus-ops-cron.sh full-flow   # stock → price → master-specs (manual/catalog recovery)
 #   bash scripts/galaxus-ops-cron.sh full-push   # single push-full (heavy; can OOM)
 #   bash scripts/galaxus-ops-cron.sh stx-full    # full StockX/KickDB catalog sync
 #   bash scripts/galaxus-ops-cron.sh push-master-specs  # master+specs only (recovery)
@@ -277,13 +278,25 @@ run_snapshot_rebuild() {
 }
 
 if [[ -z "$ACTION" ]]; then
-  log "ERROR: missing action (full-flow | full-push | stx-full | push-master-specs)"
+  log "ERROR: missing action (stock-price-flow | full-flow | full-push | stx-full | push-master-specs)"
   exit 2
 fi
 
 cd /opt/resell
 
 case "$ACTION" in
+  stock-price-flow)
+    log "START stock-price-flow (rebuild snapshots -> stock + price)"
+    run_snapshot_rebuild || true
+    step_started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    post_json '{"action":"push-stock"}' >/dev/null || log "WARN: enqueue push-stock failed"
+    post_json '{"action":"push-price"}' >/dev/null || log "WARN: enqueue push-price failed"
+    wait_scope_success "stock" "$step_started" "$WAIT_SEC" \
+      || log "WARN: stock failed/timed out"
+    wait_scope_success "price" "$step_started" "$WAIT_SEC" \
+      || log "WARN: price failed/timed out"
+    log "DONE stock-price-flow"
+    ;;
   full-flow)
     run_image_sync_full || true
     log "START full-flow (rebuild snapshots -> stock + price + master-specs; stock/price failure must not skip master)"

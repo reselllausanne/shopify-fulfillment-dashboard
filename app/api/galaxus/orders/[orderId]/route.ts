@@ -6,6 +6,7 @@ import { digitsOnlyGtin, sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { attachProcurementToLines } from "@/galaxus/orders/lineProcurement";
 import { reserveStxPurchaseUnitsForOrder } from "@/galaxus/stx/purchaseUnits";
 import { resolveGalaxusLineOfferSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
+import { enrichBuySourceOverrideCosts } from "@/galaxus/warehouse/enrichBuySourceOverrideCosts";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
 import {
   attachPhysicalStockToLines,
@@ -439,11 +440,8 @@ export async function GET(
         orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
       });
     }
-    const linesWithProcurement = attachProcurementToLines(
-      linesWithPhysicalStock,
-      stx,
-      matchesForResponse,
-      stxUnits
+    const linesWithProcurement = await enrichBuySourceOverrideCosts(
+      attachProcurementToLines(linesWithPhysicalStock, stx, matchesForResponse, stxUnits)
     );
 
     const normalized = {

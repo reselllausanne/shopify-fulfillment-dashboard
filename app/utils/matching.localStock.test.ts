@@ -88,4 +88,36 @@ describe("matchShopifyToSupplier local stock", () => {
     expect(result.bestMatch?.supplierOrder.totalTTC).toBe(0);
     expect(result.bestMatch?.reasons).toContain("Origin ESSENTIALS");
   });
+
+  it("does not create an ESS match from BAPE title without exact physical stock", () => {
+    const result = matchShopifyToSupplier(
+      {
+        ...shopifyItem,
+        title: "BAPE Trial Camo Big Ape Head Tee Black/Green - M",
+        sku: "1L30-110-034-M",
+        physicalStockQty: 0,
+      },
+      [],
+      new Set()
+    );
+
+    expect(result.bestMatch).toBeNull();
+  });
+
+  it("creates an ESS match only when exact BAPE variant has physical stock", () => {
+    const result = matchShopifyToSupplier(
+      {
+        ...shopifyItem,
+        title: "BAPE Trial Camo Big Ape Head Tee Black/Green - M",
+        sku: "1L30-110-034-M",
+        physicalStockQty: 1,
+        physicalStockLocation: "Warehouse Bussigny",
+      },
+      [],
+      new Set()
+    );
+
+    expect(result.bestMatch?.supplierOrder.statusKey).toBe("ESSENTIAL_STOCK");
+    expect(result.bestMatch?.supplierOrder.supplierOrderNumber).toBe("ESS-1001");
+  });
 });

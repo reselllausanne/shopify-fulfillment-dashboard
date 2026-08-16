@@ -7,6 +7,7 @@ import {
   fetchSnowleaderProductBySku,
   fetchSnowleaderProductSkusPage,
   isRetryableSnowleaderGraphqlError,
+  isSnowleaderCloudflareBlock,
   snowleaderGraphqlConfig,
   type SnowleaderGqlVariant,
 } from "@/app/lib/snowleaderGraphqlClient";
@@ -267,6 +268,8 @@ export async function scrapeSnowleaderShop(
     ])
   );
 
+  let consecutiveCloudflareBlocks = 0;
+
   try {
     for (const categoryId of cfg.categoryIds) {
       let currentPage = 1;
@@ -284,6 +287,7 @@ export async function scrapeSnowleaderShop(
               pageSize: cfg.pageSize,
             });
             categoryLoaded = true;
+            consecutiveCloudflareBlocks = 0;
             if (!categoryTotal) {
               categoryTotal = listPage.totalCount;
               totalListed += categoryTotal;
@@ -309,8 +313,17 @@ export async function scrapeSnowleaderShop(
                 wrote += result.wrote;
                 gtinMatched += result.gtinMatched;
                 parseErrors += result.parseErrors;
+                consecutiveCloudflareBlocks = 0;
               } catch (err) {
                 requestErrors++;
+                if (isSnowleaderCloudflareBlock(err)) {
+                  consecutiveCloudflareBlocks++;
+                  if (consecutiveCloudflareBlocks >= 3) {
+                    throw new Error(
+                      `snowleader_cloudflare_ip_block — VPS IP challenged by CF. Run SNL from unblocked IP (local) or set SCRAPER_SNL_COOKIE. first_err=${String((err as Error)?.message || err).slice(0, 180)}`
+                    );
+                  }
+                }
                 if (!isRetryableSnowleaderGraphqlError(err)) throw err;
               }
 
@@ -347,6 +360,12 @@ export async function scrapeSnowleaderShop(
             `[SCRAPER] snl category ${categoryId} attempt ${categoryAttempt + 1}/3:`,
             msg
           );
+          if (isSnowleaderCloudflareBlock(err) || msg.includes("snowleader_cloudflare_ip_block")) {
+            consecutiveCloudflareBlocks++;
+            if (consecutiveCloudflareBlocks >= 3 || msg.includes("snowleader_cloudflare_ip_block")) {
+              throw err instanceof Error ? err : new Error(msg);
+            }
+          }
           if (categoryAttempt < 2) {
             await new Promise((r) => setTimeout(r, 3000 * (categoryAttempt + 1)));
           }

@@ -28,4 +28,16 @@ describe("GLD / Golden line detection", () => {
     expect(galaxusLineWarehouseStockHint({ supplierVariantId: "golden:9" })).toBe("GOLDEN");
     expect(galaxusLineWarehouseStockHint({ supplierSku: "THE_x" })).toBe("MAISON");
   });
+
+  it("AF1 White STX listing → GOLDEN buy-source override (no StockX)", () => {
+    expect(galaxusLineWarehouseStockHint({ providerKey: "STX_0194500874923" })).toBe("GOLDEN");
+    expect(galaxusLineWarehouseStockHint({ gtin: "0194500874947" })).toBe("GOLDEN");
+    expect(
+      isGalaxusStxSupplierLine({
+        providerKey: "STX_0194500874961",
+        gtin: "0194500874961",
+      })
+    ).toBe(false);
+    expect(isGalaxusStxSupplierLine({ providerKey: "STX_194500874848" })).toBe(true);
+  });
 });

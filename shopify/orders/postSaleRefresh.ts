@@ -13,10 +13,24 @@ import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugFor
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
+import { isJmoneyPriceLockNote } from "@/shopify/inventory/locationConfig";
 import {
   decrementShopifyWebSaleStock,
   syncMirrorForGtinFromShopify,
 } from "@/shopify/orders/webSaleInventory";
+
+async function hasJmoneyPriceLock(gtin: string): Promise<boolean> {
+  const prismaAny = prisma as any;
+  const row = await prismaAny.supplierVariant
+    .findFirst({
+      where: { gtin },
+      orderBy: [{ updatedAt: "desc" }],
+      select: { manualLock: true, manualNote: true },
+    })
+    .catch(() => null);
+  if (!row) return false;
+  return Boolean(row.manualLock) && isJmoneyPriceLockNote(row.manualNote);
+}
 
 export type PostSaleRefreshOptions = {
   /** Units sold on this paid order line — decrements home/warehouse stock before converge. */
@@ -96,7 +110,10 @@ export async function refreshAfterShopifySale(
     // Non-fatal — fall through to StockX refresh attempt.
   }
 
-  if (!isAdminOnly) {
+  const jmoneyLocked = await hasJmoneyPriceLock(cleanGtin);
+  if (jmoneyLocked) {
+    warnings.push("JMoney Kickz price lock — unlock/reprice skipped");
+  } else if (!isAdminOnly) {
     const unlock = await unlockShopifyPriceByBarcode(cleanGtin);
     if (!unlock.ok && unlock.error && unlock.error !== "empty_barcode") {
       warnings.push(`unlock: ${unlock.error}`);
@@ -123,7 +140,7 @@ export async function refreshAfterShopifySale(
   const stillLiquidation = convergence?.desired === "liquidation";
 
   let kickdbSync: PostSaleRefreshResult["kickdbSync"];
-  if (isEssentials || isAdminOnly) {
+  if (isEssentials || isAdminOnly || jmoneyLocked) {
     kickdbSync = { ok: true, updated: 0, error: null };
   } else if (!stillLiquidation) {
     // Fresh KickDB → STX DB before Shopify upsert (price + stock source of truth).
@@ -146,6 +163,8 @@ export async function refreshAfterShopifySale(
       action: isAdminOnly ? "skipped_admin_only" : "skipped",
       error: null,
     };
+  } else if (jmoneyLocked) {
+    shopifyRefresh = { ok: true, action: "skipped_jmoney_price_lock", error: null };
   } else if (stillLiquidation) {
     shopifyRefresh = { ok: true, action: "skipped_liquidation", error: null };
   } else if (skipDropshipRelist) {

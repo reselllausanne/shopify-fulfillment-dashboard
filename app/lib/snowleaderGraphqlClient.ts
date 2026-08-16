@@ -197,8 +197,24 @@ function jitterMs(max = 400) {
   return Math.floor(Math.random() * max);
 }
 
+/** Cloudflare HTML challenge / Attention Required page (VPS IP often blocked). */
+export function isSnowleaderCloudflareBlock(errOrBody: unknown): boolean {
+  const msg = String((errOrBody as Error)?.message ?? errOrBody ?? "").toLowerCase();
+  return (
+    msg.includes("attention required") ||
+    msg.includes("cf-browser-verification") ||
+    msg.includes("cdn-cgi") ||
+    msg.includes("just a moment") ||
+    (msg.includes("http 403") && (msg.includes("<!doctype html>") || msg.includes("<html")))
+  );
+}
+
 export function isRetryableSnowleaderGraphqlError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
+  if (isSnowleaderCloudflareBlock(err)) {
+    // Brief CF flaps sometimes clear; persistent VPS blocks need cookie/proxy/local run.
+    return true;
+  }
   return (
     msg.includes("http 429") ||
     msg.includes("http 502") ||
@@ -210,6 +226,20 @@ export function isRetryableSnowleaderGraphqlError(err: unknown): boolean {
     msg.includes("econnreset") ||
     msg.includes("fetch failed")
   );
+}
+
+function snowleaderCookieHeader(): string | null {
+  const raw =
+    process.env.SCRAPER_SNL_COOKIE?.trim() ||
+    [
+      process.env.SCRAPER_SNL_CF_CLEARANCE?.trim()
+        ? `cf_clearance=${process.env.SCRAPER_SNL_CF_CLEARANCE.trim()}`
+        : "",
+      process.env.SCRAPER_SNL_CF_BM?.trim() ? `__cf_bm=${process.env.SCRAPER_SNL_CF_BM.trim()}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+  return raw || null;
 }
 
 function parseMoney(value: unknown): number | null {
@@ -414,23 +444,31 @@ async function fetchSnowleaderGraphqlOnce<T>(
   variables?: Record<string, unknown>
 ): Promise<T> {
   const cfg = snowleaderGraphqlConfig();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    Origin: "https://www.snowleader.ch",
+    Referer: "https://www.snowleader.ch/",
+    Store: cfg.store,
+    "User-Agent":
+      process.env.SCRAPER_USER_AGENT ||
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  };
+  const cookie = snowleaderCookieHeader();
+  if (cookie) headers.Cookie = cookie;
+
   const res = await fetch(GRAPHQL_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Origin: "https://www.snowleader.ch",
-      Referer: "https://www.snowleader.ch/",
-      Store: cfg.store,
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    },
+    headers,
     body: JSON.stringify({ query, variables }),
     signal: AbortSignal.timeout(cfg.requestTimeoutMs),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Snowleader GraphQL HTTP ${res.status}: ${body.slice(0, 300)}`);
+    const prefix = isSnowleaderCloudflareBlock(body)
+      ? "Snowleader GraphQL Cloudflare block"
+      : `Snowleader GraphQL HTTP ${res.status}`;
+    throw new Error(`${prefix}: ${body.slice(0, 300)}`);
   }
   const json = (await res.json()) as {
     data?: T;
@@ -457,7 +495,10 @@ export async function fetchSnowleaderGraphql<T>(
     } catch (err) {
       lastErr = err;
       if (!isRetryableSnowleaderGraphqlError(err) || attempt >= cfg.maxRetries - 1) break;
-      const backoff = cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(500);
+      const cf = isSnowleaderCloudflareBlock(err);
+      const backoff = cf
+        ? 15_000 * (attempt + 1) + jitterMs(2_000)
+        : cfg.requestDelayMs * Math.pow(2, attempt + 1) + jitterMs(500);
       await sleep(backoff);
     }
   }

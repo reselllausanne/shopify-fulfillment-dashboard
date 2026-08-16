@@ -191,6 +191,12 @@ export function isRetryableReicheltError(err: unknown): boolean {
   );
 }
 
+/** Permanent nginx 403 on a single shard (e.g. products_0.xml) — skip, don't abort run. */
+export function isSoftSkipReicheltShardError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
+  return msg.includes("http 403") || msg.includes("http 404");
+}
+
 /** Prefer CHF from `(12.34 CHF)` on CH storefront; reject absurd CHF/EUR pairs. */
 export function parseReicheltChfPrice(html: string, priceEur: number | null = null): number | null {
   const pick = (raw: string | undefined): number | null => {
@@ -404,7 +410,26 @@ function buildReicheltFetchHeaders(
   return headers;
 }
 
+let curlBinaryAvailable: boolean | null = null;
+
+async function ensureCurlAvailable(): Promise<boolean> {
+  if (curlBinaryAvailable != null) return curlBinaryAvailable;
+  try {
+    await execFile("curl", ["--version"], { timeout: 5_000 });
+    curlBinaryAvailable = true;
+  } catch {
+    curlBinaryAvailable = false;
+    console.warn(
+      "[SCRAPER] rei curl fallback disabled — curl binary missing in container (install curl in Dockerfile)"
+    );
+  }
+  return curlBinaryAvailable;
+}
+
 async function fetchTextViaCurl(url: string, headers: Headers): Promise<string> {
+  if (!(await ensureCurlAvailable())) {
+    throw new Error(`Reichelt curl unavailable ${url}`);
+  }
   const cfg = reicheltConfig();
   const args = [
     "-sS",
@@ -412,13 +437,22 @@ async function fetchTextViaCurl(url: string, headers: Headers): Promise<string> 
     "--compressed",
     "--max-time",
     String(Math.max(5, Math.ceil(cfg.requestTimeoutMs / 1000))),
+    "-w",
+    "\n__REI_CURL_HTTP__:%{http_code}",
   ];
   headers.forEach((value, key) => {
     args.push("-H", `${key}: ${value}`);
   });
   args.push(url);
   const { stdout } = await execFile("curl", args, { maxBuffer: 25 * 1024 * 1024 });
-  return stdout;
+  const marker = "\n__REI_CURL_HTTP__:";
+  const idx = stdout.lastIndexOf(marker);
+  const body = idx >= 0 ? stdout.slice(0, idx) : stdout;
+  const status = idx >= 0 ? Number(stdout.slice(idx + marker.length).trim()) : 0;
+  if (status && status >= 400) {
+    throw new Error(`Reichelt curl HTTP ${status} ${url}`);
+  }
+  return body;
 }
 
 export class ReicheltClient {
@@ -476,11 +510,13 @@ export class ReicheltClient {
     }
 
     const msg = String((lastErr as Error)?.message ?? lastErr ?? "");
-    if (reicheltCurlFallbackEnabled() && /http 503/i.test(msg)) {
+    if (reicheltCurlFallbackEnabled() && /http 503|http 502|http 429|fetch failed|timeout|econnreset/i.test(msg)) {
       try {
         const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
         const text = await fetchTextViaCurl(url, headers);
-        if (!text || text.length < 500 || !/<html/i.test(text)) {
+        const looksXml = /<\?xml|<sitemapindex|<urlset/i.test(text);
+        const looksHtml = /<html/i.test(text);
+        if (!text || text.length < 200 || (!looksXml && !looksHtml)) {
           throw new Error(`Reichelt curl empty/invalid response ${url}`);
         }
         const delayMs = reicheltConfig().requestDelayMs;
@@ -619,8 +655,11 @@ export class ReicheltClient {
     const cfg = reicheltConfig();
     const startShard = Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_START_SHARD || 0));
     const shards = await this.resolveProductSitemapShards();
-    let consecutiveSkips = 0;
-    const maxConsecutiveSkips = Math.max(3, Number(process.env.SCRAPER_REI_SITEMAP_MAX_CONSECUTIVE_SKIPS || 5));
+    let consecutiveHardSkips = 0;
+    const maxConsecutiveSkips = Math.max(
+      5,
+      Number(process.env.SCRAPER_REI_SITEMAP_MAX_CONSECUTIVE_SKIPS || 12)
+    );
     for (const shard of shards) {
       if (shard < startShard) continue;
       let xml: string | null = null;
@@ -641,20 +680,28 @@ export class ReicheltClient {
         }
       }
       if (!xml) {
-        consecutiveSkips++;
+        const soft = isSoftSkipReicheltShardError(lastErr);
+        if (!soft) {
+          consecutiveHardSkips++;
+          // Session cookies expire mid-run — re-warm before giving up the batch.
+          if (consecutiveHardSkips === 3 || consecutiveHardSkips === 6) {
+            console.warn(`[SCRAPER] rei re-warming session after ${consecutiveHardSkips} hard shard skips`);
+            await this.warmSession();
+          }
+        }
         console.warn(
-          `[SCRAPER] rei sitemap shard ${shard} skipped:`,
+          `[SCRAPER] rei sitemap shard ${shard} skipped${soft ? " (soft)" : ""}:`,
           (lastErr as Error)?.message || lastErr
         );
-        if (consecutiveSkips >= maxConsecutiveSkips) {
+        if (consecutiveHardSkips >= maxConsecutiveSkips) {
           console.warn(
-            `[SCRAPER] rei sitemap aborting after ${consecutiveSkips} consecutive shard failures (site likely down)`
+            `[SCRAPER] rei sitemap aborting after ${consecutiveHardSkips} consecutive hard shard failures (site likely down)`
           );
           break;
         }
         continue;
       }
-      consecutiveSkips = 0;
+      consecutiveHardSkips = 0;
       const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim());
       yield { shard, urls };
     }

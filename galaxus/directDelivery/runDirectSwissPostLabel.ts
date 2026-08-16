@@ -251,9 +251,15 @@ export async function runDirectSwissPostLabelForOrder(
     };
   }
 
-  // 2) Open shipment already has tracking → reprint stored label, do not remint.
+  // 2) Open shipment already has tracking → retry DELR if needed, reprint label (no remint).
   const openWithTracking = open.find((s) => String(s.trackingNumber ?? "").trim());
-  if (openWithTracking) {
+  const openWithoutTracking = open.filter((s) => !String(s.trackingNumber ?? "").trim());
+  if (openWithTracking && openWithoutTracking.length === 0) {
+    const { uploadDelrForShipment } = await import("@/galaxus/warehouse/delr");
+    const delr = await uploadDelrForShipment(openWithTracking.id).catch((error: any) => ({
+      status: "error",
+      message: error?.message ?? "DELR retry failed",
+    }));
     const existing = await loadExistingShippingLabelData(order.id, openWithTracking.id);
     if (existing) {
       return {
@@ -265,19 +271,22 @@ export async function runDirectSwissPostLabelForOrder(
         shipmentId: openWithTracking.id,
         labelData: includeLabelData ? existing.labelData : null,
         browserPrintConfig,
+        delr,
       };
     }
   }
 
   // 3) Ensure we have a shipment row BEFORE calling Swiss Post.
-  let targetShipmentId = open[0]?.id ?? null;
+  // One parcel for the whole direct order (qty can be >1). Split-by-1 burned
+  // half-labeled NER carts; ask-how-many / cancel-request comes later.
+  let targetShipmentId = openWithTracking?.id ?? open[0]?.id ?? null;
   let createShipmentsStatus: string | undefined;
 
   if (!targetShipmentId) {
     const created = await createShipmentsForOrder({
       orderId: order.id,
-      allowSplit: true,
-      maxPairsPerParcel: 1,
+      allowSplit: false,
+      maxPairsPerParcel: 24,
       deliveryType: "direct_delivery",
     });
     createShipmentsStatus = created.status;

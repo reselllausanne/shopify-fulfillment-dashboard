@@ -1,4 +1,8 @@
-import { getLocationConfig, PHYSICAL_LOCATIONS } from "@/shopify/inventory/locationConfig";
+import {
+  getLocationConfig,
+  moneyKickzLocationId,
+  PHYSICAL_LOCATIONS,
+} from "@/shopify/inventory/locationConfig";
 import type { OrderLinePhysicalStock } from "@/shopify/inventory/orderLinePhysicalStock.types";
 
 type FoLineNode = {
@@ -18,8 +22,9 @@ type FoNode = {
 
 /**
  * Map Shopify lineItemId → physical location from open fulfillment orders.
- * When Shopify commits Lab/Bussigny/etc. stock to an order, mirror `available`
- * drops to 0 — FO assignedLocation is the source of truth for matching UI.
+ * When Shopify commits Lab/Bussigny/etc. or Money Kickz supplier stock to an
+ * order, mirror `available` drops to 0 — FO assignedLocation is source of
+ * truth for matching UI.
  */
 export function buildPhysicalStockFromFulfillmentOrders(
   fulfillmentOrders: FoNode[] | null | undefined
@@ -63,7 +68,7 @@ function resolvePhysicalLocation(
 ): { id: string; name: string } | null {
   if (locationId) {
     const cfg = getLocationConfig(locationId);
-    if (cfg?.sourceType === "physical") {
+    if (cfg?.sourceType === "physical" || cfg?.id === moneyKickzLocationId()) {
       return { id: cfg.id, name: cfg.name };
     }
     return null;

@@ -47,6 +47,19 @@ function resolveTitle(mapping: any): string {
   );
 }
 
+/** Reject titles that are just providerKey / THE_gtin (creates junk Shopify products). */
+function isPlaceholderCatalogTitle(title: string, providerKey: string, gtin: string | null): boolean {
+  const t = String(title ?? "").trim();
+  const pk = String(providerKey ?? "").trim();
+  if (!t) return true;
+  if (pk && t === pk) return true;
+  if (/^Variant\s+/i.test(t)) return true;
+  const g = String(gtin ?? "").trim();
+  if (g && (t === g || t === `THE_${g}` || t === `NER_${g}` || t === `STX_${g}`)) return true;
+  if (/^(THE|NER|STX|GLD)_\d{8,14}$/i.test(t)) return true;
+  return false;
+}
+
 function resolveBrand(mapping: any): string | null {
   const raw = String(
     mapping?.supplierVariant?.supplierBrand ?? mapping?.kickdbVariant?.product?.brand ?? ""
@@ -379,6 +392,21 @@ export async function syncShopifyCatalog(
 
       let didCreate = false;
       if (!variantId) {
+        if (
+          isPlaceholderCatalogTitle(candidate.title, candidate.providerKey, candidate.gtin)
+        ) {
+          skipped += 1;
+          rows.push({
+            providerKey: candidate.providerKey,
+            supplierVariantId: candidate.supplierVariantId,
+            action: "skipped",
+            reason: "missing_real_product_title",
+            price: candidate.targetPrice,
+            stock: candidate.availableStock,
+            pricingKind: candidate.pricingKind,
+          });
+          continue;
+        }
         action = "created";
         if (!dryRun) {
           const createdRow = await createProductWithVariant({
@@ -416,7 +444,22 @@ export async function syncShopifyCatalog(
           if (!isShopifyMissingProductError(error)) {
             throw error;
           }
-          // Stale Shopify ids in ChannelListingState: re-create listing and continue.
+          // Stale Shopify ids in ChannelListingState: re-create only with a real title.
+          if (
+            isPlaceholderCatalogTitle(candidate.title, candidate.providerKey, candidate.gtin)
+          ) {
+            skipped += 1;
+            rows.push({
+              providerKey: candidate.providerKey,
+              supplierVariantId: candidate.supplierVariantId,
+              action: "skipped",
+              reason: "stale_listing_missing_real_product_title",
+              price: candidate.targetPrice,
+              stock: candidate.availableStock,
+              pricingKind: candidate.pricingKind,
+            });
+            continue;
+          }
           const createdRow = await createProductWithVariant({
             title: candidate.title,
             brand: candidate.brand,

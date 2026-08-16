@@ -1,9 +1,15 @@
+import { resolveGalaxusBuySourceOverride } from "@/galaxus/warehouse/buySourceOverride";
+
 /** True when the Galaxus line is the StockX (STX) supplier channel (vs TRM/GLD, etc.). */
 export function isGalaxusStxSupplierLine(line: {
   supplierPid?: string | null;
   supplierVariantId?: string | null;
   providerKey?: string | null;
+  gtin?: string | null;
+  offerSupplierSku?: string | null;
 }): boolean {
+  // Listed as STX but buy-source override → treat as non-STX for auto-link / reserve.
+  if (resolveGalaxusBuySourceOverride(line)) return false;
   if (isGalaxusGldSupplierLine(line)) return false;
   const supplierPid = String(line?.supplierPid ?? "").trim().toUpperCase();
   if (supplierPid.startsWith("STX_")) return true;
@@ -82,7 +88,10 @@ export function galaxusLineWarehouseStockHint(line: {
   offerSupplierSku?: string | null;
   supplierPid?: string | null;
   supplierVariantId?: string | null;
+  gtin?: string | null;
 }): GalaxusWarehouseStockHint | null {
+  const buyOverride = resolveGalaxusBuySourceOverride(line);
+  if (buyOverride?.hint === "GOLDEN") return "GOLDEN";
   if (isGalaxusGldSupplierLine(line)) return "GOLDEN";
   const offer =
     String(line?.offerSupplierSku ?? "").trim() ||

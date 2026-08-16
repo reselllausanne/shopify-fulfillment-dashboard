@@ -10,6 +10,7 @@ ROOT="/opt/shopify-automation"
 LOCK="/tmp/sse_create_queue.lock"
 LOG="${ROOT}/logs/sse_create_queue.log"
 PYTHON="${ROOT}/venv/bin/python3"
+if [[ ! -x "${PYTHON}" ]]; then PYTHON="$(command -v python3)"; fi
 [[ -f "${ROOT}/.env.sse" ]] && set -a && source "${ROOT}/.env.sse" && set +a
 API="${KICKDB_BUFFER_BASE:-${RESELL_API_BASE:-http://127.0.0.1:3002}}"
 

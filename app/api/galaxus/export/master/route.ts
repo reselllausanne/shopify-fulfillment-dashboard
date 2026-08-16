@@ -433,6 +433,7 @@ export async function GET(request: Request) {
         dropshipStock,
         physicalQty: physical.qty,
         dropshipDelisted,
+        liquidationLocked: manualLock,
       });
       effectiveStock = merged.finalStock;
     }

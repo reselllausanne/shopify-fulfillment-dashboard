@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   expandSnowleaderGraphqlProduct,
   isRetryableSnowleaderGraphqlError,
+  isSnowleaderCloudflareBlock,
   parseSnowleaderStock,
   pickSnowleaderProductType,
 } from "@/app/lib/snowleaderGraphqlClient";
@@ -107,5 +108,13 @@ describe("snowleaderGraphqlClient", () => {
         new Error('Snowleader GraphQL HTTP 504: {"title":"Error 504: Gateway time-out"}')
       )
     ).toBe(true);
+  });
+
+  it("detects cloudflare 403 html block", () => {
+    const err = new Error(
+      'Snowleader GraphQL Cloudflare block: <!DOCTYPE html><title>Attention Required! | Cloudflare</title>'
+    );
+    expect(isSnowleaderCloudflareBlock(err)).toBe(true);
+    expect(isRetryableSnowleaderGraphqlError(err)).toBe(true);
   });
 });

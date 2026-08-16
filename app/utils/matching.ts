@@ -827,7 +827,14 @@ export function matchShopifyToSupplier(
     return buildLocalStockMatch(shopifyItem, localStockLot);
   }
 
-  const inStockEssential = resolveInStockEssential(shopifyItem.sku, shopifyItem.title);
+  // Fixed-price rules identify a product family, not an owned unit. Only create
+  // the synthetic ESS match when this exact Shopify variant has physical stock.
+  // Never let a BAPE/Essentials title regex match sibling variants or a
+  // dropship-only line.
+  const inStockEssential =
+    Number(shopifyItem.physicalStockQty ?? 0) > 0
+      ? resolveInStockEssential(shopifyItem.sku, shopifyItem.title)
+      : null;
 
   if (inStockEssential) {
     console.log(

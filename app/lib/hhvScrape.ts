@@ -25,8 +25,98 @@ const IMAGE_SYNC_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_IMAGE_SYNC
 const HHV_CATALOG_PATH =
   process.env.SCRAPER_HHV_CATALOG_PATH || "/clothing/katalog/filter/sneaker-N418";
 const HHV_MAX_CATALOG_PAGES = Math.max(1, Number(process.env.SCRAPER_HHV_MAX_CATALOG_PAGES || 14));
+const HHV_SITEMAP_INDEX_URL = "https://www.hhv.de/sitemap.xml";
+const HHV_GOTO_TIMEOUT_MS = Math.max(15_000, Number(process.env.SCRAPER_HHV_GOTO_TIMEOUT_MS || 45_000));
+const HHV_BOT_WALL_WAIT_MS = Math.max(5_000, Number(process.env.SCRAPER_HHV_BOT_WALL_WAIT_MS || 20_000));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Anti-bot interstitial (~1.8KB obfuscated JS) — catalog/product HTML never loads. */
+export function isHhvBotWall(html: string): boolean {
+  const trimmed = String(html ?? "").trim();
+  if (!trimmed) return true;
+  if (trimmed.length < 4_000 && /<script[^>]*>\s*\(function\(_0x/i.test(trimmed)) return true;
+  if (/datadome|px-captcha|cf-browser-verification|attention required/i.test(trimmed)) return true;
+  return false;
+}
+
+export async function collectSitemapProductUrls(
+  baseUrl: string,
+  maxProducts?: number
+): Promise<string[]> {
+  const origin = baseUrl.replace(/\/+$/, "");
+  const indexRes = await fetch(HHV_SITEMAP_INDEX_URL, {
+    headers: {
+      "User-Agent": USER_AGENT,
+      Accept: "application/xml,text/xml,*/*",
+      "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    },
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!indexRes.ok) throw new Error(`HHV sitemap index HTTP ${indexRes.status}`);
+  const indexXml = await indexRes.text();
+  if (isHhvBotWall(indexXml)) throw new Error("HHV sitemap index hit bot wall");
+
+  const shardUrls = [...indexXml.matchAll(/<loc>([^<]+)<\/loc>/gi)].map((m) => m[1].trim());
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const articleRe = /\/clothing\/artikel\/[a-z0-9-]+-\d+/i;
+
+  for (const shardUrl of shardUrls) {
+    try {
+      const res = await fetch(shardUrl, {
+        headers: {
+          "User-Agent": USER_AGENT,
+          Accept: "application/xml,text/xml,*/*",
+          "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+          Referer: `${origin}/`,
+        },
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!res.ok) continue;
+      const xml = await res.text();
+      if (isHhvBotWall(xml)) continue;
+      for (const match of xml.matchAll(/<loc>([^<]+)<\/loc>/gi)) {
+        const url = match[1].trim().split("?")[0];
+        if (!articleRe.test(url) || seen.has(url)) continue;
+        seen.add(url);
+        out.push(url);
+        if (maxProducts && out.length >= maxProducts) return out;
+      }
+    } catch (err) {
+      console.warn(`[SCRAPER] hhv sitemap shard failed ${shardUrl}:`, (err as Error)?.message || err);
+    }
+  }
+  return out;
+}
+
+async function gotoHhvPage(page: Page, url: string): Promise<string> {
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "commit", timeout: HHV_GOTO_TIMEOUT_MS });
+      const deadline = Date.now() + HHV_BOT_WALL_WAIT_MS;
+      while (Date.now() < deadline) {
+        const html = await page.content();
+        if (!isHhvBotWall(html) && html.length > 5_000) {
+          await dismissCookieBanner(page);
+          return html;
+        }
+        await sleep(1_000);
+      }
+      const html = await page.content();
+      if (isHhvBotWall(html)) {
+        throw new Error(`HHV bot wall on ${url}`);
+      }
+      await dismissCookieBanner(page);
+      return html;
+    } catch (err) {
+      lastErr = err;
+      await sleep(1_500 * (attempt + 1));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
 
 export type HhvSizeVariant = {
   sku: string;
@@ -216,8 +306,12 @@ async function collectCatalogProductUrls(page: Page, baseUrl: string, maxProduct
   const articleRe = /\/clothing\/artikel\/[a-z0-9-]+-\d+/i;
 
   for (let pageNum = 1; pageNum <= HHV_MAX_CATALOG_PAGES; pageNum++) {
-    await page.goto(catalogPageUrl(baseUrl, pageNum), { waitUntil: "domcontentloaded", timeout: 90_000 });
-    await dismissCookieBanner(page);
+    const html = await gotoHhvPage(page, catalogPageUrl(baseUrl, pageNum));
+    if (isHhvBotWall(html)) {
+      throw new Error(
+        `HHV catalog bot wall on page ${pageNum} — site serves JS challenge to this IP/browser. Need residential proxy or SCRAPER_HHV_PROXY.`
+      );
+    }
     await sleep(REQUEST_DELAY_MS);
 
     let lastCount = 0;
@@ -614,20 +708,65 @@ export async function scrapeHhvShop(shop: ScraperShop, runId: number, maxProduct
   };
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
+    const discovery = String(process.env.SCRAPER_HHV_DISCOVERY || "sitemap").toLowerCase();
+    let productUrls: string[] = [];
+    if (discovery === "catalog") {
+      // Catalog HTML is bot-walled on datacenter IPs; kept as optional fallback.
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-blink-features=AutomationControlled",
+          "--disable-dev-shm-usage",
+        ],
+        ...(process.env.SCRAPER_HHV_PROXY || process.env.SCRAPER_PROXY
+          ? { proxy: { server: String(process.env.SCRAPER_HHV_PROXY || process.env.SCRAPER_PROXY) } }
+          : {}),
+      });
+      const catalogContext = await browser.newContext({
+        userAgent: USER_AGENT,
+        locale: "de-CH",
+        extraHTTPHeaders: { "Accept-Language": "de-CH,de;q=0.9,fr-CH;q=0.8,en;q=0.7" },
+      });
+      await catalogContext.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      });
+      const catalogPage = await catalogContext.newPage();
+      productUrls = await collectCatalogProductUrls(catalogPage, shop.baseUrl, maxProducts);
+      await catalogPage.close();
+      await catalogContext.close();
+    } else {
+      // Sitemap XML is not bot-walled; catalog HTML is. Prefer sitemap discovery.
+      productUrls = await collectSitemapProductUrls(shop.baseUrl, maxProducts);
+    }
+    await updateRun(runId, { products_listed: productUrls.length });
+    if (!productUrls.length) {
+      throw new Error(`HHV discovery empty (mode=${discovery})`);
+    }
+
+    if (!browser) {
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-blink-features=AutomationControlled",
+          "--disable-dev-shm-usage",
+        ],
+        ...(process.env.SCRAPER_HHV_PROXY || process.env.SCRAPER_PROXY
+          ? { proxy: { server: String(process.env.SCRAPER_HHV_PROXY || process.env.SCRAPER_PROXY) } }
+          : {}),
+      });
+    }
     const context = await browser.newContext({
       userAgent: USER_AGENT,
       locale: "de-CH",
       extraHTTPHeaders: { "Accept-Language": "de-CH,de;q=0.9,fr-CH;q=0.8,en;q=0.7" },
     });
-    const catalogPage = await context.newPage();
-
-    const productUrls = await collectCatalogProductUrls(catalogPage, shop.baseUrl, maxProducts);
-    await catalogPage.close();
-    await updateRun(runId, { products_listed: productUrls.length });
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    });
 
     const existingRows = (await prismaAny.supplierVariant.findMany({
       where: { supplierVariantId: { startsWith: `${shop.key}_` } },
@@ -650,12 +789,22 @@ export async function scrapeHhvShop(shop: ScraperShop, runId: number, maxProduct
     );
 
     const productPage = await context.newPage();
+    let botWallHits = 0;
     for (const url of productUrls) {
       try {
-        await productPage.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
-        await dismissCookieBanner(productPage);
+        const html = await gotoHhvPage(productPage, url);
         await sleep(REQUEST_DELAY_MS);
-        const html = await productPage.content();
+        if (isHhvBotWall(html)) {
+          botWallHits++;
+          parseErrors++;
+          if (botWallHits >= 5 && wrote === 0) {
+            throw new Error(
+              `HHV bot wall on product pages (${botWallHits} hits) — need residential proxy (SCRAPER_HHV_PROXY). Sitemap discovery ok (${productUrls.length} urls).`
+            );
+          }
+          continue;
+        }
+        botWallHits = 0;
         const meta = extractProductFromJsonLd(html);
         if (!meta || !isHhvSneakerProduct(meta)) continue;
 
@@ -822,7 +971,7 @@ export async function scrapeHhvShop(shop: ScraperShop, runId: number, maxProduct
       variants_upserted: wrote,
       with_gtin: gtinMatched,
       errors: parseErrors,
-      message: `purpose=gtin_discovery catalog=${productUrls.length} processed=${processed} wrote=${wrote} gtin_matched=${gtinMatched} db_style_index=${styleIndex.size} db_gtin_hits=${dbGtinMatched} kickdb_gtin_hits=${kickdbGtinMatched} kickdb_styles=${kickdbCache.size} enrich_pass processed=${enrichProcessed} enriched=${enrichRows} enrich_errors=${enrichErrors} errors=${parseErrors} images_queued=${imageSyncQueue.size} images_synced=${imageSynced} images_failed=${imageFailed}`,
+      message: `purpose=gtin_discovery discovery=${discovery} catalog=${productUrls.length} processed=${processed} wrote=${wrote} gtin_matched=${gtinMatched} db_style_index=${styleIndex.size} db_gtin_hits=${dbGtinMatched} kickdb_gtin_hits=${kickdbGtinMatched} kickdb_styles=${kickdbCache.size} enrich_pass processed=${enrichProcessed} enriched=${enrichRows} enrich_errors=${enrichErrors} errors=${parseErrors} images_queued=${imageSyncQueue.size} images_synced=${imageSynced} images_failed=${imageFailed}`,
     });
   } catch (err: any) {
     await updateRun(runId, {

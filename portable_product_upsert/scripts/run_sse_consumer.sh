@@ -7,6 +7,7 @@ ROOT="/opt/shopify-automation"
 LOCK="/tmp/sse_consumer.lock"
 LOG="${ROOT}/logs/sse_consumer.log"
 PYTHON="${ROOT}/venv/bin/python3"
+if [[ ! -x "${PYTHON}" ]]; then PYTHON="$(command -v python3)"; fi
 # Shared secret + API base for the kickdb buffer routes (not in git).
 [[ -f "${ROOT}/.env.sse" ]] && set -a && source "${ROOT}/.env.sse" && set +a
 

@@ -16,6 +16,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends \
+        curl ca-certificates \
         xvfb fluxbox x11vnc novnc websockify \
         python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*

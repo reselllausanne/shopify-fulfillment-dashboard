@@ -55,10 +55,12 @@ function resolveEffectiveStock(
             const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
             if (extra > 0) {
               const dropshipDelisted = stx === 0;
+              const liquidationLocked = Boolean(variant?.manualLock);
               return mergePhysicalWithDropship({
                 dropshipStock: stx,
                 physicalQty: extra,
                 dropshipDelisted,
+                liquidationLocked,
               }).finalStock;
             }
             return stx;

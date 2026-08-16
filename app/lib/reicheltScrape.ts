@@ -17,10 +17,8 @@ import {
   isPlausibleReicheltSellPrice,
   type ReicheltLandedCost,
 } from "@/app/lib/reicheltPricing";
-import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
+import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
-import { scheduleScraperGalaxusFeedPush } from "@/app/lib/scraperFeedPush";
-
 export { startRun, hasRunningRun, recoverStaleRuns };
 
 const IMAGE_SYNC_CONCURRENCY = 5;
@@ -435,7 +433,14 @@ export async function scrapeReicheltShop(
       }
     }
 
-    await scheduleScraperGalaxusFeedPush({ shop, wrote: stats.wrote, syncImages: true });
+    if (stats.wrote > 0) {
+      try {
+        const { scheduleScraperGalaxusFeedPush } = await import("@/app/lib/scraperFeedPush");
+        await scheduleScraperGalaxusFeedPush({ shop, wrote: stats.wrote, syncImages: true });
+      } catch (err) {
+        console.warn(`[SCRAPER] rei feed push schedule failed:`, (err as Error)?.message || err);
+      }
+    }
 
     await updateRun(runId, {
       status: stats.listed === 0 && stats.processedProducts === 0 ? "error" : "ok",

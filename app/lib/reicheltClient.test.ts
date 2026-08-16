@@ -15,6 +15,7 @@ import {
   reicheltAcceptLanguage,
   reicheltReferer,
   toReicheltDeProductUrl,
+  isSoftSkipReicheltShardError,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -32,6 +33,17 @@ const SAMPLE_PRODUCT_HTML = `
 <img itemprop="image" src="https://cdn-reichelt.de/images/test.jpg">
 </body>
 </html>`;
+
+describe("isSoftSkipReicheltShardError", () => {
+  it("treats nginx 403/404 shard misses as soft skips", () => {
+    expect(isSoftSkipReicheltShardError(new Error("Reichelt HTTP 403 https://x/products_0.xml"))).toBe(
+      true
+    );
+    expect(isSoftSkipReicheltShardError(new Error("Reichelt HTTP 503 https://x/products_1.xml"))).toBe(
+      false
+    );
+  });
+});
 
 describe("reicheltAcceptLanguage", () => {
   it("avoids fr-CH primary language that triggers MyraCloud 503 on Node fetch", () => {

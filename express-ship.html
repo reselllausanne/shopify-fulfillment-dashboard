@@ -78,7 +78,7 @@
                   </td>
                   <td align="right" style="vertical-align:middle;">
                     <span style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#6b7280;">
-                      Commande <strong style="color:#111111;">{{order_name}}</strong>
+                      {{label_order}} <strong style="color:#111111;">{{order_name}}</strong>
                     </span>
                   </td>
                 </tr>
@@ -108,7 +108,7 @@
                             <div style="height:8px;"></div>
 
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:22px; color:#ffffff; font-weight:700;">
-                              Arrivée estimée :
+                              {{label_eta}}:
                             </div>
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:22px; color:#ffffff; font-weight:400;">
                               {{estimated_arrival_start}} – {{estimated_arrival_end}}
@@ -119,17 +119,17 @@
                             <!-- Tracking (optional) -->
                             {{#tracking_url}}
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff;">
-                              Tracking :
+                              {{tracking_label}}:
                             </div>
                             <div style="height:6px;"></div>
                             <a href="{{.}}" target="_blank" rel="noopener noreferrer"
                               style="font-size:14px; font-family:Arial, Helvetica, sans-serif; color:#ffffff; text-decoration:none; border-radius:4px; background:#55b3f3; display:inline-block; line-height:36px; padding:0 14px; font-weight:700;">
-                              Suivre ma commande
+                              {{cta_track}}
                             </a>
                             {{/tracking_url}}
                             {{^tracking_url}}
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff; opacity:.75;">
-                              Tracking : à venir
+                              {{tracking_pending_text}}
                             </div>
                             {{/tracking_url}}
                           </td>
@@ -137,7 +137,7 @@
                           <!-- RIGHT (steps) -->
                           <td class="stack steps-col" width="48%" style="width:48%; vertical-align:top;">
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#ffffff; opacity:.9; font-weight:800; padding-bottom:6px;">
-                              Statut
+                              {{label_status}}
                             </div>
 
                             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
@@ -231,20 +231,20 @@
 
                                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                                   <tr>
-                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">ID de style</td>
+                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">{{label_style_id}}</td>
                                     <td align="right" style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#111111; font-weight:700;">{{style_id}}</td>
                                   </tr>
                                   <tr>
-                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">Taille</td>
+                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">{{label_size}}</td>
                                     <td align="right" style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#111111; font-weight:700;">{{size_label}}</td>
                                   </tr>
                                   <tr>
-                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">Numéro de commande</td>
+                                    <td style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">{{label_order_number}}</td>
                                     <td align="right" style="padding:6px 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#111111; font-weight:700;">{{order_name}}</td>
                                   </tr>
 
                                   <tr>
-                                    <td style="padding:10px 0 0 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">Prix de vente</td>
+                                    <td style="padding:10px 0 0 0; font-family:Arial, Helvetica, sans-serif; font-size:14px; color:#6b7280; font-weight:700;">{{label_sale_price}}</td>
                                     <td align="right" style="padding:10px 0 0 0; font-family:Arial, Helvetica, sans-serif; font-size:16px; color:#111111; font-weight:800;">CHF {{display_price_chf}}</td>
                                   </tr>
                                 </table>
@@ -259,8 +259,8 @@
                     <div style="height:12px;"></div>
 
                     <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#6b7280; padding:0 2px;">
-                      Des questions sur ta commande ?
-                      <a href="{{faq_url}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">Consulte notre page d’informations</a>
+                      {{faq_intro}}
+                      <a href="{{faq_url}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">{{faq_link_text}}</a>
                     </div>
                   </td>
                 </tr>
@@ -274,9 +274,9 @@
                 <tr>
                   <td style="padding:14px 18px 18px 18px;">
                     <div style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#6b7280;">
-                      © {{current_year}} Resell Lausanne. Tous droits réservés.<br/>
-                      L'expéditeur de cet e-mail est Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Suisse.<br/>
-                      Besoin d’aide ? <a href="mailto:{{support_email}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">{{support_email}}</a>
+                      © {{current_year}} Resell Lausanne. {{footer_rights}}<br/>
+                      {{footer_sender}}<br/>
+                      {{footer_help}} <a href="mailto:{{support_email}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">{{support_email}}</a>
                     </div>
                   </td>
                 </tr>

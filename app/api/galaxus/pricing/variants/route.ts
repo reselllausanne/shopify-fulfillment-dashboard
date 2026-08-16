@@ -120,7 +120,7 @@ export async function GET(request: Request) {
     let galaxusPriceExVat: number | null = null;
     let galaxusPriceIncVat: number | null = null;
     if (manualLock && manualPrice && manualPrice > 0) {
-      // manualPrice = final Galaxus PurchasePriceExclVat (operator-stated), not TTC.
+      // Shelf/soldes sell — same number as Shopify. Never strip VAT for Galaxus.
       galaxusPriceExVat = manualPrice;
       const defaults = getDefaultPricing();
       const vatRate = defaults.vatRate;

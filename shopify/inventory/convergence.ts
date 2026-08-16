@@ -11,6 +11,8 @@ import {
 import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
+import { resolveInStockFixedPrice } from "@/shopify/inventory/inStockFixedPrice";
+import { syncPhysicalExpressAvailability } from "@/shopify/inventory/syncPhysicalExpressAvailability";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
 /**
@@ -42,7 +44,11 @@ import {
   syncLiquidationExpressPriceMetafield,
 } from "@/shopify/restock/liquidationExpressPrice";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
-import { LIQUIDATION_LOCATION_IDS, ONLINE_LOCATION } from "@/shopify/inventory/locationConfig";
+import {
+  isJmoneyPriceLockNote,
+  LIQUIDATION_LOCATION_IDS,
+  ONLINE_LOCATION,
+} from "@/shopify/inventory/locationConfig";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -364,9 +370,45 @@ export async function convergeVariant(
   }
 
   const isEssentials = isEssentialsShopifyVariant(shopifyVariant);
+  const fixedPriceRule = resolveInStockFixedPrice({
+    sku: shopifyVariant?.sku ?? null,
+    title: shopifyVariant?.productTitle ?? null,
+    productId: shopifyVariant?.productId ?? null,
+  });
 
   if (isEssentials && bussignyQty > 0) {
     warnings.push("Essentials product — liquidation skipped (Bussigny stock kept at manual price)");
+  }
+
+  // Fixed-price warehouse lanes (Essentials / Bape / AP×Travis):
+  // - never StockX liquidation / never auto-reprice
+  // - express 48h only while physical stock remains; normal price stays
+  if (fixedPriceRule && shopifyVariant?.variantId) {
+    const expressSync = await syncPhysicalExpressAvailability({
+      variantId: shopifyVariant.variantId,
+      physicalQty,
+      fixedPriceRule,
+      sku: shopifyVariant.sku,
+      title: shopifyVariant.productTitle,
+      productId: shopifyVariant.productId,
+    });
+    changes.push(...expressSync.changes);
+    warnings.push(...expressSync.warnings);
+    if (physicalQty <= 0) {
+      warnings.push(
+        `${fixedPriceRule.label} — physical=0, express/48h off, normal price kept`
+      );
+    }
+    return {
+      gtin: cleanGtin,
+      physicalQty,
+      bussignyQty,
+      homeQty,
+      desired: "dropship",
+      changed: changes.length > 0,
+      changes,
+      warnings,
+    };
   }
 
   if (isAdminOnlyShopifyVariant(shopifyVariant?.variantId, shopifyVariant?.productId)) {
@@ -513,10 +555,13 @@ export async function convergeVariant(
     // Never wipe operator Galaxus liquidation notes (e.g. mq2-liquidation) — those are feed prices, not Bussigny soldes.
     const note = String(stxRow?.manualNote ?? "");
     const preserveGalaxusLiquidation = /mq2-liquidation/i.test(note) || /galaxus-liquidation/i.test(note);
+    // JMoney / Money Kickz fixed retail — never clear on Bussigny=0 / web sale.
+    const preserveJmoneyLock = isJmoneyPriceLockNote(note);
+    const preserveManualLock = preserveGalaxusLiquidation || preserveJmoneyLock;
     const hadDbLiquidation = Boolean(stxRow?.manualLock);
     if (
       stxRow &&
-      !preserveGalaxusLiquidation &&
+      !preserveManualLock &&
       (hadDbLiquidation || stxRow.manualPrice !== null || stxRow.manualStock !== null)
     ) {
       await prisma.supplierVariant.update({
@@ -532,6 +577,8 @@ export async function convergeVariant(
       changes.push("DB manualLock=false, cleared manual overrides");
     } else if (stxRow && preserveGalaxusLiquidation) {
       warnings.push(`preserved Galaxus liquidation lock (${note || "named"})`);
+    } else if (stxRow && preserveJmoneyLock) {
+      warnings.push(`preserved JMoney Kickz price lock (${note || "named"})`);
     }
 
     if (shopifyVariant?.variantId && shopifyVariant.productId) {
@@ -543,6 +590,15 @@ export async function convergeVariant(
           warnings.push(`Shopify price_locked read failed: ${err?.message ?? err}`);
         }
 
+        // Keep JMoney Kickz fixed retail through post-sale / dropship converge.
+        if (preserveJmoneyLock || (isLocked && preserveManualLock)) {
+          if (!isLocked) {
+            await writeShopifyPriceLocked(shopifyVariant.variantId, true);
+            changes.push("Shopify price_locked=true (jmoney preserve)");
+          } else {
+            changes.push("Shopify price_locked preserved (jmoney)");
+          }
+        } else {
         const currentPrice = toNumber(shopifyVariant.price);
         const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
         const dropshipPrice =
@@ -645,6 +701,7 @@ export async function convergeVariant(
             warnings.push(`Shopify express_price restore failed: ${err?.message ?? err}`);
           }
         }
+        } // end else (!preserveJmoneyLock)
       } catch (err: any) {
         warnings.push(`Shopify unlock/revert failed: ${err?.message ?? err}`);
       }
@@ -656,6 +713,20 @@ export async function convergeVariant(
   // already requires Bussigny qty > 0 + manualLock). Dropship always clears.
   const liquidationLockActive = desired === "liquidation";
   await syncBussignyDelivery48h(shopifyVariant, cleanGtin, liquidationLockActive, changes, warnings);
+
+  // Exact variant only: physical inventory enables express; every other size
+  // clears it. Do not let a product's StockX express lane mark sibling sizes.
+  if (shopifyVariant?.variantId) {
+    const expressSync = await syncPhysicalExpressAvailability({
+      variantId: shopifyVariant.variantId,
+      physicalQty,
+      sku: shopifyVariant.sku,
+      title: shopifyVariant.productTitle,
+      productId: shopifyVariant.productId,
+    });
+    changes.push(...expressSync.changes);
+    warnings.push(...expressSync.warnings);
+  }
 
   return {
     gtin: cleanGtin,

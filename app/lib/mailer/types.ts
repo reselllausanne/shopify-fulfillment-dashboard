@@ -5,8 +5,10 @@ export type MailSendResult =
 export type StockXMilestoneEmailInput = {
   to: string;
   stockxStates?: any[] | null;
+  language?: "fr" | "en";
   match: {
     id: string;
+    customerTrackingToken?: string | null;
     shopifyOrderName: string;
     shopifyProductTitle: string;
     shopifySku?: string | null;

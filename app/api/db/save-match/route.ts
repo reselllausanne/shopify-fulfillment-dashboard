@@ -13,6 +13,7 @@ export const runtime = "nodejs";
 
 type EmailMatch = {
   id: string;
+  customerTrackingToken: string | null;
   shopifyOrderName: string;
   shopifyProductTitle: string;
   shopifySku: string | null;
@@ -58,6 +59,7 @@ function pickEmailMatch(m: any): EmailMatch {
 
   return {
     id: m.id,
+    customerTrackingToken: m.customerTrackingToken ?? null,
     shopifyOrderName: m.shopifyOrderName,
     shopifyProductTitle: m.shopifyProductTitle,
     shopifySku: m.shopifySku ?? null,
@@ -415,6 +417,7 @@ export async function POST(req: Request) {
         where: { shopifyLineItemId },
         select: {
           id: true,
+          customerTrackingToken: true,
           shopifyOrderName: true,
           shopifyProductTitle: true,
           shopifySku: true,

@@ -58,6 +58,7 @@ export async function sendMilestoneEmailForMatch({
       id: true,
       shopifyOrderId: true,
       shopifyOrderName: true,
+      customerTrackingToken: true,
       shopifyProductTitle: true,
       shopifySku: true,
       shopifySizeEU: true,
@@ -159,6 +160,7 @@ export async function sendMilestoneEmailForMatch({
     stockxStates: states,
     match: {
       id: match.id,
+      customerTrackingToken: match.customerTrackingToken ?? null,
       shopifyOrderName: match.shopifyOrderName,
       shopifyProductTitle: match.shopifyProductTitle,
       shopifySku: match.shopifySku ?? null,

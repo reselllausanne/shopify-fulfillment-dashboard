@@ -11,6 +11,7 @@ import {
   createLimiter,
 } from "./bulkSql";
 import { runKickdbEnrich } from "@/galaxus/kickdb/enrichJob";
+import { buildBuySourceOverrideStockUpdates } from "@/galaxus/warehouse/buySourceOverride";
 
 type StockSyncResult = {
   processed: number;
@@ -92,6 +93,26 @@ async function removeZeroStockSupplierVariants(params: {
   return { removed, skipped: false };
 }
 
+async function syncLockedListingStockFromBuySource(
+  rows: Array<{ supplierVariantId: string; stock?: number | null }>,
+  now: Date
+): Promise<number> {
+  const stockByBuySupplierVariantId = new Map(
+    rows.map((row) => [row.supplierVariantId, row.stock ?? null] as const)
+  );
+  const updates = buildBuySourceOverrideStockUpdates(stockByBuySupplierVariantId);
+  let updated = 0;
+
+  for (const update of updates) {
+    const result = await prisma.supplierVariant.updateMany({
+      where: { supplierVariantId: update.listingSupplierVariantId },
+      data: { manualStock: update.manualStock, manualUpdatedAt: now },
+    });
+    updated += result.count;
+  }
+  return updated;
+}
+
 export async function runStockSync(options: StockSyncOptions = {}): Promise<StockSyncResult> {
   const client = createGoldenSupplierClient();
   const startedAt = Date.now();
@@ -140,6 +161,7 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     created += await bulkInsertSupplierVariants(batch, now);
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: true });
   }
+  const linkedListingStockUpdated = await syncLockedListingStockFromBuySource(rows, now);
 
   const mappingRows = rows.map((r) => {
     const status = r.gtin ? "SUPPLIER_GTIN" : "PENDING_GTIN";
@@ -191,6 +213,7 @@ export async function runStockSync(options: StockSyncOptions = {}): Promise<Stoc
     updatedCount: updated,
     mappingInserted,
     mappingUpdated,
+    linkedListingStockUpdated,
     remappedToExistingGtinRow: remappedRowsResult.remapped,
     removedMissing: removeResult.removed,
     removedZeroStock: removeZeroStockResult.removed,
@@ -245,6 +268,7 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
   for (const batch of chunkArray(rows, 500)) {
     updated += await bulkUpdateSupplierVariants(batch, now, { updateGtinWhenProvided: false });
   }
+  const linkedListingStockUpdated = await syncLockedListingStockFromBuySource(rows, now);
 
   const mappingRows = rows
     .filter((r) => r.gtin && r.providerKey)
@@ -294,6 +318,7 @@ export async function runStockPriceSync(options: StockSyncOptions = {}): Promise
     updatedCount: updated,
     mappingInserted,
     mappingUpdated,
+    linkedListingStockUpdated,
     remappedToExistingGtinRow: remappedRowsResult.remapped,
     removedMissing: removeResult.removed,
     removedZeroStock: removeZeroStockResult.removed,

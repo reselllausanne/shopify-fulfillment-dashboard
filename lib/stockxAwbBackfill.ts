@@ -45,6 +45,19 @@ export type AwbBackfillOptions = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function normalizeStockxStatus(
+  currentStatusKey: string | null | undefined,
+  orderStatusRaw: string | null | undefined
+): string | null {
+  const key = String(currentStatusKey || "").trim().toUpperCase();
+  if (key) return key;
+  const raw = String(orderStatusRaw || "").trim().toUpperCase();
+  if (!raw) return null;
+  if (raw.includes("CANCEL")) return "CANCELLED";
+  if (raw.includes("REFUND")) return "REFUNDED";
+  return raw;
+}
+
 export function carrierFromTrackingUrl(trackingUrl: string | null): string | null {
   if (!trackingUrl) return null;
   const lowered = trackingUrl.toLowerCase();
@@ -183,7 +196,10 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
       consecutiveAuthFailures = 0;
       const trackingUrl = buyOrder?.shipping?.shipment?.trackingUrl || null;
       const awb = extractAwbFromTrackingUrl(trackingUrl);
-      const stockxStatus = buyOrder?.currentStatus?.key || null;
+      const stockxStatus = normalizeStockxStatus(
+        buyOrder?.currentStatus?.key || null,
+        buyOrder?.status || null
+      );
       const carrier = carrierFromTrackingUrl(trackingUrl);
       const states = buyOrder?.states ?? null;
       const statesHash = hashStockXStates(states as any);
@@ -209,7 +225,7 @@ export async function runAwbBackfill(options: AwbBackfillOptions): Promise<AwbBa
           ...(stockxStatus ? { stockxStatus } : {}),
           ...(buyOrder?.checkoutType ? { stockxCheckoutType: buyOrder.checkoutType } : {}),
           ...(states && statesHash
-            ? { stockxStates: states, stockxStatesHash: statesHash }
+            ? { stockxStates: states, stockxStatesHash: statesHash, stockxStatesUpdatedAt: new Date() }
             : {}),
           ...(estimatedDelivery ? { stockxEstimatedDelivery: new Date(estimatedDelivery) } : {}),
           ...(latestEstimatedDelivery

@@ -494,8 +494,25 @@ export default function WarehouseBulkPage() {
                                     NER_ · partner stock
                                   </span>
                                 ) : proc?.warehouseStockHint === "GOLDEN" ? (
-                                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950 shrink-0">
-                                    GLD · Golden — do not buy StockX
+                                  <span
+                                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950 shrink-0"
+                                    title={
+                                      proc?.buySourceOverride?.note
+                                        ? `${proc.buySourceOverride.note}${
+                                            proc.buySourceOverride.buyProviderKey
+                                              ? ` · ${proc.buySourceOverride.buyProviderKey}`
+                                              : ""
+                                          }`
+                                        : "Golden dropship — do not buy StockX"
+                                    }
+                                  >
+                                    {proc?.buySourceOverride
+                                      ? `BUY GLD${
+                                          proc.buySourceOverride.buyPriceChf != null
+                                            ? ` @ ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
+                                            : ""
+                                        } — no StockX`
+                                      : "GLD · Golden — do not buy StockX"}
                                   </span>
                                 ) : null}
                                 <PhysicalStockBadge
@@ -603,7 +620,13 @@ export default function WarehouseBulkPage() {
                                   proc?.warehouseStockHint === "GOLDEN" ? (
                                     <span>
                                       {proc?.warehouseStockHint === "GOLDEN"
-                                        ? "GLD/Golden — do not buy on StockX. Order on Golden manually, then mark shipped."
+                                        ? proc?.buySourceOverride
+                                          ? `Listed STX but buy Golden: ${proc.buySourceOverride.buySupplierVariantId}${
+                                              proc.buySourceOverride.buyPriceChf != null
+                                                ? ` @ CHF ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
+                                                : ""
+                                            }. Do not buy StockX — order Golden, then mark shipped.`
+                                          : "GLD/Golden — do not buy on StockX. Order on Golden manually, then mark shipped."
                                         : "Supplier SKU THE_/the_ or NER_/ner_ — no StockX link. Mark shipped when ready."}
                                     </span>
                                   ) : (

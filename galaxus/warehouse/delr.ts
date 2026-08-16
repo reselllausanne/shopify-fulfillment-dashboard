@@ -16,7 +16,7 @@ import {
 import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
 import { GALAXUS_SHIPMENT_CARRIER_ALLOWLIST } from "@/galaxus/config";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
-import { getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
+import { getStxLinkStatusForOrder, getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
 import { deductTheCatalogStockForGalaxusLines } from "@/galaxus/warehouse/theCatalogStock";
 import {
   removeGalaxusDelrFulfillmentExpenses,
@@ -279,13 +279,21 @@ export async function uploadDelrForShipment(
     (stxMatches ?? []).some((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0);
   const isDirect = String(shipment.order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
   const allowDelrByMatch = Boolean(shipment.order?.ordrSentAt) && hasStockxMatch;
+  // Direct Swiss Post: StockX link only required when the order actually has STX lines.
+  // NER / physical / local stock has no GalaxusStockxMatch — old gate blocked DELR forever.
   if (isDirect && !options.force && !allowDelrByMatch) {
-    return {
-      shipmentId,
-      status: "error",
-      httpStatus: 409,
-      message: "StockX order not linked yet",
-    };
+    const orderRef = String(shipment.order?.galaxusOrderId ?? shipment.orderId ?? "").trim();
+    const stxLink = orderRef
+      ? await getStxLinkStatusForOrder(orderRef).catch(() => null)
+      : null;
+    if (stxLink?.hasStxItems) {
+      return {
+        shipmentId,
+        status: "error",
+        httpStatus: 409,
+        message: "StockX order not linked yet",
+      };
+    }
   }
   if (!isDirect && isStxShipment && stxStatus?.hasStxItems && !options.force && !isManual && !allowDelrByMatch) {
     if (!stxStatus.allLinked) {

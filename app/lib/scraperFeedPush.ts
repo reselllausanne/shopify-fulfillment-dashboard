@@ -1,4 +1,5 @@
-import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
+// Use Core (no `server-only`) so scraper CLI (tsx) can schedule pushes too.
+import { requestFeedPush } from "@/galaxus/ops/feedPipelineCore";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 

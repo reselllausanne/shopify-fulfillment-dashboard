@@ -82,10 +82,12 @@ export function resolveEffectiveStock(
     if (physicalQty > 0) {
       // Delist detection: STX price cap or non-express forced stxStock to 0.
       const dropshipDelisted = stxStock === 0;
+      const liquidationLocked = Boolean(variant?.manualLock);
       return mergePhysicalWithDropship({
         dropshipStock: stxStock,
         physicalQty,
         dropshipDelisted,
+        liquidationLocked,
       }).finalStock;
     }
     return stxStock;

@@ -7,6 +7,7 @@ import {
   extractProductFromJsonLd,
   extractSizeVariants,
   extractWeightGrams,
+  isHhvBotWall,
   isHhvSneakerProduct,
   resolveGtinsFromStyleIndex,
   sizesMatch,
@@ -24,6 +25,17 @@ const shop: ScraperShop = {
 };
 
 describe("hhvScrape parsers", () => {
+  it("detects obfuscated bot-wall HTML", () => {
+    expect(
+      isHhvBotWall(
+        `<html><head><script type="text/javascript">(function(_0x363415,_0x4f5e7c){var _0x4f0547=a0_0x2695;</script></head></html>`
+      )
+    ).toBe(true);
+    expect(isHhvBotWall(`<html><body><div class="size" data-value="1"><span class="title">42</span></div>${"x".repeat(6000)}</body></html>`)).toBe(
+      false
+    );
+  });
+
   it("extracts product JSON-LD with CHF", () => {
     const html = `
       <script type="application/ld+json">

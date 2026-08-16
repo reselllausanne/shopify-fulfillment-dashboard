@@ -2,6 +2,7 @@ import {
   galaxusLineWarehouseStockHint,
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
+import { resolveGalaxusBuySourceOverride } from "@/galaxus/warehouse/buySourceOverride";
 import { sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { expandGtinsForDbLookup } from "@/galaxus/stx/purchaseUnits";
 
@@ -75,6 +76,7 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
   return lines.map((line) => {
     const qty = Math.max(Number(line.quantity ?? 1), 1);
     const whHint = galaxusLineWarehouseStockHint(line);
+    const buyOverride = resolveGalaxusBuySourceOverride(line);
     /** Own / partner / Golden (THE_/NER_/GLD_): not fulfilled via StockX buy link. */
     if (whHint) {
       const source =
@@ -83,14 +85,18 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           : whHint === "NER_STOCK"
             ? ("ner_stock" as const)
             : ("golden_manual" as const);
+      const overrideBuy =
+        buyOverride?.buyPriceChfFallback != null && Number.isFinite(buyOverride.buyPriceChfFallback)
+          ? Number(buyOverride.buyPriceChfFallback)
+          : null;
       const units = Array.from({ length: qty }, (_, i) => ({
         unitIndex: i,
         linked: true,
         source,
         stockxOrderNumber: null as string | null,
         stockxOrderId: null as string | null,
-        stockxAmount: null as number | null,
-        stockxCurrencyCode: null as string | null,
+        stockxAmount: overrideBuy,
+        stockxCurrencyCode: overrideBuy != null ? ("CHF" as const) : null,
         awb: null as string | null,
       }));
       return {
@@ -101,12 +107,21 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
           stockxOrderNumber: null,
           stockxOrderId: null,
           awb: null,
-          stockxCostChf: null,
-          stockxCostCurrency: null,
+          stockxCostChf: overrideBuy,
+          stockxCostCurrency: overrideBuy != null ? "CHF" : null,
           stockxEstimatedDelivery: null,
           stockxLatestEstimatedDelivery: null,
           units,
           warehouseStockHint: whHint,
+          buySourceOverride: buyOverride
+            ? {
+                hint: buyOverride.hint,
+                buySupplierVariantId: buyOverride.buySupplierVariantId,
+                buyProviderKey: buyOverride.buyProviderKey ?? null,
+                note: buyOverride.note,
+                buyPriceChf: overrideBuy,
+              }
+            : null,
         },
       };
     }
