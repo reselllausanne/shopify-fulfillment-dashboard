@@ -1,0 +1,11 @@
+[Unit]
+Description=Resell Ads Google auth health check (Ads + Merchant grants)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+EnvironmentFile=-/etc/default/resell-ads
+ExecStart=/usr/bin/env bash -lc 'docker compose exec -T web npm run ads -- auth:health'
+StandardOutput=journal
+StandardError=journal

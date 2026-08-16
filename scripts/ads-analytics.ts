@@ -19,6 +19,7 @@ import "dotenv/config";
 import { analyzeCommand } from "../adsanalytics/commands/analyze";
 import { analyzeModelsCommand } from "../adsanalytics/commands/analyzeModels";
 import { authCheckCommand } from "../adsanalytics/commands/authCheck";
+import { authHealthCommand } from "../adsanalytics/commands/authHealth";
 import { authOauthCommand } from "../adsanalytics/commands/authOauth";
 import { backfillCommand } from "../adsanalytics/commands/backfill";
 import { comparePeriodsCommand } from "../adsanalytics/commands/comparePeriods";
@@ -71,6 +72,7 @@ function usage(): void {
 Commands:
   auth:check                 Verify OAuth + reach the Ads account
   auth:oauth                 One-time browser login → write refresh token to .env
+  auth:health                Exercise Ads + Merchant grants, alert when revoked
   probe --days=N             Pull product rows (100k cap), dump sample to tmp/
   backfill --days=N          Month-by-month upsert (no row cap); syncs DailyAdSpend
   backfill --from= --to=     Exact inclusive date window upsert
@@ -200,6 +202,8 @@ async function main(): Promise<number> {
       return authCheckCommand();
     case "auth:oauth":
       return authOauthCommand();
+    case "auth:health":
+      return authHealthCommand();
     case "probe":
       return probeCommand({
         days: intFlag(args, "days", 30),

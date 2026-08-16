@@ -13,7 +13,16 @@ import { URL } from "node:url";
 
 import { EXIT_CONFIG_MISSING, EXIT_FAILED, EXIT_OK, log, logError } from "@/adsanalytics/run";
 
-const SCOPE = "https://www.googleapis.com/auth/adwords";
+/**
+ * Ads and Merchant share one grant. Two separate consents on the same client id kept
+ * drifting: renewing one left the other on an older token nobody re-checked until a
+ * nightly job died. One grant means one thing to renew.
+ */
+const SCOPES = [
+  "https://www.googleapis.com/auth/adwords",
+  "https://www.googleapis.com/auth/content",
+] as const;
+const SCOPE = SCOPES.join(" ");
 /** Desktop OAuth clients allow loopback; downloaded JSON lists http://localhost. */
 const REDIRECT_URI = "http://localhost:8765";
 const PORT = 8765;
@@ -68,9 +77,10 @@ Do this once, logged in as reselllausanne@gmail.com:
    GOOGLE_ADS_CLIENT_ID=.....apps.googleusercontent.com
    GOOGLE_ADS_CLIENT_SECRET=.....
 
-6. OAuth consent screen: External (or Internal if Workspace), add yourself
-   as test user: reselllausanne@gmail.com
-   Scope needed later is only: ${SCOPE}
+6. OAuth consent screen: External, and PUBLISH the app (Publishing status:
+   "In production"). While it stays in "Testing", Google revokes every refresh
+   token after 7 days and all nightly jobs die.
+   Scopes needed: ${SCOPES.join(", ")}
 
 Then re-run:
 
@@ -182,7 +192,11 @@ export async function authOauthCommand(): Promise<number> {
     return EXIT_FAILED;
   }
 
-  const parsed = JSON.parse(text) as { refresh_token?: string; access_token?: string };
+  const parsed = JSON.parse(text) as {
+    refresh_token?: string;
+    access_token?: string;
+    scope?: string;
+  };
   if (!parsed.refresh_token) {
     logError("auth.oauth.no_refresh_token", {
       note: "Google returned no refresh_token. Re-run with prompt=consent (this command already sets it), or revoke prior access at https://myaccount.google.com/permissions and try again.",
@@ -190,11 +204,29 @@ export async function authOauthCommand(): Promise<number> {
     return EXIT_FAILED;
   }
 
-  upsertEnv(envPath, { GOOGLE_ADS_REFRESH_TOKEN: parsed.refresh_token });
+  const grantedScopes = (parsed.scope ?? "").split(" ").filter(Boolean);
+  const missingScopes = SCOPES.filter((scope) => !grantedScopes.includes(scope));
+  if (missingScopes.length > 0) {
+    logError("auth.oauth.scope_missing", {
+      grantedScopes,
+      missingScopes,
+      note: "Untick nothing on the consent screen. Both Ads and Merchant scopes must be granted in the same consent.",
+    });
+    return EXIT_FAILED;
+  }
+
+  upsertEnv(envPath, {
+    GOOGLE_ADS_REFRESH_TOKEN: parsed.refresh_token,
+    GOOGLE_MERCHANT_REFRESH_TOKEN: parsed.refresh_token,
+  });
   log("auth.oauth.refresh_token_saved", {
     envPath,
     refreshTokenLength: parsed.refresh_token.length,
+    grantedScopes,
+    keysWritten: ["GOOGLE_ADS_REFRESH_TOKEN", "GOOGLE_MERCHANT_REFRESH_TOKEN"],
   });
-  console.info("\nRefresh token written to .env. Next:\n  npm run ads -- auth:check\n  npm run ads -- probe --days=30\n");
+  console.info(
+    "\nRefresh token written to .env (Ads + Merchant). Next:\n  npm run ads -- auth:health\n  npm run ads -- probe --days=30\n"
+  );
   return EXIT_OK;
 }

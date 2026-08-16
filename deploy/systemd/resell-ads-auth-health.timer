@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Resell Ads auth health check daily before the nightly jobs
+
+[Timer]
+OnCalendar=*-*-* 01:45:00
+Persistent=true
+Unit=resell-ads-auth-health.service
+
+[Install]
+WantedBy=timers.target
