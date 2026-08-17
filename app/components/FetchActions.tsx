@@ -14,6 +14,7 @@ type FetchActionsProps = {
   onImportGoatSession: (file: File | null) => void;
   onStockxLogin: () => void;
   stockxLoginLoading: boolean;
+  goatLoginLoading?: boolean;
   loading: boolean;
   isFetchingAll: boolean;
   isEnriching: boolean;
@@ -36,6 +37,7 @@ export default function FetchActions({
   onImportGoatSession,
   onStockxLogin,
   stockxLoginLoading,
+  goatLoginLoading = false,
   loading,
   isFetchingAll,
   isEnriching,
@@ -103,14 +105,14 @@ export default function FetchActions({
         </button>
         <button
           onClick={onGoatLogin}
-          disabled={loading || isFetchingAll}
+          disabled={loading || isFetchingAll || goatLoginLoading}
           className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          🐐 GOAT Login (Playwright)
+          {goatLoginLoading ? "🐐 GOAT connecting…" : "🐐 GOAT Login (Playwright)"}
         </button>
         <button
           onClick={onGoatDebug}
-          disabled={loading || isFetchingAll}
+          disabled={loading || isFetchingAll || goatLoginLoading}
           className="px-4 py-2 bg-amber-100 text-amber-900 rounded-md hover:bg-amber-200 disabled:bg-gray-200 disabled:cursor-not-allowed"
         >
           🐐 GOAT Debug Raw JSON
