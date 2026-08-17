@@ -41,25 +41,27 @@ export type InStockFixedPriceRule = InStockFixedPriceConfig & {
   titlePatterns?: RegExp[];
 };
 
-/** Owned warehouse / Lab stock — already expensed; margin = full sell price. */
-const OWNED_WAREHOUSE_COST_CHF = 0;
+/** Owned warehouse / Lab stock cost per unit (CHF). Values per user 2026-08-16. */
+const ESSENTIALS_COST_CHF = 26;
+const BAPE_COST_CHF = 35;
+const AUDEMARS_TRAVIS_COST_CHF = 40;
 
 export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   {
-    costChf: OWNED_WAREHOUSE_COST_CHF,
+    costChf: ESSENTIALS_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (fixed 59/89, full margin)",
+    matchReason: "Essential Hoodie (fixed 59/89, cost 26)",
     skuBases: ["192HO246258F", "192HO246250F"],
     titlePatterns: [/^Essentials Hoodie\b/i, /Fear of God Essentials.*Hoodie\b/i],
   },
   {
-    costChf: OWNED_WAREHOUSE_COST_CHF,
+    costChf: ESSENTIALS_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential T-Shirt (in stock)",
-    matchReason: "Essential T-Shirt (fixed 59/89, full margin)",
+    matchReason: "Essential T-Shirt (fixed 59/89, cost 26)",
     productIds: [
       "15340411617666", // Tee Stretch Limo SS22
       "15349630501250", // Tee Light Oatmeal (SS22)
@@ -72,11 +74,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
   },
   {
-    costChf: OWNED_WAREHOUSE_COST_CHF,
+    costChf: ESSENTIALS_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Shorts (in stock)",
-    matchReason: "Essential Shorts (fixed 59/89, full margin)",
+    matchReason: "Essential Shorts (fixed 59/89, cost 26)",
     productIds: [
       "15340410732930", // Shorts Stretch Limo (SS22)
       "15340410831234", // Shorts Dark Oatmeal (SS22)
@@ -86,11 +88,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     titlePatterns: [/^Essentials Shorts\b/i, /Fear of God Essentials.*Shorts\b/i],
   },
   {
-    costChf: OWNED_WAREHOUSE_COST_CHF,
+    costChf: BAPE_COST_CHF,
     sellChf: BAPE_SELL_CHF,
     expressChf: BAPE_EXPRESS_CHF,
     label: "Bape Tee (in stock)",
-    matchReason: "Bape Tee (fixed 69/99, full margin)",
+    matchReason: "Bape Tee (fixed 69/99, cost 35)",
     productIds: [
       "15356478325122", // Check by Bathing Tee White/Beige
       "15356478357890", // Big Ape Head Tee White
@@ -102,11 +104,11 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
   },
   {
-    costChf: OWNED_WAREHOUSE_COST_CHF,
+    costChf: AUDEMARS_TRAVIS_COST_CHF,
     sellChf: AUDEMARS_TRAVIS_SELL_CHF,
     expressChf: AUDEMARS_TRAVIS_EXPRESS_CHF,
     label: "Audemars x Travis Tee (in stock)",
-    matchReason: "Audemars x Travis Tee (fixed 89/109, full margin)",
+    matchReason: "Audemars x Travis Tee (fixed 89/109, cost 40)",
     productIds: [
       "15115016733058", // Vintage Tee Black
       "15115016831362", // Watch Face Tee Green

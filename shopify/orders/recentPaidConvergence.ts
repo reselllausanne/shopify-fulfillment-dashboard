@@ -220,6 +220,31 @@ export async function convergeRecentPaidShopifyOrders(options?: {
     schedulePostSaleMarketplacePricePush();
   }
 
+  // Auto-match OrderMatch pour chaque commande scannée (idempotent, cheap).
+  // Rattrape les cas où le webhook orders/paid a échoué.
+  const { upsertAutoOrderMatchesForPaidOrder } = await import("@/shopify/orders/autoMatchOnPaidOrder");
+  for (const [orderId] of orderSales) {
+    try {
+      const res = await upsertAutoOrderMatchesForPaidOrder(orderId);
+      if (res.fixedRule + res.moneyKickz + res.physicalZero > 0 || res.errors.length > 0) {
+        console.log("[shopify][recent-paid][auto-match]", {
+          orderId,
+          orderName: res.orderName,
+          fixedRule: res.fixedRule,
+          moneyKickz: res.moneyKickz,
+          physicalZero: res.physicalZero,
+          skippedProtected: res.skippedProtected,
+          errors: res.errors,
+        });
+      }
+    } catch (err: any) {
+      console.warn("[shopify][recent-paid][auto-match][error]", {
+        orderId,
+        error: err?.message ?? String(err),
+      });
+    }
+  }
+
   return {
     scanned: orders.length,
     processed: out.length,

@@ -7,6 +7,7 @@ import { resolveProviderKeyForGtin } from "@/shopify/restock/channelListingState
 import { processShopifyPaidPhysicalSale } from "@/shopify/localStock/processShopifyPaidPhysicalSale";
 import { refreshAfterShopifySale } from "@/shopify/orders/postSaleRefresh";
 import { markPaidLineProcessed } from "@/shopify/orders/paidLineState";
+import { upsertAutoOrderMatchesForPaidOrder } from "@/shopify/orders/autoMatchOnPaidOrder";
 
 export type OrderPaidLineItem = {
   id?: number | string;
@@ -395,6 +396,30 @@ export async function processOrdersPaidPayload(
       if (!synthetic && providerKey) providerKeys.add(providerKey);
     }
     schedulePostSaleMarketplacePricePush(null, Array.from(providerKeys));
+  }
+
+  // Auto-match OrderMatch pour les lanes cost-0 (physical) et Money Kickz (inventoryItem.unitCost).
+  // Idempotent, ne touche pas aux matches manuels / StockX existants.
+  if (orderId) {
+    try {
+      const autoMatch = await upsertAutoOrderMatchesForPaidOrder(orderId);
+      if (autoMatch.fixedRule + autoMatch.moneyKickz + autoMatch.physicalZero > 0 || autoMatch.errors.length > 0) {
+        console.log("[shopify][orders-paid][auto-match]", {
+          orderId,
+          orderName: autoMatch.orderName,
+          fixedRule: autoMatch.fixedRule,
+          moneyKickz: autoMatch.moneyKickz,
+          physicalZero: autoMatch.physicalZero,
+          skippedProtected: autoMatch.skippedProtected,
+          errors: autoMatch.errors,
+        });
+      }
+    } catch (err: any) {
+      console.warn("[shopify][orders-paid][auto-match][error]", {
+        orderId,
+        error: err?.message ?? String(err),
+      });
+    }
   }
 
   return { orderId, gtins, results };

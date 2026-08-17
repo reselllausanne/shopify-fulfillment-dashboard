@@ -175,12 +175,22 @@ export default function Home() {
   } | null>(null);
   const [trackingAlertLoading, setTrackingAlertLoading] = useState(false);
   const [trackingAlertError, setTrackingAlertError] = useState<string | null>(null);
-  const [unlinkedAlert, setUnlinkedAlert] = useState<{
+  const [unmatchedOrders, setUnmatchedOrders] = useState<{
     count: number;
-    items: any[];
+    paidPositiveCount: number;
+    paidPositiveNetChf: number;
+    netTotalChf: number;
+    days: number;
+    orders: Array<{
+      orderName: string;
+      createdAt: string;
+      financialStatus: string | null;
+      netSalesChf: number;
+    }>;
   } | null>(null);
-  const [unlinkedAlertLoading, setUnlinkedAlertLoading] = useState(false);
-  const [unlinkedAlertError, setUnlinkedAlertError] = useState<string | null>(null);
+  const [unmatchedLoading, setUnmatchedLoading] = useState(false);
+  const [unmatchedError, setUnmatchedError] = useState<string | null>(null);
+  const [unmatchedDays, setUnmatchedDays] = useState(30);
   const [goatDebugLoading, setGoatDebugLoading] = useState(false);
   const [goatDebugResult, setGoatDebugResult] = useState<string | null>(null);
   const [stockxLoginLoading, setStockxLoginLoading] = useState(false);
@@ -224,24 +234,29 @@ export default function Home() {
     }
   };
 
-  const loadUnlinkedAlert = async () => {
-    setUnlinkedAlertLoading(true);
-    setUnlinkedAlertError(null);
+  const loadUnmatchedOrders = async (days = unmatchedDays) => {
+    setUnmatchedLoading(true);
+    setUnmatchedError(null);
     try {
-      const res = await fetch("/api/notifications/unlinked-orders");
+      const res = await fetch(`/api/orders/unmatched?days=${days}`);
       const data = await res.json();
       if (res.ok && data?.ok) {
-        setUnlinkedAlert({
+        setUnmatchedOrders({
           count: data.count || 0,
-          items: data.items || [],
+          paidPositiveCount: data.paidPositiveCount || 0,
+          paidPositiveNetChf: Number(data.paidPositiveNetChf || 0),
+          netTotalChf: Number(data.netTotalChf || 0),
+          days: data.days || days,
+          orders: data.orders || [],
         });
+        setUnmatchedDays(data.days || days);
       } else {
-        setUnlinkedAlertError(data?.error || "Failed to load unlinked orders");
+        setUnmatchedError(data?.error || "Failed to load unmatched orders");
       }
     } catch (error: any) {
-      setUnlinkedAlertError(error?.message || "Failed to load unlinked orders");
+      setUnmatchedError(error?.message || "Failed to load unmatched orders");
     } finally {
-      setUnlinkedAlertLoading(false);
+      setUnmatchedLoading(false);
     }
   };
 
@@ -471,7 +486,7 @@ export default function Home() {
 
   useEffect(() => {
     loadTrackingAlert();
-    loadUnlinkedAlert();
+    loadUnmatchedOrders(30);
   }, []);
 
   const formatDate = (value?: string | null) => {
@@ -1285,43 +1300,94 @@ export default function Home() {
           </nav>
         </div>
 
-        {((unlinkedAlert?.items?.length ?? 0) > 0 || unlinkedAlertError) && (
-          <div className="mb-6 border rounded-lg p-4 bg-orange-50 border-orange-300">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-orange-900">
-                ⚠️ Unlinked Shopify lines (last 50 orders, no supplier / AWB):{" "}
-                {unlinkedAlert?.count ?? 0}
+        <div className="mb-6 border-2 border-red-600 rounded-lg p-4 bg-red-50">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-base font-bold text-red-900">
+                Commandes sans coût d&apos;achat: {unmatchedOrders?.count ?? "…"}
+                {unmatchedOrders != null && (
+                  <span className="font-semibold text-red-800">
+                    {" "}
+                    · {unmatchedOrders.paidPositiveNetChf.toLocaleString("fr-CH", {
+                      minimumFractionDigits: 0,
+                      maximumFractionDigits: 0,
+                    })}{" "}
+                    CHF net
+                  </span>
+                )}
               </div>
+              <p className="mt-1 text-xs text-red-800">
+                Shopify payé, aucune ligne OrderMatch = marge inconnue. Tri: plus vieux → plus récent.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {[14, 30, 90].map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => {
+                    setUnmatchedDays(d);
+                    void loadUnmatchedOrders(d);
+                  }}
+                  className={`text-xs px-2 py-1 rounded ${
+                    unmatchedDays === d
+                      ? "bg-red-700 text-white"
+                      : "bg-red-200 text-red-900 hover:bg-red-300"
+                  }`}
+                >
+                  {d}j
+                </button>
+              ))}
               <button
-                onClick={loadUnlinkedAlert}
-                disabled={unlinkedAlertLoading}
-                className="text-xs px-2 py-1 bg-orange-200 text-orange-900 rounded hover:bg-orange-300 disabled:opacity-60"
+                type="button"
+                onClick={() => void loadUnmatchedOrders(unmatchedDays)}
+                disabled={unmatchedLoading}
+                className="text-xs px-2 py-1 bg-red-200 text-red-900 rounded hover:bg-red-300 disabled:opacity-60"
               >
-                {unlinkedAlertLoading ? "Refreshing..." : "Refresh"}
+                {unmatchedLoading ? "…" : "Refresh"}
               </button>
             </div>
-            <p className="mt-1 text-xs text-orange-800">
-              Fulfillable lines without a DB match. Excludes in-stock Essentials.
-            </p>
-            {unlinkedAlertError && (
-              <p className="mt-2 text-xs text-red-700">Failed to load: {unlinkedAlertError}</p>
-            )}
-            {(unlinkedAlert?.items?.length ?? 0) > 0 && (
-              <div className="mt-2 max-h-48 overflow-auto space-y-1 text-xs text-orange-900">
-                {(unlinkedAlert?.items ?? []).map((item: any) => (
-                  <div key={item.shopifyLineItemId} className="flex flex-wrap gap-2 border-b border-orange-200 pb-1">
-                    <span className="font-semibold">{item.shopifyOrderName}</span>
-                    <span>{item.shopifyProductTitle}</span>
-                    {item.shopifySku && <span className="font-mono">{item.shopifySku}</span>}
-                    <span>Qty: {item.fulfillableQuantity}</span>
-                    <span>{item.displayFulfillmentStatus ?? "—"}</span>
-                    <span>Age: {item.ageDays ?? "—"}d</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
-        )}
+          {unmatchedError && (
+            <p className="mt-2 text-xs text-red-700">Erreur: {unmatchedError}</p>
+          )}
+          {(unmatchedOrders?.orders?.length ?? 0) > 0 && (
+            <div className="mt-3 max-h-80 overflow-auto border border-red-200 rounded bg-white">
+              <table className="min-w-full text-xs">
+                <thead className="bg-red-100 sticky top-0">
+                  <tr className="text-left text-red-900">
+                    <th className="px-2 py-1.5">Commande</th>
+                    <th className="px-2 py-1.5">Date</th>
+                    <th className="px-2 py-1.5">Statut</th>
+                    <th className="px-2 py-1.5 text-right">Net CHF</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unmatchedOrders!.orders.map((o) => (
+                    <tr key={o.orderName} className="border-t border-red-100">
+                      <td className="px-2 py-1 font-semibold text-gray-900">{o.orderName}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {formatDate(o.createdAt)}
+                      </td>
+                      <td className="px-2 py-1">{o.financialStatus ?? "—"}</td>
+                      <td className="px-2 py-1 text-right font-mono">
+                        {Number(o.netSalesChf).toLocaleString("fr-CH", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!unmatchedLoading && unmatchedOrders?.count === 0 && (
+            <p className="mt-2 text-xs text-green-800 font-medium">
+              Aucune commande sans match sur {unmatchedDays} jours.
+            </p>
+          )}
+        </div>
 
         {(over7TrackingItems.length > 0 || trackingAlertError) && (
           <div className="mb-6 space-y-3">

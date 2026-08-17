@@ -147,6 +147,15 @@ export function resolveOrderMatchCost(m: OrderMatchCostInput): {
     return { cost: 0, fullMargin: true };
   }
 
+  // Physical fulfillment (Website stock / stores / warehouse) sans unitCost natif
+  // = déjà expensé. INVENTORY_COST rows stockent le cost dans supplierCost et
+  // tombent dans la lane standard ci-dessous (pas full-margin).
+  const statusUpper = String(m.stockxStatus ?? "").trim().toUpperCase();
+  const refUpper = String(m.stockxOrderNumber ?? "").trim().toUpperCase();
+  if (statusUpper === "PHYSICAL_STOCK" || refUpper.startsWith("PHYS-")) {
+    return { cost: 0, fullMargin: true };
+  }
+
   const hasOverride =
     m.manualCostOverride !== null &&
     m.manualCostOverride !== undefined &&
