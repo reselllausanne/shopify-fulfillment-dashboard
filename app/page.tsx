@@ -182,6 +182,7 @@ export default function Home() {
     netTotalChf: number;
     days: number;
     orders: Array<{
+      shopifyOrderId: string;
       orderName: string;
       createdAt: string;
       financialStatus: string | null;
@@ -191,6 +192,14 @@ export default function Home() {
   const [unmatchedLoading, setUnmatchedLoading] = useState(false);
   const [unmatchedError, setUnmatchedError] = useState<string | null>(null);
   const [unmatchedDays, setUnmatchedDays] = useState(30);
+  const [unmatchedReconcile, setUnmatchedReconcile] = useState<{
+    orderId: string;
+    orderName: string;
+    loading: boolean;
+    error: string | null;
+    lines: ShopifyLineItem[];
+  } | null>(null);
+  const [unmatchedReconcileBusy, setUnmatchedReconcileBusy] = useState<string | null>(null);
   const [goatDebugLoading, setGoatDebugLoading] = useState(false);
   const [goatDebugResult, setGoatDebugResult] = useState<string | null>(null);
   const [stockxLoginLoading, setStockxLoginLoading] = useState(false);
@@ -247,7 +256,13 @@ export default function Home() {
           paidPositiveNetChf: Number(data.paidPositiveNetChf || 0),
           netTotalChf: Number(data.netTotalChf || 0),
           days: data.days || days,
-          orders: data.orders || [],
+          orders: (data.orders || []).map((o: any) => ({
+            shopifyOrderId: o.shopifyOrderId,
+            orderName: o.orderName,
+            createdAt: o.createdAt,
+            financialStatus: o.financialStatus,
+            netSalesChf: Number(o.netSalesChf || 0),
+          })),
         });
         setUnmatchedDays(data.days || days);
       } else {
@@ -257,6 +272,85 @@ export default function Home() {
       setUnmatchedError(error?.message || "Failed to load unmatched orders");
     } finally {
       setUnmatchedLoading(false);
+    }
+  };
+
+  const openUnmatchedReconcile = async (order: {
+    shopifyOrderId: string;
+    orderName: string;
+  }) => {
+    setUnmatchedReconcileBusy(order.shopifyOrderId);
+    setUnmatchedReconcile({
+      orderId: order.shopifyOrderId,
+      orderName: order.orderName,
+      loading: true,
+      error: null,
+      lines: [],
+    });
+    try {
+      const res = await fetch(
+        `/api/orders/unmatched/lines?orderId=${encodeURIComponent(order.shopifyOrderId)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
+      const openLines: ShopifyLineItem[] = (data.openLines || []).map((l: any) => ({
+        shopifyOrderId: l.shopifyOrderId,
+        orderName: l.orderName,
+        createdAt: l.createdAt,
+        displayFinancialStatus: l.displayFinancialStatus || "",
+        displayFulfillmentStatus: l.displayFulfillmentStatus,
+        customerEmail: l.customerEmail,
+        customerName: l.customerName,
+        customerFirstName: l.customerFirstName,
+        customerLastName: l.customerLastName,
+        shippingCountry: l.shippingCountry,
+        shippingCity: l.shippingCity,
+        lineItemId: l.lineItemId,
+        title: l.title,
+        sku: l.sku,
+        variantTitle: l.variantTitle,
+        quantity: l.quantity,
+        price: l.price,
+        totalPrice: l.totalPrice,
+        currencyCode: l.currencyCode,
+        sizeEU: l.sizeEU,
+        lineItemImageUrl: l.lineItemImageUrl,
+      }));
+
+      if (openLines.length === 0) {
+        setUnmatchedReconcile(null);
+        alert(
+          `${order.orderName}: plus de lignes à matcher (déjà matchées ou protection colis uniquement). Refresh la liste.`
+        );
+        await loadUnmatchedOrders(unmatchedDays);
+        return;
+      }
+
+      if (openLines.length === 1) {
+        setUnmatchedReconcile(null);
+        openManualEntryModal(openLines[0]);
+        return;
+      }
+
+      setUnmatchedReconcile({
+        orderId: order.shopifyOrderId,
+        orderName: order.orderName,
+        loading: false,
+        error: null,
+        lines: openLines,
+      });
+    } catch (error: any) {
+      setUnmatchedReconcile({
+        orderId: order.shopifyOrderId,
+        orderName: order.orderName,
+        loading: false,
+        error: error?.message || "Failed to load lines",
+        lines: [],
+      });
+    } finally {
+      setUnmatchedReconcileBusy(null);
     }
   };
 
@@ -629,102 +723,68 @@ export default function Home() {
     setLastResponsePayload(null);
   };
 
+  const mapGoatRows = (goatOrdersRaw: any[]) =>
+    goatOrdersRaw.map((o: any) => ({
+      ...o,
+      provider: "GOAT",
+      productTitleB: o.productTitle || o.displayName || null,
+      brandB: null,
+      sizeB: o.size || null,
+      thumbUrlB: o.thumbUrl || null,
+      imageUrlB: o.thumbUrl || null,
+      statusB: o.statusTitle || o.statusKey || null,
+      statusKeyB: o.statusKey || null,
+      estimatedDeliveryB: o.estimatedDeliveryDate || null,
+      latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
+      styleId: o.skuKey || o.styleId || null,
+    }));
+
+  const mergeGoatRowsIntoTable = (goatRows: any[]) => {
+    if (goatRows.length === 0) return;
+    const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
+    const combinedRows = [...existingRows, ...goatRows];
+    const seen = new Set<string>();
+    const dedupedRows = combinedRows.filter((row: any) => {
+      const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    setOrders(dedupedRows as OrderNode[]);
+    setEnrichedOrders(dedupedRows);
+  };
+
   const handleGoatLogin = async () => {
     setGoatDebugLoading(true);
     try {
-      const basePayload = {
-        headless: false,
-        includeRaw: false,
-        browser: "chromium",
-        persistent: true,
-      };
       const res = await fetch("/api/goat/playwright", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(basePayload),
+        body: JSON.stringify({
+          headless: false,
+          includeRaw: false,
+          browser: "chromium",
+          persistent: true,
+          maxWaitMs: 600000,
+        }),
       });
       const json = await res.json().catch(() => ({}));
+      if (json?.cookie) {
+        setGoatCookie(String(json.cookie));
+        setSaveToken(true);
+      }
+      if (json?.csrfToken) {
+        setGoatCsrfToken(String(json.csrfToken));
+        setSaveToken(true);
+      }
       if (!res.ok || json?.ok === false) {
         const message = String(json?.error || `HTTP ${res.status}`);
-        // Retry once with a fresh session (clears stale cookies that can block login)
-        if (/login required|no goat orders detected/i.test(message)) {
-          const retryRes = await fetch("/api/goat/playwright", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ ...basePayload, forceLogin: true }),
-          });
-          const retryJson = await retryRes.json().catch(() => ({}));
-          if (!retryRes.ok || retryJson?.ok === false) {
-            alert(`❌ GOAT login failed: ${retryJson?.error || `HTTP ${retryRes.status}`}`);
-            return;
-          }
-          alert(`✅ GOAT session ready. Orders: ${retryJson?.count || 0}. Added to results table.`);
-          const goatOrdersRaw = Array.isArray(retryJson?.orders) ? retryJson.orders : [];
-          const goatRows = goatOrdersRaw.map((o: any) => ({
-            ...o,
-            provider: "GOAT",
-            productTitleB: o.productTitle || o.displayName || null,
-            brandB: null,
-            sizeB: o.size || null,
-            thumbUrlB: o.thumbUrl || null,
-            imageUrlB: o.thumbUrl || null,
-            statusB: o.statusTitle || o.statusKey || null,
-            statusKeyB: o.statusKey || null,
-            estimatedDeliveryB: o.estimatedDeliveryDate || null,
-            latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
-            styleId: o.skuKey || o.styleId || null,
-          }));
-          if (goatRows.length > 0) {
-            const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
-            const combinedRows = [...existingRows, ...goatRows];
-            const seen = new Set<string>();
-            const dedupedRows = combinedRows.filter((row: any) => {
-              const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
-            setOrders(dedupedRows as OrderNode[]);
-            setEnrichedOrders(dedupedRows);
-          }
-          setLastStatus(retryRes.status);
-          setLastErrors([]);
-          setPageInfo(null);
-          return;
-        }
-        alert(`❌ GOAT login failed: ${message}`);
+        const lastUrl = json?.debug?.lastUrl ? `\nURL: ${json.debug.lastUrl}` : "";
+        alert(`❌ GOAT login failed: ${message}${lastUrl}\nFinish Cloudflare + login in the Playwright window, then click again.`);
         return;
       }
       const goatOrdersRaw = Array.isArray(json?.orders) ? json.orders : [];
-      const goatRows = goatOrdersRaw.map((o: any) => ({
-        ...o,
-        provider: "GOAT",
-        productTitleB: o.productTitle || o.displayName || null,
-        brandB: null,
-        sizeB: o.size || null,
-        thumbUrlB: o.thumbUrl || null,
-        imageUrlB: o.thumbUrl || null,
-        statusB: o.statusTitle || o.statusKey || null,
-        statusKeyB: o.statusKey || null,
-        estimatedDeliveryB: o.estimatedDeliveryDate || null,
-        latestEstimatedDeliveryB: o.latestEstimatedDeliveryDate || null,
-        styleId: o.skuKey || o.styleId || null,
-      }));
-
-      if (goatRows.length > 0) {
-        const existingRows = (enrichedOrders && enrichedOrders.length > 0 ? enrichedOrders : orders) as any[];
-        const combinedRows = [...existingRows, ...goatRows];
-        const seen = new Set<string>();
-        const dedupedRows = combinedRows.filter((row: any) => {
-          const key = `${row?.provider || "STOCKX"}:${row?.orderId || ""}:${row?.orderNumber || ""}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-
-        setOrders(dedupedRows as OrderNode[]);
-        setEnrichedOrders(dedupedRows);
-      }
+      mergeGoatRowsIntoTable(mapGoatRows(goatOrdersRaw));
 
       setLastStatus(res.status);
       setLastErrors([]);
@@ -745,7 +805,13 @@ export default function Home() {
       const res = await fetch("/api/goat/playwright", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ headless: false, includeRaw: true }),
+        body: JSON.stringify({
+          headless: false,
+          includeRaw: true,
+          browser: "chromium",
+          persistent: true,
+          maxWaitMs: 600000,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json?.ok === false) {
@@ -1223,7 +1289,9 @@ export default function Home() {
       
       // Close modal and reload
       setManualEntryModal({ isOpen: false, shopifyItem: null, mode: 'create' });
+      setUnmatchedReconcile(null);
       await loadFromDB();
+      await loadUnmatchedOrders(unmatchedDays);
       
     } catch (error: any) {
       console.error("[MANUAL_ENTRY] Error:", error);
@@ -1317,7 +1385,9 @@ export default function Home() {
                 )}
               </div>
               <p className="mt-1 text-xs text-red-800">
-                Shopify payé, aucune ligne OrderMatch = marge inconnue. Tri: plus vieux → plus récent.
+                Shopify payé, aucune ligne OrderMatch. Clique{" "}
+                <strong>Reconcile</strong> → ouvre le formulaire manuel complet (coût, StockX, AWB…).
+                Tri: plus vieux → plus récent.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1351,6 +1421,49 @@ export default function Home() {
           {unmatchedError && (
             <p className="mt-2 text-xs text-red-700">Erreur: {unmatchedError}</p>
           )}
+          {unmatchedReconcile && (
+            <div className="mt-3 border border-red-300 rounded bg-white p-3">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-sm font-semibold text-red-900">
+                  Choisir la ligne — {unmatchedReconcile.orderName}
+                </div>
+                <button
+                  type="button"
+                  className="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
+                  onClick={() => setUnmatchedReconcile(null)}
+                >
+                  Fermer
+                </button>
+              </div>
+              {unmatchedReconcile.loading && (
+                <p className="text-xs text-gray-500">Chargement lignes Shopify…</p>
+              )}
+              {unmatchedReconcile.error && (
+                <p className="text-xs text-red-700">{unmatchedReconcile.error}</p>
+              )}
+              {!unmatchedReconcile.loading && unmatchedReconcile.lines.length > 0 && (
+                <div className="space-y-2">
+                  {unmatchedReconcile.lines.map((line) => (
+                    <button
+                      key={line.lineItemId}
+                      type="button"
+                      onClick={() => {
+                        setUnmatchedReconcile(null);
+                        openManualEntryModal(line);
+                      }}
+                      className="w-full text-left px-3 py-2 border border-red-200 rounded hover:bg-red-50 text-xs"
+                    >
+                      <div className="font-semibold text-gray-900">{line.title}</div>
+                      <div className="text-gray-600 mt-0.5">
+                        {line.sku || "—"} · size {line.sizeEU || "—"} · qty {line.quantity} ·{" "}
+                        {line.totalPrice} {line.currencyCode}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {(unmatchedOrders?.orders?.length ?? 0) > 0 && (
             <div className="mt-3 max-h-80 overflow-auto border border-red-200 rounded bg-white">
               <table className="min-w-full text-xs">
@@ -1360,11 +1473,12 @@ export default function Home() {
                     <th className="px-2 py-1.5">Date</th>
                     <th className="px-2 py-1.5">Statut</th>
                     <th className="px-2 py-1.5 text-right">Net CHF</th>
+                    <th className="px-2 py-1.5 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {unmatchedOrders!.orders.map((o) => (
-                    <tr key={o.orderName} className="border-t border-red-100">
+                    <tr key={o.shopifyOrderId || o.orderName} className="border-t border-red-100">
                       <td className="px-2 py-1 font-semibold text-gray-900">{o.orderName}</td>
                       <td className="px-2 py-1 whitespace-nowrap">
                         {formatDate(o.createdAt)}
@@ -1375,6 +1489,26 @@ export default function Home() {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })}
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <button
+                          type="button"
+                          disabled={
+                            unmatchedReconcileBusy === o.shopifyOrderId ||
+                            !o.shopifyOrderId
+                          }
+                          onClick={() =>
+                            void openUnmatchedReconcile({
+                              shopifyOrderId: o.shopifyOrderId,
+                              orderName: o.orderName,
+                            })
+                          }
+                          className="px-2 py-1 bg-red-700 text-white rounded hover:bg-red-800 disabled:opacity-50 font-semibold"
+                        >
+                          {unmatchedReconcileBusy === o.shopifyOrderId
+                            ? "…"
+                            : "Reconcile"}
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1488,6 +1622,7 @@ export default function Home() {
           onClear={handleClearResults}
           onExport={handleExportCSV}
           onGoatLogin={handleGoatLogin}
+          goatLoginLoading={goatDebugLoading}
           onGoatDebug={handleGoatDebug}
           onExportGoatSession={handleExportGoatSession}
           onImportGoatSession={handleImportGoatSession}
