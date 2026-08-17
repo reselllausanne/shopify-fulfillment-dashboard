@@ -460,14 +460,23 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     return results;
   };
 
-  const loadShopifyOrders = async (sinceDays = 30) => {
+  const loadShopifyOrders = async (sinceDays?: number) => {
     setLoadingShopify(true);
     try {
-      const res = await postJson<any>("/api/shopify/orders", {
-        sinceDays,
+      // Matching UI needs the full open-fulfillment backlog (oldest ~60d+).
+      // Omit sinceDays → query is unfulfilled/partial only, no created:>= cut.
+      // Cap 250 with 50-page + cost sleep (see /api/shopify/orders).
+      const payload: Record<string, unknown> = {
         first: 250,
         physicalStock: true,
-      });
+        orderQuery:
+          "(fulfillment_status:unfulfilled OR fulfillment_status:partial) -status:cancelled",
+      };
+      if (sinceDays != null && Number.isFinite(sinceDays) && sinceDays > 0) {
+        payload.sinceDays = sinceDays;
+        delete payload.orderQuery;
+      }
+      const res = await postJson<any>("/api/shopify/orders", payload);
       if (!res.ok) {
         alert(`Shopify error: ${res.data?.error || "Unknown error"}`);
         return;

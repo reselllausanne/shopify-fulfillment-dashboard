@@ -67,11 +67,11 @@ export default function OrderMatchingSection({
           <p className="text-sm text-gray-500 mt-1">Manual matching interface (for review and overrides)</p>
         </div>
         <button
-          onClick={() => loadShopifyOrders(30)}
+          onClick={() => loadShopifyOrders()}
           disabled={loadingShopify || orders.length === 0}
           className="px-4 py-2 bg-teal-600 text-white rounded-md hover:bg-teal-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          {loadingShopify ? "Loading..." : "Load Shopify (matchable / open fulfillment)"}
+          {loadingShopify ? "Loading..." : "Load Shopify (all open fulfill, max 250)"}
         </button>
       </div>
 
