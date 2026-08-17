@@ -303,6 +303,26 @@ model ShopifyFulfillmentRecord {
   @@schema("public")
 }
 
+/// Failed warehouse AWB scans (NOT_FOUND / UNMATCHED / ERROR). Pruned after ~30 days.
+model WarehouseScanMiss {
+  id             String   @id @default(uuid())
+  rawCode        String
+  normalizedAwb  String?
+  lookupCandidates String[] @default([])
+  status         String
+  errorMessage   String?
+  scanSessionKey String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([normalizedAwb])
+  @@index([rawCode])
+  @@index([scanSessionKey])
+  @@index([status])
+  @@schema("public")
+}
+
 model OrderMetric {
   shopifyOrderId String   @id
   createdAt      DateTime

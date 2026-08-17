@@ -9,6 +9,10 @@ import {
 import { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { buildScanDemoScanPayload, resolveScanDemoChannel } from "@/lib/scanFulfillmentDemo";
+import {
+  recordWarehouseScanMiss,
+  WAREHOUSE_SCAN_MISS_RETENTION_DAYS,
+} from "@/lib/warehouseScanMiss";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -108,11 +112,45 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const list = searchParams.get("list");
+    const misses = searchParams.get("misses");
     const limit = Math.min(Number(searchParams.get("limit") || 500), 2000);
+
+    if (misses === "1") {
+      const daysRaw = Number(searchParams.get("days") || WAREHOUSE_SCAN_MISS_RETENTION_DAYS);
+      const days = Number.isFinite(daysRaw)
+        ? Math.min(WAREHOUSE_SCAN_MISS_RETENTION_DAYS, Math.max(1, Math.floor(daysRaw)))
+        : WAREHOUSE_SCAN_MISS_RETENTION_DAYS;
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const take = Math.min(Number(searchParams.get("limit") || 200), 500);
+
+      const rows = await prisma.warehouseScanMiss.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: "desc" },
+        take,
+        select: {
+          id: true,
+          rawCode: true,
+          normalizedAwb: true,
+          lookupCandidates: true,
+          status: true,
+          errorMessage: true,
+          scanSessionKey: true,
+          createdAt: true,
+        },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        days,
+        retentionDays: WAREHOUSE_SCAN_MISS_RETENTION_DAYS,
+        count: rows.length,
+        items: rows,
+      });
+    }
 
     if (list !== "1") {
       return NextResponse.json(
-        { error: "Missing list=1 parameter" },
+        { error: "Missing list=1 or misses=1 parameter" },
         { status: 400 }
       );
     }
@@ -164,10 +202,17 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let rawCleanForLog = "";
+  let scanSessionKeyForLog: string | null = null;
+  const userAgent = req.headers.get("user-agent");
+
   try {
     const body = await req.json().catch(() => ({}));
     const rawCode = body?.code;
+    const scanSessionKey = String(body?.scanSessionKey ?? "").trim() || null;
+    scanSessionKeyForLog = scanSessionKey;
     const rawClean = String(rawCode ?? "").trim();
+    rawCleanForLog = rawClean;
     // Include DHL JJD→10-digit AWB variants; StockX stores the short AWB, scanners often send JJD…
     const awbCandidates = awbLookupCandidates(rawClean);
     const awb = normalizeCode(rawClean) || awbCandidates[0] || "";
@@ -179,6 +224,17 @@ export async function POST(req: NextRequest) {
     }));
 
     if (!awb) {
+      if (rawClean) {
+        void recordWarehouseScanMiss({
+          rawCode: rawClean,
+          normalizedAwb: null,
+          lookupCandidates: awbCandidates,
+          status: "UNMATCHED",
+          errorMessage: "Missing code",
+          scanSessionKey,
+          userAgent,
+        });
+      }
       return NextResponse.json(
         { ok: false, status: "UNMATCHED", awb: "", match: null, error: { message: "Missing code" } },
         { status: 400 }
@@ -392,9 +448,29 @@ export async function POST(req: NextRequest) {
         : null,
     };
 
+    if (!hasAnyMatch) {
+      void recordWarehouseScanMiss({
+        rawCode: rawClean,
+        normalizedAwb: awb,
+        lookupCandidates: awbCandidates,
+        status,
+        scanSessionKey,
+        userAgent,
+      });
+    }
+
     return NextResponse.json(response, { status: 200 });
   } catch (error: any) {
     console.error("[SCAN-AWB] Error:", error);
+    if (rawCleanForLog) {
+      void recordWarehouseScanMiss({
+        rawCode: rawCleanForLog,
+        status: "ERROR",
+        errorMessage: error?.message || "Internal error",
+        scanSessionKey: scanSessionKeyForLog,
+        userAgent,
+      });
+    }
     return NextResponse.json(
       {
         ok: false,

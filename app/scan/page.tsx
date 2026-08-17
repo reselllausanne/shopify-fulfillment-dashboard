@@ -644,7 +644,7 @@ export default function ScanPage() {
       const res = await fetch("/api/scan-awb", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ code, scanSessionKey }),
       });
       const data: ScanResult = await res.json();
       setResult(data);

@@ -16,6 +16,26 @@ type MetricMinutes = {
   p90Min: number | null;
 };
 
+type MissItem = {
+  id: string;
+  rawCode: string;
+  normalizedAwb: string | null;
+  lookupCandidates: string[];
+  status: string;
+  errorMessage: string | null;
+  scanSessionKey: string | null;
+  createdAt: string;
+};
+
+type MissesPayload = {
+  ok: boolean;
+  days: number;
+  retentionDays: number;
+  count: number;
+  items: MissItem[];
+  error?: string;
+};
+
 type StatsPayload = {
   ok: boolean;
   days: number;
@@ -106,6 +126,7 @@ function MetricCard({
 export default function ScanFulfillmentStatsPage() {
   const [days, setDays] = useState(7);
   const [data, setData] = useState<StatsPayload | null>(null);
+  const [misses, setMisses] = useState<MissesPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,14 +134,22 @@ export default function ScanFulfillmentStatsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/logistics/fulfillment-stats?days=${selectedDays}`, {
-        cache: "no-store",
-      });
-      const json = (await res.json()) as StatsPayload;
-      if (!res.ok || !json.ok) {
-        throw new Error(json.error || `HTTP ${res.status}`);
+      const [statsRes, missesRes] = await Promise.all([
+        fetch(`/api/logistics/fulfillment-stats?days=${selectedDays}`, { cache: "no-store" }),
+        fetch(`/api/scan-awb?misses=1&days=${selectedDays}&limit=200`, { cache: "no-store" }),
+      ]);
+      const json = (await statsRes.json()) as StatsPayload;
+      if (!statsRes.ok || !json.ok) {
+        throw new Error(json.error || `HTTP ${statsRes.status}`);
       }
       setData(json);
+
+      const missesJson = (await missesRes.json()) as MissesPayload;
+      if (missesRes.ok && missesJson.ok) {
+        setMisses(missesJson);
+      } else {
+        setMisses(null);
+      }
     } catch (err: any) {
       setError(err?.message || "Failed to load");
       setData(null);
@@ -262,6 +291,51 @@ export default function ScanFulfillmentStatsPage() {
                           <td className="px-4 py-2">{row.fulfills}</td>
                           <td className="px-4 py-2">{row.withScanTiming}</td>
                           <td className="px-4 py-2">{fmtSec(row.p50ScanToFulfillSec)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mb-6 overflow-hidden rounded-lg border border-amber-200 bg-white shadow-sm">
+              <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950">
+                Failed scans (no match) · kept {misses?.retentionDays ?? 30}d · n=
+                {misses?.count ?? 0}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                    <tr>
+                      <th className="px-4 py-2">When</th>
+                      <th className="px-4 py-2">Scanned</th>
+                      <th className="px-4 py-2">Normalized</th>
+                      <th className="px-4 py-2">Status</th>
+                      <th className="px-4 py-2">Candidates</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {!misses || misses.items.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-6 text-gray-500">
+                          No failed scans in this window.
+                        </td>
+                      </tr>
+                    ) : (
+                      misses.items.map((row) => (
+                        <tr key={row.id}>
+                          <td className="px-4 py-2 text-xs text-gray-600">
+                            {new Date(row.createdAt).toLocaleString("fr-CH")}
+                          </td>
+                          <td className="px-4 py-2 font-mono text-xs">{row.rawCode}</td>
+                          <td className="px-4 py-2 font-mono text-xs">
+                            {row.normalizedAwb || "—"}
+                          </td>
+                          <td className="px-4 py-2 text-xs">{row.status}</td>
+                          <td className="px-4 py-2 font-mono text-[11px] text-gray-600">
+                            {(row.lookupCandidates || []).slice(0, 4).join(" · ") || "—"}
+                          </td>
                         </tr>
                       ))
                     )}
