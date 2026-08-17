@@ -465,7 +465,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     try {
       const res = await postJson<any>("/api/shopify/orders", {
         sinceDays,
-        first: 100,
+        first: 250,
         physicalStock: true,
       });
       if (!res.ok) {

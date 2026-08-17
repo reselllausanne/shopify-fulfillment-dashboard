@@ -34,7 +34,8 @@ const SHOP_TIMEZONE = "Europe/Zurich";
 /** Paginate headers cheaply; line items fetched in separate low-cost batches. */
 const SHOPIFY_ORDERS_PAGE_SIZE = 50;
 const SHOPIFY_ORDERS_LINE_ITEMS_BATCH = 50;
-const SHOPIFY_ORDERS_MAX_FIRST = 100;
+/** Cap for matching UI load — paginated + cost-throttled (see sleepForShopifyQueryCost). */
+const SHOPIFY_ORDERS_MAX_FIRST = 250;
 const SHOPIFY_ORDER_HEADERS_ESTIMATED_COST = 140;
 const SHOPIFY_ORDER_LINE_ITEMS_ESTIMATED_COST = 60;
 
