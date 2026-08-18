@@ -187,7 +187,9 @@ export async function explorerReconcileCommand(
 
     if (!dryRun && decisions.length > 0) {
       const offersByModel = await loadOffersForBatchGroupedByModel(batchId);
+      let attempted = 0;
       for (const decision of decisions) {
+        attempted += 1;
         try {
           const result = await setModelDestination(decision.modelId, decision.destination, ctx, {
             reason: decision.reason,
@@ -204,6 +206,16 @@ export async function explorerReconcileCommand(
                 result.mutationErrors.length > 0
                   ? result.mutationErrors
                   : ["Merchant readback not converged; will retry next run"],
+            });
+          }
+          if (attempted === 1 || attempted % 10 === 0 || attempted === decisions.length) {
+            log("explorer_reconcile.progress", {
+              batchId,
+              attempted,
+              of: decisions.length,
+              planned: allDecisions.length,
+              committed: results.filter((r) => r.committed).length,
+              failures: failures.length,
             });
           }
         } catch (err) {
