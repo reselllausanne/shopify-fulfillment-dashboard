@@ -28,6 +28,10 @@ import {
 } from "@/adsanalytics/explorer/rules";
 import { log, logError, withSyncRun } from "@/adsanalytics/run";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export type ExplorerReconcileOptions = {
   batch?: string;
   dryRun?: boolean;
@@ -181,7 +185,13 @@ export async function explorerReconcileCommand(
       return acc;
     }, {});
 
-    // 4. Merchant mutation + readback + DB commit, one model at a time.
+    const pendingByModel = new Map(
+      rows.map((r) => [r.shopify_product_id, r.pending_destination] as const)
+    );
+
+    // 4. Merchant mutation + short readback. Unconfirmed models stay pending; we do not
+    // sit 2 minutes per model waiting for Merchant. A poll at the end of this run commits
+    // whatever has propagated.
     const results: SetModelDestinationResult[] = [];
     const failures: Array<{ modelId: string; destination: Destination; errors: string[] }> = [];
 
@@ -189,6 +199,9 @@ export async function explorerReconcileCommand(
       const offersByModel = await loadOffersForBatchGroupedByModel(batchId);
       let attempted = 0;
       for (const decision of decisions) {
+        if (pendingByModel.get(decision.modelId) === decision.destination) {
+          continue;
+        }
         attempted += 1;
         try {
           const result = await setModelDestination(decision.modelId, decision.destination, ctx, {
@@ -227,6 +240,24 @@ export async function explorerReconcileCommand(
             destination: decision.destination,
             message,
           });
+        }
+      }
+
+      const pendingAfterMutate = failures.filter((f) =>
+        f.errors.some((e) => e.includes("not converged"))
+      ).length;
+      if (pendingAfterMutate > 0) {
+        for (let round = 1; round <= 8; round += 1) {
+          await sleep(45_000);
+          const poll = await verifyPendingDestinations(ctx);
+          log("explorer_reconcile.pending_poll", {
+            batchId,
+            round,
+            checked: poll.checked,
+            committed: poll.committed,
+            stillPending: poll.stillPending,
+          });
+          if (poll.stillPending === 0) break;
         }
       }
     }

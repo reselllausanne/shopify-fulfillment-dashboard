@@ -80,8 +80,11 @@ export type SetModelDestinationResult = {
 };
 
 const DEFAULT_CONCURRENCY = 8;
-const DEFAULT_VERIFY_ATTEMPTS = 6;
-const DEFAULT_VERIFY_DELAY_MS = 20_000;
+/** One short peek after mutate. Merchant often needs minutes-to-hours; sitting in a 6×20s
+ * loop per model just serializes the drain. Unconfirmed writes stay pending and the
+ * resume path (readback only) commits them on the next pass. */
+const DEFAULT_VERIFY_ATTEMPTS = 1;
+const DEFAULT_VERIFY_DELAY_MS = 3_000;
 
 function errorMessage(err: unknown): string {
   if (err instanceof MerchantApiError) return err.message;

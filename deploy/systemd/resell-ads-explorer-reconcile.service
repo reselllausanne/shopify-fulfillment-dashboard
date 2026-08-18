@@ -7,11 +7,11 @@ Type=oneshot
 WorkingDirectory=/opt/resell
 EnvironmentFile=-/etc/default/resell-ads
 # Isolated `run` (not `exec` into web): a web recreate used to SIGKILL the job (exit 137).
-# Chunk size keeps one invocation under the next 6h timer; leftover models resume next run.
+# Mutate-all then poll readback; 300 is ~1h of writes at ~15s/model, well under TimeoutStartSec.
 TimeoutStartSec=6h
 TimeoutStopSec=15min
 KillMode=mixed
 OOMPolicy=continue
-ExecStart=/usr/bin/env bash -lc 'test -n "$BATCH_ID" || exit 1; docker rm -f resell-ads-reconcile >/dev/null 2>&1 || true; docker compose run --no-deps --rm -T --name resell-ads-reconcile web npm run ads -- explorer:reconcile --batch="$BATCH_ID" --max-transitions=80'
+ExecStart=/usr/bin/env bash -lc 'test -n "$BATCH_ID" || exit 1; docker rm -f resell-ads-reconcile >/dev/null 2>&1 || true; docker compose run --no-deps --rm -T --name resell-ads-reconcile web npm run ads -- explorer:reconcile --batch="$BATCH_ID" --max-transitions=300'
 StandardOutput=journal
 StandardError=journal
