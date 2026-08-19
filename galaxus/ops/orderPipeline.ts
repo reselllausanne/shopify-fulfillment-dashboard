@@ -1,5 +1,9 @@
 import { prisma } from "@/app/lib/prisma";
-import { pollIncomingEdi, sendOutgoingEdi } from "@/galaxus/edi/service";
+import {
+  pollIncomingEdi,
+  sendOutgoingEdi,
+  type PollIncomingEdiOptions,
+} from "@/galaxus/edi/service";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import { refreshStxProductsByKickdbProductIds } from "@/galaxus/jobs/stxSync";
 
@@ -10,7 +14,10 @@ type OrderPipelineResult = {
   ordrFailed: number;
   stxProductsRefreshed: number;
   errors: string[];
+  deliveryMode: PollIncomingEdiOptions["deliveryMode"];
 };
+
+export type RunEdiInPipelineOptions = PollIncomingEdiOptions;
 
 async function sendOrdrForOrder(orderId: string) {
   const now = new Date();
@@ -99,9 +106,12 @@ async function resolveStxKickdbProductIds(orderIds: string[]): Promise<string[]>
   return Array.from(new Set(externalIds));
 }
 
-export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
+export async function runEdiInPipeline(
+  options: RunEdiInPipelineOptions = {}
+): Promise<OrderPipelineResult> {
   const errors: string[] = [];
-  const pollResults = await pollIncomingEdi();
+  const deliveryMode = options.deliveryMode ?? "all";
+  const pollResults = await pollIncomingEdi(options);
   const orderIds = Array.from(
     new Set(
       pollResults
@@ -136,11 +146,12 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
   }
 
   return {
-    filesProcessed: pollResults.length,
+    filesProcessed: pollResults.filter((r) => r.status === "processed").length,
     ordersIngested: orderIds.length,
     ordrSent,
     ordrFailed,
     stxProductsRefreshed,
     errors,
+    deliveryMode,
   };
 }

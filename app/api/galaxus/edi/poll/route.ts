@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
 import { runEdiInPipeline } from "@/galaxus/ops/orderPipeline";
 import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 
@@ -38,8 +39,14 @@ export async function POST(request: NextRequest) {
   if (denied) return denied;
 
   try {
-    const pipeline = await runEdiInPipeline();
-    return NextResponse.json({ ok: true, pipeline });
+    const locked = await withAdvisoryLock("galaxus:ops:edi-in", async () => runEdiInPipeline());
+    if (!locked.locked) {
+      return NextResponse.json(
+        { ok: false, error: "EDI poll already running", skipped: "locked" },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ ok: true, pipeline: locked.result });
   } catch (error: any) {
     console.error("[GALAXUS][EDI][POLL] Failed:", error);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

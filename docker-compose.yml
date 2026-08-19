@@ -97,6 +97,24 @@ services:
       - ./.data:/app/.data
     restart: unless-stopped
 
+  worker-galaxus-edi:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Zurich
+      - GALAXUS_EDI_WORKER_LOOP_MS=${GALAXUS_EDI_WORKER_LOOP_MS:-15000}
+      - GALAXUS_EDI_DIRECT_INTERVAL_MS=${GALAXUS_EDI_DIRECT_INTERVAL_MS:-300000}
+      - GALAXUS_EDI_WAREHOUSE_HOUR=${GALAXUS_EDI_WAREHOUSE_HOUR:-12}
+      - GALAXUS_EDI_WAREHOUSE_MINUTE=${GALAXUS_EDI_WAREHOUSE_MINUTE:-5}
+      - GALAXUS_EDI_DIRECT_SFTP_TIMEOUT_MS=${GALAXUS_EDI_DIRECT_SFTP_TIMEOUT_MS:-120000}
+      - GALAXUS_EDI_WAREHOUSE_SFTP_TIMEOUT_MS=${GALAXUS_EDI_WAREHOUSE_SFTP_TIMEOUT_MS:-600000}
+      - GALAXUS_EDI_WORKER_INITIAL_DELAY_MS=${GALAXUS_EDI_WORKER_INITIAL_DELAY_MS:-5000}
+    command: ["npx", "tsx", "scripts/workers/galaxusEdiWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped
+
   worker-galaxus-feed:
     build: .
     env_file:

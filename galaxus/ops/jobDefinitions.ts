@@ -14,7 +14,7 @@ export const DEFAULT_JOBS: Array<{
   { jobKey: "stx-refresh", intervalMs: 6 * HOUR_MS, enabled: true },
   /** Golden (GLD) assortment price/stock refresh. */
   { jobKey: "gld-refresh", intervalMs: 10 * HOUR_MS, enabled: true },
-  { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: true },
+  { jobKey: "edi-in", intervalMs: 1 * HOUR_MS, enabled: false }, // owned by worker-galaxus-edi (5min direct / 12:05 warehouse)
   { jobKey: "image-sync", intervalMs: 24 * HOUR_MS, enabled: true },
   { jobKey: "shopify-order-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
   { jobKey: "multichannel-stock-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
