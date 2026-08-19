@@ -20,6 +20,8 @@ type ExplorerCampaignCreateOptions = {
   batch?: string;
   validateOnly?: boolean;
   confirm?: string;
+  brand?: string;
+  nameSuffix?: string;
 };
 
 function requiredBatchId(batchId: string | undefined): string {
@@ -37,8 +39,12 @@ export async function explorerCampaignCreateCommand(
     const batch = await loadBatchById(batchId);
     if (!batch) throw new Error(`Batch not found: ${batchId}`);
 
+    const brand = options.brand?.trim() || "";
+    const nameSuffix = options.nameSuffix?.trim() || "Long Tail";
+    const campaignName = `Explorer | ${nameSuffix} | CH`;
+
     const spec = {
-      campaignName: "Explorer | Long Tail | CH",
+      campaignName,
       type: "STANDARD_SHOPPING",
       bidding: "MANUAL_CPC",
       budgetMicros: Number(batch.dailyBudgetMicros || String(EXPLORER_DEFAULT_BUDGET_MICROS)),
@@ -54,6 +60,7 @@ export async function explorerCampaignCreateCommand(
         includeValue: "explorer_active",
         include: "INCLUDED",
         everythingElse: "EXCLUDED",
+        brandFilter: brand || null,
       },
       statusOnCreate: "PAUSED",
       targetRoas: null,
@@ -90,6 +97,7 @@ export async function explorerCampaignCreateCommand(
           feedLabel: spec.feedLabel,
           endAfterDays: spec.endAfterDays,
           adGroupName: spec.adGroupName,
+          brandFilter: brand || undefined,
         },
         { validateOnlyFirst: true }
       );

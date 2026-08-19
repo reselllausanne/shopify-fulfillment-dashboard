@@ -28,6 +28,7 @@ type ExplorerCoreExclusionsOptions = {
   validateOnly?: boolean;
   confirm?: string;
   allowOnlySourceCampaignName?: string;
+  allowForbiddenBrands?: boolean;
 };
 
 function requiredBatchId(batchId: string | undefined): string {
@@ -116,16 +117,18 @@ export async function explorerCoreExclusionsCommand(
       }
     }
 
-    try {
-      assertNoForbiddenBrandTokens([
-        ...optimized.modelBrands.map((b) => ({ where: "model.brand", text: b })),
-        ...optimized.sourceCampaignNames.map((n) => ({ where: "source.campaign", text: n })),
-        ...optimized.touchedCampaignNames.map((n) => ({ where: "touched.campaign", text: n })),
-        ...optimized.touchedAssetGroupIds.map((id) => ({ where: "touched.asset_group", text: id })),
-        ...optimized.touchedLeafPaths.map((p) => ({ where: "touched.leaf_path", text: p })),
-      ]);
-    } catch (err) {
-      blockers.push(err instanceof Error ? err.message : String(err));
+    if (options.allowForbiddenBrands !== true) {
+      try {
+        assertNoForbiddenBrandTokens([
+          ...optimized.modelBrands.map((b) => ({ where: "model.brand", text: b })),
+          ...optimized.sourceCampaignNames.map((n) => ({ where: "source.campaign", text: n })),
+          ...optimized.touchedCampaignNames.map((n) => ({ where: "touched.campaign", text: n })),
+          ...optimized.touchedAssetGroupIds.map((id) => ({ where: "touched.asset_group", text: id })),
+          ...optimized.touchedLeafPaths.map((p) => ({ where: "touched.leaf_path", text: p })),
+        ]);
+      } catch (err) {
+        blockers.push(err instanceof Error ? err.message : String(err));
+      }
     }
 
     let applied = false;

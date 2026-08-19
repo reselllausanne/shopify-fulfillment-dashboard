@@ -126,10 +126,11 @@ Commands:
                              Build PMax listing-tree exclusion mutation plan
   explorer:core-exclusions --batch=<id> --confirm=<planHash>
                              Confirm exclusion plan (live calls blocked this phase)
-  explorer:campaign:create --batch=<id> --validate-only
-                             Build Explorer Standard Shopping campaign create plan
-  explorer:campaign:create --batch=<id> --confirm=<planHash>
-                             Confirm campaign create plan (live calls blocked this phase)
+  explorer:campaign:create --batch=<id> [--brand=<value>] [--name-suffix=<value>]
+                             [--validate-only|--confirm=<planHash>]
+                             Build/apply Explorer Standard Shopping campaign create plan.
+                             --brand=adidas narrows the listing tree to that product_brand;
+                             --name-suffix=Adidas overrides the default "Long Tail" suffix.
   explorer:activate --batch=<id> --confirm=<planHash>
                              Activation gate checks (live enable blocked this phase)
   explorer:monitor --batch=<id>
@@ -317,12 +318,15 @@ async function main(): Promise<number> {
         validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
         confirm: stringFlag(args, "confirm"),
         allowOnlySourceCampaignName: stringFlag(args, "allow-only-source-campaign"),
+        allowForbiddenBrands: flag(args, "allow-forbidden-brands") ? true : undefined,
       });
     case "explorer:campaign:create":
       return explorerCampaignCreateCommand({
         batch: stringFlag(args, "batch"),
         validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
         confirm: stringFlag(args, "confirm"),
+        brand: stringFlag(args, "brand"),
+        nameSuffix: stringFlag(args, "name-suffix"),
       });
     case "explorer:activate":
       return explorerActivateCommand({

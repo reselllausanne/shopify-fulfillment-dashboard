@@ -14,6 +14,12 @@ export type ExplorerCampaignSpec = {
   adGroupName: string;
   /** custom_label_3 value this campaign includes. Everything else is excluded. */
   includeLabel?: string;
+  /**
+   * When set, the listing tree is narrowed to a single product_brand under the
+   * includeLabel subdivision (brand-scoped Explorer). Other brands and other
+   * custom_label_3 values are excluded.
+   */
+  brandFilter?: string;
 };
 
 export type ExplorerCampaignCreateResult = {
@@ -41,6 +47,12 @@ function customLabel3Dimension(value?: string): Record<string, unknown> {
   return { productCustomAttribute: attr };
 }
 
+function productBrandDimension(value?: string): Record<string, unknown> {
+  const brand: Record<string, unknown> = {};
+  if (value != null && value.length > 0) brand.value = value;
+  return { productBrand: brand };
+}
+
 function adGroupCriterionResourceName(
   customerId: string,
   adGroupId: number | string,
@@ -59,13 +71,17 @@ export function buildExplorerCampaignMutateOperations(
   const campaignTemp = tempId(counter);
   const adGroupTemp = tempId(counter);
   const listingRootTemp = tempId(counter);
-  const listingIncludedTemp = tempId(counter);
-  const listingExcludedTemp = tempId(counter);
+  const listingLabelSubdivisionTemp = tempId(counter);
+  const listingBrandIncludeTemp = spec.brandFilter ? tempId(counter) : null;
+  const listingBrandExcludeTemp = spec.brandFilter ? tempId(counter) : null;
+  const listingLabelIncludeTemp = spec.brandFilter ? null : tempId(counter);
+  const listingLabelExcludeTemp = tempId(counter);
 
   const budgetRn = `customers/${config.customerId}/campaignBudgets/${budgetTemp}`;
   const campaignRn = `customers/${config.customerId}/campaigns/${campaignTemp}`;
   const adGroupRn = `customers/${config.customerId}/adGroups/${adGroupTemp}`;
   const includeLabel = spec.includeLabel ?? EXPLORER_ACTIVE_LABEL;
+  const brandFilter = spec.brandFilter?.trim();
   const endDate =
     spec.endAfterDays == null
       ? {}
@@ -144,53 +160,135 @@ export function buildExplorerCampaignMutateOperations(
         },
       },
     },
-    {
-      adGroupCriterionOperation: {
-        create: {
-          resourceName: adGroupCriterionResourceName(
-            config.customerId,
-            adGroupTemp,
-            listingIncludedTemp
-          ),
-          adGroup: adGroupRn,
-          status: "ENABLED",
-          cpcBidMicros: String(spec.maxCpcMicros),
-          listingGroup: {
-            type: "UNIT",
-            parentAdGroupCriterion: adGroupCriterionResourceName(
-              config.customerId,
-              adGroupTemp,
-              listingRootTemp
-            ),
-            caseValue: customLabel3Dimension(includeLabel),
-          },
-        },
-      },
-    },
-    {
-      adGroupCriterionOperation: {
-        create: {
-          resourceName: adGroupCriterionResourceName(
-            config.customerId,
-            adGroupTemp,
-            listingExcludedTemp
-          ),
-          adGroup: adGroupRn,
-          status: "ENABLED",
-          negative: true,
-          listingGroup: {
-            type: "UNIT",
-            parentAdGroupCriterion: adGroupCriterionResourceName(
-              config.customerId,
-              adGroupTemp,
-              listingRootTemp
-            ),
-            caseValue: customLabel3Dimension(),
-          },
-        },
-      },
-    },
   ];
+
+  const rootCriterionRn = adGroupCriterionResourceName(
+    config.customerId,
+    adGroupTemp,
+    listingRootTemp
+  );
+
+  if (brandFilter && listingBrandIncludeTemp != null && listingBrandExcludeTemp != null) {
+    const labelSubRn = adGroupCriterionResourceName(
+      config.customerId,
+      adGroupTemp,
+      listingLabelSubdivisionTemp
+    );
+    mutateOperations.push(
+      {
+        adGroupCriterionOperation: {
+          create: {
+            resourceName: labelSubRn,
+            adGroup: adGroupRn,
+            status: "ENABLED",
+            listingGroup: {
+              type: "SUBDIVISION",
+              parentAdGroupCriterion: rootCriterionRn,
+              caseValue: customLabel3Dimension(includeLabel),
+            },
+          },
+        },
+      },
+      {
+        adGroupCriterionOperation: {
+          create: {
+            resourceName: adGroupCriterionResourceName(
+              config.customerId,
+              adGroupTemp,
+              listingBrandIncludeTemp
+            ),
+            adGroup: adGroupRn,
+            status: "ENABLED",
+            cpcBidMicros: String(spec.maxCpcMicros),
+            listingGroup: {
+              type: "UNIT",
+              parentAdGroupCriterion: labelSubRn,
+              caseValue: productBrandDimension(brandFilter),
+            },
+          },
+        },
+      },
+      {
+        adGroupCriterionOperation: {
+          create: {
+            resourceName: adGroupCriterionResourceName(
+              config.customerId,
+              adGroupTemp,
+              listingBrandExcludeTemp
+            ),
+            adGroup: adGroupRn,
+            status: "ENABLED",
+            negative: true,
+            listingGroup: {
+              type: "UNIT",
+              parentAdGroupCriterion: labelSubRn,
+              caseValue: productBrandDimension(),
+            },
+          },
+        },
+      },
+      {
+        adGroupCriterionOperation: {
+          create: {
+            resourceName: adGroupCriterionResourceName(
+              config.customerId,
+              adGroupTemp,
+              listingLabelExcludeTemp
+            ),
+            adGroup: adGroupRn,
+            status: "ENABLED",
+            negative: true,
+            listingGroup: {
+              type: "UNIT",
+              parentAdGroupCriterion: rootCriterionRn,
+              caseValue: customLabel3Dimension(),
+            },
+          },
+        },
+      }
+    );
+  } else if (listingLabelIncludeTemp != null) {
+    mutateOperations.push(
+      {
+        adGroupCriterionOperation: {
+          create: {
+            resourceName: adGroupCriterionResourceName(
+              config.customerId,
+              adGroupTemp,
+              listingLabelIncludeTemp
+            ),
+            adGroup: adGroupRn,
+            status: "ENABLED",
+            cpcBidMicros: String(spec.maxCpcMicros),
+            listingGroup: {
+              type: "UNIT",
+              parentAdGroupCriterion: rootCriterionRn,
+              caseValue: customLabel3Dimension(includeLabel),
+            },
+          },
+        },
+      },
+      {
+        adGroupCriterionOperation: {
+          create: {
+            resourceName: adGroupCriterionResourceName(
+              config.customerId,
+              adGroupTemp,
+              listingLabelExcludeTemp
+            ),
+            adGroup: adGroupRn,
+            status: "ENABLED",
+            negative: true,
+            listingGroup: {
+              type: "UNIT",
+              parentAdGroupCriterion: rootCriterionRn,
+              caseValue: customLabel3Dimension(),
+            },
+          },
+        },
+      }
+    );
+  }
 
   return {
     mutateOperations,
