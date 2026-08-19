@@ -23,7 +23,18 @@ export async function withAdvisoryLock<T>(
   lockName: string,
   handler: () => Promise<T>
 ): Promise<{ locked: true; result: T } | { locked: false; skipped: "locked" }> {
-  const client = new Client({ connectionString: resolveAdvisoryLockConnectionString() });
+  const rawUrl = resolveAdvisoryLockConnectionString();
+  // pg treats sslmode=require as verify-full; strip so rejectUnauthorized:false wins.
+  const needsSsl = /sslmode=|supabase\.|amazonaws\.|\.pooler\./i.test(rawUrl);
+  const connectionString = rawUrl
+    .replace(/([?&])sslmode=[^&]*/gi, "$1")
+    .replace(/[?&]+$/g, "")
+    .replace(/\?&/g, "?");
+  const client = new Client({
+    connectionString,
+    connectionTimeoutMillis: 15_000,
+    ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+  });
   await client.connect();
   try {
     const rows = await client.query<{ locked: boolean }>(
