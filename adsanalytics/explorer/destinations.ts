@@ -12,11 +12,12 @@ import {
 } from "@/adsanalytics/explorer/merchantClient";
 import {
   EXPLORER_ACTIVE_LABEL,
+  EXPLORER_LABELS,
   LONG_TAIL_ALL_LABEL,
   ROUTED_LABELS,
 } from "@/adsanalytics/explorer/labels";
 
-export { EXPLORER_ACTIVE_LABEL, LONG_TAIL_ALL_LABEL, ROUTED_LABELS };
+export { EXPLORER_ACTIVE_LABEL, EXPLORER_LABELS, LONG_TAIL_ALL_LABEL, ROUTED_LABELS };
 
 export const DESTINATIONS = ["CORE_ALL", "EXPLORER_ALL", "LONG_TAIL_ALL"] as const;
 export type Destination = (typeof DESTINATIONS)[number];
@@ -34,7 +35,7 @@ export function isDestination(value: unknown): value is Destination {
 
 export function destinationForLabel(label: string | null | undefined): Destination {
   const normalized = (label ?? "").trim();
-  if (normalized === EXPLORER_ACTIVE_LABEL) return "EXPLORER_ALL";
+  if ((EXPLORER_LABELS as readonly string[]).includes(normalized)) return "EXPLORER_ALL";
   if (normalized === LONG_TAIL_ALL_LABEL) return "LONG_TAIL_ALL";
   return "CORE_ALL";
 }

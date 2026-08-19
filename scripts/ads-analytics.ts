@@ -286,6 +286,7 @@ async function main(): Promise<number> {
         sourceCampaignName: stringFlag(args, "source-campaign"),
         requireEmptyCustomLabel3: flag(args, "require-empty-custom-label-3"),
         abortForbiddenBrands: !flag(args, "allow-forbidden-brands"),
+        brand: stringFlag(args, "brand"),
       });
     case "explorer:preflight":
       return explorerPreflightCommand({ batch: stringFlag(args, "batch") });

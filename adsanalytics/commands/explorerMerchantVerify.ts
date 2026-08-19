@@ -6,7 +6,7 @@ import {
   loadEligibleInStockOffersForBatchModels,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
-import { EXPLORER_ACTIVE_LABEL as EXPLORER_LABEL } from "@/adsanalytics/explorer/labels";
+import { EXPLORER_ACTIVE_LABEL, EXPLORER_LABELS } from "@/adsanalytics/explorer/labels";
 import {
   extractCustomLabel3,
   getProcessedProduct,
@@ -61,6 +61,13 @@ export async function explorerMerchantVerifyCommand(
     const batchId = requiredBatchId(options.batch);
     const batch = await loadBatchById(batchId);
     if (!batch) throw new Error(`Batch not found: ${batchId}`);
+    const verifyStats = (batch.statsJson ?? {}) as Record<string, unknown>;
+    const verifyRawLabel =
+      typeof verifyStats.explorerLabel === "string" ? verifyStats.explorerLabel.trim() : "";
+    const EXPLORER_LABEL =
+      verifyRawLabel && (EXPLORER_LABELS as readonly string[]).includes(verifyRawLabel)
+        ? verifyRawLabel
+        : EXPLORER_ACTIVE_LABEL;
 
     const outboxRows = await prisma.$queryRaw<Array<{ status: string; n: number }>>(Prisma.sql`
       SELECT "status", COUNT(*)::int AS n

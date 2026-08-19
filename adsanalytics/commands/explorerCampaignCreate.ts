@@ -10,6 +10,11 @@ import {
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
 import { resolveAdsConfig } from "@/adsanalytics/config";
+import {
+  EXPLORER_ACTIVE_LABEL,
+  EXPLORER_LABELS,
+  explorerLabelForBrand,
+} from "@/adsanalytics/explorer/labels";
 import { createExplorerShoppingCampaign } from "@/adsanalytics/google/explorerCampaignMutations";
 import { log, withSyncRun } from "@/adsanalytics/run";
 import { Prisma } from "@prisma/client";
@@ -42,6 +47,15 @@ export async function explorerCampaignCreateCommand(
     const brand = options.brand?.trim() || "";
     const nameSuffix = options.nameSuffix?.trim() || "Long Tail";
     const campaignName = `Explorer | ${nameSuffix} | CH`;
+    const createStats = (batch.statsJson ?? {}) as Record<string, unknown>;
+    const createRawLabel =
+      typeof createStats.explorerLabel === "string" ? createStats.explorerLabel.trim() : "";
+    const includeLabel =
+      createRawLabel && (EXPLORER_LABELS as readonly string[]).includes(createRawLabel)
+        ? createRawLabel
+        : brand
+          ? explorerLabelForBrand(brand)
+          : EXPLORER_ACTIVE_LABEL;
 
     const spec = {
       campaignName,
@@ -57,7 +71,7 @@ export async function explorerCampaignCreateCommand(
       adGroupName: "Explorer Products",
       listingGroup: {
         rootSubdivision: "custom_label_3",
-        includeValue: "explorer_active",
+        includeValue: includeLabel,
         include: "INCLUDED",
         everythingElse: "EXCLUDED",
         brandFilter: brand || null,
@@ -98,6 +112,7 @@ export async function explorerCampaignCreateCommand(
           endAfterDays: spec.endAfterDays,
           adGroupName: spec.adGroupName,
           brandFilter: brand || undefined,
+          includeLabel,
         },
         { validateOnlyFirst: true }
       );

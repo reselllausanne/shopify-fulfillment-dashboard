@@ -10,7 +10,7 @@ import {
   updateBatchStatus,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
-import { EXPLORER_ACTIVE_LABEL } from "@/adsanalytics/explorer/labels";
+import { EXPLORER_ACTIVE_LABEL, EXPLORER_LABELS } from "@/adsanalytics/explorer/labels";
 import { createLimiter } from "@/adsanalytics/explorer/limiter";
 import {
   insertSupplementalProductLabel,
@@ -139,6 +139,13 @@ export async function explorerMerchantApplyCommand(
     const merchantId = offers[0]!.merchantId;
     const { dataSource, sourceCreated, primaryPatches } = await ensureExplorerSupplementalSource(merchantId);
 
+    const stats = (batch.statsJson ?? {}) as Record<string, unknown>;
+    const rawLabel = typeof stats.explorerLabel === "string" ? stats.explorerLabel.trim() : "";
+    const explorerLabel =
+      rawLabel && (EXPLORER_LABELS as readonly string[]).includes(rawLabel)
+        ? rawLabel
+        : EXPLORER_ACTIVE_LABEL;
+
     const pendingRows = await loadPendingOutboxRows(batchId);
     const limit = createLimiter(DEFAULT_CONCURRENCY);
     let processed = 0;
@@ -152,6 +159,7 @@ export async function explorerMerchantApplyCommand(
       merchantId,
       dataSource,
       sourceCreated,
+      explorerLabel,
       primaryPatchedCount: primaryPatches.filter((x) => x.patched).length,
       pendingCount: pendingRows.length,
       concurrency: DEFAULT_CONCURRENCY,
@@ -170,7 +178,7 @@ export async function explorerMerchantApplyCommand(
               merchantId,
               dataSource,
               product,
-              EXPLORER_ACTIVE_LABEL
+              explorerLabel
             );
             await markOutboxSucceeded(row.id, row.attempts);
             succeededNow += 1;

@@ -3,7 +3,7 @@ import {
   loadOffersForBatchModels,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
-import { EXPLORER_ACTIVE_LABEL as EXPLORER_LABEL } from "@/adsanalytics/explorer/labels";
+import { EXPLORER_ACTIVE_LABEL, EXPLORER_LABELS } from "@/adsanalytics/explorer/labels";
 import { EXPLORER_SOURCE_NAME } from "@/adsanalytics/explorer/supplementalSource";
 import {
   createSupplementalApiDataSource,
@@ -78,6 +78,13 @@ export async function explorerMerchantCanaryCommand(options: Options = {}): Prom
     const limit = Math.max(1, Math.min(10, Math.floor(options.limit ?? 3)));
     const batch = await loadBatchById(batchId);
     if (!batch) throw new Error(`Batch not found: ${batchId}`);
+    const canaryStats = (batch.statsJson ?? {}) as Record<string, unknown>;
+    const canaryRawLabel =
+      typeof canaryStats.explorerLabel === "string" ? canaryStats.explorerLabel.trim() : "";
+    const EXPLORER_LABEL =
+      canaryRawLabel && (EXPLORER_LABELS as readonly string[]).includes(canaryRawLabel)
+        ? canaryRawLabel
+        : EXPLORER_ACTIVE_LABEL;
 
     const offers = await loadOffersForBatchModels(batchId);
     if (offers.length < limit) throw new Error(`Not enough offers in batch ${batchId} for canary`);

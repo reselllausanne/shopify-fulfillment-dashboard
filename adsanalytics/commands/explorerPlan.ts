@@ -18,6 +18,10 @@ import {
   upsertBatchModels,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
+import {
+  EXPLORER_ACTIVE_LABEL,
+  explorerLabelForBrand,
+} from "@/adsanalytics/explorer/labels";
 import { log, withSyncRun } from "@/adsanalytics/run";
 
 type ExplorerPlanOptions = {
@@ -28,6 +32,7 @@ type ExplorerPlanOptions = {
   sourceCampaignName?: string;
   requireEmptyCustomLabel3?: boolean;
   abortForbiddenBrands?: boolean;
+  brand?: string;
 };
 
 export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Promise<number> {
@@ -39,6 +44,8 @@ export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Pr
     const sourceCampaignName = options.sourceCampaignName?.trim() || "";
     const requireEmptyCustomLabel3 = options.requireEmptyCustomLabel3 === true;
     const abortForbiddenBrands = options.abortForbiddenBrands !== false;
+    const brand = options.brand?.trim().toLowerCase() || "";
+    const explorerLabel = brand ? explorerLabelForBrand(brand) : EXPLORER_ACTIVE_LABEL;
 
     const [baseCandidates, listingCtx] = await Promise.all([
       loadBaseCandidates(lookbackDays),
@@ -178,6 +185,8 @@ export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Pr
         poolAfterFilters: pool.length,
         lookbackDays,
         seed,
+        brand: brand || null,
+        explorerLabel,
       },
     });
     await upsertBatchModels(batchId, selected);
