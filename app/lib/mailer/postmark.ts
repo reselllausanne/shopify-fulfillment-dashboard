@@ -449,7 +449,6 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     closing_2: copy.closing2,
     laposte_ready_text: copy.laPosteReady,
     laposte_pending_text: copy.laPostePending,
-    laposte_cta: copy.laPosteCta,
     laposte_tracking_url: laPosteTrackingUrlResolved,
     has_laposte_tracking: hasLaPosteTracking,
     laposte_tracking_number_label: copy.laPosteTrackingNumberLabel,
