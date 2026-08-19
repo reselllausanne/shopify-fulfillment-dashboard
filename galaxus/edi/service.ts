@@ -29,7 +29,36 @@ type IncomingResult = {
   message?: string;
   orderId?: string;
   galaxusOrderId?: string;
+  deliveryType?: string;
 };
+
+/** Filter ORDP by Galaxus UDX.DG.DELIVERY_TYPE. CANP always processed. */
+export type EdiIncomingDeliveryMode = "all" | "direct" | "warehouse";
+
+export type PollIncomingEdiOptions = {
+  /** default "all" — process every ORDP. "direct" / "warehouse" leave the other type on SFTP. */
+  deliveryMode?: EdiIncomingDeliveryMode;
+  /** Whole SFTP session timeout (default 45s). Raise for warehouse batches. */
+  timeoutMs?: number;
+};
+
+function normalizeDeliveryType(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+function shouldProcessOrdByDeliveryMode(
+  deliveryType: string | undefined,
+  mode: EdiIncomingDeliveryMode
+): boolean {
+  if (mode === "all") return true;
+  const dt = normalizeDeliveryType(deliveryType);
+  const isDirect = dt === "direct_delivery";
+  if (mode === "direct") return isDirect;
+  // warehouse: everything that is not explicit direct (incl. missing / warehouse_delivery)
+  return !isDirect;
+}
 
 type OutgoingResult = {
   docType: EdiDocType;
@@ -87,9 +116,12 @@ function buildInvoicePayloadItems(lines: any[], fallbackOrderRef: string) {
   });
 }
 
-export async function pollIncomingEdi(): Promise<IncomingResult[]> {
+export async function pollIncomingEdi(
+  options: PollIncomingEdiOptions = {}
+): Promise<IncomingResult[]> {
   assertSftpConfig();
   const results: IncomingResult[] = [];
+  const deliveryMode: EdiIncomingDeliveryMode = options.deliveryMode ?? "all";
 
   await withSftp(
     {
@@ -132,8 +164,21 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
 
           const orderIdFromName = extractOrderId(file.name);
           let ingestResult: { orderId: string; galaxusOrderId?: string } | null = null;
+          let parsedDeliveryType: string | undefined;
           if (docType === "ORDP") {
             const orderInput = parseOrderFromXml(xml, orderIdFromName);
+            parsedDeliveryType = normalizeDeliveryType(orderInput.deliveryType) || undefined;
+            if (!shouldProcessOrdByDeliveryMode(parsedDeliveryType, deliveryMode)) {
+              results.push({
+                file: file.name,
+                status: "skipped",
+                message: `delivery_mode_filter:${deliveryMode}`,
+                deliveryType: parsedDeliveryType,
+                galaxusOrderId: orderInput.galaxusOrderId,
+              });
+              // Leave remote file for the other schedule (direct vs warehouse).
+              continue;
+            }
             const missingGtins = orderInput.lines.filter(
               (line) => !line.gtin || String(line.gtin).trim().length === 0
             );
@@ -187,6 +232,7 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
             status: "processed",
             orderId: ingestResult?.orderId ?? undefined,
             galaxusOrderId: ingestResult?.galaxusOrderId ?? undefined,
+            deliveryType: parsedDeliveryType,
           });
         } catch (error: any) {
           await upsertEdiFile({
@@ -200,7 +246,8 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           results.push({ file: file.name, status: "error", message: error?.message });
         }
       }
-    }
+    },
+    { timeoutMs: options.timeoutMs }
   );
 
   return results;
