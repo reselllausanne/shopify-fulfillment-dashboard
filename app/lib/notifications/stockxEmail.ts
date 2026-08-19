@@ -1,5 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
-import { detectMilestone } from "@/app/lib/stockxStatus";
+import { detectMilestone, isStockxInboundDeliveryMilestone } from "@/app/lib/stockxStatus";
 import { StockXState } from "@/app/lib/stockxTracking";
 import { getMailer } from "@/app/lib/mailer";
 
@@ -110,6 +110,16 @@ export async function sendMilestoneEmailForMatch({
     return {
       ok: false,
       error: "No milestone detected (missing stockxStates / not completed yet)",
+      matchId,
+    };
+  }
+
+  if (isStockxInboundDeliveryMilestone(milestoneKey)) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: "wait_for_la_poste_fulfillment",
+      milestoneKey,
       matchId,
     };
   }

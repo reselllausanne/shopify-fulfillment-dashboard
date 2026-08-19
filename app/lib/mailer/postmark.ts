@@ -1,5 +1,6 @@
 import type { MailSendResult, Mailer, StockXMilestoneEmailInput } from "@/app/lib/mailer/types";
 import type { StockXState } from "@/app/lib/stockxTracking";
+import { resolveSwissPostCustomerTracking } from "@/app/lib/swissPostCustomerTracking";
 
 type PostmarkSendResponse = {
   MessageID?: string;
@@ -8,6 +9,35 @@ type PostmarkSendResponse = {
 };
 
 type MailLanguage = "fr" | "en";
+
+function normalizePublicBaseUrl(raw: string | null | undefined): string | null {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const withProtocol = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  try {
+    const url = new URL(withProtocol);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return null;
+    return `${url.origin}${url.pathname}`.replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+function resolveTrackingBaseUrl(): string | null {
+  return (
+    normalizePublicBaseUrl(process.env.TRACKING_BASE_URL) ||
+    normalizePublicBaseUrl(process.env.BRAND_HOME_URL) ||
+    normalizePublicBaseUrl(process.env.NEXT_PUBLIC_BASE_URL) ||
+    normalizePublicBaseUrl(process.env.APP_BASE_URL) ||
+    normalizePublicBaseUrl(process.env.VERCEL_PROJECT_PRODUCTION_URL) ||
+    normalizePublicBaseUrl(process.env.VERCEL_URL)
+  );
+}
+
+function isCustomerTrackingEnabled(): boolean {
+  const raw = String(process.env.CUSTOMER_TRACKING_LINK_ENABLED || "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
+}
 
 function toLocalizedDate(d: Date | null, language: MailLanguage): string | null {
   if (!d) return null;
@@ -91,18 +121,35 @@ const COPY: Record<
     footerHelp: string;
     topNote: string;
     subjectPrefix: string;
+    statusNoteStandard: string;
+    statusNoteExpress: string;
+    statusNoteShipped: string;
+    nextStepsTitle: string;
+    nextStepStandard1: string;
+    nextStepStandard2: string;
+    nextStepStandard3: string;
+    nextStepExpress1: string;
+    nextStepExpress2: string;
+    nextStepExpress3: string;
+    closing1: string;
+    closing2: string;
+    laPosteReady: string;
+    laPostePending: string;
+    laPosteCta: string;
+    laPosteTrackingNumberLabel: string;
+    trackingLabelLaPoste: string;
   }
 > = {
   fr: {
     stepLabelsStandard: [
       "Commande confirmée",
       "Authentification en cours",
-      "En route vers la Suisse",
-      "Livraison locale en préparation",
+      "Préparation expédition",
+      "Expédiée via La Poste",
     ],
-    stepLabelsExpress: ["Commande confirmée", "En route vers la Suisse", "Livraison locale en préparation"],
+    stepLabelsExpress: ["Commande confirmée", "Authentification en cours", "Préparation expédition", "Expédiée via La Poste"],
     trackingCta: "Voir le suivi complet",
-    trackingPending: "Suivi en préparation",
+    trackingPending: "Suivi local disponible après prise en charge transporteur",
     labelOrder: "Commande",
     labelEta: "Arrivée estimée",
     labelTracking: "Suivi",
@@ -111,25 +158,45 @@ const COPY: Record<
     labelSize: "Taille",
     labelOrderNumber: "Numéro de commande",
     labelSalePrice: "Prix de vente",
-    faqIntro: "Une question sur ta commande ?",
-    faqLinkText: "Consulte notre page d'informations",
+    faqIntro: "FAQ, delais et retours :",
+    faqLinkText: "Voir la page d'aide",
     footerRights: "Tous droits réservés.",
     footerSender:
       "Expéditeur: Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Suisse.",
     footerHelp: "Besoin d'aide ?",
     topNote: "Mise à jour automatique de ta commande.",
     subjectPrefix: "Suivi commande",
+    statusNoteStandard:
+      "Bonne nouvelle ! Ton article est arrive dans notre centre de verification. Une fois la verification effectuee, nous te l'expedions et te communiquons toutes les informations utiles.",
+    statusNoteExpress:
+      "Bonne nouvelle ! Ta commande prioritaire suit un parcours accelere. Apres verification, nous expedions rapidement ton colis avec toutes les infos utiles.",
+    statusNoteShipped:
+      "Bonne nouvelle. Ton colis est en route via La Poste. Suis la livraison avec le bouton ci-dessous.",
+    nextStepsTitle: "Avant de contacter le support :",
+    nextStepStandard1: "Tu recevras un e-mail automatique a chaque etape.",
+    nextStepStandard2: "Merci d'attendre la date de livraison estimee indiquee ci-dessus.",
+    nextStepStandard3: "Si rien n'est livre 48h apres cette date, contacte-nous avec ton numero de commande.",
+    nextStepExpress1: "Tu recevras un e-mail automatique a chaque etape.",
+    nextStepExpress2: "Merci d'attendre la date de livraison estimee indiquee ci-dessus.",
+    nextStepExpress3: "Si rien n'est livre 48h apres cette date, contacte-nous avec ton numero de commande.",
+    closing1: "La plupart des reponses sont dans notre page d'aide.",
+    closing2: "Support prioritaire si la commande depasse la date estimee de 48h.",
+    laPosteReady: "Ton colis est pris en charge par La Poste.",
+    laPostePending: "Le suivi La Poste est envoye des la prise en charge.",
+    laPosteCta: "Suivre mon colis",
+    laPosteTrackingNumberLabel: "Numero de suivi La Poste",
+    trackingLabelLaPoste: "Suivi La Poste",
   },
   en: {
     stepLabelsStandard: [
       "Order confirmed",
       "Authentication in progress",
-      "In transit to Switzerland",
-      "Local delivery preparation",
+      "Preparing shipment",
+      "Shipped via Swiss Post",
     ],
-    stepLabelsExpress: ["Order confirmed", "In transit to Switzerland", "Local delivery preparation"],
+    stepLabelsExpress: ["Order confirmed", "Authentication in progress", "Preparing shipment", "Shipped via Swiss Post"],
     trackingCta: "Open full tracking",
-    trackingPending: "Tracking will be available soon",
+    trackingPending: "Local tracking appears after carrier pickup",
     labelOrder: "Order",
     labelEta: "Estimated arrival",
     labelTracking: "Tracking",
@@ -138,14 +205,34 @@ const COPY: Record<
     labelSize: "Size",
     labelOrderNumber: "Order number",
     labelSalePrice: "Sale price",
-    faqIntro: "Questions about your order?",
-    faqLinkText: "Visit our information page",
+    faqIntro: "FAQ, delays and returns:",
+    faqLinkText: "Open help page",
     footerRights: "All rights reserved.",
     footerSender:
       "Sender: Resell Lausanne, Chemin de Bas de Plan 6, 1030 Bussigny, Switzerland.",
     footerHelp: "Need help?",
     topNote: "Automatic update for your order.",
     subjectPrefix: "Order update",
+    statusNoteStandard:
+      "Great news. Your item has reached our verification center. Once verification is complete, we ship it and share all useful delivery details.",
+    statusNoteExpress:
+      "Great news. Your priority order is moving quickly. After verification, we dispatch your parcel and share all useful delivery details.",
+    statusNoteShipped:
+      "Great news. Your parcel is on the way with Swiss Post. Track delivery with the button below.",
+    nextStepsTitle: "Before contacting support:",
+    nextStepStandard1: "You receive an automatic email at each step.",
+    nextStepStandard2: "Please wait until the estimated delivery date shown above.",
+    nextStepStandard3: "If nothing is delivered 48h after that date, contact us with your order number.",
+    nextStepExpress1: "You receive an automatic email at each step.",
+    nextStepExpress2: "Please wait until the estimated delivery date shown above.",
+    nextStepExpress3: "If nothing is delivered 48h after that date, contact us with your order number.",
+    closing1: "Most answers are available on our help page.",
+    closing2: "Priority support applies when delivery is 48h past estimated date.",
+    laPosteReady: "Your parcel has been handed over to Swiss Post.",
+    laPostePending: "Swiss Post tracking is shared as soon as carrier pickup is complete.",
+    laPosteCta: "Track my parcel",
+    laPosteTrackingNumberLabel: "Swiss Post tracking number",
+    trackingLabelLaPoste: "Swiss Post tracking",
   },
 };
 
@@ -158,10 +245,14 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
   const copy = COPY[language];
 
   const stepLabels = isExpress ? copy.stepLabelsExpress : copy.stepLabelsStandard;
-  const maxSteps = stepLabels.length;
 
-  // Determine active step index (1..5) from StockX states progression.
-  // This is more reliable than milestoneKey alone, especially for EXPRESS where StockX has fewer distinct titles.
+  // Step 4 button only when we explicitly pass Swiss Post outbound fields.
+  // Never infer from StockX inbound tracking.
+  const outbound = resolveSwissPostCustomerTracking({
+    trackingNumber: input.match.swissPostTrackingNumber || null,
+    trackingUrl: input.match.swissPostTrackingUrl || null,
+  });
+
   const completedCount = (() => {
     if (!states || states.length === 0) return 1;
     const done = states.filter((s) => {
@@ -169,22 +260,22 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
       if (s.status === "UPCOMING" || s.progress === "UPCOMING") return false;
       return s.progress === "COMPLETED" || s.status === "SUCCESS";
     }).length;
-    return Math.max(1, Math.min(maxSteps, done));
+    return Math.max(1, Math.min(3, done));
   })();
 
-  const activeIndex = completedCount; // 1..5
+  const activeIndex = outbound ? 4 : completedCount;
   const styleFor = (idx: number) =>
     activeIndex === idx
-      ? "font-weight:700;color:#55b3f3;"
+      ? "font-weight:700;color:#3ea8f4;"
       : "font-weight:500;color:#9ca3af;";
 
-  const brandHomeUrl =
-    process.env.BRAND_HOME_URL || process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+  const trackingBaseUrl = resolveTrackingBaseUrl();
+  const brandHomeUrl = trackingBaseUrl || "https://resell-lausanne.ch";
 
-  const brandName = process.env.BRAND_NAME || "Resell Lausanne";
+  const brandName = "Resell-Lausanne";
   const brandLogoUrl =
     process.env.BRAND_LOGO_URL ||
-    `${brandHomeUrl.replace(/\/$/, "")}/logo.png`;
+    "https://www.resell-lausanne.ch/cdn/shop/t/30/assets/logo-fullstack.png?v=22424771050372487161777561326";
 
   // Hero background image (the “StockX-style” textured/duotone banner).
   // For best email-client compatibility, this should be a pre-rendered image URL (PNG/JPG/SVG).
@@ -193,7 +284,11 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     "";
 
   const supportEmail = process.env.SUPPORT_EMAIL || process.env.POSTMARK_FROM_EMAIL || "";
-  const faqUrl = process.env.FAQ_URL || `${brandHomeUrl.replace(/\/$/, "")}/faq`;
+  const faqUrl =
+    process.env.FAQ_URL ||
+    (language === "fr"
+      ? "https://www.resell-lausanne.ch/fr-fr/pages/faq"
+      : "https://www.resell-lausanne.ch/en/pages/faq");
 
   const purchasePriceChf =
     typeof input.match.shopifyTotalPriceChf === "number" && Number.isFinite(input.match.shopifyTotalPriceChf)
@@ -227,14 +322,40 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
   const estimatedEndPlus2 = addBusinessDays(estimatedEnd, 2);
 
   let trackingUrl = "";
+  const trackingEnabled = isCustomerTrackingEnabled();
   const token = (input.match.customerTrackingToken || "").trim();
-  if (token) {
-    const baseUrl = brandHomeUrl.replace(/\/$/, "");
-    trackingUrl = `${baseUrl}/track/${token}`;
-  }
-
-  const hasTracking = Boolean(trackingUrl);
   const activeLabel = stepLabels[activeIndex - 1] || "";
+  const statusNote =
+    activeIndex === 4 ? copy.statusNoteShipped : isExpress ? copy.statusNoteExpress : copy.statusNoteStandard;
+  const nextStep1 = isExpress ? copy.nextStepExpress1 : copy.nextStepStandard1;
+  const nextStep2 = isExpress ? copy.nextStepExpress2 : copy.nextStepStandard2;
+  const nextStep3 = isExpress ? copy.nextStepExpress3 : copy.nextStepStandard3;
+  const laPosteTrackingUrlResolved = outbound?.trackingUrl || "";
+  const laPosteTrackingNumber = outbound?.trackingNumber || "";
+  const hasLaPosteTrackingNumber = Boolean(laPosteTrackingNumber);
+  const hasLaPosteTracking = Boolean(laPosteTrackingUrlResolved);
+  const hasLaPosteTrackingData = hasLaPosteTracking || hasLaPosteTrackingNumber;
+  if (hasLaPosteTracking) {
+    trackingUrl = laPosteTrackingUrlResolved;
+  } else if (trackingEnabled && token && trackingBaseUrl) {
+    trackingUrl = `${trackingBaseUrl}/track/${token}`;
+  }
+  const hasTracking = Boolean(trackingUrl);
+
+  const trackingLabel = hasLaPosteTracking ? copy.trackingLabelLaPoste : copy.labelTracking;
+  const trackingCta = hasLaPosteTracking ? copy.laPosteCta : copy.trackingCta;
+  const trackingPendingText = hasLaPosteTrackingNumber
+    ? `${copy.laPosteTrackingNumberLabel}: ${laPosteTrackingNumber}`
+    : copy.trackingPending;
+  const hasLaPosteBlock = hasLaPosteTracking;
+  const laPosteLabel = trackingLabel;
+  const laPosteNumberLine = trackingPendingText;
+  const laPosteCta = trackingCta;
+  const auxShow = hasLaPosteBlock;
+  const auxLabel = laPosteLabel;
+  const auxValue = laPosteNumberLine;
+  const auxHref = laPosteTrackingUrlResolved;
+  const auxCta = laPosteCta;
 
   return {
     // Header
@@ -253,11 +374,24 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     hero_image_url: input.match.shopifyLineItemImageUrl || brandHeroImageUrl,
     top_note: copy.topNote,
     tracking_url: trackingUrl,
-    tracking_label: copy.labelTracking,
-    tracking_pending_text: copy.trackingPending,
-    cta_track: copy.trackingCta,
+    tracking_label: trackingLabel,
+    tracking_pending_text: trackingPendingText,
+    cta_track: trackingCta,
     has_tracking: hasTracking,
+    has_laposte: hasLaPosteBlock,
+    laposte_url: laPosteTrackingUrlResolved,
+    laposte_label: laPosteLabel,
+    laposte_number_line: laPosteNumberLine,
+    laposte_cta: laPosteCta,
+    a_show: auxShow,
+    a_label: auxLabel,
+    a_value: auxValue,
+    a_href: auxHref,
+    a_cta: auxCta,
     language,
+    is_fr: language === "fr",
+    is_en: language === "en",
+    status_note: statusNote,
 
     // Status
     active_step_title: stepLabels[activeIndex - 1],
@@ -273,12 +407,12 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     step2_active: activeIndex === 2,
     step3_active: activeIndex === 3,
     step4_active: activeIndex === 4,
-    step5_active: false,
+    step5_active: activeIndex === 5,
     step1_style: styleFor(1),
     step2_style: styleFor(2),
     step3_style: styleFor(3),
     step4_style: styleFor(4),
-    step5_style: styleFor(4),
+    step5_style: styleFor(5),
 
     // Article
     product_title: stripTrailingSize(input.match.shopifyProductTitle || "", sizeLabel),
@@ -307,12 +441,30 @@ function buildTemplateModel(input: StockXMilestoneEmailInput) {
     footer_rights: copy.footerRights,
     footer_sender: copy.footerSender,
     footer_help: copy.footerHelp,
+    next_steps_title: copy.nextStepsTitle,
+    next_step_1: nextStep1,
+    next_step_2: nextStep2,
+    next_step_3: nextStep3,
+    closing_1: copy.closing1,
+    closing_2: copy.closing2,
+    laposte_ready_text: copy.laPosteReady,
+    laposte_pending_text: copy.laPostePending,
+    laposte_cta: copy.laPosteCta,
+    laposte_tracking_url: laPosteTrackingUrlResolved,
+    has_laposte_tracking: hasLaPosteTracking,
+    laposte_tracking_number_label: copy.laPosteTrackingNumberLabel,
+    laposte_tracking_number: laPosteTrackingNumber,
+    has_laposte_tracking_number: hasLaPosteTrackingNumber,
+    has_laposte_tracking_data: hasLaPosteTrackingData,
+    laposte_step_active: activeIndex >= 4,
   };
 }
 
 export function createPostmarkMailer(): Mailer {
   const token = process.env.POSTMARK_SERVER_TOKEN || "";
   const from = process.env.POSTMARK_FROM_EMAIL || "";
+  const fromName = (process.env.POSTMARK_FROM_NAME || "Resell Lausanne").trim();
+  const fromHeader = fromName ? `${fromName} <${from}>` : from;
   const messageStreamRaw = process.env.POSTMARK_MESSAGE_STREAM || "";
   const messageStream = messageStreamRaw.trim() || undefined;
   const templateAliasNormal = (process.env.POSTMARK_TEMPLATE_ALIAS_NORMAL || "normal-ship").trim();
@@ -351,7 +503,7 @@ export function createPostmarkMailer(): Mailer {
           "X-Postmark-Server-Token": token,
         },
         body: JSON.stringify({
-          From: from,
+          From: fromHeader,
           To: to,
           TemplateAlias: templateAlias,
           TemplateModel: templateModel,

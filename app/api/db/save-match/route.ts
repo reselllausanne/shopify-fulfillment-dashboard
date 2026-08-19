@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { orderMatchHasLocalStockLotIdField, prisma } from "@/app/lib/prisma";
 import { hashStockXStates, StockXState } from "@/app/lib/stockxTracking";
-import { detectMilestone } from "@/app/lib/stockxStatus";
+import { detectMilestone, isStockxInboundDeliveryMilestone } from "@/app/lib/stockxStatus";
 import { getMailer } from "@/app/lib/mailer";
 import { tryApplyResellFromReturnedStock } from "@/shopify/returns/resellFromReturnedStock";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
@@ -91,6 +91,9 @@ async function upsertMilestoneEventAndMaybeEmail(opts: {
   const milestoneKey = milestone?.key || null;
 
   if (!milestoneKey || milestoneKey === opts.previousLastMilestoneKey) {
+    return;
+  }
+  if (isStockxInboundDeliveryMilestone(milestoneKey)) {
     return;
   }
 

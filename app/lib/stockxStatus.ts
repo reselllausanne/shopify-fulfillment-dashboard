@@ -91,6 +91,12 @@ const EXPRESS_TITLE_ALIASES: Record<string, string> = {
   "awaiting order delivery": "SWISS_POST_TRACKING_AVAILABLE_EXPRESS",
 };
 
+export const CUSTOMER_SHIPPED_LA_POSTE_KEY = "CUSTOMER_SHIPPED_LA_POSTE";
+
+export function isStockxInboundDeliveryMilestone(key: string | null | undefined): boolean {
+  return key === "SWISS_POST_TRACKING_AVAILABLE" || key === "SWISS_POST_TRACKING_AVAILABLE_EXPRESS";
+}
+
 export function detectMilestone(
   checkoutType: string | null,
   states: StockXState[] | null,

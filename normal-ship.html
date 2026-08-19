@@ -33,14 +33,9 @@
       .prod-img { width:140px !important; max-width:140px !important; }
       .hero-h { height:290px !important; }
       .hide-m { display:none !important; }
-      .step-text { font-size:20px !important; line-height:24px !important; }
     }
-    .step-text { word-break: break-word; }
-    .step-dot { width:10px; height:10px; border-radius:999px; margin-top:4px; }
-    .step-dot-active { border:2px solid #55b3f3; background:#55b3f3; }
-    .step-dot-inactive { border:2px solid rgba(255,255,255,.35); background:transparent; }
-    .step-text-active { color:#ffffff; font-weight:600; }
-    .step-text-inactive { color:rgba(255,255,255,.55); font-weight:400; }
+    .tracker-label-active { color:#3ea8f4; font-weight:700; }
+    .tracker-label-inactive { color:#a0a0a0; font-weight:400; }
   </style>
 </head>
 
@@ -56,7 +51,7 @@
       <td align="center" style="padding:22px 10px;">
         <table role="presentation" class="container" width="640" cellspacing="0" cellpadding="0" border="0" style="width:640px; max-width:640px;">
 
-          <!-- Top note (optional like StockX small line) -->
+          <!-- Top note -->
           {{#top_note}}
           <tr>
             <td class="px" style="padding:0 24px 10px 24px; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#7b7b7b;">
@@ -71,8 +66,8 @@
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                 <tr>
                   <td align="left" style="vertical-align:middle;">
-                    <a href="{{brand_home_url}}">
-                      <img src="https://cdn.shopify.com/s/files/1/0675/8324/6625/files/Design_sans_titre_1.svg?v=1763218127" width="140" alt="Resell Lausanne" style="height:auto;" />
+                    <a href="{{brand_home_url}}" style="font-family:Arial, Helvetica, sans-serif; font-size:30px; line-height:34px; color:#111111; font-weight:800;">
+                      {{brand_name}}
                     </a>
                   </td>
                   <td align="right" style="vertical-align:middle;">
@@ -99,8 +94,7 @@
                     <td class="hero-pad" style="background:rgba(0,0,0,.70); padding:38px 28px 28px 28px; vertical-align:top;">
                       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
                         <tr>
-                          <!-- LEFT -->
-                          <td class="stack" width="52%" style="width:52%; vertical-align:top; padding-right:14px;">
+                          <td class="stack" width="100%" style="width:100%; vertical-align:top; padding-right:0;">
                             <div style="font-family:Arial, Helvetica, sans-serif; font-size:40px; line-height:44px; font-weight:800; color:#ffffff;">
                               {{headline}}
                             </div>
@@ -115,124 +109,9 @@
 
                             <div style="height:12px;"></div>
 
-                            <!-- Tracking (optional) -->
-                            {{#tracking_url}}
-                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff;">
-                              {{tracking_label}}:
+                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:15px; line-height:23px; color:#d4d1c7;">
+                              {{status_note}}
                             </div>
-                            <div style="height:6px;"></div>
-                            <a href="{{.}}" target="_blank" rel="noopener noreferrer"
-                              style="font-size:14px; font-family:Arial, Helvetica, sans-serif; color:#ffffff; text-decoration:none; border-radius:4px; background:#55b3f3; display:inline-block; line-height:36px; padding:0 14px; font-weight:700;">
-                              {{cta_track}}
-                            </a>
-                            {{/tracking_url}}
-                            {{^tracking_url}}
-                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#ffffff; opacity:.75;">
-                              {{tracking_pending_text}}
-                            </div>
-                            {{/tracking_url}}
-                          </td>
-
-                          <!-- RIGHT (steps) -->
-                          <td class="stack steps-col" width="46%" style="width:46%; vertical-align:top; padding-left:6px;">
-                            <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:18px; color:#ffffff; opacity:.9; font-weight:800; padding-bottom:6px;">
-                              {{label_status}}
-                            </div>
-
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-
-                              <!-- Step 1 -->
-                              <tr>
-                                <td style="padding:0;">
-                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                                    <tr>
-                                      <td width="18" style="width:18px; vertical-align:top;">
-                                        <div class="step-dot {{#step1_active}}step-dot-active{{/step1_active}}{{^step1_active}}step-dot-inactive{{/step1_active}}"></div>
-                                      </td>
-                                      <td class="step-text {{#step1_active}}step-text-active{{/step1_active}}{{^step1_active}}step-text-inactive{{/step1_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:18px; line-height:22px;">
-                                        {{step_1}}
-                                      </td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-
-                              <!-- Step 2 -->
-                              <tr>
-                                <td style="padding:0;">
-                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                                    <tr>
-                                      <td width="18" style="width:18px; vertical-align:top;">
-                                        <div class="step-dot {{#step2_active}}step-dot-active{{/step2_active}}{{^step2_active}}step-dot-inactive{{/step2_active}}"></div>
-                                      </td>
-                                      <td class="step-text {{#step2_active}}step-text-active{{/step2_active}}{{^step2_active}}step-text-inactive{{/step2_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:18px; line-height:22px;">
-                                        {{step_2}}
-                                      </td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-
-                              <!-- Step 3 -->
-                              <tr>
-                                <td style="padding:0;">
-                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                                    <tr>
-                                      <td width="18" style="width:18px; vertical-align:top;">
-                                        <div class="step-dot {{#step3_active}}step-dot-active{{/step3_active}}{{^step3_active}}step-dot-inactive{{/step3_active}}"></div>
-                                      </td>
-                                      <td class="step-text {{#step3_active}}step-text-active{{/step3_active}}{{^step3_active}}step-text-inactive{{/step3_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:18px; line-height:22px;">
-                                        {{step_3}}
-                                      </td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-
-                              {{#has_step4}}
-                              <!-- Step 4 -->
-                              <tr>
-                                <td style="padding:0;">
-                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                                    <tr>
-                                      <td width="18" style="width:18px; vertical-align:top;">
-                                        <div class="step-dot {{#step4_active}}step-dot-active{{/step4_active}}{{^step4_active}}step-dot-inactive{{/step4_active}}"></div>
-                                      </td>
-                                      <td class="step-text {{#step4_active}}step-text-active{{/step4_active}}{{^step4_active}}step-text-inactive{{/step4_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:18px; line-height:22px;">
-                                        {{step_4}}
-                                      </td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-                              {{/has_step4}}
-
-                              {{#has_step5}}
-                              <!-- Step 5 -->
-                              <tr>
-                                <td style="padding:0;">
-                                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
-                                    <tr>
-                                      <td width="18" style="width:18px; vertical-align:top;">
-                                        <div class="step-dot {{#step5_active}}step-dot-active{{/step5_active}}{{^step5_active}}step-dot-inactive{{/step5_active}}"></div>
-                                      </td>
-                                      <td class="step-text {{#step5_active}}step-text-active{{/step5_active}}{{^step5_active}}step-text-inactive{{/step5_active}}"
-                                        style="font-family:'Book Antiqua','Palatino Linotype','Palatino LT STD',Georgia,serif; font-size:18px; line-height:22px;">
-                                        {{step_5}}
-                                      </td>
-                                    </tr>
-                                  </table>
-                                </td>
-                              </tr>
-                              {{/has_step5}}
-
-                            </table>
-
-
                           </td>
                         </tr>
                       </table>
@@ -244,6 +123,57 @@
                 </v:textbox>
               </v:rect>
               <![endif]-->
+            </td>
+          </tr>
+
+          {{#a_show}}
+          <tr>
+            <td style="background:#ffffff; padding:14px 18px 12px 18px; border-top:1px solid #d4d1c7;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #cfe8ff; border-radius:10px; background:#f3f8ff;">
+                <tr>
+                  <td style="padding:10px 12px 4px 12px; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#6b7280; font-weight:700; text-transform:uppercase; letter-spacing:.3px;">
+                    {{../a_label}}
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:0 12px 12px 12px;">
+                    <a href="{{../a_href}}" target="_blank" rel="noopener noreferrer" style="display:inline-block; background:#3ea8f4; border:1px solid #3ea8f4; border-radius:8px; padding:10px 14px; font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:16px; color:#ffffff; text-decoration:none; font-weight:800;">
+                      {{../a_cta}}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {{/a_show}}
+
+          <!-- Status tracker -->
+          <tr>
+            <td style="background:#ffffff; padding:26px 16px 14px 16px; border-top:1px solid #d4d1c7;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td align="center" width="25%" style="width:25%; vertical-align:top;">
+                    {{#step1_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b051ordered-icon2.png?dpr=2&w=100&fill=solid&fill-color=3ea8f4&fit=fill&border=1%2C3ea8f4&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step1_active}}
+                    {{^step1_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b051ordered-icon2.png?dpr=2&w=100&fill=solid&fill-color=a0a0a0&fit=fill&border=1%2Ca0a0a0&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step1_active}}
+                    <div class="{{#step1_active}}tracker-label-active{{/step1_active}}{{^step1_active}}tracker-label-inactive{{/step1_active}}" style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:14px; padding:8px 4px 0 4px;">{{step_1}}</div>
+                  </td>
+                  <td align="center" width="25%" style="width:25%; vertical-align:top;">
+                    {{#step2_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b052shippedToStockX-icon2.png?dpr=2&w=100&fill=solid&fill-color=3ea8f4&fit=fill&border=1%2C3ea8f4&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step2_active}}
+                    {{^step2_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b052shippedToStockX-icon2.png?dpr=2&w=100&fill=solid&fill-color=a0a0a0&fit=fill&border=1%2Ca0a0a0&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step2_active}}
+                    <div class="{{#step2_active}}tracker-label-active{{/step2_active}}{{^step2_active}}tracker-label-inactive{{/step2_active}}" style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:14px; padding:8px 4px 0 4px;">{{step_2}}</div>
+                  </td>
+                  <td align="center" width="25%" style="width:25%; vertical-align:top;">
+                    {{#step3_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b052shippedToStockX-icon2.png?dpr=2&w=100&fill=solid&fill-color=3ea8f4&fit=fill&border=1%2C3ea8f4&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step3_active}}
+                    {{^step3_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b052shippedToStockX-icon2.png?dpr=2&w=100&fill=solid&fill-color=a0a0a0&fit=fill&border=1%2Ca0a0a0&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step3_active}}
+                    <div class="{{#step3_active}}tracker-label-active{{/step3_active}}{{^step3_active}}tracker-label-inactive{{/step3_active}}" style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:14px; padding:8px 4px 0 4px;">{{step_3}}</div>
+                  </td>
+                  <td align="center" width="25%" style="width:25%; vertical-align:top;">
+                    {{#step4_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b053shippedToBuyer3.png?dpr=2&w=100&fill=solid&fill-color=3ea8f4&fit=fill&border=1%2C3ea8f4&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step4_active}}
+                    {{^step4_active}}<img src="https://stockx-assets.imgix.net/emails/transactional/buyer-icons/b053shippedToBuyer3.png?dpr=2&w=100&fill=solid&fill-color=a0a0a0&fit=fill&border=1%2Ca0a0a0&border-radius=50%2C50%2C50%2C50&border-radius-inner=50%2C50%2C50%2C50" alt="" width="40" style="margin:0 auto;" />{{/step4_active}}
+                    <div class="{{#step4_active}}tracker-label-active{{/step4_active}}{{^step4_active}}tracker-label-inactive{{/step4_active}}" style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:14px; padding:8px 4px 0 4px;">{{step_4}}</div>
+                  </td>
+                </tr>
+              </table>
             </td>
           </tr>
 
@@ -293,11 +223,22 @@
                       </tr>
                     </table>
 
-                    <div style="height:12px;"></div>
+                    <div style="height:16px;"></div>
+
+                    <div style="font-family:Arial, Helvetica, sans-serif; font-size:18px; line-height:24px; color:#111111; font-weight:700; padding:0 2px 10px 2px;">
+                      {{next_steps_title}}
+                    </div>
+                    <ul style="margin:0 0 16px 18px; padding:0; font-family:Arial, Helvetica, sans-serif; color:#111111; font-size:14px; line-height:22px;">
+                      <li style="margin:0 0 6px 0;">{{next_step_1}}</li>
+                      <li style="margin:0 0 6px 0;">{{next_step_2}}</li>
+                      <li style="margin:0;">{{next_step_3}}</li>
+                    </ul>
 
                     <div style="font-family:Arial, Helvetica, sans-serif; font-size:14px; line-height:20px; color:#6b7280; padding:0 2px;">
+                      {{closing_1}}<br/>
+                      {{closing_2}}<br/><br/>
                       {{faq_intro}}
-                      <a href="{{faq_url}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">{{faq_link_text}}</a>
+                      <a href="{{faq_url}}" style="color:#3ea8f4; text-decoration:underline; font-weight:800;">{{faq_link_text}}</a>
                     </div>
                   </td>
                 </tr>
@@ -313,7 +254,7 @@
                     <div style="font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:16px; color:#6b7280;">
                       © {{current_year}} Resell Lausanne. {{footer_rights}}<br/>
                       {{footer_sender}}<br/>
-                      {{footer_help}} <a href="mailto:{{support_email}}" style="color:#55b3f3; text-decoration:underline; font-weight:800;">{{support_email}}</a>
+                      {{footer_help}} <a href="mailto:{{support_email}}" style="color:#3ea8f4; text-decoration:underline; font-weight:800;">{{support_email}}</a>
                     </div>
                   </td>
                 </tr>

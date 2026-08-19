@@ -27,6 +27,7 @@ import {
 } from "@/lib/fulfillmentTiming";
 import { normalizeInboundHomeAwb } from "@/app/lib/stockxInboundHomeRoutes";
 import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses";
+import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -1018,6 +1019,22 @@ export async function POST(req: NextRequest) {
         message: err?.message ?? String(err),
       });
     });
+
+    if (notifyCustomer && swissPostLabelId) {
+      await notifyCustomerShippedViaLaPoste({
+        shopifyOrderId,
+        shopifyOrderName: map.order.name,
+        trackingNumber: swissPostLabelId,
+        trackingUrl,
+        trackingCompany: "Swiss Post",
+        matchIds: selectedMatches.map((m) => m.id),
+      }).catch((err: any) => {
+        console.error("[FULFILL-FROM-AWB] customer ship email failed", {
+          shopifyOrderId,
+          message: err?.message ?? String(err),
+        });
+      });
+    }
 
     return NextResponse.json(
       {

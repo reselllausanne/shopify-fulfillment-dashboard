@@ -23,6 +23,8 @@ export type StockXMilestoneEmailInput = {
     stockxSizeEU?: string | null;
     stockxTrackingUrl: string | null;
     stockxAwb: string | null;
+    swissPostTrackingUrl?: string | null;
+    swissPostTrackingNumber?: string | null;
     stockxEstimatedDelivery: Date | null; // estimated_arrival_start
     stockxLatestEstimatedDelivery: Date | null; // estimated_arrival_end
   };
