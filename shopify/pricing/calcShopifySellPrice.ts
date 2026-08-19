@@ -45,6 +45,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const CM2_TARGET = 0.19;
   const SHIP_F = isExpress ? 15.0 : 7.0;
   const EXPRESS_UPSELL_PCT = 0.05;
+  /** Onitsuka sneakers only (Adidas aligned to SNEAKER_MARGIN_DISCOUNT). */
   const BRAND_MARGIN_DISCOUNT = 0.1;
   const SAUCONY_MARGIN_DISCOUNT = 0.08;
   const SNEAKER_MARGIN_DISCOUNT = 0.05;
@@ -84,13 +85,13 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
     finalPriceRaw = (C_plus_ship + CPA_CAP) / denom;
   }
 
-  const isAdidas = brandLower.includes("adidas") || (handleLower.includes("adidas") && !brandLower);
   const isSaucony = brandLower.includes("saucony") || (handleLower.includes("saucony") && !brandLower);
   const isOnitsuka =
     brandLower.includes("onitsuka") || (handleLower.includes("onitsuka") && !brandLower);
   const isSneaker = category === "sneakers";
 
-  if ((isAdidas || isOnitsuka) && isSneaker) {
+  // Adidas: same −5% as Nike/Jordan sneakers (was −10% brand cut → too thin vs ads).
+  if (isOnitsuka && isSneaker) {
     finalPriceRaw *= 1.0 - BRAND_MARGIN_DISCOUNT;
   } else if (isSaucony && isSneaker) {
     finalPriceRaw *= 1.0 - SAUCONY_MARGIN_DISCOUNT;

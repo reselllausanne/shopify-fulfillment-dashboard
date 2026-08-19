@@ -450,9 +450,9 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price
     SHIP_F = SHIP_F_EXPRESS if is_express else SHIP_F_STANDARD
-    BRAND_MARGIN_DISCOUNT = 0.10  # adidas / onitsuka sneakers only
+    BRAND_MARGIN_DISCOUNT = 0.10  # onitsuka sneakers only (adidas now uses SNEAKER_MARGIN_DISCOUNT)
     SAUCONY_MARGIN_DISCOUNT = 0.08  # saucony sneakers: -8% vs hybrid base only, no default stack
-    SNEAKER_MARGIN_DISCOUNT = 0.05  # nike, jordan, nb, etc.
+    SNEAKER_MARGIN_DISCOUNT = 0.05  # nike, jordan, adidas, nb, etc.
     CLOTHING_MARGIN_DISCOUNT = 0.02  # streetwear, jerseys, apparel
     LOW_AOV_COST_THRESHOLD = 100.0  # all-in StockX buy (C) at or below this
     LOW_AOV_MIN_MARGIN = 50.0       # fixed margin on low-AOV items
@@ -536,14 +536,11 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     is_saucony = "saucony" in brand_lower or ("saucony" in handle_lower and not brand_lower)
     is_onitsuka = "onitsuka" in brand_lower or ("onitsuka" in handle_lower and not brand_lower)
     is_sneaker = "sneaker" in category_lower
-    if (is_adidas or is_onitsuka) and is_sneaker:
+    # Adidas: same −5% as Nike/Jordan (was −10% brand cut → too thin vs ads).
+    if is_onitsuka and is_sneaker:
         before_discount = final_price_raw
         final_price_raw = final_price_raw * (1.0 - BRAND_MARGIN_DISCOUNT)
-        if is_adidas:
-            discount_brand = "Adidas"
-        else:
-            discount_brand = "Onitsuka"
-        print(f"[PRICE DEBUG] {discount_brand} margin discount: {before_discount:.2f} → {final_price_raw:.2f} (-{BRAND_MARGIN_DISCOUNT*100:.0f}%)")
+        print(f"[PRICE DEBUG] Onitsuka margin discount: {before_discount:.2f} → {final_price_raw:.2f} (-{BRAND_MARGIN_DISCOUNT*100:.0f}%)")
     elif is_saucony and is_sneaker:
         before_discount = final_price_raw
         final_price_raw = final_price_raw * (1.0 - SAUCONY_MARGIN_DISCOUNT)
@@ -554,6 +551,8 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     else:
         discount = SNEAKER_MARGIN_DISCOUNT if is_sneaker else CLOTHING_MARGIN_DISCOUNT
         discount_label = "Sneaker" if is_sneaker else "Clothing"
+        if is_adidas and is_sneaker:
+            discount_label = "Adidas (sneaker parity)"
         before_discount = final_price_raw
         final_price_raw = final_price_raw * (1.0 - discount)
         print(

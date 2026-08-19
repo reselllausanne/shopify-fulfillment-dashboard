@@ -5,16 +5,23 @@ import {
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 describe("calcShopifySellPrice", () => {
-  it("applies Adidas sneaker brand discount", () => {
-    const price = calcShopifySellPrice({
-      stockxRaw: 120,
+  it("prices Adidas sneakers at Nike sneaker discount parity (−5%, not −10%)", () => {
+    const adidas = calcShopifySellPrice({
+      stockxRaw: 100,
       productCategory: "sneakers",
       brand: "adidas",
       productHandle: "adidas-samba-xlg-black-carbon",
     });
-    expect(price).not.toBeNull();
-    expect(price!).toBeGreaterThan(150);
-    expect(price! % 10).toBe(9);
+    const nike = calcShopifySellPrice({
+      stockxRaw: 100,
+      productCategory: "sneakers",
+      brand: "nike",
+      productHandle: "nike-dunk-low",
+    });
+    expect(adidas).not.toBeNull();
+    expect(nike).not.toBeNull();
+    expect(adidas).toBe(nike);
+    expect(adidas! % 10).toBe(9);
   });
 
   it("returns psych-rounded lego price", () => {
