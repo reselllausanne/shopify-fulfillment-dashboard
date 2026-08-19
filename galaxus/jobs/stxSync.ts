@@ -362,7 +362,7 @@ export type StxIngestResult = {
 export async function ingestStxFromRawPayload(
   payload: any,
   kickdbProductId: string,
-  options?: { skipZeroStock?: boolean }
+  options?: { skipZeroStock?: boolean; skipShopifyPriceSync?: boolean }
 ): Promise<StxIngestResult> {
   const startedAt = Date.now();
   const now = new Date();
@@ -448,7 +448,11 @@ export async function ingestStxFromRawPayload(
     .filter((r) => !r.gtin)
     .map((r) => r.supplierVariantId)
     .filter(Boolean);
-  if ((gtins.length > 0 || pendingNoGtinSupplierIds.length > 0) && (created > 0 || updated > 0)) {
+  const shouldSyncShopify =
+    options?.skipShopifyPriceSync !== true &&
+    (gtins.length > 0 || pendingNoGtinSupplierIds.length > 0) &&
+    (created > 0 || updated > 0);
+  if (shouldSyncShopify) {
     try {
       if (gtins.length > 0) {
         await syncShopifyStxPricesForGtins(gtins);
