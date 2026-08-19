@@ -103,6 +103,8 @@ services:
       - .env
     environment:
       - TZ=Europe/Zurich
+      # Next `server-only` throws under raw tsx; stub so EDI can import supplier/orders.
+      - NODE_OPTIONS=--require ./scripts/workers/stubServerOnly.cjs
       - GALAXUS_EDI_WORKER_LOOP_MS=${GALAXUS_EDI_WORKER_LOOP_MS:-15000}
       - GALAXUS_EDI_DIRECT_INTERVAL_MS=${GALAXUS_EDI_DIRECT_INTERVAL_MS:-300000}
       - GALAXUS_EDI_WAREHOUSE_HOUR=${GALAXUS_EDI_WAREHOUSE_HOUR:-12}
