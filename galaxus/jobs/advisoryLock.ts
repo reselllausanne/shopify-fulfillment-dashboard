@@ -1,44 +1,56 @@
 import { prisma } from "@/app/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { Client } from "pg";
 
+function resolveAdvisoryLockConnectionString(): string {
+  const direct = process.env.DIRECT_URL?.trim();
+  if (direct) return direct;
+  const pooled = process.env.DATABASE_URL?.trim();
+  if (pooled) return pooled;
+  throw new Error("DIRECT_URL or DATABASE_URL required for advisory locks");
+}
+
+/**
+ * Session advisory lock held on a dedicated `pg` connection for the whole handler.
+ *
+ * Do NOT use Prisma `$queryRaw` for session locks under Supabase/pgbouncer transaction
+ * pooling — lock + unlock land on different backends and the lock LEAKS.
+ *
+ * Prefer DIRECT_URL (session mode, port 5432). Handler should use the normal Prisma
+ * pool for business queries so the lock connection stays idle but held.
+ */
 export async function withAdvisoryLock<T>(
   lockName: string,
   handler: () => Promise<T>
 ): Promise<{ locked: true; result: T } | { locked: false; skipped: "locked" }> {
-  // IMPORTANT:
-  // Do NOT wrap the whole handler inside `prisma.$transaction()`.
-  // With small connection pools (connection_limit=1), the transaction keeps the single
-  // connection busy for the whole duration, and the handler's Prisma queries try to
-  // acquire a second connection -> pool timeout.
-  //
-  // We instead use `pg_try_advisory_lock` and always unlock in a finally block.
-  const rows = await prisma.$queryRaw<Array<{ locked: boolean }>>(
-    Prisma.sql`SELECT pg_try_advisory_lock(hashtext(${lockName})) AS locked`
-  );
-  const locked = Boolean(rows?.[0]?.locked);
-  if (!locked) return { locked: false, skipped: "locked" as const };
-
+  const client = new Client({ connectionString: resolveAdvisoryLockConnectionString() });
+  await client.connect();
   try {
-    const result = await handler();
-    return { locked: true, result };
+    const rows = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [lockName]
+    );
+    const locked = Boolean(rows.rows?.[0]?.locked);
+    if (!locked) return { locked: false, skipped: "locked" as const };
+
+    try {
+      const result = await handler();
+      return { locked: true, result };
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockName]).catch(() => undefined);
+    }
   } finally {
-    // Release the advisory lock even if the handler throws.
-    await prisma.$queryRaw(Prisma.sql`SELECT pg_advisory_unlock(hashtext(${lockName}))`);
+    await client.end().catch(() => undefined);
   }
 }
 
 /**
- * Transaction-scoped advisory lock — REQUIRED under pgbouncer transaction pooling.
+ * Transaction-scoped advisory lock — REQUIRED under pgbouncer transaction pooling
+ * when the critical section is SHORT.
  *
- * `withAdvisoryLock` uses a *session* advisory lock (`pg_try_advisory_lock`) released by a *separate*
- * `pg_advisory_unlock` query. With pgbouncer in transaction mode each statement can land on a
- * different backend, so the unlock frequently runs on the wrong connection and the lock LEAKS on the
- * original backend until it idles out (minutes) — this is what silently starved the nightly
- * `push-master-specs` step.
- *
- * `pg_try_advisory_xact_lock` is held on the single connection pinned to the interactive transaction
- * and auto-released at COMMIT/ROLLBACK. Only use this for SHORT critical sections (the lock is held
- * for the whole transaction) — do NOT wrap heavy multi-minute work in it.
+ * `pg_try_advisory_xact_lock` is held on the single connection pinned to the interactive
+ * transaction and auto-released at COMMIT/ROLLBACK. Do NOT wrap heavy multi-minute work
+ * in it — use `withAdvisoryLock` (dedicated session connection) instead.
  */
 export async function withAdvisoryXactLock<T>(
   lockName: string,
@@ -58,4 +70,3 @@ export async function withAdvisoryXactLock<T>(
     { timeout: options?.timeoutMs ?? 60000, maxWait: options?.maxWaitMs ?? 10000 }
   );
 }
-
