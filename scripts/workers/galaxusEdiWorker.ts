@@ -27,10 +27,7 @@
  */
 import { prisma } from "@/app/lib/prisma";
 import { withAdvisoryLock } from "@/galaxus/jobs/advisoryLock";
-import {
-  runEdiInPipeline,
-  type RunEdiInPipelineOptions,
-} from "@/galaxus/ops/orderPipeline";
+import { runEdiInPipeline } from "@/galaxus/ops/orderPipeline";
 
 const LOOP_MS = Number(process.env.GALAXUS_EDI_WORKER_LOOP_MS ?? 15_000);
 const DIRECT_INTERVAL_MS = Number(process.env.GALAXUS_EDI_DIRECT_INTERVAL_MS ?? 5 * 60_000);
@@ -107,31 +104,6 @@ function isWarehouseDue(lastRunAt: Date | null, now: Date): boolean {
   return lastDate !== date;
 }
 
-async function runLocked(
-  label: "direct" | "warehouse",
-  options: RunEdiInPipelineOptions
-): Promise<"ran" | "locked" | "failed"> {
-  const locked = await withAdvisoryLock(LOCK_NAME, async () => {
-    const startedAt = new Date().toISOString();
-    const pipeline = await runEdiInPipeline(options);
-    console.info(`[WORKER][GALAXUS_EDI] ${label}`, {
-      startedAt,
-      filesProcessed: pipeline.filesProcessed,
-      ordersIngested: pipeline.ordersIngested,
-      ordrSent: pipeline.ordrSent,
-      ordrFailed: pipeline.ordrFailed,
-      errors: pipeline.errors.slice(0, 5),
-    });
-    return pipeline;
-  });
-
-  if (!locked.locked) {
-    console.info(`[WORKER][GALAXUS_EDI] ${label} skipped — advisory lock held`);
-    return "locked";
-  }
-  return "ran";
-}
-
 async function tick() {
   const now = new Date();
   const [lastDirect, lastWarehouse] = await Promise.all([
@@ -139,40 +111,48 @@ async function tick() {
     getLastRunAt(WAREHOUSE_STATE_KEY),
   ]);
 
-  // Warehouse first at 12:05 so a long warehouse batch does not starve the daily window;
-  // direct still runs on the next loop if due.
-  if (isWarehouseDue(lastWarehouse, now)) {
-    try {
-      const outcome = await runLocked("warehouse", {
+  const wantWarehouse = isWarehouseDue(lastWarehouse, now);
+  const wantDirect = isDirectDue(lastDirect, now);
+  if (!wantWarehouse && !wantDirect) return;
+
+  // One lock for the whole tick so warehouse→direct does not race unlock.
+  const locked = await withAdvisoryLock(LOCK_NAME, async () => {
+    if (wantWarehouse) {
+      const startedAt = new Date().toISOString();
+      const pipeline = await runEdiInPipeline({
         deliveryMode: "warehouse",
         timeoutMs: WAREHOUSE_TIMEOUT_MS,
       });
-      if (outcome === "ran") {
-        await markRun(WAREHOUSE_STATE_KEY, now);
-      }
-    } catch (err: unknown) {
-      console.error(
-        "[WORKER][GALAXUS_EDI] warehouse failed",
-        err instanceof Error ? err.message : err
-      );
+      console.info("[WORKER][GALAXUS_EDI] warehouse", {
+        startedAt,
+        filesProcessed: pipeline.filesProcessed,
+        ordersIngested: pipeline.ordersIngested,
+        ordrSent: pipeline.ordrSent,
+        ordrFailed: pipeline.ordrFailed,
+        errors: pipeline.errors.slice(0, 5),
+      });
+      await markRun(WAREHOUSE_STATE_KEY, now);
     }
-  }
-
-  if (isDirectDue(lastDirect, now)) {
-    try {
-      const outcome = await runLocked("direct", {
+    if (wantDirect) {
+      const startedAt = new Date().toISOString();
+      const pipeline = await runEdiInPipeline({
         deliveryMode: "direct",
         timeoutMs: DIRECT_TIMEOUT_MS,
       });
-      if (outcome === "ran") {
-        await markRun(DIRECT_STATE_KEY, now);
-      }
-    } catch (err: unknown) {
-      console.error(
-        "[WORKER][GALAXUS_EDI] direct failed",
-        err instanceof Error ? err.message : err
-      );
+      console.info("[WORKER][GALAXUS_EDI] direct", {
+        startedAt,
+        filesProcessed: pipeline.filesProcessed,
+        ordersIngested: pipeline.ordersIngested,
+        ordrSent: pipeline.ordrSent,
+        ordrFailed: pipeline.ordrFailed,
+        errors: pipeline.errors.slice(0, 5),
+      });
+      await markRun(DIRECT_STATE_KEY, now);
     }
+  });
+
+  if (!locked.locked) {
+    console.info("[WORKER][GALAXUS_EDI] tick skipped — advisory lock held");
   }
 }
 
