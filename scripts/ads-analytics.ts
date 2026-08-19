@@ -61,6 +61,7 @@ import { merchantAuthUrlCommand } from "../adsanalytics/commands/merchantAuthUrl
 import { merchantRegisterGcpCommand } from "../adsanalytics/commands/merchantRegisterGcp";
 import { merchantSourcesAuditCommand } from "../adsanalytics/commands/merchantSourcesAudit";
 import { overlapVerifyCommand } from "../adsanalytics/commands/overlapVerify";
+import { pmaxExcludeRoutedLabelsCommand } from "../adsanalytics/commands/pmaxExcludeRoutedLabels";
 import { probeCommand } from "../adsanalytics/commands/probe";
 import { syncSpendCommand } from "../adsanalytics/commands/syncSpend";
 import { validateCommand } from "../adsanalytics/commands/validate";
@@ -145,6 +146,10 @@ Commands:
                              Create the persistent Long Tail All shopping campaign (PAUSED)
   explorer:core-exclusions:extend [--label=long_tail_all] [--validate-only|--confirm=<hash>]
                              Add a missing routed-label exclusion to the core campaign
+  pmax:exclude-routed-labels --campaign-id=<id> [--labels=explorer_active,long_tail_all]
+                             [--validate-only|--confirm=<hash>]
+                             Idempotent: subdivide UNIT_INCLUDED leaves + extend CL3 subdivisions
+                             so any PMax excludes routed labels (used for brand PMax hardening)
   explorer:overlap:proof     Prove each routed label is targeted by exactly one campaign
   explorer:rollback --batch=<id> --confirm=<planHash>
                              Idempotent rollback state transition (live calls blocked)
@@ -367,6 +372,13 @@ async function main(): Promise<number> {
       });
     case "longtail:campaign:activate":
       return longTailCampaignActivateCommand({
+        validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
+        confirm: stringFlag(args, "confirm"),
+      });
+    case "pmax:exclude-routed-labels":
+      return pmaxExcludeRoutedLabelsCommand({
+        campaignId: stringFlag(args, "campaign-id"),
+        labels: stringFlag(args, "labels"),
         validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
         confirm: stringFlag(args, "confirm"),
       });
