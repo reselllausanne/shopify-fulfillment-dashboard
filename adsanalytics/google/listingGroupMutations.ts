@@ -332,7 +332,7 @@ export async function applyCoreExclusionMutations(
   config: AdsConfig,
   listingNodes: ListingFilterNode[],
   touchedLeafIds: string[],
-  options: { validateOnlyFirst?: boolean } = {}
+  options: { validateOnlyFirst?: boolean; validateOnly?: boolean } = {}
 ): Promise<CoreExclusionApplyResult> {
   const touchedSet = new Set(touchedLeafIds);
   const leaves = listingNodes.filter((n) => touchedSet.has(n.id));
@@ -381,7 +381,7 @@ export async function applyCoreExclusionMutations(
           error = JSON.stringify(dry.partialFailureError).slice(0, 500);
         }
       }
-      if (validateOnlyOk) {
+      if (validateOnlyOk && options.validateOnly !== true) {
         const live = await mutateResource(config, "assetGroupListingGroupFilters", operations, {
           validateOnly: false,
         });
