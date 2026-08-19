@@ -28,6 +28,10 @@ import { EXIT_OK, log, withSyncRun } from "@/adsanalytics/run";
 
 const SOURCE_CAMPAIGN_NAME = "all";
 const EXPLORER_ROLE = "EXPLORER_ALL";
+/** Weekly target; effective size is min(target, availablePool). */
+const WEEKLY_TARGET_MODELS = 1000;
+/** Below this pool size the weekly run skips instead of shipping a tiny batch. */
+const WEEKLY_FLOOR_MODELS = 100;
 /** Statuses that indicate a batch is not terminal — presence blocks re-planning. */
 const NON_TERMINAL_STATUSES = [
   "planned",
@@ -259,17 +263,49 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
 
     const explorerCampaign = await ensureExplorerCampaignRegistered();
 
-    await runOrThrow("explorer:plan", () =>
+    const runPlan = (models: number) =>
       explorerPlanCommand({
-        models: 1000,
+        models,
         days: 30,
         seed,
         requireRoutingClean: true,
         sourceCampaignName: SOURCE_CAMPAIGN_NAME,
         requireEmptyCustomLabel3: true,
         abortForbiddenBrands: true,
-      })
-    );
+      });
+
+    let effectiveModels = WEEKLY_TARGET_MODELS;
+    try {
+      await runOrThrow("explorer:plan", () => runPlan(effectiveModels));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const match = message.match(/have (\d+), need \d+/);
+      if (!match) throw err;
+      const pool = Number(match[1]);
+      if (pool < WEEKLY_FLOOR_MODELS) {
+        log("explorer_weekly.skip_low_pool", {
+          seed,
+          pool,
+          floor: WEEKLY_FLOOR_MODELS,
+          target: WEEKLY_TARGET_MODELS,
+        });
+        return {
+          skipped: true,
+          reason: "low_pool",
+          seed,
+          pool,
+          floor: WEEKLY_FLOOR_MODELS,
+          target: WEEKLY_TARGET_MODELS,
+        };
+      }
+      log("explorer_weekly.retry_with_pool", {
+        seed,
+        target: WEEKLY_TARGET_MODELS,
+        pool,
+      });
+      effectiveModels = pool;
+      await runOrThrow("explorer:plan", () => runPlan(effectiveModels));
+    }
 
     const batch = await findLatestBatchBySeed(seed);
     if (!batch) {
