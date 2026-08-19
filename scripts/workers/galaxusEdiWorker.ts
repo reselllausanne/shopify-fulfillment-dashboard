@@ -13,6 +13,9 @@
  *   - last-run persisted in GalaxusJobDefinition → catch-up after downtime
  *   - filtered poll leaves the other delivery type on SFTP
  *
+ * Requires NODE_OPTIONS=--require ./scripts/workers/stubServerOnly.cjs
+ * (compose sets this) so `server-only` imports under tsx do not throw.
+ *
  * Env:
  *   GALAXUS_EDI_WORKER_LOOP_MS              default 15000
  *   GALAXUS_EDI_DIRECT_INTERVAL_MS          default 300000 (5 min)
