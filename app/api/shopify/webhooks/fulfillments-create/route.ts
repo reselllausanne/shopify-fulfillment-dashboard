@@ -43,7 +43,7 @@ export async function POST(req: Request) {
       trackingNumber: result.trackingNumber,
       email: result.email ?? null,
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json(result);
   } catch (err: any) {
     console.error("[shopify][webhook][fulfillments] failed", {
       topic,
