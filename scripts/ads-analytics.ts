@@ -50,6 +50,7 @@ import { explorerPreflightCommand } from "../adsanalytics/commands/explorerPrefl
 import { explorerReconcileCommand } from "../adsanalytics/commands/explorerReconcile";
 import { explorerRollbackCommand } from "../adsanalytics/commands/explorerRollback";
 import { explorerRoutingDebugCommand } from "../adsanalytics/commands/explorerRoutingDebug";
+import { explorerWeeklyPlanCommand } from "../adsanalytics/commands/explorerWeeklyPlan";
 import { funnelCommand } from "../adsanalytics/commands/funnel";
 import { funnelSnapshotCommand } from "../adsanalytics/commands/funnelSnapshot";
 import { inventorySyncCommand } from "../adsanalytics/commands/inventorySync";
@@ -154,6 +155,11 @@ Commands:
   explorer:overlap:proof     Prove each routed label is targeted by exactly one campaign
   explorer:rollback --batch=<id> --confirm=<planHash>
                              Idempotent rollback state transition (live calls blocked)
+  explorer:weekly:plan       Self-serve weekly cycle for source_campaign=all:
+                             plan (1000 models, seed=weekly-YYYYWww) → preflight
+                             → core-exclusions validate → merchant prepare/apply
+                             → activate. Idempotent per ISO week. Reuses the
+                             registered EXPLORER_ALL campaign; never creates one.
   explorer:batch:supersede --old-batch=<id> --new-batch=<id>
                              Mark old batch superseded after new plan success
 
@@ -402,6 +408,8 @@ async function main(): Promise<number> {
         batch: stringFlag(args, "batch"),
         confirm: stringFlag(args, "confirm"),
       });
+    case "explorer:weekly:plan":
+      return explorerWeeklyPlanCommand();
     case "explorer:batch:supersede":
       return explorerBatchSupersedeCommand({
         oldBatch: stringFlag(args, "old-batch"),

@@ -1,0 +1,17 @@
+[Unit]
+Description=Resell Ads explorer weekly self-serve plan/apply/activate (source_campaign=all)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+EnvironmentFile=-/etc/default/resell-ads
+# Same robustness knobs as the reconciler: web recreate must not SIGKILL this run,
+# and Merchant apply for 1000 models can take a while when the outbox is cold.
+TimeoutStartSec=2h
+TimeoutStopSec=15min
+KillMode=mixed
+OOMPolicy=continue
+ExecStart=/usr/bin/env bash -lc 'docker rm -f resell-ads-explorer-weekly >/dev/null 2>&1 || true; docker compose run --no-deps --rm -T --name resell-ads-explorer-weekly web npm run ads -- explorer:weekly:plan'
+StandardOutput=journal
+StandardError=journal

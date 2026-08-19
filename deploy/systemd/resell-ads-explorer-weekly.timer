@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Resell Ads explorer weekly self-serve pipeline every Monday 03:15
+
+[Timer]
+OnCalendar=Mon *-*-* 03:15:00
+Persistent=true
+Unit=resell-ads-explorer-weekly.service
+
+[Install]
+WantedBy=timers.target
