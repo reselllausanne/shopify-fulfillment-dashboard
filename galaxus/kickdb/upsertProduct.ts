@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
 import { pickPersistedKickdbBarcodes } from "@/galaxus/kickdb/client";
@@ -6,6 +7,7 @@ import { ingestStxFromRawPayload, zeroStxStockForKickdbProduct } from "@/galaxus
 export type KickdbUpsertBody = {
   data?: unknown;
   notFound?: boolean;
+  skipShopifyPriceSync?: boolean;
 };
 
 export type KickdbUpsertResult =
@@ -100,36 +102,56 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
   if (!productRowId) throw new Error("product_upsert_returned_no_id");
 
   const variants: any[] = Array.isArray(data.variants) ? data.variants : [];
-  let variantsUpserted = 0;
-  for (const v of variants) {
-    const kickdbVariantId = pickString(v?.id);
-    if (!kickdbVariantId) continue;
+  const kickdbVariantRows = variants
+    .map((v) => {
+      const kickdbVariantId = pickString(v?.id);
+      if (!kickdbVariantId) return null;
+      const { sizeEu, sizeUs } = pickPersistedKickdbSizes(v);
+      const { gtin, ean } = pickPersistedKickdbBarcodes(v);
+      return { kickdbVariantId, sizeEu, sizeUs, gtin, ean };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+  const variantsUpserted = kickdbVariantRows.length;
 
-    const { sizeEu, sizeUs } = pickPersistedKickdbSizes(v);
-    const { gtin, ean } = pickPersistedKickdbBarcodes(v);
-
-    await prisma.$executeRaw`
-      INSERT INTO "public"."KickDBVariant" (
-        "id", "kickdbVariantId", "productId", "sizeUs", "sizeEu", "gtin", "ean",
-        "lastFetchedAt", "notFound", "createdAt", "updatedAt"
-      ) VALUES (
-        gen_random_uuid(), ${kickdbVariantId}, ${productRowId}, ${sizeUs}, ${sizeEu},
-        ${gtin}, ${ean}, ${now}, false, ${now}, ${now}
-      )
-      ON CONFLICT ("kickdbVariantId") DO UPDATE SET
-        "productId"     = EXCLUDED."productId",
-        "sizeUs"        = COALESCE(EXCLUDED."sizeUs", "KickDBVariant"."sizeUs"),
-        "sizeEu"        = COALESCE(EXCLUDED."sizeEu", "KickDBVariant"."sizeEu"),
-        "gtin"          = COALESCE(EXCLUDED."gtin", "KickDBVariant"."gtin"),
-        "ean"           = COALESCE(EXCLUDED."ean", "KickDBVariant"."ean"),
-        "lastFetchedAt" = EXCLUDED."lastFetchedAt",
-        "notFound"      = false,
-        "updatedAt"     = EXCLUDED."updatedAt"
-    `;
-    variantsUpserted += 1;
+  if (kickdbVariantRows.length > 0) {
+    const values = kickdbVariantRows.map((row) =>
+      Prisma.sql`(
+        gen_random_uuid(),
+        ${row.kickdbVariantId},
+        ${productRowId},
+        ${row.sizeUs},
+        ${row.sizeEu},
+        ${row.gtin},
+        ${row.ean},
+        ${now},
+        false,
+        ${now},
+        ${now}
+      )`
+    );
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO "public"."KickDBVariant" (
+          "id", "kickdbVariantId", "productId", "sizeUs", "sizeEu", "gtin", "ean",
+          "lastFetchedAt", "notFound", "createdAt", "updatedAt"
+        )
+        VALUES ${Prisma.join(values)}
+        ON CONFLICT ("kickdbVariantId") DO UPDATE SET
+          "productId"     = EXCLUDED."productId",
+          "sizeUs"        = COALESCE(EXCLUDED."sizeUs", "KickDBVariant"."sizeUs"),
+          "sizeEu"        = COALESCE(EXCLUDED."sizeEu", "KickDBVariant"."sizeEu"),
+          "gtin"          = COALESCE(EXCLUDED."gtin", "KickDBVariant"."gtin"),
+          "ean"           = COALESCE(EXCLUDED."ean", "KickDBVariant"."ean"),
+          "lastFetchedAt" = EXCLUDED."lastFetchedAt",
+          "notFound"      = false,
+          "updatedAt"     = EXCLUDED."updatedAt"
+      `
+    );
   }
 
-  const ingest = await ingestStxFromRawPayload(data, kickdbProductId);
+  const ingest = await ingestStxFromRawPayload(data, kickdbProductId, {
+    skipShopifyPriceSync: body?.skipShopifyPriceSync === true,
+  });
 
   return {
     ok: true,

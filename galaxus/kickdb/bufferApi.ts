@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { kickdbUpsertGate } from "@/galaxus/kickdb/upsertGate";
 import { upsertKickdbProductPayload } from "@/galaxus/kickdb/upsertProduct";
 
 export function checkKickdbBufferAuth(headers: Record<string, string | string[] | undefined>): boolean {
@@ -226,7 +227,28 @@ export async function handleKickdbBufferRequest(
   }
 
   if (method === "POST" && pathname === "/api/kickdb/upsert") {
-    const result = await upsertKickdbProductPayload(body as { data?: unknown; notFound?: boolean });
+    const startedAt = Date.now();
+    const gated = await kickdbUpsertGate.run(() =>
+      upsertKickdbProductPayload({
+        ...(body as { data?: unknown; notFound?: boolean }),
+        // Keep SSE hot path focused on DB writes; Shopify pricing runs async elsewhere.
+        skipShopifyPriceSync: true,
+      })
+    );
+    if (!gated.ok) {
+      return { status: 503, json: { ok: false, error: "busy" } };
+    }
+    const result = gated.value;
+    const id =
+      result.ok && "kickdbProductId" in result
+        ? result.kickdbProductId
+        : null;
+    console.info("[kickdb-buffer] upsert", {
+      ok: result.ok,
+      kickdbProductId: id,
+      ms: Date.now() - startedAt,
+      ...kickdbUpsertGate.snapshot(),
+    });
     if (!result.ok) {
       const status = result.error === "missing_data_or_id" ? 400 : 500;
       return { status, json: result };

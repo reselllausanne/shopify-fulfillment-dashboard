@@ -2,16 +2,15 @@
 SSE listener v2 — DB buffer mode.
 
 On each KicksDB SSE price-change event:
-  1. Dedup: skip if this product UUID was fetched within --min-refetch-interval
-     (default 12h — a product is never pushed to Shopify more than ~2x/day, so
-     refetching more often is wasted quota).
+  1. Dedup: skip if this product UUID was *successfully upserted* within
+     --min-refetch-interval (default 12h). Failures do NOT start the 12h window.
   2. Fetch the FULL product from KicksDB (variants + prices + identifiers +
      gallery + 360) — this is the ONLY KicksDB call in the whole pipeline.
-  3. POST the raw payload to the resell API /api/kickdb/upsert, which stores it
-     in KickDBProduct.rawJson (single source of truth for Shopify + marketplace).
+  3. POST the raw payload to /api/kickdb/upsert (:3002), which writes
+     KickDBProduct.rawJson AND SupplierVariant price/stock.
 
-Fetch+upsert run on worker threads so the SSE stream read never blocks (event
-bursts would otherwise drop the connection).
+Do not mark a UUID "fetched" until upsert returns 200. Marking on enqueue/timeout
+was dropping live StockX prices for 12h (Galaxus kept selling stale buy).
 
 Usage:
     python3 sse_db_listener.py --topics price:stockx:ch \
@@ -40,8 +39,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SSE_URL = "https://sse.kicks.dev/v1/stream"
 DEFAULT_TOPICS = os.environ.get("KICKSDB_SSE_TOPICS", "price:stockx:ch")
 DEFAULT_UPSERT_URL = "http://127.0.0.1:3002/api/kickdb/upsert"
-DEFAULT_REFETCH_INTERVAL = 12 * 3600  # 12h: max ~2 refreshes per product per day
-DEFAULT_WORKERS = 4
+DEFAULT_REFETCH_INTERVAL = 12 * 3600  # 12h after successful upsert
+DEFAULT_WORKERS = 2
+DEFAULT_QUEUE_SIZE = 500
+DEFAULT_UPSERT_TIMEOUT = 180
+DEFAULT_UPSERT_RETRIES = 4
+IN_FLIGHT_STALE_S = 600
 
 LOG_FILE = BASE_DIR / "sse_db_listener.log"
 LAST_EVENT_ID_FILE = BASE_DIR / "sse_db_last_event_id.txt"
@@ -60,9 +63,19 @@ KICKS_DISPLAY_PARAMS = {
 }
 
 _cache_lock = threading.Lock()
-_uuid_cache = {}  # uuid -> lastFetchTs
+_uuid_cache = {}  # uuid -> last SUCCESSFUL upsert ts
+_in_flight = {}  # uuid -> enqueue ts
 _stats_lock = threading.Lock()
-_stats = {"events": 0, "dedup_skips": 0, "fetched": 0, "upserted": 0, "errors": 0}
+_stats = {
+    "events": 0,
+    "dedup_skips": 0,
+    "in_flight_skips": 0,
+    "queue_full": 0,
+    "fetched": 0,
+    "upserted": 0,
+    "errors": 0,
+    "upsert_retries": 0,
+}
 
 
 def log(msg):
@@ -126,16 +139,41 @@ def load_uuid_cache(min_interval):
         log(f"cache load error: {e}")
 
 
+def is_in_flight(uuid):
+    with _cache_lock:
+        ts = _in_flight.get(uuid)
+        if ts is None:
+            return False
+        if time.time() - ts > IN_FLIGHT_STALE_S:
+            _in_flight.pop(uuid, None)
+            return False
+        return True
+
+
+def mark_in_flight(uuid):
+    with _cache_lock:
+        _in_flight[uuid] = time.time()
+
+
+def clear_in_flight(uuid):
+    with _cache_lock:
+        _in_flight.pop(uuid, None)
+
+
 def should_fetch(uuid, min_interval):
+    if is_in_flight(uuid):
+        return False
     with _cache_lock:
         ts = _uuid_cache.get(uuid)
         return ts is None or (time.time() - ts) >= min_interval
 
 
-def mark_fetched(uuid):
+def mark_upserted(uuid):
+    """12h dedup starts only after SupplierVariant actually wrote."""
     now = time.time()
     with _cache_lock:
         _uuid_cache[uuid] = now
+        _in_flight.pop(uuid, None)
     try:
         with open(UUID_CACHE_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps({"uuid": uuid, "lastFetchTs": now}) + "\n")
@@ -162,21 +200,43 @@ def fetch_full_product(uuid, api_key):
         return None, f"error:{e}"
 
 
-def upsert_to_db(payload, upsert_url):
+def upsert_to_db(payload, upsert_url, timeout_s, retries):
     headers = {"Content-Type": "application/json"}
     token = os.environ.get("KICKDB_INTERNAL_TOKEN", "").strip()
     if token:
         headers["x-internal-token"] = token
-    try:
-        r = requests.post(upsert_url, json=payload, timeout=30, headers=headers)
-        if r.status_code == 200:
-            return r.json().get("ok", False), None
-        return False, f"http_{r.status_code}:{r.text[:200]}"
-    except Exception as e:
-        return False, f"error:{e}"
+    last_err = None
+    attempts = max(1, retries)
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.post(upsert_url, json=payload, timeout=timeout_s, headers=headers)
+            if r.status_code == 200:
+                body = {}
+                try:
+                    body = r.json()
+                except Exception:
+                    body = {}
+                if body.get("ok", False):
+                    return True, None
+                last_err = f"http_200_not_ok:{r.text[:200]}"
+            elif r.status_code in (429, 502, 503, 504):
+                last_err = f"http_{r.status_code}:{r.text[:200]}"
+                bump("upsert_retries")
+                time.sleep(min(8, attempt * 2))
+                continue
+            else:
+                return False, f"http_{r.status_code}:{r.text[:200]}"
+        except Exception as e:
+            last_err = f"error:{e}"
+            bump("upsert_retries")
+            time.sleep(min(8, attempt * 2))
+            continue
+        bump("upsert_retries")
+        time.sleep(min(8, attempt * 2))
+    return False, last_err
 
 
-def worker_loop(q, api_key, upsert_url):
+def worker_loop(q, api_key, upsert_url, timeout_s, retries):
     while True:
         item = q.get()
         if item is None:
@@ -187,25 +247,28 @@ def worker_loop(q, api_key, upsert_url):
             payload, err = fetch_full_product(uuid, api_key)
             if err:
                 if err == "http_404":
-                    # Delisted on StockX/KicksDB: tell the API to zero marketplace stock
-                    # (Galaxus drops it OOS) and flag notFound. Don't retry-storm.
-                    ok, derr = upsert_to_db({"data": {"id": uuid}, "notFound": True}, upsert_url)
+                    ok, derr = upsert_to_db(
+                        {"data": {"id": uuid}, "notFound": True},
+                        upsert_url,
+                        timeout_s,
+                        retries,
+                    )
                     if ok:
                         bump("upserted")
+                        mark_upserted(uuid)
                     else:
                         bump("errors")
                         log(f"uuid={uuid} delist FAILED: {derr}")
-                    mark_fetched(uuid)
                 else:
                     bump("errors")
                     log(f"uuid={uuid} fetch error: {err}")
                 continue
             bump("fetched")
-            mark_fetched(uuid)
             data = payload.get("data", {})
-            ok, err = upsert_to_db(payload, upsert_url)
+            ok, err = upsert_to_db(payload, upsert_url, timeout_s, retries)
             if ok:
                 bump("upserted")
+                mark_upserted(uuid)
             else:
                 bump("errors")
                 log(f"uuid={uuid} slug={data.get('slug')} upsert FAILED: {err}")
@@ -213,6 +276,7 @@ def worker_loop(q, api_key, upsert_url):
             bump("errors")
             log(f"uuid={uuid} worker error: {e}")
         finally:
+            clear_in_flight(uuid)
             q.task_done()
 
 
@@ -243,6 +307,17 @@ def parse_sse_stream(response):
             data_lines.append(line[5:].lstrip())
 
 
+def enqueue_fetch(q, uuid, event_id):
+    mark_in_flight(uuid)
+    try:
+        q.put_nowait((uuid, event_id))
+        return True
+    except queue.Full:
+        clear_in_flight(uuid)
+        bump("queue_full")
+        return False
+
+
 def stream_once(api_key, topics, q, min_interval, last_event_id):
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -254,8 +329,6 @@ def stream_once(api_key, topics, q, min_interval, last_event_id):
 
     log(f"Connecting SSE: topics={topics!r} last_event_id={last_event_id!r}")
     try:
-        # Read timeout generous (600s): the stream can be quiet between events;
-        # a dead connection is still detected within 10 min and reconnected.
         response = requests.get(
             os.environ.get("KICKSDB_SSE_URL", DEFAULT_SSE_URL),
             headers=headers,
@@ -281,23 +354,20 @@ def stream_once(api_key, topics, q, min_interval, last_event_id):
             if not uuid:
                 continue
             bump("events")
-            if should_fetch(uuid, min_interval):
-                # Mark immediately so a burst of events for the same product
-                # enqueues only one fetch.
-                mark_fetched(uuid)
-                q.put((uuid, event_id))
+            if is_in_flight(uuid):
+                bump("in_flight_skips")
+            elif should_fetch(uuid, min_interval):
+                if not enqueue_fetch(q, uuid, event_id):
+                    log(f"uuid={uuid} queue full — will retry on next SSE event")
             else:
                 bump("dedup_skips")
 
             if time.time() - last_stats >= 300:
                 with _stats_lock:
                     snapshot = dict(_stats)
-                log(f"stats: {snapshot} queue={q.qsize()}")
+                log(f"stats: {snapshot} queue={q.qsize()} in_flight={len(_in_flight)}")
                 last_stats = time.time()
     except Exception as e:
-        # Mid-stream breaks on a quiet stream are normal (Cloudflare idle
-        # timeout ~100s). A successful connect counts as OK so the reconnect
-        # loop doesn't back off exponentially and miss event bursts.
         log(f"SSE stream error: {e}")
         return connected
     finally:
@@ -311,6 +381,9 @@ def main():
     parser.add_argument("--upsert-url", default=DEFAULT_UPSERT_URL)
     parser.add_argument("--min-refetch-interval", type=int, default=DEFAULT_REFETCH_INTERVAL)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
+    parser.add_argument("--queue-size", type=int, default=DEFAULT_QUEUE_SIZE)
+    parser.add_argument("--upsert-timeout", type=int, default=DEFAULT_UPSERT_TIMEOUT)
+    parser.add_argument("--upsert-retries", type=int, default=DEFAULT_UPSERT_RETRIES)
     parser.add_argument("--once", action="store_true", help="single stream attempt (no reconnect loop)")
     args = parser.parse_args()
 
@@ -321,10 +394,21 @@ def main():
 
     load_uuid_cache(args.min_refetch_interval)
 
-    q = queue.Queue(maxsize=10000)
+    q = queue.Queue(maxsize=max(1, args.queue_size))
     for _ in range(max(1, args.workers)):
-        t = threading.Thread(target=worker_loop, args=(q, api_key, args.upsert_url), daemon=True)
+        t = threading.Thread(
+            target=worker_loop,
+            args=(q, api_key, args.upsert_url, args.upsert_timeout, args.upsert_retries),
+            daemon=True,
+        )
         t.start()
+
+    log(
+        "listener config "
+        f"workers={args.workers} queue={args.queue_size} "
+        f"upsert_timeout={args.upsert_timeout}s retries={args.upsert_retries} "
+        f"min_refetch={args.min_refetch_interval}s"
+    )
 
     backoff = 1
     while True:
