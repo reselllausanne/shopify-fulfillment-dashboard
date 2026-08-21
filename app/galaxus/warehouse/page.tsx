@@ -137,7 +137,10 @@ export default function WarehouseBulkPage() {
     setBusy("detail");
     setError(null);
     try {
-      const res = await fetch(`/api/galaxus/orders/${orderId}`, { cache: "no-store" });
+      const res = await fetch(
+        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=0&reserveStx=0`,
+        { cache: "no-store" }
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load order detail");
       const order = (data.order ?? null) as OrderDetail | null;

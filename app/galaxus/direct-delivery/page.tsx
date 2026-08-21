@@ -112,7 +112,7 @@ export default function GalaxusDirectDeliveryPage() {
     try {
       // minimal + no ensureLocal: skip address repair writes + LOCAL_STOCK upserts on every click
       const res = await fetch(
-        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=0`,
+        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=0&reserveStx=0`,
         { cache: "no-store" }
       );
       const data = await res.json();
