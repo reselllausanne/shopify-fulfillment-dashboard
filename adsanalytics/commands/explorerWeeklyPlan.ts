@@ -246,7 +246,7 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
     log("explorer_weekly.start", { seed });
 
     const existing = await findExistingBatch(seed);
-    if (existing) {
+    if (existing?.status === "active") {
       log("explorer_weekly.skip_existing", {
         seed,
         batchId: existing.id,
@@ -263,59 +263,81 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
 
     const explorerCampaign = await ensureExplorerCampaignRegistered();
 
-    const pool = await countExplorerPlanPool({
-      days: 30,
-      requireRoutingClean: true,
-      sourceCampaignName: SOURCE_CAMPAIGN_NAME,
-      requireEmptyCustomLabel3: true,
-    });
-    if (pool < WEEKLY_FLOOR_MODELS) {
-      log("explorer_weekly.skip_low_pool", {
-        seed,
-        pool,
-        floor: WEEKLY_FLOOR_MODELS,
-        target: WEEKLY_TARGET_MODELS,
-      });
-      return {
-        skipped: true,
-        reason: "low_pool",
-        seed,
-        pool,
-        floor: WEEKLY_FLOOR_MODELS,
-        target: WEEKLY_TARGET_MODELS,
-      };
-    }
-    const effectiveModels = Math.min(WEEKLY_TARGET_MODELS, pool);
-    log("explorer_weekly.pool", {
-      seed,
-      pool,
-      target: WEEKLY_TARGET_MODELS,
-      effectiveModels,
-    });
+    let batch =
+      existing && NON_TERMINAL_STATUSES.includes(existing.status)
+        ? {
+            id: existing.id,
+            status: existing.status,
+            plan_hash: existing.plan_hash,
+            google_campaign_id: existing.google_campaign_id,
+          }
+        : null;
 
-    await runOrThrow("explorer:plan", () =>
-      explorerPlanCommand({
-        models: effectiveModels,
+    if (!batch) {
+      const pool = await countExplorerPlanPool({
         days: 30,
-        seed,
         requireRoutingClean: true,
         sourceCampaignName: SOURCE_CAMPAIGN_NAME,
         requireEmptyCustomLabel3: true,
-        abortForbiddenBrands: true,
-      })
-    );
+      });
+      if (pool < WEEKLY_FLOOR_MODELS) {
+        log("explorer_weekly.skip_low_pool", {
+          seed,
+          pool,
+          floor: WEEKLY_FLOOR_MODELS,
+          target: WEEKLY_TARGET_MODELS,
+        });
+        return {
+          skipped: true,
+          reason: "low_pool",
+          seed,
+          pool,
+          floor: WEEKLY_FLOOR_MODELS,
+          target: WEEKLY_TARGET_MODELS,
+        };
+      }
+      const effectiveModels = Math.min(WEEKLY_TARGET_MODELS, pool);
+      log("explorer_weekly.pool", {
+        seed,
+        pool,
+        target: WEEKLY_TARGET_MODELS,
+        effectiveModels,
+      });
 
-    const batch = await findLatestBatchBySeed(seed);
-    if (!batch) {
-      throw new Error(`Batch missing after explorer:plan for seed=${seed}`);
+      await runOrThrow("explorer:plan", () =>
+        explorerPlanCommand({
+          models: effectiveModels,
+          days: 30,
+          seed,
+          requireRoutingClean: true,
+          sourceCampaignName: SOURCE_CAMPAIGN_NAME,
+          requireEmptyCustomLabel3: true,
+          abortForbiddenBrands: true,
+        })
+      );
+
+      const planned = await findLatestBatchBySeed(seed);
+      if (!planned) {
+        throw new Error(`Batch missing after explorer:plan for seed=${seed}`);
+      }
+      batch = planned;
+      log("explorer_weekly.batch_created", { batchId: batch.id, planHash: batch.plan_hash });
+    } else {
+      log("explorer_weekly.resume_batch", {
+        seed,
+        batchId: batch.id,
+        status: batch.status,
+        googleCampaignId: batch.google_campaign_id,
+      });
     }
-    log("explorer_weekly.batch_created", { batchId: batch.id, planHash: batch.plan_hash });
 
-    await attachCampaignToBatch(batch.id, explorerCampaign);
-    log("explorer_weekly.campaign_attached", {
-      batchId: batch.id,
-      googleCampaignId: explorerCampaign.campaignId,
-    });
+    if (!batch.google_campaign_id) {
+      await attachCampaignToBatch(batch.id, explorerCampaign);
+      log("explorer_weekly.campaign_attached", {
+        batchId: batch.id,
+        googleCampaignId: explorerCampaign.campaignId,
+      });
+    }
 
     await runOrThrow("explorer:preflight", () =>
       explorerPreflightCommand({ batch: batch.id })
