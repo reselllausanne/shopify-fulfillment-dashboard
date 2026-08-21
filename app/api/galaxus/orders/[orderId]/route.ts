@@ -204,6 +204,8 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const view = String(searchParams.get("view") ?? "full").trim().toLowerCase();
     const viewFull = view !== "minimal";
+    const ensureLocal = searchParams.get("ensureLocal") !== "0";
+    const reserveStx = searchParams.get("reserveStx") !== "0";
 
     const order = await prisma.galaxusOrder.findFirst({
       where: { OR: [{ id: orderId }, { galaxusOrderId: orderId }] },
@@ -233,10 +235,13 @@ export async function GET(
         } as any)
       : order;
 
-    // Fast DB-only slot reservation; full reconcile runs on ingest / sync / manual entry.
-    await reserveStxPurchaseUnitsForOrder(orderRow.id, orderRow).catch((err) => {
-      console.warn("[GALAXUS][ORDERS] STX unit reserve skipped:", err?.message ?? err);
-    });
+    // Optional read-path optimization: some UIs only need display data, not read-time reservation writes.
+    if (reserveStx) {
+      // Fast DB-only slot reservation; full reconcile runs on ingest / sync / manual entry.
+      await reserveStxPurchaseUnitsForOrder(orderRow.id, orderRow).catch((err) => {
+        console.warn("[GALAXUS][ORDERS] STX unit reserve skipped:", err?.message ?? err);
+      });
+    }
 
     const orderLineIds = (orderRow.lines ?? []).map((line: any) => line.id);
     const lineGtins: string[] = Array.from(
@@ -429,10 +434,12 @@ export async function GET(
       enrichedLines.map((line: { gtin?: string | null }) => line.gtin)
     );
     const linesWithPhysicalStock = attachPhysicalStockToLines(enrichedLines, physicalStockByGtin);
-    const localEnsure = await ensureLocalStockMatchesForOrder({
-      order: { ...orderRow, lines: linesWithPhysicalStock },
-      reason: "LOCAL_PHYSICAL_STOCK_ON_ORDER_FETCH",
-    });
+    const localEnsure = ensureLocal
+      ? await ensureLocalStockMatchesForOrder({
+          order: { ...orderRow, lines: linesWithPhysicalStock },
+          reason: "LOCAL_PHYSICAL_STOCK_ON_ORDER_FETCH",
+        })
+      : { created: 0 };
     let matchesForResponse = stockxMatches;
     if (localEnsure.created > 0) {
       matchesForResponse = await (prisma as any).galaxusStockxMatch.findMany({
