@@ -297,7 +297,9 @@ export default function GalaxusInvoicesPage() {
     setOrderDetailLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/galaxus/orders/${encodeURIComponent(internalOrderId)}`);
+      const res = await fetch(
+        `/api/galaxus/orders/${encodeURIComponent(internalOrderId)}?view=full&ensureLocal=0&reserveStx=0`
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load order");
       const order = data.order as Record<string, unknown>;
