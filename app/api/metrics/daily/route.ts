@@ -21,6 +21,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TIMEZONE = SHOPIFY_SELL_TIMEZONE;
+const METRICS_CACHE_TTL_MS = 30_000;
+const dailyMetricsCache = new Map<string, { at: number; body: unknown }>();
+const dailyMetricsInflight = new Map<string, Promise<unknown>>();
 
 type DailyRow = {
   date: string;
@@ -51,8 +54,19 @@ export async function GET(req: NextRequest) {
         { status: 400 }
       );
     }
+    const cacheKey = `range:${range}`;
+    const cached = dailyMetricsCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < METRICS_CACHE_TTL_MS) {
+      return NextResponse.json(cached.body);
+    }
+    const pending = dailyMetricsInflight.get(cacheKey);
+    if (pending) {
+      const body = await pending;
+      return NextResponse.json(body);
+    }
 
-    const nowZurich = toZonedTime(new Date(), TIMEZONE);
+    const run = (async () => {
+      const nowZurich = toZonedTime(new Date(), TIMEZONE);
     const startDateLocal = new Date(Date.UTC(
       nowZurich.getFullYear(),
       nowZurich.getMonth(),
@@ -357,19 +371,28 @@ export async function GET(req: NextRequest) {
 
     const totalsMarginPct = totals.salesChf > 0 ? (totals.marginChf / totals.salesChf) * 100 : 0;
 
-    return NextResponse.json({
-      rows,
-      totals: {
-        ...totals,
-        marginPct: Number(totalsMarginPct.toFixed(2)),
-      },
-      metadata: {
-        dateMode: "sell_date",
-        startDate: startDateLocal.toISOString().split("T")[0],
-        endDate: endDateLocal.toISOString().split("T")[0],
-        range,
-      },
-    });
+      return {
+        rows,
+        totals: {
+          ...totals,
+          marginPct: Number(totalsMarginPct.toFixed(2)),
+        },
+        metadata: {
+          dateMode: "sell_date",
+          startDate: startDateLocal.toISOString().split("T")[0],
+          endDate: endDateLocal.toISOString().split("T")[0],
+          range,
+        },
+      };
+    })();
+    dailyMetricsInflight.set(cacheKey, run);
+    try {
+      const body = await run;
+      dailyMetricsCache.set(cacheKey, { at: Date.now(), body });
+      return NextResponse.json(body);
+    } finally {
+      dailyMetricsInflight.delete(cacheKey);
+    }
   } catch (error: any) {
     console.error("[METRICS/DAILY] Error:", error);
     return NextResponse.json(

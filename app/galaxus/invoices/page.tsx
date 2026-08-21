@@ -244,6 +244,8 @@ export default function GalaxusInvoicesPage() {
           limit: "500",
           sort: "orderDate",
           includeInvoice: "1",
+          includeLinked: "0",
+          includeWarehouse: "0",
         });
         if (debouncedOrderSearch.length >= 2) {
           params.set("q", debouncedOrderSearch);

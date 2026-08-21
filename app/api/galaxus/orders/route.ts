@@ -24,6 +24,8 @@ export async function GET(request: Request) {
     const deliveryType = String(searchParams.get("deliveryType") ?? "").trim();
     const excludeDeliveryType = String(searchParams.get("excludeDeliveryType") ?? "").trim();
     const includeInvoice = searchParams.get("includeInvoice") !== "0";
+    const includeLinked = searchParams.get("includeLinked") !== "0";
+    const includeWarehouse = searchParams.get("includeWarehouse") !== "0";
     const q = String(searchParams.get("q") ?? "").trim();
     const warehouseOpen = searchParams.get("warehouseOpen") === "1";
 
@@ -107,7 +109,7 @@ export async function GET(request: Request) {
     // Align with order-detail procurement.ok (match rows OR StxPurchaseUnit OR warehouse stock).
     // Old SQL only counted GalaxusStockxMatch rows → STX-linked-via-units showed 0/N on left list.
     const linkedCountByOrderId = new Map<string, number>();
-    if (orderIds.length > 0) {
+    if (includeLinked && orderIds.length > 0) {
       try {
         const orderRefs = orders.map((o) => o.galaxusOrderId).filter(Boolean);
         const prismaAny = prisma as any;
@@ -180,7 +182,7 @@ export async function GET(request: Request) {
       }
     }
     const warehouseShippedByOrderId = new Map<string, number>();
-    if (orderIds.length > 0) {
+    if (includeWarehouse && orderIds.length > 0) {
       try {
         const rows = await prisma.galaxusOrderLine.groupBy({
           by: ["orderId"],
@@ -214,8 +216,8 @@ export async function GET(request: Request) {
             const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
             return Boolean(shipment.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
           }).length;
-      const linkedCount = linkedCountByOrderId.get(order.id) ?? 0;
-      const warehouseLinesShipped = warehouseShippedByOrderId.get(order.id) ?? 0;
+      const linkedCount = includeLinked ? (linkedCountByOrderId.get(order.id) ?? 0) : 0;
+      const warehouseLinesShipped = includeWarehouse ? (warehouseShippedByOrderId.get(order.id) ?? 0) : 0;
       const warehouseOpenLineCount =
         warehouseOpenLineCountByOrderId != null
           ? (warehouseOpenLineCountByOrderId.get(order.id) ?? 0)
