@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/app/lib/prisma";
 import { resolveAdsConfig } from "@/adsanalytics/config";
-import { explorerPlanCommand } from "@/adsanalytics/commands/explorerPlan";
+import { explorerPlanCommand, countExplorerPlanPool } from "@/adsanalytics/commands/explorerPlan";
 import { explorerPreflightCommand } from "@/adsanalytics/commands/explorerPreflight";
 import { explorerCoreExclusionsCommand } from "@/adsanalytics/commands/explorerCoreExclusions";
 import { explorerMerchantPrepareCommand } from "@/adsanalytics/commands/explorerMerchantPrepare";
@@ -263,49 +263,47 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
 
     const explorerCampaign = await ensureExplorerCampaignRegistered();
 
-    const runPlan = (models: number) =>
+    const pool = await countExplorerPlanPool({
+      days: 30,
+      requireRoutingClean: true,
+      sourceCampaignName: SOURCE_CAMPAIGN_NAME,
+      requireEmptyCustomLabel3: true,
+    });
+    if (pool < WEEKLY_FLOOR_MODELS) {
+      log("explorer_weekly.skip_low_pool", {
+        seed,
+        pool,
+        floor: WEEKLY_FLOOR_MODELS,
+        target: WEEKLY_TARGET_MODELS,
+      });
+      return {
+        skipped: true,
+        reason: "low_pool",
+        seed,
+        pool,
+        floor: WEEKLY_FLOOR_MODELS,
+        target: WEEKLY_TARGET_MODELS,
+      };
+    }
+    const effectiveModels = Math.min(WEEKLY_TARGET_MODELS, pool);
+    log("explorer_weekly.pool", {
+      seed,
+      pool,
+      target: WEEKLY_TARGET_MODELS,
+      effectiveModels,
+    });
+
+    await runOrThrow("explorer:plan", () =>
       explorerPlanCommand({
-        models,
+        models: effectiveModels,
         days: 30,
         seed,
         requireRoutingClean: true,
         sourceCampaignName: SOURCE_CAMPAIGN_NAME,
         requireEmptyCustomLabel3: true,
         abortForbiddenBrands: true,
-      });
-
-    let effectiveModels = WEEKLY_TARGET_MODELS;
-    try {
-      await runOrThrow("explorer:plan", () => runPlan(effectiveModels));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const match = message.match(/have (\d+), need \d+/);
-      if (!match) throw err;
-      const pool = Number(match[1]);
-      if (pool < WEEKLY_FLOOR_MODELS) {
-        log("explorer_weekly.skip_low_pool", {
-          seed,
-          pool,
-          floor: WEEKLY_FLOOR_MODELS,
-          target: WEEKLY_TARGET_MODELS,
-        });
-        return {
-          skipped: true,
-          reason: "low_pool",
-          seed,
-          pool,
-          floor: WEEKLY_FLOOR_MODELS,
-          target: WEEKLY_TARGET_MODELS,
-        };
-      }
-      log("explorer_weekly.retry_with_pool", {
-        seed,
-        target: WEEKLY_TARGET_MODELS,
-        pool,
-      });
-      effectiveModels = pool;
-      await runOrThrow("explorer:plan", () => runPlan(effectiveModels));
-    }
+      })
+    );
 
     const batch = await findLatestBatchBySeed(seed);
     if (!batch) {

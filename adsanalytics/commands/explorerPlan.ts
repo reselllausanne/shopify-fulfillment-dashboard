@@ -35,6 +35,47 @@ type ExplorerPlanOptions = {
   brand?: string;
 };
 
+type ExplorerPlanPoolOptions = Pick<
+  ExplorerPlanOptions,
+  "days" | "requireRoutingClean" | "sourceCampaignName" | "requireEmptyCustomLabel3"
+>;
+
+/** Count models that pass the same filters as explorer:plan (no batch created). */
+export async function countExplorerPlanPool(
+  options: ExplorerPlanPoolOptions = {}
+): Promise<number> {
+  const lookbackDays = Math.max(7, Math.floor(options.days ?? 30));
+  const requireRoutingClean = options.requireRoutingClean === true;
+  const sourceCampaignName = options.sourceCampaignName?.trim() || "";
+  const requireEmptyCustomLabel3 = options.requireEmptyCustomLabel3 === true;
+
+  const [baseCandidates, listingCtx] = await Promise.all([
+    loadBaseCandidates(lookbackDays),
+    loadExplorerCampaignsAndListingNodes(),
+  ]);
+  const offersByModel = await loadCandidateOffersForModels(
+    baseCandidates.map((c) => c.shopifyProductId)
+  );
+  const mapped = mapModelToSingleSourceCampaign(
+    baseCandidates,
+    offersByModel,
+    listingCtx.campaigns,
+    listingCtx.listingNodes
+  );
+  const routing = requireRoutingClean
+    ? evaluateRoutingCleanModels(mapped.mapped, offersByModel, listingCtx.campaigns, listingCtx.listingNodes)
+    : { clean: mapped.mapped, rejected: [] };
+
+  let pool = routing.clean;
+  if (sourceCampaignName) {
+    pool = filterModelsBySourceCampaignName(pool, sourceCampaignName).kept;
+  }
+  if (requireEmptyCustomLabel3) {
+    pool = filterModelsWithEmptyPrimaryCustomLabel3(pool, offersByModel).kept;
+  }
+  return pool.length;
+}
+
 export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Promise<number> {
   return withSyncRun("explorer:plan", options, async () => {
     const modelTarget = Math.max(1, Math.floor(options.models ?? 500));
