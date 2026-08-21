@@ -9,7 +9,7 @@ WorkingDirectory=/opt/sse-listener
 Environment=KICKSDB_API_KEY=sd_kRbsuYh7brcMNR5BermZnUhufKUNBnuA
 # Set once go-live security is enabled (matches web .env):
 # Environment=KICKDB_INTERNAL_TOKEN=...
-ExecStart=/usr/bin/python3 /opt/sse-listener/sse_db_listener.py --topics price:stockx:ch --upsert-url http://127.0.0.1:3002/api/kickdb/upsert --workers 2 --queue-size 500 --upsert-timeout 180 --upsert-retries 4
+ExecStart=/usr/bin/python3 /opt/sse-listener/sse_db_listener.py --topics price:stockx:ch --upsert-url http://127.0.0.1:3002/api/kickdb/upsert --workers 4 --queue-size 1000 --upsert-timeout 180 --upsert-retries 4
 Restart=always
 RestartSec=10
 
