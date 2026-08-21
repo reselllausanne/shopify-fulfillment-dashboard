@@ -108,7 +108,6 @@ export async function GET(request: Request) {
   const pageSize = all ? 5000 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
-  let cursorUpdatedAt: Date | null = null;
   let cursorId: string | null = null;
   const prismaAny = prisma as any;
   const partners = prismaAny.partner?.findMany
@@ -121,14 +120,7 @@ export async function GET(request: Request) {
       ? {
           ...mappingsWhere,
           ...(providerKeyFilter ? providerKeyFilter : {}),
-          ...(cursorUpdatedAt && cursorId
-            ? {
-                OR: [
-                  { updatedAt: { lt: cursorUpdatedAt } },
-                  { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
-                ],
-              }
-            : {}),
+          ...(cursorId ? { id: { lt: cursorId } } : {}),
         }
       : {
           ...mappingsWhere,
@@ -151,7 +143,6 @@ export async function GET(request: Request) {
             manualLock: true,
             manualNote: true,
             leadTimeDays: true,
-            updatedAt: true,
             deliveryType: true,
             // Catalog-ready gate (must match master eligibility).
             supplierProductName: true,
@@ -164,14 +155,13 @@ export async function GET(request: Request) {
           },
         },
       },
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      orderBy: [{ id: "desc" }],
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
     lastBatch = mappings.length;
     if (mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
-      cursorUpdatedAt = last.updatedAt ?? null;
       cursorId = last.id ?? null;
     }
     accumulateBestCandidates(mappings, bestByGtin, {

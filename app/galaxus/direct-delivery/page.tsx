@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
@@ -15,8 +15,14 @@ type OrderListItem = {
   fulfilledCount?: number;
   linkedCount?: number;
   fulfillmentState?: "to_process" | "shipped" | "fulfilled";
+  hasPhysicalStock?: boolean;
+  physicalStockLineCount?: number;
+  physicalStockLabel?: string | null;
   _count?: { lines: number; shipments: number };
 };
+
+const ORDERS_LIST_CACHE_TTL_MS = 30_000;
+const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
 
 export default function GalaxusDirectDeliveryPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
@@ -28,9 +34,15 @@ export default function GalaxusDirectDeliveryPage() {
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
+  const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
+  const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
+  const selectedOrderIdRef = useRef<string | null>(null);
+  const detailLoadSeq = useRef(0);
   const [polling, setPolling] = useState(false);
+  const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [sendingOrdr, setSendingOrdr] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
+  const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
@@ -41,12 +53,26 @@ export default function GalaxusDirectDeliveryPage() {
     initialData: any;
   }>({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
 
-  const loadOrders = async () => {
+  selectedOrderIdRef.current = selectedOrderId;
+
+  const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = ordersListCacheRef.current;
+    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+      const items = cached.items;
+      setOrders(items);
+      const current = selectedOrderIdRef.current;
+      if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
+        setSelectedOrderId(items[0].id);
+      }
+      setLoadingOrders(false);
+      return;
+    }
     setLoadingOrders(true);
     setError(null);
     try {
       const res = await fetch(
-        "/api/galaxus/orders?limit=50&view=active&deliveryType=direct_delivery",
+        "/api/galaxus/orders?limit=50&view=active&deliveryType=direct_delivery&includeInvoice=0",
         { cache: "no-store" }
       );
       const data = await res.json();
@@ -54,26 +80,53 @@ export default function GalaxusDirectDeliveryPage() {
       const items: OrderListItem[] = data.items || [];
       const fresh = new Set<string>();
       for (const item of items) {
-        if (!knownOrderIds.current.has(item.id)) {
-          fresh.add(item.id);
-        }
+        if (!knownOrderIds.current.has(item.id)) fresh.add(item.id);
       }
-      if (fresh.size > 0) {
-        setNewOrderIds(fresh);
-      } else {
-        setNewOrderIds(new Set());
-      }
+      setNewOrderIds(fresh.size > 0 ? fresh : new Set());
       knownOrderIds.current = new Set(items.map((item) => item.id));
+      ordersListCacheRef.current = { at: Date.now(), items };
       setOrders(items);
-      if (!selectedOrderId && data.items?.[0]?.id) {
-        setSelectedOrderId(data.items[0].id);
+
+      const current = selectedOrderIdRef.current;
+      if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
+        setSelectedOrderId(items[0].id);
       }
     } catch (err: any) {
       setError(err.message);
     } finally {
       setLoadingOrders(false);
     }
-  };
+  }, []);
+
+  const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = orderDetailCacheRef.current.get(orderId);
+    if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
+      setSelectedOrder(cached.order);
+      setLoadingOrder(false);
+      return;
+    }
+    const seq = ++detailLoadSeq.current;
+    setLoadingOrder(true);
+    setError(null);
+    try {
+      // minimal + no ensureLocal: skip address repair writes + LOCAL_STOCK upserts on every click
+      const res = await fetch(
+        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=0`,
+        { cache: "no-store" }
+      );
+      const data = await res.json();
+      if (seq !== detailLoadSeq.current) return;
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
+      orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: data.order });
+      setSelectedOrder(data.order);
+    } catch (err: any) {
+      if (seq !== detailLoadSeq.current) return;
+      setError(err.message);
+    } finally {
+      if (seq === detailLoadSeq.current) setLoadingOrder(false);
+    }
+  }, []);
 
   const ingestNewOrders = async () => {
     setPolling(true);
@@ -83,58 +136,38 @@ export default function GalaxusDirectDeliveryPage() {
     } catch (err: any) {
       setError(err?.message ?? "Ingest failed");
     } finally {
-      await loadOrders();
+      await loadOrders({ force: true });
       setPolling(false);
     }
   };
 
-  const loadOrderDetail = async (orderId: string) => {
-    setLoadingOrder(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/galaxus/orders/${orderId}`, { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
-      setSelectedOrder(data.order);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoadingOrder(false);
-    }
-  };
+  useEffect(() => {
+    void loadOrders({ selectFirstIfEmpty: true });
+  }, [loadOrders]);
 
   useEffect(() => {
-    loadOrders();
-  }, []);
-
-  useEffect(() => {
-    const poll = async () => {
-      setPolling(true);
-      try {
-        await fetch("/api/galaxus/edi/poll", { cache: "no-store" });
-      } catch {
-        // Silent: polling should not spam UI
-      } finally {
-        await loadOrders();
-        setPolling(false);
-      }
-    };
-    const interval = setInterval(poll, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    if (selectedOrderId) {
-      // Avoid showing stale order details while loading the new order
+    if (!selectedOrderId) {
       setSelectedOrder(null);
-      loadOrderDetail(selectedOrderId);
+      return;
     }
-  }, [selectedOrderId]);
+    void loadOrderDetail(selectedOrderId);
+  }, [selectedOrderId, loadOrderDetail]);
 
   useEffect(() => {
-    // Prevent saving a modal that was opened for another order.
-    if (manualEntryModal.isOpen && manualEntryModal.orderId && selectedOrderId && manualEntryModal.orderId !== selectedOrderId) {
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
+    if (
+      manualEntryModal.isOpen &&
+      manualEntryModal.orderId &&
+      selectedOrderId &&
+      manualEntryModal.orderId !== selectedOrderId
+    ) {
+      setManualEntryModal({
+        isOpen: false,
+        mode: "create",
+        line: null,
+        orderId: null,
+        unitIndex: 0,
+        initialData: {},
+      });
     }
   }, [selectedOrderId, manualEntryModal.isOpen, manualEntryModal.orderId]);
 
@@ -145,6 +178,7 @@ export default function GalaxusDirectDeliveryPage() {
     });
     return map;
   }, [selectedOrder]);
+
   const orderFulfilled = useMemo(() => {
     const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
     return shipments.some((shipment: any) => {
@@ -153,16 +187,6 @@ export default function GalaxusDirectDeliveryPage() {
     });
   }, [selectedOrder]);
 
-  const orderHasTracking = useMemo(() => {
-    const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
-    return shipments.some((shipment: any) => String(shipment?.trackingNumber ?? "").trim().length > 0);
-  }, [selectedOrder]);
-
-  const orderLinked = useMemo(() => {
-    const lines = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : [];
-    const matches = Array.isArray(selectedOrder?.stockxMatches) ? selectedOrder.stockxMatches : [];
-    return lines.length > 0 && matches.length >= lines.length;
-  }, [selectedOrder]);
   const packingSlipUrl = useMemo(() => {
     const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
     const withSlip = shipments.find(
@@ -189,6 +213,73 @@ export default function GalaxusDirectDeliveryPage() {
     });
   }, [orderedList, leftTab]);
 
+  const runBulkStockxSyncVisible = async () => {
+    const targets = ordersByTab;
+    if (!targets.length) {
+      setError("No visible orders to sync.");
+      return;
+    }
+    setBulkStockxSyncing(true);
+    setError(null);
+    setOpsLog(null);
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+    const failures: Array<{ orderId: string; error: string }> = [];
+    try {
+      for (const order of targets) {
+        const orderId = String(order.id ?? "").trim();
+        if (!orderId) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const res = await fetch(`/api/galaxus/orders/${orderId}/stx/sync`, {
+            method: "POST",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) {
+            failed += 1;
+            failures.push({
+              orderId,
+              error: String(data?.error ?? `HTTP ${res.status}`),
+            });
+          } else {
+            success += 1;
+          }
+        } catch (err: any) {
+          failed += 1;
+          failures.push({
+            orderId,
+            error: String(err?.message ?? "Sync failed"),
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+      setOpsLog(
+        JSON.stringify(
+          {
+            ok: failed === 0,
+            mode: "galaxus_direct_bulk_stockx_sync_visible",
+            tab: leftTab,
+            total: targets.length,
+            success,
+            failed,
+            skipped,
+            failures: failures.slice(0, 25),
+          },
+          null,
+          2
+        )
+      );
+      await loadOrders({ force: true });
+      if (selectedOrderIdRef.current) await loadOrderDetail(selectedOrderIdRef.current, { force: true });
+    } finally {
+      setBulkStockxSyncing(false);
+    }
+  };
+
   const needsLinking = (order: OrderListItem) => {
     const lines = order._count?.lines ?? 0;
     const linked = order.linkedCount ?? 0;
@@ -213,7 +304,7 @@ export default function GalaxusDirectDeliveryPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Resend ORDR failed");
       setOpsLog(JSON.stringify(data, null, 2));
-      await loadOrderDetail(selectedOrderId);
+      await loadOrderDetail(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -221,7 +312,6 @@ export default function GalaxusDirectDeliveryPage() {
     }
   };
 
-  /** Shipment row first, then Swiss Post label (never burn a barcode before parcel exists). */
   const generateDirectSwissPostLabel = async () => {
     if (!selectedOrderId) return;
     setError(null);
@@ -235,12 +325,11 @@ export default function GalaxusDirectDeliveryPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Direct Swiss Post label failed");
       setOpsLog(JSON.stringify(data, null, 2));
-      // Fulfilled orders leave the "to process" list — keep them visible.
       if (data.status === "CREATED" || data.status === "REPRINT" || data.status === "ALREADY_FULFILLED") {
         setLeftTab("fulfilled");
       }
-      await loadOrders();
-      if (selectedOrderId) await loadOrderDetail(selectedOrderId);
+      await loadOrders({ force: true });
+      if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
       if (data?.url) {
         window.open(String(data.url), "_blank", "noopener,noreferrer");
       }
@@ -282,7 +371,6 @@ export default function GalaxusDirectDeliveryPage() {
         ? ((priceNumber - resolvedCost) / priceNumber) * 100
         : null;
     const title = buildLineTitle(line);
-    const gtin = String(line.gtin ?? "").trim();
     const sizePrefill = String(line.size ?? "");
     const skuPrefill = String(line.supplierSku ?? "N/A");
     const orderLabel = `${selectedOrder?.galaxusOrderId ?? ""}${selectedOrder?.recipientName ? ` · ${selectedOrder.recipientName}` : ""}`;
@@ -297,7 +385,6 @@ export default function GalaxusDirectDeliveryPage() {
       shopifyTotalPrice: Number.isFinite(priceNumber) ? priceNumber : null,
       shopifyCurrencyCode: selectedOrder?.currencyCode ?? "CHF",
       stockxOrderNumber: match?.stockxOrderNumber ?? proc?.stockxOrderNumber ?? "",
-      // Reuse Chain ID field in the modal as "Supplier PID" (do not persist in DB)
       stockxChainId: String(line.supplierPid ?? "").trim(),
       stockxOrderId: match?.stockxOrderId ?? proc?.stockxOrderId ?? "",
       stockxProductName: match?.stockxProductName ?? "",
@@ -342,7 +429,7 @@ export default function GalaxusDirectDeliveryPage() {
       onSuccess: async () => {
         setSelectedOrderId(null);
         setSelectedOrder(null);
-        await loadOrders();
+        await loadOrders({ selectFirstIfEmpty: true, force: true });
       },
     });
   };
@@ -364,96 +451,160 @@ export default function GalaxusDirectDeliveryPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
-      // Non-StockX order numbers should save without warnings (match is still stored).
       setOpsLog(JSON.stringify(json, null, 2));
-      setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
-      await loadOrderDetail(orderId);
+      setManualEntryModal({
+        isOpen: false,
+        mode: "create",
+        line: null,
+        orderId: null,
+        unitIndex: 0,
+        initialData: {},
+      });
+      await loadOrderDetail(orderId, { force: true });
+      await loadOrders({ force: true });
     } catch (err: any) {
       setError(err.message);
     }
   };
 
+  const lineStatusLabel = (line: any, match: any, proc: any, procOk: boolean) => {
+    if (!procOk) return "Not linked";
+    if (proc?.warehouseStockHint === "GOLDEN") {
+      if (proc?.buySourceOverride) {
+        return `BUY GLD${
+          proc.buySourceOverride.buyPriceChf != null
+            ? ` @ CHF ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
+            : ""
+        }`;
+      }
+      return "GLD/Golden — no StockX";
+    }
+    if (proc?.warehouseStockHint === "MAISON") return "THE_ your stock";
+    if (proc?.warehouseStockHint === "NER_STOCK") return "NER_ partner stock";
+    if (line.physicalStock) return "Warehouse stock";
+    if (proc?.source === "stx_sync") return `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`;
+    if (match) return `Linked ${match.stockxOrderNumber}`;
+    return "Linked";
+  };
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-6 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold">Galaxus Direct Delivery (CH)</h1>
-          <p className="text-sm text-gray-500">Minimal direct-delivery operations and StockX linking</p>
+          <h1 className="text-2xl font-semibold">Galaxus Direct Delivery</h1>
+          <p className="text-sm text-gray-500">StockX link · Swiss Post · warehouse pairs</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <a href="/galaxus" className="px-3 py-2 rounded bg-gray-100 text-sm">
-            Ops &amp; Data
-          </a>
-          <a href="/galaxus/warehouse" className="px-3 py-2 rounded bg-gray-100 text-sm">
-            Warehouse
+            Ops
           </a>
           <a href="/galaxus/warehouse-shipments" className="px-3 py-2 rounded bg-gray-100 text-sm">
-            Warehouse shipments
-          </a>
-          <a href="/galaxus/pricing" className="px-3 py-2 rounded bg-gray-100 text-sm">
-            Pricing &amp; DB
-          </a>
-          <a href="/galaxus/invoices" className="px-3 py-2 rounded bg-gray-100 text-sm">
-            Invoices
-          </a>
-          <a href="/decathlon" className="px-3 py-2 rounded bg-teal-700 text-white text-sm">
-            Decathlon
+            Warehouse
           </a>
           <button
-            onClick={() => void ingestNewOrders()}
-            disabled={loadingOrders || polling}
-            className="px-3 py-2 bg-gray-900 text-white rounded"
+            type="button"
+            onClick={() => void loadOrders({ force: true })}
+            disabled={loadingOrders || polling || bulkStockxSyncing}
+            className="px-3 py-2 bg-white border border-gray-300 rounded text-sm disabled:opacity-50"
           >
-            {polling ? "Ingesting..." : "Ingest new orders"}
+            {loadingOrders ? "Refreshing…" : "Refresh list"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void ingestNewOrders()}
+            disabled={loadingOrders || polling || bulkStockxSyncing}
+            className="px-3 py-2 bg-gray-900 text-white rounded text-sm disabled:opacity-50"
+          >
+            {polling ? "Ingesting…" : "Ingest EDI"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void runBulkStockxSyncVisible()}
+            disabled={loadingOrders || polling || bulkStockxSyncing}
+            className="px-3 py-2 bg-blue-700 text-white rounded text-sm disabled:opacity-50"
+            title="StockX sync on visible tab (sequential)"
+          >
+            {bulkStockxSyncing ? "Bulk sync…" : "Bulk StockX sync"}
           </button>
         </div>
       </div>
 
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
-      {polling ? <div className="text-xs text-gray-500">Polling SFTP...</div> : null}
+      {bulkStockxSyncing ? (
+        <div className="text-xs text-gray-500">Sequential StockX sync on visible orders…</div>
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded p-3">
           <div className="font-semibold mb-2">Orders</div>
           <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
             <button
-              className={`rounded border px-2 py-1 ${leftTab === "to_process" ? "bg-black text-white border-black" : "bg-white border-gray-300"}`}
+              type="button"
+              className={`rounded border px-2 py-1 ${
+                leftTab === "to_process"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300"
+              }`}
               onClick={() => setLeftTab("to_process")}
             >
-              A traiter
+              À traiter
             </button>
             <button
-              className={`rounded border px-2 py-1 ${leftTab === "fulfilled" ? "bg-black text-white border-black" : "bg-white border-gray-300"}`}
+              type="button"
+              className={`rounded border px-2 py-1 ${
+                leftTab === "fulfilled"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300"
+              }`}
               onClick={() => setLeftTab("fulfilled")}
             >
               Fulfilled
             </button>
           </div>
-          <div className="space-y-2 max-h-[500px] overflow-auto">
-            {ordersByTab.map((order) => (
-              <button
-                key={order.id}
-                onClick={() => setSelectedOrderId(order.id)}
-                className={`w-full text-left border rounded p-2 text-sm ${
-                  needsLinking(order)
-                    ? "border-red-500 bg-red-50"
-                    : newOrderIds.has(order.id)
-                    ? "border-green-500 bg-green-50"
-                    : selectedOrderId === order.id
-                    ? "border-black"
-                    : "border-gray-200"
-                }`}
-              >
-                <div className="font-medium">{order.orderNumber ?? order.galaxusOrderId}</div>
-                <div className="text-xs text-gray-500">
-                  {new Date(order.orderDate).toLocaleDateString("fr-CH")} •{" "}
-                  {(order.shippedCount ?? 0)}/{order._count?.shipments ?? 0} shipped •{" "}
-                  {order.fulfilledCount ?? 0}/{order._count?.shipments ?? 0} fulfilled •{" "}
-                  {order.linkedCount ?? 0}/{order._count?.lines ?? 0} linked
-                </div>
-              </button>
-            ))}
+          <div className="space-y-2 max-h-[70vh] overflow-auto">
+            {ordersByTab.map((order) => {
+              const selected = selectedOrderId === order.id;
+              return (
+                <button
+                  key={order.id}
+                  type="button"
+                  onClick={() => setSelectedOrderId(order.id)}
+                  className={`w-full text-left border rounded p-2 text-sm ${
+                    selected
+                      ? "border-black ring-1 ring-black"
+                      : needsLinking(order)
+                        ? "border-red-400 bg-red-50"
+                        : order.hasPhysicalStock
+                          ? "border-green-500 bg-green-50/60"
+                          : newOrderIds.has(order.id)
+                            ? "border-emerald-400 bg-emerald-50"
+                            : "border-gray-200"
+                  }`}
+                >
+                  <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                    <span>{order.orderNumber ?? order.galaxusOrderId}</span>
+                    {order.hasPhysicalStock ? (
+                      <span
+                        className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-600 text-white"
+                        title={order.physicalStockLabel ?? "Pair in warehouse stock"}
+                      >
+                        WH
+                        {order.physicalStockLineCount && order.physicalStockLineCount > 1
+                          ? ` ×${order.physicalStockLineCount}`
+                          : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(order.orderDate).toLocaleDateString("fr-CH")} ·{" "}
+                    {order.linkedCount ?? 0}/{order._count?.lines ?? 0} linked
+                    {order.hasPhysicalStock && order.physicalStockLabel ? (
+                      <span className="block text-green-800 mt-0.5">{order.physicalStockLabel}</span>
+                    ) : null}
+                  </div>
+                </button>
+              );
+            })}
             {ordersByTab.length === 0 ? (
               <div className="text-xs text-gray-500">No orders in this tab.</div>
             ) : null}
@@ -461,41 +612,89 @@ export default function GalaxusDirectDeliveryPage() {
         </div>
 
         <div className="md:col-span-2 border rounded p-3 space-y-3">
-          <div className="font-semibold">Order detail</div>
-          <StockxOrderTools
-            orderId={selectedOrderId}
-            onAfterAction={async () => {
-              if (selectedOrderId) await loadOrderDetail(selectedOrderId);
-              await loadOrders();
-            }}
-          />
-          <div className="flex justify-end">
-            <button
-              onClick={resendOrdr}
-              disabled={sendingOrdr || !selectedOrderId}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded text-xs"
-            >
-              {sendingOrdr ? "Sending ORDR..." : "Resend ORDR"}
-            </button>
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-semibold">Order detail</div>
+            {loadingOrder ? <span className="text-xs text-gray-400">Loading…</span> : null}
           </div>
 
-          {loadingOrder ? (
-            <div className="text-sm text-gray-500">Loading...</div>
+          <div className="rounded border border-amber-200 bg-amber-50/50">
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm font-medium text-gray-900"
+              onClick={() => setStockxToolsOpen((v) => !v)}
+            >
+              StockX tools {stockxToolsOpen ? "▾" : "▸"}
+            </button>
+            {stockxToolsOpen ? (
+              <div className="px-3 pb-3">
+                <StockxOrderTools
+                  orderId={selectedOrderId}
+                  onAfterAction={async () => {
+                    if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
+                    await loadOrders({ force: true });
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          {!selectedOrderId ? (
+            <div className="text-sm text-gray-500">Select an order.</div>
+          ) : !selectedOrder && loadingOrder ? (
+            <div className="text-sm text-gray-500">Loading order…</div>
           ) : selectedOrder ? (
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="text-sm text-gray-600 min-w-0">
-                  {selectedOrder.galaxusOrderId} · {selectedOrder.orderNumber ?? "—"}
+                <div className="text-sm min-w-0">
+                  <div className="font-medium text-gray-900">
+                    {selectedOrder.recipientName ?? "—"}
+                  </div>
+                  <div className="text-gray-500 text-xs">
+                    {selectedOrder.recipientAddress1 ?? ""} {selectedOrder.recipientAddress2 ?? ""}
+                  </div>
+                  <div className="text-gray-500 text-xs">
+                    {selectedOrder.recipientPostalCode ?? ""} {selectedOrder.recipientCity ?? ""}{" "}
+                    {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
+                  </div>
+                  <div className="text-gray-600 mt-1">
+                    {selectedOrder.galaxusOrderId} · {selectedOrder.orderNumber ?? "—"}
+                  </div>
                   {selectedOrder.cancelledAt ? (
                     <span className="block text-xs text-red-600 mt-0.5">
-                      Cancelled in DB · {new Date(selectedOrder.cancelledAt).toLocaleString()}
+                      Cancelled · {new Date(selectedOrder.cancelledAt).toLocaleString()}
                     </span>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <span className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700">
                     ORDR: {selectedOrder.ordrSentAt ? "SENT" : selectedOrder.ordrStatus ?? "PENDING"}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => void resendOrdr()}
+                    disabled={sendingOrdr || !selectedOrderId}
+                    className="px-2 py-1.5 bg-gray-900 text-white rounded text-xs disabled:opacity-50"
+                  >
+                    {sendingOrdr ? "ORDR…" : "Resend ORDR"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void generateDirectSwissPostLabel()}
+                    disabled={orderFulfilled}
+                    className="px-2 py-1.5 bg-indigo-700 text-white rounded text-xs disabled:opacity-50"
+                  >
+                    {orderFulfilled ? "Fulfilled" : "Swiss Post label"}
+                  </button>
+                  {selectedOrder?.physicalDeliveryNoteRequired && packingSlipUrl ? (
+                    <a
+                      href={packingSlipUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2 py-1.5 bg-amber-600 text-white rounded text-xs"
+                    >
+                      Packing slip
+                    </a>
+                  ) : null}
                   <button
                     type="button"
                     title="Permanently delete this order from the database."
@@ -503,138 +702,96 @@ export default function GalaxusDirectDeliveryPage() {
                     onClick={purgeSelectedOrderFromDb}
                     disabled={purgingOrder || loadingOrder}
                   >
-                    {purgingOrder ? "Removing…" : "Remove from DB"}
+                    {purgingOrder ? "…" : "Remove"}
                   </button>
                 </div>
               </div>
+
               <div className="space-y-2">
                 {(selectedOrder.lines || []).map((line: any) => {
                   const match = matchesByLine.get(line.id);
                   const proc = line.procurement;
-                  const procOk = Boolean(proc?.ok || match);
+                  const procOk = Boolean(proc?.ok || match || line.physicalStock);
                   const priceRaw = line.priceLineAmount ?? line.lineNetAmount ?? null;
                   const priceNumber = typeof priceRaw === "number" ? priceRaw : Number(priceRaw);
                   const priceText = Number.isFinite(priceNumber)
                     ? `CHF ${priceNumber.toFixed(2)}`
                     : "—";
+                  const unitsList: any[] = proc?.units ?? [];
+                  const totalUnitCost = unitsList
+                    .filter((u: any) => u.linked && u.stockxAmount != null)
+                    .reduce((sum: number, u: any) => sum + Number(u.stockxAmount), 0);
+                  const costFromMatch =
+                    match?.stockxAmount != null ? Number(match.stockxAmount) : NaN;
+                  const cost = Number.isFinite(costFromMatch)
+                    ? costFromMatch
+                    : totalUnitCost > 0
+                      ? totalUnitCost
+                      : proc?.stockxCostChf != null && Number.isFinite(Number(proc.stockxCostChf))
+                        ? Number(proc.stockxCostChf)
+                        : NaN;
+                  const hasMargin = Number.isFinite(priceNumber) && Number.isFinite(cost);
+                  const margin = hasMargin ? priceNumber - cost : null;
+                  const marginPct =
+                    hasMargin && priceNumber > 0 ? ((priceNumber - cost) / priceNumber) * 100 : null;
+                  const etaRaw =
+                    match?.stockxEstimatedDelivery ?? proc?.stockxEstimatedDelivery ?? null;
+
                   return (
                     <div
                       key={line.id}
                       className={`border rounded p-3 text-xs ${
-                        procOk
-                          ? "border-green-400 bg-green-50/40"
-                          : line.physicalStock
-                            ? "border-green-400 bg-green-50/30"
-                            : ""
+                        line.physicalStock
+                          ? "border-green-500 bg-green-50/40"
+                          : procOk
+                            ? "border-green-400 bg-green-50/20"
+                            : "border-gray-200"
                       }`}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-2">
-                          <div className="font-medium">{selectedOrder.recipientName ?? "—"}</div>
-                          <div className="text-gray-500">
-                            {selectedOrder.recipientAddress1 ?? ""} {selectedOrder.recipientAddress2 ?? ""}
-                          </div>
-                          <div className="text-gray-500">
-                            {selectedOrder.recipientPostalCode ?? ""} {selectedOrder.recipientCity ?? ""}{" "}
-                            {selectedOrder.recipientCountryCode ?? selectedOrder.recipientCountry ?? ""}
-                          </div>
-                          <div className="text-gray-600 font-medium flex items-center gap-1.5 flex-wrap">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1 min-w-0">
+                          <div className="font-medium text-sm text-gray-900 flex items-center gap-1.5 flex-wrap">
                             {procOk ? (
-                              <span className="text-green-600" title="Procurement linked">
-                                ✓
-                              </span>
+                              <span className="text-green-600">✓</span>
                             ) : (
                               <span className="text-gray-300">○</span>
                             )}
                             {buildLineTitle(line)}
-                            {proc?.warehouseStockHint === "MAISON" ? (
-                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-violet-100 text-violet-900">
-                                THE / your stock
-                              </span>
-                            ) : proc?.warehouseStockHint === "NER_STOCK" ? (
-                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950">
-                                NER_ · partner stock
-                              </span>
-                            ) : proc?.warehouseStockHint === "GOLDEN" ? (
-                              <span
-                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950"
-                                title={proc?.buySourceOverride?.note ?? "Golden — no StockX / no DD"}
-                              >
-                                {proc?.buySourceOverride
-                                  ? `BUY GLD${
-                                      proc.buySourceOverride.buyPriceChf != null
-                                        ? ` @ ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
-                                        : ""
-                                    } — no StockX`
-                                  : "GLD · Golden — not direct delivery / no StockX"}
-                              </span>
-                            ) : null}
                             <PhysicalStockBadge
                               physicalStock={line.physicalStock}
-                              avoidStockxHint={!procOk}
+                              avoidStockxHint={!procOk || Boolean(line.physicalStock)}
                             />
+                            {proc?.warehouseStockHint === "MAISON" ? (
+                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-violet-100 text-violet-900">
+                                THE_
+                              </span>
+                            ) : null}
+                            {proc?.warehouseStockHint === "NER_STOCK" ? (
+                              <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-950">
+                                NER_
+                              </span>
+                            ) : null}
+                            {proc?.warehouseStockHint === "GOLDEN" ? (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950">
+                                GLD
+                              </span>
+                            ) : null}
                           </div>
                           <PhysicalStockHintText
                             physicalStock={line.physicalStock}
-                            avoidStockxHint={!procOk}
+                            avoidStockxHint={Boolean(line.physicalStock)}
                           />
                           <div className="text-gray-500">
-                            Supplier PID: {line.supplierPid ?? "—"}
+                            Size {line.size ?? line.sizeRaw ?? "—"} ·{" "}
+                            {line.styleSku ?? line.supplierSku ?? "—"} · Qty {line.quantity} ·{" "}
+                            {priceText}
                           </div>
-                          <div className="text-gray-500">
-                            Size raw: {line.sizeRaw ?? "—"} · Size: {line.size ?? "—"} · Style:{" "}
-                            {line.styleSku ?? line.supplierSku ?? "—"} · Offer:{" "}
-                            {line.offerSupplierSku ?? line.providerKey ?? "—"} ·
-                            Qty: {line.quantity}
-                          </div>
-                          <div className="text-gray-500">Sell price: {priceText}</div>
                         </div>
-                        <div className="text-right">
-                          {(() => {
-                            const sellRaw = line.priceLineAmount ?? line.lineNetAmount ?? null;
-                            const sell = typeof sellRaw === "number" ? sellRaw : Number(sellRaw);
-                            const unitsList: any[] = proc?.units ?? [];
-                            const totalUnitCost = unitsList
-                              .filter((u: any) => u.linked && u.stockxAmount != null)
-                              .reduce((sum: number, u: any) => sum + Number(u.stockxAmount), 0);
-                            const costFromMatch =
-                              match?.stockxAmount != null ? Number(match.stockxAmount) : NaN;
-                            const cost =
-                              Number.isFinite(costFromMatch)
-                                ? costFromMatch
-                                : totalUnitCost > 0
-                                  ? totalUnitCost
-                                  : proc?.stockxCostChf != null &&
-                                      Number.isFinite(Number(proc.stockxCostChf))
-                                    ? Number(proc.stockxCostChf)
-                                    : NaN;
-                            const hasMargin = Number.isFinite(sell) && Number.isFinite(cost);
-                            const margin = hasMargin ? sell - cost : null;
-                            const marginPct = hasMargin && sell > 0 ? ((sell - cost) / sell) * 100 : null;
-                            const etaRaw =
-                              match?.stockxEstimatedDelivery ?? proc?.stockxEstimatedDelivery ?? null;
-                            return (
-                              <>
-                          <div className={`font-medium ${procOk ? "text-green-700" : "text-red-600"}`}>
-                            {procOk
-                              ? proc?.warehouseStockHint === "GOLDEN"
-                                ? proc?.buySourceOverride
-                                  ? `BUY GLD ${proc.buySourceOverride.buySupplierVariantId}${
-                                      proc.buySourceOverride.buyPriceChf != null
-                                        ? ` @ CHF ${Number(proc.buySourceOverride.buyPriceChf).toFixed(2)}`
-                                        : ""
-                                    } (no StockX)`
-                                  : "GLD/Golden — order manually (no StockX / no DD)"
-                                : proc?.warehouseStockHint === "MAISON" || proc?.warehouseStockHint === "NER_STOCK"
-                                  ? proc?.warehouseStockHint === "MAISON"
-                                    ? "THE_/the_ your stock (no StockX)"
-                                    : "NER_ partner stock (no StockX)"
-                                  : proc?.source === "stx_sync"
-                                    ? `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`
-                                    : match
-                                      ? `Linked ${match.stockxOrderNumber}`
-                                      : "Linked"
-                              : "Not linked"}
+                        <div className="text-right shrink-0 space-y-0.5">
+                          <div
+                            className={`font-medium ${procOk ? "text-green-700" : "text-red-600"}`}
+                          >
+                            {lineStatusLabel(line, match, proc, procOk)}
                           </div>
                           <div className="text-gray-500">
                             ETA: {etaRaw ? new Date(etaRaw).toLocaleDateString("fr-CH") : "—"}
@@ -646,36 +803,19 @@ export default function GalaxusDirectDeliveryPage() {
                             Margin: {margin != null ? `CHF ${margin.toFixed(2)}` : "—"}
                             {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
                           </div>
-                              </>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                      <div className="mt-3 flex justify-end">
-                        <button
-                          onClick={() => openManualEntry(line)}
-                          disabled={loadingOrder || !selectedOrder || String(selectedOrder?.id ?? "") !== String(selectedOrderId)}
-                          className="px-2 py-1 bg-blue-600 text-white rounded mr-2"
-                        >
-                          Create Manual Entry (Full)
-                        </button>
-                        {selectedOrder?.physicalDeliveryNoteRequired && packingSlipUrl ? (
-                          <a
-                            href={packingSlipUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="px-2 py-1 bg-amber-600 text-white rounded mr-2"
+                          <button
+                            type="button"
+                            onClick={() => openManualEntry(line)}
+                            disabled={
+                              loadingOrder ||
+                              !selectedOrder ||
+                              String(selectedOrder?.id ?? "") !== String(selectedOrderId)
+                            }
+                            className="mt-1 px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
                           >
-                            Print packing slip
-                          </a>
-                        ) : null}
-                        <button
-                          onClick={() => void generateDirectSwissPostLabel()}
-                          disabled={orderFulfilled}
-                          className="px-2 py-1 bg-gray-900 text-white rounded disabled:opacity-50"
-                        >
-                          {orderFulfilled ? "Already fulfilled" : "Generate Swiss Post label"}
-                        </button>
+                            Manual entry
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -683,13 +823,15 @@ export default function GalaxusDirectDeliveryPage() {
               </div>
             </div>
           ) : (
-            <div className="text-sm text-gray-500">Select an order to view details.</div>
+            <div className="text-sm text-gray-500">Could not load order.</div>
           )}
         </div>
       </div>
 
       {opsLog ? (
-        <pre className="text-xs bg-gray-50 border rounded p-3 whitespace-pre-wrap">{opsLog}</pre>
+        <pre className="text-xs bg-gray-50 border rounded p-3 whitespace-pre-wrap max-h-48 overflow-auto">
+          {opsLog}
+        </pre>
       ) : null}
       <GalaxusManualEntryModal
         isOpen={manualEntryModal.isOpen}
@@ -705,7 +847,14 @@ export default function GalaxusDirectDeliveryPage() {
         }}
         onSave={(data) => saveManualEntry(data)}
         onClose={() =>
-          setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} })
+          setManualEntryModal({
+            isOpen: false,
+            mode: "create",
+            line: null,
+            orderId: null,
+            unitIndex: 0,
+            initialData: {},
+          })
         }
       />
     </div>

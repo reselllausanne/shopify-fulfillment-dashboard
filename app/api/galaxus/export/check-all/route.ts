@@ -688,7 +688,6 @@ export async function GET(request: Request) {
     const pageSize = all ? 500 : limit;
     let currentOffset = all ? 0 : offset;
     let lastBatch = 0;
-    let cursorUpdatedAt: Date | null = null;
     let cursorId: string | null = null;
     const bestByGtin = new Map<string, any>();
     const prismaAny = prisma as any;
@@ -696,13 +695,10 @@ export async function GET(request: Request) {
     const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
 
     do {
-      const whereClause = all && cursorUpdatedAt && cursorId
+      const whereClause = all && cursorId
         ? {
             ...mappingsWhere,
-            OR: [
-              { updatedAt: { lt: cursorUpdatedAt } },
-              { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
-            ],
+            id: { lt: cursorId },
           }
         : { ...mappingsWhere };
       const mappings = await prismaAny.variantMapping.findMany({
@@ -725,14 +721,13 @@ export async function GET(request: Request) {
             },
           },
         },
-        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        orderBy: [{ id: "desc" }],
         take: pageSize,
         ...(all ? {} : { skip: currentOffset }),
       });
       lastBatch = mappings.length;
       if (all && mappings.length > 0) {
         const last: any = mappings[mappings.length - 1];
-        cursorUpdatedAt = last.updatedAt ?? null;
         cursorId = last.id ?? null;
       }
 

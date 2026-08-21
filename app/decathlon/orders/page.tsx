@@ -48,6 +48,9 @@ type ReturnLineItem = {
   restockAppliedAt: string | null;
 };
 
+const ORDERS_LIST_CACHE_TTL_MS = 30_000;
+const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
+
 export default function DecathlonOrdersPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -58,6 +61,8 @@ export default function DecathlonOrdersPage() {
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
+  const ordersListCacheRef = useRef<Map<string, { at: number; items: OrderListItem[] }>>(new Map());
+  const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const [polling, setPolling] = useState(false);
   const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "canceled" | "returns">("to_process");
@@ -161,7 +166,21 @@ export default function DecathlonOrdersPage() {
     return filename;
   };
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cacheKey = `${leftTab}::${productSearch.toLowerCase()}`;
+    const cached = ordersListCacheRef.current.get(cacheKey);
+    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+      const items = cached.items;
+      setOrders(items);
+      setSelectedOrderId((prev) => {
+        if (items.length === 0) return null;
+        if (prev && items.some((i) => i.id === prev)) return prev;
+        return items[0].id;
+      });
+      setLoadingOrders(false);
+      return;
+    }
     setLoadingOrders(true);
     setError(null);
     try {
@@ -192,6 +211,7 @@ export default function DecathlonOrdersPage() {
       }
       setNewOrderIds(fresh.size > 0 ? fresh : new Set());
       knownOrderIds.current = new Set(items.map((item) => item.id));
+      ordersListCacheRef.current.set(cacheKey, { at: Date.now(), items });
       setOrders(items);
       setSelectedOrderId((prev) => {
         if (items.length === 0) return null;
@@ -285,7 +305,7 @@ export default function DecathlonOrdersPage() {
     } catch (err: any) {
       setError(err?.message ?? "Ingest failed");
     } finally {
-      await Promise.all([loadOrders(), loadReturns()]);
+      await Promise.all([loadOrders({ force: true }), loadReturns()]);
       setPolling(false);
     }
   };
@@ -355,16 +375,46 @@ export default function DecathlonOrdersPage() {
         )
       );
       await Promise.all([
-        loadOrders(),
+        loadOrders({ force: true }),
         loadReturns(),
-        selectedOrderId ? loadOrderDetail(selectedOrderId) : Promise.resolve(),
+        selectedOrderId ? loadOrderDetail(selectedOrderId, { force: true }) : Promise.resolve(),
       ]);
     } finally {
       setBulkStockxSyncing(false);
     }
   };
 
-  const loadOrderDetail = async (orderId: string) => {
+  const loadOrderDetail = async (orderId: string, opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = orderDetailCacheRef.current.get(orderId);
+    if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
+      const order = cached.order;
+      setSelectedOrder(order);
+      if (order) {
+        const shippedCount = Array.isArray(order.shipments)
+          ? order.shipments.filter((s: any) => Boolean(s?.shippedAt)).length
+          : 0;
+        const shipmentCount = Array.isArray(order.shipments) ? order.shipments.length : 0;
+        const summary = buildShipmentSummary(order);
+        setOrders((prev) =>
+          prev.map((item) =>
+            item.id === order.id
+              ? {
+                  ...item,
+                  orderState: order.orderState ?? item.orderState ?? null,
+                  shippedCount,
+                  shippedUnits: summary.shippedUnits,
+                  totalUnits: summary.totalUnits,
+                  remainingUnits: summary.remainingUnits,
+                  _count: { ...(item._count ?? { lines: 0, shipments: 0 }), shipments: shipmentCount },
+                }
+              : item
+          )
+        );
+      }
+      setLoadingOrder(false);
+      return;
+    }
     setLoadingOrder(true);
     setError(null);
     try {
@@ -372,6 +422,7 @@ export default function DecathlonOrdersPage() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
       const order = data.order;
+      orderDetailCacheRef.current.set(orderId, { at: Date.now(), order });
       setSelectedOrder(order);
       if (order) {
         const shippedCount = Array.isArray(order.shipments)
@@ -433,7 +484,7 @@ export default function DecathlonOrdersPage() {
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Address update failed");
       setSelectedOrder(data.order ?? null);
       setEditingAddress(false);
-      await loadOrderDetail(selectedOrderId);
+      await loadOrderDetail(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -453,7 +504,7 @@ export default function DecathlonOrdersPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Assignment failed");
-      await Promise.all([loadOrderDetail(selectedOrderId), loadOrders()]);
+      await Promise.all([loadOrderDetail(selectedOrderId, { force: true }), loadOrders({ force: true })]);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -474,7 +525,7 @@ export default function DecathlonOrdersPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Line assignment failed");
-      await Promise.all([loadOrderDetail(selectedOrderId), loadOrders()]);
+      await Promise.all([loadOrderDetail(selectedOrderId, { force: true }), loadOrders({ force: true })]);
     } catch (err: any) {
       setError(err.message ?? "Line assignment failed");
     } finally {
@@ -783,7 +834,7 @@ export default function DecathlonOrdersPage() {
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
       setOpsLog(JSON.stringify(json, null, 2));
       setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
-      await Promise.all([loadOrderDetail(orderId), loadOrders()]);
+      await Promise.all([loadOrderDetail(orderId, { force: true }), loadOrders({ force: true })]);
     } catch (err: any) {
       setError(err.message);
     }
@@ -799,7 +850,7 @@ export default function DecathlonOrdersPage() {
         `decathlon-delivery_${selectedOrderId}.pdf`
       );
       setOpsLog(`Saved to Downloads: ${filename}`);
-      await loadOrderDetail(selectedOrderId);
+      await loadOrderDetail(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -878,7 +929,7 @@ export default function DecathlonOrdersPage() {
       setOpsLog(JSON.stringify(data, null, 2));
       setSplitModalOpen(false);
       setSplitQuantities({});
-      await Promise.all([loadOrderDetail(selectedOrderId), loadOrders()]);
+      await Promise.all([loadOrderDetail(selectedOrderId, { force: true }), loadOrders({ force: true })]);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -907,7 +958,7 @@ export default function DecathlonOrdersPage() {
           );
         }
       }
-      await loadOrderDetail(selectedOrderId);
+      await loadOrderDetail(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -1218,8 +1269,8 @@ export default function DecathlonOrdersPage() {
             orderId={selectedOrderId}
             apiBasePath="/api/decathlon"
             onAfterAction={async () => {
-              if (selectedOrderId) await loadOrderDetail(selectedOrderId);
-              await loadOrders();
+              if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
+              await loadOrders({ force: true });
             }}
           />
           <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1354,7 +1405,7 @@ export default function DecathlonOrdersPage() {
                                   `decathlon-delivery_${selectedOrder?.orderId ?? selectedOrderId}_${s.id}.pdf`
                                 );
                                 setOpsLog(`Saved to Downloads: ${fn}`);
-                                await loadOrderDetail(selectedOrderId!);
+                                await loadOrderDetail(selectedOrderId!, { force: true });
                               } catch (err: any) {
                                 setError(err.message);
                               }
@@ -1375,7 +1426,7 @@ export default function DecathlonOrdersPage() {
                                   `decathlon-delivery_${selectedOrder?.orderId ?? selectedOrderId}.pdf`
                                 );
                                 setOpsLog(`Saved to Downloads: ${fn}`);
-                                await loadOrderDetail(selectedOrderId!);
+                                await loadOrderDetail(selectedOrderId!, { force: true });
                               } catch (err: any) {
                                 setError(err.message);
                               }

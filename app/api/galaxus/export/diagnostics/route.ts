@@ -32,19 +32,11 @@ export async function GET(request: Request) {
     const bestByGtin = new Map<string, any>();
     const pageSize = 500;
     let lastBatch = 0;
-    let cursorUpdatedAt: Date | null = null;
     let cursorId: string | null = null;
     do {
       const whereClause: Record<string, unknown> = {
         ...mappingsWhere,
-        ...(cursorUpdatedAt && cursorId
-          ? {
-              OR: [
-                { updatedAt: { lt: cursorUpdatedAt } },
-                { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
-              ],
-            }
-          : {}),
+        ...(cursorId ? { id: { lt: cursorId } } : {}),
       };
       const mappings: any[] = await prismaAny.variantMapping.findMany({
         where: whereClause,
@@ -58,18 +50,16 @@ export async function GET(request: Request) {
               supplierVariantId: true,
               price: true,
               stock: true,
-              updatedAt: true,
               deliveryType: true,
             },
           },
         },
-        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        orderBy: [{ id: "desc" }],
         take: pageSize,
       });
       lastBatch = mappings.length;
       if (mappings.length > 0) {
         const last: any = mappings[mappings.length - 1];
-        cursorUpdatedAt = last.updatedAt ?? null;
         cursorId = last.id ?? null;
       }
       accumulateBestCandidates(mappings, bestByGtin, {
