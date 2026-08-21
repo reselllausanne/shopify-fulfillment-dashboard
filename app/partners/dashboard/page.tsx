@@ -116,7 +116,7 @@ export default function PartnerDashboardPage() {
   const loadOrdersSummary = async () => {
     try {
       const [decRes, galRes] = await Promise.all([
-        fetch("/api/decathlon/orders?limit=200&scope=partner", { cache: "no-store" }),
+        fetch("/api/decathlon/orders?limit=200&scope=partner&includeLinked=0", { cache: "no-store" }),
         fetch("/api/partners/galaxus/orders?limit=200", { cache: "no-store" }),
       ]);
       if (!decRes.ok) return;

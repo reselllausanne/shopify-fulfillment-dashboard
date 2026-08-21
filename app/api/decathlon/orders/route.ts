@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const limit = Math.min(Math.max(Number(searchParams.get("limit") ?? "50"), 1), 200);
     const offset = Math.max(Number(searchParams.get("offset") ?? "0"), 0);
+    const includeLinked = searchParams.get("includeLinked") !== "0";
     const view = String(searchParams.get("view") ?? "active").trim();
     const scope = String(searchParams.get("scope") ?? "").trim().toLowerCase();
     const productSearch = String(searchParams.get("product") ?? "").trim();
@@ -100,23 +101,25 @@ export async function GET(request: NextRequest) {
     const lineIds = orders.flatMap((order: { lines?: { id: string }[] }) =>
       (order.lines ?? []).map((line) => line.id)
     );
-    const [matchRows, partnerRows] = await Promise.all([
-      lineIds.length > 0
-        ? prismaAny.decathlonStockxMatch.findMany({
-            where: { decathlonOrderLineId: { in: lineIds } },
-            select: {
-              decathlonOrderLineId: true,
-              stockxOrderNumber: true,
-              stockxOrderId: true,
-              stockxChainId: true,
-            },
-          })
-        : Promise.resolve([]),
-      prismaAny.partner.findMany({
-        where: { active: true },
-        select: { key: true },
-      }),
-    ]);
+    const [matchRows, partnerRows] = includeLinked
+      ? await Promise.all([
+          lineIds.length > 0
+            ? prismaAny.decathlonStockxMatch.findMany({
+                where: { decathlonOrderLineId: { in: lineIds } },
+                select: {
+                  decathlonOrderLineId: true,
+                  stockxOrderNumber: true,
+                  stockxOrderId: true,
+                  stockxChainId: true,
+                },
+              })
+            : Promise.resolve([]),
+          prismaAny.partner.findMany({
+            where: { active: true },
+            select: { key: true },
+          }),
+        ])
+      : [[], []];
     const partnerKeysForMatch = partnerRows
       .map((row: { key?: string | null }) => String(row.key ?? "").trim())
       .filter(Boolean);
@@ -181,7 +184,9 @@ export async function GET(request: NextRequest) {
         : scopedShipmentLines.reduce((sum: number, line: any) => sum + Number(line.quantity ?? 0), 0);
       const remainingUnits = Math.max(totalUnits - shippedUnits, 0);
       const lineCount = partnerOfferPrefix ? metricsLines.length : order._count?.lines ?? 0;
-      const linkedCount = metricsLines.filter((line: any) => lineCountsAsLinkedForList(line)).length;
+      const linkedCount = includeLinked
+        ? metricsLines.filter((line: any) => lineCountsAsLinkedForList(line)).length
+        : 0;
       return {
         id: order.id,
         orderId: order.orderId,

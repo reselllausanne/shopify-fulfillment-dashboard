@@ -4,6 +4,8 @@ import { getInvoicedQuantitiesByOrderLineId } from "@/galaxus/edi/invoiceCoverag
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const ELIGIBLE_CACHE_TTL_MS = 30_000;
+const eligibleCache = new Map<string, { at: number; body: unknown }>();
 
 type ShipmentCoverage = {
   ordered: number;
@@ -11,6 +13,41 @@ type ShipmentCoverage = {
   reserved: number;
   remaining: number;
 };
+
+const ORDER_LINE_SELECT = {
+  id: true,
+  lineNumber: true,
+  supplierPid: true,
+  buyerPid: true,
+  gtin: true,
+  supplierVariantId: true,
+  quantity: true,
+  unitNetPrice: true,
+  priceLineAmount: true,
+  lineNetAmount: true,
+  description: true,
+  productName: true,
+  size: true,
+  supplierSku: true,
+  orderUnit: true,
+  warehouseMarkedShippedAt: true,
+} as const;
+
+const ORDER_SELECT = {
+  id: true,
+  galaxusOrderId: true,
+  orderNumber: true,
+  orderDate: true,
+  deliveryType: true,
+  currencyCode: true,
+  recipientName: true,
+  recipientAddress1: true,
+  recipientPostalCode: true,
+  recipientCity: true,
+  archivedAt: true,
+  cancelledAt: true,
+  lines: { select: ORDER_LINE_SELECT },
+} as const;
 
 function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
@@ -124,6 +161,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const anchorRaw = normalizeText(searchParams.get("anchorOrderId"));
+    const force = searchParams.get("force") === "1";
     if (!anchorRaw) {
       return NextResponse.json({ ok: false, error: "anchorOrderId is required" }, { status: 400 });
     }
@@ -131,11 +169,11 @@ export async function GET(request: Request) {
     const anchor =
       (await prisma.galaxusOrder.findUnique({
         where: { id: anchorRaw },
-        include: { lines: true },
+        select: ORDER_SELECT,
       })) ??
       (await prisma.galaxusOrder.findUnique({
         where: { galaxusOrderId: anchorRaw },
-        include: { lines: true },
+        select: ORDER_SELECT,
       }));
 
     if (!anchor) {
@@ -159,6 +197,13 @@ export async function GET(request: Request) {
         { status: 400 }
       );
     }
+    const cacheKey = anchor.id;
+    if (!force) {
+      const cached = eligibleCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < ELIGIBLE_CACHE_TTL_MS) {
+        return NextResponse.json(cached.body);
+      }
+    }
 
     const orders = await prisma.galaxusOrder.findMany({
       where: {
@@ -170,7 +215,7 @@ export async function GET(request: Request) {
         recipientCity,
       },
       orderBy: { orderDate: "desc" },
-      include: { lines: true },
+      select: ORDER_SELECT,
     });
 
     const ordersWithAnchor = orders.some((o) => o.id === anchor.id) ? orders : [anchor, ...orders];
@@ -234,8 +279,17 @@ export async function GET(request: Request) {
         },
       },
     });
+    const existingItemsByOrderId = new Map<string, any[]>();
+    for (const item of existingItems as any[]) {
+      const oid = String(item?.orderId ?? "");
+      if (!oid) continue;
+      const arr = existingItemsByOrderId.get(oid);
+      if (arr) arr.push(item);
+      else existingItemsByOrderId.set(oid, [item]);
+    }
 
     for (const order of ordersWithAnchor) {
+      const orderItems = existingItemsByOrderId.get(String(order.id)) ?? [];
       for (const line of order.lines ?? []) {
         const lineId = String(line.id);
         const buyerPid = normalizeText(line.buyerPid);
@@ -245,7 +299,6 @@ export async function GET(request: Request) {
         const orderedQty = Number(line.quantity ?? 0);
         const markedShipped = Boolean(line?.warehouseMarkedShippedAt);
         const lineMatchesShipmentItem = (item: any) => {
-          if (String(item?.orderId ?? "") !== String(order.id)) return false;
           const itemBuyerPid = normalizeText(item?.buyerPid);
           if (buyerPid && itemBuyerPid) {
             return itemBuyerPid === buyerPid;
@@ -263,22 +316,20 @@ export async function GET(request: Request) {
           if (canCompareGtin) return sameGtinKey(itemGtin, gtin);
           return false;
         };
-        const shipped = existingItems
-          .filter((item: any) => {
-            if (!lineMatchesShipmentItem(item)) return false;
-            const shipmentId = normalizeText(item?.shipmentId);
-            const fromDelrHistory = shipmentId ? delrShipmentIds.has(shipmentId) : false;
-            return shipmentIsFinalized(item) || fromDelrHistory;
-          })
-          .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
-        const reserved = existingItems
-          .filter((item: any) => {
-            if (!lineMatchesShipmentItem(item)) return false;
-            const shipmentId = normalizeText(item?.shipmentId);
-            if (shipmentId && delrShipmentIds.has(shipmentId)) return false;
-            return shipmentIsReserved(item);
-          })
-          .reduce((acc: number, item: any) => acc + Math.max(0, Number(item?.quantity ?? 0)), 0);
+        let shipped = 0;
+        let reserved = 0;
+        for (const item of orderItems) {
+          if (!lineMatchesShipmentItem(item)) continue;
+          const shipmentId = normalizeText(item?.shipmentId);
+          const qty = Math.max(0, Number(item?.quantity ?? 0));
+          const fromDelrHistory = shipmentId ? delrShipmentIds.has(shipmentId) : false;
+          if (shipmentIsFinalized(item) || fromDelrHistory) {
+            shipped += qty;
+            continue;
+          }
+          if (shipmentId && delrShipmentIds.has(shipmentId)) continue;
+          if (shipmentIsReserved(item)) reserved += qty;
+        }
         const ordered = Number.isFinite(orderedQty) ? orderedQty : 0;
         const shippedFinal =
           markedShipped && shipped + reserved >= ordered ? Math.max(shipped, ordered) : shipped;
@@ -317,14 +368,42 @@ export async function GET(request: Request) {
       );
       const byGtin = await (prisma as any).variantMapping.findMany({
         where: { gtin: { in: gtinQueryKeys } },
-        include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
+        select: {
+          id: true,
+          gtin: true,
+          supplierVariantId: true,
+          updatedAt: true,
+          supplierVariant: {
+            select: {
+              supplierSku: true,
+              sizeRaw: true,
+              sizeNormalized: true,
+              supplierProductName: true,
+            },
+          },
+          kickdbVariant: { select: { sizeEu: true, product: { select: { name: true } } } },
+        },
         orderBy: { updatedAt: "desc" },
       });
       const bySupplierVariantId =
         supplierVariantIdsFromLines.length > 0
           ? await (prisma as any).variantMapping.findMany({
               where: { supplierVariantId: { in: supplierVariantIdsFromLines } },
-              include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
+              select: {
+                id: true,
+                gtin: true,
+                supplierVariantId: true,
+                updatedAt: true,
+                supplierVariant: {
+                  select: {
+                    supplierSku: true,
+                    sizeRaw: true,
+                    sizeNormalized: true,
+                    supplierProductName: true,
+                  },
+                },
+                kickdbVariant: { select: { sizeEu: true, product: { select: { name: true } } } },
+              },
               orderBy: { updatedAt: "desc" },
             })
           : [];
@@ -453,48 +532,15 @@ export async function GET(request: Request) {
       }),
     }));
 
-    const draftShipments = await prisma.shipment.findMany({
-      where: {
-        orderId: anchor.id,
-        status: "MANUAL",
-        delrSentAt: null,
-        OR: [{ delrStatus: null }, { delrStatus: "PENDING" }, { delrStatus: "ERROR" }],
-      },
-      include: {
-        items: { include: { order: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
-
-    const draftPayload = draftShipments.map((shipment) => {
-      const orderNumbers = Array.from(
-        new Set(
-          (shipment.items ?? [])
-            .map((item: any) => item.order?.orderNumber ?? item.order?.galaxusOrderId)
-            .filter(Boolean)
-        )
-      );
-      return {
-        id: shipment.id,
-        shipmentId: shipment.shipmentId,
-        dispatchNotificationId: shipment.dispatchNotificationId,
-        packageId: shipment.packageId,
-        trackingNumber: shipment.trackingNumber ?? null,
-        delrStatus: shipment.delrStatus ?? null,
-        createdAt: shipment.createdAt,
-        orderNumbers,
-        itemCount: (shipment.items ?? []).length,
-      };
-    });
-
-    return NextResponse.json({
+    const body = {
       ok: true,
       anchorOrderId: anchor.id,
       orders: orderPayload,
       invoiceCoverage,
       shipmentCoverage,
-      draftShipments: draftPayload,
-    });
+    };
+    eligibleCache.set(cacheKey, { at: Date.now(), body });
+    return NextResponse.json(body);
   } catch (error: any) {
     console.error("[GALAXUS][WAREHOUSE][ELIGIBLE] Failed:", error);
     return NextResponse.json({ ok: false, error: error?.message ?? "Failed" }, { status: 500 });

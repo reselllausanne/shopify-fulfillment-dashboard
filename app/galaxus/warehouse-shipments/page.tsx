@@ -102,6 +102,9 @@ type CreatedShipment = {
   delrStatus?: string | null;
 };
 
+const ORDERS_LIST_CACHE_TTL_MS = 30_000;
+const ELIGIBILITY_CACHE_TTL_MS = 30_000;
+
 /** Short label like `[invoiced]` / `[20/22 - 2 left]` / `[not invoiced]`. */
 function formatInvoiceStatusTag(o: OrderListItem): string | null {
   if (o.invoiceLinesTotal == null || o.invoiceLinesFullyInvoiced == null) return null;
@@ -222,6 +225,18 @@ function normalizeGtinKey(value: string): string {
 export default function GalaxusWarehouseShipmentsPage() {
   const actionsRef = useRef<HTMLDivElement | null>(null);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const ordersListCacheRef = useRef<{ at: number; query: string; items: OrderListItem[] } | null>(null);
+  const eligibilityCacheRef = useRef<
+    Map<
+      string,
+      {
+        at: number;
+        orders: EligibleOrder[];
+        invoiceCoverage: Record<string, { ordered: number; invoiced: number }>;
+        shipmentCoverage: Record<string, ShipmentCoverage>;
+      }
+    >
+  >(new Map());
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderSearch, setOrderSearch] = useState("");
@@ -256,13 +271,30 @@ export default function GalaxusWarehouseShipmentsPage() {
     return () => clearTimeout(t);
   }, [orderSearch]);
 
-  const loadOrders = async () => {
+  const loadOrders = async (options?: { force?: boolean }) => {
     setOrdersLoading(true);
     setError(null);
     try {
-      const q = debouncedOrderSearch ? `&q=${encodeURIComponent(debouncedOrderSearch)}` : "";
+      const query = debouncedOrderSearch;
+      const cached = ordersListCacheRef.current;
+      if (
+        !options?.force &&
+        cached &&
+        cached.query === query &&
+        Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS
+      ) {
+        const filtered = cached.items;
+        setOrders(filtered);
+        if (!selectedOrderId && filtered[0]?.id) {
+          setSelectedOrderId(filtered[0].id);
+        } else if (selectedOrderId && !filtered.some((item: any) => item.id === selectedOrderId)) {
+          setSelectedOrderId(filtered[0]?.id ?? "");
+        }
+        return;
+      }
+      const q = query ? `&q=${encodeURIComponent(query)}` : "";
       const res = await fetch(
-        `/api/galaxus/orders?view=active&warehouseOpen=1&limit=500&excludeDeliveryType=direct_delivery${q}`,
+        `/api/galaxus/orders?view=active&warehouseOpen=1&limit=500&excludeDeliveryType=direct_delivery&includeLinked=0${q}`,
         { cache: "no-store" }
       );
       const data = await res.json().catch(() => ({}));
@@ -280,6 +312,7 @@ export default function GalaxusWarehouseShipmentsPage() {
         return true;
       });
       setOrders(filtered);
+      ordersListCacheRef.current = { at: Date.now(), query, items: filtered };
       if (!selectedOrderId && filtered[0]?.id) {
         setSelectedOrderId(filtered[0].id);
       } else if (selectedOrderId && !filtered.some((item: any) => item.id === selectedOrderId)) {
@@ -292,7 +325,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     }
   };
 
-  const loadEligibility = async (orderId: string) => {
+  const loadEligibility = async (orderId: string, options?: { force?: boolean }) => {
     if (!orderId) {
       setEligibleOrders([]);
       setInvoiceCoverage({});
@@ -302,15 +335,32 @@ export default function GalaxusWarehouseShipmentsPage() {
     setEligibilityLoading(true);
     setError(null);
     try {
+      const cached = eligibilityCacheRef.current.get(orderId);
+      if (!options?.force && cached && Date.now() - cached.at < ELIGIBILITY_CACHE_TTL_MS) {
+        setEligibleOrders(cached.orders);
+        setInvoiceCoverage(cached.invoiceCoverage);
+        setShipmentCoverage(cached.shipmentCoverage);
+        return;
+      }
+      const force = options?.force ? "&force=1" : "";
       const res = await fetch(
-        `/api/galaxus/warehouse-shipments/eligible?anchorOrderId=${encodeURIComponent(orderId)}`,
+        `/api/galaxus/warehouse-shipments/eligible?anchorOrderId=${encodeURIComponent(orderId)}${force}`,
         { cache: "no-store" }
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load eligible orders");
-      setEligibleOrders(Array.isArray(data.orders) ? data.orders : []);
-      setInvoiceCoverage(data.invoiceCoverage ?? {});
-      setShipmentCoverage(data.shipmentCoverage ?? {});
+      const nextOrders = Array.isArray(data.orders) ? data.orders : [];
+      const nextInvoiceCoverage = data.invoiceCoverage ?? {};
+      const nextShipmentCoverage = data.shipmentCoverage ?? {};
+      setEligibleOrders(nextOrders);
+      setInvoiceCoverage(nextInvoiceCoverage);
+      setShipmentCoverage(nextShipmentCoverage);
+      eligibilityCacheRef.current.set(orderId, {
+        at: Date.now(),
+        orders: nextOrders,
+        invoiceCoverage: nextInvoiceCoverage,
+        shipmentCoverage: nextShipmentCoverage,
+      });
     } catch (err: any) {
       setError(err?.message ?? "Failed to load eligible orders");
       setEligibleOrders([]);
@@ -557,8 +607,8 @@ export default function GalaxusWarehouseShipmentsPage() {
           ? "Shipment created. Preparing documents + Swiss Post label..."
           : "Shipment created. Download SSCC + delivery note, then generate Swiss Post label."
       );
-      await loadEligibility(selectedOrderId);
-      await loadOrders();
+      await loadEligibility(selectedOrderId, { force: true });
+      await loadOrders({ force: true });
       await loadDraftShipments();
       await loadRecentShipments();
     } catch (err: any) {
@@ -705,8 +755,8 @@ export default function GalaxusWarehouseShipmentsPage() {
           data?.delr?.status ?? "pending"
         }${data?.delr?.status === "pending" ? " (sending in background)" : ""}`
       );
-      await loadOrders();
-      if (selectedOrderId) await loadEligibility(selectedOrderId);
+      await loadOrders({ force: true });
+      if (selectedOrderId) await loadEligibility(selectedOrderId, { force: true });
       await loadDraftShipments();
       await loadRecentShipments();
     } catch (err: any) {
@@ -734,7 +784,7 @@ export default function GalaxusWarehouseShipmentsPage() {
       if (createdShipment?.id === shipmentId) setCreatedShipment(null);
       await loadDraftShipments();
       await loadRecentShipments();
-      if (selectedOrderId) await loadEligibility(selectedOrderId);
+      if (selectedOrderId) await loadEligibility(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err?.message ?? "Delete shipment failed");
     } finally {
@@ -760,7 +810,7 @@ export default function GalaxusWarehouseShipmentsPage() {
       setResult(data.result?.message ?? "Shipment reset to MANUAL — you can now delete and re-create it with all items.");
       await loadRecentShipments();
       await loadDraftShipments();
-      if (selectedOrderId) await loadEligibility(selectedOrderId);
+      if (selectedOrderId) await loadEligibility(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err?.message ?? "Reset DELR failed");
     } finally {
