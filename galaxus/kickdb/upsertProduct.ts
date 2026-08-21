@@ -2,11 +2,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { digestProductFields, pickPersistedKickdbSizes, pickString } from "@/galaxus/kickdb/extract";
 import { pickPersistedKickdbBarcodes } from "@/galaxus/kickdb/client";
+import { mergeKickdbRawJson } from "@/galaxus/kickdb/rawJsonMerge";
 import { ingestStxFromRawPayload, zeroStxStockForKickdbProduct } from "@/galaxus/jobs/stxSync";
 
 export type KickdbUpsertBody = {
   data?: unknown;
   notFound?: boolean;
+  /** Skinny SSE price tick: merge into existing rawJson, keep gallery. */
+  priceOnly?: boolean;
   skipShopifyPriceSync?: boolean;
 };
 
@@ -63,6 +66,19 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
   }
 
   const digest = digestProductFields(data);
+  const priceOnly = body?.priceOnly === true;
+
+  let existingRaw: unknown = null;
+  if (priceOnly) {
+    const existing = await prisma.$queryRaw<Array<{ rawJson: unknown }>>`
+      SELECT "rawJson"
+      FROM "public"."KickDBProduct"
+      WHERE "kickdbProductId" = ${kickdbProductId}
+      LIMIT 1
+    `;
+    existingRaw = existing[0]?.rawJson ?? null;
+  }
+  const persistRaw = mergeKickdbRawJson(existingRaw, data, priceOnly);
 
   const product = await prisma.$queryRaw<Array<{ id: string }>>`
     INSERT INTO "public"."KickDBProduct" (
@@ -76,7 +92,7 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
       ${digest.traitsJson === null ? null : JSON.stringify(digest.traitsJson)}::jsonb,
       ${digest.description}, ${digest.gender}, ${digest.colorway}, ${digest.countryOfManufacture},
       ${digest.releaseDate}, ${digest.retailPrice}, ${now}, false,
-      ${JSON.stringify(data)}::jsonb, ${now}, ${now}, ${now}
+      ${JSON.stringify(persistRaw)}::jsonb, ${now}, ${now}, ${now}
     )
     ON CONFLICT ("kickdbProductId") DO UPDATE SET
       "urlKey"               = COALESCE(EXCLUDED."urlKey", "KickDBProduct"."urlKey"),
@@ -94,7 +110,10 @@ export async function upsertKickdbProductPayload(body: KickdbUpsertBody): Promis
       "lastFetchedAt"        = EXCLUDED."lastFetchedAt",
       "notFound"             = false,
       "rawJson"              = EXCLUDED."rawJson",
-      "rawFetchedAt"         = EXCLUDED."rawFetchedAt",
+      "rawFetchedAt"         = CASE
+        WHEN ${priceOnly} THEN "KickDBProduct"."rawFetchedAt"
+        ELSE EXCLUDED."rawFetchedAt"
+      END,
       "updatedAt"            = EXCLUDED."updatedAt"
     RETURNING "id"
   `;

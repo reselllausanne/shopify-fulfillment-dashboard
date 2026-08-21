@@ -4,10 +4,10 @@ SSE listener v2 — DB buffer mode.
 On each KicksDB SSE price-change event:
   1. Dedup: skip if this product UUID was *successfully upserted* within
      --min-refetch-interval (default 12h). Failures do NOT start the 12h window.
-  2. Fetch the FULL product from KicksDB (variants + prices + identifiers +
-     gallery + 360) — this is the ONLY KicksDB call in the whole pipeline.
-  3. POST the raw payload to /api/kickdb/upsert (:3002), which writes
-     KickDBProduct.rawJson AND SupplierVariant price/stock.
+  2. Cheap exists check on :3002 — known product with rawJson → skinny KickDB
+     fetch (variants+prices+ids, no gallery/360). Unknown → full fetch once.
+  3. POST payload to /api/kickdb/upsert (:3002), which writes SupplierVariant
+     prices. priceOnly=true merges into existing rawJson (keeps gallery).
 
 Do not mark a UUID "fetched" until upsert returns 200. Marking on enqueue/timeout
 was dropping live StockX prices for 12h (Galaxus kept selling stale buy).
@@ -40,8 +40,8 @@ DEFAULT_SSE_URL = "https://sse.kicks.dev/v1/stream"
 DEFAULT_TOPICS = os.environ.get("KICKSDB_SSE_TOPICS", "price:stockx:ch")
 DEFAULT_UPSERT_URL = "http://127.0.0.1:3002/api/kickdb/upsert"
 DEFAULT_REFETCH_INTERVAL = 12 * 3600  # 12h after successful upsert
-DEFAULT_WORKERS = 2
-DEFAULT_QUEUE_SIZE = 500
+DEFAULT_WORKERS = 4
+DEFAULT_QUEUE_SIZE = 1000
 DEFAULT_UPSERT_TIMEOUT = 180
 DEFAULT_UPSERT_RETRIES = 4
 IN_FLIGHT_STALE_S = 600
@@ -51,7 +51,7 @@ LAST_EVENT_ID_FILE = BASE_DIR / "sse_db_last_event_id.txt"
 UUID_CACHE_FILE = BASE_DIR / "sse_uuid_cache.jsonl"
 
 KICKS_PRODUCT_URL = "https://api.kicks.dev/v3/stockx/products/{id}"
-KICKS_DISPLAY_PARAMS = {
+KICKS_FULL_PARAMS = {
     "currency": "CHF",
     "market": "CH",
     "display[variants]": "true",
@@ -60,6 +60,15 @@ KICKS_DISPLAY_PARAMS = {
     "display[prices]": "true",
     "display[gallery]": "true",
     "display[gallery_360]": "true",
+}
+# Known products: price tick only — skip heavy gallery/360 payloads.
+KICKS_PRICE_PARAMS = {
+    "currency": "CHF",
+    "market": "CH",
+    "display[variants]": "true",
+    "display[traits]": "true",
+    "display[identifiers]": "true",
+    "display[prices]": "true",
 }
 
 _cache_lock = threading.Lock()
@@ -72,6 +81,8 @@ _stats = {
     "in_flight_skips": 0,
     "queue_full": 0,
     "fetched": 0,
+    "fetched_skinny": 0,
+    "fetched_full": 0,
     "upserted": 0,
     "errors": 0,
     "upsert_retries": 0,
@@ -181,11 +192,43 @@ def mark_upserted(uuid):
         pass
 
 
-def fetch_full_product(uuid, api_key):
+def derive_exists_url(upsert_url):
+    if upsert_url.endswith("/upsert"):
+        return upsert_url[: -len("/upsert")] + "/exists"
+    return upsert_url.rstrip("/") + "/exists"
+
+
+def auth_headers():
+    headers = {}
+    token = os.environ.get("KICKDB_INTERNAL_TOKEN", "").strip()
+    if token:
+        headers["x-internal-token"] = token
+    return headers
+
+
+def should_price_only(uuid, exists_url):
+    """True when KickDBProduct already has rawJson — skinny KickDB fetch."""
+    try:
+        r = requests.get(
+            exists_url,
+            params={"id": uuid},
+            headers=auth_headers(),
+            timeout=5,
+        )
+        if r.status_code != 200:
+            return False
+        body = r.json()
+        return bool(body.get("priceOnly"))
+    except Exception:
+        return False
+
+
+def fetch_product(uuid, api_key, price_only):
     url = KICKS_PRODUCT_URL.format(id=uuid)
+    params = KICKS_PRICE_PARAMS if price_only else KICKS_FULL_PARAMS
     try:
         r = requests.get(url, headers={"Authorization": api_key},
-                         params=KICKS_DISPLAY_PARAMS, timeout=25)
+                         params=params, timeout=25)
         if r.status_code == 404:
             return None, "http_404"
         if r.status_code != 200:
@@ -201,10 +244,7 @@ def fetch_full_product(uuid, api_key):
 
 
 def upsert_to_db(payload, upsert_url, timeout_s, retries):
-    headers = {"Content-Type": "application/json"}
-    token = os.environ.get("KICKDB_INTERNAL_TOKEN", "").strip()
-    if token:
-        headers["x-internal-token"] = token
+    headers = {"Content-Type": "application/json", **auth_headers()}
     last_err = None
     attempts = max(1, retries)
     for attempt in range(1, attempts + 1):
@@ -236,7 +276,7 @@ def upsert_to_db(payload, upsert_url, timeout_s, retries):
     return False, last_err
 
 
-def worker_loop(q, api_key, upsert_url, timeout_s, retries):
+def worker_loop(q, api_key, upsert_url, exists_url, timeout_s, retries):
     while True:
         item = q.get()
         if item is None:
@@ -244,7 +284,8 @@ def worker_loop(q, api_key, upsert_url, timeout_s, retries):
             return
         uuid, event_id = item
         try:
-            payload, err = fetch_full_product(uuid, api_key)
+            price_only = should_price_only(uuid, exists_url)
+            payload, err = fetch_product(uuid, api_key, price_only)
             if err:
                 if err == "http_404":
                     ok, derr = upsert_to_db(
@@ -264,14 +305,21 @@ def worker_loop(q, api_key, upsert_url, timeout_s, retries):
                     log(f"uuid={uuid} fetch error: {err}")
                 continue
             bump("fetched")
+            bump("fetched_skinny" if price_only else "fetched_full")
             data = payload.get("data", {})
-            ok, err = upsert_to_db(payload, upsert_url, timeout_s, retries)
+            upsert_body = dict(payload)
+            if price_only:
+                upsert_body["priceOnly"] = True
+            ok, err = upsert_to_db(upsert_body, upsert_url, timeout_s, retries)
             if ok:
                 bump("upserted")
                 mark_upserted(uuid)
             else:
                 bump("errors")
-                log(f"uuid={uuid} slug={data.get('slug')} upsert FAILED: {err}")
+                log(
+                    f"uuid={uuid} slug={data.get('slug')} "
+                    f"mode={'skinny' if price_only else 'full'} upsert FAILED: {err}"
+                )
         except Exception as e:
             bump("errors")
             log(f"uuid={uuid} worker error: {e}")
@@ -379,6 +427,7 @@ def main():
     parser = argparse.ArgumentParser(description="KicksDB SSE listener -> DB buffer")
     parser.add_argument("--topics", default=DEFAULT_TOPICS)
     parser.add_argument("--upsert-url", default=DEFAULT_UPSERT_URL)
+    parser.add_argument("--exists-url", default="", help="defaults from --upsert-url")
     parser.add_argument("--min-refetch-interval", type=int, default=DEFAULT_REFETCH_INTERVAL)
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument("--queue-size", type=int, default=DEFAULT_QUEUE_SIZE)
@@ -392,13 +441,21 @@ def main():
         print("KICKSDB_API_KEY env required", file=sys.stderr)
         return 2
 
+    exists_url = (args.exists_url or derive_exists_url(args.upsert_url)).strip()
     load_uuid_cache(args.min_refetch_interval)
 
     q = queue.Queue(maxsize=max(1, args.queue_size))
     for _ in range(max(1, args.workers)):
         t = threading.Thread(
             target=worker_loop,
-            args=(q, api_key, args.upsert_url, args.upsert_timeout, args.upsert_retries),
+            args=(
+                q,
+                api_key,
+                args.upsert_url,
+                exists_url,
+                args.upsert_timeout,
+                args.upsert_retries,
+            ),
             daemon=True,
         )
         t.start()
@@ -407,7 +464,8 @@ def main():
         "listener config "
         f"workers={args.workers} queue={args.queue_size} "
         f"upsert_timeout={args.upsert_timeout}s retries={args.upsert_retries} "
-        f"min_refetch={args.min_refetch_interval}s"
+        f"min_refetch={args.min_refetch_interval}s "
+        f"exists_url={exists_url}"
     )
 
     backoff = 1

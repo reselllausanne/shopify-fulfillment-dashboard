@@ -9,6 +9,36 @@ export function checkKickdbBufferAuth(headers: Record<string, string | string[] 
   return token === expected;
 }
 
+/** Cheap check: known product with rawJson → SSE can fetch price-only. */
+export async function queryKickdbExists(kickdbProductId: string): Promise<{
+  ok: true;
+  exists: boolean;
+  priceOnly: boolean;
+  ms: number;
+}> {
+  const startedAt = Date.now();
+  const id = String(kickdbProductId ?? "").trim();
+  if (!id) {
+    return { ok: true, exists: false, priceOnly: false, ms: Date.now() - startedAt };
+  }
+  const rows = await prisma.$queryRaw<Array<{ hasRaw: boolean }>>`
+    SELECT (
+      "rawJson" IS NOT NULL
+      AND jsonb_typeof("rawJson") = 'object'
+    ) AS "hasRaw"
+    FROM "public"."KickDBProduct"
+    WHERE "kickdbProductId" = ${id}
+    LIMIT 1
+  `;
+  const hasRaw = rows[0]?.hasRaw === true;
+  return {
+    ok: true,
+    exists: rows.length > 0,
+    priceOnly: hasRaw,
+    ms: Date.now() - startedAt,
+  };
+}
+
 export async function queryKickdbFreshProducts(params: {
   limit: number;
   status: string;
@@ -226,11 +256,20 @@ export async function handleKickdbBufferRequest(
     return { status: 401, json: { ok: false, error: "unauthorized" } };
   }
 
+  if (method === "GET" && pathname === "/api/kickdb/exists") {
+    const id = String(searchParams.get("id") ?? "").trim();
+    if (!id) {
+      return { status: 400, json: { ok: false, error: "missing_id" } };
+    }
+    const result = await queryKickdbExists(id);
+    return { status: 200, json: result };
+  }
+
   if (method === "POST" && pathname === "/api/kickdb/upsert") {
     const startedAt = Date.now();
     const gated = await kickdbUpsertGate.run(() =>
       upsertKickdbProductPayload({
-        ...(body as { data?: unknown; notFound?: boolean }),
+        ...(body as { data?: unknown; notFound?: boolean; priceOnly?: boolean }),
         // Keep SSE hot path focused on DB writes; Shopify pricing runs async elsewhere.
         skipShopifyPriceSync: true,
       })

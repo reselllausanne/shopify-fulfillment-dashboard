@@ -46,6 +46,7 @@ export function createUpsertGate(params?: {
 }
 
 export const kickdbUpsertGate = createUpsertGate({
-  concurrency: Number(process.env.KICKDB_UPSERT_CONCURRENCY ?? 2),
-  maxWaiting: Number(process.env.KICKDB_UPSERT_MAX_WAITING ?? 8),
+  // Skinny price upserts are ~1–3s; allow more parallel once gallery is off hot path.
+  concurrency: Number(process.env.KICKDB_UPSERT_CONCURRENCY ?? 4),
+  maxWaiting: Number(process.env.KICKDB_UPSERT_MAX_WAITING ?? 16),
 });
