@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 
 import { prisma } from "@/app/lib/prisma";
 import { resolveAdsConfig } from "@/adsanalytics/config";
+import { authHealthCommand } from "@/adsanalytics/commands/authHealth";
 import { explorerPlanCommand, countExplorerPlanPool } from "@/adsanalytics/commands/explorerPlan";
 import { explorerPreflightCommand } from "@/adsanalytics/commands/explorerPreflight";
 import { explorerCoreExclusionsCommand } from "@/adsanalytics/commands/explorerCoreExclusions";
@@ -102,7 +103,41 @@ async function findLatestBatchBySeed(seed: string): Promise<{
 async function ensureExplorerCampaignRegistered(): Promise<CampaignRegistryRow> {
   let registry = await loadCampaignRegistry();
   let row = registry.get(EXPLORER_ROLE);
-  if (row) return row;
+  if (
+    row &&
+    row.campaignId &&
+    row.adGroupResourceName &&
+    row.adGroupAdResourceName &&
+    row.campaignResourceName
+  ) {
+    return row;
+  }
+  if (row?.campaignId) {
+    log("explorer_weekly.refresh_explorer_campaign", {
+      role: EXPLORER_ROLE,
+      campaignId: row.campaignId,
+      reason: "missing_registry_fields",
+    });
+    const refreshExit = await explorerCampaignRegisterCommand({
+      role: EXPLORER_ROLE,
+      campaignId: row.campaignId,
+      force: true,
+    });
+    if (refreshExit !== EXIT_OK) {
+      throw new Error(`explorer:campaign:register failed with exit code ${refreshExit}`);
+    }
+    registry = await loadCampaignRegistry();
+    row = registry.get(EXPLORER_ROLE);
+    if (
+      row &&
+      row.campaignId &&
+      row.adGroupResourceName &&
+      row.adGroupAdResourceName &&
+      row.campaignResourceName
+    ) {
+      return row;
+    }
+  }
 
   log("explorer_weekly.discover_explorer_campaign", { role: EXPLORER_ROLE });
   const discoverExit = await explorerCampaignDiscoverCommand({ role: EXPLORER_ROLE });
@@ -244,6 +279,10 @@ export async function explorerWeeklyPlanCommand(): Promise<number> {
   return withSyncRun("explorer:weekly:plan", {}, async () => {
     const seed = isoWeekSeed();
     log("explorer_weekly.start", { seed });
+    const authExit = await authHealthCommand();
+    if (authExit !== EXIT_OK) {
+      throw new Error(`auth:health exited with code ${authExit}`);
+    }
 
     const existing = await findExistingBatch(seed);
     if (existing?.status === "active") {

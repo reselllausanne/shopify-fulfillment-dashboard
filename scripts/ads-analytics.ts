@@ -48,6 +48,7 @@ import { explorerOverlapProofCommand } from "../adsanalytics/commands/explorerOv
 import { explorerPlanCommand } from "../adsanalytics/commands/explorerPlan";
 import { explorerPreflightCommand } from "../adsanalytics/commands/explorerPreflight";
 import { explorerReconcileCommand } from "../adsanalytics/commands/explorerReconcile";
+import { explorerReconcileAllCommand } from "../adsanalytics/commands/explorerReconcileAll";
 import { explorerRollbackCommand } from "../adsanalytics/commands/explorerRollback";
 import { explorerRoutingDebugCommand } from "../adsanalytics/commands/explorerRoutingDebug";
 import { explorerWeeklyPlanCommand } from "../adsanalytics/commands/explorerWeeklyPlan";
@@ -140,6 +141,8 @@ Commands:
                              Ingest offer-level Ads metrics and roll them up per model
   explorer:reconcile --batch=<id> [--dry-run] [--skip-ingest] [--force]
                              metric sync → rules → Merchant mutation → readback → DB commit
+  explorer:reconcile:all [--dry-run] [--skip-ingest] [--force] [--max-transitions=300]
+                             Same as explorer:reconcile but loops all active batches
   explorer:campaign:discover [--role=<role>] [--name=<substring>]
   explorer:campaign:register --role=CORE_ALL|EXPLORER_ALL|LONG_TAIL_ALL --campaign-id=<id> [--force]
                              Bind an existing Ads campaign to a routing role
@@ -352,6 +355,15 @@ async function main(): Promise<number> {
     case "explorer:reconcile":
       return explorerReconcileCommand({
         batch: stringFlag(args, "batch"),
+        dryRun: flag(args, "dry-run") ? true : undefined,
+        skipIngest: flag(args, "skip-ingest") ? true : undefined,
+        force: flag(args, "force") ? true : undefined,
+        maxTransitions: stringFlag(args, "max-transitions")
+          ? intFlag(args, "max-transitions", 0)
+          : undefined,
+      });
+    case "explorer:reconcile:all":
+      return explorerReconcileAllCommand({
         dryRun: flag(args, "dry-run") ? true : undefined,
         skipIngest: flag(args, "skip-ingest") ? true : undefined,
         force: flag(args, "force") ? true : undefined,
