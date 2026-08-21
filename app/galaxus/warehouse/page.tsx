@@ -37,6 +37,9 @@ type OrderDetail = {
   stockxMatches?: any[];
 };
 
+const ORDERS_LIST_CACHE_TTL_MS = 30_000;
+const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
+
 export default function WarehouseBulkPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
@@ -45,6 +48,8 @@ export default function WarehouseBulkPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const autoOrdrAttempted = useRef<Set<string>>(new Set());
+  const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
+  const orderDetailCacheRef = useRef<Map<string, { at: number; order: OrderDetail | null }>>(new Map());
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
     mode: "create" | "edit";
@@ -70,7 +75,18 @@ export default function WarehouseBulkPage() {
   const buildLineTitle = (line: any) =>
     line.productName || line.description || line.supplierPid || "—";
 
-  const loadOrders = async () => {
+  const loadOrders = async (opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = ordersListCacheRef.current;
+    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+      const items = cached.items;
+      setOrders(items);
+      if (!selectedOrderId && items[0]?.id) {
+        setSelectedOrderId(items[0].id);
+      }
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -81,6 +97,7 @@ export default function WarehouseBulkPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load orders");
       const items = Array.isArray(data.items) ? data.items : [];
+      ordersListCacheRef.current = { at: Date.now(), items };
       setOrders(items);
       if (!selectedOrderId && items[0]?.id) {
         setSelectedOrderId(items[0].id);
@@ -97,8 +114,8 @@ export default function WarehouseBulkPage() {
     setError(null);
     try {
       await fetch("/api/galaxus/edi/poll", { cache: "no-store" });
-      await loadOrders();
-      if (selectedOrderId) await loadDetail(selectedOrderId);
+      await loadOrders({ force: true });
+      if (selectedOrderId) await loadDetail(selectedOrderId, { force: true });
     } catch (err: any) {
       setError(err?.message ?? "Ingest failed");
     } finally {
@@ -106,9 +123,15 @@ export default function WarehouseBulkPage() {
     }
   };
 
-  const loadDetail = async (orderId: string) => {
+  const loadDetail = async (orderId: string, opts?: { force?: boolean }) => {
     if (!orderId) {
       setDetail(null);
+      return;
+    }
+    const force = Boolean(opts?.force);
+    const cached = orderDetailCacheRef.current.get(orderId);
+    if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
+      setDetail(cached.order);
       return;
     }
     setBusy("detail");
@@ -117,7 +140,9 @@ export default function WarehouseBulkPage() {
       const res = await fetch(`/api/galaxus/orders/${orderId}`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load order detail");
-      setDetail(data.order ?? null);
+      const order = (data.order ?? null) as OrderDetail | null;
+      orderDetailCacheRef.current.set(orderId, { at: Date.now(), order });
+      setDetail(order);
     } catch (err: any) {
       setError(err?.message ?? "Failed to load order detail");
     } finally {
@@ -144,7 +169,7 @@ export default function WarehouseBulkPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "ORDR send failed");
-      await loadDetail(orderId);
+      await loadDetail(orderId, { force: true });
     } catch (err: any) {
       setError(err?.message ?? "ORDR send failed");
     } finally {
@@ -162,8 +187,8 @@ export default function WarehouseBulkPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Could not mark shipped");
-      await loadDetail(selectedOrderId);
-      await loadOrders();
+      await loadDetail(selectedOrderId, { force: true });
+      await loadOrders({ force: true });
     } catch (err: any) {
       setError(err?.message ?? "Could not mark shipped");
     } finally {
@@ -251,7 +276,7 @@ export default function WarehouseBulkPage() {
       onSuccess: async () => {
         setSelectedOrderId("");
         setDetail(null);
-        await loadOrders();
+        await loadOrders({ force: true });
       },
     });
   };
@@ -279,8 +304,8 @@ export default function WarehouseBulkPage() {
         setError("Match saved, but no pending STX unit slot on this order — run sync or refresh order.");
       }
       setManualEntryModal({ isOpen: false, mode: "create", line: null, orderId: null, unitIndex: 0, initialData: {} });
-      await loadDetail(orderId);
-      await loadOrders();
+      await loadDetail(orderId, { force: true });
+      await loadOrders({ force: true });
     } catch (err: any) {
       setError(err.message);
     }
@@ -413,8 +438,8 @@ export default function WarehouseBulkPage() {
                 <StockxOrderTools
                   orderId={selectedOrderId}
                   onAfterAction={async () => {
-                    await loadOrders();
-                    await loadDetail(selectedOrderId);
+                    await loadOrders({ force: true });
+                    await loadDetail(selectedOrderId, { force: true });
                   }}
                 />
 

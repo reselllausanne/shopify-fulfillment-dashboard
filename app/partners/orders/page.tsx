@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { decathlonLinePayoutPreferMirakl, decathlonMiraklSellTotal } from "@/decathlon/orders/margin";
 
 type OrderListItem = {
@@ -32,6 +32,9 @@ type GalaxusOrderListItem = {
   lineCount?: number;
   fulfillmentState?: string | null;
 };
+
+const ORDERS_LIST_CACHE_TTL_MS = 30_000;
+const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
 
 function lineDisplayTitle(line: any) {
   const mir = line.productTitle || line.description || line.offerSku || "—";
@@ -70,13 +73,30 @@ export default function PartnerOrdersPage() {
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [productSearchInput, setProductSearchInput] = useState("");
   const [productSearch, setProductSearch] = useState("");
+  const decathlonListCacheRef = useRef<Map<string, { at: number; items: OrderListItem[] }>>(new Map());
+  const galaxusListCacheRef = useRef<{ at: number; items: GalaxusOrderListItem[] } | null>(null);
+  const decathlonDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
+  const galaxusDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
 
   useEffect(() => {
     const t = setTimeout(() => setProductSearch(productSearchInput.trim()), 400);
     return () => clearTimeout(t);
   }, [productSearchInput]);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cacheKey = `${leftTab}::${productSearch.toLowerCase()}`;
+    const cached = decathlonListCacheRef.current.get(cacheKey);
+    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+      const items = cached.items;
+      setOrders(items);
+      setSelectedOrderId((prev) => {
+        if (prev && items.some((o) => o.id === prev)) return prev;
+        return items[0]?.id ?? null;
+      });
+      setLoadingOrders(false);
+      return;
+    }
     setLoadingOrders(true);
     setError(null);
     try {
@@ -92,6 +112,7 @@ export default function PartnerOrdersPage() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
       const items: OrderListItem[] = data.items || [];
+      decathlonListCacheRef.current.set(cacheKey, { at: Date.now(), items });
       setOrders(items);
       setSelectedOrderId((prev) => {
         if (prev && items.some((o) => o.id === prev)) return prev;
@@ -104,7 +125,18 @@ export default function PartnerOrdersPage() {
     }
   }, [leftTab, productSearch]);
 
-  const loadGalaxusOrders = async () => {
+  const loadGalaxusOrders = async (opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = galaxusListCacheRef.current;
+    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+      const items = cached.items;
+      setGalaxusOrders(items);
+      if (!selectedGalaxusOrderId && items[0]?.id) {
+        setSelectedGalaxusOrderId(items[0].id);
+      }
+      setLoadingGalaxusOrders(false);
+      return;
+    }
     setLoadingGalaxusOrders(true);
     setError(null);
     try {
@@ -112,6 +144,7 @@ export default function PartnerOrdersPage() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load Galaxus orders");
       const items: GalaxusOrderListItem[] = data.items || [];
+      galaxusListCacheRef.current = { at: Date.now(), items };
       setGalaxusOrders(items);
       if (!selectedGalaxusOrderId && items[0]?.id) {
         setSelectedGalaxusOrderId(items[0].id);
@@ -123,13 +156,21 @@ export default function PartnerOrdersPage() {
     }
   };
 
-  const loadOrderDetail = async (orderId: string) => {
+  const loadOrderDetail = async (orderId: string, opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = decathlonDetailCacheRef.current.get(orderId);
+    if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
+      setSelectedOrder(cached.order);
+      setLoadingOrder(false);
+      return;
+    }
     setLoadingOrder(true);
     setError(null);
     try {
       const res = await fetch(`/api/decathlon/orders/${orderId}?scope=partner`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
+      decathlonDetailCacheRef.current.set(orderId, { at: Date.now(), order: data.order });
       setSelectedOrder(data.order);
     } catch (err: any) {
       setError(err.message);
@@ -138,13 +179,21 @@ export default function PartnerOrdersPage() {
     }
   };
 
-  const loadGalaxusOrderDetail = async (orderId: string) => {
+  const loadGalaxusOrderDetail = async (orderId: string, opts?: { force?: boolean }) => {
+    const force = Boolean(opts?.force);
+    const cached = galaxusDetailCacheRef.current.get(orderId);
+    if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
+      setSelectedGalaxusOrder(cached.order);
+      setLoadingGalaxusOrder(false);
+      return;
+    }
     setLoadingGalaxusOrder(true);
     setError(null);
     try {
       const res = await fetch(`/api/partners/galaxus/orders/${orderId}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load Galaxus order");
+      galaxusDetailCacheRef.current.set(orderId, { at: Date.now(), order: data.order });
       setSelectedGalaxusOrder(data.order);
     } catch (err: any) {
       setError(err.message);
@@ -315,21 +364,21 @@ export default function PartnerOrdersPage() {
       } else if (data.reconciled) {
         setError(null);
       }
-      await loadOrderDetail(selectedOrderId);
-      await loadOrders();
+      await loadOrderDetail(selectedOrderId, { force: true });
+      await loadOrders({ force: true });
     } catch (err: any) {
       setError(err.message ?? "Ship failed");
     }
   };
 
   const refreshData = async () => {
-    await loadOrders();
+    await loadOrders({ force: true });
     if (selectedOrderId) {
-      await loadOrderDetail(selectedOrderId);
+      await loadOrderDetail(selectedOrderId, { force: true });
     }
-    await loadGalaxusOrders();
+    await loadGalaxusOrders({ force: true });
     if (selectedGalaxusOrderId) {
-      await loadGalaxusOrderDetail(selectedGalaxusOrderId);
+      await loadGalaxusOrderDetail(selectedGalaxusOrderId, { force: true });
     }
   };
 
@@ -343,8 +392,8 @@ export default function PartnerOrdersPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Mark shipped failed");
-      await loadGalaxusOrders();
-      await loadGalaxusOrderDetail(selectedGalaxusOrderId);
+      await loadGalaxusOrders({ force: true });
+      await loadGalaxusOrderDetail(selectedGalaxusOrderId, { force: true });
     } catch (err: any) {
       setError(err.message ?? "Mark shipped failed");
     } finally {

@@ -116,7 +116,6 @@ export async function loadFeedExportCandidates(params: {
   const pageSize = all ? FEED_EXPORT_PAGE_SIZE : Math.min(limit, 1000);
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
-  let cursorUpdatedAt: Date | null = null;
   let cursorId: string | null = null;
   const prismaAny = prismaDirect as any;
   const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
@@ -141,20 +140,17 @@ export async function loadFeedExportCandidates(params: {
       ...(providerKeyFilter ? providerKeyFilter : {}),
     };
     const whereClause =
-      all && cursorUpdatedAt && cursorId
+      all && cursorId
         ? {
             ...baseWhere,
-            OR: [
-              { updatedAt: { lt: cursorUpdatedAt } },
-              { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
-            ],
+            id: { lt: cursorId },
           }
         : baseWhere;
 
     const mappings = await prismaAny.variantMapping.findMany({
       where: whereClause,
       include: FEED_MAPPING_INCLUDE,
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      orderBy: [{ id: "desc" }],
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
@@ -162,7 +158,6 @@ export async function loadFeedExportCandidates(params: {
     lastBatch = mappings.length;
     if (all && mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
-      cursorUpdatedAt = last.updatedAt ?? null;
       cursorId = last.id ?? null;
     }
 
@@ -222,7 +217,6 @@ export async function loadMasterAndSpecsExportCandidates(params: {
   const pageSize = all ? FEED_EXPORT_PAGE_SIZE : Math.min(limit, 1000);
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
-  let cursorUpdatedAt: Date | null = null;
   let cursorId: string | null = null;
   const prismaAny = prismaDirect as any;
   const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
@@ -261,20 +255,17 @@ export async function loadMasterAndSpecsExportCandidates(params: {
       ...(providerKeyFilter ? providerKeyFilter : {}),
     };
     const whereClause =
-      all && cursorUpdatedAt && cursorId
+      all && cursorId
         ? {
             ...baseWhere,
-            OR: [
-              { updatedAt: { lt: cursorUpdatedAt } },
-              { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
-            ],
+            id: { lt: cursorId },
           }
         : baseWhere;
 
     const mappings = await prismaAny.variantMapping.findMany({
       where: whereClause,
       include: FEED_MAPPING_INCLUDE,
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      orderBy: [{ id: "desc" }],
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
@@ -284,7 +275,6 @@ export async function loadMasterAndSpecsExportCandidates(params: {
     mappingsScanned += lastBatch;
     if (all && mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
-      cursorUpdatedAt = last.updatedAt ?? null;
       cursorId = last.id ?? null;
     }
 

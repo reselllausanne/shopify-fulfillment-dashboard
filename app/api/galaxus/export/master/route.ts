@@ -273,7 +273,6 @@ export async function GET(request: Request) {
   const pageSize = all ? 1000 : limit;
   let currentOffset = all ? 0 : offset;
   let lastBatch = 0;
-  let cursorUpdatedAt: Date | null = null;
   let cursorId: string | null = null;
   const prismaAny = prisma as any;
   const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
@@ -284,13 +283,10 @@ export async function GET(request: Request) {
       ...mappingsWhere,
       ...(providerKeyFilter ? providerKeyFilter : {}),
     };
-    const whereClause = all && cursorUpdatedAt && cursorId
+    const whereClause = all && cursorId
       ? {
           ...baseWhere,
-          OR: [
-            { updatedAt: { lt: cursorUpdatedAt } },
-            { updatedAt: cursorUpdatedAt, id: { lt: cursorId } },
-          ],
+          id: { lt: cursorId },
         }
       : baseWhere;
     const mappings = await prismaAny.variantMapping.findMany({
@@ -314,14 +310,13 @@ export async function GET(request: Request) {
           },
         }),
       },
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      orderBy: [{ id: "desc" }],
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
     lastBatch = mappings.length;
     if (all && mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
-      cursorUpdatedAt = last.updatedAt ?? null;
       cursorId = last.id ?? null;
     }
     accumulateBestCandidates(mappings, bestByGtin, {
