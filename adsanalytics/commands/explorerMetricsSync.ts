@@ -35,11 +35,15 @@ export function resolveBatchMetricWindow(
   options: { from?: string; to?: string } = {}
 ): MetricWindow {
   const end = options.to?.trim() || defaultEndDate();
-  const start =
+  let start =
     options.from?.trim() ||
     (activatedAt ? toIsoDate(new Date(activatedAt)) : null) ||
     end;
-  if (start > end) throw new Error(`Invalid metric window: ${start} > ${end}`);
+  if (start > end) {
+    // A batch activated "today" can be newer than defaultEndDate() (typically yesterday).
+    // Clamp to a single-day window instead of failing the whole reconcile loop.
+    start = end;
+  }
   return { start, end };
 }
 
