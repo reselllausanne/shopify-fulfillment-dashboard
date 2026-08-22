@@ -152,11 +152,88 @@ type EligibleRecord = {
   available: boolean;
 };
 
-function collectEligibleRecords(shop: ScraperShop, product: any, productJs: any): EligibleRecord[] {
+/** Normalize Shopify tags from products.json (string) or .js (array). */
+export function shopifyProductTags(product: any, productJs: any): string[] {
+  const raw = productJs?.tags ?? product?.tags ?? [];
+  if (Array.isArray(raw)) return raw.map((t) => String(t).trim()).filter(Boolean);
+  return String(raw)
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Preorder / coming-soon signals in tags or title.
+ * WellPlayed rarely tags these; continue-policy OOS is the main path (see resolveShopifyAvailable).
+ */
+export function isShopifyPreorderSignal(product: any, productJs: any, variant: any, jsV: any): boolean {
+  const tags = shopifyProductTags(product, productJs).map((t) => t.toLowerCase());
+  const title = String(productJs?.title ?? product?.title ?? "").toLowerCase();
+  const vtitle = String(jsV?.title ?? variant?.title ?? "").toLowerCase();
+  const blob = [...tags, title, vtitle].join(" ");
+  return /\bpre-?orders?\b|\bvorbestell|\bvorverkauf|\bcoming\s*soon\b/.test(blob);
+}
+
+export function resolveShopifyInventoryQty(variant: any, jsV: any): number | null {
+  const raw = jsV?.inventory_quantity ?? variant?.inventory_quantity;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+function shopifyAvailableFlag(variant: any, jsV: any): boolean {
+  let available = variant?.available;
+  if (available === null || available === undefined) available = jsV?.available;
+  return Boolean(available);
+}
+
+function shopifyInventoryManagement(variant: any, jsV: any): {
+  present: boolean;
+  value: string | null;
+} {
+  const fromJs = jsV != null && Object.prototype.hasOwnProperty.call(jsV, "inventory_management");
+  const fromList =
+    variant != null && Object.prototype.hasOwnProperty.call(variant, "inventory_management");
+  if (!fromJs && !fromList) return { present: false, value: null };
+  const raw = fromJs ? jsV.inventory_management : variant.inventory_management;
+  if (raw === null || raw === undefined || raw === "") return { present: true, value: null };
+  return { present: true, value: String(raw) };
+}
+
+/**
+ * Sellable stock for Galaxus / catalog.
+ *
+ * Shopify `available:true` with `inventory_policy:"continue"` + `inventory_quantity:0`
+ * means oversell / backorder — NOT physical stock. products.json list omits qty;
+ * .js has it. Tracked inventory → require qty > 0. Explicitly untracked → trust available.
+ * Missing .js (no qty / no mgmt) → not sellable. Preorder tags/title → not sellable.
+ */
+export function resolveShopifyAvailable(
+  product: any,
+  productJs: any,
+  variant: any,
+  jsV: any
+): boolean {
+  if (isShopifyPreorderSignal(product, productJs, variant, jsV)) return false;
+
+  const qty = resolveShopifyInventoryQty(variant, jsV);
+  const mgmt = shopifyInventoryManagement(variant, jsV);
+
+  // Explicitly untracked inventory: Shopify keeps qty at 0 and available:true.
+  if (mgmt.present && !mgmt.value) return shopifyAvailableFlag(variant, jsV);
+
+  // Tracked (e.g. "shopify") or management unknown (list-only / .js failed):
+  // only sell when we have a positive quantity from .js.
+  if (qty !== null) return qty > 0;
+  return false;
+}
+
+/** Exported for unit tests. */
+export function collectEligibleRecords(shop: ScraperShop, product: any, productJs: any): EligibleRecord[] {
   const out: EligibleRecord[] = [];
   const title = product?.title || "";
   const brand = product?.vendor || "";
-  const productType = String(product?.product_type ?? "").trim() || null;
+  const productType = String(product?.product_type ?? productJs?.type ?? "").trim() || null;
   const jsById = new Map<string, any>();
   for (const v of productJs?.variants || []) jsById.set(String(v?.id), v);
   const imgSource = productJs && Object.keys(productJs).length ? productJs : product;
@@ -168,9 +245,7 @@ function collectEligibleRecords(shop: ScraperShop, product: any, productJs: any)
     if (!gtin) continue; // galaxus needs GTIN
     const price = priceFrom(jsV, variant);
     if (!price || price <= 0) continue;
-    let available = variant?.available;
-    if (available === null || available === undefined) available = jsV?.available;
-    available = Boolean(available);
+    const available = resolveShopifyAvailable(product, productJs, variant, jsV);
     const vtitle = variant?.title && variant.title !== "Default Title" ? variant.title : "";
     const fullTitle = vtitle ? `${title} — ${vtitle}` : title;
     const sku = String((jsV?.sku ?? variant?.sku) || "").trim();

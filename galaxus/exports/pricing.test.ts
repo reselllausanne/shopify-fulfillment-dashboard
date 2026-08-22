@@ -18,6 +18,10 @@ describe("Galaxus STX margin", () => {
     delete process.env.GALAXUS_PRICE_SHIPPING_CHF;
     delete process.env.GALAXUS_SHIPPING_CHF;
     delete process.env.GALAXUS_WEL_SHIPPING_CHF;
+    delete process.env.GALAXUS_WEL_TARGET_NET_MARGIN;
+    delete process.env.GALAXUS_WEL_TARGET_MARGIN;
+    delete process.env.GALAXUS_WEL_BUFFER_CHF;
+    delete process.env.GALAXUS_WEL_PRICE_BUFFER_CHF;
     delete process.env.GALAXUS_PRICE_BUFFER_CHF;
     delete process.env.GALAXUS_BUFFER_CHF;
     delete process.env.GALAXUS_PRICE_ROUND_TO;
@@ -81,15 +85,40 @@ describe("Galaxus STX margin", () => {
 
   it("uses higher default shipping for WEL own-catalog lines", () => {
     const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
-    // (3 + 7) / (1 - 0.12) rounded up to 0.05 increment
-    expect(welSell).toBe(11.4);
+    // (3 + 7 ship + 1 buffer) / (1 - 0.15) rounded up to 0.05 increment
+    expect(welSell).toBe(12.95);
+  });
+
+  it("defaults WEL to at least 15% net + CHF 1 buffer", () => {
+    expect(resolveGalaxusTargetNetMarginForSupplier("wel")).toBeCloseTo(0.15, 5);
+    const welSell = resolveGalaxusSellExVatForChannel(24.9, "wel", new Set());
+    // (24.9 + 7 + 1) / 0.85 = 38.705 → 38.75
+    expect(welSell).toBe(38.75);
   });
 
   it("allows WEL shipping override via env", () => {
     process.env.GALAXUS_WEL_SHIPPING_CHF = "9";
     const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
-    // (3 + 9) / (1 - 0.12) rounded up to 0.05 increment
-    expect(welSell).toBe(13.65);
+    // (3 + 9 + 1) / (1 - 0.15) rounded up to 0.05 increment
+    expect(welSell).toBe(15.3);
+  });
+
+  it("allows WEL margin/buffer override via env (floor at 15% / CHF 1)", () => {
+    process.env.GALAXUS_WEL_TARGET_NET_MARGIN = "0.12";
+    process.env.GALAXUS_WEL_BUFFER_CHF = "0";
+    expect(resolveGalaxusTargetNetMarginForSupplier("wel")).toBeCloseTo(0.15, 5);
+    const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
+    // floor: (3 + 7 + 1) / 0.85 → 12.95
+    expect(welSell).toBe(12.95);
+  });
+
+  it("allows higher WEL margin/buffer via env", () => {
+    process.env.GALAXUS_WEL_TARGET_NET_MARGIN = "0.18";
+    process.env.GALAXUS_WEL_BUFFER_CHF = "2";
+    expect(resolveGalaxusTargetNetMarginForSupplier("wel")).toBeCloseTo(0.18, 5);
+    const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
+    // (3 + 7 + 2) / 0.82 ≈ 14.634 → 14.65
+    expect(welSell).toBe(14.65);
   });
 });
 
