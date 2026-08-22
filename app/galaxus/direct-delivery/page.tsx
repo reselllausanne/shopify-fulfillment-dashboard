@@ -34,7 +34,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
-  const ordersListCacheRef = useRef<{ at: number; query: string; items: OrderListItem[] } | null>(null);
+  const ordersListCacheRef = useRef<{ at: number; key: string; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
   const detailLoadSeq = useRef(0);
@@ -43,7 +43,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [sendingOrdr, setSendingOrdr] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
-  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
+  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "history">("to_process");
   const [orderSearch, setOrderSearch] = useState("");
   const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
   const [manualEntryModal, setManualEntryModal] = useState<{
@@ -65,8 +65,10 @@ export default function GalaxusDirectDeliveryPage() {
   const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
     const force = Boolean(opts?.force);
     const query = debouncedOrderSearch;
+    const listMode = leftTab === "history" ? "history" : "active";
+    const cacheKey = `${listMode}::${query.toLowerCase()}`;
     const cached = ordersListCacheRef.current;
-    if (!force && cached && cached.query === query && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+    if (!force && cached && cached.key === cacheKey && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = cached.items;
       setOrders(items);
       const current = selectedOrderIdRef.current;
@@ -79,21 +81,50 @@ export default function GalaxusDirectDeliveryPage() {
     setLoadingOrders(true);
     setError(null);
     try {
-      const q = query ? `&q=${encodeURIComponent(query)}` : "";
-      const res = await fetch(
-        `/api/galaxus/orders?limit=50&view=active&deliveryType=direct_delivery&includeInvoice=0${q}`,
-        { cache: "no-store" }
-      );
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-      const items: OrderListItem[] = data.items || [];
+      const buildUrl = (limit: number, offset: number, view: "active" | "all") => {
+        const params = new URLSearchParams({
+          limit: String(limit),
+          offset: String(offset),
+          view,
+          sort: "orderDate",
+          deliveryType: "direct_delivery",
+          includeInvoice: "0",
+        });
+        if (query) params.set("q", query);
+        return `/api/galaxus/orders?${params.toString()}`;
+      };
+      const items: OrderListItem[] = [];
+      if (listMode === "history") {
+        const pageLimit = 200;
+        const maxRows = 5000;
+        let offset = 0;
+        while (items.length < maxRows) {
+          const res = await fetch(buildUrl(pageLimit, offset, "all"), { cache: "no-store" });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order history");
+          const page: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+          if (page.length === 0) break;
+          items.push(...page);
+          const nextOffset = Number(data.nextOffset ?? NaN);
+          if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
+          offset = nextOffset;
+          if (page.length < pageLimit) break;
+        }
+        if (items.length > maxRows) items.length = maxRows;
+      } else {
+        const res = await fetch(buildUrl(50, 0, "active"), { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+        const page: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+        items.push(...page);
+      }
       const fresh = new Set<string>();
       for (const item of items) {
         if (!knownOrderIds.current.has(item.id)) fresh.add(item.id);
       }
       setNewOrderIds(fresh.size > 0 ? fresh : new Set());
       knownOrderIds.current = new Set(items.map((item) => item.id));
-      ordersListCacheRef.current = { at: Date.now(), items, query };
+      ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
       setOrders(items);
 
       const current = selectedOrderIdRef.current;
@@ -105,7 +136,7 @@ export default function GalaxusDirectDeliveryPage() {
     } finally {
       setLoadingOrders(false);
     }
-  }, [debouncedOrderSearch]);
+  }, [debouncedOrderSearch, leftTab]);
 
   const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
     const force = Boolean(opts?.force);
@@ -215,6 +246,7 @@ export default function GalaxusDirectDeliveryPage() {
   }, [orders, newOrderIds]);
 
   const ordersByTab = useMemo(() => {
+    if (leftTab === "history") return orderedList;
     return orderedList.filter((order) => {
       const state = order.fulfillmentState ?? "to_process";
       if (leftTab === "fulfilled") return state === "fulfilled";
@@ -552,7 +584,7 @@ export default function GalaxusDirectDeliveryPage() {
             value={orderSearch}
             onChange={(e) => setOrderSearch(e.target.value)}
           />
-          <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
+          <div className="mb-2 grid grid-cols-3 gap-1 text-xs">
             <button
               type="button"
               className={`rounded border px-2 py-1 ${
@@ -574,6 +606,17 @@ export default function GalaxusDirectDeliveryPage() {
               onClick={() => setLeftTab("fulfilled")}
             >
               Fulfilled
+            </button>
+            <button
+              type="button"
+              className={`rounded border px-2 py-1 ${
+                leftTab === "history"
+                  ? "bg-black text-white border-black"
+                  : "bg-white border-gray-300"
+              }`}
+              onClick={() => setLeftTab("history")}
+            >
+              History
             </button>
           </div>
           <div className="space-y-2 max-h-[70vh] overflow-auto">
