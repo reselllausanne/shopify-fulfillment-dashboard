@@ -45,31 +45,20 @@ function resolveEffectiveStock(
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const extra = Math.max(0, Math.floor(physicalQty));
-  if (supplierKey === "gld" || supplierKey === "trm") return 0;
-          if (supplierKey === "stx") {
-            // Publish whichever STX offer the selector picked. Express (both
-            // ranks) wins when available; the "standard" fallback is allowed
-            // through so product families without any express asks (LEGO,
-            // low-liquidity apparel) still make it to the feed. Lead time on
-            // the offer row carries the actual delivery estimate.
-            const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
-            if (extra > 0) {
-              const dropshipDelisted = stx === 0;
-              const liquidationLocked = Boolean(variant?.manualLock);
-              return mergePhysicalWithDropship({
-                dropshipStock: stx,
-                physicalQty: extra,
-                dropshipDelisted,
-                liquidationLocked,
-              }).finalStock;
-            }
-            return stx;
-          }
-  const manualLock = Boolean(variant?.manualLock);
-  const manualStock = parseIntSafe(variant?.manualStock);
-  const baseStock = parseIntSafe(variant?.stock) ?? 0;
-  const supplierStock = manualLock && manualStock !== null ? manualStock : baseStock;
-  return supplierStock + extra;
+  // Decathlon sellable lane = STX express only.
+  if (supplierKey !== "stx") return 0;
+  const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
+  if (extra > 0) {
+    const dropshipDelisted = stx === 0;
+    const liquidationLocked = Boolean(variant?.manualLock);
+    return mergePhysicalWithDropship({
+      dropshipStock: stx,
+      physicalQty: extra,
+      dropshipDelisted,
+      liquidationLocked,
+    }).finalStock;
+  }
+  return stx;
 }
 
 function resolvePrice(
@@ -109,7 +98,8 @@ function resolvePrice(
     buyNow,
     supplierKey,
     undefined,
-    supplierKey === "stx" ? decathlonStxListPriceContextFromCandidate(candidate) : undefined
+    supplierKey === "stx" ? decathlonStxListPriceContextFromCandidate(candidate) : undefined,
+    partnerKeysLower
   );
   if (!base || base <= 0) return null;
   return applyPricingPolicy(base);

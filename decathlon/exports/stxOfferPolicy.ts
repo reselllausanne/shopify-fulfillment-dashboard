@@ -1,5 +1,4 @@
 import { isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
-import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import type { DecathlonExportCandidate } from "./types";
 import {
   readDecathlonStxMaxListPriceChf,
@@ -37,6 +36,25 @@ export function isDecathlonStxCandidate(candidate: DecathlonExportCandidate): bo
   return supplierVariantId.startsWith("stx_") || providerKey.startsWith("STX_");
 }
 
+/**
+ * Onitsuka: KickDB/STX often store marketplace EAN (69…) that ≠ official size barcode.
+ * Mirakl then binds the offer to the wrong catalog product. Block until GTIN hygiene fixed.
+ */
+export function isDecathlonOnitsukaBlocked(candidate: DecathlonExportCandidate): boolean {
+  const variant = candidate.variant ?? {};
+  const product = candidate.product ?? candidate.kickdbVariant?.product ?? null;
+  const hay = [
+    variant?.supplierBrand,
+    variant?.supplierProductName,
+    product?.brand,
+    product?.name,
+    product?.urlKey,
+  ]
+    .map((v) => String(v ?? "").toLowerCase())
+    .join(" ");
+  return hay.includes("onitsuka");
+}
+
 /** STX offer stock zero only when Mirakl list exceeds cap (default 400 CHF). */
 export function isDecathlonStxOfferDelisted(params: {
   supplierKey: string | null;
@@ -58,23 +76,18 @@ function parseIntSafe(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** STX Mirakl quantity before delist rules (express + asks guard). */
+/** STX Mirakl quantity before delist rules — Decathlon = express_* only (no standard). */
 export function resolveDecathlonStxOfferStockBeforeDelist(candidate: DecathlonExportCandidate): number {
+  if (isDecathlonOnitsukaBlocked(candidate)) return 0;
   const variant = candidate.variant ?? {};
   const manualLock = Boolean(variant?.manualLock);
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock) ?? 0;
   const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
-  const deliveryType = String(variant?.deliveryType ?? "");
-  const ctx = decathlonStxListPriceContextFromCandidate(candidate);
+  const deliveryType = String(variant?.deliveryType ?? "").trim().toLowerCase();
+  const expressOnly = deliveryType.startsWith("express_");
   const stxEligible =
-    isStxMarketplacePublishableDeliveryType(deliveryType, {
-      slug: ctx.productHandle,
-      product: candidate.product ?? candidate.kickdbVariant?.product ?? null,
-      productName: ctx.productName,
-    }) &&
-    Number.isFinite(rawStock) &&
-    isStxListingEligibleAsks(rawStock);
+    expressOnly && Number.isFinite(rawStock) && isStxListingEligibleAsks(rawStock);
   return stxEligible ? 1 : 0;
 }
 

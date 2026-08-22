@@ -47,4 +47,21 @@ describe("STX offer delist policy", () => {
   it("returns stock 1 for listable express STX", () => {
     expect(resolveDecathlonStxOfferStock(stxCandidate(106), 149)).toBe(1);
   });
+
+  it("zeros STX standard shipping (express only)", () => {
+    expect(resolveDecathlonStxOfferStock(stxCandidate(106, "standard"), 149)).toBe(0);
+  });
+
+  it("zeros Onitsuka even when express", () => {
+    const candidate = {
+      ...stxCandidate(106),
+      variant: {
+        ...stxCandidate(106).variant,
+        supplierBrand: "Onitsuka Tiger",
+        supplierProductName: "Onitsuka Tiger Mexico 66 Yellow",
+      },
+      product: { name: "Onitsuka Tiger Mexico 66 Yellow", brand: "Onitsuka Tiger" },
+    };
+    expect(resolveDecathlonStxOfferStock(candidate as any, 149)).toBe(0);
+  });
 });

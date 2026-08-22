@@ -729,52 +729,18 @@ export async function runPhysicalLiquidationOf01Import(params?: {
   limit?: number;
   mode?: MiraklImportMode;
 }) {
-  const { buildPhysicalLiquidationOfferRows } = await import("./physicalLiquidationOffers");
-  const built = await buildPhysicalLiquidationOfferRows({ limit: params?.limit });
-  const syncRows: DecathlonSyncRow[] = built.rows.map((row) => ({
-    providerKey: row.providerKey,
-    gtin: row.gtin,
-    offerSku: row.offerSku,
-    supplierVariantId: row.supplierVariantId,
-    price: row.listPrice,
-    stock: row.stock,
-  }));
-  const csvRows = built.rows.map((row) => ({
-    offerSku: row.offerSku,
-    productId: row.gtin,
-    productIdType: "EAN",
-    price: row.listPrice,
-    quantity: row.stock,
-    state: row.state,
-    logisticClass: "",
-    leadtimeToShip: row.leadtimeToShip,
-    minOrderQuantity: "",
-    maxOrderQuantity: "",
-    discountPrice: "",
-    discountStartDate: "",
-    discountEndDate: "",
-    description: "",
-  }));
-  const { csv } = buildOf01Csv(csvRows as any);
-  const mode: MiraklImportMode =
-    params?.mode === "TEST" || DECATHLON_MIRAKL_TEST_MODE
-      ? "TEST"
-      : params?.mode === "REPLACE"
-        ? "REPLACE"
-        : "NORMAL";
-  return runImportFlow({
-    flow: "OF01",
-    mode,
-    rows: syncRows,
-    csv,
-    withProducts: false,
-    summary: {
-      physicalLiquidation: true,
-      build: built.summary,
-      skippedSample: built.skipped.slice(0, 25),
-      testMode: DECATHLON_MIRAKL_TEST_MODE,
-    },
-  });
+  // Hard kill: Decathlon lane is STX express only — never re-publish physical/NER/BAE/….
+  void params;
+  return {
+    ok: true,
+    skipped: true,
+    reason: "decathlon_stx_express_only",
+    flow: "OF01" as const,
+    mode: "NORMAL" as MiraklImportMode,
+    importId: null,
+    rowCount: 0,
+    summary: { physicalLiquidation: true, disabled: true },
+  };
 }
 
 export async function runOf01Import(params?: {

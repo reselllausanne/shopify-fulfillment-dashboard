@@ -21,9 +21,9 @@ const makeCandidate = (overrides?: Partial<any>) => ({
 });
 
 describe("mirakl deltas", () => {
-  it("resolves manual stock and price overrides", () => {
+  it("resolves manual price; non-STX stock hard-zeroed", () => {
     const candidate = makeCandidate();
-    expect(resolveEffectiveStock(candidate)).toBe(5);
+    expect(resolveEffectiveStock(candidate)).toBe(0);
     expect(resolveEffectivePrice(candidate)).toBe("120.00");
   });
 
@@ -34,7 +34,7 @@ describe("mirakl deltas", () => {
         "NER_1234567890123",
         {
           providerKey: "NER_1234567890123",
-          lastStock: 5,
+          lastStock: 0,
           lastPrice: "120.00",
           offerCreatedAt: new Date(),
         },
@@ -62,6 +62,7 @@ describe("mirakl deltas", () => {
     const result = computeDecathlonDeltasFromCandidates([candidate], syncByKey);
     expect(result.stockUpdates.length).toBe(1);
     expect(result.stockUpdates[0].offerSku).toBe("NER_1234567890123");
+    expect(result.stockUpdates[0].stock).toBe(0);
   });
 
   it("uses partner /0.75 rule for NER rows", () => {
@@ -179,21 +180,32 @@ describe("mirakl deltas", () => {
   });
 
   it("emits new offers when offerCreatedAt is missing", () => {
-    const candidate = makeCandidate();
+    const candidate = makeCandidate({
+      providerKey: "STX_1234567890123",
+      variant: {
+        supplierVariantId: "stx_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 106.47,
+        deliveryType: "express_standard",
+      },
+    });
     const syncByKey = new Map([
       [
-        "NER_1234567890123",
+        "STX_1234567890123",
         {
-          providerKey: "NER_1234567890123",
-          lastStock: 5,
-          lastPrice: "160.00",
+          providerKey: "STX_1234567890123",
+          lastStock: 1,
+          lastPrice: "149.00",
           offerCreatedAt: null,
         },
       ],
     ]);
     const result = computeDecathlonDeltasFromCandidates([candidate], syncByKey);
     expect(result.newOffers.length).toBe(1);
-    expect(result.newOffers[0].offerSku).toBe("NER_1234567890123");
+    expect(result.newOffers[0].offerSku).toBe("STX_1234567890123");
   });
 
   it("emits stock=0 when offerCreatedAt missing and includeZeroStockWithoutOffer", () => {

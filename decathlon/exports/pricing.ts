@@ -610,29 +610,40 @@ export function computeDecathlonOfferListPriceFromBuyNow(
 }
 
 /**
+ * Own-catalog / scraper shoes (SNL, BAE, WEL, REI, …): Mirakl list keeps ~25%
+ * headroom after the normal margin+fee stack (`list / 0.75`).
+ * NER/partners already price as `buy / 0.75`; STX/THE use their own paths.
+ */
+export const DECATHLON_OWN_CATALOG_FEED_GROSS_UP = 0.75;
+
+/**
  * Supplier-aware Mirakl list TTC from DB buy (`buyNow`):
- * - **NER**: `buy / 0.75` (partner slice on list)
+ * - **NER / partners**: `buy / 0.75` (partner slice on list)
  * - **THE**: loss fraction on buy (default 15%)
- * - **STX**: margin-on-buy (default 20%) + fixed fulfilment
- * - **others**: margin-on-buy (default 15%) + fixed fulfilment
+ * - **STX**: website suggested retail — no extra /0.75
+ * - **others** (SNL, BAE, WEL, REI, …): margin-on-buy (default 15% net on buy after fees)
+ *   then `/ {@link DECATHLON_OWN_CATALOG_FEED_GROSS_UP}` feed gross-up
  */
 export function computeDecathlonOfferListPriceFromBuyNowForSupplier(
   buyNow: number,
   supplierKey: string | null,
   overrides?: DecathlonSalePriceOverrides,
-  stxContext?: DecathlonStxListPriceContext
+  stxContext?: DecathlonStxListPriceContext,
+  partnerKeysLower: Set<string> = new Set()
 ): number | null {
   const sk = supplierKey?.toLowerCase() ?? "";
-  if (sk === DECATHLON_NER_SUPPLIER_KEY) {
-    return roundToIncrement(buyNow / 0.75, DECATHLON_PRICE_ROUND_TO);
-  }
   if (sk === DECATHLON_THE_SUPPLIER_KEY) {
     return computeDecathlonOfferListPriceFromLossFraction(buyNow, overrides);
+  }
+  if (sk === DECATHLON_NER_SUPPLIER_KEY || partnerKeysLower.has(sk)) {
+    return roundToIncrement(buyNow / 0.75, DECATHLON_PRICE_ROUND_TO);
   }
   if (sk === DECATHLON_STX_SUPPLIER_KEY) {
     return computeDecathlonStxOfferListPrice(buyNow, overrides, stxContext);
   }
-  return computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
+  const base = computeDecathlonOfferListPriceFromBuyNow(buyNow, overrides);
+  if (base == null || base <= 0) return null;
+  return roundToIncrement(base / DECATHLON_OWN_CATALOG_FEED_GROSS_UP, DECATHLON_PRICE_ROUND_TO);
 }
 
 /**
@@ -687,8 +698,8 @@ function readDecathlonTheListMultiplier(): number {
 
 /**
  * NER and other partner keys: **only** `input / 0.75` (25% partner slice on list TTC).
- * For margin-based exports, `input` is already the Mirakl list from {@link computeDecathlonOfferListPriceFromBuyNow}.
- * NER partner path passes **DB buy** here — do not run margin formula on NER first.
+ * For margin-based exports, prefer {@link computeDecathlonOfferListPriceFromBuyNowForSupplier}
+ * which already applies partner `buy / 0.75` and own-catalog `margin / 0.75`.
  *
  * Non-partner own catalog (STX, THE, …): `input ×` {@link readDecathlonOwnCatalogListMultiplier} (default 1).
  * THE rows get an extra `×` {@link readDecathlonTheListMultiplier} (default 0.95) when **not** on the partner /0.75 path.
@@ -700,13 +711,16 @@ export function applyDecathlonPartnerListPriceMultipliers(
 ): number {
   if (!Number.isFinite(baseListPriceTtc) || baseListPriceTtc <= 0) return baseListPriceTtc;
   const k = supplierKey?.toLowerCase() ?? "";
+  // THE is also a Partner row — keep loss/own-catalog path, never partner /0.75.
+  if (k === "the") {
+    const out =
+      baseListPriceTtc * readDecathlonOwnCatalogListMultiplier() * readDecathlonTheListMultiplier();
+    return roundToIncrement(out, DECATHLON_PRICE_ROUND_TO);
+  }
   if (k === DECATHLON_NER_SUPPLIER_KEY || partnerKeysLower.has(k)) {
     return roundToIncrement(baseListPriceTtc / 0.75, DECATHLON_PRICE_ROUND_TO);
   }
   let out = baseListPriceTtc * readDecathlonOwnCatalogListMultiplier();
-  if (k === "the") {
-    out *= readDecathlonTheListMultiplier();
-  }
   return roundToIncrement(out, DECATHLON_PRICE_ROUND_TO);
 }
 

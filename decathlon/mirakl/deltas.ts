@@ -69,40 +69,26 @@ export function resolveEffectiveStock(
 ): number | null {
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
-  const supplierKeyPrefix = (supplierKey ?? "").toUpperCase();
   const physicalQty = Math.max(0, Math.floor(opts?.physicalQty ?? 0));
 
-  // GLD/TRM stay hard-blocked even with physical present (business rule).
-  if (supplierKeyPrefix === "GLD" || supplierKeyPrefix === "TRM") {
+  // Decathlon sellable lane = STX express only. Everything else (SNL/GLD/BAE/NER/REI/WEL/physical) → 0.
+  if (supplierKey !== "stx") {
     return 0;
   }
 
-  if (supplierKey === "stx") {
-    const stxStock = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
-    if (physicalQty > 0) {
-      // Delist detection: STX price cap or non-express forced stxStock to 0.
-      const dropshipDelisted = stxStock === 0;
-      const liquidationLocked = Boolean(variant?.manualLock);
-      return mergePhysicalWithDropship({
-        dropshipStock: stxStock,
-        physicalQty,
-        dropshipDelisted,
-        liquidationLocked,
-      }).finalStock;
-    }
-    return stxStock;
+  const stxStock = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
+  if (physicalQty > 0) {
+    // Delist detection: STX price cap or non-express forced stxStock to 0.
+    const dropshipDelisted = stxStock === 0;
+    const liquidationLocked = Boolean(variant?.manualLock);
+    return mergePhysicalWithDropship({
+      dropshipStock: stxStock,
+      physicalQty,
+      dropshipDelisted,
+      liquidationLocked,
+    }).finalStock;
   }
-
-  const manualLock = Boolean(variant?.manualLock);
-  const manualStock = parseIntSafe(variant?.manualStock);
-  const baseStock = parseIntSafe(variant?.stock);
-  const supplierStock = manualLock && manualStock !== null
-    ? Math.max(0, manualStock)
-    : baseStock === null
-      ? null
-      : Math.max(0, baseStock);
-  if (supplierStock === null && physicalQty === 0) return null;
-  return (supplierStock ?? 0) + physicalQty;
+  return stxStock;
 }
 
 function extractDecathlonSupplierKey(candidate: DecathlonExportCandidate): string | null {
@@ -146,7 +132,8 @@ export function resolveEffectivePrice(
     buyNow,
     supplierKey,
     undefined,
-    supplierKey === "stx" ? decathlonStxListPriceContextFromCandidate(candidate) : undefined
+    supplierKey === "stx" ? decathlonStxListPriceContextFromCandidate(candidate) : undefined,
+    partnerKeysLower
   );
   if (!base || base <= 0) return null;
   return applyPricingPolicy(base);
