@@ -12,6 +12,7 @@ export type GalaxusProductKind =
   | "flip_flops"
   | "shorts"
   | "apparel"
+  | "light_jacket"
   | "phone"
   | "backpack"
   | "bag"
@@ -235,7 +236,10 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   sandals: "Mode > Alles in Mode > Schuhe > Sandalen",
   flip_flops: "Mode > Alles in Mode > Schuhe > Flip-Flops",
   shorts: "Mode > Alles in Mode > Bekleidung > Shorts",
-  apparel: "Mode > Alles in Mode > Bekleidung",
+  // "Bekleidung" alone is a branch, not a Producttypes leaf — Galaxus cannot assign a
+  // product type to it (Step 3). Shirts (2430) is the safest leaf for generic tops.
+  apparel: "Mode > Alles in Mode > Bekleidung > Shirts",
+  light_jacket: "Mode > Alles in Mode > Bekleidung > Jacken > Leichte Jacken",
   backpack: "Sport > Taschen + Gepäck > Rucksack",
   bag: "Sport > Taschen + Gepäck > Tasche",
   duffel: "Sport > Taschen + Gepäck > Tasche",

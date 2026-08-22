@@ -68,6 +68,13 @@ const FOOTWEAR_RE =
 const SHORTS_RE = /\b(shorts?|sweatshort|sweat short)\b/i;
 const APPAREL_RE =
   /\b(hoodie|sweatshirt|crewneck|tee|t-shirt|shirt|jogger|jacket|pullover|sweater|track ?pant|essentials|jersey|polo)\b/i;
+const KNIT_TOP_RE = /\b(hoodie|hooded|sweatshirt|crewneck|sweater|pullover|fleece|cardigan)\b/i;
+const TSHIRT_RE = /\b(tee|t-shirt|tshirt|jersey|polo|tank ?top|singlet|top)\b/i;
+const BUTTON_SHIRT_RE = /\b(button[- ]?(down|up)|oxford shirt|flannel shirt|dress shirt)\b/i;
+const VEST_RE = /\b(vest|gilet|bodywarmer)\b/i;
+const WINTER_JACKET_RE = /\b(puffer|down jacket|parka|winter jacket|insulated jacket)\b/i;
+const RAIN_JACKET_RE = /\b(rain ?jacket|raincoat|waterproof jacket|shell jacket)\b/i;
+const LIGHT_JACKET_RE = /\b(jacket|windbreaker|coach jacket|bomber|track ?top|anorak|coat)\b/i;
 const BACKPACK_RE = /\b(backpack|rucksack|bookbag|daypack)\b/i;
 const BAG_RE = /\b(bag|tote|duffel|duffle|gym ?bag|crossbody|sling ?bag|messenger ?bag|handbag|bum ?bag|fanny ?pack|waist ?bag)\b/i;
 const PHONE_RE =
@@ -226,6 +233,7 @@ const FOOTWEAR_KINDS = new Set<GalaxusProductKind>([
 
 const CLOTHING_SIZE_KINDS = new Set<GalaxusProductKind>([
   "apparel",
+  "light_jacket",
   "shorts",
   "trousers",
   "underwear",
@@ -359,6 +367,13 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (SANDALS_RE.test(text)) return "sandals";
   if (BOOTS_RE.test(text)) return "boots";
   if (FOOTWEAR_RE.test(text)) return "sneakers";
+  if (BUTTON_SHIRT_RE.test(text)) return "hemd";
+  if (VEST_RE.test(text)) return "vest";
+  if (WINTER_JACKET_RE.test(text)) return "winter_jacket";
+  if (RAIN_JACKET_RE.test(text)) return "rain_jacket";
+  if (KNIT_TOP_RE.test(text)) return "pullover";
+  if (LIGHT_JACKET_RE.test(text)) return "light_jacket";
+  if (TSHIRT_RE.test(text)) return "tshirt";
   if (APPAREL_RE.test(text)) return "apparel";
 
   return classifyFromSizeRaw(input.sizeRaw) ?? defaultGalaxusProductKind(supplierKey);

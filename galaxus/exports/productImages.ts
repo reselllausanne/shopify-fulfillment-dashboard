@@ -78,6 +78,50 @@ function collectVariantImageUrls(variant: {
   return ordered;
 }
 
+/** Galaxus rejects low-resolution images; StockX/imgix defaults ship 140×100 thumbnails. */
+const GALAXUS_MIN_IMAGE_EDGE = 1200;
+
+const IMGIX_HOSTS = ["images.stockx.com", "image.goat.com", "images.goat.com"];
+
+/**
+ * Raise imgix-style `w`/`h` params to at least `GALAXUS_MIN_IMAGE_EDGE`.
+ * Only touches known imgix CDNs — arbitrary supplier URLs may not accept resize params.
+ */
+export function upgradeGalaxusImageResolution(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return trimmed;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+  if (!IMGIX_HOSTS.includes(parsed.hostname.toLowerCase())) return trimmed;
+
+  const hasSizeParam = parsed.searchParams.has("w") || parsed.searchParams.has("h");
+  if (!hasSizeParam) return trimmed;
+
+  const width = Number.parseInt(parsed.searchParams.get("w") ?? "", 10);
+  const height = Number.parseInt(parsed.searchParams.get("h") ?? "", 10);
+  const largestEdge = Math.max(
+    Number.isFinite(width) ? width : 0,
+    Number.isFinite(height) ? height : 0
+  );
+  if (largestEdge >= GALAXUS_MIN_IMAGE_EDGE) return trimmed;
+
+  // Scale both edges by the same factor so imgix keeps the original aspect ratio.
+  const factor = GALAXUS_MIN_IMAGE_EDGE / largestEdge;
+  if (Number.isFinite(width) && width > 0) {
+    parsed.searchParams.set("w", String(Math.round(width * factor)));
+  }
+  if (Number.isFinite(height) && height > 0) {
+    parsed.searchParams.set("h", String(Math.round(height * factor)));
+  }
+  // dpr multiplies on top of w/h and can push past imgix limits once w is large.
+  parsed.searchParams.delete("dpr");
+  return parsed.toString();
+}
+
 /** Higher = better for Galaxus (raster JPEG/PNG paths, avoid AVIF/WebP file extension and query format). */
 export function scoreGalaxusImageUrl(url: string): number {
   let s = 0;
@@ -136,7 +180,9 @@ export function pickGalaxusProductImageList(variant: {
     return { url, idx, score };
   });
   indexed.sort((a, b) => b.score - a.score || a.idx - b.idx);
-  const normalized = indexed.map((x) => normalizeDecathlonImageUrl(x.url));
+  const normalized = indexed.map((x) =>
+    upgradeGalaxusImageResolution(normalizeDecathlonImageUrl(x.url))
+  );
   const out: string[] = [];
   const seenN = new Set<string>();
   for (const n of normalized) {
