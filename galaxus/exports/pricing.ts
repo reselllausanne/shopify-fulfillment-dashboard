@@ -29,9 +29,11 @@ const DEFAULT_TARGET_MARGIN_KEYS = [
 const STX_TARGET_MARGIN_KEYS = ["GALAXUS_STX_TARGET_NET_MARGIN", "GALAXUS_STX_TARGET_MARGIN"];
 const STX_MARGIN_ADJUSTMENT_KEYS = ["GALAXUS_STX_MARGIN_ADJUSTMENT", "GALAXUS_STX_TARGET_MARGIN_ADJUSTMENT"];
 const DEFAULT_SHIPPING_KEYS = ["GALAXUS_PRICE_SHIPPING_CHF", "GALAXUS_SHIPPING_CHF"];
+const WEL_SHIPPING_KEYS = ["GALAXUS_WEL_SHIPPING_CHF", "GALAXUS_WEL_PRICE_SHIPPING_CHF"];
 const DEFAULT_BUFFER_KEYS = ["GALAXUS_PRICE_BUFFER_CHF", "GALAXUS_BUFFER_CHF"];
 const DEFAULT_ROUND_TO_KEYS = ["GALAXUS_PRICE_ROUND_TO", "GALAXUS_ROUND_TO"];
 const DEFAULT_VAT_RATE_KEYS = ["GALAXUS_PRICE_VAT_RATE", "GALAXUS_VAT_RATE"];
+const WEL_DEFAULT_SHIPPING = 7;
 
 function roundUpToIncrement(value: number, increment: number): number {
   if (increment <= 0) return value;
@@ -222,6 +224,19 @@ export function resolveGalaxusTargetNetMarginForSupplier(
   return adjusted;
 }
 
+function resolveShippingPerPairForSupplier(
+  supplierKey: string | null,
+  defaultShippingPerPair: number
+): number {
+  const key = String(supplierKey ?? "")
+    .trim()
+    .toLowerCase();
+  if (key !== "wel") return defaultShippingPerPair;
+  const shipping = readNumberEnv(WEL_SHIPPING_KEYS, WEL_DEFAULT_SHIPPING);
+  if (!Number.isFinite(shipping) || shipping < 0) return defaultShippingPerPair;
+  return shipping;
+}
+
 /**
  * Galaxus retail feed:
  * - `ner` / `the` = sell ex VAT equals partner buy (0% margin)
@@ -254,10 +269,11 @@ export function resolveGalaxusSellExVatForChannel(
   }
 
   const targetNetMargin = resolveGalaxusTargetNetMarginForSupplier(supplierKey, defaults.targetMargin);
+  const shippingPerPair = resolveShippingPerPairForSupplier(supplierKey, defaults.shippingPerPair);
 
   return computeGalaxusSellPriceExVat({
     buyPriceExVatCHF,
-    shippingPerPairCHF: defaults.shippingPerPair,
+    shippingPerPairCHF: shippingPerPair,
     targetNetMargin,
     bufferPerPairCHF: defaults.bufferPerPair,
     roundTo: defaults.roundTo,
