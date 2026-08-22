@@ -188,12 +188,20 @@ export const normalizeGoatOrder = (raw: GoatRawOrder): NormalizedGoatOrder | nul
   const productTitle = pickFirst(
     pickNested(raw, "product.productTemplate.name"),
     pickNested(raw, "product.productTemplate.nickname"),
-    pickNested(raw, "product.slug")
+    pickNested(raw, "product.slug"),
+    pickNested(raw, "product.name"),
+    pickNested(raw, "productTemplate.name"),
+    pickNested(raw, "catalogProduct.name"),
+    raw.name,
+    raw.title
   );
 
   const skuKeyRaw = pickFirst(
     pickNested(raw, "product.productTemplate.sku"),
     pickNested(raw, "product.productTemplate.slug"),
+    pickNested(raw, "product.sku"),
+    pickNested(raw, "productTemplate.sku"),
+    raw.sku,
     rawOrderId
   );
   const skuKey = skuKeyRaw ? skuKeyRaw.replace(/\s+/g, "-").trim() : null;
@@ -225,11 +233,29 @@ export const normalizeGoatOrder = (raw: GoatRawOrder): NormalizedGoatOrder | nul
     sizeType = "EU";
   }
 
-  const statusKey = pickFirst(raw.status, raw.saleStatus, raw.state, raw.buyerTitle);
-  const statusTitle = statusKey;
+  const statusKey = pickFirst(
+    raw.status,
+    raw.saleStatus,
+    raw.state,
+    raw.buyerTitle,
+    pickNested(raw, "status.key"),
+    pickNested(raw, "currentStatus.key")
+  );
+  const statusTitle = pickFirst(raw.statusTitle, raw.buyerTitle, statusKey);
 
-  const trackingUrl = pickFirst(raw.trackingToBuyerCodeUrl, raw.tracking_to_buyer_code_url);
-  const awb = pickFirst(raw.trackingToBuyerCode, raw.tracking_to_buyer_code);
+  const trackingUrl = pickFirst(
+    raw.trackingToBuyerCodeUrl,
+    raw.tracking_to_buyer_code_url,
+    raw.trackingUrl,
+    raw.tracking_url
+  );
+  const awb = pickFirst(
+    raw.trackingToBuyerCode,
+    raw.tracking_to_buyer_code,
+    raw.trackingNumber,
+    raw.tracking_number,
+    raw.awb
+  );
 
   const thumbUrl = pickFirst(
     pickNested(raw, "product.mainPictureUrl"),
@@ -267,13 +293,67 @@ export const normalizeGoatOrder = (raw: GoatRawOrder): NormalizedGoatOrder | nul
   };
 };
 
-export const extractOrdersArray = (json: unknown): GoatRawOrder[] => {
-  if (Array.isArray(json)) return json as GoatRawOrder[];
-  if (!json || typeof json !== "object") return [];
-  const data = json as Record<string, unknown>;
-  const candidates = [data.orders, data.data, data.items, data.results];
-  for (const candidate of candidates) {
-    if (Array.isArray(candidate)) return candidate as GoatRawOrder[];
+const looksLikeGoatOrder = (item: unknown): item is GoatRawOrder => {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const raw = item as Record<string, unknown>;
+  if (raw.node && typeof raw.node === "object") return looksLikeGoatOrder(raw.node);
+  return Boolean(
+    raw.id ||
+      raw.orderId ||
+      raw.order_id ||
+      raw.orderNumber ||
+      raw.order_number ||
+      raw.purchasedAt ||
+      raw.purchased_at ||
+      raw.product ||
+      raw.saleStatus ||
+      raw.buyerTitle
+  );
+};
+
+const unwrapOrderNode = (item: unknown): GoatRawOrder | null => {
+  if (!item || typeof item !== "object") return null;
+  const raw = item as Record<string, unknown>;
+  const node = raw.node && typeof raw.node === "object" ? raw.node : item;
+  return looksLikeGoatOrder(node) ? (node as GoatRawOrder) : null;
+};
+
+const ORDER_ARRAY_KEYS = [
+  "orders",
+  "data",
+  "items",
+  "results",
+  "purchases",
+  "buyOrders",
+  "buy_orders",
+  "nodes",
+];
+
+const findOrderArray = (value: unknown, depth: number): GoatRawOrder[] => {
+  if (depth > 6 || value == null) return [];
+  if (Array.isArray(value)) {
+    const orders = value.map(unwrapOrderNode).filter((item): item is GoatRawOrder => Boolean(item));
+    return orders.length ? orders : [];
+  }
+  if (typeof value !== "object") return [];
+  const obj = value as Record<string, unknown>;
+  for (const key of ORDER_ARRAY_KEYS) {
+    if (!(key in obj)) continue;
+    const found = findOrderArray(obj[key], depth + 1);
+    if (found.length) return found;
+  }
+  for (const nested of Object.values(obj)) {
+    if (!nested || (typeof nested !== "object" && !Array.isArray(nested))) continue;
+    const found = findOrderArray(nested, depth + 1);
+    if (found.length) return found;
   }
   return [];
+};
+
+export const extractOrdersArray = (json: unknown): GoatRawOrder[] => {
+  if (Array.isArray(json)) {
+    const direct = json.map(unwrapOrderNode).filter((item): item is GoatRawOrder => Boolean(item));
+    return direct.length ? direct : (json as GoatRawOrder[]);
+  }
+  return findOrderArray(json, 0);
 };

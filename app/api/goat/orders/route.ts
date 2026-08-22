@@ -1,8 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { extractOrdersArray, normalizeGoatOrder, type NormalizedGoatOrder } from "@/app/lib/goat/normalize";
+import { POST as goatPlaywright } from "@/app/api/goat/playwright/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
+
+async function hasGoatSession(): Promise<boolean> {
+  const sessionFile = path.join(process.cwd(), ".data", "goat-session.json");
+  const profileDir = path.join(process.cwd(), ".data", "goat-profile");
+  try {
+    await fs.access(sessionFile);
+    return true;
+  } catch {
+    // continue
+  }
+  try {
+    const entries = await fs.readdir(profileDir);
+    return entries.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchGoatOrdersViaPlaywright(): Promise<NextResponse | null> {
+  if (!(await hasGoatSession())) return null;
+  try {
+    const request = new NextRequest("http://internal/api/goat/playwright", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        headless: true,
+        persistent: true,
+        browser: "chromium",
+        maxWaitMs: 90000,
+        includeRaw: false,
+        forceLogin: false,
+      }),
+    });
+    const response = await goatPlaywright(request);
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok || json?.ok === false) return null;
+    const orders = Array.isArray(json?.orders) ? json.orders : [];
+    return NextResponse.json({
+      ok: true,
+      page: 1,
+      count: orders.length,
+      orders,
+      viaPlaywright: true,
+    });
+  } catch (error: any) {
+    console.warn("[GOAT] Playwright fallback failed:", error?.message || error);
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,7 +79,9 @@ export async function POST(req: NextRequest) {
     const page = Math.max(1, Number(body?.page || 1));
 
     if (!cookie) {
-      return NextResponse.json({ error: "Missing GOAT credential token" }, { status: 400 });
+      const fallback = await fetchGoatOrdersViaPlaywright();
+      if (fallback) return fallback;
+      return NextResponse.json({ ok: true, page: 1, count: 0, orders: [], viaPlaywright: true });
     }
 
     const headers: Record<string, string> = {
@@ -80,6 +135,10 @@ export async function POST(req: NextRequest) {
       json = rawText ? JSON.parse(rawText) : null;
     } catch {
       const blocked = /access denied|cf-error|cloudflare/i.test(rawText);
+      if (blocked || page === 1) {
+        const fallback = await fetchGoatOrdersViaPlaywright();
+        if (fallback) return fallback;
+      }
       return NextResponse.json(
         {
           error: blocked ? "GOAT blocked request (WAF / Access denied)" : "Invalid JSON response from GOAT",
@@ -92,6 +151,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (!response.ok) {
+      if (page === 1) {
+        const fallback = await fetchGoatOrdersViaPlaywright();
+        if (fallback) return fallback;
+      }
       return NextResponse.json(
         {
           error: `GOAT request failed with status ${response.status}`,

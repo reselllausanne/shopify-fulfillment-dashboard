@@ -613,8 +613,6 @@ export function useSupplierOrders() {
 
   const fetchAllGoatOrders = async (goatCookie: string, goatCsrfToken: string) => {
     const token = goatCookie.trim();
-    if (!token) return [];
-
     const allOrders: any[] = [];
     let page = 1;
     while (true) {
@@ -634,6 +632,7 @@ export function useSupplierOrders() {
       const orders = Array.isArray(json?.orders) ? json.orders : [];
       if (orders.length === 0) break;
       allOrders.push(...orders);
+      if (json?.viaPlaywright) break;
       page += 1;
     }
 
@@ -934,8 +933,7 @@ export function useSupplierOrders() {
         }
       }
 
-      const goatOrders =
-        goatCookie && goatCookie.trim() ? await fetchAllGoatOrders(goatCookie, goatCsrfToken) : [];
+      const goatOrders = await fetchAllGoatOrders(goatCookie, goatCsrfToken);
       const goatRowsForMerge = goatOrders.length > 0 ? goatOrders : existingGoatRows;
 
       if (allLoadedStockXOrders.length === 0 && goatRowsForMerge.length === 0) {
