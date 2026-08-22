@@ -14,9 +14,23 @@ import {
 } from "@/shopify/inventory/orderLinePhysicalStock";
 import { isLegoStxProduct } from "@/galaxus/stx/legoProduct";
 import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
+import { supplierKeyFromVariantId } from "@/galaxus/supplier/supplierKeyGuards";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function resolveOrderLineSupplierKey(line: {
+  supplierVariantId?: string | null;
+  supplierPid?: string | null;
+  providerKey?: string | null;
+}): string | null {
+  const fromVariant = supplierKeyFromVariantId(line.supplierVariantId);
+  if (fromVariant) return fromVariant;
+  const fromPid = supplierKeyFromVariantId(line.supplierPid);
+  if (fromPid) return fromPid;
+  const fromProvider = supplierKeyFromVariantId(line.providerKey);
+  return fromProvider || null;
+}
 
 async function repairOrderAddressesFromLatestOrdp(order: any) {
   const edi = await (prisma as any).galaxusEdiFile.findFirst({
@@ -523,6 +537,7 @@ export async function GET(
         id: line.id,
         lineNumber: line.lineNumber,
         supplierPid: line.supplierPid ?? null,
+        supplierKey: resolveOrderLineSupplierKey(line),
         gtin: line.gtin ?? null,
         quantity: line.quantity,
         priceLineAmount: line.priceLineAmount ?? line.lineNetAmount ?? null,
