@@ -53,6 +53,19 @@ export async function GET(request: Request) {
                 OR: [
                   { galaxusOrderId: { contains: q, mode: "insensitive" } },
                   { orderNumber: { contains: q, mode: "insensitive" } },
+                  {
+                    lines: {
+                      some: {
+                        OR: [
+                          { gtin: { contains: q, mode: "insensitive" } },
+                          { supplierSku: { contains: q, mode: "insensitive" } },
+                          { productName: { contains: q, mode: "insensitive" } },
+                          { description: { contains: q, mode: "insensitive" } },
+                          { supplierPid: { contains: q, mode: "insensitive" } },
+                        ],
+                      },
+                    },
+                  },
                 ],
               },
             ],

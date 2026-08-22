@@ -875,7 +875,7 @@ export default function GalaxusWarehouseShipmentsPage() {
           <div className="font-semibold mb-2">Orders (open)</div>
           <input
             className="w-full border rounded px-2 py-1 text-xs mb-2"
-            placeholder="Search order number..."
+            placeholder="Search order, SKU, GTIN, product..."
             value={orderSearch}
             onChange={(e) => setOrderSearch(e.target.value)}
           />
@@ -1184,6 +1184,11 @@ export default function GalaxusWarehouseShipmentsPage() {
                     {String(line.description ?? "").trim() &&
                     String(line.description ?? "").trim() !== displayProductTitle(line) ? (
                       <div className="text-gray-500 mt-0.5 leading-snug line-clamp-2">{String(line.description)}</div>
+                    ) : null}
+                    {String(line.gtin ?? "").trim() ? (
+                      <div className="text-[11px] text-gray-500 mt-0.5">
+                        GTIN: <span className="font-mono text-[10px]">{String(line.gtin).trim()}</span>
+                      </div>
                     ) : null}
                     {fullyInvoiced ? (
                       <div className="text-[11px] text-rose-700 mt-1">

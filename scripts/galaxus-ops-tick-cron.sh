@@ -4,6 +4,7 @@
 # Runs due background jobs from GalaxusJobDefinition, including:
 #   - gld-refresh (every 10h) — Golden price/stock
 #   - stx-refresh, partner-stock-sync, edi-in, etc. when due
+#   - edi-in now also retries unsent/failed ORDR confirmations backlog each run
 #
 # Usage:
 #   bash scripts/galaxus-ops-tick-cron.sh

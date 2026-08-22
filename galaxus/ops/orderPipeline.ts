@@ -7,6 +7,7 @@ type OrderPipelineResult = {
   filesProcessed: number;
   ordersIngested: number;
   ordrSent: number;
+  ordrRetried: number;
   ordrFailed: number;
   stxProductsRefreshed: number;
   errors: string[];
@@ -40,6 +41,21 @@ async function sendOrdrForOrder(orderId: string) {
     });
     return { ok: false, error: error?.message ?? "ORDR failed" };
   }
+}
+
+async function listPendingOrdrOrderIds(limit = 30): Promise<string[]> {
+  const rows = await (prisma as any).galaxusOrder.findMany({
+    where: {
+      archivedAt: null,
+      cancelledAt: null,
+      ordrSentAt: null,
+      OR: [{ ordrStatus: null }, { ordrStatus: "PENDING" }, { ordrStatus: "FAILED" }],
+    },
+    orderBy: [{ orderDate: "asc" }, { createdAt: "asc" }],
+    take: Math.max(1, Math.min(limit, 200)),
+    select: { id: true },
+  });
+  return rows.map((row: { id: string }) => row.id);
 }
 
 async function resolveStxKickdbProductIds(orderIds: string[]): Promise<string[]> {
@@ -110,6 +126,7 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
     )
   );
   let ordrSent = 0;
+  let ordrRetried = 0;
   let ordrFailed = 0;
   for (const orderId of orderIds) {
     await reconcileGalaxusOrderProcurement(orderId).catch((err) => {
@@ -121,6 +138,16 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
     } else if (!res?.ok) {
       ordrFailed += 1;
       if (res?.error) errors.push(res.error);
+    }
+  }
+  const retryOrderIds = (await listPendingOrdrOrderIds(40)).filter((id) => !orderIds.includes(id));
+  for (const orderId of retryOrderIds) {
+    const res = await sendOrdrForOrder(orderId);
+    if (res?.ok && !res?.skipped) {
+      ordrRetried += 1;
+    } else if (!res?.ok) {
+      ordrFailed += 1;
+      if (res?.error) errors.push(`retry ${orderId}: ${res.error}`);
     }
   }
 
@@ -139,6 +166,7 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
     filesProcessed: pollResults.length,
     ordersIngested: orderIds.length,
     ordrSent,
+    ordrRetried,
     ordrFailed,
     stxProductsRefreshed,
     errors,
