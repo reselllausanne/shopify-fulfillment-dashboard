@@ -230,6 +230,13 @@ Daily job key: `decathlon-return-sync` (24h), via Decathlon ops tick:
 curl -fsS "https://YOUR_HOST/api/decathlon/ops/tick?force=1&only=decathlon-return-sync"
 ```
 
+Snowleader scrape scheduler (recommended every 3h), via same ops tick:
+
+```bash
+# cron / external scheduler
+curl -fsS "https://YOUR_HOST/api/decathlon/ops/tick?only=scraper-snl-sync"
+```
+
 ### Manual sync
 
 ```bash

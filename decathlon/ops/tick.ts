@@ -9,6 +9,13 @@ import {
   runDecathlonStockSync,
 } from "@/decathlon/mirakl/sync";
 import { syncMarketplaceReturns } from "@/decathlon/returns/receipt/sync";
+import { findScraperShop } from "@/app/lib/scraperShops";
+import {
+  hasRunningRun as hasRunningSnowleaderRun,
+  recoverStaleRuns as recoverStaleSnowleaderRuns,
+  scrapeSnowleaderShop,
+  startRun as startSnowleaderRun,
+} from "@/app/lib/snowleaderScrape";
 
 type TickJobResult = {
   due: boolean;
@@ -39,6 +46,23 @@ async function executeJob(jobKey: DecathlonOpsJobKey) {
   }
   if (jobKey === "decathlon-return-sync") {
     return runDecathlonOpsJob(jobKey, async () => syncMarketplaceReturns());
+  }
+  if (jobKey === "scraper-snl-sync") {
+    return runDecathlonOpsJob(jobKey, async () => {
+      await recoverStaleSnowleaderRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 90));
+      const shop = findScraperShop("snl");
+      if (!shop) {
+        return { ok: false, started: false, reason: "shop_not_configured" };
+      }
+      if (await hasRunningSnowleaderRun(shop.key)) {
+        return { ok: true, started: false, reason: "already_running" };
+      }
+      const runId = await startSnowleaderRun(shop);
+      void scrapeSnowleaderShop(shop, runId).catch((error) => {
+        console.error(`[SCRAPER] scheduled SNL run#${runId} failed:`, error?.message || error);
+      });
+      return { ok: true, started: true, runId, shop: shop.key };
+    });
   }
   throw new Error(`Unknown jobKey ${jobKey}`);
 }

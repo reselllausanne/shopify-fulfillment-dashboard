@@ -124,6 +124,17 @@ function reicheltCurlFallbackEnabled(): boolean {
   return process.env.SCRAPER_REI_CURL_FALLBACK !== "0";
 }
 
+function reicheltForceCurlEnabled(): boolean {
+  return String(process.env.SCRAPER_REI_FORCE_CURL ?? "0") === "1";
+}
+
+function reicheltProxyUrl(): string | null {
+  const scoped = String(process.env.SCRAPER_REI_PROXY_URL ?? "").trim();
+  if (scoped) return scoped;
+  const global = String(process.env.SCRAPER_PROXY_URL ?? "").trim();
+  return global || null;
+}
+
 export function reicheltConfig() {
   return {
     userAgent: DEFAULT_UA,
@@ -431,6 +442,7 @@ async function fetchTextViaCurl(url: string, headers: Headers): Promise<string> 
     throw new Error(`Reichelt curl unavailable ${url}`);
   }
   const cfg = reicheltConfig();
+  const proxy = reicheltProxyUrl();
   const args = [
     "-sS",
     "-L",
@@ -440,6 +452,7 @@ async function fetchTextViaCurl(url: string, headers: Headers): Promise<string> 
     "-w",
     "\n__REI_CURL_HTTP__:%{http_code}",
   ];
+  if (proxy) args.push("--proxy", proxy);
   headers.forEach((value, key) => {
     args.push("-H", `${key}: ${value}`);
   });
@@ -492,6 +505,14 @@ export class ReicheltClient {
     maxRetries: number,
     retryBaseMs: number
   ): Promise<string> {
+    if (reicheltForceCurlEnabled()) {
+      const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
+      const text = await fetchTextViaCurl(url, headers);
+      const delayMs = reicheltConfig().requestDelayMs;
+      if (delayMs) await sleep(delayMs + jitterMs(250));
+      return text;
+    }
+
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
