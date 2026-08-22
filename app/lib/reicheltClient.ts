@@ -101,7 +101,7 @@ function cookieHeader(jar: CookieJar): string {
 export function reicheltAcceptLanguage(url: string): string {
   const override = process.env.SCRAPER_REI_ACCEPT_LANGUAGE?.trim();
   if (override) return override;
-  // MyraCloud WAF returns 503 to Node fetch when fr-CH is the primary Accept-Language.
+  // MyraCloud WAF returns 503 when fr-CH is primary; de-DE also trips residential proxies.
   try {
     const host = new URL(url).hostname.toLowerCase();
     if (host.endsWith("reichelt.de")) return "de-DE,de;q=0.9,en;q=0.8";
@@ -118,6 +118,13 @@ export function reicheltReferer(url: string, baseUrl: string): string {
   } catch {
     return `${baseUrl.replace(/\/$/, "")}/`;
   }
+}
+
+/** LemonProxy/residential: Accept-Language + Referer → MyraCloud "Security Check" 503. */
+export function reicheltShouldSendBrowserHints(): boolean {
+  if (String(process.env.SCRAPER_REI_BROWSER_HINTS ?? "").trim() === "1") return true;
+  if (String(process.env.SCRAPER_REI_BROWSER_HINTS ?? "").trim() === "0") return false;
+  return !(reicheltForceCurlEnabled() || reicheltProxyPool().length > 0);
 }
 
 function reicheltCurlFallbackEnabled(): boolean {
@@ -476,9 +483,11 @@ function buildReicheltFetchHeaders(
   const cfg = reicheltConfig();
   const headers = new Headers(init.headers);
   headers.set("User-Agent", cfg.userAgent);
-  headers.set("Accept-Language", reicheltAcceptLanguage(url));
   headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-  headers.set("Referer", reicheltReferer(url, baseUrl));
+  if (reicheltShouldSendBrowserHints()) {
+    headers.set("Accept-Language", reicheltAcceptLanguage(url));
+    headers.set("Referer", reicheltReferer(url, baseUrl));
+  }
   const cookie = cookieHeader(jar);
   if (cookie) headers.set("Cookie", cookie);
   if (xsrf) headers.set("X-CSRF-TOKEN", xsrf);
@@ -528,6 +537,9 @@ async function fetchTextViaCurl(url: string, headers: Headers): Promise<string> 
   const status = idx >= 0 ? Number(stdout.slice(idx + marker.length).trim()) : 0;
   if (status && status >= 400) {
     throw new Error(`Reichelt curl HTTP ${status} ${url}`);
+  }
+  if (/<title>\s*Security Check\s*<\/title>/i.test(body) || /myracloud-blocked/i.test(body)) {
+    throw new Error(`Reichelt curl HTTP 503 ${url} (myracloud security check)`);
   }
   return body;
 }

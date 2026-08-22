@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   computeReicheltLandedCost,
   computeReicheltShippingEur,
@@ -17,6 +17,7 @@ import {
   toReicheltDeProductUrl,
   isSoftSkipReicheltShardError,
   normalizeReicheltProxyUrl,
+  reicheltShouldSendBrowserHints,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -183,5 +184,29 @@ describe("normalizeReicheltProxyUrl", () => {
 
   it("keeps already-normalized http proxy URLs", () => {
     expect(normalizeReicheltProxyUrl("http://user:pass@host:5555")).toBe("http://user:pass@host:5555");
+  });
+});
+
+describe("reicheltShouldSendBrowserHints", () => {
+  const prevForce = process.env.SCRAPER_REI_FORCE_CURL;
+  const prevHints = process.env.SCRAPER_REI_BROWSER_HINTS;
+
+  afterEach(() => {
+    if (prevForce === undefined) delete process.env.SCRAPER_REI_FORCE_CURL;
+    else process.env.SCRAPER_REI_FORCE_CURL = prevForce;
+    if (prevHints === undefined) delete process.env.SCRAPER_REI_BROWSER_HINTS;
+    else process.env.SCRAPER_REI_BROWSER_HINTS = prevHints;
+  });
+
+  it("defaults off when FORCE_CURL=1", () => {
+    process.env.SCRAPER_REI_FORCE_CURL = "1";
+    delete process.env.SCRAPER_REI_BROWSER_HINTS;
+    expect(reicheltShouldSendBrowserHints()).toBe(false);
+  });
+
+  it("can force on via SCRAPER_REI_BROWSER_HINTS=1", () => {
+    process.env.SCRAPER_REI_FORCE_CURL = "1";
+    process.env.SCRAPER_REI_BROWSER_HINTS = "1";
+    expect(reicheltShouldSendBrowserHints()).toBe(true);
   });
 });
