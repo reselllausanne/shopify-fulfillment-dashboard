@@ -460,6 +460,16 @@ export default function WarehouseBulkPage() {
                       const linked = allUnitsLinked || Boolean(proc?.ok);
                       const shippedAt = line.warehouseMarkedShippedAt;
                       const isShipped = Boolean(shippedAt);
+                      const physicalOnHand =
+                        Boolean(line.physicalStock) && Number(line.physicalStock?.qty ?? 0) > 0;
+                      const physicalSaleToShip =
+                        !physicalOnHand &&
+                        !isShipped &&
+                        (proc?.source === "local_stock" ||
+                          proc?.source === "maison_stock" ||
+                          proc?.source === "ner_stock" ||
+                          proc?.warehouseStockHint === "MAISON" ||
+                          proc?.warehouseStockHint === "NER_STOCK");
                       const shipBusy = busy === `ship-${line.id}`;
                       const revenueChf = galaxusLineNetRevenueChf(line);
                       const totalUnitCost = unitsList
@@ -495,11 +505,13 @@ export default function WarehouseBulkPage() {
                         <div
                           key={line.id}
                           className={`border rounded p-2 ${
-                            linked
+                            physicalOnHand
                               ? "border-green-400 bg-green-50/50"
-                              : line.physicalStock
-                                ? "border-green-400 bg-green-50/30"
-                                : "border-gray-200"
+                              : physicalSaleToShip
+                                ? "border-amber-400 bg-amber-50/40"
+                                : linked
+                                  ? "border-blue-200 bg-blue-50/30"
+                                  : "border-gray-200"
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -547,6 +559,14 @@ export default function WarehouseBulkPage() {
                                   physicalStock={line.physicalStock}
                                   avoidStockxHint={!linked}
                                 />
+                                {physicalSaleToShip ? (
+                                  <span
+                                    className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-200 text-amber-950 shrink-0"
+                                    title="Galaxus sale already decremented Shopify — pick and ship (mirror may show 0 now)"
+                                  >
+                                    Sold · ship from warehouse
+                                  </span>
+                                ) : null}
                                 {isShipped ? (
                                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-slate-200 text-slate-800 shrink-0">
                                     Shipped
