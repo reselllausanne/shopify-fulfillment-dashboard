@@ -458,14 +458,19 @@ export async function convergeVariant(
 
   // Chemin (ONLINE_LOCATION) is the StockX dropship pool — never triggers liquidation.
   // Liquidation-lane stock (Bussigny/Lab/COLD) with a lock or sale price keeps soldes.
+  // JMoney Kickz manualLock is fixed supplier retail — NOT a Bussigny soldes signal.
+  const jmoneyLocked = isJmoneyPriceLockNote(String(stxRow?.manualNote ?? ""));
+  if (jmoneyLocked) {
+    warnings.push("JMoney Kickz price lock active — skipping liquidation reprice");
+  }
   const desired = resolveDesiredListingMode({
     isEssentials,
     liquidationLaneQty: bussignyQty,
-    manualLock: Boolean(stxRow?.manualLock),
-    postPhysicalRestock: Boolean(options.postPhysicalRestock),
+    manualLock: Boolean(stxRow?.manualLock) && !jmoneyLocked,
+    postPhysicalRestock: Boolean(options.postPhysicalRestock) && !jmoneyLocked,
     forceDropship: Boolean(options.forceDropship),
     afterWebSale: Boolean(options.afterWebSale),
-    looksLikeLiquidationPrice,
+    looksLikeLiquidationPrice: looksLikeLiquidationPrice && !jmoneyLocked,
   });
 
   if (desired === "liquidation") {
@@ -476,7 +481,8 @@ export async function convergeVariant(
     if (hasLiquidationPricing) {
       // DB side: manualLock=true + manualPrice=liq. manualStock stays null so
       // Resolver keeps adding physical on top of STX asks (no double-count).
-      if (stxRow) {
+      // Never overwrite JMoney Kickz fixed retail (belt if desired-mode guard fails).
+      if (stxRow && !jmoneyLocked) {
         const needDbUpdate =
           !stxRow.manualLock ||
           toNumber(stxRow.manualPrice) !== liqPrice ||
