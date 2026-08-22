@@ -50,23 +50,16 @@ async function sendOrdrForOrder(orderId: string) {
       isBlacklistedSnlSyntheticPid(line?.supplierPid) || isBlacklistedSnlSyntheticPid(line?.providerKey)
   );
   if (hasBlacklistedSnl) {
+    // Do not auto-accept; leave for manual review — never auto-cancel.
     await (prisma as any).galaxusOrder.update({
       where: { id: orderId },
       data: {
-        cancelledAt: now,
-        archivedAt: now,
-        cancelReason: "blacklist:snl_synthetic_gtin_collision_mtg",
-        ordrStatus: "FAILED",
-        ordrLastError: "auto-ORDR blocked: SNL synthetic GTIN collision",
+        ordrStatus: "PENDING",
+        ordrLastError: "auto-ORDR skipped: SNL synthetic GTIN — manual review",
         ordrLastAttemptAt: now,
       },
     });
-    try {
-      await sendOutgoingEdi({ orderId, types: ["CANR"], force: true });
-    } catch {
-      // best-effort cancel to Galaxus
-    }
-    return { ok: true, skipped: "blacklisted_snl_synthetic" };
+    return { ok: true, skipped: "snl_synthetic_manual_review" };
   }
   await (prisma as any).galaxusOrder.update({
     where: { id: orderId },
