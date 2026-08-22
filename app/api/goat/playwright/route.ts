@@ -239,15 +239,16 @@ export async function POST(req: NextRequest) {
 
     const launchArgs = ["--no-sandbox", "--disable-setuid-sandbox"];
     const antiBotArgs = ["--disable-blink-features=AutomationControlled"];
+    const launchEnv: Record<string, string | undefined> = {
+      ...process.env,
+      DISPLAY: process.env.DISPLAY || ":99",
+      MOZ_DISABLE_CONTENT_SANDBOX: "1",
+    };
     const launchOptions: Record<string, unknown> = {
       headless,
       slowMo: headless ? 0 : 80,
       args: [...launchArgs, ...antiBotArgs],
-      env: {
-        ...process.env,
-        DISPLAY: process.env.DISPLAY || ":99",
-        MOZ_DISABLE_CONTENT_SANDBOX: "1",
-      },
+      env: launchEnv,
     };
     if (useSystemChrome) {
       launchOptions.channel = "chrome";
@@ -294,7 +295,7 @@ export async function POST(req: NextRequest) {
                 headless,
                 slowMo: headless ? 0 : 50,
                 args: launchArgs,
-                env: launchOptions.env,
+                env: launchEnv,
               });
         context = await createEphemeralContext({
           browser,
@@ -311,7 +312,7 @@ export async function POST(req: NextRequest) {
               headless,
               slowMo: headless ? 0 : 50,
               args: launchArgs,
-              env: launchOptions.env,
+              env: launchEnv,
             });
       context = await createEphemeralContext({
         browser,
@@ -430,9 +431,9 @@ export async function POST(req: NextRequest) {
       const now = Date.now();
       if (now - lastKick > 12000) {
         lastKick = now;
-        const pathsToTry = discoveredPath
+        const pathsToTry: string[] = discoveredPath
           ? [discoveredPath, ...ORDER_FETCH_PATHS]
-          : ORDER_FETCH_PATHS;
+          : [...ORDER_FETCH_PATHS];
         for (const template of pathsToTry) {
           const result = await fetchOrdersFromPage(page, template, 1);
           if (result && typeof result === "object" && !("__goatStatus" in (result as object))) {
