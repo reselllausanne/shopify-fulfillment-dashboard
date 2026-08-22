@@ -128,11 +128,75 @@ function reicheltForceCurlEnabled(): boolean {
   return String(process.env.SCRAPER_REI_FORCE_CURL ?? "0") === "1";
 }
 
+/** `host:port:user:pass` (LemonProxy) → `http://user:pass@host:port`. */
+export function normalizeReicheltProxyUrl(raw: string): string | null {
+  const value = String(raw ?? "").trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  const parts = value.split(":");
+  if (parts.length >= 4) {
+    const host = parts[0];
+    const port = parts[1];
+    const password = parts[parts.length - 1];
+    const user = parts.slice(2, -1).join(":");
+    if (!host || !port || !user || !password) return null;
+    return `http://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}`;
+  }
+  return null;
+}
+
+function splitProxyEntries(raw: string): string[] {
+  return raw
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function readProxyFileEntries(): string[] {
+  const filePath = String(process.env.SCRAPER_REI_PROXY_FILE ?? "").trim();
+  if (!filePath) return [];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    if (!fs.existsSync(filePath)) return [];
+    return splitProxyEntries(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return [];
+  }
+}
+
+let proxyPoolCache: string[] | null = null;
+let proxyPoolCursor = 0;
+
+/** Round-robin pool from file / SCRAPER_REI_PROXY_URLS / SCRAPER_REI_PROXY_URL. */
+export function reicheltProxyPool(): string[] {
+  if (proxyPoolCache) return proxyPoolCache;
+  const multi = String(process.env.SCRAPER_REI_PROXY_URLS ?? "").trim();
+  const single =
+    String(process.env.SCRAPER_REI_PROXY_URL ?? "").trim() ||
+    String(process.env.SCRAPER_PROXY_URL ?? "").trim();
+  const rawEntries = [
+    ...readProxyFileEntries(),
+    ...(multi ? splitProxyEntries(multi) : []),
+    ...(single ? [single] : []),
+  ];
+  const seen = new Set<string>();
+  proxyPoolCache = [];
+  for (const entry of rawEntries) {
+    const url = normalizeReicheltProxyUrl(entry);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    proxyPoolCache.push(url);
+  }
+  return proxyPoolCache;
+}
+
 function reicheltProxyUrl(): string | null {
-  const scoped = String(process.env.SCRAPER_REI_PROXY_URL ?? "").trim();
-  if (scoped) return scoped;
-  const global = String(process.env.SCRAPER_PROXY_URL ?? "").trim();
-  return global || null;
+  const pool = reicheltProxyPool();
+  if (!pool.length) return null;
+  const url = pool[proxyPoolCursor % pool.length]!;
+  proxyPoolCursor = (proxyPoolCursor + 1) % pool.length;
+  return url;
 }
 
 export function reicheltConfig() {
@@ -506,11 +570,22 @@ export class ReicheltClient {
     retryBaseMs: number
   ): Promise<string> {
     if (reicheltForceCurlEnabled()) {
-      const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
-      const text = await fetchTextViaCurl(url, headers);
-      const delayMs = reicheltConfig().requestDelayMs;
-      if (delayMs) await sleep(delayMs + jitterMs(250));
-      return text;
+      let lastCurlErr: unknown = null;
+      const attempts = Math.max(maxRetries, reicheltProxyPool().length ? Math.min(5, reicheltProxyPool().length) : 1);
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+          const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
+          const text = await fetchTextViaCurl(url, headers);
+          const delayMs = reicheltConfig().requestDelayMs;
+          if (delayMs) await sleep(delayMs + jitterMs(250));
+          return text;
+        } catch (err) {
+          lastCurlErr = err;
+          if (!isRetryableReicheltError(err) || attempt >= attempts - 1) break;
+          await sleep(retryBaseMs * Math.pow(2, attempt) + jitterMs(400));
+        }
+      }
+      throw lastCurlErr instanceof Error ? lastCurlErr : new Error(String(lastCurlErr));
     }
 
     let lastErr: unknown = null;

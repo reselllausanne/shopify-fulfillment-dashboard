@@ -16,6 +16,7 @@ import {
   reicheltReferer,
   toReicheltDeProductUrl,
   isSoftSkipReicheltShardError,
+  normalizeReicheltProxyUrl,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -166,5 +167,21 @@ describe("parseReicheltProductSitemapShards", () => {
 
   it("builds blind fallback shard list", () => {
     expect(fallbackReicheltProductSitemapShards(2)).toEqual([0, 1, 2]);
+  });
+});
+
+describe("normalizeReicheltProxyUrl", () => {
+  it("converts LemonProxy host:port:user:pass into curl proxy URL", () => {
+    expect(
+      normalizeReicheltProxyUrl(
+        "gw-eu.lemonclub.io:5555:pkg-lemonstream-country-ch-session-123-ttl-10:secretpass"
+      )
+    ).toBe(
+      "http://pkg-lemonstream-country-ch-session-123-ttl-10:secretpass@gw-eu.lemonclub.io:5555"
+    );
+  });
+
+  it("keeps already-normalized http proxy URLs", () => {
+    expect(normalizeReicheltProxyUrl("http://user:pass@host:5555")).toBe("http://user:pass@host:5555");
   });
 });
