@@ -43,7 +43,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [sendingOrdr, setSendingOrdr] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
-  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled" | "history">("to_process");
+  const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [orderSearch, setOrderSearch] = useState("");
   const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
   const [manualEntryModal, setManualEntryModal] = useState<{
@@ -65,8 +65,7 @@ export default function GalaxusDirectDeliveryPage() {
   const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
     const force = Boolean(opts?.force);
     const query = debouncedOrderSearch;
-    const listMode = leftTab === "history" ? "history" : "active";
-    const cacheKey = `${listMode}::${query.toLowerCase()}`;
+    const cacheKey = query.toLowerCase();
     const cached = ordersListCacheRef.current;
     if (!force && cached && cached.key === cacheKey && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = cached.items;
@@ -94,29 +93,20 @@ export default function GalaxusDirectDeliveryPage() {
         return `/api/galaxus/orders?${params.toString()}`;
       };
       const items: OrderListItem[] = [];
-      if (listMode === "history") {
-        const pageLimit = 200;
-        const maxRows = 5000;
-        let offset = 0;
-        while (items.length < maxRows) {
-          const res = await fetch(buildUrl(pageLimit, offset, "all"), { cache: "no-store" });
-          const data = await res.json();
-          if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order history");
-          const page: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
-          if (page.length === 0) break;
-          items.push(...page);
-          const nextOffset = Number(data.nextOffset ?? NaN);
-          if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-          offset = nextOffset;
-          if (page.length < pageLimit) break;
-        }
-        if (items.length > maxRows) items.length = maxRows;
-      } else {
-        const res = await fetch(buildUrl(50, 0, "active"), { cache: "no-store" });
+      const pageLimit = 200;
+      const maxRows = 5000;
+      let offset = 0;
+      while (items.length < maxRows) {
+        const res = await fetch(buildUrl(pageLimit, offset, "active"), { cache: "no-store" });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
         const page: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+        if (page.length === 0) break;
         items.push(...page);
+        const nextOffset = Number(data.nextOffset ?? NaN);
+        if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
+        offset = nextOffset;
+        if (page.length < pageLimit) break;
       }
       const fresh = new Set<string>();
       for (const item of items) {
@@ -136,7 +126,7 @@ export default function GalaxusDirectDeliveryPage() {
     } finally {
       setLoadingOrders(false);
     }
-  }, [debouncedOrderSearch, leftTab]);
+  }, [debouncedOrderSearch]);
 
   const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
     const force = Boolean(opts?.force);
@@ -246,7 +236,6 @@ export default function GalaxusDirectDeliveryPage() {
   }, [orders, newOrderIds]);
 
   const ordersByTab = useMemo(() => {
-    if (leftTab === "history") return orderedList;
     return orderedList.filter((order) => {
       const state = order.fulfillmentState ?? "to_process";
       if (leftTab === "fulfilled") return state === "fulfilled";
@@ -584,7 +573,7 @@ export default function GalaxusDirectDeliveryPage() {
             value={orderSearch}
             onChange={(e) => setOrderSearch(e.target.value)}
           />
-          <div className="mb-2 grid grid-cols-3 gap-1 text-xs">
+          <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
             <button
               type="button"
               className={`rounded border px-2 py-1 ${
@@ -606,17 +595,6 @@ export default function GalaxusDirectDeliveryPage() {
               onClick={() => setLeftTab("fulfilled")}
             >
               Fulfilled
-            </button>
-            <button
-              type="button"
-              className={`rounded border px-2 py-1 ${
-                leftTab === "history"
-                  ? "bg-black text-white border-black"
-                  : "bg-white border-gray-300"
-              }`}
-              onClick={() => setLeftTab("history")}
-            >
-              History
             </button>
           </div>
           <div className="space-y-2 max-h-[70vh] overflow-auto">
