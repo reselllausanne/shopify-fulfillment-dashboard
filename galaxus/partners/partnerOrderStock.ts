@@ -80,6 +80,7 @@ export async function deductStockForPartnerOrderFulfillment(params: {
 
       const variant = await txAny.supplierVariant.findUnique({
         where: { supplierVariantId: targetId },
+        select: { stock: true },
       });
       if (!variant) {
         details.push(`skip line ${line.id}: variant missing`);
@@ -157,6 +158,7 @@ export async function deductPartnerCatalogStockForDecathlonLines(params: {
 
       const variant = await txAny.supplierVariant.findUnique({
         where: { supplierVariantId: targetId },
+        select: { stock: true },
       });
       if (!variant) {
         details.push(`skip decathlon line ${lineId || "?"}: variant missing`);

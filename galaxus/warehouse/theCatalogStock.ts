@@ -56,6 +56,7 @@ export async function resolveTheSupplierVariantForGalaxusLine(
         ],
       },
       orderBy: { stock: "desc" },
+      select: { supplierVariantId: true },
     });
     if (byOffer?.supplierVariantId) return String(byOffer.supplierVariantId);
   }
@@ -66,6 +67,7 @@ export async function resolveTheSupplierVariantForGalaxusLine(
         AND: [theVariantIdFilter, { gtin }],
       },
       orderBy: { stock: "desc" },
+      select: { supplierVariantId: true },
     });
     if (byGtin?.supplierVariantId) return String(byGtin.supplierVariantId);
   }
@@ -99,6 +101,7 @@ export async function applyTheCatalogStockDeltaInTx(
 
   const variant = await tx.supplierVariant.findUnique({
     where: { supplierVariantId: targetId },
+    select: { stock: true, manualLock: true, manualStock: true },
   });
   if (!variant) {
     details.push(`skip ${lineRef}: THE variant ${targetId} missing`);

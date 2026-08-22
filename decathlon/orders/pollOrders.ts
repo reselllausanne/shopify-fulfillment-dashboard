@@ -594,10 +594,12 @@ async function syncDecathlonReturns(options: {
         if (providerKey && gtin) {
           supplierVariant = await prismaAny.supplierVariant.findFirst({
             where: { providerKey, gtin },
+            select: { price: true },
           });
         } else if (providerKey) {
           supplierVariant = await prismaAny.supplierVariant.findFirst({
             where: { providerKey },
+            select: { price: true },
           });
         }
         const basePriceRaw =

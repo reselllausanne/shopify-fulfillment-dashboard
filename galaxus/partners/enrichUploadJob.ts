@@ -168,6 +168,7 @@ export async function runPartnerUploadEnrich(options: PartnerEnrichOptions) {
 
     let offer = await prismaAny.supplierVariant.findUnique({
       where: { providerKey_gtin: { providerKey: fullProviderKey, gtin: resolvedGtin } },
+      select: { supplierVariantId: true },
     });
 
     if (offer) {

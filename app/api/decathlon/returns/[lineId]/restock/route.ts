@@ -65,10 +65,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ lin
     if (providerKey && gtin) {
       supplierVariant = await prismaAny.supplierVariant.findFirst({
         where: { providerKey, gtin },
+        select: { price: true },
       });
     } else if (providerKey) {
       supplierVariant = await prismaAny.supplierVariant.findFirst({
         where: { providerKey },
+        select: { price: true },
       });
     }
     const basePriceRaw =

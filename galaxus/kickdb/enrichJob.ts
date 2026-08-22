@@ -65,6 +65,18 @@ type KickdbEnrichOptions = {
   includeNotFound?: boolean;
 };
 
+const ENRICH_SUPPLIER_VARIANT_SELECT = {
+  supplierVariantId: true,
+  supplierSku: true,
+  supplierBrand: true,
+  supplierProductName: true,
+  gtin: true,
+  providerKey: true,
+  sizeRaw: true,
+  manualNote: true,
+  images: true,
+} as const;
+
 type DebugInfo = {
   reason?: string;
   query?: string;
@@ -373,6 +385,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
   if (supplierVariantId) {
     const match = await prisma.supplierVariant.findUnique({
       where: { supplierVariantId },
+      select: ENRICH_SUPPLIER_VARIANT_SELECT,
     });
     if (!match) {
       throw new Error(`Supplier variant not found: ${supplierVariantId}`);
@@ -382,6 +395,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     const matches = await prisma.supplierVariant.findMany({
       where: { supplierSku },
       orderBy: { updatedAt: "desc" },
+      select: ENRICH_SUPPLIER_VARIANT_SELECT,
     });
     if (!matches.length) {
       throw new Error(`Supplier variant not found for SKU: ${supplierSku}`);
@@ -411,6 +425,7 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
     } else {
       const fetched = await prisma.supplierVariant.findMany({
         where: { supplierVariantId: { in: candidateIds } },
+        select: ENRICH_SUPPLIER_VARIANT_SELECT,
       });
       const byId = new Map(fetched.map((variant) => [variant.supplierVariantId, variant]));
       supplierVariants = candidateIds

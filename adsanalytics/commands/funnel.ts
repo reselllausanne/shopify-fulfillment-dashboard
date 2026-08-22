@@ -169,31 +169,55 @@ async function loadInventoryOffers(): Promise<InventoryOffer[]> {
 async function loadOfferPerf(range: DateRange): Promise<OfferPerf[]> {
   const last7Start = addDays(range.end, -6);
   return prisma.$queryRaw<OfferPerf[]>(Prisma.sql`
+    WITH date_range AS (
+      SELECT
+        "merchant_id"::text AS merchant_id,
+        'ONLINE'::text AS channel,
+        "language_code",
+        "feed_label",
+        "offer_id",
+        SUM("impressions")::float8 AS impressions,
+        SUM("clicks")::float8 AS clicks,
+        SUM("cost_micros")::float8 AS cost_micros,
+        SUM("conversions")::float8 AS conversions,
+        SUM("conversion_value")::float8 AS conversion_value,
+        SUM("impressions") FILTER (WHERE "date" BETWEEN ${last7Start}::date AND ${range.end}::date)::float8 AS impressions_7d,
+        SUM("clicks") FILTER (WHERE "date" BETWEEN ${last7Start}::date AND ${range.end}::date)::float8 AS clicks_7d
+      FROM "public"."ads_product_daily"
+      WHERE "date" BETWEEN ${range.start}::date AND ${range.end}::date
+      GROUP BY "merchant_id", "language_code", "feed_label", "offer_id"
+    ),
+    lifetime AS (
+      SELECT
+        "merchant_id"::text AS merchant_id,
+        "language_code",
+        "feed_label",
+        "offer_id",
+        COALESCE(SUM("conversions"), 0)::float8 AS conversions_lifetime
+      FROM "public"."ads_product_daily"
+      WHERE "date" <= ${range.end}::date
+      GROUP BY "merchant_id", "language_code", "feed_label", "offer_id"
+    )
     SELECT
-      "merchant_id"::text,
-      'ONLINE'::text AS channel,
-      "language_code",
-      "feed_label",
-      "offer_id",
-      SUM("impressions")::float8 AS impressions,
-      SUM("clicks")::float8 AS clicks,
-      SUM("cost_micros")::float8 AS cost_micros,
-      SUM("conversions")::float8 AS conversions,
-      SUM("conversion_value")::float8 AS conversion_value,
-      SUM("impressions") FILTER (WHERE "date" BETWEEN ${last7Start}::date AND ${range.end}::date)::float8 AS impressions_7d,
-      SUM("clicks") FILTER (WHERE "date" BETWEEN ${last7Start}::date AND ${range.end}::date)::float8 AS clicks_7d,
-      (
-        SELECT COALESCE(SUM(p2."conversions"), 0)::float8
-        FROM "public"."ads_product_daily" p2
-        WHERE p2."merchant_id" = p."merchant_id"
-          AND p2."feed_label" = p."feed_label"
-          AND p2."language_code" = p."language_code"
-          AND p2."offer_id" = p."offer_id"
-          AND p2."date" <= ${range.end}::date
-      ) AS conversions_lifetime
-    FROM "public"."ads_product_daily" p
-    WHERE "date" BETWEEN ${range.start}::date AND ${range.end}::date
-    GROUP BY "merchant_id", "language_code", "feed_label", "offer_id"
+      d.merchant_id,
+      d.channel,
+      d.language_code,
+      d.feed_label,
+      d.offer_id,
+      d.impressions,
+      d.clicks,
+      d.cost_micros,
+      d.conversions,
+      d.conversion_value,
+      d.impressions_7d,
+      d.clicks_7d,
+      COALESCE(l.conversions_lifetime, 0)::float8 AS conversions_lifetime
+    FROM date_range d
+    LEFT JOIN lifetime l
+      ON l.merchant_id = d.merchant_id
+      AND l.language_code = d.language_code
+      AND l.feed_label = d.feed_label
+      AND l.offer_id = d.offer_id
   `);
 }
 
