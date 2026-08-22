@@ -34,7 +34,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(new Set());
-  const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
+  const ordersListCacheRef = useRef<{ at: number; query: string; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
   const detailLoadSeq = useRef(0);
@@ -44,6 +44,8 @@ export default function GalaxusDirectDeliveryPage() {
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
+  const [orderSearch, setOrderSearch] = useState("");
+  const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
     mode: "create" | "edit";
@@ -55,10 +57,16 @@ export default function GalaxusDirectDeliveryPage() {
 
   selectedOrderIdRef.current = selectedOrderId;
 
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedOrderSearch(orderSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [orderSearch]);
+
   const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
     const force = Boolean(opts?.force);
+    const query = debouncedOrderSearch;
     const cached = ordersListCacheRef.current;
-    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+    if (!force && cached && cached.query === query && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = cached.items;
       setOrders(items);
       const current = selectedOrderIdRef.current;
@@ -71,8 +79,9 @@ export default function GalaxusDirectDeliveryPage() {
     setLoadingOrders(true);
     setError(null);
     try {
+      const q = query ? `&q=${encodeURIComponent(query)}` : "";
       const res = await fetch(
-        "/api/galaxus/orders?limit=50&view=active&deliveryType=direct_delivery&includeInvoice=0",
+        `/api/galaxus/orders?limit=50&view=active&deliveryType=direct_delivery&includeInvoice=0${q}`,
         { cache: "no-store" }
       );
       const data = await res.json();
@@ -84,7 +93,7 @@ export default function GalaxusDirectDeliveryPage() {
       }
       setNewOrderIds(fresh.size > 0 ? fresh : new Set());
       knownOrderIds.current = new Set(items.map((item) => item.id));
-      ordersListCacheRef.current = { at: Date.now(), items };
+      ordersListCacheRef.current = { at: Date.now(), items, query };
       setOrders(items);
 
       const current = selectedOrderIdRef.current;
@@ -96,7 +105,7 @@ export default function GalaxusDirectDeliveryPage() {
     } finally {
       setLoadingOrders(false);
     }
-  }, []);
+  }, [debouncedOrderSearch]);
 
   const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
     const force = Boolean(opts?.force);
@@ -537,6 +546,12 @@ export default function GalaxusDirectDeliveryPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="border rounded p-3">
           <div className="font-semibold mb-2">Orders</div>
+          <input
+            className="w-full border rounded px-2 py-1 text-xs mb-2"
+            placeholder="Search order, SKU, GTIN, product..."
+            value={orderSearch}
+            onChange={(e) => setOrderSearch(e.target.value)}
+          />
           <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
             <button
               type="button"
@@ -786,6 +801,11 @@ export default function GalaxusDirectDeliveryPage() {
                             {line.styleSku ?? line.supplierSku ?? "—"} · Qty {line.quantity} ·{" "}
                             {priceText}
                           </div>
+                          {String(line.gtin ?? "").trim() ? (
+                            <div className="text-[11px] text-gray-500">
+                              GTIN: <span className="font-mono text-[10px]">{String(line.gtin).trim()}</span>
+                            </div>
+                          ) : null}
                         </div>
                         <div className="text-right shrink-0 space-y-0.5">
                           <div
