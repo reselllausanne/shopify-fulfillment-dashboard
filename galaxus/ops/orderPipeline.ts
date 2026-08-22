@@ -7,21 +7,59 @@ type OrderPipelineResult = {
   filesProcessed: number;
   ordersIngested: number;
   ordrSent: number;
-  ordrRetried: number;
   ordrFailed: number;
   stxProductsRefreshed: number;
   errors: string[];
 };
 
+/** Synthetic SNL GTINs (40000000…) collide with Galaxus MTG catalog — never auto-accept. */
+function isBlacklistedSnlSyntheticPid(pid: string | null | undefined): boolean {
+  return /^SNL_40000000/i.test(String(pid ?? "").trim());
+}
+
 async function sendOrdrForOrder(orderId: string) {
   const now = new Date();
   const order = await (prisma as any).galaxusOrder.findUnique({
     where: { id: orderId },
-    select: { id: true, galaxusOrderId: true, ordrSentAt: true, ordrStatus: true },
+    select: {
+      id: true,
+      galaxusOrderId: true,
+      ordrSentAt: true,
+      ordrStatus: true,
+      cancelledAt: true,
+      lines: { select: { supplierPid: true, providerKey: true } },
+    },
   });
   if (!order) return { ok: false, skipped: "not_found" };
+  if (order.cancelledAt) {
+    return { ok: true, skipped: "cancelled" };
+  }
   if (order.ordrSentAt || order.ordrStatus === "SENT") {
     return { ok: true, skipped: "already_sent" };
+  }
+  const lines = Array.isArray(order.lines) ? order.lines : [];
+  const hasBlacklistedSnl = lines.some(
+    (line: any) =>
+      isBlacklistedSnlSyntheticPid(line?.supplierPid) || isBlacklistedSnlSyntheticPid(line?.providerKey)
+  );
+  if (hasBlacklistedSnl) {
+    await (prisma as any).galaxusOrder.update({
+      where: { id: orderId },
+      data: {
+        cancelledAt: now,
+        archivedAt: now,
+        cancelReason: "blacklist:snl_synthetic_gtin_collision_mtg",
+        ordrStatus: "FAILED",
+        ordrLastError: "auto-ORDR blocked: SNL synthetic GTIN collision",
+        ordrLastAttemptAt: now,
+      },
+    });
+    try {
+      await sendOutgoingEdi({ orderId, types: ["CANR"], force: true });
+    } catch {
+      // best-effort cancel to Galaxus
+    }
+    return { ok: true, skipped: "blacklisted_snl_synthetic" };
   }
   await (prisma as any).galaxusOrder.update({
     where: { id: orderId },
@@ -41,21 +79,6 @@ async function sendOrdrForOrder(orderId: string) {
     });
     return { ok: false, error: error?.message ?? "ORDR failed" };
   }
-}
-
-async function listPendingOrdrOrderIds(limit = 30): Promise<string[]> {
-  const rows = await (prisma as any).galaxusOrder.findMany({
-    where: {
-      archivedAt: null,
-      cancelledAt: null,
-      ordrSentAt: null,
-      OR: [{ ordrStatus: null }, { ordrStatus: "PENDING" }, { ordrStatus: "FAILED" }],
-    },
-    orderBy: [{ orderDate: "asc" }, { createdAt: "asc" }],
-    take: Math.max(1, Math.min(limit, 200)),
-    select: { id: true },
-  });
-  return rows.map((row: { id: string }) => row.id);
 }
 
 async function resolveStxKickdbProductIds(orderIds: string[]): Promise<string[]> {
@@ -126,7 +149,6 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
     )
   );
   let ordrSent = 0;
-  let ordrRetried = 0;
   let ordrFailed = 0;
   for (const orderId of orderIds) {
     await reconcileGalaxusOrderProcurement(orderId).catch((err) => {
@@ -138,16 +160,6 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
     } else if (!res?.ok) {
       ordrFailed += 1;
       if (res?.error) errors.push(res.error);
-    }
-  }
-  const retryOrderIds = (await listPendingOrdrOrderIds(40)).filter((id) => !orderIds.includes(id));
-  for (const orderId of retryOrderIds) {
-    const res = await sendOrdrForOrder(orderId);
-    if (res?.ok && !res?.skipped) {
-      ordrRetried += 1;
-    } else if (!res?.ok) {
-      ordrFailed += 1;
-      if (res?.error) errors.push(`retry ${orderId}: ${res.error}`);
     }
   }
 
@@ -166,7 +178,6 @@ export async function runEdiInPipeline(): Promise<OrderPipelineResult> {
     filesProcessed: pollResults.length,
     ordersIngested: orderIds.length,
     ordrSent,
-    ordrRetried,
     ordrFailed,
     stxProductsRefreshed,
     errors,

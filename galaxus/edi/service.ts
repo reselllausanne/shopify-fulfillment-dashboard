@@ -105,8 +105,10 @@ export async function pollIncomingEdi(): Promise<IncomingResult[]> {
           where: { filename: file.name },
           select: { id: true, status: true },
         });
-        if (existing?.status === "processed") {
-          results.push({ file: file.name, status: "skipped", message: "already processed" });
+        if (existing?.status === "processed" || existing?.status === "skipped") {
+          // Clear inbox leftovers so Direct Delivery auto-poll does not stall on stale files.
+          await client.delete(file.path).catch(() => undefined);
+          results.push({ file: file.name, status: "skipped", message: `already ${existing.status}` });
           continue;
         }
 
