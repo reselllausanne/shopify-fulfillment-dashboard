@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { computeDecathlonDeltasFromCandidates, resolveEffectivePrice, resolveEffectiveStock } from "../deltas";
 import { computeDecathlonOfferListPriceFromBuyNowForSupplier } from "@/decathlon/exports/pricing";
 
+// Unit tests assert live-lane stock math; production default is paused.
+process.env.DECATHLON_SALES_PAUSED = "0";
+
 /** Aligns with `buildProviderKey(gtin, supplierVariantId)` → NER_1234567890123 for ner_* suppliers */
 const makeCandidate = (overrides?: Partial<any>) => ({
   providerKey: "NER_1234567890123",
@@ -124,6 +127,25 @@ describe("mirakl deltas", () => {
       },
     });
     expect(resolveEffectivePrice(candidate, new Set())).toBeNull();
+  });
+
+  it("zeros all stock when Decathlon sales are paused", () => {
+    const prev = process.env.DECATHLON_SALES_PAUSED;
+    process.env.DECATHLON_SALES_PAUSED = "1";
+    const candidate = makeCandidate({
+      providerKey: "STX_1234567890123",
+      variant: {
+        supplierVariantId: "stx_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 106.47,
+        deliveryType: "express_expedited",
+      },
+    });
+    expect(resolveEffectiveStock(candidate, 169, { physicalQty: 5 })).toBe(0);
+    process.env.DECATHLON_SALES_PAUSED = prev ?? "0";
   });
 
   it("uses fee-aware margin list for STX expedited buy", () => {

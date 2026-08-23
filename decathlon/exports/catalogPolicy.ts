@@ -21,6 +21,25 @@ export const DECATHLON_BLOCKED_SUPPLIER_KEYS = [
   "the",
 ] as const;
 
+/**
+ * Global Decathlon sales halt. When true, every Mirakl qty resolves to 0
+ * (stock/offer sync + inventory push). Cron cannot re-list.
+ *
+ * Default ON until explicitly reopened. Override with env:
+ * - `DECATHLON_SALES_PAUSED=0|false|no|off` → resume sales
+ * - `DECATHLON_SALES_PAUSED=1|true|yes|on` → force pause
+ */
+export function isDecathlonSalesPaused(): boolean {
+  const raw = process.env.DECATHLON_SALES_PAUSED;
+  if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+    const s = String(raw).trim().toLowerCase();
+    if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+    if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
+  }
+  // 2026-08-23: pause all Decathlon sales after manualLock used as list TTC (payout loss).
+  return true;
+}
+
 export function isDecathlonExpressExpeditedDelivery(
   deliveryType: string | null | undefined
 ): boolean {

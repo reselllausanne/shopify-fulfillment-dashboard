@@ -4,6 +4,7 @@ import {
   isDecathlonExpressExpeditedDelivery,
   isDecathlonPhysicalInstockEnabled,
   isDecathlonProductOnboardable,
+  isDecathlonSalesPaused,
   isDecathlonSellableSupplierKey,
 } from "../catalogPolicy";
 
@@ -42,5 +43,17 @@ describe("Decathlon catalog policy", () => {
 
   it("keeps physical instock merge always on", () => {
     expect(isDecathlonPhysicalInstockEnabled()).toBe(true);
+  });
+
+  it("pauses all Decathlon sales by default until explicitly reopened", () => {
+    const prev = process.env.DECATHLON_SALES_PAUSED;
+    delete process.env.DECATHLON_SALES_PAUSED;
+    expect(isDecathlonSalesPaused()).toBe(true);
+    process.env.DECATHLON_SALES_PAUSED = "0";
+    expect(isDecathlonSalesPaused()).toBe(false);
+    process.env.DECATHLON_SALES_PAUSED = "1";
+    expect(isDecathlonSalesPaused()).toBe(true);
+    if (prev === undefined) delete process.env.DECATHLON_SALES_PAUSED;
+    else process.env.DECATHLON_SALES_PAUSED = prev;
   });
 });

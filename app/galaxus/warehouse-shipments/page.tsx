@@ -1187,18 +1187,17 @@ export default function GalaxusWarehouseShipmentsPage() {
                     String(line.description ?? "").trim() !== displayProductTitle(line) ? (
                       <div className="text-gray-500 mt-0.5 leading-snug line-clamp-2">{String(line.description)}</div>
                     ) : null}
-                    {String(line.productKey ?? line.providerKey ?? "").trim() ? (
-                      <div className="text-[11px] text-gray-500 mt-0.5">
-                        Key:{" "}
-                        <span className="font-mono text-[10px]">
-                          {String(line.productKey ?? line.providerKey).trim()}
-                        </span>
-                      </div>
-                    ) : String(line.gtin ?? "").trim() ? (
-                      <div className="text-[11px] text-gray-500 mt-0.5">
-                        GTIN: <span className="font-mono text-[10px]">{String(line.gtin).trim()}</span>
-                      </div>
-                    ) : null}
+                    <div className="text-[11px] text-gray-500 mt-0.5">
+                      Key:{" "}
+                      <span className="font-mono text-[10px]">
+                        {String(line.productKey ?? line.providerKey ?? "").trim() || "—"}
+                      </span>
+                      {" · "}
+                      GTIN:{" "}
+                      <span className="font-mono text-[10px]">
+                        {String(line.gtin ?? "").trim() || "—"}
+                      </span>
+                    </div>
                     {fullyInvoiced ? (
                       <div className="text-[11px] text-rose-700 mt-1">
                         Invoiced already ({invoicedQty}/{orderedSafe})

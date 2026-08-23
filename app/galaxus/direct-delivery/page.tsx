@@ -822,21 +822,19 @@ export default function GalaxusDirectDeliveryPage() {
                             {line.styleSku ?? line.supplierSku ?? "—"} · Qty {line.quantity} ·{" "}
                             {priceText}
                           </div>
-                          {String(line.productKey ?? line.providerKey ?? "").trim() ? (
-                            <div className="text-[11px] text-gray-500">
-                              Key:{" "}
-                              <span className="font-mono text-[10px]">
-                                {String(line.productKey ?? line.providerKey).trim()}
-                              </span>
-                            </div>
-                          ) : String(line.supplierKey ?? "").trim() ? (
-                            <div className="text-[11px] text-gray-500">
-                              Supplier:{" "}
-                              <span className="font-mono text-[10px]">
-                                {String(line.supplierKey).trim()}
-                              </span>
-                            </div>
-                          ) : null}
+                          <div className="text-[11px] text-gray-500">
+                            Key:{" "}
+                            <span className="font-mono text-[10px]">
+                              {String(line.productKey ?? line.providerKey ?? "").trim() ||
+                                String(line.supplierKey ?? "").trim() ||
+                                "—"}
+                            </span>
+                            {" · "}
+                            GTIN:{" "}
+                            <span className="font-mono text-[10px]">
+                              {String(line.gtin ?? "").trim() || "—"}
+                            </span>
+                          </div>
                         </div>
                         <div className="text-right shrink-0 space-y-0.5">
                           <div

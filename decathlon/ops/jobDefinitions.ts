@@ -9,8 +9,9 @@ export const DEFAULT_DECATHLON_JOBS: Array<{
   intervalMs: number;
   enabled: boolean;
 }> = [
-  { jobKey: "decathlon-stock-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
-  { jobKey: "decathlon-price-sync", intervalMs: 1 * HOUR_MS, enabled: true },
+  /** 2026-08-23: sales paused — stock/price cron off until reopen (see isDecathlonSalesPaused). */
+  { jobKey: "decathlon-stock-sync", intervalMs: 15 * MINUTE_MS, enabled: false },
+  { jobKey: "decathlon-price-sync", intervalMs: 1 * HOUR_MS, enabled: false },
   /** Legacy full-catalog OF01 — keep off; Decathlon lane = STX express_expedited + instock. */
   { jobKey: "decathlon-offer-sync", intervalMs: 24 * HOUR_MS, enabled: false },
   /** Physical liquidation OF01 — DISABLED (was publishing NER/BAE/REI/WEL/GLD/SNL at wrong prices). */

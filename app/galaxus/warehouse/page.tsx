@@ -584,12 +584,9 @@ export default function WarehouseBulkPage() {
                                 <span className="font-mono">
                                   {line.productKey ?? line.providerKey ?? line.offerSupplierSku ?? "—"}
                                 </span>
-                                {line.gtin ? (
-                                  <>
-                                    {" "}
-                                    · GTIN: <span className="font-mono">{line.gtin}</span>
-                                  </>
-                                ) : null}
+                                {" · "}
+                                GTIN:{" "}
+                                <span className="font-mono">{String(line.gtin ?? "").trim() || "—"}</span>
                               </div>
                               <div className="text-gray-500 text-xs">
                                 Qty {line.quantity}

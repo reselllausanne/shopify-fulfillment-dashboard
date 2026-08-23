@@ -15,6 +15,7 @@ import {
   resolveDecathlonStxOfferStock,
 } from "./stxOfferPolicy";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
+import { isDecathlonSalesPaused } from "@/decathlon/exports/catalogPolicy";
 import {
   mergePhysicalWithDropship,
   type PhysicalStockMap,
@@ -42,6 +43,7 @@ function resolveEffectiveStock(
   listPriceTtc: number | null,
   physicalQty: number = 0
 ): number | null {
+  if (isDecathlonSalesPaused()) return 0;
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const extra = Math.max(0, Math.floor(physicalQty));

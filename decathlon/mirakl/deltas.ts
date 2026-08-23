@@ -22,7 +22,10 @@ import {
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
-import { isDecathlonPhysicalInstockEnabled } from "@/decathlon/exports/catalogPolicy";
+import {
+  isDecathlonPhysicalInstockEnabled,
+  isDecathlonSalesPaused,
+} from "@/decathlon/exports/catalogPolicy";
 import {
   loadPhysicalMirrorStockByGtin,
   mergePhysicalWithDropship,
@@ -67,6 +70,8 @@ export function resolveEffectiveStock(
   listPriceTtc: number | null = null,
   opts?: { physicalQty?: number }
 ): number | null {
+  if (isDecathlonSalesPaused()) return 0;
+
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const physicalQty = Math.max(0, Math.floor(opts?.physicalQty ?? 0));

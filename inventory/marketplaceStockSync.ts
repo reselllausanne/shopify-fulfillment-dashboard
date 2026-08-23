@@ -1,5 +1,6 @@
 import { prisma } from "@/app/lib/prisma";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
+import { isDecathlonSalesPaused } from "@/decathlon/exports/catalogPolicy";
 import { runDecathlonStockSync } from "@/decathlon/mirakl/sync";
 import { startFeedPushAsync } from "@/galaxus/ops/feedPipelineCore";
 import { patchFeedSnapshotsForProviderKeys } from "@/galaxus/exports/feedSnapshot";
@@ -56,26 +57,29 @@ async function markListings(providerKeys: string[]): Promise<number> {
     const supplierVariantId = String(variant.supplierVariantId ?? "").trim();
     if (!providerKey || !supplierVariantId) continue;
     const available = stockById.get(supplierVariantId) ?? 0;
-    const status = available <= 0 ? "SOLD_OUT" : "ACTIVE";
 
     for (const channel of ["GALAXUS", "DECATHLON"] as const) {
+      // Decathlon sales halt: never mark DECATHLON listings live from inventory push.
+      const decathlonPaused = channel === "DECATHLON" && isDecathlonSalesPaused();
+      const pushedStock = decathlonPaused ? 0 : available;
+      const listingStatus = decathlonPaused || available <= 0 ? "SOLD_OUT" : "ACTIVE";
       await prismaAny.channelListingState.upsert({
         where: { channel_providerKey: { channel, providerKey } },
         create: {
           channel,
           providerKey,
           supplierVariantId,
-          lastPushedStock: available,
-          status,
-          soldOutAt: available <= 0 ? now : null,
+          lastPushedStock: pushedStock,
+          status: listingStatus,
+          soldOutAt: pushedStock <= 0 ? now : null,
           lastSyncedAt: now,
           metadataJson: { source: "marketplace-stock-sync" },
         },
         update: {
           supplierVariantId,
-          lastPushedStock: available,
-          status,
-          soldOutAt: available <= 0 ? now : null,
+          lastPushedStock: pushedStock,
+          status: listingStatus,
+          soldOutAt: pushedStock <= 0 ? now : null,
           lastSyncedAt: now,
           lastError: null,
           metadataJson: { source: "marketplace-stock-sync" },

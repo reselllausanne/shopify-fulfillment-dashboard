@@ -280,7 +280,8 @@ export default function PartnerGalaxusShipmentsPage() {
                       <div className="min-w-0">
                         <div className="font-medium text-slate-800">{line.productName ?? "Item"}</div>
                         <div className="text-slate-500">
-                          GTIN {line.gtin ?? "—"} · SKU {line.supplierSku ?? "—"} · Qty {line.remaining}
+                          Key {line.productKey ?? line.providerKey ?? "—"} · GTIN {line.gtin ?? "—"} · SKU{" "}
+                          {line.supplierSku ?? "—"} · Qty {line.remaining}
                         </div>
                       </div>
                     </label>
