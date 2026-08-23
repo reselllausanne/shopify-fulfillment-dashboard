@@ -140,9 +140,9 @@ export default function GalaxusDirectDeliveryPage() {
     setLoadingOrder(true);
     setError(null);
     try {
-      // minimal + no ensureLocal: skip address repair writes + LOCAL_STOCK upserts on every click
+      // ensureLocal=1 so warehouse in-stock lane (Essentials/Bape/AP/boxers) auto-links
       const res = await fetch(
-        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=0&reserveStx=0`,
+        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=1&reserveStx=0`,
         { cache: "no-store" }
       );
       const data = await res.json();
