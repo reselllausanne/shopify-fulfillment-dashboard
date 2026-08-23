@@ -14,12 +14,21 @@ export type DecathlonManualStockxEnrichResult =
     }
   | { ok: false; reason: string };
 
+/** Trim + strip leading `#` (StockX Pro UI paste). */
+export function normalizeStockxOrderNumberInput(input: string | null | undefined): string {
+  return String(input ?? "")
+    .trim()
+    .replace(/^#+/, "")
+    .trim();
+}
+
 export function looksLikeStockxOrderNumber(input: string | null | undefined): boolean {
-  const value = String(input ?? "").trim();
+  const value = normalizeStockxOrderNumberInput(input);
   if (!value) return false;
   if (value.length < 6 || value.length > 60) return false;
   if (/^https?:\/\//i.test(value)) return false;
   if (/\s/.test(value)) return false;
+  // Allow optional leading # on raw input; normalized must start alnum.
   return /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/.test(value);
 }
 
@@ -30,7 +39,7 @@ export async function resolveStockxBuyByOrderNumberWithToken(
   token: string,
   stockxOrderNumberInput: string
 ): Promise<DecathlonManualStockxEnrichResult> {
-  const orderNum = String(stockxOrderNumberInput ?? "").trim();
+  const orderNum = normalizeStockxOrderNumberInput(stockxOrderNumberInput);
   if (!orderNum) return { ok: false, reason: "empty_order_number" };
   try {
     const listNode = await findBuyOrderListNodeByOrderNumber(token, orderNum);

@@ -481,7 +481,15 @@ export default function GalaxusDirectDeliveryPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
-      setOpsLog(JSON.stringify(json, null, 2));
+      const enrich = json.stockxEnrich;
+      if (enrich?.attempted && !enrich.ok) {
+        setOpsLog(
+          `Saved link, but StockX auto-fill failed (${enrich.reason ?? "unknown"}).\n` +
+            JSON.stringify(json, null, 2)
+        );
+      } else {
+        setOpsLog(JSON.stringify(json, null, 2));
+      }
       setManualEntryModal({
         isOpen: false,
         mode: "create",

@@ -200,6 +200,7 @@ async function resolvePersistedHashForSync(operationName: string): Promise<strin
 function normalizeOrderNumberKey(raw: string): string {
   return String(raw ?? "")
     .trim()
+    .replace(/^#+/, "")
     .replace(/\s+/g, "")
     .toLowerCase();
 }
@@ -269,7 +270,8 @@ export async function fetchRecentStockxBuyingOrders(
           {
             first,
             after,
-            state: stateForQuery ?? "PENDING",
+            // Keep explicit null (= any state). Do not coalesce null → PENDING.
+            state: stateForQuery === undefined ? "PENDING" : stateForQuery,
             sort: "MATCHED_AT",
             order: "DESC",
             currencyCode: "CHF",
@@ -329,13 +331,17 @@ export async function fetchRecentStockxBuyingOrders(
 
 /**
  * Find a buying list node by human-readable order number (search + scan).
- * Tries: all states with query, PENDING with query, then recent PENDING pages without query.
+ * Tries all states + common closed states with query, then recent PENDING pages.
+ * Manual link is identity-only — product mismatch is allowed.
  */
 export async function findBuyOrderListNodeByOrderNumber(
   token: string,
   orderNumber: string
 ): Promise<StockxBuyingNode | null> {
-  const needle = orderNumber.trim();
+  const needle = String(orderNumber ?? "")
+    .trim()
+    .replace(/^#+/, "")
+    .trim();
   if (!needle) return null;
 
   const key = (n: StockxBuyingNode) => `${String(n.chainId ?? "")}::${String(n.orderId ?? "")}`;
@@ -351,6 +357,9 @@ export async function findBuyOrderListNodeByOrderNumber(
     }
   };
 
+  const findHit = () => merged.find((n) => buyOrderNumbersMatch(n.orderNumber, needle)) ?? null;
+
+  // Any state + query (Pro Buying) — includes completed / shipped / authenticated.
   addBatch(
     await fetchRecentStockxBuyingOrders(token, {
       first: 100,
@@ -359,17 +368,21 @@ export async function findBuyOrderListNodeByOrderNumber(
       query: needle,
     })
   );
-  addBatch(
-    await fetchRecentStockxBuyingOrders(token, {
-      first: 100,
-      maxPages: 8,
-      state: "PENDING",
-      query: needle,
-    })
-  );
+  let hit = findHit();
+  if (hit) return hit;
 
-  for (const n of merged) {
-    if (buyOrderNumbersMatch(n.orderNumber, needle)) return n;
+  // Explicit common states in case null-state filter is ignored by API.
+  for (const state of ["PENDING", "COMPLETED", "AUTHENTICATED", "SHIPPED", "CANCELED"] as const) {
+    addBatch(
+      await fetchRecentStockxBuyingOrders(token, {
+        first: 100,
+        maxPages: 4,
+        state,
+        query: needle,
+      })
+    );
+    hit = findHit();
+    if (hit) return hit;
   }
 
   addBatch(
@@ -380,12 +393,7 @@ export async function findBuyOrderListNodeByOrderNumber(
       query: null,
     })
   );
-
-  for (const n of merged) {
-    if (buyOrderNumbersMatch(n.orderNumber, needle)) return n;
-  }
-
-  return null;
+  return findHit();
 }
 
 async function fetchStockxBuyOrderPersisted(

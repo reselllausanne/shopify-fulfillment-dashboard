@@ -3,6 +3,7 @@ import { prisma } from "@/app/lib/prisma";
 import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
+  normalizeStockxOrderNumberInput,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
 import {
@@ -82,7 +83,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       where: { galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex } },
     });
 
-    const orderNumberInput = trimStr(data.stockxOrderNumber);
+    const orderNumberInput = normalizeStockxOrderNumberInput(data.stockxOrderNumber);
     let auto: ReturnType<typeof applyStockxDetailsToDecathlonMatchFields> | null = null;
     let stockxEnrich: { attempted: boolean; ok: boolean; reason?: string } = {
       attempted: false,
@@ -130,9 +131,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
             : null;
 
     const stockxOrderNumberFinal =
-      trimStr(data.stockxOrderNumber) ||
-      trimStr(a.stockxOrderNumber) ||
-      trimStr(existing?.stockxOrderNumber) ||
+      orderNumberInput ||
+      normalizeStockxOrderNumberInput(a.stockxOrderNumber) ||
+      normalizeStockxOrderNumberInput(existing?.stockxOrderNumber) ||
       `MANUAL-${order.galaxusOrderId}-${line.lineNumber ?? 1}`;
     const stockxOrderIdFinal =
       trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null;

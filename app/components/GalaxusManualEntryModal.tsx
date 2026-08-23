@@ -67,7 +67,7 @@ export default function GalaxusManualEntryModal({
   };
 
   const lookupStockxOrder = async (orderNumber: string) => {
-    const trimmed = orderNumber.trim();
+    const trimmed = orderNumber.trim().replace(/^#+/, "").trim();
     if (!trimmed || context !== "galaxus" || !stockxLookupOrderId) return;
     setLookupBusy(true);
     setLookupStatus(null);

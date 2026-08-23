@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
+  normalizeStockxOrderNumberInput,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
 
@@ -21,7 +22,7 @@ export async function GET(
   try {
     await params;
     const { searchParams } = new URL(request.url);
-    const orderNumber = String(searchParams.get("orderNumber") ?? "").trim();
+    const orderNumber = normalizeStockxOrderNumberInput(searchParams.get("orderNumber"));
     if (!orderNumber) {
       return NextResponse.json({ ok: false, error: "Missing orderNumber" }, { status: 400 });
     }
