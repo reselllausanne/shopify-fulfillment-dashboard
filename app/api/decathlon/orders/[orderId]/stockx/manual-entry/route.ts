@@ -162,8 +162,8 @@ export async function POST(
           : null;
 
     const stockxOrderNumberFinal =
-      trimStr(data.stockxOrderNumber) ||
-      a.stockxOrderNumber ||
+      orderNumberInput ||
+      normalizeStockxOrderNumberInput(a.stockxOrderNumber) ||
       `MANUAL-${order.orderId}-${line.lineNumber ?? 1}`;
     const stockxOrderIdFinal = trimStr(data.stockxOrderId) || a.stockxOrderId || null;
 
