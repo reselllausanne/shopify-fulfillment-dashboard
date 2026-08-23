@@ -45,6 +45,10 @@ import {
 } from "@/shopify/restock/liquidationExpressPrice";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import {
+  isRestockFixedPriceNote,
+  parseRestockFixedCompareAt,
+} from "@/shopify/restock/operatorRestockPrice";
+import {
   isJmoneyPriceLockNote,
   JMONEY_PRICE_LOCK_NOTE,
   LIQUIDATION_LOCATION_IDS,
@@ -488,30 +492,49 @@ export async function convergeVariant(
   });
 
   if (desired === "liquidation") {
-    if (!hasLiquidationPricing) {
+    const lockNote = String(stxRow?.manualNote ?? "");
+    const operatorFixed = isRestockFixedPriceNote(lockNote);
+    const operatorSell = toNumber(stxRow?.manualPrice);
+    const operatorCompare = parseRestockFixedCompareAt(lockNote);
+    const useOperatorPrice = operatorFixed && operatorSell != null && operatorSell > 0;
+    const targetSell = useOperatorPrice ? operatorSell : liqPrice;
+    const targetCompare =
+      useOperatorPrice && operatorCompare != null && operatorCompare > operatorSell!
+        ? operatorCompare
+        : referencePrice;
+    const hasTargetPricing =
+      targetSell != null &&
+      targetSell > 0 &&
+      (useOperatorPrice || hasLiquidationPricing);
+
+    if (!hasTargetPricing && !useOperatorPrice) {
       warnings.push(`no StockX liquidation pricing (${pricing.source})`);
     }
 
-    if (hasLiquidationPricing) {
-      // DB side: manualLock=true + manualPrice=liq. manualStock stays null so
-      // Resolver keeps adding physical on top of STX asks (no double-count).
+    if (hasTargetPricing) {
+      // DB side: manualLock=true + manualPrice. Operator restock:fixed-price
+      // keeps the typed sell; formula soldes writes StockX −30%.
       if (stxRow) {
+        const keepNote = useOperatorPrice
+          ? lockNote
+          : `phase4:liquidation home=${homeQty} bussigny=${bussignyQty}`;
         const needDbUpdate =
           !stxRow.manualLock ||
-          toNumber(stxRow.manualPrice) !== liqPrice ||
-          stxRow.manualStock !== null;
+          toNumber(stxRow.manualPrice) !== targetSell ||
+          stxRow.manualStock !== null ||
+          String(stxRow.manualNote ?? "") !== keepNote;
         if (needDbUpdate) {
           await prisma.supplierVariant.update({
             where: { id: stxRow.id },
             data: {
               manualLock: true,
-              manualPrice: liqPrice,
+              manualPrice: targetSell,
               manualStock: null,
               manualUpdatedAt: new Date(),
-              manualNote: `phase4:liquidation home=${homeQty} bussigny=${bussignyQty}`,
+              manualNote: keepNote,
             },
           });
-          changes.push(`DB manualLock=true, manualPrice=${liqPrice!.toFixed(2)}`);
+          changes.push(`DB manualLock=true, manualPrice=${targetSell!.toFixed(2)}`);
         }
       }
 
@@ -519,19 +542,23 @@ export async function convergeVariant(
       if (shopifyVariant?.variantId && shopifyVariant.productId) {
         const currentPrice = toNumber(shopifyVariant.price);
         const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
-        const priceDiffers = currentPrice == null || Math.abs(currentPrice - liqPrice!) > 0.005;
+        const priceDiffers = currentPrice == null || Math.abs(currentPrice - targetSell!) > 0.005;
         const compareDiffers =
-          currentCompareAt == null || Math.abs(currentCompareAt - referencePrice!) > 0.005;
+          targetCompare == null
+            ? false
+            : currentCompareAt == null || Math.abs(currentCompareAt - targetCompare) > 0.005;
         if (priceDiffers || compareDiffers) {
           try {
             await writeShopifyVariantPrice({
               productId: shopifyVariant.productId,
               variantId: shopifyVariant.variantId,
-              price: liqPrice!,
-              compareAtPrice: referencePrice!,
+              price: targetSell!,
+              compareAtPrice: targetCompare,
             });
             changes.push(
-              `Shopify price=${liqPrice!.toFixed(2)} compareAt=${referencePrice!.toFixed(2)}`
+              `Shopify price=${targetSell!.toFixed(2)}${
+                targetCompare != null ? ` compareAt=${targetCompare.toFixed(2)}` : ""
+              }${useOperatorPrice ? " (operator restock)" : ""}`
             );
           } catch (err: any) {
             warnings.push(`Shopify price write failed: ${err?.message ?? err}`);
@@ -550,7 +577,7 @@ export async function convergeVariant(
         try {
           const expressSync = await syncLiquidationExpressPriceMetafield({
             variantId: shopifyVariant.variantId,
-            liquidationPriceChf: liqPrice!,
+            liquidationPriceChf: targetSell!,
           });
           if (expressSync.changed) {
             changes.push(

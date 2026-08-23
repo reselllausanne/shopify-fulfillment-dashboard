@@ -252,6 +252,41 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     expect(result.changes.some((c) => c.includes("reverted to dropship"))).toBe(false);
   });
 
+  it("restock:fixed-price lock keeps operator sell — does not rewrite StockX −30%", async () => {
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-1",
+      supplierVariantId: "stx_v375",
+      price: 110,
+      manualLock: true,
+      manualPrice: 189,
+      manualStock: null,
+      manualNote: "restock:fixed-price compareAt=249.00",
+    });
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({ price: 189, compareAtPrice: 249, onSale: true }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 120,
+      cost: 185.6,
+      compareAt: 219,
+      sellPrice: 129.9,
+      source: "kickdb-live-size",
+    });
+
+    const result = await convergeVariant(GTIN);
+
+    expect(result.desired).toBe("liquidation");
+    expect(prisma.supplierVariant.update).not.toHaveBeenCalled();
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string }> } | undefined;
+      return vars?.variants?.[0]?.price != null;
+    });
+    expect(priceWrites).toHaveLength(0);
+    expect(result.changes.some((c) => c.includes("129.9"))).toBe(false);
+  });
+
   it("afterWebSale + liquidation lane stock remains + soldes price → stays liquidation", async () => {
     mockedMirror.mockResolvedValue(new Map([[GTIN, { qty: 1 }]]));
     mockedQueryRaw.mockResolvedValue([{ available: 1 }]);

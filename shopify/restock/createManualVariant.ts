@@ -83,9 +83,9 @@ export async function ensureManualSizeVariant(input: {
   sizeTitle: string;
   gtin: string;
   dryRun?: boolean;
-  /** When StockX pricing missing — liquidation sell price (CHF). */
+  /** Operator sell price (CHF). Wins over StockX liquidation when set. */
   manualSellPrice?: number | null;
-  /** Optional compare-at for sale badge when pricing is manual. */
+  /** Optional compare-at for sale badge. Wins over formula when > sell. */
   manualCompareAtPrice?: number | null;
 }): Promise<{
   variantId: string;
@@ -148,7 +148,7 @@ export async function ensureManualSizeVariant(input: {
   const manualSell = input.manualSellPrice != null ? Number(input.manualSellPrice) : null;
   const manualCompare =
     input.manualCompareAtPrice != null ? Number(input.manualCompareAtPrice) : null;
-  const usedManualPrice = (!sellPrice || sellPrice <= 0) && manualSell != null && manualSell > 0;
+  const usedManualPrice = manualSell != null && Number.isFinite(manualSell) && manualSell > 0;
 
   if (usedManualPrice) {
     sellPrice = manualSell;

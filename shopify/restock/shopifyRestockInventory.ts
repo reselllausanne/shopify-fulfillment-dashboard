@@ -682,6 +682,8 @@ export async function restockShopifyVariantByGtin(input: {
   gtin: string;
   quantity: number;
   salePrice?: number | null;
+  /** Operator compare-at (CHF). Used when salePrice is set. */
+  compareAtPrice?: number | null;
   dryRun?: boolean;
   /** When set (GTIN disambiguation), restock this variant directly. */
   variantId?: string | null;
@@ -805,18 +807,26 @@ export async function restockShopifyVariantByGtin(input: {
   const quantity = Math.max(0, Math.trunc(input.quantity));
   const salePrice = input.salePrice != null ? Number(input.salePrice) : null;
   const alreadyOnSale = match.onSale;
+  const operatorCompareRaw =
+    input.compareAtPrice != null ? Number(input.compareAtPrice) : null;
+  const operatorCompareAt =
+    operatorCompareRaw != null && Number.isFinite(operatorCompareRaw) ? operatorCompareRaw : null;
 
-  // Compute compareAtPrice: keep existing sale anchor if already on sale, else
-  // anchor to current price so the discount shows on the storefront.
+  // Operator compare-at wins. Else keep existing sale anchor / current list.
   let compareAtPrice: number | null = null;
   if (salePrice != null) {
-    if (alreadyOnSale) {
+    const { resolveOperatorCompareAt } = await import("@/shopify/restock/operatorRestockPrice");
+    compareAtPrice = resolveOperatorCompareAt({
+      salePrice,
+      operatorCompareAt,
+      currentPrice: match.price,
+      currentCompareAt: match.compareAtPrice,
+      alreadyOnSale,
+    });
+    if (alreadyOnSale && operatorCompareAt == null) {
       warnings.push(
-        `Variant already on sale (price ${match.price}, compareAt ${match.compareAtPrice}) — keeping existing sale anchor, logging for later review`
+        `Variant already on sale (price ${match.price}, compareAt ${match.compareAtPrice}) — keeping existing sale anchor`
       );
-      compareAtPrice = match.compareAtPrice;
-    } else if (match.price != null && match.price > salePrice) {
-      compareAtPrice = match.price;
     }
   }
 
@@ -1011,6 +1021,21 @@ export async function restockShopifyVariantByGtin(input: {
         compareAtPrice != null ? ` compareAt=${compareAtPrice.toFixed(2)}` : ""
       }`
     );
+    try {
+      const { lockOperatorRestockPrice } = await import("@/shopify/restock/operatorRestockPrice");
+      const lock = await lockOperatorRestockPrice({
+        gtin,
+        variantId: match.variantId,
+        salePrice,
+        compareAtPrice,
+      });
+      if (lock.locked) {
+        actions.push("locked operator restock price (convergence keeps it)");
+      }
+      warnings.push(...lock.warnings);
+    } catch (err: any) {
+      warnings.push(`Operator price lock failed: ${err?.message ?? err}`);
+    }
   } else if (!dryRun && quantity > 0) {
     const { isLiquidationPhysicalLocation } = await import("@/shopify/inventory/locationConfig");
     if (!isLiquidationPhysicalLocation(locationId)) {

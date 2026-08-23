@@ -113,6 +113,8 @@ const LOCATION_STORAGE_KEY = "restock.locationId";
 const AUTO_MODE_STORAGE_KEY = "restock.autoMode";
 
 const FIXED_PRICE_MODE_STORAGE_KEY = "restock.fixedPriceMode";
+const FIXED_PRICE_VALUE_STORAGE_KEY = "restock.fixedPriceValue";
+const FIXED_COMPARE_AT_STORAGE_KEY = "restock.fixedCompareAt";
 
 type HistoryEntry = {
   id: string;
@@ -124,6 +126,8 @@ type HistoryEntry = {
   location: string;
   at: number;
   warning?: string;
+  price?: number | null;
+  compareAt?: number | null;
 };
 
 function isAwaitingManualAction(
@@ -240,7 +244,23 @@ export default function RestockScanPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     setFixedPriceMode(window.localStorage.getItem(FIXED_PRICE_MODE_STORAGE_KEY) === "1");
+    setFixedPrice(window.localStorage.getItem(FIXED_PRICE_VALUE_STORAGE_KEY) ?? "");
+    setFixedCompareAt(window.localStorage.getItem(FIXED_COMPARE_AT_STORAGE_KEY) ?? "");
   }, []);
+
+  function persistFixedPrice(value: string) {
+    setFixedPrice(value);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(FIXED_PRICE_VALUE_STORAGE_KEY, value);
+    }
+  }
+
+  function persistFixedCompareAt(value: string) {
+    setFixedCompareAt(value);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(FIXED_COMPARE_AT_STORAGE_KEY, value);
+    }
+  }
 
   function toggleFixedPriceMode(next: boolean) {
     setFixedPriceMode(next);
@@ -248,8 +268,8 @@ export default function RestockScanPage() {
       window.localStorage.setItem(FIXED_PRICE_MODE_STORAGE_KEY, next ? "1" : "0");
     }
     if (!next) {
-      setFixedPrice("");
-      setFixedCompareAt("");
+      persistFixedPrice("");
+      persistFixedCompareAt("");
     }
     focusScanInput();
   }
@@ -418,6 +438,8 @@ export default function RestockScanPage() {
             quantity,
             location: currentLoc,
             warning: data.warnings?.[0],
+            price: sell,
+            compareAt: compare,
           });
         }
         prepareNextScan();
@@ -555,7 +577,7 @@ export default function RestockScanPage() {
             onChange={(e) => toggleFixedPriceMode(e.target.checked)}
             className="h-4 w-4"
           />
-          <span>Prix fixe sur ce restock (garde le cost Shopify inchangé)</span>
+          <span>Prix manuel — écrit vente + compare-at sur Shopify (cost inchangé)</span>
         </label>
         {fixedPriceMode && (
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -563,14 +585,14 @@ export default function RestockScanPage() {
               Prix de vente (CHF) *
               <input
                 value={fixedPrice}
-                onChange={(e) => setFixedPrice(e.target.value)}
+                onChange={(e) => persistFixedPrice(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
                     focusScanInput();
                   }
                 }}
-                placeholder="189"
+                placeholder="ex. 189"
                 inputMode="decimal"
                 className="mt-1 w-full rounded-sm border border-gray-400 px-3 py-2 text-sm focus:border-black focus:outline-none"
               />
@@ -579,20 +601,21 @@ export default function RestockScanPage() {
               Compare-at (CHF, optionnel)
               <input
                 value={fixedCompareAt}
-                onChange={(e) => setFixedCompareAt(e.target.value)}
+                onChange={(e) => persistFixedCompareAt(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
                     focusScanInput();
                   }
                 }}
-                placeholder="349"
+                placeholder="ex. 249"
                 inputMode="decimal"
                 className="mt-1 w-full rounded-sm border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
               />
             </label>
             <div className="sm:col-span-2 text-xs text-gray-500">
-              Sans prix fixe : restock normal → cost Shopify remis à 0.
+              Ces montants partent sur Shopify à chaque scan. Décocher = restock
+              soldes auto + cost remis à 0.
             </div>
           </div>
         )}
@@ -1099,6 +1122,9 @@ export default function RestockScanPage() {
                   <span className="text-gray-800">{h.title ?? "(sans titre)"}</span>
                   <span className="ml-2 text-xs text-gray-500">
                     +{h.quantity} @ {h.location}
+                    {h.price != null
+                      ? ` · ${h.price}${h.compareAt != null ? ` / ${h.compareAt}` : ""} CHF`
+                      : ""}
                   </span>
                   {h.warning && (
                     <span className="ml-2 text-xs text-amber-700">⚠ {h.warning}</span>
@@ -1135,6 +1161,13 @@ export default function RestockScanPage() {
               {applyResult.shopify.restock.variant.sku ?? "—"}
             </div>
           )}
+          {applyResult.shopify?.restock?.actions
+            ?.filter((a) => /set price=|locked operator/i.test(a))
+            .map((a) => (
+              <div key={a} className="mt-1 text-xs font-medium text-green-900">
+                {a}
+              </div>
+            ))}
           {applyResult.db && (
             <div className="mt-1 text-xs text-gray-600">
               DB export Galaxus/Decathlon:{" "}
