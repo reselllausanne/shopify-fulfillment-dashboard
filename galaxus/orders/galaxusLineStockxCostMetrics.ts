@@ -69,6 +69,25 @@ export async function galaxusLineStockxCostChfByLineId(
     )
   );
 
+  const orderDbIds = [...new Set(lines.map((l) => String(l.orderId)).filter(Boolean))];
+  const externalBuys =
+    orderDbIds.length > 0
+      ? await prismaAny.galaxusExternalBuy
+          .findMany({
+            where: { galaxusOrderId: { in: orderDbIds }, cancelledAt: null },
+            orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
+          })
+          .catch(() => [])
+      : [];
+  const buysByOrderId = new Map<string, any[]>();
+  for (const b of externalBuys as any[]) {
+    const oid = String(b.galaxusOrderId ?? "").trim();
+    if (!oid) continue;
+    const arr = buysByOrderId.get(oid) ?? [];
+    arr.push(b);
+    buysByOrderId.set(oid, arr);
+  }
+
   const linesByOrderId = new Map<string, typeof lines>();
   for (const line of lines) {
     const oid = String(line.orderId);
@@ -77,14 +96,15 @@ export async function galaxusLineStockxCostChfByLineId(
     linesByOrderId.set(oid, arr);
   }
 
-  for (const [, olines] of linesByOrderId) {
+  for (const [orderDbId, olines] of linesByOrderId) {
     const ref = String(olines[0]?.order?.galaxusOrderId ?? "").trim();
     if (!ref) continue;
     const st = stxByRef.get(ref) ?? null;
     const units = unitsByRef.get(ref) ?? [];
     const lidSet = new Set(olines.map((l) => l.id));
     const omatches = (matches as any[]).filter((m) => lidSet.has(String(m.galaxusOrderLineId ?? "")));
-    const enriched = attachProcurementToLines(olines as any[], st, omatches, units);
+    const obuy = buysByOrderId.get(orderDbId) ?? [];
+    const enriched = attachProcurementToLines(olines as any[], st, omatches, units, obuy);
     for (const row of enriched) {
       const c = row.procurement?.stockxCostChf;
       if (c != null && Number.isFinite(Number(c)) && Number(c) > 0) {

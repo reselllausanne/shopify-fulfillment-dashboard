@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
+import GalaxusExternalBuyPanel, {
+  isExternalBuyLine,
+} from "@/app/galaxus/_components/GalaxusExternalBuyPanel";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
 
 type OrderListItem = {
@@ -520,6 +523,9 @@ export default function GalaxusDirectDeliveryPage() {
     if (proc?.warehouseStockHint === "MAISON") return "THE_ your stock";
     if (proc?.warehouseStockHint === "NER_STOCK") return "NER_ partner stock";
     if (line.physicalStock) return "Warehouse stock";
+    if (proc?.source === "external_buy") {
+      return `Linked ${proc?.supplierKey ?? "EXT"} ${proc?.stockxOrderNumber ?? ""}`.trim();
+    }
     if (proc?.source === "stx_sync") return `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`;
     if (match) return `Linked ${match.stockxOrderNumber}`;
     return "Linked";
@@ -866,14 +872,30 @@ export default function GalaxusDirectDeliveryPage() {
                             disabled={
                               loadingOrder ||
                               !selectedOrder ||
-                              String(selectedOrder?.id ?? "") !== String(selectedOrderId)
+                              String(selectedOrder?.id ?? "") !== String(selectedOrderId) ||
+                              isExternalBuyLine(line)
                             }
                             className="mt-1 px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+                            title={
+                              isExternalBuyLine(line)
+                                ? "Use REI/WEL link panel below (not StockX)"
+                                : undefined
+                            }
                           >
                             Manual entry
                           </button>
                         </div>
                       </div>
+                      {isExternalBuyLine(line) ? (
+                        <GalaxusExternalBuyPanel
+                          orderId={selectedOrderId}
+                          line={line}
+                          onSaved={async () => {
+                            if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
+                            await loadOrders({ force: true });
+                          }}
+                        />
+                      ) : null}
                     </div>
                   );
                 })}

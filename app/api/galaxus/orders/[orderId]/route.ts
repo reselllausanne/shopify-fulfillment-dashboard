@@ -284,7 +284,7 @@ export async function GET(
     );
 
     const prismaAny = prisma as any;
-    const [placement, stx, stxUnits, stockxMatches, mappingsRaw] = await Promise.all([
+    const [placement, stx, stxUnits, stockxMatches, mappingsRaw, externalBuys] = await Promise.all([
       getShipmentPlacementByOrder(orderRow.id),
       getStxLinkStatusForOrder(orderRow.galaxusOrderId, orderRow).catch(() => null),
       prismaAny.stxPurchaseUnit
@@ -339,6 +339,14 @@ export async function GET(
               },
               include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
               orderBy: { updatedAt: "desc" },
+            })
+            .catch(() => [])
+        : Promise.resolve([]),
+      prismaAny.galaxusExternalBuy?.findMany
+        ? prismaAny.galaxusExternalBuy
+            .findMany({
+              where: { galaxusOrderId: orderRow.id, cancelledAt: null },
+              orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
             })
             .catch(() => [])
         : Promise.resolve([]),
@@ -472,7 +480,13 @@ export async function GET(
     );
     const linesWithProcurement = (
       await enrichBuySourceOverrideCosts(
-        attachProcurementToLines(linesWithPhysicalStock, stx, matchesForResponse, stxUnits)
+        attachProcurementToLines(
+          linesWithPhysicalStock,
+          stx,
+          matchesForResponse,
+          stxUnits,
+          Array.isArray(externalBuys) ? externalBuys : []
+        )
       )
     ).map((line: any) => {
       const productKey = resolveOrderLineProductKey(line);
@@ -490,6 +504,7 @@ export async function GET(
       stx,
       stxUnits,
       stockxMatches: matchesForResponse,
+      externalBuys: Array.isArray(externalBuys) ? externalBuys : [],
       shipments: orderRow.shipments.map((shipment: any) => {
         const isStxShipment = String(shipment?.providerKey ?? "").toUpperCase() === "STX";
         const stxShipmentStatus = isStxShipment

@@ -239,6 +239,42 @@ model GalaxusStockxMatch {
   @@schema("public")
 }
 
+/// Manual link: Galaxus line ↔ external site buy (REI / WEL / SNL / …). Not StockX.
+model GalaxusExternalBuy {
+  id String @id @default(uuid())
+
+  galaxusOrderId     String
+  galaxusOrderLineId String
+  unitIndex          Int     @default(0)
+
+  /// REI, WEL, SNL, BAE, …
+  supplierKey          String
+  supplierOrderNumber  String
+  costAmount           Decimal?  @db.Decimal(12, 2)
+  currencyCode         String    @default("CHF")
+  trackingNumber       String?
+  trackingUrl          String?
+  etaMin               DateTime?
+  etaMax               DateTime?
+  status               String?
+  note                 String?
+
+  cancelledAt     DateTime?
+  cancelledReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order     GalaxusOrder     @relation(fields: [galaxusOrderId], references: [id], onDelete: Cascade)
+  orderLine GalaxusOrderLine @relation(fields: [galaxusOrderLineId], references: [id], onDelete: Cascade)
+
+  @@unique([galaxusOrderLineId, unitIndex])
+  @@index([galaxusOrderId])
+  @@index([supplierKey])
+  @@index([supplierOrderNumber])
+  @@schema("public")
+}
+
 model StockXStatusEvent {
   id             String   @id @default(uuid())
   orderMatchId   String
@@ -1755,6 +1791,7 @@ model GalaxusOrder {
   ediFiles       GalaxusEdiFile[]
   routingIssues  OrderRoutingIssue[]
   stockxMatches  GalaxusStockxMatch[]
+  externalBuys   GalaxusExternalBuy[]
 
   @@index([orderDate])
   @@index([archivedAt])
@@ -1814,6 +1851,7 @@ model GalaxusOrderLine {
 
   order         GalaxusOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   stockxMatches GalaxusStockxMatch[]
+  externalBuys  GalaxusExternalBuy[]
 
   @@index([orderId])
   @@schema("public")
