@@ -18,6 +18,8 @@ type EligibleLine = {
   supplierPid: string | null;
   supplierSku: string | null;
   productName: string | null;
+  productKey?: string | null;
+  providerKey?: string | null;
   size: string | null;
   providerKey?: string | null;
   productKey?: string | null;
