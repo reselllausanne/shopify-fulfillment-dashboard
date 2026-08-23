@@ -21,8 +21,6 @@ type EligibleLine = {
   productKey?: string | null;
   providerKey?: string | null;
   size: string | null;
-  providerKey?: string | null;
-  productKey?: string | null;
   quantity: number;
   remaining: number;
 };
