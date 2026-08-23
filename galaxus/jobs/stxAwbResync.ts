@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
-import { fetchRecentStockxBuyingOrders, fetchStockxBuyOrderDetails } from "@/galaxus/stx/stockxClient";
+import { resolveStockxBuyByOrderNumberWithToken } from "@/decathlon/stx/manualStockxEnrich";
+import { fetchStockxBuyOrderDetails } from "@/galaxus/stx/stockxClient";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 
 type StxAwbResyncResult = {
@@ -14,14 +15,16 @@ type StxAwbResyncResult = {
 type StxAwbResyncOptions = {
   minAgeHours?: number;
   limitUnits?: number;
-  orderListPages?: number;
   concurrency?: number;
 };
 
+/**
+ * Backfill AWB on linked units that still have null AWB.
+ * Uses stored order # / order id (all buying states) — not PENDING-only list.
+ */
 export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promise<StxAwbResyncResult> {
   const minAgeHours = Math.max(1, options.minAgeHours ?? 48);
   const limitUnits = Math.max(1, options.limitUnits ?? 500);
-  const orderListPages = Math.max(1, options.orderListPages ?? 12);
   const concurrency = Math.max(1, options.concurrency ?? 2);
   const cutoff = new Date(Date.now() - minAgeHours * 60 * 60 * 1000);
 
@@ -44,7 +47,7 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
     },
     orderBy: { createdAt: "asc" },
     take: limitUnits,
-    select: { id: true, stockxOrderId: true },
+    select: { id: true, stockxOrderId: true, stockxOrderNumber: true },
   });
 
   const orderIds = Array.from(
@@ -63,16 +66,25 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
     };
   }
 
-  const recentOrders = await fetchRecentStockxBuyingOrders(token, {
-    first: 50,
-    maxPages: orderListPages,
+  const matches = await (prisma as any).galaxusStockxMatch.findMany({
+    where: { stockxOrderId: { in: orderIds } },
+    select: { stockxOrderId: true, stockxChainId: true },
   });
   const chainByOrderId = new Map<string, string>();
-  for (const order of recentOrders) {
-    const orderId = typeof order.orderId === "string" ? order.orderId.trim() : "";
-    const chainId = typeof order.chainId === "string" ? order.chainId.trim() : "";
-    if (!orderId || !chainId) continue;
-    chainByOrderId.set(orderId, chainId);
+  for (const m of matches) {
+    const oid = String(m?.stockxOrderId ?? "").trim();
+    const chain = String(m?.stockxChainId ?? "").trim();
+    if (oid && chain) chainByOrderId.set(oid, chain);
+  }
+
+  const unitByOrderId = new Map<string, { stockxOrderNumber: string | null }>();
+  for (const unit of pendingUnits) {
+    const oid = String(unit?.stockxOrderId ?? "").trim();
+    if (!oid || unitByOrderId.has(oid)) continue;
+    unitByOrderId.set(oid, {
+      stockxOrderNumber:
+        typeof unit?.stockxOrderNumber === "string" ? unit.stockxOrderNumber : null,
+    });
   }
 
   const limiter = createLimiter(concurrency);
@@ -82,17 +94,36 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
   await Promise.all(
     orderIds.map((stockxOrderId) =>
       limiter(async () => {
-        const chainId = chainByOrderId.get(stockxOrderId) ?? "";
-        if (!chainId) return;
-        let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>>;
-        try {
-          details = await fetchStockxBuyOrderDetails(token, {
-            chainId,
-            orderId: stockxOrderId,
-          });
-        } catch {
-          return;
+        let chainId = chainByOrderId.get(stockxOrderId) ?? "";
+        let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>> | null = null;
+
+        if (chainId) {
+          try {
+            details = await fetchStockxBuyOrderDetails(token, {
+              chainId,
+              orderId: stockxOrderId,
+            });
+          } catch {
+            details = null;
+          }
         }
+
+        if (!details?.awb) {
+          const lookupKey =
+            String(unitByOrderId.get(stockxOrderId)?.stockxOrderNumber ?? "").trim() ||
+            stockxOrderId;
+          const resolved = await resolveStockxBuyByOrderNumberWithToken(token, lookupKey);
+          if (!resolved.ok) return;
+          chainId = String(resolved.listNode.chainId ?? "").trim();
+          details = {
+            awb: resolved.details.awb,
+            etaMin: resolved.details.etaMin,
+            etaMax: resolved.details.etaMax,
+            order: resolved.details.order,
+          } as Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>>;
+        }
+
+        if (!details) return;
 
         const checkoutType =
           typeof details.order?.checkoutType === "string" ? details.order.checkoutType : null;
@@ -125,4 +156,3 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
     updatedOrders,
   };
 }
-

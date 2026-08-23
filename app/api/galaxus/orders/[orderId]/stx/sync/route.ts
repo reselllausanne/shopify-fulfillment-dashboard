@@ -11,6 +11,7 @@ import {
 } from "@/galaxus/stx/purchaseUnits";
 import { resolveStockxBuyByOrderNumberWithToken } from "@/decathlon/stx/manualStockxEnrich";
 import { leanBuyOrder } from "@/galaxus/stx/leanBuyOrder";
+import { refreshLinkedStxUnitsByStoredRefs } from "@/galaxus/stx/linkedUnitRefresh";
 import {
   extractStockxVariantId,
   fetchRecentStockxBuyingOrders,
@@ -181,6 +182,75 @@ export async function POST(
         },
         { status: 409 }
       );
+    }
+
+    /**
+     * Linked units already have stockxOrderId/order # — re-fetch AWB/ETA/settled even when the buy
+     * left StockX PENDING (common for non-express). Same idea as Decathlon orderNumberRefresh.
+     */
+    const linkedUnitRefresh =
+      awbBackfillSupplierVariantIds.size > 0 ||
+      etaBackfillSupplierVariantIds.size > 0 ||
+      settledBackfillKeys.size > 0
+        ? await refreshLinkedStxUnitsByStoredRefs(token, reservation.galaxusOrderId)
+        : {
+            eligible: 0,
+            attempted: 0,
+            refreshed: 0,
+            awbBackfilled: 0,
+            etaBackfilled: 0,
+            settledBackfilled: 0,
+            failed: 0,
+            skipped: 0,
+            failures: [],
+          };
+
+    if (linkedUnitRefresh.refreshed > 0) {
+      console.info("[GALAXUS][STX][SYNC] Linked-unit stored-ref refresh", linkedUnitRefresh);
+    }
+
+    // After stored-ref refresh, only crawl PENDING when we still need new links.
+    const needsPendingLinkWork =
+      pendingSupplierVariantIds.size > 0 || unlinkedPurchaseUnits > 0;
+    if (!needsPendingLinkWork) {
+      const status = await getStxLinkStatusForOrder(reservation.galaxusOrderId);
+      const postLinkReconcile = await reconcileGalaxusOrderProcurement(reservation.galaxusOrderId, {
+        skipAutoLink: true,
+      }).catch((err) => {
+        console.warn("[GALAXUS][STX][SYNC] post-refresh procurement reconcile skipped:", err?.message ?? err);
+        return null;
+      });
+      return NextResponse.json({
+        ok: true,
+        galaxusOrderId: reservation.galaxusOrderId,
+        stockxListWarning: null,
+        stockxBuyingOrders: [],
+        stockxBuyingOrdersEnriched: [],
+        sync: {
+          fetchedOrders: 0,
+          enrichedOrders: 0,
+          enrichmentFailed: 0,
+          detailCalls: 0,
+          inspectedOrders: 0,
+          linked: 0,
+          alreadyLinked: 0,
+          noPendingUnit: 0,
+          missingEta: 0,
+          etaBackfilled: linkedUnitRefresh.etaBackfilled,
+          skippedNoVariant: 0,
+          skippedNotPendingVariant: 0,
+          settledBackfilled: linkedUnitRefresh.settledBackfilled,
+          errors: linkedUnitRefresh.failed,
+          listWarning: null,
+          linkedFromSavedMatches: 0,
+          savedMatchAttempts: 0,
+          savedMatchSkipped: 0,
+          awbBackfilled: linkedUnitRefresh.awbBackfilled,
+          linkedUnitRefresh,
+          ensuredMatches: postLinkReconcile?.ensuredMatches ?? 0,
+        },
+        status,
+      });
     }
 
     // Same as Decathlon sync: only the Pro "pending" buying list (state=PENDING). Shipped buys won't appear.
@@ -801,16 +871,17 @@ export async function POST(
         alreadyLinked,
         noPendingUnit,
         missingEta,
-        etaBackfilled,
+        etaBackfilled: etaBackfilled + linkedUnitRefresh.etaBackfilled,
         skippedNoVariant,
         skippedNotPendingVariant,
-        settledBackfilled,
+        settledBackfilled: settledBackfilled + linkedUnitRefresh.settledBackfilled,
         errors,
         listWarning: stockxListWarning,
         linkedFromSavedMatches,
         savedMatchAttempts,
         savedMatchSkipped,
-        awbBackfilled,
+        awbBackfilled: awbBackfilled + linkedUnitRefresh.awbBackfilled,
+        linkedUnitRefresh,
         ensuredMatches: postLinkReconcile?.ensuredMatches ?? 0,
       },
       status,
