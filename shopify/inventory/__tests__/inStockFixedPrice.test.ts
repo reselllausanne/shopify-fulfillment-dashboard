@@ -53,4 +53,27 @@ describe("inStockFixedPrice", () => {
       })
     ).toBe(false);
   });
+
+  it("resolves Supreme boxers by productId / title / StockX SKU, not socks", () => {
+    const byId = resolveInStockFixedPrice({ productId: "15074846179714" });
+    expect(byId?.sellChf).toBe(45);
+    expect(byId?.expressChf).toBe(59);
+    expect(byId?.label).toMatch(/Boxer/i);
+
+    expect(
+      isInStockFixedPriceProduct({
+        title: "Supreme Hanes Boxer Briefs (4 Pack) White",
+      })
+    ).toBe(true);
+    expect(
+      isInStockFixedPriceProduct({
+        sku: "eadd2461-f6c4-45eb-86f8-83869bb034b3-S",
+      })
+    ).toBe(true);
+    expect(
+      isInStockFixedPriceProduct({
+        title: "Supreme Hanes Crew Socks (4 Pack) White",
+      })
+    ).toBe(false);
+  });
 });

@@ -6,7 +6,7 @@
  *   SHOPIFY_ADMIN_ONLY_PRODUCT_IDS=15340410732930,...
  *   SHOPIFY_ADMIN_ONLY_VARIANT_IDS=56670660067714
  *
- * Includes fixed-price in-stock lane (Essentials / Bape / AP×Travis).
+ * Includes fixed-price in-stock lane (Essentials / Bape / AP×Travis / Supreme boxers).
  * Python SSE/StockX path mirrors this list in
  * `portable_product_upsert/admin_only_products.py` (hard-skip update).
  */
@@ -24,6 +24,9 @@ const HARDCODED_PRODUCT_IDS = new Set([
   // Bape
   "15356478325122", // Check by Bathing Tee
   "15356478357890", // Big Ape Head Tee
+  // Supreme Hanes boxers (4-pack) — JMoney retail, never StockX soldes
+  "15074846179714", // Black
+  "15075733504386", // White
 ]);
 
 const HARDCODED_VARIANT_IDS = new Set([

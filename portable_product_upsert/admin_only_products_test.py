@@ -6,6 +6,8 @@ def test_ids():
     assert is_in_stock_fixed_price_product(product_id="15115016831362")
     assert is_in_stock_fixed_price_product(product_id="gid://shopify/Product/15356478325122")
     assert is_in_stock_fixed_price_product(product_id="15340411617666")
+    assert is_in_stock_fixed_price_product(product_id="15074846179714")
+    assert is_in_stock_fixed_price_product(product_id="gid://shopify/Product/15075733504386")
     assert not is_in_stock_fixed_price_product(product_id="999999999")
 
 
@@ -15,6 +17,8 @@ def test_titles():
     )
     assert is_in_stock_fixed_price_product(title="Essentials Tee Stretch Limo SS22")
     assert is_in_stock_fixed_price_product(title="BAPE Big Ape Head Tee White")
+    assert is_in_stock_fixed_price_product(title="Supreme Hanes Boxer Briefs (4 Pack) Black")
+    assert not is_in_stock_fixed_price_product(title="Supreme Hanes Crew Socks (4 Pack) White")
     assert not is_in_stock_fixed_price_product(
         title="Nike Air Max 1 Essential Light Bone/Psychic Blue"
     )
@@ -23,6 +27,7 @@ def test_titles():
 def test_skus():
     assert is_in_stock_fixed_price_product(sku="125HO244368F-M")
     assert is_in_stock_fixed_price_product(sku="192HO246258F")
+    assert is_in_stock_fixed_price_product(sku="eadd2461-f6c4-45eb-86f8-83869bb034b3-S")
     assert not is_in_stock_fixed_price_product(sku="FZ5808-009-44")
 
 

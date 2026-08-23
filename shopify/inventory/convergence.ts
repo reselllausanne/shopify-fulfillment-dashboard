@@ -46,6 +46,7 @@ import {
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
 import {
   isJmoneyPriceLockNote,
+  JMONEY_PRICE_LOCK_NOTE,
   LIQUIDATION_LOCATION_IDS,
   ONLINE_LOCATION,
 } from "@/shopify/inventory/locationConfig";
@@ -380,10 +381,28 @@ export async function convergeVariant(
     warnings.push("Essentials product — liquidation skipped (Bussigny stock kept at manual price)");
   }
 
-  // Fixed-price warehouse lanes (Essentials / Bape / AP×Travis):
+  // Fixed-price warehouse lanes (Essentials / Bape / AP×Travis / Supreme boxers):
   // - never StockX liquidation / never auto-reprice
   // - express 48h only while physical stock remains; normal price stays
   if (fixedPriceRule && shopifyVariant?.variantId) {
+    const note = String(stxRow?.manualNote ?? "");
+    const isSoldesLock = Boolean(stxRow?.manualLock) && /phase4:liquidation/i.test(note);
+    if (stxRow && isSoldesLock) {
+      const sell = fixedPriceRule.sellChf ?? null;
+      await prisma.supplierVariant.update({
+        where: { id: stxRow.id },
+        data: {
+          manualLock: true,
+          manualPrice: sell,
+          manualStock: null,
+          manualUpdatedAt: new Date(),
+          manualNote: JMONEY_PRICE_LOCK_NOTE,
+        },
+      });
+      changes.push(
+        `soldes lock → ${JMONEY_PRICE_LOCK_NOTE}${sell != null ? ` ${sell.toFixed(2)}` : ""}`
+      );
+    }
     const expressSync = await syncPhysicalExpressAvailability({
       variantId: shopifyVariant.variantId,
       physicalQty,

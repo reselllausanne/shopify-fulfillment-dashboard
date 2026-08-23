@@ -1,5 +1,5 @@
 """
-Hard-skip list for in-store fixed-price clothing (Essentials / Bape / AP×Travis).
+Hard-skip list for in-store fixed-price clothing (Essentials / Bape / AP×Travis / Supreme boxers).
 
 StockX / SSE / main.py must NEVER rewrite price, express_price, compareAt, or
 Chemin qty for these. Keep in sync with:
@@ -45,6 +45,13 @@ BAPE_PRODUCT_IDS = frozenset(
     }
 )
 
+SUPREME_BOXER_PRODUCT_IDS = frozenset(
+    {
+        "15074846179714",  # 4 Pack Black
+        "15075733504386",  # 4 Pack White
+    }
+)
+
 ESSENTIALS_PRODUCT_IDS = frozenset(
     {
         "15340410732930",  # Shorts Stretch Limo
@@ -62,6 +69,7 @@ HARDCODED_PRODUCT_IDS = frozenset(
         *ESSENTIALS_PRODUCT_IDS,
         *AUDEMARS_TRAVIS_PRODUCT_IDS,
         *BAPE_PRODUCT_IDS,
+        *SUPREME_BOXER_PRODUCT_IDS,
     }
 )
 
@@ -79,6 +87,7 @@ _TITLE_PATTERNS = tuple(
         r"Big Ape Head Tee\b",
         r"Travis Scott.*Audemars.*\bTee\b",
         r"Audemars Piguet.*\bTee\b",
+        r"Supreme Hanes Boxer Briefs\b",
     )
 )
 
@@ -89,6 +98,8 @@ _SKU_BASES = (
     "125HO244368F",
     "160BT212012F",
     "160BT212013F",
+    "eadd2461-f6c4-45eb-86f8-83869bb034b3",
+    "5ae9ed80-6772-46d8-922d-a7d03b251d01",
 )
 
 
