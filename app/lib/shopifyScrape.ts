@@ -302,12 +302,18 @@ export async function startRun(shop: ScraperShop): Promise<number> {
 /** Mark runs stuck in 'running' longer than maxAgeMin as errored (crash recovery). */
 export async function recoverStaleRuns(maxAgeMin = 20): Promise<void> {
   try {
+    await scraperQuery(`ALTER TABLE scraper.scrape_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
+  } catch {
+    /* best-effort */
+  }
+  try {
     await scraperQuery(
       `UPDATE scraper.scrape_runs
-         SET status = 'error', finished_at = NOW(),
+         SET status = CASE WHEN COALESCE(products_listed, 0) > 0 THEN 'interrupted' ELSE 'error' END,
+             finished_at = NOW(),
              message = COALESCE(message, '') || ' [auto-recovered: stale run]'
        WHERE status = 'running'
-         AND started_at < NOW() - make_interval(mins => $1::int)`,
+         AND COALESCE(heartbeat_at, started_at) < NOW() - make_interval(mins => $1::int)`,
       [maxAgeMin]
     );
   } catch {

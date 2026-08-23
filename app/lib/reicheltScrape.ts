@@ -6,6 +6,7 @@ import {
   ReicheltClient,
   extractReicheltCategorySlug,
   reicheltConfig,
+  clearReicheltScrapeProgress,
   type ReicheltProduct,
 } from "@/app/lib/reicheltClient";
 import {
@@ -94,7 +95,18 @@ async function updateRun(runId: number, fields: Record<string, unknown>) {
   const keys = Object.keys(fields);
   if (!keys.length) return;
   const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(", ");
-  await scraperQuery(`UPDATE scraper.scrape_runs SET ${sets} WHERE id = $1`, [runId, ...keys.map((k) => fields[k])]);
+  try {
+    await scraperQuery(
+      `UPDATE scraper.scrape_runs SET ${sets}, heartbeat_at = NOW() WHERE id = $1`,
+      [runId, ...keys.map((k) => fields[k])]
+    );
+  } catch {
+    await scraperQuery(`ALTER TABLE scraper.scrape_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
+    await scraperQuery(
+      `UPDATE scraper.scrape_runs SET ${sets}, heartbeat_at = NOW() WHERE id = $1`,
+      [runId, ...keys.map((k) => fields[k])]
+    );
+  }
 }
 
 function runMessage(stats: ReicheltRunStats, discovery: string, imageSynced: number, imageFailed: number) {
@@ -454,6 +466,7 @@ export async function scrapeReicheltShop(
           ? `${runMessage(stats, discovery, imageSynced, imageFailed)} · reichelt_unreachable_or_503_retry_later`
           : runMessage(stats, discovery, imageSynced, imageFailed),
     });
+    if (stats.listed > 0 || stats.wrote > 0) clearReicheltScrapeProgress();
   } catch (err: any) {
     await updateRun(runId, {
       status: stats.listed > 0 || stats.wrote > 0 ? "interrupted" : "error",

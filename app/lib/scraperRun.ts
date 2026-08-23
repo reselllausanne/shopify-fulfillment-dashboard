@@ -19,15 +19,23 @@ export async function startRun(shop: ScraperShop): Promise<number> {
   return Number(rows[0].id);
 }
 
-/** Mark runs stuck in 'running' longer than maxAgeMin as errored (crash recovery). */
+/** Mark runs stuck in 'running' longer than maxAgeMin as errored (crash recovery).
+ * Uses heartbeat_at when present so long REI scrapes are not killed while still progressing.
+ */
 export async function recoverStaleRuns(maxAgeMin = 20): Promise<void> {
+  try {
+    await scraperQuery(`ALTER TABLE scraper.scrape_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
+  } catch {
+    /* best-effort — column may already exist or lack DDL rights */
+  }
   try {
     await scraperQuery(
       `UPDATE scraper.scrape_runs
-         SET status = 'error', finished_at = NOW(),
+         SET status = CASE WHEN COALESCE(products_listed, 0) > 0 THEN 'interrupted' ELSE 'error' END,
+             finished_at = NOW(),
              message = COALESCE(message, '') || ' [auto-recovered: stale run]'
        WHERE status = 'running'
-         AND started_at < NOW() - make_interval(mins => $1::int)`,
+         AND COALESCE(heartbeat_at, started_at) < NOW() - make_interval(mins => $1::int)`,
       [maxAgeMin]
     );
   } catch {

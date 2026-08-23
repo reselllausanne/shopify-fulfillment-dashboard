@@ -206,6 +206,64 @@ function reicheltProxyUrl(): string | null {
   return url;
 }
 
+function reicheltProgressPath(): string {
+  return String(process.env.SCRAPER_REI_PROGRESS_FILE || "/app/.data/reichelt-scrape-progress.json").trim();
+}
+
+export type ReicheltScrapeProgress = {
+  lastShard: number;
+  updatedAt: string;
+  runId?: number;
+};
+
+export function readReicheltScrapeProgress(): ReicheltScrapeProgress | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = reicheltProgressPath();
+    if (!fs.existsSync(path)) return null;
+    const raw = JSON.parse(fs.readFileSync(path, "utf8")) as ReicheltScrapeProgress;
+    if (!Number.isFinite(raw?.lastShard)) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+export function writeReicheltScrapeProgress(progress: ReicheltScrapeProgress): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pathMod = require("node:path") as typeof import("node:path");
+    const path = reicheltProgressPath();
+    fs.mkdirSync(pathMod.dirname(path), { recursive: true });
+    fs.writeFileSync(path, JSON.stringify(progress));
+  } catch (err) {
+    console.warn("[SCRAPER] rei progress write failed:", (err as Error)?.message || err);
+  }
+}
+
+export function clearReicheltScrapeProgress(): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = reicheltProgressPath();
+    if (fs.existsSync(path)) fs.unlinkSync(path);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Resume shard: progress file when SCRAPER_REI_RESUME≠0; else SCRAPER_REI_SITEMAP_START_SHARD. */
+export function resolveReicheltStartShard(): number {
+  if (String(process.env.SCRAPER_REI_RESUME ?? "1") !== "0") {
+    const progress = readReicheltScrapeProgress();
+    if (progress) return Math.max(0, progress.lastShard);
+  }
+  return Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_START_SHARD || 0));
+}
+
 export function reicheltConfig() {
   return {
     userAgent: DEFAULT_UA,
@@ -761,7 +819,10 @@ export class ReicheltClient {
 
   async *iterProductSitemapShards(): AsyncGenerator<{ shard: number; urls: string[] }> {
     const cfg = reicheltConfig();
-    const startShard = Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_START_SHARD || 0));
+    const startShard = resolveReicheltStartShard();
+    if (startShard > 0) {
+      console.log(`[SCRAPER] rei resuming sitemap from shard ${startShard}`);
+    }
     const shards = await this.resolveProductSitemapShards();
     let consecutiveHardSkips = 0;
     const maxConsecutiveSkips = Math.max(
@@ -810,6 +871,7 @@ export class ReicheltClient {
         continue;
       }
       consecutiveHardSkips = 0;
+      writeReicheltScrapeProgress({ lastShard: shard, updatedAt: new Date().toISOString() });
       const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim());
       yield { shard, urls };
     }
