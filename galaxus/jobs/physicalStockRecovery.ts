@@ -3,6 +3,7 @@ import { normalizeSize, normalizeSku, validateGtin } from "@/app/lib/normalize";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { isGalaxusCatalogReady } from "@/galaxus/exports/feedEligibility";
 import { resolvePhysicalCatalogIdentity } from "@/galaxus/jobs/physicalCatalogHydrate";
+import { hydrateSupplierVariantsMissingCatalog } from "@/galaxus/jobs/hydrateCatalogIdentity";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 
 const VAT_DIVISOR = 1.081;
@@ -572,6 +573,11 @@ export async function recoverPhysicalStockForGalaxus(
     // Dedupe first so we never spend a KickDB lookup on a row we are about to delete.
     duplicateNerRowsRemoved = await removeRedundantPhysicalRows(normalizedGtins);
     catalogRowsHydrated = await hydrateIncompletePhysicalRows(normalizedGtins, catalogUnhydrated);
+    const stxHydrated = await hydrateSupplierVariantsMissingCatalog({
+      supplierVariantIdPrefix: "stx_",
+      limit: 200,
+    });
+    catalogRowsHydrated += stxHydrated.hydrated;
   }
 
   const changedRows =

@@ -16,6 +16,7 @@ import {
   syncLiquidationExpressPriceMetafield,
 } from "@/shopify/restock/liquidationExpressPrice";
 import { gtinCandidates } from "@/shopify/restock/gtinNormalize";
+import { resolvePhysicalCatalogIdentity } from "@/galaxus/jobs/physicalCatalogHydrate";
 
 const METAFIELD_SET_MUTATION = /* GraphQL */ `
 mutation LiqSetMetafield($metafields: [MetafieldsSetInput!]!) {
@@ -141,7 +142,7 @@ export async function applyLiquidationSaleDisplay(input: {
         gtin: { in: cands.length > 0 ? cands : [input.gtin] },
         supplierVariantId: { startsWith: "stx_" },
       },
-      select: { id: true, manualLock: true, manualPrice: true },
+      select: { id: true, supplierVariantId: true, manualLock: true, manualPrice: true, sourceImageUrl: true, images: true },
     });
     if (stxRow) {
       const needUpdate =
@@ -158,6 +159,27 @@ export async function applyLiquidationSaleDisplay(input: {
             manualNote: `restock:liquidation compareAt=${reference.toFixed(2)}`,
           },
         });
+      }
+      const hasImages =
+        Boolean(stxRow.sourceImageUrl?.trim()) ||
+        (Array.isArray(stxRow.images) && stxRow.images.length > 0);
+      if (!hasImages) {
+        const identity = await resolvePhysicalCatalogIdentity(input.gtin);
+        if (identity.brand && identity.images.length > 0) {
+          await prisma.supplierVariant.update({
+            where: { id: stxRow.id },
+            data: {
+              supplierBrand: identity.brand,
+              images: identity.images,
+              sourceImageUrl: identity.images[0],
+              imageSyncStatus: "PENDING",
+              imageSyncError: null,
+              ...(identity.name ? { supplierProductName: identity.name } : {}),
+            },
+          });
+        } else {
+          warnings.push("KickDB has no brand/images for this GTIN — Galaxus master will skip until hydrated");
+        }
       }
     } else {
       warnings.push(
