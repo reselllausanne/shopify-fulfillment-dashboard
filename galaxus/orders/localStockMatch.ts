@@ -194,7 +194,7 @@ async function loadShopifySkuByGtin(gtins: string[]): Promise<Map<string, string
  * - still have physical qty, OR
  * - match the warehouse in-stock fixed-price lane (Essentials / Bape / AP / boxers)
  *
- * COGS for the fixed-price lane come from `inStockFixedPrice.ts` (hardcoded).
+ * COGS for the fixed-price lane come from `inStockFixedPrice.ts` (tee 26 / hoodie 42 / Bape 35 / AP 40 / boxers 20).
  */
 export async function ensureLocalStockMatchesForOrder(params: {
   order: {
@@ -279,8 +279,8 @@ export async function ensureLocalStockMatchesForOrder(params: {
         existingMatch.stockxAmount != null && Number.isFinite(Number(existingMatch.stockxAmount))
           ? Number(existingMatch.stockxAmount)
           : null;
-      // Refresh cost when lane COGS is known and match still at 0 / missing.
-      if (isLocal && decision.costChf > 0 && (existingAmt == null || existingAmt === 0)) {
+      // Refresh when lane COGS is known and match amount is missing or stale.
+      if (isLocal && decision.costChf > 0 && existingAmt !== decision.costChf) {
         await upsertGalaxusLocalStockMatch({
           order: params.order,
           line: { ...line, shopifySku },

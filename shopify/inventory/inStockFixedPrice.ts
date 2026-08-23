@@ -46,24 +46,25 @@ export type InStockFixedPriceRule = InStockFixedPriceConfig & {
   titlePatterns?: RegExp[];
 };
 
-/** Owned warehouse / Lab stock cost per unit (CHF). Values per user 2026-08-16. */
-const ESSENTIALS_COST_CHF = 26;
+/** Owned warehouse / Lab stock cost per unit (CHF). Values per user 2026-08-23. */
+const ESSENTIALS_TEE_COST_CHF = 26;
+const ESSENTIALS_HOODIE_COST_CHF = 42;
 const BAPE_COST_CHF = 35;
 const AUDEMARS_TRAVIS_COST_CHF = 40;
 const SUPREME_BOXER_COST_CHF = 20;
 
 export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
   {
-    costChf: ESSENTIALS_COST_CHF,
+    costChf: ESSENTIALS_HOODIE_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (fixed 59/89, cost 26)",
+    matchReason: "Essential Hoodie (fixed 59/89, cost 42)",
     skuBases: ["192HO246258F", "192HO246250F"],
     titlePatterns: [/^Essentials Hoodie\b/i, /Fear of God Essentials.*Hoodie\b/i],
   },
   {
-    costChf: ESSENTIALS_COST_CHF,
+    costChf: ESSENTIALS_TEE_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential T-Shirt (in stock)",
@@ -80,7 +81,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
   },
   {
-    costChf: ESSENTIALS_COST_CHF,
+    costChf: ESSENTIALS_TEE_COST_CHF,
     sellChf: ESSENTIALS_SELL_CHF,
     expressChf: ESSENTIALS_EXPRESS_CHF,
     label: "Essential Shorts (in stock)",

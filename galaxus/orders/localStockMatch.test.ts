@@ -5,10 +5,18 @@ import {
 } from "@/galaxus/orders/localStockMatch";
 
 describe("resolveGalaxusLocalStockCostChf", () => {
-  it("returns Essentials hoodie hard COGS 26", () => {
+  it("returns Essentials hoodie hard COGS 42", () => {
     const r = resolveGalaxusLocalStockCostChf({
       productName: "Fear Of God Essentials Fleece Hoodie (FW24) Black (S)",
       shopifySku: "192HO246250F-S",
+    });
+    expect(r?.costChf).toBe(42);
+  });
+
+  it("returns Essentials tee hard COGS 26", () => {
+    const r = resolveGalaxusLocalStockCostChf({
+      productName: "Fear Of God Essentials Tee Stretch Limo",
+      shopifySku: "125HO244368F-M",
     });
     expect(r?.costChf).toBe(26);
   });
@@ -43,7 +51,7 @@ describe("shouldAutoLocalStockMatch", () => {
       physicalStock: { qty: 0 },
     });
     expect(d.ok).toBe(true);
-    expect(d.costChf).toBe(26);
+    expect(d.costChf).toBe(42);
   });
 
   it("auto-links generic STX line when physical stock > 0 at cost 0", () => {
