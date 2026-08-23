@@ -56,6 +56,13 @@ function deferReicheltImageSync(): boolean {
 }
 
 function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost: ReicheltLandedCost) {
+  const descriptionText = product.descriptionHtml
+    ? product.descriptionHtml
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 3500)
+    : null;
   return JSON.stringify({
     type: "reichelt_landed_cost",
     articleId: product.articleId,
@@ -78,6 +85,7 @@ function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost:
     stockText: product.stockText,
     breadcrumbs: product.breadcrumbs,
     productUrl: product.productUrl,
+    descriptionText: descriptionText || undefined,
     imageStoredInDb: false,
     stockSource: "availability_status",
   });

@@ -114,10 +114,81 @@ const REI_LABEL_TO_KIND: Array<{ pattern: RegExp; kind: GalaxusProductKind }> = 
     kind: "dev_board",
   },
 
-  // active semiconductors
+  // Lighting BEFORE `led\b` in active semiconductors — otherwise tubes/lamps map to Transistor.
   {
     pattern:
-      /transistor|mosfet|igbt|thyristor|diode|zener|led\b|optocoupl|triac|halbleiter|semiconductor|active component|composant actif|aktives bauelement|gate driver|driver ic|integrated circuit|\bic\b|microprocesseur|processeur embarqu|spannungsregler|regulator|op.?amp|operational amplifier|logic ic|memory ic|timer ic|convertisseur|wandler/i,
+      /campinglampe|camping[-\s]?lampe|camping[-\s]?licht|camping[-\s]?leuchte|campingleuchte|camping\s*light|lampe.*camping|lumière.*camping|akku[-\s]?camping|led[-\s]?camping|lumière\s*extérieure\s*led|outdoor\s*led.*(?:batter|akku)|led[-\s]?akku[-\s]?camping|\bglen\b/i,
+    kind: "camping_lamp",
+  },
+  {
+    pattern:
+      /led[-\s]?röhre|led[-\s]?roehre|led[-\s]?tube|tube\s*led|röhre\s*t[58]|roehre\s*t[58]|\bt5\b.*(?:led|röhre|tube)|\bt8\b.*(?:led|röhre|tube)|(?:led|röhre|tube).*\bt[58]\b|culot\s*g13|sockel\s*g13|\bg13\b.*(?:tube|röhre|led)|leuchtmittel|filament\s*led|lampe\s*filament|led[-\s]?filament|ampoule\s*led|glühbirne|gluehbirne|led[-\s]?birne|led\s*bulb|lampe\s*led|led[-\s]?lampe(?!.*(?:driver|ic|modul))|projecteur\s*led|led[-\s]?strahler|led[-\s]?spot|gu10|gu5\.?3|gu4|e27|e14|e40|mr16/i,
+    kind: "light_bulb",
+  },
+  {
+    pattern:
+      /stirnlampe|headlamp|head\s*torch|lampe\s*frontale/i,
+    kind: "headlamp",
+  },
+  {
+    pattern:
+      /taschenlampe|flashlight|\btorch\b|lampe\s*de\s*poche/i,
+    kind: "flashlight",
+  },
+  {
+    pattern:
+      /lampe\s*de\s*travail|arbeitsleuchte|werkstattlampe|werkstattleuchte|work\s*light|baustellenstrahler|projecteur\s*de\s*chantier|unterbau|sous[-\s]?meuble|schrankbeleuchtung|stehlampe|tischlampe|deckenleuchte|wandleuchte|lampe\s*de\s*table|aussenleuchte|außenleuchte|gartenleuchte|solarleuchte|outdoor.?light|panneau\s*(?:à\s*)?led|led[-\s]?panel/i,
+    kind: "home_lamp",
+  },
+  {
+    pattern:
+      /bewegungsmelder|motion\s*sensor|motion\s*detector|détecteur\s*de\s*mouvement|detecteur\s*de\s*mouvement|détecteur\s*de\s*présence|anwesenheitssensor|\bpir\b/i,
+    kind: "motion_sensor",
+  },
+  // LED drivers / PSUs — not finished luminaires, not transistors
+  {
+    pattern:
+      /(?:transformateur|trafo|netzteil|alimentation|power\s*supply|driver|bloc\s*d['’]alimentation|led[-\s]?treiber)\s*led|led\s*(?:transformateur|trafo|netzteil|driver|alimentation|power\s*supply|treiber)|alimentation\s*led|led[-\s]?netzteil|constant\s*current.*led|led.*constant\s*current/i,
+    kind: "charger",
+  },
+  // Discrete LED components (SMD / wired indicators) — keep as Aktive Bauelemente
+  {
+    pattern:
+      /led,\s*cms|cms\s*(?:latérale|laterale)?\s*,?\s*rgb|led,\s*\d+\s*mm|led\s*\d+\s*mm|led\s*simple|\b\d+\s*mcd\b|superflux|led\s*bedrahtet|wired\s*led|led\s*chip|led\s*diode|led\s*emitter|smd\s*led|high[-\s]?power\s*led/i,
+    kind: "active_component",
+  },
+  // Broad LED lighting catch-all (brands: LEDVANCE, Paulmann, V-TAC, …) before semiconductor fallthrough.
+  {
+    pattern:
+      /\bled\b.{0,48}(?:lampe|leuchte|strip|band|bande|barrette|streifen|leiste|panel|panneau|spot|strahler|röhre|roehre|tube|birne|bulb|filament|downlight|beleuchtung|luminaire|éclairage|eclairage|leuchtmittel|ampoule|glüh|glueh|spotlight|decke|pendel|einbau|plafonnier|applique|projecteur|feu\b|signalisation|maxled|highbay|armature|colonne)|(?:lampe|leuchte|strip|band|bande|barrette|streifen|leiste|panel|panneau|spot|strahler|röhre|roehre|tube|birne|bulb|filament|downlight|beleuchtung|luminaire|éclairage|eclairage|leuchtmittel|ampoule|spotlight|deckenlampe|pendelleuchte|einbauleuchte|strahler|leuchtstoff|plafonnier|applique|projecteur|maxled|highbay|armature|colonne\s*lumineuse).{0,48}\bled\b|\b(?:leuchtmittel|glühbirne|gluehbirne|ampoule|leuchtstofflampe|energiesparlampe|halogenlampe|plafonnier|applique\s*murale|panneau\s*d['’]encastrement|high\s*bay|highbay|colonne\s*lumineuse|armature\s*led|maxled)\b/i,
+    kind: "light_bulb",
+  },
+  {
+    pattern:
+      /\b(?:lampe|leuchte|luminaire|lumininaire|éclairage|eclairage|beleuchtung|strahler|downlight|pendelleuchte|deckenlampe|tischlampe|stehlampe|wandlampe|einbauleuchte|plafonnier|applique|projecteur|feu\s*(?:machine|de\s*signalisation|d['’]orientation|à\s*éclats|a\s*eclats)|avertisseur\s*lumineux|feu\s*de\s*machine)\b/i,
+    kind: "home_lamp",
+  },
+  // Finished LED modules with electrical lighting specs (W + lm/K)
+  {
+    pattern: /module\s*led|led\s*module|led2work|systeme\s*d['’]eclairage|système\s*d['’]éclairage/i,
+    kind: "light_bulb",
+  },
+  {
+    pattern:
+      /\bled\b.{0,80}\d+(?:[.,]\d+)?\s*W\b.{0,80}\d[\d\s]*\s*(?:lm|K)\b|\b\d+(?:[.,]\d+)?\s*W\b.{0,80}\bled\b.{0,80}\d[\d\s]*\s*(?:lm|K)\b/i,
+    kind: "light_bulb",
+  },
+  { pattern: /\blatarka\b|keychain\s*led|led\s*key\s*chain/i, kind: "flashlight" },
+  {
+    pattern:
+      /alimentation\s*à\s*découpage.*led|led.*alimentation\s*à\s*découpage|variateur.*led|led.*variateur|dimmer.*led|led.*dimmer/i,
+    kind: "charger",
+  },
+
+  // active semiconductors — discrete parts (finished LED lamps handled above)
+  {
+    pattern:
+      /transistor|mosfet|igbt|thyristor|diode|zener|optocoupl|triac|halbleiter|semiconductor|active component|composant actif|aktives bauelement|gate driver|driver ic|integrated circuit|\bic\b|microprocesseur|processeur embarqu|spannungsregler|regulator|op.?amp|operational amplifier|logic ic|memory ic|timer ic|convertisseur|wandler/i,
     kind: "active_component",
   },
 
@@ -255,11 +326,9 @@ const REI_LABEL_TO_KIND: Array<{ pattern: RegExp; kind: GalaxusProductKind }> = 
   { pattern: /e-scooter|elektroroller|escooter/i, kind: "escooter" },
   { pattern: /elektromobilit|e-mobility|emobility/i, kind: "ev_charger" },
 
-  // lighting
-  { pattern: /stirnlampe|headlamp|head torch/i, kind: "headlamp" },
-  { pattern: /campinglampe|camping.?lampe/i, kind: "camping_lamp" },
-  { pattern: /taschenlampe|flashlight|torch\b/i, kind: "flashlight" },
-  { pattern: /stehlampe|tischlampe|deckenleuchte|wandleuchte|leuchtmittel|sockel e\d|sockel gu/i, kind: "home_lamp" },
+  // lighting (primary rules live above active semiconductors — keep late fallbacks)
+  { pattern: /leuchtmittel|sockel e\d|sockel gu/i, kind: "light_bulb" },
+  { pattern: /stehlampe|tischlampe|deckenleuchte|wandleuchte/i, kind: "home_lamp" },
   { pattern: /gartenleuchte|aussenleuchte|solarleuchte|outdoor.?light/i, kind: "home_lamp" },
 
   // cleaning / appliances
@@ -322,7 +391,9 @@ export function classifyReicheltGalaxusKind(input: ReicheltClassifyInput): Galax
 }
 
 export function reicheltCategoryPathLabel(breadcrumbs: string[]): string | null {
-  const trimmed = breadcrumbs.map((b) => b.trim()).filter(Boolean);
+  const trimmed = breadcrumbs
+    .map((b) => b.trim())
+    .filter((b) => b && !/veuillez vous connecter|bitte loggen|taille d['’]origine|avec\s+[\d.,]+\s*%\s*tva|ex stock|délai de livraison/i.test(b));
   if (!trimmed.length) return null;
   return trimmed[trimmed.length - 1] ?? null;
 }

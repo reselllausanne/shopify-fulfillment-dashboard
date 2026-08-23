@@ -82,6 +82,19 @@ function decodeHtml(value: string): string {
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
 }
 
+/** Login CTAs / VAT / stock blurbs often leak into Reichelt breadcrumb UL. */
+export function isJunkReicheltBreadcrumb(value: string): boolean {
+  const t = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return true;
+  return (
+    /^(vous êtes ici|you are here|home|page d'accueil|startseite)$/i.test(t) ||
+    /veuillez vous connecter|bitte loggen|please (log|sign)\s*in|anmelden/i.test(t) ||
+    /^taille d['’]origine$/i.test(t) ||
+    /avec\s+[\d.,]+\s*%\s*tva|inkl\.?\s*mwst|hors frais|zzgl\.?\s*versand/i.test(t) ||
+    /ex stock|délai de livraison|lieferzeit|sofort lieferbar/i.test(t)
+  );
+}
+
 function absorbSetCookie(jar: CookieJar, header: string | null) {
   if (!header) return;
   for (const part of header.split(/,(?=\s*[^;]+=[^;]+)/)) {
@@ -509,7 +522,7 @@ export function parseReicheltProductHtml(html: string, articleId: string, baseUr
     ...(html.match(/class="breadcrumb"[\s\S]*?<\/ul>/i)?.[0]?.matchAll(/<a[^>]*>([^<]+)</gi) ?? []),
   ]
     .map((m) => decodeHtml(m[1].replace(/\s+/g, " ").trim()))
-    .filter((b) => b && !/^vous êtes ici|^you are here|^home$|^page d'accueil$/i.test(b));
+    .filter((b) => b && !isJunkReicheltBreadcrumb(b));
   const descriptionHtml = html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/div>/i)?.[1]?.trim() ?? null;
 
   return {

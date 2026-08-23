@@ -23,6 +23,7 @@ import {
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
 import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
+import { buildLightingSpecRows } from "@/galaxus/exports/lightingSpecs";
 import { extractKickdbClassificationSignals } from "@/galaxus/kickdb/classificationSignals";
 import { parseSupplierKeyFromVariantId } from "@/galaxus/exports/supplierKey";
 import { attachAvailableStock } from "@/inventory/availableStock";
@@ -32,6 +33,7 @@ import {
   mergePhysicalWithDropship,
   type PhysicalStockMap,
 } from "@/shopify/inventory/physicalAvailability";
+import { classifyGalaxusProductKind } from "@/galaxus/exports/productClassification";
 
 type ExportRow = Record<string, string>;
 
@@ -129,6 +131,17 @@ function pickTrait(traits: any, keys: string[]) {
     }
   }
   return null;
+}
+
+function parseReicheltNoteDescription(manualNote: unknown): string | null {
+  if (!manualNote || typeof manualNote !== "string") return null;
+  try {
+    const parsed = JSON.parse(manualNote);
+    const text = String(parsed?.descriptionText ?? "").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
 }
 
 function buildMasterRowsFromCandidates(
@@ -247,8 +260,9 @@ function buildMasterRowsFromCandidates(
       supplierProductType
     );
     const signals = extractKickdbClassificationSignals(rawKickdbJson);
+    const noteDescription = parseReicheltNoteDescription(supplierVariant?.manualNote);
     const description = resolveGalaxusDescription({
-      description: payload?.description ?? null,
+      description: payload?.description ?? noteDescription ?? null,
       title: fallbackTitle,
       brand: supplierBrand || payload?.brand || product?.brand || null,
       category: signals.category ?? payload?.category ?? null,
@@ -320,6 +334,28 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
     });
     if (sizeSpecRow) {
       rows.push(sizeSpecRow);
+    }
+    const exportKind = classifyGalaxusProductKind({
+      title: variant?.supplierProductName ?? product?.name ?? null,
+      brand: variant?.supplierBrand ?? product?.brand ?? null,
+      supplierKey: specSupplierKey,
+      supplierProductType: variant?.supplierProductType ?? null,
+      productType: specSignals.productType,
+      breadcrumbAliases: specSignals.breadcrumbAliases,
+    });
+    if (
+      exportKind === "light_bulb" ||
+      exportKind === "home_lamp" ||
+      exportKind === "camping_lamp" ||
+      exportKind === "flashlight" ||
+      exportKind === "headlamp"
+    ) {
+      rows.push(
+        ...buildLightingSpecRows({
+          providerKey,
+          title: variant?.supplierProductName ?? product?.name ?? null,
+        })
+      );
     }
     const supplierBrand = variant?.supplierBrand ?? null;
     if (supplierBrand || product?.brand) {

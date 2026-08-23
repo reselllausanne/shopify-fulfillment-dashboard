@@ -11,6 +11,7 @@ import { classifyWelProductKind } from "@/galaxus/exports/welProductClassificati
 import { classifySnowleaderCategoryLabel } from "@/app/lib/snowleaderGalaxusCategories";
 import { classifyReicheltGalaxusKind } from "@/app/lib/reicheltGalaxusCategories";
 import { classifyNewsoleGalaxusKind } from "@/app/lib/newsoleGalaxusCategories";
+import { buildLightingDescriptionBits } from "@/galaxus/exports/lightingSpecs";
 
 export type { GalaxusProductKind };
 
@@ -466,5 +467,26 @@ export function resolveGalaxusDescription(input: {
   if (kind === "controller") return `${prefix}. Gaming controller offering precise input and ergonomic comfort.`;
   if (kind === "coin") return `${prefix}. Collectible coin in original mint packaging.`;
   if (kind === "puzzle") return `${prefix}. Puzzle game offering engaging challenges for solo or group play.`;
+  if (kind === "light_bulb") {
+    const bits = buildLightingDescriptionBits(title);
+    return bits
+      ? `${prefix}. LED lighting product (${bits}) for residential and commercial use.`
+      : `${prefix}. LED lighting / bulb product for residential and commercial use.`;
+  }
+  if (kind === "home_lamp") {
+    return `${prefix}. Lamp / luminaire designed for indoor or outdoor lighting applications.`;
+  }
+  if (kind === "camping_lamp") {
+    return `${prefix}. Portable camping light for outdoor use, battery or mains powered.`;
+  }
+  if (kind === "flashlight" || kind === "headlamp") {
+    return `${prefix}. Portable light designed for hands-free or handheld illumination.`;
+  }
+  if (kind === "motion_sensor") {
+    return `${prefix}. Motion / presence detector for lighting control and building security.`;
+  }
+  if (kind === "active_component" || kind === "passive_component" || kind === "unknown") {
+    return `${prefix}. Electronic product sourced for the Galaxus marketplace assortment.`;
+  }
   return `${prefix}. Lifestyle sneakers with durable construction and all-day comfort.`;
 }
