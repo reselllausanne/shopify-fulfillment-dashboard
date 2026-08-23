@@ -272,14 +272,14 @@ export function reicheltConfig() {
       Number(process.env.SCRAPER_REI_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 40)
     ),
     requestTimeoutMs: Math.max(5_000, Number(process.env.SCRAPER_REI_REQUEST_TIMEOUT_MS || 45_000)),
-    maxRetries: Math.max(1, Number(process.env.SCRAPER_REI_MAX_RETRIES || 5)),
-    sitemapMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_MAX_RETRIES || 4)),
+    maxRetries: Math.max(1, Number(process.env.SCRAPER_REI_MAX_RETRIES || 2)),
+    sitemapMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_MAX_RETRIES || 3)),
     sitemapRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_RETRY_BASE_MS || 3_000)),
-    sitemapShardMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_MAX_RETRIES || 3)),
+    sitemapShardMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_MAX_RETRIES || 2)),
     sitemapShardRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_RETRY_BASE_MS || 2_000)),
     sitemapFallbackMaxShard: Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_FALLBACK_MAX_SHARD || 149)),
     defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
-    productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 16)),
+    productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 8)),
   };
 }
 
@@ -335,6 +335,37 @@ export function isRetryableReicheltError(err: unknown): boolean {
 export function isSoftSkipReicheltShardError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
   return msg.includes("http 403") || msg.includes("http 404");
+}
+
+/** Network/WAF failures worth a single DE fallback — not soft HTML misses. */
+export function isHardReicheltFetchError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
+  return (
+    isRetryableReicheltError(err) ||
+    msg.includes("ssl") ||
+    msg.includes("tunnel") ||
+    msg.includes("connect") ||
+    msg.includes("curl:") ||
+    msg.includes("http 400") ||
+    msg.includes("http 500")
+  );
+}
+
+/** Prefer slugged sitemap / CH-FR URL; avoid short `/-id` (often 451 + full body). */
+export function resolveReicheltPrimaryProductUrl(
+  articleId: string,
+  productUrl: string | null | undefined,
+  baseUrl: string
+): string {
+  const raw = String(productUrl ?? "").trim();
+  if (raw && raw.includes(String(articleId))) {
+    return toReicheltChFrProductUrl(raw) ?? raw;
+  }
+  if (raw) {
+    const ch = toReicheltChFrProductUrl(raw);
+    if (ch) return ch;
+  }
+  return `${baseUrl.replace(/\/$/, "")}/shop/produit/-${articleId}`;
 }
 
 /** Prefer CHF from `(12.34 CHF)` on CH storefront; reject absurd CHF/EUR pairs. */
@@ -641,7 +672,8 @@ export class ReicheltClient {
   ): Promise<string> {
     if (reicheltForceCurlEnabled()) {
       let lastCurlErr: unknown = null;
-      const attempts = Math.max(maxRetries, reicheltProxyPool().length ? Math.min(5, reicheltProxyPool().length) : 1);
+      // Cap attempts at maxRetries — do NOT inflate to proxy-pool size (burns GB).
+      const attempts = Math.max(1, maxRetries);
       for (let attempt = 0; attempt < attempts; attempt++) {
         try {
           const headers = buildReicheltFetchHeaders(url, this.baseUrl, this.jar, this.xsrf, init);
@@ -780,28 +812,33 @@ export class ReicheltClient {
   }
 
   async fetchProductByArticleId(articleId: string, productUrl?: string | null): Promise<ReicheltProduct | null> {
-    const candidates = new Set<string>();
-    if (productUrl && productUrl.includes(String(articleId))) candidates.add(productUrl);
-    candidates.add(`${this.baseUrl}/shop/produit/-${articleId}`);
-    if (productUrl) {
-      const ch = toReicheltChFrProductUrl(productUrl);
-      if (ch) candidates.add(ch);
-      const de = toReicheltDeProductUrl(productUrl);
-      if (de) candidates.add(de);
-    }
+    const primary = resolveReicheltPrimaryProductUrl(articleId, productUrl, this.baseUrl);
+    const deFallbackEnabled = String(process.env.SCRAPER_REI_DE_FALLBACK ?? "1") !== "0";
 
-    let lastErr: unknown = null;
-    for (const url of candidates) {
+    const tryOne = async (url: string): Promise<ReicheltProduct | null> => {
+      const html = await this.fetchText(url);
+      return parseReicheltProductHtml(html, articleId, this.baseUrl);
+    };
+
+    try {
+      const product = await tryOne(primary);
+      if (product) return product;
+      // Soft miss (HTML ok, no GTIN) — do not burn a second full page on DE.
+      return null;
+    } catch (err) {
+      if (!deFallbackEnabled || !isHardReicheltFetchError(err)) {
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+      const de = productUrl ? toReicheltDeProductUrl(productUrl) : null;
+      if (!de || de === primary) throw err instanceof Error ? err : new Error(String(err));
       try {
-        const html = await this.fetchText(url);
-        const product = parseReicheltProductHtml(html, articleId, this.baseUrl);
+        const product = await tryOne(de);
         if (product) return product;
-      } catch (err) {
-        lastErr = err;
+        return null;
+      } catch (deErr) {
+        throw deErr instanceof Error ? deErr : new Error(String(deErr));
       }
     }
-    if (lastErr) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
-    return null;
   }
 
   /** Map articleId → canonical sitemap product URL (slugged; short `/-id` often 451/503). */

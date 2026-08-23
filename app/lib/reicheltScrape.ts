@@ -45,6 +45,7 @@ type ReicheltRunStats = {
   skippedCategoryUnmapped: number;
   skippedNoGtin: number;
   skippedNoPrice: number;
+  skippedFresh: number;
   parseErrors: number;
   requestErrors: number;
   listed: number;
@@ -120,6 +121,7 @@ function runMessage(stats: ReicheltRunStats, discovery: string, imageSynced: num
     `skipped_unmapped=${stats.skippedUnmapped}`,
     `skipped_no_gtin=${stats.skippedNoGtin}`,
     `skipped_no_price=${stats.skippedNoPrice}`,
+    `skipped_fresh=${stats.skippedFresh}`,
     `req_errors=${stats.requestErrors}`,
     `images_synced=${imageSynced}`,
     `images_failed=${imageFailed}`,
@@ -318,6 +320,7 @@ export async function scrapeReicheltShop(
     skippedCategoryUnmapped: 0,
     skippedNoGtin: 0,
     skippedNoPrice: 0,
+    skippedFresh: 0,
     parseErrors: 0,
     requestErrors: 0,
     listed: 0,
@@ -326,6 +329,10 @@ export async function scrapeReicheltShop(
   let imageFailed = 0;
   const imageSyncQueue = new Set<string>();
 
+  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 3));
+  const freshCutoffMs = deltaDays > 0 ? Date.now() - deltaDays * 86_400_000 : 0;
+  const freshArticleIds = new Set<string>();
+
   const existingRows = (await prismaAny.supplierVariant.findMany({
     where: { supplierVariantId: { startsWith: `${shop.key}_` } },
     select: {
@@ -333,8 +340,16 @@ export async function scrapeReicheltShop(
       sourceImageUrl: true,
       hostedImageUrl: true,
       imageSyncStatus: true,
+      lastSyncAt: true,
+      manualNote: true,
     },
-  })) as Array<ExistingVariantImage & { supplierVariantId: string }>;
+  })) as Array<
+    ExistingVariantImage & {
+      supplierVariantId: string;
+      lastSyncAt: Date | null;
+      manualNote: string | null;
+    }
+  >;
   const existingById = new Map(
     existingRows.map((row) => [
       row.supplierVariantId,
@@ -345,6 +360,21 @@ export async function scrapeReicheltShop(
       },
     ])
   );
+  if (deltaDays > 0) {
+    for (const row of existingRows) {
+      if (!row.lastSyncAt || row.lastSyncAt.getTime() < freshCutoffMs) continue;
+      try {
+        const note = JSON.parse(String(row.manualNote || "")) as { articleId?: string };
+        const id = String(note?.articleId || "").trim();
+        if (id) freshArticleIds.add(id);
+      } catch {
+        /* ignore bad note */
+      }
+    }
+    console.log(
+      `[SCRAPER] rei delta: skip ${freshArticleIds.size} articles synced within ${deltaDays}d`
+    );
+  }
 
   try {
     let stop = false;
@@ -368,6 +398,11 @@ export async function scrapeReicheltShop(
         stats.processedProducts++;
 
         try {
+          if (freshArticleIds.has(articleId)) {
+            stats.skippedFresh++;
+            return;
+          }
+
           if (categoryHint) {
             const preKind = classifyReicheltGalaxusKind({
               title: categoryHint,
@@ -414,6 +449,7 @@ export async function scrapeReicheltShop(
           if (!ok) return;
           stats.wrote++;
           stats.gtinMatched++;
+          freshArticleIds.add(articleId);
         } catch (err) {
           stats.requestErrors++;
           stats.parseErrors++;

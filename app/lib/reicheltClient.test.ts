@@ -18,6 +18,8 @@ import {
   isSoftSkipReicheltShardError,
   normalizeReicheltProxyUrl,
   reicheltShouldSendBrowserHints,
+  resolveReicheltPrimaryProductUrl,
+  isHardReicheltFetchError,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -184,6 +186,31 @@ describe("normalizeReicheltProxyUrl", () => {
 
   it("keeps already-normalized http proxy URLs", () => {
     expect(normalizeReicheltProxyUrl("http://user:pass@host:5555")).toBe("http://user:pass@host:5555");
+  });
+});
+
+describe("resolveReicheltPrimaryProductUrl", () => {
+  it("prefers CH-FR slugged sitemap URL over short /-id", () => {
+    expect(
+      resolveReicheltPrimaryProductUrl(
+        "43378",
+        "https://www.reichelt.com/de/en/shop/product/cable_test-43378",
+        "https://www.reichelt.com/ch/fr"
+      )
+    ).toBe("https://www.reichelt.com/ch/fr/shop/produit/cable_test-43378");
+  });
+
+  it("falls back to short URL only when no productUrl", () => {
+    expect(resolveReicheltPrimaryProductUrl("43378", null, "https://www.reichelt.com/ch/fr")).toBe(
+      "https://www.reichelt.com/ch/fr/shop/produit/-43378"
+    );
+  });
+});
+
+describe("isHardReicheltFetchError", () => {
+  it("treats proxy SSL/tunnel failures as hard", () => {
+    expect(isHardReicheltFetchError(new Error("curl: (35) OpenSSL SSL_connect"))).toBe(true);
+    expect(isHardReicheltFetchError(new Error("CONNECT tunnel failed, response 504"))).toBe(true);
   });
 });
 
