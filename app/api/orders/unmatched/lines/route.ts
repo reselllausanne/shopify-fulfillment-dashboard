@@ -112,12 +112,16 @@ export async function GET(req: NextRequest) {
     }
 
     const existing = await prisma.orderMatch.findMany({
-      where: { shopifyOrderId: order.id },
+      where: {
+        OR: [{ shopifyOrderId: order.id }, { shopifyOrderName: order.name }],
+      },
       select: { shopifyLineItemId: true },
     });
+    const orderAlreadyCosted = existing.length > 0;
     const matchedIds = new Set(
       existing.map((m) => {
         const raw = String(m.shopifyLineItemId || "");
+        if (raw.startsWith("synthetic://")) return raw;
         return raw.startsWith("gid://")
           ? raw
           : `gid://shopify/LineItem/${raw.replace(/\D/g, "")}`;
@@ -130,8 +134,14 @@ export async function GET(req: NextRequest) {
       .trim();
 
     const lines = (order.lineItems?.edges ?? []).map(({ node: li }) => {
-      const qty =
-        Number(li.currentQuantity ?? li.quantity ?? 0) || Number(li.quantity ?? 0) || 1;
+      const currentQty = Number(li.currentQuantity ?? 0);
+      const originalQty = Number(li.quantity ?? 0) || 0;
+      const refundedLine = currentQty <= 0 && originalQty > 0;
+      const qty = refundedLine
+        ? 0
+        : currentQty > 0
+          ? currentQty
+          : originalQty || 1;
       const unit = Number(li.originalUnitPriceSet?.shopMoney?.amount ?? 0) || 0;
       const lineItemId = li.id.startsWith("gid://")
         ? li.id
@@ -139,7 +149,8 @@ export async function GET(req: NextRequest) {
       const sizeOpt = (li.variant?.selectedOptions ?? []).find((o) => /size/i.test(o.name));
       const sizeEU = sizeOpt?.value || li.variantTitle || null;
       const protection = isPackageProtectionShopifyLine(li.title, li.sku);
-      const alreadyMatched = matchedIds.has(lineItemId);
+      const alreadyMatched =
+        matchedIds.has(lineItemId) || orderAlreadyCosted;
 
       return {
         shopifyOrderId: order.id,
@@ -165,10 +176,17 @@ export async function GET(req: NextRequest) {
         lineItemImageUrl: li.image?.url ?? null,
         isPackageProtection: protection,
         alreadyMatched,
+        refundedLine,
       };
     });
 
-    const openLines = lines.filter((l) => !l.isPackageProtection && !l.alreadyMatched);
+    const openLines = lines.filter(
+      (l) =>
+        !l.isPackageProtection &&
+        !l.alreadyMatched &&
+        !l.refundedLine &&
+        l.quantity > 0
+    );
 
     return NextResponse.json({
       ok: true,

@@ -1385,9 +1385,8 @@ export default function Home() {
                 )}
               </div>
               <p className="mt-1 text-xs text-red-800">
-                Shopify payé, aucune ligne OrderMatch. Clique{" "}
-                <strong>Reconcile</strong> → ouvre le formulaire manuel complet (coût, StockX, AWB…).
-                Tri: plus vieux → plus récent.
+                Shopify net&gt;0, pas encore OrderMatch. Refund/void complets exclus. Clique{" "}
+                <strong>Reconcile</strong> → coût / StockX / AWB. Tri: vieux → récent.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">

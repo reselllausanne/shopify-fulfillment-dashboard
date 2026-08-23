@@ -4,10 +4,22 @@ import { prisma } from "@/app/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function normalizeFinancialStatus(raw: string | null | undefined): string {
+  return String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+}
+
+/** Fully refunded / void — not actionable for COGS reconcile. */
+function isFullyRefundedOrVoid(status: string): boolean {
+  return status === "REFUNDED" || status === "VOIDED";
+}
+
 /**
  * GET /api/orders/unmatched?days=30
- * Shopify orders with zero OrderMatch rows (no purchase cost recorded).
- * Galaxus not included — ShopifyOrder table only.
+ * Shopify orders still needing purchase COGS (no OrderMatch).
+ * Excludes: cancelled, fully refunded/void, net ≤ 0, already matched (by name or id).
  */
 export async function GET(req: NextRequest) {
   try {
@@ -41,26 +53,40 @@ export async function GET(req: NextRequest) {
         days,
         since: since.toISOString(),
         count: 0,
+        paidPositiveCount: 0,
         netTotalChf: 0,
+        paidPositiveNetChf: 0,
         orders: [],
       });
     }
 
     const names = orders.map((o) => o.orderName);
+    const ids = orders.map((o) => o.shopifyOrderId).filter(Boolean);
     const matched = await prisma.orderMatch.findMany({
-      where: { shopifyOrderName: { in: names } },
-      select: { shopifyOrderName: true },
-      distinct: ["shopifyOrderName"],
+      where: {
+        OR: [
+          { shopifyOrderName: { in: names } },
+          { shopifyOrderId: { in: ids } },
+        ],
+      },
+      select: { shopifyOrderName: true, shopifyOrderId: true },
     });
-    const matchedSet = new Set(matched.map((m) => m.shopifyOrderName));
+    const matchedNames = new Set(
+      matched.map((m) => m.shopifyOrderName).filter(Boolean) as string[]
+    );
+    const matchedIds = new Set(
+      matched.map((m) => m.shopifyOrderId).filter(Boolean) as string[]
+    );
 
     const unmatched = orders
-      .filter((o) => !matchedSet.has(o.orderName))
       .map((o) => {
         const gross = Number(o.totalSalesChf ?? 0);
         const refunded = Number(o.refundedAmountChf ?? 0);
         const net =
           o.netSalesChf != null ? Number(o.netSalesChf) : gross - refunded;
+        const status = normalizeFinancialStatus(o.financialStatus);
+        const fullyRefundedByMoney =
+          gross > 0 && refunded >= gross - 0.01 && net <= 0.01;
         return {
           shopifyOrderId: o.shopifyOrderId,
           orderName: o.orderName,
@@ -70,8 +96,22 @@ export async function GET(req: NextRequest) {
           totalSalesChf: Number(gross.toFixed(2)),
           refundedAmountChf: Number(refunded.toFixed(2)),
           paymentGatewayNames: o.paymentGatewayNames,
+          _status: status,
+          _fullyRefundedByMoney: fullyRefundedByMoney,
+          _matched:
+            matchedNames.has(o.orderName) ||
+            matchedIds.has(o.shopifyOrderId),
         };
       })
+      .filter((o) => {
+        if (o._matched) return false;
+        if (isFullyRefundedOrVoid(o._status)) return false;
+        if (o._fullyRefundedByMoney) return false;
+        // Partial refund OK only if remaining net still needs COGS
+        if (o.netSalesChf <= 0) return false;
+        return true;
+      })
+      .map(({ _status, _fullyRefundedByMoney, _matched, ...row }) => row)
       .sort(
         (a, b) =>
           new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
@@ -80,22 +120,16 @@ export async function GET(req: NextRequest) {
     const netTotalChf = Number(
       unmatched.reduce((s, o) => s + o.netSalesChf, 0).toFixed(2)
     );
-    const paidPositive = unmatched.filter(
-      (o) => o.financialStatus !== "REFUNDED" && o.netSalesChf > 0
-    );
-    const paidPositiveNetChf = Number(
-      paidPositive.reduce((s, o) => s + o.netSalesChf, 0).toFixed(2)
-    );
 
     return NextResponse.json({
       ok: true,
       days,
       since: since.toISOString(),
       count: unmatched.length,
-      paidPositiveCount: paidPositive.length,
+      paidPositiveCount: unmatched.length,
       netTotalChf,
-      paidPositiveNetChf,
-      note: "Commande Shopify sans aucune ligne OrderMatch = coût d'achat inconnu",
+      paidPositiveNetChf: netTotalChf,
+      note: "Shopify payé, net>0, aucune OrderMatch (nom ou id). Pas de refund/void complets.",
       orders: unmatched,
     });
   } catch (err: any) {
