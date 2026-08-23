@@ -25,6 +25,8 @@ type EligibleLine = {
   buyerPid: string | null;
   gtin: string | null;
   supplierVariantId?: string | null;
+  providerKey?: string | null;
+  productKey?: string | null;
   quantity: number;
   unitNetPrice: number | string | null;
   priceLineAmount: number | string | null;
