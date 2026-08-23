@@ -14,6 +14,7 @@ import {
 } from "@/shopify/inventory/orderLinePhysicalStock";
 import { isLegoStxProduct } from "@/galaxus/stx/legoProduct";
 import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
+import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import { supplierKeyFromVariantId } from "@/galaxus/supplier/supplierKeyGuards";
 
 export const runtime = "nodejs";
@@ -461,9 +462,19 @@ export async function GET(
         orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
       });
     }
-    const linesWithProcurement = await enrichBuySourceOverrideCosts(
-      attachProcurementToLines(linesWithPhysicalStock, stx, matchesForResponse, stxUnits)
-    );
+    const linesWithProcurement = (
+      await enrichBuySourceOverrideCosts(
+        attachProcurementToLines(linesWithPhysicalStock, stx, matchesForResponse, stxUnits)
+      )
+    ).map((line: any) => {
+      const productKey = resolveOrderLineProductKey(line);
+      return {
+        ...line,
+        supplierKey: resolveOrderLineSupplierKey(line),
+        productKey,
+        providerKey: productKey ?? line.providerKey ?? null,
+      };
+    });
 
     const normalized = {
       ...orderRow,
@@ -537,7 +548,9 @@ export async function GET(
         id: line.id,
         lineNumber: line.lineNumber,
         supplierPid: line.supplierPid ?? null,
-        supplierKey: resolveOrderLineSupplierKey(line),
+        supplierKey: line.supplierKey ?? resolveOrderLineSupplierKey(line),
+        productKey: line.productKey ?? null,
+        providerKey: line.providerKey ?? null,
         gtin: line.gtin ?? null,
         quantity: line.quantity,
         priceLineAmount: line.priceLineAmount ?? line.lineNetAmount ?? null,

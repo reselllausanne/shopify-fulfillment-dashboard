@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getPartnerSession, isPartnerRoleAllowed } from "@/app/lib/partnerAuth";
 import { isPartnerSelfFulfillEnabled } from "@/app/lib/partnerSelfFulfill";
-import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
+import { normalizeProviderKey, resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import {
   collectGtinsFromLines,
   lineMatchesPartnerScope,
@@ -49,7 +49,16 @@ export async function GET(
 
     const gtins = collectGtinsFromLines(order.lines);
     const partnerGtins = await resolvePartnerGtins(gtins, pk);
-    const partnerLines = order.lines.filter((line) => lineMatchesPartnerScope(line, pk, partnerGtins));
+    const partnerLines = order.lines
+      .filter((line) => lineMatchesPartnerScope(line, pk, partnerGtins))
+      .map((line) => {
+        const productKey = resolveOrderLineProductKey(line);
+        return {
+          ...line,
+          productKey,
+          providerKey: productKey ?? line.providerKey ?? null,
+        };
+      });
     if (partnerLines.length === 0) {
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }

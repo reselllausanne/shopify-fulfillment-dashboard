@@ -580,8 +580,16 @@ export default function WarehouseBulkPage() {
                                 Size raw: {line.sizeRaw ?? "—"} · Size: {line.size ?? "—"}
                               </div>
                               <div className="text-gray-600 text-xs">
-                                Style: {line.styleSku ?? line.supplierSku ?? "—"} · Offer:{" "}
-                                {line.offerSupplierSku ?? line.providerKey ?? "—"} · GTIN: {line.gtin ?? "—"}
+                                Style: {line.styleSku ?? line.supplierSku ?? "—"} · Key:{" "}
+                                <span className="font-mono">
+                                  {line.productKey ?? line.providerKey ?? line.offerSupplierSku ?? "—"}
+                                </span>
+                                {line.gtin ? (
+                                  <>
+                                    {" "}
+                                    · GTIN: <span className="font-mono">{line.gtin}</span>
+                                  </>
+                                ) : null}
                               </div>
                               <div className="text-gray-500 text-xs">
                                 Qty {line.quantity}

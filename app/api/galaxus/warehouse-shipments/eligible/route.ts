@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getInvoicedQuantitiesByOrderLineId } from "@/galaxus/edi/invoiceCoverage";
+import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ const ORDER_LINE_SELECT = {
   buyerPid: true,
   gtin: true,
   supplierVariantId: true,
+  providerKey: true,
   quantity: true,
   unitNetPrice: true,
   priceLineAmount: true,
@@ -512,12 +514,15 @@ export async function GET(request: Request) {
       recipientCity: order.recipientCity ?? null,
       lines: (order.lines ?? []).map((line) => {
         const enriched = enrichedLinesById.get(String(line.id)) ?? line;
+        const productKey = resolveOrderLineProductKey(enriched);
         return {
           id: enriched.id,
           lineNumber: enriched.lineNumber ?? null,
           supplierPid: enriched.supplierPid ?? null,
           buyerPid: enriched.buyerPid ?? null,
           gtin: enriched.gtin ?? null,
+          providerKey: productKey ?? enriched.providerKey ?? null,
+          productKey,
           quantity: enriched.quantity,
           unitNetPrice: enriched.unitNetPrice ?? null,
           priceLineAmount: enriched.priceLineAmount ?? null,

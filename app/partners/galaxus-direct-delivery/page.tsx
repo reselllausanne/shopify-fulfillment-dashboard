@@ -152,7 +152,8 @@ export default function PartnerGalaxusDirectDeliveryPage() {
                   <div key={line.id} className="rounded border border-slate-200 p-2 text-xs">
                     <div className="font-medium text-slate-800">{line.productName ?? line.description ?? "Item"}</div>
                     <div className="text-slate-500">
-                      GTIN {line.gtin ?? "—"} · SKU {line.supplierSku ?? "—"} · Qty {line.quantity ?? 0}
+                      Key {line.productKey ?? line.providerKey ?? "—"} · GTIN {line.gtin ?? "—"} · SKU{" "}
+                      {line.supplierSku ?? "—"} · Qty {line.quantity ?? 0}
                     </div>
                   </div>
                 ))}

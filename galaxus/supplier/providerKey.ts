@@ -54,6 +54,28 @@ export function buildProviderKey(
   return `${supplierCode}_${cleaned}`;
 }
 
+/**
+ * Product key for Galaxus order lines (`REI_4018…`).
+ * Prefer stored providerKey / SUPPLIER_PID when already `CODE_gtin`, else rebuild from GTIN + supplier ref.
+ */
+export function resolveOrderLineProductKey(line: {
+  providerKey?: string | null;
+  supplierPid?: string | null;
+  supplierVariantId?: string | null;
+  gtin?: string | null;
+}): string | null {
+  const providerKey = String(line.providerKey ?? "").trim();
+  if (isValidProviderKeyWithGtin(providerKey)) return providerKey;
+
+  const supplierPid = String(line.supplierPid ?? "").trim();
+  if (isValidProviderKeyWithGtin(supplierPid)) return supplierPid;
+
+  return buildProviderKey(
+    line.gtin,
+    line.supplierVariantId || line.supplierPid || line.providerKey
+  );
+}
+
 export function assertMappingIntegrity(input: {
   supplierVariantId?: string | null;
   gtin?: string | null;
