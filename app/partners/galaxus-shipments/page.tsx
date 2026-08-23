@@ -19,6 +19,8 @@ type EligibleLine = {
   supplierSku: string | null;
   productName: string | null;
   size: string | null;
+  providerKey?: string | null;
+  productKey?: string | null;
   quantity: number;
   remaining: number;
 };
