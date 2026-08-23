@@ -6,8 +6,7 @@
  * 1. Live physical mirror qty > 0
  * 2. warehouseMarkedShippedAt and no linked StockX unit
  * 3. In-stock fixed-price lane (Essentials / Bape / AP / boxers)
- * 4. InventoryEvent SALE exists AND Shopify physical levels are all 0 AND
- *    mirror was updated within ±2h of the inventory event (MarketplaceSale fingerprint)
+ * Not used: InventoryEvent + mirror@0 — too many dropship STX sales share that fingerprint.
  *
  * Usage:
  *   npx tsx scripts/backfill-galaxus-local-stock-misses.ts --dry-run
@@ -220,27 +219,23 @@ async function main() {
         new Date(0)
       );
 
-      let mirrorUpdatedNearEvent = false;
-      if (invAt && mirrors.length > 0) {
-        const deltaMs = Math.abs(latestMirrorAt.getTime() - invAt.getTime());
-        mirrorUpdatedNearEvent = deltaMs <= 2 * 60 * 60 * 1000 && physicalTotal === 0;
-      }
-
-      // Prefer location from live stock, else highest-priority mirror row (even if 0).
-      const preferred =
+      // Prefer live stock location; else best mirror row that currently holds qty.
+      const liveLoc =
         live && live.qty > 0
           ? { name: live.locationName, id: live.locationId }
-          : mirrors.slice().sort((a, b) => a.priority - b.priority)[0]
-            ? {
-                name: mirrors.slice().sort((a, b) => a.priority - b.priority)[0]!.locationName,
-                id: mirrors.slice().sort((a, b) => a.priority - b.priority)[0]!.locationId,
-              }
-            : { name: null as string | null, id: null as string | null };
+          : null;
+      const positiveMirror = mirrors
+        .filter((r) => r.available > 0)
+        .sort((a, b) => a.priority - b.priority)[0];
+      const preferred = liveLoc
+        ? liveLoc
+        : positiveMirror
+          ? { name: positiveMirror.locationName, id: positiveMirror.locationId }
+          : { name: null as string | null, id: null as string | null };
 
       let reason: string | null = null;
       if (liveQty > 0) reason = "LIVE_PHYSICAL";
       else if (warehouseShipped) reason = "WAREHOUSE_SHIPPED";
-      else if (mirrorUpdatedNearEvent) reason = "INVENTORY_EVENT_MIRROR_ZEROED";
 
       // Fixed-price lane handled via ensureLocalStockMatchesForOrder below.
       if (!reason) continue;
@@ -257,7 +252,7 @@ async function main() {
         orderDate: order.orderDate,
         warehouseShipped,
         hasInventoryEvent: Boolean(invAt),
-        mirrorUpdatedNearEvent,
+        mirrorUpdatedNearEvent: false,
         livePhysicalQty: liveQty,
         preferredLocationName: preferred.name,
         preferredLocationId: preferred.id,
