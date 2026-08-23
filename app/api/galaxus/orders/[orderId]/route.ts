@@ -13,7 +13,10 @@ import {
   buildPhysicalStockByGtinMap,
 } from "@/shopify/inventory/orderLinePhysicalStock";
 import { isLegoStxProduct } from "@/galaxus/stx/legoProduct";
-import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
+import {
+  ensureLocalStockMatchesForOrder,
+  mergeReservedPhysicalStockOntoLines,
+} from "@/galaxus/orders/localStockMatch";
 import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import { supplierKeyFromVariantId } from "@/galaxus/supplier/supplierKeyGuards";
 
@@ -448,10 +451,10 @@ export async function GET(
     const physicalStockByGtin = await buildPhysicalStockByGtinMap(
       enrichedLines.map((line: { gtin?: string | null }) => line.gtin)
     );
-    const linesWithPhysicalStock = attachPhysicalStockToLines(enrichedLines, physicalStockByGtin);
+    const linesWithLivePhysical = attachPhysicalStockToLines(enrichedLines, physicalStockByGtin);
     const localEnsure = ensureLocal
       ? await ensureLocalStockMatchesForOrder({
-          order: { ...orderRow, lines: linesWithPhysicalStock },
+          order: { ...orderRow, lines: linesWithLivePhysical },
           reason: "LOCAL_PHYSICAL_STOCK_ON_ORDER_FETCH",
         })
       : { created: 0 };
@@ -462,6 +465,11 @@ export async function GET(
         orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
       });
     }
+    // LOCAL_STOCK match carries sold-from location after mirror qty hits 0.
+    const linesWithPhysicalStock = mergeReservedPhysicalStockOntoLines(
+      linesWithLivePhysical,
+      matchesForResponse
+    );
     const linesWithProcurement = (
       await enrichBuySourceOverrideCosts(
         attachProcurementToLines(linesWithPhysicalStock, stx, matchesForResponse, stxUnits)

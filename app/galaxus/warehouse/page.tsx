@@ -461,7 +461,9 @@ export default function WarehouseBulkPage() {
                       const shippedAt = line.warehouseMarkedShippedAt;
                       const isShipped = Boolean(shippedAt);
                       const physicalOnHand =
-                        Boolean(line.physicalStock) && Number(line.physicalStock?.qty ?? 0) > 0;
+                        Boolean(line.physicalStock) &&
+                        (Number(line.physicalStock?.qty ?? 0) > 0 ||
+                          Boolean(line.physicalStock?.reservedFromSale));
                       const physicalSaleToShip =
                         !physicalOnHand &&
                         !isShipped &&

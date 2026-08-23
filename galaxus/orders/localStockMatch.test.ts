@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildLocalStockMatchReasons,
+  isLocalStockMatchRow,
+  mergeReservedPhysicalStockOntoLines,
+  parseLocalStockLocationFromMatch,
   resolveGalaxusLocalStockCostChf,
   shouldAutoLocalStockMatch,
 } from "@/galaxus/orders/localStockMatch";
@@ -70,5 +74,74 @@ describe("shouldAutoLocalStockMatch", () => {
       physicalStock: { qty: 0 },
     });
     expect(d.ok).toBe(false);
+  });
+});
+
+describe("localStockMatch location helpers", () => {
+  it("encodes and parses sale location", () => {
+    const reasons = buildLocalStockMatchReasons({
+      reason: "LOCAL_PHYSICAL_STOCK_AFTER_MARKETPLACE_SALE",
+      locationName: "THE LAB CONCEPT STORE",
+      locationId: "gid://shopify/Location/111267250562",
+    });
+    const loc = parseLocalStockLocationFromMatch({ matchReasons: reasons });
+    expect(loc).toEqual({
+      locationName: "THE LAB CONCEPT STORE",
+      locationId: "gid://shopify/Location/111267250562",
+    });
+  });
+
+  it("parses legacy location:Name string reasons", () => {
+    const loc = parseLocalStockLocationFromMatch({
+      matchReasons: JSON.stringify(["LOCAL_PHYSICAL_STOCK", "location:Warehouse Bussigny"]),
+    });
+    expect(loc).toEqual({ locationName: "Warehouse Bussigny", locationId: null });
+  });
+
+  it("detects LOCAL_STOCK match rows", () => {
+    expect(
+      isLocalStockMatchRow({
+        matchType: "LOCAL_STOCK",
+        stockxStatus: "LOCAL_STOCK",
+        stockxOrderNumber: "LOCAL-STOCK-1-1",
+      })
+    ).toBe(true);
+    expect(
+      isLocalStockMatchRow({
+        matchType: "AUTO",
+        stockxStatus: "SHIPPED",
+        stockxOrderNumber: "01-abc",
+      })
+    ).toBe(false);
+  });
+
+  it("fills physicalStock from LOCAL_STOCK when live qty is 0", () => {
+    const merged = mergeReservedPhysicalStockOntoLines(
+      [
+        {
+          id: "line-1",
+          gtin: "197298832618",
+          physicalStock: null,
+        },
+      ],
+      [
+        {
+          galaxusOrderLineId: "line-1",
+          matchType: "LOCAL_STOCK",
+          stockxStatus: "LOCAL_STOCK",
+          stockxOrderNumber: "LOCAL-STOCK-200248007-1",
+          matchReasons: buildLocalStockMatchReasons({
+            reason: "LOCAL_PHYSICAL_STOCK_AFTER_MARKETPLACE_SALE",
+            locationName: "THE LAB CONCEPT STORE",
+            locationId: "gid://shopify/Location/111267250562",
+          }),
+        },
+      ]
+    );
+    expect(merged[0]?.physicalStock).toMatchObject({
+      qty: 1,
+      locationName: "THE LAB CONCEPT STORE",
+      reservedFromSale: true,
+    });
   });
 });
