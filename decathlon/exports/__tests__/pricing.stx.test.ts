@@ -1,32 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { calcSuggestedRetailFromStoredStxBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
+import { decathlonEstimatedPayoutFromSellTtc } from "@/decathlon/orders/margin";
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
+  computeDecathlonOfferListPriceFromMarginOnBuy,
   computeDecathlonStxOfferListPrice,
+  DECATHLON_FIXED_COST_CHF,
+  DEFAULT_DECATHLON_STX_MARGIN_ON_BUY,
   isDecathlonStxListableBuy,
 } from "../pricing";
 
-describe("STX pricing (website margin + 400 cap)", () => {
-  it("matches website suggested retail for stored STX buy", () => {
+describe("STX pricing (fee-aware 40% after fees + 400 cap)", () => {
+  it("lists at 40% margin on buy after commission + VAT + fulfil", () => {
     const buy = 106.47;
-    const expected = calcSuggestedRetailFromStoredStxBuyPrice({
-      storedBuyPriceChf: buy,
-      deliveryType: "express_standard",
+    const expected = computeDecathlonOfferListPriceFromMarginOnBuy(buy, {
+      marginOnBuy: DEFAULT_DECATHLON_STX_MARGIN_ON_BUY,
     });
-    expect(computeDecathlonStxOfferListPrice(buy, undefined, { deliveryType: "express_standard" })).toBe(
-      expected
-    );
-    expect(expected).toBe(149);
+    expect(computeDecathlonStxOfferListPrice(buy)).toBe(expected);
+    expect(expected).toBeGreaterThan(149);
+    const payout = decathlonEstimatedPayoutFromSellTtc(expected!);
+    expect(payout).toBeTruthy();
+    const pocket = payout! - buy - DECATHLON_FIXED_COST_CHF;
+    expect(pocket).toBeGreaterThan(buy * 0.35);
   });
 
   it("buy 180 is listable under 400 cap", () => {
-    expect(
-      computeDecathlonStxOfferListPrice(180.44, undefined, { deliveryType: "express_standard" })
-    ).toBe(269);
-    expect(isDecathlonStxListableBuy(180.44, { deliveryType: "express_standard" })).toBe(true);
+    const list = computeDecathlonStxOfferListPrice(180.44);
+    expect(list).toBe(
+      computeDecathlonOfferListPriceFromMarginOnBuy(180.44, {
+        marginOnBuy: DEFAULT_DECATHLON_STX_MARGIN_ON_BUY,
+      })
+    );
+    expect(list).toBeLessThanOrEqual(400);
+    expect(isDecathlonStxListableBuy(180.44)).toBe(true);
   });
 
-  it("high buy excluded when website list exceeds 400", () => {
+  it("high buy excluded when fee-aware list exceeds 400", () => {
     expect(computeDecathlonStxOfferListPrice(300)).toBeNull();
     expect(isDecathlonStxListableBuy(300)).toBe(false);
   });
@@ -38,10 +46,9 @@ describe("STX pricing (website margin + 400 cap)", () => {
     }
   });
 
-  it("STX supplier path uses website margin only", () => {
-    const stx = computeDecathlonOfferListPriceFromBuyNowForSupplier(106.47, "stx", undefined, {
-      deliveryType: "express_standard",
-    });
-    expect(stx).toBe(computeDecathlonStxOfferListPrice(106.47, undefined, { deliveryType: "express_standard" }));
+  it("STX supplier path uses fee-aware margin, not website retail", () => {
+    const stx = computeDecathlonOfferListPriceFromBuyNowForSupplier(106.47, "stx");
+    expect(stx).toBe(computeDecathlonStxOfferListPrice(106.47));
+    expect(stx).not.toBe(149);
   });
 });

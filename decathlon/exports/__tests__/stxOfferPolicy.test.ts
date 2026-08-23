@@ -4,7 +4,7 @@ import {
   resolveDecathlonStxOfferStock,
 } from "../stxOfferPolicy";
 
-const stxCandidate = (price: number, deliveryType = "express_standard", stock = 10) => ({
+const stxCandidate = (price: number, deliveryType = "express_expedited", stock = 10) => ({
   providerKey: "STX_1234567890123",
   gtin: "1234567890123",
   mapping: {},
@@ -48,8 +48,9 @@ describe("STX offer delist policy", () => {
     expect(resolveDecathlonStxOfferStock(stxCandidate(106), 149)).toBe(1);
   });
 
-  it("zeros STX standard shipping (express only)", () => {
+  it("zeros STX standard and express_standard (expedited only)", () => {
     expect(resolveDecathlonStxOfferStock(stxCandidate(106, "standard"), 149)).toBe(0);
+    expect(resolveDecathlonStxOfferStock(stxCandidate(106, "express_standard"), 149)).toBe(0);
   });
 
   it("zeros Onitsuka even when express", () => {

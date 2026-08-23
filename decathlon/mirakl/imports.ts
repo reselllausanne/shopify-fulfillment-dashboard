@@ -729,7 +729,7 @@ export async function runPhysicalLiquidationOf01Import(params?: {
   limit?: number;
   mode?: MiraklImportMode;
 }) {
-  // Hard kill: Decathlon lane is STX express only — never re-publish physical/NER/BAE/….
+  // Hard kill: never re-publish NER/SNL/BAE/… via OF01. Instock rides STX SKU merge.
   void params;
   return {
     ok: true,

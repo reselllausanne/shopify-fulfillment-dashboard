@@ -45,7 +45,7 @@ function resolveEffectiveStock(
   const variant = candidate.variant ?? {};
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const extra = Math.max(0, Math.floor(physicalQty));
-  // Decathlon sellable lane = STX express only.
+  // Sellable lane = STX express_expedited. Physical instock may still add qty.
   if (supplierKey !== "stx") return 0;
   const stx = resolveDecathlonStxOfferStock(candidate, listPriceTtc) ?? 0;
   if (extra > 0) {
@@ -182,7 +182,7 @@ export function buildOfferCsv(
       if (supplierKey === "stx" && buyNow && buyNow > 0) {
         recordDecathlonExclusion(summary, {
           reason: "PRICE_TOO_HIGH",
-          message: `STX list exceeds ${readDecathlonStxMaxListPriceChf()} CHF cap (website margin)`,
+          message: `STX list exceeds ${readDecathlonStxMaxListPriceChf()} CHF cap (fee-aware margin)`,
           fileType: "offers",
           providerKey: candidate.providerKey,
           supplierVariantId: variant?.supplierVariantId ?? null,

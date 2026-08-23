@@ -110,7 +110,7 @@ describe("mirakl deltas", () => {
     expect(resolveEffectivePrice(candidate, new Set(["the"]))).toBe("112.01");
   });
 
-  it("STX high buy excluded when website list exceeds 400 cap", () => {
+  it("STX high buy excluded when fee-aware list exceeds 400 cap", () => {
     const candidate = makeCandidate({
       providerKey: "STX_1234567890123",
       variant: {
@@ -120,13 +120,35 @@ describe("mirakl deltas", () => {
         manualStock: null,
         stock: 10,
         price: 300,
-        deliveryType: "express_standard",
+        deliveryType: "express_expedited",
       },
     });
     expect(resolveEffectivePrice(candidate, new Set())).toBeNull();
   });
 
-  it("uses website margin list for STX normal buy", () => {
+  it("uses fee-aware margin list for STX expedited buy", () => {
+    const candidate = makeCandidate({
+      providerKey: "STX_1234567890123",
+      variant: {
+        supplierVariantId: "stx_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 106.47,
+        deliveryType: "express_expedited",
+      },
+    });
+    const price = resolveEffectivePrice(candidate, new Set());
+    expect(price).toBe(
+      computeDecathlonOfferListPriceFromBuyNowForSupplier(106.47, "stx")?.toFixed(2) ?? null
+    );
+    expect(Number(price)).toBeGreaterThan(149);
+    expect(Number(price)).toBeLessThanOrEqual(400);
+    expect(resolveEffectiveStock(candidate, Number(price))).toBe(1);
+  });
+
+  it("keeps warehouse instock on express_standard STX SKU", () => {
     const candidate = makeCandidate({
       providerKey: "STX_1234567890123",
       variant: {
@@ -139,15 +161,26 @@ describe("mirakl deltas", () => {
         deliveryType: "express_standard",
       },
     });
-    const price = resolveEffectivePrice(candidate, new Set());
-    expect(price).toBe(
-      computeDecathlonOfferListPriceFromBuyNowForSupplier(106.47, "stx", undefined, {
+    const price = Number(resolveEffectivePrice(candidate, new Set()));
+    expect(resolveEffectiveStock(candidate, price)).toBe(0);
+    expect(resolveEffectiveStock(candidate, price, { physicalQty: 2 })).toBe(2);
+  });
+
+  it("zeros STX express_standard dropship", () => {
+    const candidate = makeCandidate({
+      providerKey: "STX_1234567890123",
+      variant: {
+        supplierVariantId: "stx_1",
+        manualLock: false,
+        manualPrice: null,
+        manualStock: null,
+        stock: 10,
+        price: 106.47,
         deliveryType: "express_standard",
-      })?.toFixed(2) ?? null
-    );
-    expect(Number(price)).toBe(149);
-    expect(Number(price)).toBeLessThanOrEqual(400);
-    expect(resolveEffectiveStock(candidate, Number(price))).toBe(1);
+      },
+    });
+    const price = Number(resolveEffectivePrice(candidate, new Set()));
+    expect(resolveEffectiveStock(candidate, price)).toBe(0);
   });
 
   it("zeros stock on Mirakl when STX list exceeds 400", () => {
@@ -160,7 +193,7 @@ describe("mirakl deltas", () => {
         manualStock: 1,
         stock: 10,
         price: 100,
-        deliveryType: "express_standard",
+        deliveryType: "express_expedited",
       },
     });
     const syncByKey = new Map([
@@ -189,7 +222,7 @@ describe("mirakl deltas", () => {
         manualStock: null,
         stock: 10,
         price: 106.47,
-        deliveryType: "express_standard",
+        deliveryType: "express_expedited",
       },
     });
     const syncByKey = new Map([

@@ -334,12 +334,11 @@ export async function loadDecathlonCandidates(
     byGtin.set(candidate.gtin, bucket);
   }
   const filtered: DecathlonExportCandidate[] = [];
-  for (const [gtin, bucket] of byGtin) {
-    if (bucket.length === 1) {
-      filtered.push(bucket[0]);
-      continue;
-    }
+  for (const [, bucket] of byGtin) {
     bucket.sort((a, b) => {
+      const aStx = extractDecathlonOfferSupplierKey(a) === "stx" ? 0 : 1;
+      const bStx = extractDecathlonOfferSupplierKey(b) === "stx" ? 0 : 1;
+      if (aStx !== bStx) return aStx - bStx;
       const pa = Number(a.variant?.price ?? Infinity);
       const pb = Number(b.variant?.price ?? Infinity);
       if (pa !== pb) return pa - pb;
@@ -347,16 +346,8 @@ export async function loadDecathlonCandidates(
       const sb = Number(b.variant?.stock ?? 0);
       return sb - sa;
     });
-    filtered.push(bucket[0]);
-    for (let i = 1; i < bucket.length; i++) {
-      recordDecathlonExclusion(summary, {
-        reason: "DUPLICATE_GTIN" as DecathlonExclusionReason,
-        message: `Duplicate GTIN ${gtin}: kept ${bucket[0].providerKey} (cheaper)`,
-        providerKey: bucket[i].providerKey,
-        supplierVariantId: bucket[i]?.variant?.supplierVariantId ?? null,
-        gtin,
-      });
-    }
+    // Keep every providerKey so NER/SNL live offers still receive stock=0.
+    filtered.push(...bucket);
   }
 
   return { candidates: filtered, scanned };
