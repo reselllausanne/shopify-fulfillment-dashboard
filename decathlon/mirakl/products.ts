@@ -7,6 +7,7 @@ import {
 } from "@/decathlon/exports/mapping";
 import { BASE_REQUIRED_COLUMNS, buildProductRow } from "@/decathlon/exports/productCsv";
 import { PRODUCTS_HEADERS } from "@/decathlon/exports/templates";
+import { isDecathlonProductOnboardable } from "@/decathlon/exports/catalogPolicy";
 import type { DecathlonExportCandidate } from "@/decathlon/exports/types";
 import { buildMiraklClient } from "@/decathlon/mirakl/client";
 import { DECATHLON_MIRAKL_TEST_LIMIT, DECATHLON_MIRAKL_TEST_MODE } from "./config";
@@ -404,6 +405,17 @@ export async function prepareProductOnboarding(params?: {
   let notLive = 0;
 
   for (const candidate of limited) {
+    if (!isDecathlonProductOnboardable(candidate)) {
+      recordDecathlonExclusion(summary, {
+        reason: "MISSING_STOCK",
+        message: "Decathlon catalog: STX only (no NER/SNL/Onitsuka)",
+        fileType: "products",
+        providerKey: String(candidate.providerKey ?? "").trim() || null,
+        supplierVariantId: String(candidate?.variant?.supplierVariantId ?? "").trim() || null,
+        gtin: String(candidate.gtin ?? "").trim() || null,
+      });
+      continue;
+    }
     const row = buildProductRow(candidate, summary);
     if (!row) continue;
 

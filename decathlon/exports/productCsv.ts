@@ -1,4 +1,5 @@
 import type { DecathlonExclusionSummary, DecathlonExportCandidate, DecathlonExportFilePayload } from "./types";
+import { isDecathlonProductOnboardable } from "./catalogPolicy";
 import { recordDecathlonExclusion } from "./mapping";
 import { PRODUCTS_HEADERS } from "./templates";
 import { isBasketballTitle } from "./basketballTitles";
@@ -215,6 +216,17 @@ export function buildProductCsv(
   const rows = [];
 
   for (const candidate of candidates) {
+    if (!isDecathlonProductOnboardable(candidate)) {
+      recordDecathlonExclusion(summary, {
+        reason: "MISSING_STOCK",
+        message: "Decathlon catalog: STX only (no NER/SNL/Onitsuka)",
+        fileType: "products",
+        providerKey: candidate.providerKey,
+        supplierVariantId: candidate?.variant?.supplierVariantId ?? null,
+        gtin: candidate.gtin,
+      });
+      continue;
+    }
     const row = buildProductRow(candidate, summary);
     if (!row) continue;
     rows.push(row);

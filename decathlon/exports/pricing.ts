@@ -2,7 +2,6 @@ import {
   decathlonEstimatedPayoutFromSellTtc,
   decathlonEstimatedPayoutRate,
 } from "@/decathlon/orders/margin";
-import { calcSuggestedRetailFromStoredStxBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 
 export const DECATHLON_COMMISSION_RATE = 0.17;
 export const DECATHLON_VAT_RATE = 0.081;
@@ -34,8 +33,11 @@ export const DECATHLON_MARGIN_RULE_ADD_PP = 0;
  */
 export const DECATHLON_STX_MARGIN_BUMP_PP = 0;
 
-/** @deprecated STX uses website-aligned {@link calcSuggestedRetailFromStoredStxBuyPrice}. */
-export const DEFAULT_DECATHLON_STX_MARGIN_ON_BUY = 0.35;
+/**
+ * STX target margin **on buy after Decathlon fees** (commission + VAT + 13 CHF fulfil).
+ * Hard floor — env may only raise it. 0.40 = pocket ≈ 40% of buy.
+ */
+export const DEFAULT_DECATHLON_STX_MARGIN_ON_BUY = 0.4;
 /** Max Mirakl list TTC for STX (ceiling only). Default 400 CHF. */
 export const DECATHLON_STX_MAX_LIST_PRICE_CHF = 400;
 
@@ -205,14 +207,17 @@ function readDecathlonStxMarginBumpPp(): number {
 const STX_MARGIN_ON_BUY_ENV_KEYS = ["DECATHLON_STX_MARGIN_ON_BUY"];
 
 function readDecathlonStxMarginOnBuyFraction(): number {
+  let parsed: number | null = null;
   for (const key of STX_MARGIN_ON_BUY_ENV_KEYS) {
     const raw = process.env[key];
     if (raw === undefined || raw === null || raw === "") continue;
-    const parsed = Number.parseFloat(String(raw));
-    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) continue;
-    return parsed > 1 ? parsed / 100 : parsed;
+    const value = Number.parseFloat(String(raw));
+    if (!Number.isFinite(value) || value < 0 || value > 2) continue;
+    parsed = value > 1 ? value / 100 : value;
+    break;
   }
-  return DEFAULT_DECATHLON_STX_MARGIN_ON_BUY + readDecathlonStxMarginBumpPp();
+  const fromEnv = parsed ?? DEFAULT_DECATHLON_STX_MARGIN_ON_BUY + readDecathlonStxMarginBumpPp();
+  return Math.min(0.99, Math.max(DEFAULT_DECATHLON_STX_MARGIN_ON_BUY, fromEnv));
 }
 
 /** STX `marginOnBuy` for {@link computeDecathlonOfferListPriceFromMarginOnBuy}. */
@@ -434,7 +439,7 @@ export type DecathlonStxListPriceContext = {
   deliveryType?: string | null;
 };
 
-/** Break-even + recommended list for one STX buy (website margin bands, cap 400). */
+/** Break-even + recommended list for one STX buy (fee-aware margin-on-buy, cap 400). */
 export function computeDecathlonStxPricingGuide(
   buyNow: number,
   context?: DecathlonStxListPriceContext
@@ -466,24 +471,22 @@ export function isDecathlonStxListableBuy(
 }
 
 /**
- * STX Mirakl list TTC: same formula as website / Shopify suggested retail
- * ({@link calcSuggestedRetailFromStoredStxBuyPrice}). Excluded when list exceeds cap (default 400 CHF).
+ * STX Mirakl list TTC: fee-aware margin on buy after commission + VAT + fulfil.
+ * `list = (buy + 13 + buy × 40%) / retainedRate` so pocket ≈ 40% of buy.
+ * Excluded when list exceeds cap (default 400 CHF).
  */
 export function computeDecathlonStxOfferListPrice(
   buyNow: number,
   overrides?: DecathlonSalePriceOverrides,
   context?: DecathlonStxListPriceContext
 ): number | null {
-  void overrides;
+  void context;
   if (!Number.isFinite(buyNow) || buyNow <= 0) return null;
-  const websiteList = calcSuggestedRetailFromStoredStxBuyPrice({
-    storedBuyPriceChf: buyNow,
-    productHandle: context?.productHandle,
-    productName: context?.productName,
-    deliveryType: context?.deliveryType,
+  const list = computeDecathlonOfferListPriceFromMarginOnBuy(buyNow, {
+    ...overrides,
+    marginOnBuy: overrides?.marginOnBuy ?? resolveDecathlonStxMarginOnBuy(),
   });
-  if (websiteList == null || websiteList <= 0) return null;
-  const list = roundToIncrement(websiteList, DECATHLON_PRICE_ROUND_TO);
+  if (list == null || list <= 0) return null;
   if (list > readDecathlonStxMaxListPriceChf()) return null;
   return list;
 }
@@ -620,7 +623,7 @@ export const DECATHLON_OWN_CATALOG_FEED_GROSS_UP = 0.75;
  * Supplier-aware Mirakl list TTC from DB buy (`buyNow`):
  * - **NER / partners**: `buy / 0.75` (partner slice on list)
  * - **THE**: loss fraction on buy (default 15%)
- * - **STX**: website suggested retail — no extra /0.75
+ * - **STX**: fee-aware 40% margin on buy after commission + VAT + 13 CHF — no extra /0.75
  * - **others** (SNL, BAE, WEL, REI, …): margin-on-buy (default 15% net on buy after fees)
  *   then `/ {@link DECATHLON_OWN_CATALOG_FEED_GROSS_UP}` feed gross-up
  */

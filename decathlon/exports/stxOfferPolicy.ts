@@ -1,4 +1,5 @@
 import { isStxListingEligibleAsks } from "@/galaxus/stx/stockPublish";
+import { isDecathlonExpressExpeditedDelivery } from "./catalogPolicy";
 import type { DecathlonExportCandidate } from "./types";
 import {
   readDecathlonStxMaxListPriceChf,
@@ -76,7 +77,7 @@ function parseIntSafe(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** STX Mirakl quantity before delist rules — Decathlon = express_* only (no standard). */
+/** STX Mirakl quantity before delist — Decathlon dropship = express_expedited only. */
 export function resolveDecathlonStxOfferStockBeforeDelist(candidate: DecathlonExportCandidate): number {
   if (isDecathlonOnitsukaBlocked(candidate)) return 0;
   const variant = candidate.variant ?? {};
@@ -84,10 +85,9 @@ export function resolveDecathlonStxOfferStockBeforeDelist(candidate: DecathlonEx
   const manualStock = parseIntSafe(variant?.manualStock);
   const baseStock = parseIntSafe(variant?.stock) ?? 0;
   const rawStock = manualLock && manualStock !== null ? manualStock : baseStock;
-  const deliveryType = String(variant?.deliveryType ?? "").trim().toLowerCase();
-  const expressOnly = deliveryType.startsWith("express_");
+  const expeditedOnly = isDecathlonExpressExpeditedDelivery(variant?.deliveryType);
   const stxEligible =
-    expressOnly && Number.isFinite(rawStock) && isStxListingEligibleAsks(rawStock);
+    expeditedOnly && Number.isFinite(rawStock) && isStxListingEligibleAsks(rawStock);
   return stxEligible ? 1 : 0;
 }
 

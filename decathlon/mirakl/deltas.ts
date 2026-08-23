@@ -22,8 +22,8 @@ import {
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { loadPartnerKeysLowerFromDb } from "@/galaxus/exports/partnerPricing";
 import { classifyProductPricingKind, computeChannelVariantPrice } from "@/inventory/pricingPolicy";
+import { isDecathlonPhysicalInstockEnabled } from "@/decathlon/exports/catalogPolicy";
 import {
-  isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
   mergePhysicalWithDropship,
   type PhysicalStockMap,
@@ -71,7 +71,7 @@ export function resolveEffectiveStock(
   const supplierKey = extractDecathlonOfferSupplierKey(candidate);
   const physicalQty = Math.max(0, Math.floor(opts?.physicalQty ?? 0));
 
-  // Decathlon sellable lane = STX express only. Everything else (SNL/GLD/BAE/NER/REI/WEL/physical) → 0.
+  // Sellable lane = STX express_expedited + warehouse instock on that STX SKU. NER/SNL/… → 0.
   if (supplierKey !== "stx") {
     return 0;
   }
@@ -381,10 +381,8 @@ export async function buildDecathlonDeltas(params?: {
 
   const decathlonPartnerKeysLower = await loadPartnerKeysLowerFromDb();
 
-  // Phase 2 — physical mirror preload (flag-gated). Skipped when disabled so
-  // full deltas keep their current DB cost.
   let physicalByGtin: PhysicalStockMap | undefined;
-  if (isPhysicalMergeEnabled()) {
+  if (isDecathlonPhysicalInstockEnabled()) {
     const gtins = limited
       .map((c) => String(c.gtin ?? "").trim())
       .filter((g) => g.length > 0);
