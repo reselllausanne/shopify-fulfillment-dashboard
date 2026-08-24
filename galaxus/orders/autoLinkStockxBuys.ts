@@ -9,6 +9,7 @@ import {
   extractStockxVariantId,
   fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
+  synthesizeBuyOrderDetailsFromListNode,
 } from "@/galaxus/stx/stockxClient";
 import {
   getStxLinkStatusForOrder,
@@ -21,7 +22,7 @@ import {
   galaxusLineWarehouseStockHint,
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
-import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { resolveStockxBearerToken } from "@/lib/stockxToken";
 
 function parseDateMs(value: unknown): number | null {
   if (!value) return null;
@@ -75,7 +76,8 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
     return { linked: 0, reason: "nothing_to_link" as const };
   }
 
-  const token = await readGalaxusStockxToken();
+  const auth = await resolveStockxBearerToken();
+  const token = auth?.token ?? null;
   if (!token) return { linked: 0, reason: "no_token" as const };
 
   if (!options?.skipReserve) {
@@ -144,11 +146,15 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
       const buyOrderId = String(node.orderId ?? "").trim();
       if (!chainId || !buyOrderId) continue;
 
-      let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>> | null = null;
+      let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>;
       try {
         details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId: buyOrderId });
+        if (!details?.order) {
+          details = synthesizeBuyOrderDetailsFromListNode(node);
+        }
       } catch {
-        continue;
+        // Same fallback as manual paste: Buying list amount/ETA when GET_BUY_ORDER WAF-blocks.
+        details = synthesizeBuyOrderDetailsFromListNode(node);
       }
 
       const auto = applyStockxDetailsToDecathlonMatchFields(node, details, {

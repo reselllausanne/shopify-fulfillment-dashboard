@@ -130,6 +130,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
             ? existingAmount
             : null;
 
+    // StockX-looking order # must not save as MANUAL with empty cost (Cornelia / Cloud5 bug).
+    // Same as auto-link: either enrich fills amount, user types cost, or refuse.
+    if (
+      looksLikeStockxOrderNumber(orderNumberInput) &&
+      (resolvedCost == null || !Number.isFinite(resolvedCost))
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            stockxEnrich.attempted && !stockxEnrich.ok
+              ? `StockX enrich failed (${stockxEnrich.reason ?? "unknown"}) — enter cost manually or re-auth StockX, then retry.`
+              : "StockX order # requires cost (auto-fill failed or empty). Enter supplier cost, then save.",
+          stockxEnrich,
+        },
+        { status: 422 }
+      );
+    }
+
     const stockxOrderNumberFinal =
       orderNumberInput ||
       normalizeStockxOrderNumberInput(a.stockxOrderNumber) ||

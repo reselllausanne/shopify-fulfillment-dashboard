@@ -122,9 +122,14 @@ function expandGtinQueryVariants(lineGtins: string[]): string[] {
     out.add(d);
     out.add(d.padStart(14, "0"));
     out.add(d.padStart(13, "0"));
+    out.add(d.padStart(12, "0"));
     const strip = d.replace(/^0+/, "") || "0";
     out.add(strip);
-    if (strip !== d) out.add(strip.padStart(14, "0"));
+    if (strip !== d) {
+      out.add(strip.padStart(14, "0"));
+      out.add(strip.padStart(13, "0"));
+      out.add(strip.padStart(12, "0"));
+    }
   }
   return Array.from(out).filter((s) => s.length > 0);
 }

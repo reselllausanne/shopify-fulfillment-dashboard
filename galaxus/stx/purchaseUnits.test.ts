@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { buildBucketsFromNeeds } from "@/galaxus/stx/purchaseUnits";
+import { buildBucketsFromNeeds, expandGtinsForDbLookup } from "@/galaxus/stx/purchaseUnits";
+
+describe("expandGtinsForDbLookup", () => {
+  it("includes UPC-12 padding used in VariantMapping", () => {
+    const expanded = expandGtinsForDbLookup(["19649508150"]);
+    expect(expanded).toContain("19649508150");
+    expect(expanded).toContain("019649508150");
+    expect(expanded).toContain("0019649508150");
+  });
+});
 
 describe("buildBucketsFromNeeds", () => {
   it("counts linked units by GTIN when supplierVariantId changed after price sync", () => {

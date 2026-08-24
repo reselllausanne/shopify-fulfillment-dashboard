@@ -2,9 +2,10 @@ import {
   extractStockxVariantId,
   fetchStockxBuyOrderDetailsFull,
   findBuyOrderListNodeByOrderNumber,
+  synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
-import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { resolveStockxBearerToken } from "@/lib/stockxToken";
 
 export type DecathlonManualStockxEnrichResult =
   | {
@@ -48,7 +49,17 @@ export async function resolveStockxBuyByOrderNumberWithToken(
     if (!listNode || !chainId || !orderId) {
       return { ok: false, reason: "order_not_found_in_buying_list" };
     }
-    const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+    // Same as auto-link / sync: prefer GET_BUY_ORDER; if WAF blocks details, keep
+    // Buying-list amount/ETA so manual paste still fills cost (not empty MANUAL).
+    let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>;
+    try {
+      details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+      if (!details?.order) {
+        details = synthesizeBuyOrderDetailsFromListNode(listNode);
+      }
+    } catch {
+      details = synthesizeBuyOrderDetailsFromListNode(listNode);
+    }
     return { ok: true, listNode, details };
   } catch (error: any) {
     const reason = String(error?.message ?? "").trim();
@@ -65,9 +76,10 @@ export async function resolveStockxBuyByOrderNumberWithToken(
 export async function resolveStockxBuyForManualDecathlon(
   stockxOrderNumberInput: string
 ): Promise<DecathlonManualStockxEnrichResult> {
-  const token = await readGalaxusStockxToken();
-  if (!token) return { ok: false, reason: "missing_stockx_token" };
-  return resolveStockxBuyByOrderNumberWithToken(token, stockxOrderNumberInput);
+  // Same bearer resolution as backfill (`getSupplierToken`) + auto-link file fallback.
+  const auth = await resolveStockxBearerToken();
+  if (!auth?.token) return { ok: false, reason: "missing_stockx_token" };
+  return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
 }
 
 /**
@@ -104,9 +116,30 @@ export function applyStockxDetailsToDecathlonMatchFields(
         ""
     ).trim() || null;
 
-  const normalizedEtaMin = details.etaMin ?? details.etaMax ?? null;
-  const normalizedEtaMax = details.etaMax ?? details.etaMin ?? null;
+  const listEtaMinRaw = listNode?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
+  const listEtaMaxRaw = listNode?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
+  const normalizedEtaMin =
+    details.etaMin ??
+    details.etaMax ??
+    (listEtaMinRaw ? new Date(listEtaMinRaw) : null) ??
+    (listEtaMaxRaw ? new Date(listEtaMaxRaw) : null);
+  const normalizedEtaMax =
+    details.etaMax ??
+    details.etaMin ??
+    (listEtaMaxRaw ? new Date(listEtaMaxRaw) : null) ??
+    (listEtaMinRaw ? new Date(listEtaMinRaw) : null);
   const reasons = options?.matchReasons ?? ["MANUAL_STOCKX_ORDER_LOOKUP"];
+
+  const settledFromDetails = (() => {
+    const raw = order?.payment?.settledAmount?.value;
+    if (raw == null || raw === "") return null;
+    const n = Number(String(raw).replace(",", "."));
+    return Number.isFinite(n) ? n : null;
+  })();
+  const settledFromList =
+    listNode?.amount != null && Number.isFinite(Number(listNode.amount))
+      ? Number(listNode.amount)
+      : null;
 
   return {
     stockxChainId:
@@ -118,20 +151,32 @@ export function applyStockxDetailsToDecathlonMatchFields(
     stockxProductName,
     stockxSkuKey,
     stockxSizeEU: String(size ?? "").trim() || null,
-    stockxPurchaseDate: order?.created ? new Date(order.created) : null,
-    stockxAmount: (() => {
-      const raw = order?.payment?.settledAmount?.value;
-      if (raw == null || raw === "") return null;
-      const n = Number(String(raw).replace(",", "."));
-      return Number.isFinite(n) ? n : null;
-    })(),
-    stockxCurrencyCode: order?.payment?.settledAmount?.currency ?? null,
-    stockxStatus: order?.status != null ? String(order.status) : null,
+    stockxPurchaseDate: order?.created
+      ? new Date(order.created)
+      : listNode?.purchaseDate
+        ? new Date(listNode.purchaseDate)
+        : listNode?.creationDate
+          ? new Date(listNode.creationDate)
+          : null,
+    stockxAmount: settledFromDetails ?? settledFromList,
+    stockxCurrencyCode:
+      order?.payment?.settledAmount?.currency ?? listNode?.currencyCode ?? null,
+    stockxStatus:
+      order?.status != null
+        ? String(order.status)
+        : listNode?.state?.statusKey != null
+          ? String(listNode.state.statusKey)
+          : null,
     stockxEstimatedDelivery: normalizedEtaMin,
     stockxLatestEstimatedDelivery: normalizedEtaMax,
     stockxAwb: details.awb ?? null,
     stockxTrackingUrl: order?.shipping?.shipment?.trackingUrl ?? null,
-    stockxCheckoutType: typeof order?.checkoutType === "string" ? order.checkoutType : null,
+    stockxCheckoutType:
+      typeof order?.checkoutType === "string"
+        ? order.checkoutType
+        : typeof listNode?.checkoutType === "string"
+          ? listNode.checkoutType
+          : null,
     stockxStates: order?.states ?? null,
     matchType: "SYNC",
     matchConfidence: "high",

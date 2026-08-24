@@ -32,7 +32,65 @@ export type StockxBuyingNode = {
   localizedSizeTitle?: string | null;
   localizedSizeType?: string | null;
   productVariant?: any | null;
+  estimatedDeliveryDateRange?: {
+    estimatedDeliveryDate?: string | null;
+    latestEstimatedDeliveryDate?: string | null;
+  } | null;
+  checkoutType?: string | null;
 };
+
+/**
+ * When GET_BUY_ORDER fails (WAF/403) but Buying list hit succeeded, synthesize the
+ * same shape `applyStockxDetailsToDecathlonMatchFields` / auto-link expect.
+ */
+export function synthesizeBuyOrderDetailsFromListNode(listNode: StockxBuyingNode): {
+  order: any;
+  awb: string | null;
+  etaMin: Date | null;
+  etaMax: Date | null;
+} {
+  const etaMinRaw = listNode.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
+  const etaMaxRaw = listNode.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
+  const amount =
+    listNode.amount != null && Number.isFinite(Number(listNode.amount))
+      ? Number(listNode.amount)
+      : null;
+  const currency =
+    typeof listNode.currencyCode === "string" && listNode.currencyCode.trim()
+      ? listNode.currencyCode.trim()
+      : null;
+  const status =
+    listNode.state?.statusKey != null
+      ? String(listNode.state.statusKey)
+      : listNode.state?.statusTitle != null
+        ? String(listNode.state.statusTitle)
+        : null;
+  return {
+    order: {
+      id: listNode.orderId,
+      chainId: listNode.chainId,
+      orderNumber: listNode.orderNumber,
+      created: listNode.purchaseDate ?? listNode.creationDate ?? null,
+      status,
+      checkoutType: listNode.checkoutType ?? null,
+      estimatedDeliveryDateRange: listNode.estimatedDeliveryDateRange ?? null,
+      product: {
+        variant: listNode.productVariant ?? null,
+        localizedSize: listNode.localizedSizeTitle
+          ? { title: listNode.localizedSizeTitle }
+          : null,
+      },
+      payment:
+        amount != null
+          ? { settledAmount: { value: String(amount), currency } }
+          : null,
+      shipping: { shipment: { trackingUrl: null } },
+    },
+    awb: null,
+    etaMin: etaMinRaw ? new Date(etaMinRaw) : null,
+    etaMax: etaMaxRaw ? new Date(etaMaxRaw) : null,
+  };
+}
 
 type StockxBuyOrder = {
   id?: string | null;
