@@ -28,6 +28,8 @@ import { getJson, postJson, delJson } from "@/app/lib/api";
 
 const STOCKX_QUERY_CONFIG_STORAGE_KEY = "supplier_stockx_query_config_v1";
 const STOCKX_TOKEN_STORAGE_KEY = "supplier_stockx_token";
+/** Once-per-day auto AWB backfill after a manual token paste (Zurich calendar day). */
+const STOCKX_AWB_AUTOFILL_DAY_KEY = "supplier_stockx_awb_autofill_day_v1";
 
 const decodeJwtPayloadSafe = (token: string): Record<string, unknown> | null => {
   try {
@@ -58,6 +60,9 @@ export default function Home() {
   };
 
   const [stockxToken, setStockxToken] = useState("");
+  const [awbBackfillBusy, setAwbBackfillBusy] = useState(false);
+  const [awbBackfillStatus, setAwbBackfillStatus] = useState<string | null>(null);
+  const awbAutoFillRef = React.useRef(false);
   const normalizeStockxTokenInput = (value: string) => {
     if (!value) return "";
     let token = String(value).trim();
@@ -467,6 +472,98 @@ export default function Home() {
     });
     await loadFromDB();
   };
+
+  const zurichDayKey = () =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Zurich",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+  const runAwbBackfillFromAuth = async (opts?: { auto?: boolean }) => {
+    const token = normalizeStockxTokenInput(stockxToken);
+    if (!token) {
+      if (!opts?.auto) alert("Paste a StockX bearer token first.");
+      return;
+    }
+    if (isExpiredStockxJwt(token, 60)) {
+      setAwbBackfillStatus("Token expired — paste a fresh one.");
+      if (!opts?.auto) alert("StockX token expired. Paste a fresh bearer.");
+      return;
+    }
+    if (awbBackfillBusy) return;
+
+    setAwbBackfillBusy(true);
+    setAwbBackfillStatus(opts?.auto ? "Auto AWB backfill…" : "Backfilling AWBs…");
+    try {
+      const res = await fetch("/api/db/backfill-awb", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          token,
+          days: 21,
+          limit: 60,
+          dryRun: false,
+          includeFulfilled: false,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        const msg = data?.error || data?.details || `HTTP ${res.status}`;
+        setAwbBackfillStatus(`AWB backfill failed: ${msg}`);
+        if (!opts?.auto) alert(`AWB backfill failed: ${msg}`);
+        return;
+      }
+      const updated = Number(data.updated ?? 0);
+      const scanned = Number(data.scanned ?? 0);
+      const candidates = Number(data.candidates ?? 0);
+      const summary = `AWB backfill OK — updated ${updated}/${scanned} (candidates ${candidates})`;
+      setAwbBackfillStatus(summary);
+      try {
+        localStorage.setItem(
+          STOCKX_AWB_AUTOFILL_DAY_KEY,
+          `${zurichDayKey()}:${token.slice(-16)}`
+        );
+      } catch {
+        // ignore
+      }
+      await loadFromDB();
+    } catch (err: any) {
+      const msg = err?.message || "Network error";
+      setAwbBackfillStatus(`AWB backfill failed: ${msg}`);
+      if (!opts?.auto) alert(`AWB backfill failed: ${msg}`);
+    } finally {
+      setAwbBackfillBusy(false);
+    }
+  };
+
+  // After manual token paste: once per Zurich day, auto-save + backfill AWBs.
+  useEffect(() => {
+    if (!tokenStorageHydrated) return;
+    const token = normalizeStockxTokenInput(stockxToken);
+    if (!token || token.length < 40 || isExpiredStockxJwt(token, 60)) return;
+
+    const day = zurichDayKey();
+    const marker = `${day}:${token.slice(-16)}`;
+    let already = "";
+    try {
+      already = localStorage.getItem(STOCKX_AWB_AUTOFILL_DAY_KEY) || "";
+    } catch {
+      already = "";
+    }
+    if (already === marker) return;
+
+    const timer = window.setTimeout(() => {
+      if (awbAutoFillRef.current || awbBackfillBusy) return;
+      awbAutoFillRef.current = true;
+      void runAwbBackfillFromAuth({ auto: true }).finally(() => {
+        awbAutoFillRef.current = false;
+      });
+    }, 2000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: fire on token paste
+  }, [stockxToken, tokenStorageHydrated]);
 
   const handleFetchShopifyOrderWrapper = async () => {
     await handleFetchShopifyOrder(manualFetchOrder);
@@ -1605,6 +1702,9 @@ export default function Home() {
           onGoatCsrfTokenChange={setGoatCsrfToken}
           saveToken={saveToken}
           onSaveTokenToggle={setSaveToken}
+          onBackfillAwb={() => void runAwbBackfillFromAuth({ auto: false })}
+          awbBackfillBusy={awbBackfillBusy}
+          awbBackfillStatus={awbBackfillStatus}
         />
 
         <QueryControls
