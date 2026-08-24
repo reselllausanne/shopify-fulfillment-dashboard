@@ -1,21 +1,41 @@
 /**
- * Temporary WEL feed omit helpers (Aug 2026 hotfix).
+ * Durable Galaxus policy: WEL Pokémon is never sent in any feed
+ * (stock / price / master / specs), including new scrapes.
  *
- * Used by `scripts/galaxus-push-omit-wel-cards.ts` to strip WEL card SKUs from
- * full StockData/PriceData uploads without VPS-only one-offs.
- *
- * FOLLOW-UP (durable management — do not leave as script-only forever):
- * - Decide policy: keep live on Galaxus, force qty 0, or block price updates only.
- * - Prefer export-time filter in stock/offer routes (or runFeedUpload) driven by
- *   classification (`classifyWelProductKind` → tradingcard) / allowlist, not ad-hoc regex.
- * - Snapshot rebuild must apply the same omit so post-sale pushes stay consistent.
+ * Applied in `accumulateBestCandidates` (live export + snapshot rebuild)
+ * and again in `runFeedUpload` so a stale snapshot cannot reintroduce rows.
  */
 import { prisma } from "@/app/lib/prisma";
 
-/** WEL title/brand match for temporary card-SKU omit. */
+const POKEMON_RE = /pok[eé]mon/;
+
+export function isWelSupplierKey(input: {
+  supplierKey?: string | null;
+  providerKey?: string | null;
+  supplierVariantId?: string | null;
+}): boolean {
+  const keys = [input.supplierKey, input.providerKey, input.supplierVariantId]
+    .map((value) => String(value ?? "").trim().toLowerCase())
+    .filter(Boolean);
+  return keys.some((key) => key === "wel" || key.startsWith("wel_") || key.startsWith("wel:"));
+}
+
+/** WEL title/brand match for Pokémon omit. */
 export function isWelCardOmitTitle(name: string, brand: string): boolean {
   const text = `${name} ${brand}`.toLowerCase();
-  return /pok[eé]mon/.test(text);
+  return POKEMON_RE.test(text);
+}
+
+export function shouldOmitWelPokemonFromGalaxusFeed(input: {
+  supplierKey?: string | null;
+  providerKey?: string | null;
+  supplierVariantId?: string | null;
+  title?: string | null;
+  brand?: string | null;
+  extraText?: string | null;
+}): boolean {
+  if (!isWelSupplierKey(input)) return false;
+  return isWelCardOmitTitle(`${input.title ?? ""} ${input.extraText ?? ""}`, input.brand ?? "");
 }
 
 export async function loadWelCardOmitProviderKeys(): Promise<Set<string>> {
@@ -34,7 +54,13 @@ export async function loadWelCardOmitProviderKeys(): Promise<Set<string>> {
   for (const row of rows) {
     const key = String(row.providerKey ?? "").trim();
     if (!key) continue;
-    if (isWelCardOmitTitle(String(row.supplierProductName ?? ""), String(row.supplierBrand ?? ""))) {
+    if (
+      shouldOmitWelPokemonFromGalaxusFeed({
+        providerKey: key,
+        title: row.supplierProductName,
+        brand: row.supplierBrand,
+      })
+    ) {
       out.add(key);
     }
   }

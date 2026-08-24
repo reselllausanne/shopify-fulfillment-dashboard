@@ -1,8 +1,8 @@
 #!/usr/bin/env npx tsx
 /**
- * Temporary ops: full Galaxus stock +/or price push, omitting WEL card SKUs
- * (see galaxus/exports/welFeedOmit.ts). Never upload WEL-only — Stock/Price
- * files are full-catalog replacements.
+ * Manual full stock/price push (same WEL Pokémon omit as live export).
+ * Prefer queue push-stock / push-price after deploy — export gate already omits.
+ * Never upload WEL-only — Stock/Price files are full-catalog replacements.
  *
  * Env:
  *   PUSH_MODE=both|stock|price   (default both)

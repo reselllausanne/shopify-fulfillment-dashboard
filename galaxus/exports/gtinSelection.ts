@@ -3,6 +3,7 @@ import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { validateGtin } from "@/app/lib/normalize";
 import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
+import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
 
 type VariantCandidate = {
   mapping: any;
@@ -101,11 +102,38 @@ export function accumulateBestCandidates(
   for (const mapping of mappings) {
     const variant = mapping.supplierVariant ?? null;
     if (!variant) continue;
-    const supplierKey = extractSupplierKey(variant?.supplierVariantId ?? null);
+    const supplierKey =
+      extractSupplierKey(variant?.supplierVariantId ?? mapping?.supplierVariantId ?? null) ??
+      (mapping?.supplierKey ? String(mapping.supplierKey).trim().toLowerCase() : null) ??
+      extractSupplierKey(variant?.providerKey ?? mapping?.providerKey ?? null);
 
     // TRM permanently blocked. GLD (Golden) is allowed — MOQ 3, DD=0, 15% landed pricing.
     if (supplierKey === "trm") {
       options?.onExclude?.({ reason: "SUPPLIER_BLOCKED", supplierKey, mapping, variant });
+      continue;
+    }
+
+    if (
+      shouldOmitWelPokemonFromGalaxusFeed({
+        supplierKey,
+        providerKey: variant?.providerKey ?? mapping?.providerKey,
+        supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
+        title: variant?.supplierProductName,
+        brand: variant?.supplierBrand,
+        extraText: [
+          mapping?.kickdbVariant?.product?.name,
+          mapping?.kickdbVariant?.product?.brand,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      })
+    ) {
+      options?.onExclude?.({
+        reason: "SUPPLIER_BLOCKED",
+        supplierKey: supplierKey ?? "wel",
+        mapping,
+        variant,
+      });
       continue;
     }
 
