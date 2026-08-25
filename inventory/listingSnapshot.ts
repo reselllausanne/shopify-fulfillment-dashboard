@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { attachAvailableStock } from "./availableStock";
 import type { InventoryChannel } from "./types";
+import { isDecathlonSalesPaused } from "@/decathlon/exports/catalogPolicy";
 
 const ELIGIBLE_MAPPING_STATUSES = ["MATCHED", "SUPPLIER_GTIN", "PARTNER_GTIN"] as const;
 
@@ -57,9 +58,11 @@ export async function refreshChannelListingSnapshots(
     const availableStock =
       stockMap.get(supplierVariantId) ??
       Math.max(0, Number.parseInt(String(mapping?.supplierVariant?.stock ?? 0), 10) || 0);
-    const status = availableStock <= 0 ? "SOLD_OUT" : "ACTIVE";
 
     for (const channel of uniqueChannels) {
+      const decathlonPaused = channel === "DECATHLON" && isDecathlonSalesPaused();
+      const pushedStock = decathlonPaused ? 0 : availableStock;
+      const status = pushedStock <= 0 ? "SOLD_OUT" : "ACTIVE";
       await prismaAny.channelListingState.upsert({
         where: {
           channel_providerKey: {
@@ -72,10 +75,10 @@ export async function refreshChannelListingSnapshots(
           providerKey,
           supplierVariantId,
           gtin: mapping?.gtin ?? null,
-          lastPushedStock: availableStock,
+          lastPushedStock: pushedStock,
           status,
           lastSyncedAt: new Date(),
-          soldOutAt: availableStock <= 0 ? new Date() : null,
+          soldOutAt: pushedStock <= 0 ? new Date() : null,
           metadataJson: {
             source: "listing-snapshot",
           },
@@ -83,10 +86,10 @@ export async function refreshChannelListingSnapshots(
         update: {
           supplierVariantId,
           gtin: mapping?.gtin ?? undefined,
-          lastPushedStock: availableStock,
+          lastPushedStock: pushedStock,
           status,
           lastSyncedAt: new Date(),
-          soldOutAt: availableStock <= 0 ? new Date() : null,
+          soldOutAt: pushedStock <= 0 ? new Date() : null,
           metadataJson: {
             source: "listing-snapshot",
           },
