@@ -43,7 +43,8 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const ADS_PCT = 0.19;
   const CPA_CAP = 17.0;
   const CM2_TARGET = 0.19;
-  const SHIP_F = isExpress ? 15.0 : 7.0;
+  /** Outbound customer ship in hybrid base — STX dropship ≈ 14.5 CHF (was 7 warehouse). */
+  const SHIP_F = isExpress ? 15.0 : 14.5;
   const EXPRESS_UPSELL_PCT = 0.05;
   /** Onitsuka sneakers only (Adidas aligned to SNEAKER_MARGIN_DISCOUNT). */
   const BRAND_MARGIN_DISCOUNT = 0.1;
