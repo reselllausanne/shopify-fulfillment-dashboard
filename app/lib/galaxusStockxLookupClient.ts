@@ -97,44 +97,116 @@ export async function lookupGalaxusStockxBuyViaProxy(
   const needle = normalizeStockxOrderNumberInput(orderNumberInput);
   if (!needle) return { ok: false, error: "empty_order_number" };
 
-  const listRes = await fetch("/api/stockx", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      token: cleanedToken,
-      operationName: STOCKX_PERSISTED_OPERATION_NAME,
-      query: "",
-      variables: {
-        first: 50,
-        after: "",
-        state: null,
-        sort: "MATCHED_AT",
-        order: "DESC",
-        currencyCode: "CHF",
-        market: "CH",
-        country: "CH",
-        query: needle,
-      },
-    }),
-  });
-  const listJson = await listRes.json().catch(() => ({}));
-  if (!listRes.ok) {
-    const msg =
-      String(listJson?.error ?? "").trim() ||
-      String(listJson?.details ?? "").trim() ||
-      (Array.isArray(listJson?.errors) ? listJson.errors[0]?.message : "") ||
-      `StockX list HTTP ${listRes.status}`;
-    return { ok: false, error: msg };
+  const fetchBuyingPage = async (vars: {
+    after: string;
+    state: string | null;
+    query: string | null;
+  }): Promise<{ ok: true; json: any } | { ok: false; error: string }> => {
+    const res = await fetch("/api/stockx", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: cleanedToken,
+        operationName: STOCKX_PERSISTED_OPERATION_NAME,
+        query: "",
+        variables: {
+          first: 50,
+          after: vars.after,
+          state: vars.state,
+          sort: "MATCHED_AT",
+          order: "DESC",
+          currencyCode: "CHF",
+          market: "CH",
+          country: "CH",
+          ...(vars.query ? { query: vars.query } : {}),
+        },
+      }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg =
+        String(json?.error ?? "").trim() ||
+        String(json?.details ?? "").trim() ||
+        (Array.isArray(json?.errors) ? json.errors[0]?.message : "") ||
+        `StockX list HTTP ${res.status}`;
+      return { ok: false, error: msg };
+    }
+    return { ok: true, json };
+  };
+
+  const findInBuyingJson = (json: any) => {
+    const edges = Array.isArray(json?.data?.viewer?.buying?.edges)
+      ? json.data.viewer.buying.edges
+      : [];
+    return (
+      edges.map((edge: any) => edge?.node).find((node: any) =>
+        buyOrderNumbersMatch(node?.orderNumber, needle)
+      ) ?? null
+    );
+  };
+
+  const scanPages = async (opts: {
+    state: string | null;
+    query: string | null;
+    maxPages: number;
+  }): Promise<{ listNode: any | null; lastError: string | null }> => {
+    let after = "";
+    let lastCursor = "";
+    let lastError: string | null = null;
+    for (let page = 0; page < opts.maxPages; page += 1) {
+      const result = await fetchBuyingPage({
+        after,
+        state: opts.state,
+        query: opts.query,
+      });
+      if (!result.ok) {
+        lastError = result.error;
+        break;
+      }
+      const hit = findInBuyingJson(result.json);
+      if (hit) return { listNode: hit, lastError: null };
+
+      const pageInfo = result.json?.data?.viewer?.buying?.pageInfo;
+      const hasNext = Boolean(pageInfo?.hasNextPage);
+      const nextCursor =
+        typeof pageInfo?.endCursor === "string" ? pageInfo.endCursor.trim() : "";
+      if (!hasNext || !nextCursor || nextCursor === after || nextCursor === lastCursor) {
+        break;
+      }
+      lastCursor = after;
+      after = nextCursor;
+    }
+    return { listNode: null, lastError };
+  };
+
+  // Same strategy as server findBuyOrderListNodeByOrderNumber: query + paginate, then states, then blind PENDING.
+  const attempts: Array<{ state: string | null; query: string | null; maxPages: number }> = [
+    { state: null, query: needle, maxPages: 12 },
+    { state: "PENDING", query: needle, maxPages: 4 },
+    { state: "COMPLETED", query: needle, maxPages: 4 },
+    { state: "AUTHENTICATED", query: needle, maxPages: 4 },
+    { state: "SHIPPED", query: needle, maxPages: 4 },
+    { state: "CANCELED", query: needle, maxPages: 4 },
+    { state: "PENDING", query: null, maxPages: 8 },
+  ];
+
+  let listNode: any | null = null;
+  let lastError: string | null = null;
+  for (const attempt of attempts) {
+    const scanned = await scanPages(attempt);
+    if (scanned.listNode) {
+      listNode = scanned.listNode;
+      break;
+    }
+    if (scanned.lastError) lastError = scanned.lastError;
   }
 
-  const edges = Array.isArray(listJson?.data?.viewer?.buying?.edges)
-    ? listJson.data.viewer.buying.edges
-    : [];
-  const listNode =
-    edges.map((edge: any) => edge?.node).find((node: any) =>
-      buyOrderNumbersMatch(node?.orderNumber, needle)
-    ) ?? null;
-  if (!listNode) return { ok: false, error: "order_not_found_in_buying_list" };
+  if (!listNode) {
+    return {
+      ok: false,
+      error: lastError ?? "order_not_found_in_buying_list",
+    };
+  }
 
   const chainId = String(listNode?.chainId ?? "").trim();
   const orderId = String(listNode?.orderId ?? "").trim();
