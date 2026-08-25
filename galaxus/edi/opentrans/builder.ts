@@ -1,4 +1,5 @@
 import { create } from "xmlbuilder2";
+import { toGtin14 } from "@/galaxus/orders/gtinKey";
 import type {
   EdiDispatchDocument,
   EdiInvoiceDocument,
@@ -32,7 +33,8 @@ function addOrderResponseLineItem(parent: any, line: EdiOrderLine) {
   if (!line.supplierPid && line.providerKey) {
     product.ele("SUPPLIER_PID", { xmlns: BMECAT_NS }).txt(line.providerKey);
   }
-  if (line.gtin) product.ele("INTERNATIONAL_PID", { xmlns: BMECAT_NS }).txt(line.gtin);
+  const gtin14 = toGtin14(line.gtin);
+  if (gtin14) product.ele("INTERNATIONAL_PID", { xmlns: BMECAT_NS }).txt(gtin14);
   if (line.buyerPid) product.ele("BUYER_PID", { xmlns: BMECAT_NS }).txt(line.buyerPid);
   item.ele("QUANTITY").txt(line.quantity.toString());
   if (line.arrivalDateStart || line.arrivalDateEnd) {
@@ -129,9 +131,11 @@ export function buildOrderResponseXml(doc: EdiOrderResponseDocument): string {
     info.ele("SUPPLIER_ORDER_ID").txt(doc.supplierOrderId);
   }
 
-  const items = root.ele("ORDERRESPONSE_ITEM_LIST");
-  for (const line of doc.lines) {
-    addOrderResponseLineItem(items, line);
+  if (doc.lines.length > 0) {
+    const items = root.ele("ORDERRESPONSE_ITEM_LIST");
+    for (const line of doc.lines) {
+      addOrderResponseLineItem(items, line);
+    }
   }
 
   return root.end({ prettyPrint: true });
