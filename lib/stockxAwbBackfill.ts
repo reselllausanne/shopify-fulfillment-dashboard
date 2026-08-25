@@ -58,6 +58,14 @@ function normalizeStockxStatus(
   return raw;
 }
 
+/** Real StockX buy refs only — skip manual supplier / GOAT placeholders. */
+export function isRealStockxBuyRef(value: unknown): boolean {
+  const ref = String(value ?? "").trim();
+  if (!ref) return false;
+  if (/^(GOAT|BERGER|WEL|REI|CONRAD|SNL|LOCAL|MANUAL|PHYS|ESS)-/i.test(ref)) return false;
+  return /^01-[A-Z0-9]+$/i.test(ref) || /^0\d/.test(ref);
+}
+
 export function carrierFromTrackingUrl(trackingUrl: string | null): string | null {
   if (!trackingUrl) return null;
   const lowered = trackingUrl.toLowerCase();
@@ -72,7 +80,7 @@ export function carrierFromTrackingUrl(trackingUrl: string | null): string | nul
   }
 }
 
-async function fetchBuyOrder(token: string, chainId: string, orderId: string) {
+export async function fetchBuyOrder(token: string, chainId: string, orderId: string) {
   const proxyRequest = new NextRequest("http://internal/api/stockx", {
     method: "POST",
     headers: { "content-type": "application/json" },

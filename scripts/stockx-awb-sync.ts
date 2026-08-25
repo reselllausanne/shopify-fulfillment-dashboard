@@ -10,6 +10,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
+import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
+import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
 import { refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken } from "@/lib/stockxServerToken";
 
@@ -120,10 +122,31 @@ async function main(): Promise<void> {
     return;
   }
 
-  const result = await runAwbBackfill({ token, days, limit, dryRun, includeFulfilled: false });
+  const shopifyResult = await runAwbBackfill({ token, days, limit, dryRun, includeFulfilled: false });
+  const galaxusResult = await runGalaxusAwbBackfill({
+    token,
+    days,
+    limit,
+    dryRun,
+    includeFulfilled: false,
+  });
+  const decathlonResult = await runDecathlonAwbBackfill({
+    token,
+    days,
+    limit,
+    dryRun,
+    includeFulfilled: false,
+  });
   console.log(
-    `[STOCKX-AWB-SYNC] candidates=${result.candidates} scanned=${result.scanned} updated=${result.updated} emailsSent=${result.emailsSent} authFailures=${result.authFailures}`
+    `[STOCKX-AWB-SYNC] shopify candidates=${shopifyResult.candidates} updated=${shopifyResult.updated} emailsSent=${shopifyResult.emailsSent}`
   );
+  console.log(
+    `[STOCKX-AWB-SYNC] galaxus candidates=${galaxusResult.candidates} updated=${galaxusResult.updated}`
+  );
+  console.log(
+    `[STOCKX-AWB-SYNC] decathlon candidates=${decathlonResult.candidates} updated=${decathlonResult.updated}`
+  );
+  const result = shopifyResult;
   for (const item of result.items.filter((entry) => entry.emailSent)) {
     console.log(
       `[STOCKX-AWB-SYNC] email ${item.shopifyOrderName ?? "?"} ${item.stockxOrderNumber}`
@@ -135,12 +158,24 @@ async function main(): Promise<void> {
     );
   }
 
-  if (result.abortedReason) {
+  for (const item of galaxusResult.items.filter((entry) => entry.status === "UPDATED")) {
+    console.log(
+      `[STOCKX-AWB-SYNC] galaxus ${item.galaxusOrderRef ?? "?"} ${item.stockxOrderNumber} -> ${item.awb} (${item.carrier ?? "?"})`
+    );
+  }
+
+  for (const item of decathlonResult.items.filter((entry) => entry.status === "UPDATED")) {
+    console.log(
+      `[STOCKX-AWB-SYNC] decathlon ${item.decathlonOrderId ?? "?"} ${item.stockxOrderNumber} -> ${item.awb} (${item.carrier ?? "?"})`
+    );
+  }
+
+  if (result.abortedReason || galaxusResult.abortedReason || decathlonResult.abortedReason) {
     await alert(
       "auth_rejected",
       [
         ":rotating_light: *StockX AWB sync aborted*",
-        result.abortedReason,
+        result.abortedReason || galaxusResult.abortedReason || decathlonResult.abortedReason,
         "Action: log in on the VPS (noVNC :6080) to refresh the StockX session.",
       ].join("\n")
     );
@@ -148,13 +183,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  const errors = result.items.filter((entry) => entry.status === "ERROR");
-  if (errors.length > 0 && errors.length === result.scanned && result.scanned > 0) {
+  const errors = [
+    ...result.items.filter((entry) => entry.status === "ERROR"),
+    ...galaxusResult.items.filter((entry) => entry.status === "ERROR"),
+    ...decathlonResult.items.filter((entry) => entry.status === "ERROR"),
+  ];
+  const scannedTotal = result.scanned + galaxusResult.scanned + decathlonResult.scanned;
+  if (errors.length > 0 && errors.length === scannedTotal && scannedTotal > 0) {
     await alert(
       "all_errors",
       [
         ":warning: *StockX AWB sync failing*",
-        `Every one of ${result.scanned} orders errored. First: ${errors[0]?.error ?? "unknown"}`,
+        `Every one of ${scannedTotal} orders errored. First: ${errors[0]?.error ?? "unknown"}`,
       ].join("\n")
     );
     process.exitCode = 1;

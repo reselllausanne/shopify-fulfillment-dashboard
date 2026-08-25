@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
+import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
 import { refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken } from "@/lib/stockxServerToken";
@@ -46,16 +48,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await runAwbBackfill({
-      token,
-      days,
-      limit,
-      dryRun,
-      includeFulfilled: false,
-    });
+    const shared = { token, days, limit, dryRun, includeFulfilled: false as const };
+    const shopify = await runAwbBackfill(shared);
+    const galaxus = await runGalaxusAwbBackfill(shared);
+    const decathlon = await runDecathlonAwbBackfill(shared);
+
+    const abortedReason =
+      shopify.abortedReason || galaxus.abortedReason || decathlon.abortedReason || null;
 
     return NextResponse.json({
-      ok: !result.abortedReason,
+      ok: !abortedReason,
       refresh: {
         ok: refresh.ok,
         reused: refresh.reused,
@@ -63,7 +65,20 @@ export async function POST(req: NextRequest) {
         needsManualLogin: refresh.needsManualLogin,
         error: refresh.error,
       },
-      ...result,
+      shopify,
+      galaxus,
+      decathlon,
+      scanned: shopify.scanned + galaxus.scanned + decathlon.scanned,
+      candidates: shopify.candidates + galaxus.candidates + decathlon.candidates,
+      updated: shopify.updated + galaxus.updated + decathlon.updated,
+      emailsSent: shopify.emailsSent,
+      authFailures: shopify.authFailures + galaxus.authFailures + decathlon.authFailures,
+      abortedReason,
+      items: [
+        ...shopify.items.map((item) => ({ ...item, channel: "shopify" as const })),
+        ...galaxus.items,
+        ...decathlon.items,
+      ],
     });
   } catch (error: any) {
     console.error("[STOCKX-AWB-SYNC] Error:", error?.message || error);

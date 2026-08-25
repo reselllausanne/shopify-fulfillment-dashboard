@@ -3,13 +3,23 @@
 import { useEffect, useState } from "react";
 
 type BackfillItem = {
+  channel?: "shopify" | "galaxus" | "decathlon";
   shopifyOrderName: string | null;
+  galaxusOrderRef?: string | null;
+  decathlonOrderId?: string | null;
+  deliveryType?: string | null;
   stockxOrderNumber: string;
   status: "UPDATED" | "NO_TRACKING" | "AUTH_FAILED" | "ERROR" | "DRY_RUN";
   awb?: string | null;
   carrier?: string | null;
   stockxStatus?: string | null;
   error?: string | null;
+};
+
+type ChannelStats = {
+  missingAwb: number;
+  missingAwbInTransit: number;
+  stockxMatches: number;
 };
 
 type BackfillResponse = {
@@ -20,6 +30,9 @@ type BackfillResponse = {
   updated?: number;
   abortedReason?: string | null;
   items?: BackfillItem[];
+  galaxus?: { updated?: number; scanned?: number };
+  shopify?: { updated?: number; scanned?: number };
+  decathlon?: { updated?: number; scanned?: number };
   error?: string;
   details?: string;
 };
@@ -32,18 +45,39 @@ const statusStyle: Record<BackfillItem["status"], string> = {
   ERROR: "bg-orange-100 text-orange-800",
 };
 
+function channelLabel(item: BackfillItem): string {
+  if (item.channel === "galaxus") return "Galaxus";
+  if (item.channel === "decathlon") return "Decathlon";
+  return "Shopify";
+}
+
+function orderLabel(item: BackfillItem): string {
+  if (item.channel === "galaxus") {
+    const ref = item.galaxusOrderRef || item.shopifyOrderName || "—";
+    return item.deliveryType ? `${ref} (${item.deliveryType})` : ref;
+  }
+  if (item.channel === "decathlon") {
+    return item.decathlonOrderId || item.shopifyOrderName || "—";
+  }
+  return item.shopifyOrderName || "—";
+}
+
 export default function AwbBackfillPage() {
   const [token, setToken] = useState("");
   const [days, setDays] = useState(45);
   const [limit, setLimit] = useState(40);
   const [dryRun, setDryRun] = useState(true);
   const [includeFulfilled, setIncludeFulfilled] = useState(false);
+  const [includeGalaxus, setIncludeGalaxus] = useState(true);
+  const [includeDecathlon, setIncludeDecathlon] = useState(true);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<BackfillResponse | null>(null);
   const [stats, setStats] = useState<{
     missingAwb: number;
     missingAwbInTransit: number;
     stockxMatches: number;
+    galaxus?: ChannelStats | null;
+    decathlon?: ChannelStats | null;
     storedToken: { source: string; expiresAt: string | null } | null;
   } | null>(null);
 
@@ -56,6 +90,8 @@ export default function AwbBackfillPage() {
           missingAwb: data.missingAwb,
           missingAwbInTransit: data.missingAwbInTransit,
           stockxMatches: data.stockxMatches,
+          galaxus: data.galaxus ?? null,
+          decathlon: data.decathlon ?? null,
           storedToken: data.storedToken ?? null,
         });
       }
@@ -79,7 +115,15 @@ export default function AwbBackfillPage() {
       const res = await fetch("/api/db/backfill-awb", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, days, limit, dryRun, includeFulfilled }),
+        body: JSON.stringify({
+          token,
+          days,
+          limit,
+          dryRun,
+          includeFulfilled,
+          includeGalaxus,
+          includeDecathlon,
+        }),
       });
       const data: BackfillResponse = await res.json();
       setResult(data);
@@ -97,27 +141,48 @@ export default function AwbBackfillPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Backfill StockX AWB</h1>
           <p className="mt-1 text-sm text-gray-600">
-            Refetches <span className="font-mono">getBuyOrder</span> for matched StockX buys that have
-            no AWB stored, so the warehouse scan page can find them.
+            Refetches <span className="font-mono">getBuyOrder</span> for matched StockX buys —
+            Shopify, Galaxus (direct + warehouse), Decathlon — so warehouse scan resolves inbound
+            parcels (DFS / AC shipped) and can auto-print outbound labels.
           </p>
         </div>
 
         {stats && (
-          <div className="rounded-lg border bg-white p-4 text-sm text-gray-800">
-            Last {days} days: <strong>{stats.missingAwbInTransit}</strong> orders still in transit
-            without AWB (these are the ones the warehouse will scan) ·{" "}
-            <strong>{stats.missingAwb}</strong> total without AWB out of{" "}
-            <strong>{stats.stockxMatches}</strong> StockX matches.
-            <div className="mt-2 text-xs text-gray-600">
+          <div className="rounded-lg border bg-white p-4 text-sm text-gray-800 space-y-3">
+            <div>
+              <strong>Shopify</strong> · last {days} days:{" "}
+              <strong>{stats.missingAwbInTransit}</strong> in transit without AWB ·{" "}
+              <strong>{stats.missingAwb}</strong> total without AWB /{" "}
+              <strong>{stats.stockxMatches}</strong> StockX matches
+            </div>
+            {stats.galaxus ? (
+              <div>
+                <strong>Galaxus DD+WD</strong> · last {days} days:{" "}
+                <strong>{stats.galaxus.missingAwbInTransit}</strong> in transit without AWB ·{" "}
+                <strong>{stats.galaxus.missingAwb}</strong> total without AWB /{" "}
+                <strong>{stats.galaxus.stockxMatches}</strong> StockX matches
+              </div>
+            ) : null}
+            {stats.decathlon ? (
+              <div>
+                <strong>Decathlon</strong> · last {days} days:{" "}
+                <strong>{stats.decathlon.missingAwbInTransit}</strong> in transit without AWB ·{" "}
+                <strong>{stats.decathlon.missingAwb}</strong> total without AWB /{" "}
+                <strong>{stats.decathlon.stockxMatches}</strong> StockX matches
+              </div>
+            ) : null}
+            <div className="text-xs text-gray-600">
               {stats.storedToken?.expiresAt ? (
                 <>
-                  Hourly auto-sync token ({stats.storedToken.source}) valid until{" "}
+                  Auto-sync token ({stats.storedToken.source}) valid until{" "}
                   <strong>{new Date(stats.storedToken.expiresAt).toLocaleString("fr-CH")}</strong>.
                 </>
+              ) : stats.storedToken ? (
+                <>Galaxus token file present ({stats.storedToken.source}).</>
               ) : (
                 <span className="text-red-700">
-                  No valid stored token — the hourly auto-sync cannot run. Paste one below (it gets
-                  saved for the job) or log in on the server.
+                  No valid stored token — hourly auto-sync cannot run. Paste one below or save via
+                  Direct Delivery StockX tools.
                 </span>
               )}
             </div>
@@ -149,14 +214,14 @@ export default function AwbBackfillPage() {
               />
             </label>
             <label className="text-sm text-gray-700">
-              Max orders
+              Max orders / channel
               <input
                 type="number"
                 min={1}
                 max={200}
                 value={limit}
                 onChange={(e) => setLimit(Number(e.target.value) || 40)}
-                className="mt-1 block w-24 rounded border p-2"
+                className="mt-1 block w-28 rounded border p-2"
               />
             </label>
             <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -175,6 +240,22 @@ export default function AwbBackfillPage() {
               />
               Include already fulfilled orders
             </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={includeGalaxus}
+                onChange={(e) => setIncludeGalaxus(e.target.checked)}
+              />
+              Include Galaxus (direct + warehouse)
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={includeDecathlon}
+                onChange={(e) => setIncludeDecathlon(e.target.checked)}
+              />
+              Include Decathlon
+            </label>
             <button
               onClick={run}
               disabled={running}
@@ -191,6 +272,13 @@ export default function AwbBackfillPage() {
               <div className="text-sm text-gray-800">
                 Checked <strong>{result.scanned}</strong> orders · updated{" "}
                 <strong>{result.updated}</strong>
+                {result.shopify || result.galaxus || result.decathlon ? (
+                  <span className="text-gray-600">
+                    {" "}
+                    (Shopify {result.shopify?.updated ?? 0} · Galaxus {result.galaxus?.updated ?? 0}{" "}
+                    · Decathlon {result.decathlon?.updated ?? 0})
+                  </span>
+                ) : null}
                 {result.dryRun ? " (dry run)" : ""}
               </div>
             ) : (
@@ -209,7 +297,8 @@ export default function AwbBackfillPage() {
               <table className="w-full text-left text-sm">
                 <thead className="text-xs uppercase text-gray-500">
                   <tr>
-                    <th className="py-1">Shopify</th>
+                    <th className="py-1">Channel</th>
+                    <th className="py-1">Order</th>
                     <th className="py-1">StockX order</th>
                     <th className="py-1">Result</th>
                     <th className="py-1">AWB</th>
@@ -219,8 +308,14 @@ export default function AwbBackfillPage() {
                 </thead>
                 <tbody>
                   {result.items.map((item) => (
-                    <tr key={`${item.stockxOrderNumber}`} className="border-t">
-                      <td className="py-1">{item.shopifyOrderName || "—"}</td>
+                    <tr
+                      key={`${item.channel ?? "shopify"}-${item.stockxOrderNumber}-${item.shopifyOrderName ?? ""}-${item.decathlonOrderId ?? ""}`}
+                      className="border-t"
+                    >
+                      <td className="py-1 text-xs uppercase text-gray-500">
+                        {channelLabel(item)}
+                      </td>
+                      <td className="py-1">{orderLabel(item)}</td>
                       <td className="py-1 font-mono text-xs">{item.stockxOrderNumber}</td>
                       <td className="py-1">
                         <span className={`rounded px-2 py-0.5 text-xs ${statusStyle[item.status]}`}>
