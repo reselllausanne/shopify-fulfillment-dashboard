@@ -326,7 +326,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
           etaMax: payload.stockxLatestEstimatedDelivery,
           stockxSettledAmount: resolvedCost,
           stockxSettledCurrency: payload.stockxCurrencyCode,
-          allowMissingEta: true,
         });
       }
     }

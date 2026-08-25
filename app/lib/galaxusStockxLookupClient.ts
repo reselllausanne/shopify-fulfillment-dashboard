@@ -3,8 +3,26 @@ import {
   STOCKX_PERSISTED_OPERATION_NAME,
   buildStockxGetBuyOrderVariables,
 } from "@/app/lib/constants";
-import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
-import { normalizeStockxOrderNumberInput } from "@/decathlon/stx/manualStockxEnrich";
+
+function normalizeStockxOrderNumberInput(input: string | null | undefined): string {
+  return String(input ?? "")
+    .trim()
+    .replace(/^#+/, "")
+    .trim();
+}
+
+function extractAwbFromTrackingUrl(trackingUrl: string | null | undefined): string | null {
+  if (!trackingUrl) return null;
+  const tokens = String(trackingUrl).split(/[\s\r\n/?&#=]+/).filter(Boolean);
+  for (const token of tokens) {
+    const cleaned = token.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    if (!cleaned) continue;
+    if (/^1Z[0-9A-Z]{16}$/.test(cleaned)) return cleaned;
+    if (/^\d{13,}$/.test(cleaned)) return cleaned.slice(-12);
+    if (/^[A-Z0-9]{8,}$/.test(cleaned)) return cleaned;
+  }
+  return null;
+}
 
 function buyOrderNumbersMatch(stored: string | null | undefined, search: string): boolean {
   const a = normalizeStockxOrderNumberInput(stored).toLowerCase();
