@@ -426,7 +426,7 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     1. After-fees cost C (StockX fees + inbound shipping model)
     2. C_plus_ship = C + SHIP_F (customer ship inside hybrid base; bump SHIP_F when fulfil model changes)
     3. Hybrid on C_plus_ship: % mode if implied price ≤ 190, else CPA-cap with CPA_CAP
-    4. Adidas / Onitsuka sneakers: -10%; Saucony sneakers: -8% only (no default stack); sneakers else -5%; clothing/streetwear -2%
+    4. No brand/category margin discounts (removed Q4 — full hybrid CM2)
     5. Low-AOV floor when C ≤ 100: max(hybrid, C + 50 + 13) — hybrid wins above ~86 all-in
     6. Psychological rounding (no global +3%, no second ship bump)
     
@@ -450,10 +450,6 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price
     SHIP_F = SHIP_F_EXPRESS if is_express else SHIP_F_STANDARD
-    BRAND_MARGIN_DISCOUNT = 0.10  # onitsuka sneakers only (adidas now uses SNEAKER_MARGIN_DISCOUNT)
-    SAUCONY_MARGIN_DISCOUNT = 0.08  # saucony sneakers: -8% vs hybrid base only, no default stack
-    SNEAKER_MARGIN_DISCOUNT = 0.05  # nike, jordan, adidas, nb, etc.
-    CLOTHING_MARGIN_DISCOUNT = 0.02  # streetwear, jerseys, apparel
     LOW_AOV_COST_THRESHOLD = 100.0  # all-in StockX buy (C) at or below this
     LOW_AOV_MIN_MARGIN = 50.0       # fixed margin on low-AOV items
     LOW_AOV_FULFIL = 15.0 if is_express else 13.0  # outbound logistics
@@ -528,36 +524,8 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
         print(f"[PRICE DEBUG] Switching to CPA-CAP MODE (% price > 190 CHF)")
         print(f"[PRICE DEBUG] CPA mode: ({C_plus_ship:.2f} + {CPA_CAP}) / {denom:.3f} = {price_cpa:.2f} CHF")
     
-    # Step 4.5: Brand / default margin discount (before rounding)
-    brand_lower = str(brand or "").lower()
-    handle_lower = str(product_handle or "").lower()
-    category_lower = str(product_category or "").lower()
-    is_adidas = "adidas" in brand_lower or ("adidas" in handle_lower and not brand_lower)
-    is_saucony = "saucony" in brand_lower or ("saucony" in handle_lower and not brand_lower)
-    is_onitsuka = "onitsuka" in brand_lower or ("onitsuka" in handle_lower and not brand_lower)
-    is_sneaker = "sneaker" in category_lower
-    # Adidas: same −5% as Nike/Jordan (was −10% brand cut → too thin vs ads).
-    if is_onitsuka and is_sneaker:
-        before_discount = final_price_raw
-        final_price_raw = final_price_raw * (1.0 - BRAND_MARGIN_DISCOUNT)
-        print(f"[PRICE DEBUG] Onitsuka margin discount: {before_discount:.2f} → {final_price_raw:.2f} (-{BRAND_MARGIN_DISCOUNT*100:.0f}%)")
-    elif is_saucony and is_sneaker:
-        before_discount = final_price_raw
-        final_price_raw = final_price_raw * (1.0 - SAUCONY_MARGIN_DISCOUNT)
-        print(
-            f"[PRICE DEBUG] Saucony margin discount: {before_discount:.2f} → {final_price_raw:.2f} "
-            f"(-{SAUCONY_MARGIN_DISCOUNT*100:.0f}%, no default stack)"
-        )
-    else:
-        discount = SNEAKER_MARGIN_DISCOUNT if is_sneaker else CLOTHING_MARGIN_DISCOUNT
-        discount_label = "Sneaker" if is_sneaker else "Clothing"
-        if is_adidas and is_sneaker:
-            discount_label = "Adidas (sneaker parity)"
-        before_discount = final_price_raw
-        final_price_raw = final_price_raw * (1.0 - discount)
-        print(
-            f"[PRICE DEBUG] {discount_label} margin discount: {before_discount:.2f} → {final_price_raw:.2f} (-{discount*100:.0f}%)"
-        )
+    # Step 4.5: no brand/category margin discounts (removed Q4)
+    _ = brand  # API parity; unused for pricing
 
     # Step 4.6: Low-AOV floor — fixed margin + fulfil when all-in cost ≤ 100 CHF
     if C <= LOW_AOV_COST_THRESHOLD:

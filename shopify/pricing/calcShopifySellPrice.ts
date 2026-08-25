@@ -46,17 +46,12 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   /** Outbound customer ship in hybrid base — STX dropship ≈ 14.5 CHF (was 7 warehouse). */
   const SHIP_F = isExpress ? 15.0 : 14.5;
   const EXPRESS_UPSELL_PCT = 0.05;
-  /** Onitsuka sneakers only (Adidas aligned to SNEAKER_MARGIN_DISCOUNT). */
-  const BRAND_MARGIN_DISCOUNT = 0.1;
-  const SAUCONY_MARGIN_DISCOUNT = 0.08;
-  const SNEAKER_MARGIN_DISCOUNT = 0.05;
-  const CLOTHING_MARGIN_DISCOUNT = 0.02;
   const LOW_AOV_COST_THRESHOLD = 100.0;
   const LOW_AOV_MIN_MARGIN = 50.0;
   const LOW_AOV_FULFIL = isExpress ? 15.0 : 13.0;
 
-  const handleLower = productHandle.toLowerCase();
-  const brandLower = brand.toLowerCase();
+  // brand kept on input for API parity with Python; no brand/category margin cuts (Q4).
+  void brand;
   const isLego = category === "lego";
 
   let C: number;
@@ -84,21 +79,6 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   } else {
     const denom = 1.0 - (PSP + VAT + CM2_TARGET);
     finalPriceRaw = (C_plus_ship + CPA_CAP) / denom;
-  }
-
-  const isSaucony = brandLower.includes("saucony") || (handleLower.includes("saucony") && !brandLower);
-  const isOnitsuka =
-    brandLower.includes("onitsuka") || (handleLower.includes("onitsuka") && !brandLower);
-  const isSneaker = category === "sneakers";
-
-  // Adidas: same −5% as Nike/Jordan sneakers (was −10% brand cut → too thin vs ads).
-  if (isOnitsuka && isSneaker) {
-    finalPriceRaw *= 1.0 - BRAND_MARGIN_DISCOUNT;
-  } else if (isSaucony && isSneaker) {
-    finalPriceRaw *= 1.0 - SAUCONY_MARGIN_DISCOUNT;
-  } else {
-    const discount = isSneaker ? SNEAKER_MARGIN_DISCOUNT : CLOTHING_MARGIN_DISCOUNT;
-    finalPriceRaw *= 1.0 - discount;
   }
 
   if (C <= LOW_AOV_COST_THRESHOLD) {
