@@ -391,12 +391,32 @@ export async function convergeVariant(
   // - never delivery_48h (soldes-48h collection) — express_available only
   // - enforce fixed sell + clear compareAt if a past soldes pass left them wrong
   if (fixedPriceRule && shopifyVariant?.variantId && shopifyVariant.productId) {
-    const sell = fixedPriceRule.sellChf ?? null;
+    const registrySell = fixedPriceRule.sellChf ?? null;
     const note = String(stxRow?.manualNote ?? "");
     const isSoldesLock =
       Boolean(stxRow?.manualLock) &&
       (/phase4:liquidation/i.test(note) || /restock:liquidation/i.test(note));
     const wantNote = `in-stock:fixed-price ${fixedPriceRule.label}`;
+
+    // Registry is the floor. Keep a higher existing retail lock (e.g. Bape @ 89)
+    // so converge never cuts Money Kickz shelf prices down to the catalog default.
+    const dbSell = toNumber(stxRow?.manualPrice);
+    const shopifySell = toNumber(shopifyVariant.price);
+    const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+    const onSoldesDisplay =
+      currentCompareAt != null &&
+      currentCompareAt > 0 &&
+      shopifySell != null &&
+      currentCompareAt > shopifySell;
+    let sell = registrySell;
+    if (registrySell != null && registrySell > 0) {
+      if (dbSell != null && dbSell >= registrySell) sell = dbSell;
+      else if (!onSoldesDisplay && shopifySell != null && shopifySell >= registrySell) {
+        sell = shopifySell;
+      } else {
+        sell = registrySell;
+      }
+    }
 
     if (stxRow && sell != null && sell > 0) {
       const needDbUpdate =
@@ -424,10 +444,9 @@ export async function convergeVariant(
     }
 
     if (sell != null && sell > 0) {
-      const currentPrice = toNumber(shopifyVariant.price);
-      const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+      const currentPrice = shopifySell;
       const priceDiffers = currentPrice == null || Math.abs(currentPrice - sell) > 0.005;
-      const needsClearCompare = currentCompareAt != null && currentCompareAt > 0;
+      const needsClearCompare = onSoldesDisplay || (currentCompareAt != null && currentCompareAt > 0);
       if (priceDiffers || needsClearCompare) {
         try {
           await writeShopifyVariantPrice({
