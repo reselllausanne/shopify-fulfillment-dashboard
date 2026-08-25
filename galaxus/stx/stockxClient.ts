@@ -15,6 +15,7 @@ import {
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 import {
   GALAXUS_STOCKX_PERSISTED_HASHES_FILE,
+  GALAXUS_STOCKX_SESSION_FILE,
   GALAXUS_STOCKX_SESSION_META_FILE,
 } from "@/lib/stockxGalaxusAuth";
 
@@ -224,6 +225,34 @@ function stockxNonJsonErrorDetail(res: Response, raw: string, operationName: str
   return `content-type=${ct}; op=${operationName}; body≈ ${snippet || "(whitespace only)"}${authHint}${rateHint}`;
 }
 
+async function readStockxSessionMetaFromPlaywrightSession(
+  sessionFile: string
+): Promise<StockxSessionMeta | null> {
+  try {
+    const raw = await fs.readFile(sessionFile, "utf8");
+    const parsed = JSON.parse(raw) as {
+      cookies?: Array<{ name?: string; value?: string; domain?: string }>;
+    };
+    const cookies = Array.isArray(parsed?.cookies) ? parsed.cookies : [];
+    const stockxCookies = cookies.filter((cookie) =>
+      String(cookie?.domain ?? "").includes("stockx.com")
+    );
+    if (stockxCookies.length === 0) return null;
+    const cookieHeader = stockxCookies
+      .map((cookie) => `${String(cookie.name ?? "").trim()}=${String(cookie.value ?? "").trim()}`)
+      .filter((part) => part !== "=" && !part.startsWith("="))
+      .join("; ");
+    if (!cookieHeader) return null;
+    const deviceId =
+      stockxCookies.find((cookie) => cookie.name === "stockx_device_id")?.value ?? null;
+    const sessionId =
+      stockxCookies.find((cookie) => cookie.name === "stockx_session_id")?.value ?? null;
+    return { deviceId, sessionId, cookieHeader };
+  } catch {
+    return null;
+  }
+}
+
 async function readStockxSessionMeta(): Promise<StockxSessionMeta | null> {
   const filesToTry = [GALAXUS_STOCKX_SESSION_META_FILE, STOCKX_FALLBACK_SESSION_META_FILE];
   for (const filePath of filesToTry) {
@@ -238,6 +267,11 @@ async function readStockxSessionMeta(): Promise<StockxSessionMeta | null> {
     } catch {
       // try next file
     }
+  }
+  const sessionFallbacks = [GALAXUS_STOCKX_SESSION_FILE, path.join(process.cwd(), ".data", "stockx-session.json")];
+  for (const sessionFile of sessionFallbacks) {
+    const fromSession = await readStockxSessionMetaFromPlaywrightSession(sessionFile);
+    if (fromSession) return fromSession;
   }
   return null;
 }
@@ -287,76 +321,57 @@ export async function fetchRecentStockxBuyingOrders(
     typeof options?.query === "string" && options.query.trim().length > 0
       ? options.query.trim()
       : null;
-  const useLegacyBuyingQuery = Boolean(queryFilter);
   const buyingPersistedHash = await resolvePersistedHashForSync(STOCKX_PERSISTED_OPERATION_NAME);
   if (!buyingPersistedHash) {
     throw new Error("Missing persisted hash for FetchCurrentBids");
   }
+  const buyingReferer =
+    stateForQuery === "HISTORICAL"
+      ? "https://stockx.com/buying/history"
+      : "https://stockx.com/buying/orders";
 
   for (let page = 0; page < maxPages; page += 1) {
     if (page > 0 && Number.isFinite(STOCKX_PAGE_GAP_MS) && STOCKX_PAGE_GAP_MS > 0) {
       await sleepMs(STOCKX_PAGE_GAP_MS);
     }
-    const response = useLegacyBuyingQuery
-      ? await callStockx<any>(
-          token,
-          "Buying",
-          DEFAULT_QUERY,
-          {
-            first,
-            after,
-            currencyCode: "CHF",
-            query: queryFilter,
-            state: stateForQuery,
-            sort: "MATCHED_AT",
-            order: "DESC",
+    const variables: Record<string, unknown> = {
+      first,
+      after,
+      // Keep explicit null (= any state). Do not coalesce null → PENDING.
+      state: stateForQuery === undefined ? "PENDING" : stateForQuery,
+      sort: "MATCHED_AT",
+      order: "DESC",
+      currencyCode: "CHF",
+      market: "CH",
+      country: "CH",
+    };
+    if (queryFilter) variables.query = queryFilter;
+    const response = await callStockx<any>(
+      token,
+      STOCKX_PERSISTED_OPERATION_NAME,
+      "",
+      variables,
+      {
+        url: STOCKX_GATEWAY_URL,
+        includeQuery: false,
+        extensions: {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: buyingPersistedHash,
           },
-          {
-            url: STOCKX_PRO_URL,
-            includeQuery: true,
-            headers: {
-              origin: "https://pro.stockx.com",
-              referer: "https://pro.stockx.com/purchasing/orders",
-              "x-operation-name": "Buying",
-            },
-          }
-        )
-      : await callStockx<any>(
-          token,
-          STOCKX_PERSISTED_OPERATION_NAME,
-          "",
-          {
-            first,
-            after,
-            // Keep explicit null (= any state). Do not coalesce null → PENDING.
-            state: stateForQuery === undefined ? "PENDING" : stateForQuery,
-            sort: "MATCHED_AT",
-            order: "DESC",
-            currencyCode: "CHF",
-            market: "CH",
-            country: "CH",
-          },
-          {
-            url: STOCKX_GATEWAY_URL,
-            includeQuery: false,
-            extensions: {
-              persistedQuery: {
-                version: 1,
-                sha256Hash: buyingPersistedHash,
-              },
-            },
-            headers: {
-              origin: "https://stockx.com",
-              referer: "https://stockx.com/buying/orders",
-              "x-operation-name": STOCKX_PERSISTED_OPERATION_NAME,
-              "selected-country": "CH",
-              "apollographql-client-name": "Iron",
-              "apollographql-client-version": "2026.04.19.00",
-              "app-platform": "Iron",
-              "app-version": "2026.04.19.00",
-            },
-          }
-        );
+        },
+        headers: {
+          origin: "https://stockx.com",
+          referer: buyingReferer,
+          "x-operation-name": STOCKX_PERSISTED_OPERATION_NAME,
+          "selected-country": "CH",
+          "apollographql-client-name": "Iron",
+          "apollographql-client-version": "2026.04.19.00",
+          "app-platform": "Iron",
+          "app-version": "2026.04.19.00",
+        },
+      }
+    );
     const buying = response?.data?.viewer?.buying;
     const edges = Array.isArray(buying?.edges) ? buying.edges : [];
     for (const edge of edges) {

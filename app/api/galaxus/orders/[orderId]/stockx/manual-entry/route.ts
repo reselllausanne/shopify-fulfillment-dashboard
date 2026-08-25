@@ -4,8 +4,10 @@ import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
   normalizeStockxOrderNumberInput,
-  resolveStockxBuyForManualDecathlon,
+  resolveStockxBuyByOrderNumberWithToken,
+  resolveStockxBuyForManualGalaxus,
 } from "@/decathlon/stx/manualStockxEnrich";
+import { writeGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import {
   buildStockxOrderClaimIndex,
   findStockxOrderClaim,
@@ -36,6 +38,13 @@ function parseMaybeNumber(value: any): number | null {
 
 function trimStr(v: unknown): string {
   return String(v ?? "").trim();
+}
+
+function normalizeBearer(raw: unknown): string | null {
+  const cleaned = String(raw ?? "")
+    .trim()
+    .replace(/^Bearer\s+/i, "");
+  return cleaned || null;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
@@ -93,7 +102,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     if (enrichFromStockx && orderNumberInput && looksLikeStockxOrderNumber(orderNumberInput)) {
       stockxEnrich.attempted = true;
       try {
-        const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
+        const overrideToken = normalizeBearer(body?.stockxToken);
+        if (overrideToken) {
+          await writeGalaxusStockxToken(overrideToken).catch(() => undefined);
+        }
+        const resolved = overrideToken
+          ? await resolveStockxBuyByOrderNumberWithToken(overrideToken, orderNumberInput)
+          : await resolveStockxBuyForManualGalaxus(orderNumberInput);
         if (resolved.ok) {
           auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {
             matchReasons: ["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"],
@@ -141,7 +156,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
           ok: false,
           error:
             stockxEnrich.attempted && !stockxEnrich.ok
-              ? `StockX enrich failed (${stockxEnrich.reason ?? "unknown"}) — enter cost manually or re-auth StockX, then retry.`
+              ? `StockX enrich failed (${stockxEnrich.reason ?? "unknown"}) — enter Supplier Cost below and save, or Save token in StockX tools then retry.`
               : "StockX order # requires cost (auto-fill failed or empty). Enter supplier cost, then save.",
           stockxEnrich,
         },

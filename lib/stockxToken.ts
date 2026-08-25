@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
 import { readServerStockxToken, stockxTokenExpiresAt } from "@/lib/stockxServerToken";
 
 /**
@@ -58,4 +59,14 @@ export async function resolveStockxBearerToken(): Promise<{
   const file = await readServerStockxToken();
   if (!file) return null;
   return { token: file.token, source: file.source };
+}
+
+/** Galaxus direct-delivery / warehouse: prefer `.data/stockx-token-galaxus.json` over cron DB token. */
+export async function resolveGalaxusStockxBearerToken(): Promise<{
+  token: string;
+  source: "galaxus" | "db" | "dashboard";
+} | null> {
+  const galaxus = await readGalaxusStockxToken();
+  if (galaxus) return { token: galaxus, source: "galaxus" };
+  return resolveStockxBearerToken();
 }

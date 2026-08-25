@@ -5,7 +5,7 @@ import {
   synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
-import { resolveStockxBearerToken } from "@/lib/stockxToken";
+import { resolveGalaxusStockxBearerToken, resolveStockxBearerToken } from "@/lib/stockxToken";
 
 export type DecathlonManualStockxEnrichResult =
   | {
@@ -78,6 +78,15 @@ export async function resolveStockxBuyForManualDecathlon(
 ): Promise<DecathlonManualStockxEnrichResult> {
   // Same bearer resolution as backfill (`getSupplierToken`) + auto-link file fallback.
   const auth = await resolveStockxBearerToken();
+  if (!auth?.token) return { ok: false, reason: "missing_stockx_token" };
+  return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
+}
+
+/** Galaxus manual link + lookup: Galaxus token file first (same as stx/sync). */
+export async function resolveStockxBuyForManualGalaxus(
+  stockxOrderNumberInput: string
+): Promise<DecathlonManualStockxEnrichResult> {
+  const auth = await resolveGalaxusStockxBearerToken();
   if (!auth?.token) return { ok: false, reason: "missing_stockx_token" };
   return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
 }

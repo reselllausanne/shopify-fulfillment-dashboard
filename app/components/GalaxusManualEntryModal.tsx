@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
+import { GALAXUS_STOCKX_TOKEN_STORAGE_KEY } from "@/app/galaxus/_components/StockxOrderTools";
 
 type ManualEntryModalProps = {
   isOpen: boolean;
@@ -26,6 +27,16 @@ export default function GalaxusManualEntryModal({
   const [localData, setLocalData] = useState<any>(initialData);
   const [lookupStatus, setLookupStatus] = useState<string | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
+
+  const readSessionStockxToken = (): string | null => {
+    try {
+      const raw = sessionStorage.getItem(GALAXUS_STOCKX_TOKEN_STORAGE_KEY);
+      const trimmed = String(raw ?? "").trim().replace(/^Bearer\s+/i, "");
+      return trimmed || null;
+    } catch {
+      return null;
+    }
+  };
 
   // Sync when opening
   useEffect(() => {
@@ -72,12 +83,17 @@ export default function GalaxusManualEntryModal({
     setLookupBusy(true);
     setLookupStatus(null);
     try {
+      const token = readSessionStockxToken();
       const res = await fetch(
-        `/api/galaxus/orders/${encodeURIComponent(stockxLookupOrderId)}/stockx/lookup?orderNumber=${encodeURIComponent(trimmed)}`
+        `/api/galaxus/orders/${encodeURIComponent(stockxLookupOrderId)}/stockx/lookup?orderNumber=${encodeURIComponent(trimmed)}`,
+        token ? { headers: { "x-stockx-bearer": token } } : undefined
       );
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok || !json.fields) {
-        setLookupStatus(String(json.error ?? "Order not found on StockX"));
+        setLookupStatus(
+          String(json.error ?? "Order not found on StockX") +
+            (context === "galaxus" ? " — or enter Supplier Cost and save anyway." : "")
+        );
         return;
       }
       applyLookupFields(json.fields);
@@ -392,7 +408,13 @@ export default function GalaxusManualEntryModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave(localData, mode)}
+            onClick={() => {
+              const token = context === "galaxus" ? readSessionStockxToken() : null;
+              onSave(
+                token ? { ...localData, stockxToken: token } : localData,
+                mode
+              );
+            }}
             className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700"
           >
             {mode === "edit" ? "💾 Update Entry (Partial)" : "✅ Save Manual Entry"}

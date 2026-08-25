@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { STOCKX_GET_BUY_ORDER_OPERATION_NAME } from "@/app/lib/constants";
 
+export const GALAXUS_STOCKX_TOKEN_STORAGE_KEY = "galaxus_stockx_bearer_token";
+
 type Props = {
   orderId: string | null;
   onAfterAction?: () => void | Promise<void>;
@@ -35,6 +37,15 @@ export function StockxOrderTools({
   const [manualToken, setManualToken] = useState<string>("");
   const [manualHash, setManualHash] = useState<string>("");
   const [hashLoaded, setHashLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(GALAXUS_STOCKX_TOKEN_STORAGE_KEY);
+      if (saved?.trim()) setManualToken(saved.trim());
+    } catch {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,6 +157,11 @@ export function StockxOrderTools({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.ok === false) throw new Error(data?.error ?? "Save token failed");
+      try {
+        sessionStorage.setItem(GALAXUS_STOCKX_TOKEN_STORAGE_KEY, token);
+      } catch {
+        // ignore
+      }
       setLog("✅ Token saved for StockX.");
       setManualToken("");
       await after();
@@ -215,6 +231,15 @@ export function StockxOrderTools({
           placeholder="Paste StockX token (manual)"
           value={manualToken}
           onChange={(e) => setManualToken(e.target.value)}
+          onBlur={() => {
+            const token = manualToken.trim().replace(/^Bearer\s+/i, "");
+            if (!token) return;
+            try {
+              sessionStorage.setItem(GALAXUS_STOCKX_TOKEN_STORAGE_KEY, token);
+            } catch {
+              // ignore
+            }
+          }}
         />
         <button
           type="button"

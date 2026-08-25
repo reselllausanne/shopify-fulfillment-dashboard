@@ -3,7 +3,8 @@ import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
   normalizeStockxOrderNumberInput,
-  resolveStockxBuyForManualDecathlon,
+  resolveStockxBuyByOrderNumberWithToken,
+  resolveStockxBuyForManualGalaxus,
 } from "@/decathlon/stx/manualStockxEnrich";
 
 export const runtime = "nodejs";
@@ -13,6 +14,13 @@ function toIso(value: unknown): string | null {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(String(value));
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function normalizeBearer(raw: unknown): string | null {
+  const cleaned = String(raw ?? "")
+    .trim()
+    .replace(/^Bearer\s+/i, "");
+  return cleaned || null;
 }
 
 export async function GET(
@@ -30,7 +38,10 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Not a StockX order number format" }, { status: 400 });
     }
 
-    const resolved = await resolveStockxBuyForManualDecathlon(orderNumber);
+    const headerToken = normalizeBearer(request.headers.get("x-stockx-bearer"));
+    const resolved = headerToken
+      ? await resolveStockxBuyByOrderNumberWithToken(headerToken, orderNumber)
+      : await resolveStockxBuyForManualGalaxus(orderNumber);
     if (!resolved.ok) {
       return NextResponse.json({ ok: false, error: resolved.reason }, { status: 404 });
     }
