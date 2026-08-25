@@ -87,7 +87,10 @@ export type SyncPhysicalExpressResult = {
 };
 
 /**
- * Sync express_available + delivery_48h from exact variant physical qty.
+ * Sync express_available (+ delivery_48h only for true soldes liquidation).
+ * Fixed-price warehouse stock (Essentials/Bape/boxers/…): express ON while
+ * physical > 0, but delivery_48h always OFF — that metafield drives the
+ * soldes-48h smart collection and must not pull retail stock into soldes.
  * Never mutates variant.price / compareAt / price_locked.
  */
 export async function syncPhysicalExpressAvailability(input: {
@@ -115,7 +118,8 @@ export async function syncPhysicalExpressAvailability(input: {
   // Express availability is exact-variant physical availability. StockX
   // delivery lanes must never make another size appear as warehouse 48h.
   const wantExpress = hasPhysical;
-  const want48h = hasPhysical && Boolean(rule);
+  // Fixed-price retail stock must stay out of soldes-48h (delivery_48h gate).
+  const want48h = false;
 
   try {
     const hasExpress = await readShopifyExpressAvailable(input.variantId);
@@ -138,10 +142,13 @@ export async function syncPhysicalExpressAvailability(input: {
 
   try {
     if (rule) {
+      // Fixed retail: never join soldes-48h via delivery_48h.
       const has48h = await readShopifyDelivery48h(input.variantId);
       if (has48h !== want48h) {
         await writeShopifyDelivery48h(input.variantId, want48h);
-        changes.push(`Shopify delivery_48h=${want48h} (physical=${physicalQty})`);
+        changes.push(
+          `Shopify delivery_48h=${want48h} (fixed-price retail, physical=${physicalQty})`
+        );
       }
     } else if (!hasPhysical) {
       const has48h = await readShopifyDelivery48h(input.variantId);

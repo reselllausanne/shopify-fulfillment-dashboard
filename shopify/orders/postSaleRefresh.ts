@@ -34,12 +34,13 @@ async function hasJmoneyPriceLockInDb(gtin: string): Promise<boolean> {
 }
 
 /**
- * Shopify-side lock signal. Survives DB manualNote drift (a past cleanup wiped
- * jmoney notes causing post-sale flow to relist Chemin stock).
+ * Shopify-side JMoney signal. Survives DB manualNote drift (past cleanup wiped
+ * jmoney notes → post-sale ran createProductFullFlow and relisted Chemin qty).
  *
- * Locked when EITHER:
- *  - product tag includes `jmoney-kicks`, OR
- *  - variant metafield `custom.price_locked` === "true".
+ * ONLY the product tag `jmoney-kicks`. Do NOT treat bare `custom.price_locked`
+ * as JMoney — liquidation soldes also sets price_locked=true, and that false
+ * positive skipped unlock + KickDB upsert so sold-out liquidations kept the
+ * Sale badge (compareAt) and never fully exited soldes.
  */
 async function hasJmoneyPriceLockOnShopify(variantId: string | null | undefined): Promise<boolean> {
   const id = String(variantId ?? "").trim();
@@ -47,24 +48,20 @@ async function hasJmoneyPriceLockOnShopify(variantId: string | null | undefined)
   try {
     const { data } = await shopifyGraphQL<{
       productVariant: {
-        metafield: { value: string | null } | null;
         product: { tags: string[] } | null;
       } | null;
     }>(
       `query($id: ID!) {
         productVariant(id: $id) {
-          metafield(namespace: "custom", key: "price_locked") { value }
           product { tags }
         }
       }`,
       { id }
     );
-    const v = data?.productVariant;
-    if (!v) return false;
-    const tags = (v.product?.tags ?? []).map((t) => String(t ?? "").toLowerCase());
-    if (tags.includes("jmoney-kicks")) return true;
-    const raw = String(v.metafield?.value ?? "").toLowerCase();
-    return raw === "true" || raw === "1";
+    const tags = (data?.productVariant?.product?.tags ?? []).map((t) =>
+      String(t ?? "").toLowerCase()
+    );
+    return tags.includes("jmoney-kicks");
   } catch {
     return false;
   }

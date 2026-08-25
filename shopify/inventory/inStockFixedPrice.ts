@@ -1,11 +1,12 @@
 /**
  * Fixed-price in-stock warehouse lane (Essentials / Bape / AP×Travis / Supreme boxers).
  *
- * Same 48h physical ship as liquidation; price is manual — never StockX −30%.
+ * Express 48h ship while physical > 0; price is manual — never StockX −30%.
  * Match by productId first (sizes share one product), then SKU base, then title.
  *
  * COGS: already-expensed owned stock → costChf 0 (full margin on dashboard).
- * Sell prices stay fixed (Essentials 59/89, Bape 69/99, AP×Travis 89/109, boxers 45/59).
+ * Sell prices stay fixed (Essentials 59/89, Bape 69/99, AP×Travis 89/109, boxers 49/69).
+ * Never StockX −30% soldes / never soldes-48h collection (`delivery_48h`).
  */
 
 /** Essentials in-stock Shopify sell price (CHF). Never overwritten by StockX. */
@@ -23,10 +24,10 @@ export const BAPE_SELL_CHF = 69;
 /** Bape express metafield (CHF). Only when physical location stock > 0. */
 export const BAPE_EXPRESS_CHF = 99;
 
-/** Supreme Hanes boxers (4-pack) — JMoney / warehouse retail. Never StockX soldes. */
-export const SUPREME_BOXER_SELL_CHF = 45;
-/** Supreme boxers 48h metafield. Only when physical location stock > 0. */
-export const SUPREME_BOXER_EXPRESS_CHF = 59;
+/** Supreme Hanes boxers (4-pack) — warehouse retail. Never StockX soldes. */
+export const SUPREME_BOXER_SELL_CHF = 49;
+/** Supreme boxers express metafield. Only when physical location stock > 0. */
+export const SUPREME_BOXER_EXPRESS_CHF = 69;
 
 export type InStockFixedPriceConfig = {
   costChf: number;
@@ -130,7 +131,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     sellChf: SUPREME_BOXER_SELL_CHF,
     expressChf: SUPREME_BOXER_EXPRESS_CHF,
     label: "Supreme Hanes Boxer Briefs (in stock)",
-    matchReason: "Supreme boxers (fixed 45/59, no soldes)",
+    matchReason: "Supreme boxers (fixed 49/69, no soldes)",
     productIds: [
       "15074846179714", // 4 Pack Black
       "15075733504386", // 4 Pack White
@@ -202,7 +203,8 @@ export function resolveInStockFixedPrice(input: {
   const rule = resolveInStockFixedPriceRule(input);
   if (!rule) return null;
   return {
-    costChf: rule.costChf,
+    // Owned warehouse stock already expensed — dashboard shows full margin.
+    costChf: 0,
     label: rule.label,
     matchReason: rule.matchReason,
     sellChf: rule.sellChf,

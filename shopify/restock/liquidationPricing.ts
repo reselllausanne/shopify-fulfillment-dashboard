@@ -8,6 +8,7 @@ import {
 } from "@/shopify/restock/shopifyRestockInventory";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
+import { isInStockFixedPriceProduct } from "@/shopify/inventory/inStockFixedPrice";
 import {
   readShopifyDelivery48h,
   writeShopifyDelivery48h,
@@ -91,6 +92,17 @@ export async function applyLiquidationSaleDisplay(input: {
   const warnings: string[] = [];
   if (isEssentialsShopifyVariant(input.variant)) {
     warnings.push("Essentials product — liquidation pricing skipped");
+    return { applied: false, referencePrice: null, salePrice: null, warnings };
+  }
+
+  if (
+    isInStockFixedPriceProduct({
+      sku: input.variant.sku,
+      title: input.variant.productTitle,
+      productId: input.variant.productId,
+    })
+  ) {
+    warnings.push("In-stock fixed-price product — liquidation pricing skipped");
     return { applied: false, referencePrice: null, salePrice: null, warnings };
   }
 

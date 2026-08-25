@@ -50,6 +50,7 @@ import {
 } from "@/shopify/restock/operatorRestockPrice";
 import {
   isJmoneyPriceLockNote,
+  isJmoneyShopifyProduct,
   JMONEY_PRICE_LOCK_NOTE,
   LIQUIDATION_LOCATION_IDS,
   ONLINE_LOCATION,
@@ -386,27 +387,73 @@ export async function convergeVariant(
   }
 
   // Fixed-price warehouse lanes (Essentials / Bape / AP×Travis / Supreme boxers):
-  // - never StockX liquidation / never auto-reprice
-  // - express 48h only while physical stock remains; normal price stays
-  if (fixedPriceRule && shopifyVariant?.variantId) {
+  // - never StockX liquidation / never auto-reprice to soldes
+  // - never delivery_48h (soldes-48h collection) — express_available only
+  // - enforce fixed sell + clear compareAt if a past soldes pass left them wrong
+  if (fixedPriceRule && shopifyVariant?.variantId && shopifyVariant.productId) {
+    const sell = fixedPriceRule.sellChf ?? null;
     const note = String(stxRow?.manualNote ?? "");
-    const isSoldesLock = Boolean(stxRow?.manualLock) && /phase4:liquidation/i.test(note);
-    if (stxRow && isSoldesLock) {
-      const sell = fixedPriceRule.sellChf ?? null;
-      await prisma.supplierVariant.update({
-        where: { id: stxRow.id },
-        data: {
-          manualLock: true,
-          manualPrice: sell,
-          manualStock: null,
-          manualUpdatedAt: new Date(),
-          manualNote: JMONEY_PRICE_LOCK_NOTE,
-        },
-      });
-      changes.push(
-        `soldes lock → ${JMONEY_PRICE_LOCK_NOTE}${sell != null ? ` ${sell.toFixed(2)}` : ""}`
-      );
+    const isSoldesLock =
+      Boolean(stxRow?.manualLock) &&
+      (/phase4:liquidation/i.test(note) || /restock:liquidation/i.test(note));
+    const wantNote = `in-stock:fixed-price ${fixedPriceRule.label}`;
+
+    if (stxRow && sell != null && sell > 0) {
+      const needDbUpdate =
+        isSoldesLock ||
+        !stxRow.manualLock ||
+        toNumber(stxRow.manualPrice) !== sell ||
+        String(stxRow.manualNote ?? "") !== wantNote;
+      if (needDbUpdate) {
+        await prisma.supplierVariant.update({
+          where: { id: stxRow.id },
+          data: {
+            manualLock: true,
+            manualPrice: sell,
+            manualStock: null,
+            manualUpdatedAt: new Date(),
+            manualNote: wantNote,
+          },
+        });
+        changes.push(
+          isSoldesLock
+            ? `soldes lock → ${wantNote} ${sell.toFixed(2)}`
+            : `DB fixed-price lock manualPrice=${sell.toFixed(2)}`
+        );
+      }
     }
+
+    if (sell != null && sell > 0) {
+      const currentPrice = toNumber(shopifyVariant.price);
+      const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+      const priceDiffers = currentPrice == null || Math.abs(currentPrice - sell) > 0.005;
+      const needsClearCompare = currentCompareAt != null && currentCompareAt > 0;
+      if (priceDiffers || needsClearCompare) {
+        try {
+          await writeShopifyVariantPrice({
+            productId: shopifyVariant.productId,
+            variantId: shopifyVariant.variantId,
+            price: sell,
+            compareAtPrice: null,
+          });
+          changes.push(
+            `Shopify fixed price=${sell.toFixed(2)}${needsClearCompare ? " compareAt cleared" : ""} (${fixedPriceRule.label})`
+          );
+        } catch (err: any) {
+          warnings.push(`Shopify fixed price write failed: ${err?.message ?? err}`);
+        }
+      }
+      try {
+        const isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+        if (!isLocked) {
+          await writeShopifyPriceLocked(shopifyVariant.variantId, true);
+          changes.push("Shopify price_locked=true (fixed-price)");
+        }
+      } catch (err: any) {
+        warnings.push(`Shopify fixed price_locked failed: ${err?.message ?? err}`);
+      }
+    }
+
     const expressSync = await syncPhysicalExpressAvailability({
       variantId: shopifyVariant.variantId,
       physicalQty,
@@ -445,6 +492,86 @@ export async function convergeVariant(
       homeQty,
       desired: "dropship",
       changed: false,
+      changes,
+      warnings,
+    };
+  }
+
+  // Money Kickz / jmoney fixed retail: never enter soldes STX−30% lane, even if a
+  // unit sits in Bussigny. Preserve Shopify sell + price_locked; clear false soldes flags.
+  const jmoneyTagged = isJmoneyShopifyProduct(shopifyVariant?.productTags);
+  const jmoneyNote = isJmoneyPriceLockNote(stxRow?.manualNote);
+  if ((jmoneyTagged || jmoneyNote) && shopifyVariant?.variantId && shopifyVariant.productId) {
+    const shopifySell = toNumber(shopifyVariant.price);
+    const dbSell = toNumber(stxRow?.manualPrice);
+    const retail =
+      jmoneyNote && dbSell != null && dbSell > 0
+        ? dbSell
+        : shopifySell != null && shopifySell > 0
+          ? shopifySell
+          : dbSell;
+
+    if (stxRow && retail != null && retail > 0) {
+      const needDbUpdate =
+        !stxRow.manualLock ||
+        toNumber(stxRow.manualPrice) !== retail ||
+        String(stxRow.manualNote ?? "") !== JMONEY_PRICE_LOCK_NOTE;
+      if (needDbUpdate) {
+        await prisma.supplierVariant.update({
+          where: { id: stxRow.id },
+          data: {
+            manualLock: true,
+            manualPrice: retail,
+            manualUpdatedAt: new Date(),
+            manualNote: JMONEY_PRICE_LOCK_NOTE,
+          },
+        });
+        changes.push(`DB jmoney lock restored manualPrice=${retail.toFixed(2)}`);
+      }
+    }
+
+    if (retail != null && retail > 0) {
+      const currentPrice = toNumber(shopifyVariant.price);
+      const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
+      const priceDiffers = currentPrice == null || Math.abs(currentPrice - retail) > 0.005;
+      const needsClearCompare = currentCompareAt != null && currentCompareAt > 0;
+      if (priceDiffers || needsClearCompare) {
+        try {
+          await writeShopifyVariantPrice({
+            productId: shopifyVariant.productId,
+            variantId: shopifyVariant.variantId,
+            price: retail,
+            compareAtPrice: null,
+          });
+          changes.push(
+            `Shopify jmoney price=${retail.toFixed(2)}${needsClearCompare ? " compareAt cleared" : ""}`
+          );
+        } catch (err: any) {
+          warnings.push(`Shopify jmoney price write failed: ${err?.message ?? err}`);
+        }
+      }
+    }
+
+    try {
+      const isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
+      if (!isLocked) {
+        await writeShopifyPriceLocked(shopifyVariant.variantId, true);
+        changes.push("Shopify price_locked=true (jmoney)");
+      }
+    } catch (err: any) {
+      warnings.push(`Shopify jmoney lock failed: ${err?.message ?? err}`);
+    }
+
+    // Never keep soldes-48h on Money Kickz retail.
+    await syncBussignyDelivery48h(shopifyVariant, cleanGtin, false, changes, warnings);
+
+    return {
+      gtin: cleanGtin,
+      physicalQty,
+      bussignyQty,
+      homeQty,
+      desired: "dropship",
+      changed: changes.length > 0,
       changes,
       warnings,
     };
@@ -603,7 +730,10 @@ export async function convergeVariant(
     const preserveGalaxusLiquidation = /mq2-liquidation/i.test(note) || /galaxus-liquidation/i.test(note);
     // JMoney / Money Kickz fixed retail — never clear on Bussigny=0 / web sale.
     const preserveJmoneyLock = isJmoneyPriceLockNote(note);
-    const preserveManualLock = preserveGalaxusLiquidation || preserveJmoneyLock;
+    // Essentials / Bape / boxers / AP×Travis warehouse retail.
+    const preserveFixedStockLock = /in-stock:fixed-price/i.test(note);
+    const preserveManualLock =
+      preserveGalaxusLiquidation || preserveJmoneyLock || preserveFixedStockLock;
     const hadDbLiquidation = Boolean(stxRow?.manualLock);
     if (
       stxRow &&
@@ -625,6 +755,8 @@ export async function convergeVariant(
       warnings.push(`preserved Galaxus liquidation lock (${note || "named"})`);
     } else if (stxRow && preserveJmoneyLock) {
       warnings.push(`preserved JMoney Kickz price lock (${note || "named"})`);
+    } else if (stxRow && preserveFixedStockLock) {
+      warnings.push(`preserved in-stock fixed-price lock (${note || "named"})`);
     }
 
     if (shopifyVariant?.variantId && shopifyVariant.productId) {
@@ -636,13 +768,13 @@ export async function convergeVariant(
           warnings.push(`Shopify price_locked read failed: ${err?.message ?? err}`);
         }
 
-        // Keep JMoney Kickz fixed retail through post-sale / dropship converge.
-        if (preserveJmoneyLock || (isLocked && preserveManualLock)) {
+        // Keep JMoney Kickz / in-stock fixed retail through post-sale / dropship converge.
+        if (preserveJmoneyLock || preserveFixedStockLock || (isLocked && preserveManualLock)) {
           if (!isLocked) {
             await writeShopifyPriceLocked(shopifyVariant.variantId, true);
-            changes.push("Shopify price_locked=true (jmoney preserve)");
+            changes.push("Shopify price_locked=true (fixed retail preserve)");
           } else {
-            changes.push("Shopify price_locked preserved (jmoney)");
+            changes.push("Shopify price_locked preserved (fixed retail)");
           }
         } else {
         const currentPrice = toNumber(shopifyVariant.price);
@@ -686,13 +818,37 @@ export async function convergeVariant(
           changes.push("Shopify price_locked=false");
         }
 
-        // Post-sale full liquidation exit: unlock flags here; live KickDB upsert
-        // (createProductFullFlow + STX ingest) owns price + stock — not this pass.
+        // Post-sale full liquidation exit: unlock flags + clear sale badge
+        // (compareAt) here. Live KickDB upsert owns market price + Chemin stock.
+        // Clearing compareAt immediately avoids a stuck Sale badge when upsert
+        // is skipped or fails after unlock.
         if (exitingLiquidationLaneAfterSale) {
           if (needsPriceRevert) {
-            changes.push(
-              "liquidation exit — price/stock deferred to post-sale KickDB upsert"
-            );
+            const compareStillSet = currentCompareAt != null && currentCompareAt > 0;
+            if (compareStillSet && currentPrice != null && currentPrice > 0) {
+              try {
+                await writeShopifyVariantPrice({
+                  productId: shopifyVariant.productId,
+                  variantId: shopifyVariant.variantId,
+                  price: currentPrice,
+                  compareAtPrice: null,
+                });
+                changes.push(
+                  "liquidation exit — compareAt cleared (sale badge); price/stock deferred to post-sale KickDB upsert"
+                );
+              } catch (err: any) {
+                warnings.push(
+                  `liquidation exit compareAt clear failed: ${err?.message ?? err}`
+                );
+                changes.push(
+                  "liquidation exit — price/stock deferred to post-sale KickDB upsert"
+                );
+              }
+            } else {
+              changes.push(
+                "liquidation exit — price/stock deferred to post-sale KickDB upsert"
+              );
+            }
           }
         } else if (needsPriceRevert && dropshipPrice != null) {
           const priceDiffers =

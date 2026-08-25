@@ -61,6 +61,11 @@ export function isJmoneyPriceLockNote(note: string | null | undefined): boolean 
   );
 }
 
+/** Shopify product tagged for Money Kickz fixed retail (never soldes STX−30%). */
+export function isJmoneyShopifyProduct(tags: string[] | null | undefined): boolean {
+  return (tags ?? []).some((t) => /^jmoney-kicks$/i.test(String(t ?? "").trim()));
+}
+
 export const PHYSICAL_LOCATIONS = LOCATIONS.filter((l) => l.sourceType === "physical");
 
 /**

@@ -48,6 +48,8 @@ vi.mock("@/shopify/restock/liquidationExpressPrice", () => ({
   readLiquidationExpressSurchargeChf: vi.fn().mockReturnValue(20),
   syncLiquidationExpressPriceMetafield: vi.fn().mockResolvedValue({ expressPrice: 149.9, changed: true }),
   restoreStxExpressPriceMetafield: vi.fn().mockResolvedValue({ expressPrice: 319, changed: true }),
+  readShopifyExpressPriceMetafield: vi.fn().mockResolvedValue(null),
+  writeShopifyExpressPriceMetafield: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/shopify/inventory/locationConfig", () => ({
@@ -63,7 +65,11 @@ vi.mock("@/shopify/inventory/locationConfig", () => ({
       "gid://shopify/Location/111267250562",
       "gid://shopify/Location/111272100226",
     ].includes(id),
-  isJmoneyPriceLockNote: () => false,
+  isJmoneyPriceLockNote: (note?: string | null) =>
+    /jmoney-kicks/i.test(String(note ?? "")),
+  isJmoneyShopifyProduct: (tags?: string[] | null) =>
+    (tags ?? []).some((t) => /^jmoney-kicks$/i.test(String(t ?? "").trim())),
+  JMONEY_PRICE_LOCK_NOTE: "jmoney-kicks:price-lock",
 }));
 
 import { prisma } from "@/app/lib/prisma";
@@ -97,6 +103,7 @@ function variantDetail(overrides: Record<string, unknown> = {}) {
     productTitle: "Onitsuka Tiger Mexico 66 Yellow",
     productStatus: "ACTIVE",
     productHandle: "onitsuka-tiger-mexico-66-yellow",
+    productTags: [] as string[],
     variantTitle: "37.5",
     inventoryItemId: "gid://shopify/InventoryItem/1",
     sku: "1183A872-752-37.5",
@@ -230,7 +237,7 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     mockedMirror.mockResolvedValue(new Map());
     mockedQueryRaw.mockResolvedValue([{ available: 0 }]);
     mockedFindVariant.mockResolvedValue({
-      match: variantDetail({ price: 139, compareAtPrice: null }),
+      match: variantDetail({ price: 139, compareAtPrice: 289 }),
       ambiguous: false,
       rawMatches: [],
     });
@@ -246,10 +253,19 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     const result = await convergeVariant(GTIN, { afterWebSale: true });
 
     expect(result.desired).toBe("dropship");
+    expect(result.changes.some((c) => c.includes("compareAt cleared"))).toBe(true);
     expect(result.changes.some((c) => c.includes("deferred to post-sale KickDB upsert"))).toBe(
       true
     );
     expect(result.changes.some((c) => c.includes("reverted to dropship"))).toBe(false);
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ compareAtPrice?: string | null }> } | undefined;
+      return vars?.variants?.[0] != null && "compareAtPrice" in (vars.variants[0] ?? {});
+    });
+    expect(priceWrites.some((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string; compareAtPrice?: string | null }> };
+      return vars?.variants?.[0]?.price === "139.00" && vars?.variants?.[0]?.compareAtPrice == null;
+    })).toBe(true);
   });
 
   it("restock:fixed-price lock keeps operator sell — does not rewrite StockX −30%", async () => {
@@ -285,6 +301,115 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     });
     expect(priceWrites).toHaveLength(0);
     expect(result.changes.some((c) => c.includes("129.9"))).toBe(false);
+  });
+
+  it("Supreme boxers Bussigny stock — restores 49 retail, never soldes/delivery_48h", async () => {
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-boxers",
+      supplierVariantId: "stx_boxers",
+      price: 55,
+      manualLock: true,
+      manualPrice: 39,
+      manualStock: null,
+      manualNote: "phase4:liquidation home=0 bussigny=2",
+    });
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({
+        productId: "gid://shopify/Product/15074846179714",
+        productTitle: "Supreme Hanes Boxer Briefs (4 Pack) Black",
+        sku: "eadd2461-f6c4-45eb-86f8-83869bb034b3-M",
+        price: 39,
+        compareAtPrice: 129,
+        onSale: true,
+      }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 80,
+      cost: 96,
+      compareAt: 129,
+      sellPrice: 67,
+      source: "kickdb-live-size",
+    });
+    mockedRead48h.mockResolvedValue(true);
+
+    const result = await convergeVariant(GTIN);
+
+    expect(result.desired).toBe("dropship");
+    expect(prisma.supplierVariant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          manualLock: true,
+          manualPrice: 49,
+          manualNote: expect.stringMatching(/in-stock:fixed-price/),
+        }),
+      })
+    );
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string }> } | undefined;
+      return vars?.variants?.[0]?.price != null;
+    });
+    expect(priceWrites.some((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string; compareAtPrice?: string | null }> };
+      return vars?.variants?.[0]?.price === "49.00" && vars?.variants?.[0]?.compareAtPrice == null;
+    })).toBe(true);
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    expect(result.changes.some((c) => c.includes("67"))).toBe(false);
+  });
+
+  it("jmoney-kicks tag + Bussigny stock — keeps 99 retail, never STX −30% soldes", async () => {
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-jmoney",
+      supplierVariantId: "stx_mcqueen",
+      price: 239,
+      manualLock: true,
+      manualPrice: 169,
+      manualStock: null,
+      manualNote: "phase4:liquidation home=0 bussigny=1",
+    });
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({
+        productTags: ["jmoney-kicks", "New"],
+        price: 99,
+        compareAtPrice: 329,
+        onSale: true,
+      }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 200,
+      cost: 240,
+      compareAt: 329,
+      sellPrice: 169,
+      source: "kickdb-live-size",
+    });
+    mockedRead48h.mockResolvedValue(true);
+
+    const result = await convergeVariant(GTIN);
+
+    expect(result.desired).toBe("dropship");
+    expect(prisma.supplierVariant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          manualLock: true,
+          manualPrice: 99,
+          manualNote: "jmoney-kicks:price-lock",
+        }),
+      })
+    );
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string }> } | undefined;
+      return vars?.variants?.[0]?.price != null;
+    });
+    expect(priceWrites.length).toBeGreaterThan(0);
+    expect(priceWrites.some((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string }> };
+      return vars?.variants?.[0]?.price === "99.00";
+    })).toBe(true);
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    expect(result.changes.some((c) => c.includes("169"))).toBe(false);
   });
 
   it("afterWebSale + liquidation lane stock remains + soldes price → stays liquidation", async () => {

@@ -56,8 +56,8 @@ describe("inStockFixedPrice", () => {
 
   it("resolves Supreme boxers by productId / title / StockX SKU, not socks", () => {
     const byId = resolveInStockFixedPrice({ productId: "15074846179714" });
-    expect(byId?.sellChf).toBe(45);
-    expect(byId?.expressChf).toBe(59);
+    expect(byId?.sellChf).toBe(49);
+    expect(byId?.expressChf).toBe(69);
     expect(byId?.label).toMatch(/Boxer/i);
 
     expect(

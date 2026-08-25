@@ -54,14 +54,14 @@ describe("syncPhysicalExpressAvailability", () => {
     ).toBe(true);
   });
 
-  it("physical>0 on Essentials → keeps/sets express on + express_price 89", async () => {
+  it("physical>0 on Essentials → express on + express_price 89, delivery_48h stays off (no soldes)", async () => {
     mockedGraphQL.mockResolvedValue({
       data: {
         productVariant: { metafield: { value: "false" } },
         metafieldsSet: { userErrors: [] },
       },
     });
-    mockedRead48h.mockResolvedValue(false);
+    mockedRead48h.mockResolvedValue(true);
     mockedReadExpressPrice.mockResolvedValue(null);
 
     const result = await syncPhysicalExpressAvailability({
@@ -72,8 +72,8 @@ describe("syncPhysicalExpressAvailability", () => {
     });
 
     expect(result.expressAvailable).toBe(true);
-    expect(result.delivery48h).toBe(true);
-    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", true);
+    expect(result.delivery48h).toBe(false);
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
     expect(mockedWriteExpressPrice).toHaveBeenCalledWith(
       "gid://shopify/ProductVariant/1",
       89

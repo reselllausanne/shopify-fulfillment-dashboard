@@ -3,6 +3,7 @@ import { findShopifyVariantsByGtin } from "@/shopify/catalog/graphql";
 import { expandGtinLookupCandidates } from "@/shopify/restock/gtinAliasLookup";
 import { getLocationConfig } from "@/shopify/inventory/locationConfig";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
+import { isInStockFixedPriceProduct } from "@/shopify/inventory/inStockFixedPrice";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import { upsertLocationStockRow } from "@/shopify/inventory/locationMirror";
 import {
@@ -64,6 +65,7 @@ query RestockVariantDetail($id: ID!) {
       title
       status
       handle
+      tags
     }
     inventoryItem {
       id
@@ -315,6 +317,8 @@ export type ShopifyVariantDetail = {
   productTitle: string | null;
   productStatus: string | null;
   productHandle: string | null;
+  /** Product tags from Shopify (e.g. jmoney-kicks). */
+  productTags: string[];
   /** Variant option title — our catalog uses the EU size (e.g. "37.5"). */
   variantTitle: string | null;
   inventoryItemId: string | null;
@@ -347,6 +351,7 @@ export async function getShopifyVariantDetail(
         title: string | null;
         status: string | null;
         handle: string | null;
+        tags: string[] | null;
       } | null;
       inventoryItem: { id: string } | null;
     } | null;
@@ -365,6 +370,7 @@ export async function getShopifyVariantDetail(
     productTitle: node.product.title ?? null,
     productStatus: node.product.status ?? null,
     productHandle: node.product.handle ?? null,
+    productTags: Array.isArray(node.product.tags) ? node.product.tags.map(String) : [],
     variantTitle: node.title ?? null,
     inventoryItemId: node.inventoryItem?.id ?? null,
     sku: node.sku ?? null,
@@ -1046,7 +1052,18 @@ export async function restockShopifyVariantByGtin(input: {
       try {
         if (isAdminOnlyShopifyVariant(match.variantId, match.productId)) {
           actions.push("Admin-only Shopify product — liquidation pricing skipped");
-        } else if (!isEssentialsShopifyVariant(match)) {
+        } else if (
+          isInStockFixedPriceProduct({
+            sku: match.sku,
+            title: match.productTitle,
+            productId: match.productId,
+          }) ||
+          isEssentialsShopifyVariant(match)
+        ) {
+          actions.push(
+            "In-stock fixed-price product — liquidation pricing skipped (retail kept)"
+          );
+        } else {
           const { applyLiquidationSaleDisplay } = await import("@/shopify/restock/liquidationPricing");
           const liq = await applyLiquidationSaleDisplay({
             gtin,
@@ -1064,8 +1081,6 @@ export async function restockShopifyVariantByGtin(input: {
             if (refreshed) match = refreshed;
           }
           warnings.push(...liq.warnings);
-        } else {
-          actions.push("Essentials product — liquidation pricing skipped");
         }
       } catch (err: any) {
         warnings.push(`Liquidation pricing failed: ${err?.message ?? err}`);
