@@ -107,7 +107,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     ],
     // Titles only for the two warehouse retail SKUs — never all BAPE * Tee (dropship).
     titlePatterns: [
-      /^BAPE A Bathing Ape Check by Bathing Tee\b/i,
+      /^BAPE A Bathing Ape Check by Bathing Tee White\/Beige\b/i,
       /^BAPE Big Ape Head Tee White\b/i,
     ],
   },
