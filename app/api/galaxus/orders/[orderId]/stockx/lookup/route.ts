@@ -3,7 +3,6 @@ import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
   normalizeStockxOrderNumberInput,
-  resolveStockxBuyByOrderNumberWithToken,
   resolveStockxBuyForManualGalaxus,
 } from "@/decathlon/stx/manualStockxEnrich";
 
@@ -23,6 +22,17 @@ function normalizeBearer(raw: unknown): string | null {
   return cleaned || null;
 }
 
+function isAuthLookupFailure(reason: string): boolean {
+  const s = reason.toLowerCase();
+  return (
+    s.includes("401") ||
+    s.includes("403") ||
+    s.includes("unauthorized") ||
+    s.includes("forbidden") ||
+    s.includes("missing stockx auth")
+  );
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ orderId: string }> }
@@ -39,11 +49,13 @@ export async function GET(
     }
 
     const headerToken = normalizeBearer(request.headers.get("x-stockx-bearer"));
-    const resolved = headerToken
-      ? await resolveStockxBuyByOrderNumberWithToken(headerToken, orderNumber)
-      : await resolveStockxBuyForManualGalaxus(orderNumber);
+    const resolved = await resolveStockxBuyForManualGalaxus(orderNumber, {
+      overrideToken: headerToken,
+    });
     if (!resolved.ok) {
-      return NextResponse.json({ ok: false, error: resolved.reason }, { status: 404 });
+      const reason = String(resolved.reason ?? "lookup_failed");
+      const status = isAuthLookupFailure(reason) ? 401 : reason.includes("not_found") ? 404 : 502;
+      return NextResponse.json({ ok: false, error: reason }, { status });
     }
 
     const fields = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {

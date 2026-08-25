@@ -5,7 +5,12 @@ import {
   synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
-import { resolveGalaxusStockxBearerToken, resolveStockxBearerToken } from "@/lib/stockxToken";
+import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import {
+  getSupplierToken,
+  resolveStockxBearerToken,
+} from "@/lib/stockxToken";
+import { DASHBOARD_STOCKX_TOKEN_FILE } from "@/lib/stockxServerToken";
 
 export type DecathlonManualStockxEnrichResult =
   | {
@@ -82,13 +87,49 @@ export async function resolveStockxBuyForManualDecathlon(
   return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
 }
 
-/** Galaxus manual link + lookup: Galaxus token file first (same as stx/sync). */
+function isAuthLookupFailure(reason: string): boolean {
+  const s = reason.toLowerCase();
+  return (
+    s.includes("401") ||
+    s.includes("403") ||
+    s.includes("unauthorized") ||
+    s.includes("forbidden") ||
+    s.includes("missing stockx auth")
+  );
+}
+
+async function collectGalaxusLookupTokens(overrideToken?: string | null): Promise<string[]> {
+  const out: string[] = [];
+  const push = (raw: string | null | undefined) => {
+    const cleaned = String(raw ?? "")
+      .trim()
+      .replace(/^Bearer\s+/i, "");
+    if (cleaned && !out.includes(cleaned)) out.push(cleaned);
+  };
+  push(overrideToken);
+  push(await readGalaxusStockxToken());
+  push(await readGalaxusStockxToken(DASHBOARD_STOCKX_TOKEN_FILE));
+  push(await getSupplierToken());
+  return out;
+}
+
+/** Galaxus manual link + lookup: try pasted/galaxus/dashboard/DB tokens until one works. */
 export async function resolveStockxBuyForManualGalaxus(
-  stockxOrderNumberInput: string
+  stockxOrderNumberInput: string,
+  options?: { overrideToken?: string | null }
 ): Promise<DecathlonManualStockxEnrichResult> {
-  const auth = await resolveGalaxusStockxBearerToken();
-  if (!auth?.token) return { ok: false, reason: "missing_stockx_token" };
-  return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
+  const tokens = await collectGalaxusLookupTokens(options?.overrideToken);
+  if (tokens.length === 0) return { ok: false, reason: "missing_stockx_token" };
+
+  let last: DecathlonManualStockxEnrichResult = { ok: false, reason: "missing_stockx_token" };
+  for (const token of tokens) {
+    const result = await resolveStockxBuyByOrderNumberWithToken(token, stockxOrderNumberInput);
+    if (result.ok) return result;
+    last = result;
+    const reason = String(result.reason ?? "");
+    if (!isAuthLookupFailure(reason)) break;
+  }
+  return last;
 }
 
 /**

@@ -4,10 +4,10 @@ import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
   normalizeStockxOrderNumberInput,
-  resolveStockxBuyByOrderNumberWithToken,
   resolveStockxBuyForManualGalaxus,
 } from "@/decathlon/stx/manualStockxEnrich";
 import { writeGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { writeServerStockxToken } from "@/lib/stockxServerToken";
 import {
   buildStockxOrderClaimIndex,
   findStockxOrderClaim,
@@ -105,10 +105,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
         const overrideToken = normalizeBearer(body?.stockxToken);
         if (overrideToken) {
           await writeGalaxusStockxToken(overrideToken).catch(() => undefined);
+          await writeServerStockxToken(overrideToken).catch(() => undefined);
         }
-        const resolved = overrideToken
-          ? await resolveStockxBuyByOrderNumberWithToken(overrideToken, orderNumberInput)
-          : await resolveStockxBuyForManualGalaxus(orderNumberInput);
+        const resolved = await resolveStockxBuyForManualGalaxus(orderNumberInput, {
+          overrideToken,
+        });
         if (resolved.ok) {
           auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {
             matchReasons: ["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"],
