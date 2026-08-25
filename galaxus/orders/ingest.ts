@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import type { GalaxusOrderInput } from "./types";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
+import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
 
 type IngestResult = {
   galaxusOrderId: string;
@@ -777,6 +778,30 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
         statusEvents: statusEvents.length,
       };
     });
+
+    // Reserve LOCAL_STOCK while physical mirror qty still > 0 — inventory apply
+    // below decrements Shopify and would otherwise race the match away.
+    const savedForLocal = await prisma.galaxusOrder.findUnique({
+      where: { id: result.orderId },
+      select: {
+        id: true,
+        galaxusOrderId: true,
+        orderDate: true,
+        currencyCode: true,
+        lines: true,
+      },
+    });
+    if (savedForLocal) {
+      await ensureLocalStockMatchesForOrder({
+        order: savedForLocal,
+        reason: "LOCAL_PHYSICAL_STOCK_BEFORE_INVENTORY_APPLY",
+      }).catch((err: any) => {
+        console.warn("[galaxus][ingest] local-stock reserve failed", {
+          orderId: result.galaxusOrderId,
+          error: err?.message ?? err,
+        });
+      });
+    }
 
     let inventoryApplied = 0;
     let inventoryAlreadyProcessed = 0;

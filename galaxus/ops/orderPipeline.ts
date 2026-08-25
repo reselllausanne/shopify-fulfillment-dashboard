@@ -6,12 +6,19 @@ import {
 } from "@/galaxus/edi/service";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import { refreshStxProductsByKickdbProductIds } from "@/galaxus/jobs/stxSync";
+import {
+  AUTO_ORDR_CATCHUP_DAYS,
+  AUTO_ORDR_CATCHUP_LIMIT,
+  assertOrdrUploaded,
+  orderNeedsAutoOrdr,
+} from "@/galaxus/ops/autoOrdr";
 
 type OrderPipelineResult = {
   filesProcessed: number;
   ordersIngested: number;
   ordrSent: number;
   ordrFailed: number;
+  ordrCatchUp: number;
   stxProductsRefreshed: number;
   errors: string[];
   deliveryMode: PollIncomingEdiOptions["deliveryMode"];
@@ -33,6 +40,7 @@ async function sendOrdrForOrder(orderId: string) {
       galaxusOrderId: true,
       ordrSentAt: true,
       ordrStatus: true,
+      ordrMode: true,
       cancelledAt: true,
       lines: { select: { supplierPid: true, providerKey: true } },
     },
@@ -41,7 +49,7 @@ async function sendOrdrForOrder(orderId: string) {
   if (order.cancelledAt) {
     return { ok: true, skipped: "cancelled" };
   }
-  if (order.ordrSentAt || order.ordrStatus === "SENT") {
+  if (!orderNeedsAutoOrdr(order)) {
     return { ok: true, skipped: "already_sent" };
   }
   const lines = Array.isArray(order.lines) ? order.lines : [];
@@ -66,11 +74,12 @@ async function sendOrdrForOrder(orderId: string) {
     data: { ordrStatus: "PENDING", ordrLastAttemptAt: now },
   });
   try {
-    await sendOutgoingEdi({ orderId, types: ["ORDR"] });
-    await (prisma as any).galaxusOrder.update({
-      where: { id: orderId },
-      data: { ordrStatus: "SENT", ordrLastError: null, ordrLastAttemptAt: now },
+    const results = await sendOutgoingEdi({
+      orderId,
+      types: ["ORDR"],
+      ordrMode: "WITHOUT_POSITIONS",
     });
+    assertOrdrUploaded(results);
     return { ok: true };
   } catch (error: any) {
     await (prisma as any).galaxusOrder.update({
@@ -79,6 +88,34 @@ async function sendOrdrForOrder(orderId: string) {
     });
     return { ok: false, error: error?.message ?? "ORDR failed" };
   }
+}
+
+async function findOrdersNeedingOrdr(
+  deliveryMode: PollIncomingEdiOptions["deliveryMode"]
+): Promise<string[]> {
+  const since = new Date(Date.now() - AUTO_ORDR_CATCHUP_DAYS * 24 * 60 * 60 * 1000);
+  const deliveryFilter =
+    deliveryMode === "direct"
+      ? { deliveryType: "direct_delivery" }
+      : deliveryMode === "warehouse"
+        ? { NOT: { deliveryType: "direct_delivery" } }
+        : {};
+  const rows = await (prisma as any).galaxusOrder.findMany({
+    where: {
+      cancelledAt: null,
+      createdAt: { gte: since },
+      ...deliveryFilter,
+      OR: [
+        { ordrSentAt: null },
+        { ordrStatus: { in: ["PENDING", "FAILED"] } },
+        { ordrStatus: null },
+      ],
+    },
+    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    take: AUTO_ORDR_CATCHUP_LIMIT,
+  });
+  return (rows ?? []).map((row: { id: string }) => row.id);
 }
 
 async function resolveStxKickdbProductIds(orderIds: string[]): Promise<string[]> {
@@ -144,13 +181,15 @@ export async function runEdiInPipeline(
   const errors: string[] = [];
   const deliveryMode = options.deliveryMode ?? "all";
   const pollResults = await pollIncomingEdi(options);
-  const orderIds = Array.from(
+  const ingestedIds = Array.from(
     new Set(
       pollResults
         .map((r: any) => String(r?.orderId ?? "").trim())
         .filter((value) => value.length > 0)
     )
   );
+  const catchUpIds = await findOrdersNeedingOrdr(deliveryMode);
+  const orderIds = Array.from(new Set([...ingestedIds, ...catchUpIds]));
   let ordrSent = 0;
   let ordrFailed = 0;
   for (const orderId of orderIds) {
@@ -179,9 +218,10 @@ export async function runEdiInPipeline(
 
   return {
     filesProcessed: pollResults.filter((r) => r.status === "processed").length,
-    ordersIngested: orderIds.length,
+    ordersIngested: ingestedIds.length,
     ordrSent,
     ordrFailed,
+    ordrCatchUp: catchUpIds.filter((id) => !ingestedIds.includes(id)).length,
     stxProductsRefreshed,
     errors,
     deliveryMode,

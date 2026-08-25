@@ -126,7 +126,7 @@ export async function GET(request: Request) {
       try {
         const orderRefs = orders.map((o) => o.galaxusOrderId).filter(Boolean);
         const prismaAny = prisma as any;
-        const [lines, stockxMatches, stxUnits] = await Promise.all([
+        const [lines, stockxMatches, stxUnits, externalBuys] = await Promise.all([
           prisma.galaxusOrderLine.findMany({
             where: { orderId: { in: orderIds } },
             select: {
@@ -180,12 +180,33 @@ export async function GET(request: Request) {
                 })
                 .catch(() => [])
             : Promise.resolve([]),
+          prismaAny.galaxusExternalBuy?.findMany
+            ? prismaAny.galaxusExternalBuy
+                .findMany({
+                  where: { galaxusOrderId: { in: orderIds }, cancelledAt: null },
+                  select: {
+                    id: true,
+                    galaxusOrderId: true,
+                    galaxusOrderLineId: true,
+                    unitIndex: true,
+                    supplierKey: true,
+                    supplierOrderNumber: true,
+                    costAmount: true,
+                    currencyCode: true,
+                    trackingNumber: true,
+                    trackingUrl: true,
+                    cancelledAt: true,
+                  },
+                })
+                .catch(() => [])
+            : Promise.resolve([]),
         ]);
         const computed = buildLinkedCountByOrderId({
           orders,
           lines,
           stockxMatches: Array.isArray(stockxMatches) ? stockxMatches : [],
           stxUnits: Array.isArray(stxUnits) ? stxUnits : [],
+          externalBuys: Array.isArray(externalBuys) ? externalBuys : [],
         });
         for (const [id, count] of computed) {
           linkedCountByOrderId.set(id, count);

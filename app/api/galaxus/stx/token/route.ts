@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { writeGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { persistSupplierToken } from "@/lib/stockxToken";
+import { writeServerStockxToken } from "@/lib/stockxServerToken";
 
 export const runtime = "nodejs";
 
@@ -11,6 +13,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "Missing token" }, { status: 400 });
     }
     await writeGalaxusStockxToken(token);
+    await writeServerStockxToken(token).catch((err) => {
+      console.warn("[GALAXUS][STX][TOKEN] dashboard token file skipped:", err?.message ?? err);
+    });
+    // Keep DB StockXToken in sync so backfill / getSupplierToken see the same bearer.
+    await persistSupplierToken(token).catch((err) => {
+      console.warn("[GALAXUS][STX][TOKEN] DB persist skipped:", err?.message ?? err);
+    });
     return NextResponse.json({ ok: true });
   } catch (error: any) {
     return NextResponse.json(

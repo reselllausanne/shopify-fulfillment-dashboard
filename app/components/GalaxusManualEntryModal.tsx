@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
+import { GALAXUS_STOCKX_TOKEN_STORAGE_KEY } from "@/app/galaxus/_components/StockxOrderTools";
+import { lookupGalaxusStockxBuyViaProxy } from "@/app/lib/galaxusStockxLookupClient";
 
 type ManualEntryModalProps = {
   isOpen: boolean;
@@ -26,6 +28,36 @@ export default function GalaxusManualEntryModal({
   const [localData, setLocalData] = useState<any>(initialData);
   const [lookupStatus, setLookupStatus] = useState<string | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
+  const [getBuyOrderHash, setGetBuyOrderHash] = useState<string | null>(null);
+
+  const readSessionStockxToken = (): string | null => {
+    try {
+      const raw = sessionStorage.getItem(GALAXUS_STOCKX_TOKEN_STORAGE_KEY);
+      const trimmed = String(raw ?? "").trim().replace(/^Bearer\s+/i, "");
+      return trimmed || null;
+    } catch {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen || context !== "galaxus") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/galaxus/stx/hash", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && json?.ok && typeof json.hash === "string") {
+          setGetBuyOrderHash(json.hash.trim() || null);
+        }
+      } catch {
+        // optional hash
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, context]);
 
   // Sync when opening
   useEffect(() => {
@@ -67,17 +99,43 @@ export default function GalaxusManualEntryModal({
   };
 
   const lookupStockxOrder = async (orderNumber: string) => {
-    const trimmed = orderNumber.trim();
-    if (!trimmed || context !== "galaxus" || !stockxLookupOrderId) return;
+    const trimmed = orderNumber.trim().replace(/^#+/, "").trim();
+    if (!trimmed || context !== "galaxus") return;
+    const token = readSessionStockxToken();
+    if (!token) {
+      setLookupStatus("Paste StockX token in StockX tools below, then blur/save, then retry.");
+      return;
+    }
     setLookupBusy(true);
     setLookupStatus(null);
     try {
+      const viaProxy = await lookupGalaxusStockxBuyViaProxy(token, trimmed, {
+        getBuyOrderHash,
+      });
+      if (viaProxy.ok) {
+        applyLookupFields(viaProxy.fields);
+        setLookupStatus("Loaded from StockX");
+        return;
+      }
+
+      if (!stockxLookupOrderId) {
+        setLookupStatus(
+          String(viaProxy.error ?? "Order not found on StockX") +
+            " — or enter Supplier Cost and save anyway."
+        );
+        return;
+      }
+
       const res = await fetch(
-        `/api/galaxus/orders/${encodeURIComponent(stockxLookupOrderId)}/stockx/lookup?orderNumber=${encodeURIComponent(trimmed)}`
+        `/api/galaxus/orders/${encodeURIComponent(stockxLookupOrderId)}/stockx/lookup?orderNumber=${encodeURIComponent(trimmed)}`,
+        { headers: { "x-stockx-bearer": token } }
       );
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok || !json.fields) {
-        setLookupStatus(String(json.error ?? "Order not found on StockX"));
+        setLookupStatus(
+          String(json.error ?? viaProxy.error ?? "Order not found on StockX") +
+            " — or enter Supplier Cost and save anyway."
+        );
         return;
       }
       applyLookupFields(json.fields);
@@ -392,7 +450,13 @@ export default function GalaxusManualEntryModal({
             Cancel
           </button>
           <button
-            onClick={() => onSave(localData, mode)}
+            onClick={() => {
+              const token = context === "galaxus" ? readSessionStockxToken() : null;
+              onSave(
+                token ? { ...localData, stockxToken: token } : localData,
+                mode
+              );
+            }}
             className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700"
           >
             {mode === "edit" ? "💾 Update Entry (Partial)" : "✅ Save Manual Entry"}

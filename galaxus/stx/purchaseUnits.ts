@@ -65,6 +65,8 @@ export function expandGtinsForDbLookup(gtins: Iterable<string>): string[] {
     out.add(d);
     const n = d.replace(/^0+/, "") || "0";
     out.add(n);
+    // Common marketplace paddings: UPC-12, EAN-13, GTIN-14.
+    out.add(n.padStart(12, "0"));
     out.add(n.padStart(13, "0"));
     out.add(n.padStart(14, "0"));
   }

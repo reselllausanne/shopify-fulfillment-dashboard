@@ -364,7 +364,12 @@ async function finalizeShipmentEdiAfterLabel(
   let ordr = null as any;
   if (freshOrder && !freshOrder.ordrSentAt) {
     const ordrStartedAt = Date.now();
-    ordr = await sendOutgoingEdi({ orderId: freshOrder.id, types: ["ORDR"], force: true }).catch((error: any) => ({
+    ordr = await sendOutgoingEdi({
+      orderId: freshOrder.id,
+      types: ["ORDR"],
+      ordrMode: "WITHOUT_POSITIONS",
+      force: true,
+    }).catch((error: any) => ({
       ok: false,
       error: error?.message ?? "ORDR send failed",
     }));

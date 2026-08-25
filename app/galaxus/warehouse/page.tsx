@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
+import GalaxusExternalBuyPanel, {
+  isExternalBuyLine,
+} from "@/app/galaxus/_components/GalaxusExternalBuyPanel";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
 import { galaxusLineNetRevenueChf, galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
 
@@ -461,7 +464,9 @@ export default function WarehouseBulkPage() {
                       const shippedAt = line.warehouseMarkedShippedAt;
                       const isShipped = Boolean(shippedAt);
                       const physicalOnHand =
-                        Boolean(line.physicalStock) && Number(line.physicalStock?.qty ?? 0) > 0;
+                        Boolean(line.physicalStock) &&
+                        (Number(line.physicalStock?.qty ?? 0) > 0 ||
+                          Boolean(line.physicalStock?.reservedFromSale));
                       const physicalSaleToShip =
                         !physicalOnHand &&
                         !isShipped &&
@@ -500,7 +505,9 @@ export default function WarehouseBulkPage() {
                               ? "Local stock"
                               : proc?.source === "manual_reference"
                                 ? "Manual reference"
-                                : "StockX sync";
+                                : proc?.source === "external_buy"
+                                  ? `${proc?.supplierKey ?? "External"} buy`
+                                  : "StockX sync";
                       return (
                         <div
                           key={line.id}
@@ -702,13 +709,27 @@ export default function WarehouseBulkPage() {
                               <button
                                 type="button"
                                 onClick={() => openManualEntry(line)}
-                                disabled={busy !== null || !detail}
+                                disabled={busy !== null || !detail || isExternalBuyLine(line)}
                                 className="px-2 py-1 rounded bg-blue-600 text-white text-[10px] disabled:opacity-50"
+                                title={
+                                  isExternalBuyLine(line)
+                                    ? "Use REI/WEL link panel below (not StockX)"
+                                    : undefined
+                                }
                               >
                                 Manual supplier
                               </button>
                             </div>
                           </div>
+                          {isExternalBuyLine(line) && detail?.id ? (
+                            <GalaxusExternalBuyPanel
+                              orderId={detail.id}
+                              line={line}
+                              onSaved={async () => {
+                                if (detail?.id) await loadDetail(detail.id);
+                              }}
+                            />
+                          ) : null}
                         </div>
                       );
                     })}

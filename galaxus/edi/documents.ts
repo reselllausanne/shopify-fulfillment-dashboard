@@ -1,4 +1,6 @@
 import type { GalaxusOrder, GalaxusOrderLine, Shipment } from "@prisma/client";
+import { sameGtinKey, toGtin14 } from "@/galaxus/orders/gtinKey";
+import type { AutoOrdrMode } from "@/galaxus/ops/autoOrdr";
 import { buildDocNumber } from "./docNumbers";
 import { buildEdiFilename, EdiDocType } from "./filenames";
 import {
@@ -21,6 +23,7 @@ type EdiOutput = {
   docType: EdiDocType;
   filename: string;
   content: string;
+  ordrMode?: AutoOrdrMode;
 };
 
 export type CustomInvoiceLineInput = {
@@ -40,6 +43,20 @@ export type CustomInvoiceLineInput = {
   orderLineId?: string | null;
 };
 
+function arrivalForGtin(
+  gtin: string | null,
+  arrivalByGtin: Record<string, { start: Date; end: Date }>
+): { start: Date; end: Date } | null {
+  if (!gtin) return null;
+  if (arrivalByGtin[gtin]) return arrivalByGtin[gtin];
+  const padded = toGtin14(gtin);
+  if (padded && arrivalByGtin[padded]) return arrivalByGtin[padded];
+  for (const [key, value] of Object.entries(arrivalByGtin)) {
+    if (sameGtinKey(key, gtin)) return value;
+  }
+  return null;
+}
+
 export function buildOrderResponse(
   order: GalaxusOrder,
   lines: GalaxusOrderLine[],
@@ -48,22 +65,32 @@ export function buildOrderResponse(
     status: "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
     reason?: string | null;
     arrivalByGtin?: Record<string, { start: Date; end: Date }>;
+    ordrMode?: AutoOrdrMode;
   }
 ): EdiOutput {
   const docId = buildDocNumber("GORDR");
-  const fallbackArrival = addBusinessDays(new Date(), 4);
+  const requestedMode: AutoOrdrMode = options.ordrMode ?? "WITHOUT_POSITIONS";
   const arrivalByGtin = options.arrivalByGtin ?? {};
-  const ediLines = buildEdiLines(lines).map((line) => {
+  let ediLines = requestedMode === "WITHOUT_POSITIONS" ? [] : buildEdiLines(lines).map((line) => {
     const gtin = line.gtin ?? null;
-    const arrival = gtin ? arrivalByGtin[gtin] ?? null : null;
-    const start = arrival?.start ?? line.arrivalDateStart ?? fallbackArrival;
-    const end = arrival?.end ?? line.arrivalDateEnd ?? line.arrivalDateStart ?? fallbackArrival;
+    const arrival = arrivalForGtin(gtin, arrivalByGtin);
+    const start = arrival?.start ?? line.arrivalDateStart ?? null;
+    const end = arrival?.end ?? line.arrivalDateEnd ?? line.arrivalDateStart ?? null;
     return {
       ...line,
+      gtin: toGtin14(gtin) ?? gtin,
       arrivalDateStart: start,
       arrivalDateEnd: end,
     };
   });
+  const allHaveDates =
+    ediLines.length > 0 &&
+    ediLines.every((line) => Boolean(line.arrivalDateStart || line.arrivalDateEnd));
+  const ordrMode: AutoOrdrMode =
+    requestedMode === "WITH_ARRIVAL_DATES" && allHaveDates ? "WITH_ARRIVAL_DATES" : "WITHOUT_POSITIONS";
+  if (ordrMode === "WITHOUT_POSITIONS") {
+    ediLines = [];
+  }
   const xml = buildOrderResponseXml({
     docId,
     orderId: order.galaxusOrderId,
@@ -92,6 +119,7 @@ export function buildOrderResponse(
       docNo: docId,
     }),
     content: xml,
+    ordrMode,
   };
 }
 

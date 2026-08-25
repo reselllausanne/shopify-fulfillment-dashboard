@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { upsertLocalStockMatchAfterMarketplaceSale } from "@/galaxus/orders/localStockMatch";
 import {
   applyTheCatalogStockDeltaInTx,
   isTheSupplierVariantId,
@@ -221,6 +222,28 @@ export async function applyInventoryOrderLine(
               decremented: route.decremented,
               locations: route.locations,
             });
+            // Persist LOCAL_STOCK + location even though mirror qty is already 0.
+            if (channel === "GALAXUS") {
+              try {
+                const local = await upsertLocalStockMatchAfterMarketplaceSale({
+                  channel,
+                  externalOrderId,
+                  externalLineId,
+                  locations: route.locations,
+                });
+                if (!local.ok) {
+                  console.warn("[inventory][marketplace-physical-sale] local-stock match skipped", {
+                    externalLineId,
+                    reason: local.reason,
+                  });
+                }
+              } catch (err: any) {
+                console.error("[inventory][marketplace-physical-sale] local-stock match failed", {
+                  externalLineId,
+                  error: err?.message ?? err,
+                });
+              }
+            }
           }
         } catch (err: any) {
           console.error("[inventory][marketplace-physical-sale] failed", {

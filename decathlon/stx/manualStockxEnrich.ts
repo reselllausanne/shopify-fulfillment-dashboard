@@ -2,9 +2,15 @@ import {
   extractStockxVariantId,
   fetchStockxBuyOrderDetailsFull,
   findBuyOrderListNodeByOrderNumber,
+  synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
 import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import {
+  getSupplierToken,
+  resolveStockxBearerToken,
+} from "@/lib/stockxToken";
+import { DASHBOARD_STOCKX_TOKEN_FILE } from "@/lib/stockxServerToken";
 
 export type DecathlonManualStockxEnrichResult =
   | {
@@ -14,12 +20,21 @@ export type DecathlonManualStockxEnrichResult =
     }
   | { ok: false; reason: string };
 
+/** Trim + strip leading `#` (StockX Pro UI paste). */
+export function normalizeStockxOrderNumberInput(input: string | null | undefined): string {
+  return String(input ?? "")
+    .trim()
+    .replace(/^#+/, "")
+    .trim();
+}
+
 export function looksLikeStockxOrderNumber(input: string | null | undefined): boolean {
-  const value = String(input ?? "").trim();
+  const value = normalizeStockxOrderNumberInput(input);
   if (!value) return false;
   if (value.length < 6 || value.length > 60) return false;
   if (/^https?:\/\//i.test(value)) return false;
   if (/\s/.test(value)) return false;
+  // Allow optional leading # on raw input; normalized must start alnum.
   return /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/.test(value);
 }
 
@@ -30,7 +45,7 @@ export async function resolveStockxBuyByOrderNumberWithToken(
   token: string,
   stockxOrderNumberInput: string
 ): Promise<DecathlonManualStockxEnrichResult> {
-  const orderNum = String(stockxOrderNumberInput ?? "").trim();
+  const orderNum = normalizeStockxOrderNumberInput(stockxOrderNumberInput);
   if (!orderNum) return { ok: false, reason: "empty_order_number" };
   try {
     const listNode = await findBuyOrderListNodeByOrderNumber(token, orderNum);
@@ -39,7 +54,17 @@ export async function resolveStockxBuyByOrderNumberWithToken(
     if (!listNode || !chainId || !orderId) {
       return { ok: false, reason: "order_not_found_in_buying_list" };
     }
-    const details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+    // Same as auto-link / sync: prefer GET_BUY_ORDER; if WAF blocks details, keep
+    // Buying-list amount/ETA so manual paste still fills cost (not empty MANUAL).
+    let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetailsFull>>;
+    try {
+      details = await fetchStockxBuyOrderDetailsFull(token, { chainId, orderId });
+      if (!details?.order) {
+        details = synthesizeBuyOrderDetailsFromListNode(listNode);
+      }
+    } catch {
+      details = synthesizeBuyOrderDetailsFromListNode(listNode);
+    }
     return { ok: true, listNode, details };
   } catch (error: any) {
     const reason = String(error?.message ?? "").trim();
@@ -56,9 +81,55 @@ export async function resolveStockxBuyByOrderNumberWithToken(
 export async function resolveStockxBuyForManualDecathlon(
   stockxOrderNumberInput: string
 ): Promise<DecathlonManualStockxEnrichResult> {
-  const token = await readGalaxusStockxToken();
-  if (!token) return { ok: false, reason: "missing_stockx_token" };
-  return resolveStockxBuyByOrderNumberWithToken(token, stockxOrderNumberInput);
+  // Same bearer resolution as backfill (`getSupplierToken`) + auto-link file fallback.
+  const auth = await resolveStockxBearerToken();
+  if (!auth?.token) return { ok: false, reason: "missing_stockx_token" };
+  return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
+}
+
+function isAuthLookupFailure(reason: string): boolean {
+  const s = reason.toLowerCase();
+  return (
+    s.includes("401") ||
+    s.includes("403") ||
+    s.includes("unauthorized") ||
+    s.includes("forbidden") ||
+    s.includes("missing stockx auth")
+  );
+}
+
+async function collectGalaxusLookupTokens(overrideToken?: string | null): Promise<string[]> {
+  const out: string[] = [];
+  const push = (raw: string | null | undefined) => {
+    const cleaned = String(raw ?? "")
+      .trim()
+      .replace(/^Bearer\s+/i, "");
+    if (cleaned && !out.includes(cleaned)) out.push(cleaned);
+  };
+  push(overrideToken);
+  push(await readGalaxusStockxToken());
+  push(await readGalaxusStockxToken(DASHBOARD_STOCKX_TOKEN_FILE));
+  push(await getSupplierToken());
+  return out;
+}
+
+/** Galaxus manual link + lookup: try pasted/galaxus/dashboard/DB tokens until one works. */
+export async function resolveStockxBuyForManualGalaxus(
+  stockxOrderNumberInput: string,
+  options?: { overrideToken?: string | null }
+): Promise<DecathlonManualStockxEnrichResult> {
+  const tokens = await collectGalaxusLookupTokens(options?.overrideToken);
+  if (tokens.length === 0) return { ok: false, reason: "missing_stockx_token" };
+
+  let last: DecathlonManualStockxEnrichResult = { ok: false, reason: "missing_stockx_token" };
+  for (const token of tokens) {
+    const result = await resolveStockxBuyByOrderNumberWithToken(token, stockxOrderNumberInput);
+    if (result.ok) return result;
+    last = result;
+    const reason = String(result.reason ?? "");
+    if (!isAuthLookupFailure(reason)) break;
+  }
+  return last;
 }
 
 /**
@@ -95,9 +166,30 @@ export function applyStockxDetailsToDecathlonMatchFields(
         ""
     ).trim() || null;
 
-  const normalizedEtaMin = details.etaMin ?? details.etaMax ?? null;
-  const normalizedEtaMax = details.etaMax ?? details.etaMin ?? null;
+  const listEtaMinRaw = listNode?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
+  const listEtaMaxRaw = listNode?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
+  const normalizedEtaMin =
+    details.etaMin ??
+    details.etaMax ??
+    (listEtaMinRaw ? new Date(listEtaMinRaw) : null) ??
+    (listEtaMaxRaw ? new Date(listEtaMaxRaw) : null);
+  const normalizedEtaMax =
+    details.etaMax ??
+    details.etaMin ??
+    (listEtaMaxRaw ? new Date(listEtaMaxRaw) : null) ??
+    (listEtaMinRaw ? new Date(listEtaMinRaw) : null);
   const reasons = options?.matchReasons ?? ["MANUAL_STOCKX_ORDER_LOOKUP"];
+
+  const settledFromDetails = (() => {
+    const raw = order?.payment?.settledAmount?.value;
+    if (raw == null || raw === "") return null;
+    const n = Number(String(raw).replace(",", "."));
+    return Number.isFinite(n) ? n : null;
+  })();
+  const settledFromList =
+    listNode?.amount != null && Number.isFinite(Number(listNode.amount))
+      ? Number(listNode.amount)
+      : null;
 
   return {
     stockxChainId:
@@ -109,20 +201,32 @@ export function applyStockxDetailsToDecathlonMatchFields(
     stockxProductName,
     stockxSkuKey,
     stockxSizeEU: String(size ?? "").trim() || null,
-    stockxPurchaseDate: order?.created ? new Date(order.created) : null,
-    stockxAmount: (() => {
-      const raw = order?.payment?.settledAmount?.value;
-      if (raw == null || raw === "") return null;
-      const n = Number(String(raw).replace(",", "."));
-      return Number.isFinite(n) ? n : null;
-    })(),
-    stockxCurrencyCode: order?.payment?.settledAmount?.currency ?? null,
-    stockxStatus: order?.status != null ? String(order.status) : null,
+    stockxPurchaseDate: order?.created
+      ? new Date(order.created)
+      : listNode?.purchaseDate
+        ? new Date(listNode.purchaseDate)
+        : listNode?.creationDate
+          ? new Date(listNode.creationDate)
+          : null,
+    stockxAmount: settledFromDetails ?? settledFromList,
+    stockxCurrencyCode:
+      order?.payment?.settledAmount?.currency ?? listNode?.currencyCode ?? null,
+    stockxStatus:
+      order?.status != null
+        ? String(order.status)
+        : listNode?.state?.statusKey != null
+          ? String(listNode.state.statusKey)
+          : null,
     stockxEstimatedDelivery: normalizedEtaMin,
     stockxLatestEstimatedDelivery: normalizedEtaMax,
     stockxAwb: details.awb ?? null,
     stockxTrackingUrl: order?.shipping?.shipment?.trackingUrl ?? null,
-    stockxCheckoutType: typeof order?.checkoutType === "string" ? order.checkoutType : null,
+    stockxCheckoutType:
+      typeof order?.checkoutType === "string"
+        ? order.checkoutType
+        : typeof listNode?.checkoutType === "string"
+          ? listNode.checkoutType
+          : null,
     stockxStates: order?.states ?? null,
     matchType: "SYNC",
     matchConfidence: "high",

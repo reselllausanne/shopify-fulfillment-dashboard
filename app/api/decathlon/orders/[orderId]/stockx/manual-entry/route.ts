@@ -5,6 +5,7 @@ import { normalizeProviderKey } from "@/galaxus/supplier/providerKey";
 import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
+  normalizeStockxOrderNumberInput,
   resolveStockxBuyForManualDecathlon,
 } from "@/decathlon/stx/manualStockxEnrich";
 import {
@@ -119,7 +120,7 @@ export async function POST(
       }
     }
 
-    const orderNumberInput = trimStr(data.stockxOrderNumber);
+    const orderNumberInput = normalizeStockxOrderNumberInput(data.stockxOrderNumber);
     let auto: ReturnType<typeof applyStockxDetailsToDecathlonMatchFields> | null = null;
     let stockxEnrich: { attempted: boolean; ok: boolean; reason?: string } = {
       attempted: false,
@@ -161,8 +162,8 @@ export async function POST(
           : null;
 
     const stockxOrderNumberFinal =
-      trimStr(data.stockxOrderNumber) ||
-      a.stockxOrderNumber ||
+      orderNumberInput ||
+      normalizeStockxOrderNumberInput(a.stockxOrderNumber) ||
       `MANUAL-${order.orderId}-${line.lineNumber ?? 1}`;
     const stockxOrderIdFinal = trimStr(data.stockxOrderId) || a.stockxOrderId || null;
 

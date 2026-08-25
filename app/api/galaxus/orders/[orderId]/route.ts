@@ -13,7 +13,10 @@ import {
   buildPhysicalStockByGtinMap,
 } from "@/shopify/inventory/orderLinePhysicalStock";
 import { isLegoStxProduct } from "@/galaxus/stx/legoProduct";
-import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
+import {
+  ensureLocalStockMatchesForOrder,
+  mergeReservedPhysicalStockOntoLines,
+} from "@/galaxus/orders/localStockMatch";
 import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import { supplierKeyFromVariantId } from "@/galaxus/supplier/supplierKeyGuards";
 
@@ -119,9 +122,14 @@ function expandGtinQueryVariants(lineGtins: string[]): string[] {
     out.add(d);
     out.add(d.padStart(14, "0"));
     out.add(d.padStart(13, "0"));
+    out.add(d.padStart(12, "0"));
     const strip = d.replace(/^0+/, "") || "0";
     out.add(strip);
-    if (strip !== d) out.add(strip.padStart(14, "0"));
+    if (strip !== d) {
+      out.add(strip.padStart(14, "0"));
+      out.add(strip.padStart(13, "0"));
+      out.add(strip.padStart(12, "0"));
+    }
   }
   return Array.from(out).filter((s) => s.length > 0);
 }
@@ -281,7 +289,7 @@ export async function GET(
     );
 
     const prismaAny = prisma as any;
-    const [placement, stx, stxUnits, stockxMatches, mappingsRaw] = await Promise.all([
+    const [placement, stx, stxUnits, stockxMatches, mappingsRaw, externalBuys] = await Promise.all([
       getShipmentPlacementByOrder(orderRow.id),
       getStxLinkStatusForOrder(orderRow.galaxusOrderId, orderRow).catch(() => null),
       prismaAny.stxPurchaseUnit
@@ -336,6 +344,14 @@ export async function GET(
               },
               include: { supplierVariant: true, kickdbVariant: { include: { product: true } } },
               orderBy: { updatedAt: "desc" },
+            })
+            .catch(() => [])
+        : Promise.resolve([]),
+      prismaAny.galaxusExternalBuy?.findMany
+        ? prismaAny.galaxusExternalBuy
+            .findMany({
+              where: { galaxusOrderId: orderRow.id, cancelledAt: null },
+              orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
             })
             .catch(() => [])
         : Promise.resolve([]),
@@ -448,10 +464,10 @@ export async function GET(
     const physicalStockByGtin = await buildPhysicalStockByGtinMap(
       enrichedLines.map((line: { gtin?: string | null }) => line.gtin)
     );
-    const linesWithPhysicalStock = attachPhysicalStockToLines(enrichedLines, physicalStockByGtin);
+    const linesWithLivePhysical = attachPhysicalStockToLines(enrichedLines, physicalStockByGtin);
     const localEnsure = ensureLocal
       ? await ensureLocalStockMatchesForOrder({
-          order: { ...orderRow, lines: linesWithPhysicalStock },
+          order: { ...orderRow, lines: linesWithLivePhysical },
           reason: "LOCAL_PHYSICAL_STOCK_ON_ORDER_FETCH",
         })
       : { created: 0 };
@@ -462,9 +478,20 @@ export async function GET(
         orderBy: [{ galaxusOrderLineId: "asc" }, { unitIndex: "asc" }],
       });
     }
+    // LOCAL_STOCK match carries sold-from location after mirror qty hits 0.
+    const linesWithPhysicalStock = mergeReservedPhysicalStockOntoLines(
+      linesWithLivePhysical,
+      matchesForResponse
+    );
     const linesWithProcurement = (
       await enrichBuySourceOverrideCosts(
-        attachProcurementToLines(linesWithPhysicalStock, stx, matchesForResponse, stxUnits)
+        attachProcurementToLines(
+          linesWithPhysicalStock,
+          stx,
+          matchesForResponse,
+          stxUnits,
+          Array.isArray(externalBuys) ? externalBuys : []
+        )
       )
     ).map((line: any) => {
       const productKey = resolveOrderLineProductKey(line);
@@ -482,6 +509,7 @@ export async function GET(
       stx,
       stxUnits,
       stockxMatches: matchesForResponse,
+      externalBuys: Array.isArray(externalBuys) ? externalBuys : [],
       shipments: orderRow.shipments.map((shipment: any) => {
         const isStxShipment = String(shipment?.providerKey ?? "").toUpperCase() === "STX";
         const stxShipmentStatus = isStxShipment

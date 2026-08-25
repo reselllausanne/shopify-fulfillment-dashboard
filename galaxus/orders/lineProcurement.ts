@@ -5,6 +5,12 @@ import {
 import { resolveGalaxusBuySourceOverride } from "@/galaxus/warehouse/buySourceOverride";
 import { sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { expandGtinsForDbLookup } from "@/galaxus/stx/purchaseUnits";
+import {
+  activeExternalBuysForLine,
+  resolveLineSupplierKey,
+  sumExternalBuyCostChf,
+  type ExternalBuyRow,
+} from "@/galaxus/orders/externalBuy";
 
 function isLikelyStockxOrderRef(value: unknown): boolean {
   const ref = String(value ?? "").trim();
@@ -48,7 +54,13 @@ export function pickStxPurchaseUnitForLine(line: any, stxUnits: any[]) {
 }
 
 /** Per-line procurement: DB match rows (one per unit) and/or STX purchase units (sync + AWB). */
-export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: any[], stxUnits: any[]) {
+export function attachProcurementToLines(
+  lines: any[],
+  stx: any,
+  stockxMatches: any[],
+  stxUnits: any[],
+  externalBuys: ExternalBuyRow[] = []
+) {
   const matchesByLineId = new Map<string, any[]>();
   for (const m of stockxMatches ?? []) {
     const lid = String(m?.galaxusOrderLineId ?? "").trim();
@@ -56,6 +68,15 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
     const arr = matchesByLineId.get(lid) ?? [];
     arr.push(m);
     matchesByLineId.set(lid, arr);
+  }
+  const buysByLineId = new Map<string, ExternalBuyRow[]>();
+  for (const b of externalBuys ?? []) {
+    if (b?.cancelledAt) continue;
+    const lid = String(b?.galaxusOrderLineId ?? "").trim();
+    if (!lid) continue;
+    const arr = buysByLineId.get(lid) ?? [];
+    arr.push(b);
+    buysByLineId.set(lid, arr);
   }
 
   const resolveSavedMatch = (line: any) => {
@@ -122,6 +143,72 @@ export function attachProcurementToLines(lines: any[], stx: any, stockxMatches: 
                 buyPriceChf: overrideBuy,
               }
             : null,
+        },
+      };
+    }
+
+    const lineId = String(line?.id ?? "");
+    const lineExternalBuys = activeExternalBuysForLine(buysByLineId.get(lineId) ?? [], lineId);
+    // Non-STX external buy (REI/WEL/…) — prefer over empty StockX path.
+    if (lineExternalBuys.length > 0 && !isGalaxusStxSupplierLine(line)) {
+      const supplierKey = resolveLineSupplierKey(line) ?? lineExternalBuys[0]?.supplierKey ?? "EXT";
+      const cost = sumExternalBuyCostChf(lineExternalBuys);
+      const primary = lineExternalBuys[0];
+      const lineLevelCover =
+        lineExternalBuys.length === 1 && Number(lineExternalBuys[0]?.unitIndex ?? 0) === 0;
+      const units = Array.from({ length: qty }, (_, i) => {
+        const buy = lineExternalBuys.find((b) => Number(b.unitIndex) === i) ?? null;
+        if (buy) {
+          const unitCost = buy.costAmount != null ? Number(buy.costAmount) : null;
+          return {
+            unitIndex: i,
+            linked: true,
+            source: "external_buy" as const,
+            stockxOrderNumber: buy.supplierOrderNumber ?? null,
+            stockxOrderId: null as string | null,
+            stockxAmount: unitCost != null && Number.isFinite(unitCost) ? unitCost : null,
+            stockxCurrencyCode: buy.currencyCode ?? "CHF",
+            awb: buy.trackingNumber ?? null,
+            trackingUrl: buy.trackingUrl ?? null,
+            externalBuyId: buy.id,
+            supplierKey: buy.supplierKey,
+          };
+        }
+        if (lineLevelCover) {
+          return {
+            unitIndex: i,
+            linked: true,
+            source: "external_buy" as const,
+            stockxOrderNumber: primary?.supplierOrderNumber ?? null,
+            stockxOrderId: null as string | null,
+            // Total cost lives on procurement.stockxCostChf; avoid double-count in unit sum.
+            stockxAmount: null,
+            stockxCurrencyCode: primary?.currencyCode ?? "CHF",
+            awb: primary?.trackingNumber ?? null,
+            trackingUrl: primary?.trackingUrl ?? null,
+            externalBuyId: primary?.id,
+            supplierKey: primary?.supplierKey,
+          };
+        }
+        return { unitIndex: i, linked: false, source: null as string | null };
+      });
+      const allLinked = units.every((u) => u.linked);
+      return {
+        ...line,
+        procurement: {
+          ok: allLinked || Boolean(primary),
+          source: "external_buy" as const,
+          supplierKey,
+          stockxOrderNumber: primary?.supplierOrderNumber ?? null,
+          stockxOrderId: null,
+          awb: primary?.trackingNumber ?? null,
+          trackingUrl: primary?.trackingUrl ?? null,
+          stockxCostChf: cost,
+          stockxCostCurrency: primary?.currencyCode ?? "CHF",
+          stockxEstimatedDelivery: primary?.etaMin ?? null,
+          stockxLatestEstimatedDelivery: primary?.etaMax ?? null,
+          externalBuyNote: primary?.note ?? null,
+          units,
         },
       };
     }
@@ -371,18 +458,22 @@ export function countLinkedLinesForList(
   lines: any[],
   stockxMatches: any[],
   stxUnits: any[],
-  stx: any = null
+  stx: any = null,
+  externalBuys: ExternalBuyRow[] = []
 ): number {
   if (!Array.isArray(lines) || lines.length === 0) return 0;
-  return attachProcurementToLines(lines, stx, stockxMatches ?? [], stxUnits ?? []).filter((line) =>
-    Boolean(line?.procurement?.ok)
-  ).length;
+  return attachProcurementToLines(
+    lines,
+    stx,
+    stockxMatches ?? [],
+    stxUnits ?? [],
+    externalBuys ?? []
+  ).filter((line) => Boolean(line?.procurement?.ok)).length;
 }
 
 /**
  * Batch linkedCounts for `/api/galaxus/orders` list.
- * Counts GalaxusStockxMatch, StxPurchaseUnit (stx_sync), and warehouse-stock lines —
- * not match-row COUNT(*) alone (misses STX units without a match row).
+ * Counts GalaxusStockxMatch, StxPurchaseUnit (stx_sync), warehouse-stock, and external buys.
  */
 export function buildLinkedCountByOrderId(params: {
   orders: Array<{ id: string; galaxusOrderId: string }>;
@@ -390,6 +481,7 @@ export function buildLinkedCountByOrderId(params: {
   stockxMatches: Array<{ galaxusOrderId: string } & Record<string, unknown>>;
   /** StxPurchaseUnit.galaxusOrderId is the external Galaxus order ref. */
   stxUnits: Array<{ galaxusOrderId: string } & Record<string, unknown>>;
+  externalBuys?: ExternalBuyRow[];
 }): Map<string, number> {
   const linesByOrderId = new Map<string, any[]>();
   for (const line of params.lines ?? []) {
@@ -415,6 +507,15 @@ export function buildLinkedCountByOrderId(params: {
     arr.push(u);
     unitsByOrderRef.set(ref, arr);
   }
+  const buysByOrderId = new Map<string, ExternalBuyRow[]>();
+  for (const b of params.externalBuys ?? []) {
+    if ((b as any)?.cancelledAt) continue;
+    const oid = String((b as any)?.galaxusOrderId ?? "").trim();
+    if (!oid) continue;
+    const arr = buysByOrderId.get(oid) ?? [];
+    arr.push(b);
+    buysByOrderId.set(oid, arr);
+  }
 
   const out = new Map<string, number>();
   for (const order of params.orders ?? []) {
@@ -427,7 +528,8 @@ export function buildLinkedCountByOrderId(params: {
         linesByOrderId.get(id) ?? [],
         matchesByOrderId.get(id) ?? [],
         unitsByOrderRef.get(ref) ?? [],
-        null
+        null,
+        buysByOrderId.get(id) ?? []
       )
     );
   }

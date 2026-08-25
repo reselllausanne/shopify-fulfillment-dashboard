@@ -15,6 +15,7 @@ import {
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 import {
   GALAXUS_STOCKX_PERSISTED_HASHES_FILE,
+  GALAXUS_STOCKX_SESSION_FILE,
   GALAXUS_STOCKX_SESSION_META_FILE,
 } from "@/lib/stockxGalaxusAuth";
 
@@ -32,7 +33,65 @@ export type StockxBuyingNode = {
   localizedSizeTitle?: string | null;
   localizedSizeType?: string | null;
   productVariant?: any | null;
+  estimatedDeliveryDateRange?: {
+    estimatedDeliveryDate?: string | null;
+    latestEstimatedDeliveryDate?: string | null;
+  } | null;
+  checkoutType?: string | null;
 };
+
+/**
+ * When GET_BUY_ORDER fails (WAF/403) but Buying list hit succeeded, synthesize the
+ * same shape `applyStockxDetailsToDecathlonMatchFields` / auto-link expect.
+ */
+export function synthesizeBuyOrderDetailsFromListNode(listNode: StockxBuyingNode): {
+  order: any;
+  awb: string | null;
+  etaMin: Date | null;
+  etaMax: Date | null;
+} {
+  const etaMinRaw = listNode.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null;
+  const etaMaxRaw = listNode.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null;
+  const amount =
+    listNode.amount != null && Number.isFinite(Number(listNode.amount))
+      ? Number(listNode.amount)
+      : null;
+  const currency =
+    typeof listNode.currencyCode === "string" && listNode.currencyCode.trim()
+      ? listNode.currencyCode.trim()
+      : null;
+  const status =
+    listNode.state?.statusKey != null
+      ? String(listNode.state.statusKey)
+      : listNode.state?.statusTitle != null
+        ? String(listNode.state.statusTitle)
+        : null;
+  return {
+    order: {
+      id: listNode.orderId,
+      chainId: listNode.chainId,
+      orderNumber: listNode.orderNumber,
+      created: listNode.purchaseDate ?? listNode.creationDate ?? null,
+      status,
+      checkoutType: listNode.checkoutType ?? null,
+      estimatedDeliveryDateRange: listNode.estimatedDeliveryDateRange ?? null,
+      product: {
+        variant: listNode.productVariant ?? null,
+        localizedSize: listNode.localizedSizeTitle
+          ? { title: listNode.localizedSizeTitle }
+          : null,
+      },
+      payment:
+        amount != null
+          ? { settledAmount: { value: String(amount), currency } }
+          : null,
+      shipping: { shipment: { trackingUrl: null } },
+    },
+    awb: null,
+    etaMin: etaMinRaw ? new Date(etaMinRaw) : null,
+    etaMax: etaMaxRaw ? new Date(etaMaxRaw) : null,
+  };
+}
 
 type StockxBuyOrder = {
   id?: string | null;
@@ -166,6 +225,34 @@ function stockxNonJsonErrorDetail(res: Response, raw: string, operationName: str
   return `content-type=${ct}; op=${operationName}; body≈ ${snippet || "(whitespace only)"}${authHint}${rateHint}`;
 }
 
+async function readStockxSessionMetaFromPlaywrightSession(
+  sessionFile: string
+): Promise<StockxSessionMeta | null> {
+  try {
+    const raw = await fs.readFile(sessionFile, "utf8");
+    const parsed = JSON.parse(raw) as {
+      cookies?: Array<{ name?: string; value?: string; domain?: string }>;
+    };
+    const cookies = Array.isArray(parsed?.cookies) ? parsed.cookies : [];
+    const stockxCookies = cookies.filter((cookie) =>
+      String(cookie?.domain ?? "").includes("stockx.com")
+    );
+    if (stockxCookies.length === 0) return null;
+    const cookieHeader = stockxCookies
+      .map((cookie) => `${String(cookie.name ?? "").trim()}=${String(cookie.value ?? "").trim()}`)
+      .filter((part) => part !== "=" && !part.startsWith("="))
+      .join("; ");
+    if (!cookieHeader) return null;
+    const deviceId =
+      stockxCookies.find((cookie) => cookie.name === "stockx_device_id")?.value ?? null;
+    const sessionId =
+      stockxCookies.find((cookie) => cookie.name === "stockx_session_id")?.value ?? null;
+    return { deviceId, sessionId, cookieHeader };
+  } catch {
+    return null;
+  }
+}
+
 async function readStockxSessionMeta(): Promise<StockxSessionMeta | null> {
   const filesToTry = [GALAXUS_STOCKX_SESSION_META_FILE, STOCKX_FALLBACK_SESSION_META_FILE];
   for (const filePath of filesToTry) {
@@ -180,6 +267,11 @@ async function readStockxSessionMeta(): Promise<StockxSessionMeta | null> {
     } catch {
       // try next file
     }
+  }
+  const sessionFallbacks = [GALAXUS_STOCKX_SESSION_FILE, path.join(process.cwd(), ".data", "stockx-session.json")];
+  for (const sessionFile of sessionFallbacks) {
+    const fromSession = await readStockxSessionMetaFromPlaywrightSession(sessionFile);
+    if (fromSession) return fromSession;
   }
   return null;
 }
@@ -200,6 +292,7 @@ async function resolvePersistedHashForSync(operationName: string): Promise<strin
 function normalizeOrderNumberKey(raw: string): string {
   return String(raw ?? "")
     .trim()
+    .replace(/^#+/, "")
     .replace(/\s+/g, "")
     .toLowerCase();
 }
@@ -228,75 +321,57 @@ export async function fetchRecentStockxBuyingOrders(
     typeof options?.query === "string" && options.query.trim().length > 0
       ? options.query.trim()
       : null;
-  const useLegacyBuyingQuery = Boolean(queryFilter);
   const buyingPersistedHash = await resolvePersistedHashForSync(STOCKX_PERSISTED_OPERATION_NAME);
   if (!buyingPersistedHash) {
     throw new Error("Missing persisted hash for FetchCurrentBids");
   }
+  const buyingReferer =
+    stateForQuery === "HISTORICAL"
+      ? "https://stockx.com/buying/history"
+      : "https://stockx.com/buying/orders";
 
   for (let page = 0; page < maxPages; page += 1) {
     if (page > 0 && Number.isFinite(STOCKX_PAGE_GAP_MS) && STOCKX_PAGE_GAP_MS > 0) {
       await sleepMs(STOCKX_PAGE_GAP_MS);
     }
-    const response = useLegacyBuyingQuery
-      ? await callStockx<any>(
-          token,
-          "Buying",
-          DEFAULT_QUERY,
-          {
-            first,
-            after,
-            currencyCode: "CHF",
-            query: queryFilter,
-            state: stateForQuery,
-            sort: "MATCHED_AT",
-            order: "DESC",
+    const variables: Record<string, unknown> = {
+      first,
+      after,
+      // Keep explicit null (= any state). Do not coalesce null → PENDING.
+      state: stateForQuery === undefined ? "PENDING" : stateForQuery,
+      sort: "MATCHED_AT",
+      order: "DESC",
+      currencyCode: "CHF",
+      market: "CH",
+      country: "CH",
+    };
+    if (queryFilter) variables.query = queryFilter;
+    const response = await callStockx<any>(
+      token,
+      STOCKX_PERSISTED_OPERATION_NAME,
+      "",
+      variables,
+      {
+        url: STOCKX_GATEWAY_URL,
+        includeQuery: false,
+        extensions: {
+          persistedQuery: {
+            version: 1,
+            sha256Hash: buyingPersistedHash,
           },
-          {
-            url: STOCKX_PRO_URL,
-            includeQuery: true,
-            headers: {
-              origin: "https://pro.stockx.com",
-              referer: "https://pro.stockx.com/purchasing/orders",
-              "x-operation-name": "Buying",
-            },
-          }
-        )
-      : await callStockx<any>(
-          token,
-          STOCKX_PERSISTED_OPERATION_NAME,
-          "",
-          {
-            first,
-            after,
-            state: stateForQuery ?? "PENDING",
-            sort: "MATCHED_AT",
-            order: "DESC",
-            currencyCode: "CHF",
-            market: "CH",
-            country: "CH",
-          },
-          {
-            url: STOCKX_GATEWAY_URL,
-            includeQuery: false,
-            extensions: {
-              persistedQuery: {
-                version: 1,
-                sha256Hash: buyingPersistedHash,
-              },
-            },
-            headers: {
-              origin: "https://stockx.com",
-              referer: "https://stockx.com/buying/orders",
-              "x-operation-name": STOCKX_PERSISTED_OPERATION_NAME,
-              "selected-country": "CH",
-              "apollographql-client-name": "Iron",
-              "apollographql-client-version": "2026.04.19.00",
-              "app-platform": "Iron",
-              "app-version": "2026.04.19.00",
-            },
-          }
-        );
+        },
+        headers: {
+          origin: "https://stockx.com",
+          referer: buyingReferer,
+          "x-operation-name": STOCKX_PERSISTED_OPERATION_NAME,
+          "selected-country": "CH",
+          "apollographql-client-name": "Iron",
+          "apollographql-client-version": "2026.04.19.00",
+          "app-platform": "Iron",
+          "app-version": "2026.04.19.00",
+        },
+      }
+    );
     const buying = response?.data?.viewer?.buying;
     const edges = Array.isArray(buying?.edges) ? buying.edges : [];
     for (const edge of edges) {
@@ -329,13 +404,17 @@ export async function fetchRecentStockxBuyingOrders(
 
 /**
  * Find a buying list node by human-readable order number (search + scan).
- * Tries: all states with query, PENDING with query, then recent PENDING pages without query.
+ * Tries all states + common closed states with query, then recent PENDING pages.
+ * Manual link is identity-only — product mismatch is allowed.
  */
 export async function findBuyOrderListNodeByOrderNumber(
   token: string,
   orderNumber: string
 ): Promise<StockxBuyingNode | null> {
-  const needle = orderNumber.trim();
+  const needle = String(orderNumber ?? "")
+    .trim()
+    .replace(/^#+/, "")
+    .trim();
   if (!needle) return null;
 
   const key = (n: StockxBuyingNode) => `${String(n.chainId ?? "")}::${String(n.orderId ?? "")}`;
@@ -351,6 +430,9 @@ export async function findBuyOrderListNodeByOrderNumber(
     }
   };
 
+  const findHit = () => merged.find((n) => buyOrderNumbersMatch(n.orderNumber, needle)) ?? null;
+
+  // Any state + query (Pro Buying) — includes completed / shipped / authenticated.
   addBatch(
     await fetchRecentStockxBuyingOrders(token, {
       first: 100,
@@ -359,17 +441,21 @@ export async function findBuyOrderListNodeByOrderNumber(
       query: needle,
     })
   );
-  addBatch(
-    await fetchRecentStockxBuyingOrders(token, {
-      first: 100,
-      maxPages: 8,
-      state: "PENDING",
-      query: needle,
-    })
-  );
+  let hit = findHit();
+  if (hit) return hit;
 
-  for (const n of merged) {
-    if (buyOrderNumbersMatch(n.orderNumber, needle)) return n;
+  // Explicit common states in case null-state filter is ignored by API.
+  for (const state of ["PENDING", "COMPLETED", "AUTHENTICATED", "SHIPPED", "CANCELED"] as const) {
+    addBatch(
+      await fetchRecentStockxBuyingOrders(token, {
+        first: 100,
+        maxPages: 4,
+        state,
+        query: needle,
+      })
+    );
+    hit = findHit();
+    if (hit) return hit;
   }
 
   addBatch(
@@ -380,12 +466,7 @@ export async function findBuyOrderListNodeByOrderNumber(
       query: null,
     })
   );
-
-  for (const n of merged) {
-    if (buyOrderNumbersMatch(n.orderNumber, needle)) return n;
-  }
-
-  return null;
+  return findHit();
 }
 
 async function fetchStockxBuyOrderPersisted(

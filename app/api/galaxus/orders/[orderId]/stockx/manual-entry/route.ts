@@ -3,8 +3,11 @@ import { prisma } from "@/app/lib/prisma";
 import {
   applyStockxDetailsToDecathlonMatchFields,
   looksLikeStockxOrderNumber,
-  resolveStockxBuyForManualDecathlon,
+  normalizeStockxOrderNumberInput,
+  resolveStockxBuyForManualGalaxus,
 } from "@/decathlon/stx/manualStockxEnrich";
+import { writeGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { writeServerStockxToken } from "@/lib/stockxServerToken";
 import {
   buildStockxOrderClaimIndex,
   findStockxOrderClaim,
@@ -35,6 +38,13 @@ function parseMaybeNumber(value: any): number | null {
 
 function trimStr(v: unknown): string {
   return String(v ?? "").trim();
+}
+
+function normalizeBearer(raw: unknown): string | null {
+  const cleaned = String(raw ?? "")
+    .trim()
+    .replace(/^Bearer\s+/i, "");
+  return cleaned || null;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
@@ -82,7 +92,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       where: { galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex } },
     });
 
-    const orderNumberInput = trimStr(data.stockxOrderNumber);
+    const orderNumberInput = normalizeStockxOrderNumberInput(data.stockxOrderNumber);
     let auto: ReturnType<typeof applyStockxDetailsToDecathlonMatchFields> | null = null;
     let stockxEnrich: { attempted: boolean; ok: boolean; reason?: string } = {
       attempted: false,
@@ -92,7 +102,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     if (enrichFromStockx && orderNumberInput && looksLikeStockxOrderNumber(orderNumberInput)) {
       stockxEnrich.attempted = true;
       try {
-        const resolved = await resolveStockxBuyForManualDecathlon(orderNumberInput);
+        const overrideToken = normalizeBearer(body?.stockxToken);
+        if (overrideToken) {
+          await writeGalaxusStockxToken(overrideToken).catch(() => undefined);
+          await writeServerStockxToken(overrideToken).catch(() => undefined);
+        }
+        const resolved = await resolveStockxBuyForManualGalaxus(orderNumberInput, {
+          overrideToken,
+        });
         if (resolved.ok) {
           auto = applyStockxDetailsToDecathlonMatchFields(resolved.listNode, resolved.details, {
             matchReasons: ["MANUAL_STOCKX_ORDER_LOOKUP_GALAXUS"],
@@ -129,10 +146,29 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
             ? existingAmount
             : null;
 
+    // StockX-looking order # must not save as MANUAL with empty cost (Cornelia / Cloud5 bug).
+    // Same as auto-link: either enrich fills amount, user types cost, or refuse.
+    if (
+      looksLikeStockxOrderNumber(orderNumberInput) &&
+      (resolvedCost == null || !Number.isFinite(resolvedCost))
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            stockxEnrich.attempted && !stockxEnrich.ok
+              ? `StockX enrich failed (${stockxEnrich.reason ?? "unknown"}) — enter Supplier Cost below and save, or Save token in StockX tools then retry.`
+              : "StockX order # requires cost (auto-fill failed or empty). Enter supplier cost, then save.",
+          stockxEnrich,
+        },
+        { status: 422 }
+      );
+    }
+
     const stockxOrderNumberFinal =
-      trimStr(data.stockxOrderNumber) ||
-      trimStr(a.stockxOrderNumber) ||
-      trimStr(existing?.stockxOrderNumber) ||
+      orderNumberInput ||
+      normalizeStockxOrderNumberInput(a.stockxOrderNumber) ||
+      normalizeStockxOrderNumberInput(existing?.stockxOrderNumber) ||
       `MANUAL-${order.galaxusOrderId}-${line.lineNumber ?? 1}`;
     const stockxOrderIdFinal =
       trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null;
@@ -290,7 +326,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
           etaMax: payload.stockxLatestEstimatedDelivery,
           stockxSettledAmount: resolvedCost,
           stockxSettledCurrency: payload.stockxCurrencyCode,
-          allowMissingEta: true,
         });
       }
     }

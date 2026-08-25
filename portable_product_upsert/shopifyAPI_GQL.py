@@ -446,7 +446,7 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     ADS_PCT = 0.19      # ads as % of revenue (~19 CHF per 100 CHF CA on low AOV; was 13%)
     CPA_CAP = 17.0      # CHF per order (flat piece in CPA branch; Q4 updated)
     CM2_TARGET = 0.19   # ~19% CM2 to land ~12% EBITDA at 35-37k CA band
-    SHIP_F_STANDARD = 7.0
+    SHIP_F_STANDARD = 14.5  # STX dropship outbound (was 7 warehouse)
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price
     SHIP_F = SHIP_F_EXPRESS if is_express else SHIP_F_STANDARD

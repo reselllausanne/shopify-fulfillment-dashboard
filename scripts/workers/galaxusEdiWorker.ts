@@ -129,6 +129,7 @@ async function tick() {
         ordersIngested: pipeline.ordersIngested,
         ordrSent: pipeline.ordrSent,
         ordrFailed: pipeline.ordrFailed,
+        ordrCatchUp: pipeline.ordrCatchUp,
         errors: pipeline.errors.slice(0, 5),
       });
       await markRun(WAREHOUSE_STATE_KEY, now);
@@ -145,6 +146,7 @@ async function tick() {
         ordersIngested: pipeline.ordersIngested,
         ordrSent: pipeline.ordrSent,
         ordrFailed: pipeline.ordrFailed,
+        ordrCatchUp: pipeline.ordrCatchUp,
         errors: pipeline.errors.slice(0, 5),
       });
       await markRun(DIRECT_STATE_KEY, now);

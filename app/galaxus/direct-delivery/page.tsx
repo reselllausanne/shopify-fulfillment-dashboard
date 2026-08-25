@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
+import GalaxusExternalBuyPanel, {
+  isExternalBuyLine,
+} from "@/app/galaxus/_components/GalaxusExternalBuyPanel";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
 
 type OrderListItem = {
@@ -316,6 +319,28 @@ export default function GalaxusDirectDeliveryPage() {
     return lines > 0 && linked < lines;
   };
 
+  const isFullyLinked = (order: OrderListItem) => {
+    const lines = order._count?.lines ?? 0;
+    const linked = order.linkedCount ?? 0;
+    return lines > 0 && linked >= lines;
+  };
+
+  const orderListCardClass = (order: OrderListItem, selected: boolean) => {
+    const linkTone = needsLinking(order)
+      ? "border-red-500 bg-red-50"
+      : isFullyLinked(order)
+        ? "border-green-500 bg-green-50"
+        : "border-gray-200 bg-white";
+    if (selected) return `${linkTone} ring-2 ring-black`;
+    if (order.hasPhysicalStock && isFullyLinked(order)) {
+      return "border-green-600 bg-green-50";
+    }
+    if (newOrderIds.has(order.id) && !needsLinking(order) && !isFullyLinked(order)) {
+      return "border-emerald-400 bg-emerald-50";
+    }
+    return linkTone;
+  };
+
   const resendOrdr = async () => {
     if (!selectedOrderId) return;
     setSendingOrdr(true);
@@ -481,7 +506,15 @@ export default function GalaxusDirectDeliveryPage() {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json.error ?? "Manual entry failed");
-      setOpsLog(JSON.stringify(json, null, 2));
+      const enrich = json.stockxEnrich;
+      if (enrich?.attempted && !enrich.ok) {
+        setOpsLog(
+          `Saved link, but StockX auto-fill failed (${enrich.reason ?? "unknown"}).\n` +
+            JSON.stringify(json, null, 2)
+        );
+      } else {
+        setOpsLog(JSON.stringify(json, null, 2));
+      }
       setManualEntryModal({
         isOpen: false,
         mode: "create",
@@ -512,6 +545,9 @@ export default function GalaxusDirectDeliveryPage() {
     if (proc?.warehouseStockHint === "MAISON") return "THE_ your stock";
     if (proc?.warehouseStockHint === "NER_STOCK") return "NER_ partner stock";
     if (line.physicalStock) return "Warehouse stock";
+    if (proc?.source === "external_buy") {
+      return `Linked ${proc?.supplierKey ?? "EXT"} ${proc?.stockxOrderNumber ?? ""}`.trim();
+    }
     if (proc?.source === "stx_sync") return `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`;
     if (match) return `Linked ${match.stockxOrderNumber}`;
     return "Linked";
@@ -605,17 +641,10 @@ export default function GalaxusDirectDeliveryPage() {
                   key={order.id}
                   type="button"
                   onClick={() => setSelectedOrderId(order.id)}
-                  className={`w-full text-left border rounded p-2 text-sm ${
+                  className={`w-full text-left border rounded p-2 text-sm ${orderListCardClass(
+                    order,
                     selected
-                      ? "border-black ring-1 ring-black"
-                      : needsLinking(order)
-                        ? "border-red-400 bg-red-50"
-                        : order.hasPhysicalStock
-                          ? "border-green-500 bg-green-50/60"
-                          : newOrderIds.has(order.id)
-                            ? "border-emerald-400 bg-emerald-50"
-                            : "border-gray-200"
-                  }`}
+                  )}`}
                 >
                   <div className="font-medium flex items-center gap-1.5 flex-wrap">
                     <span>{order.orderNumber ?? order.galaxusOrderId}</span>
@@ -631,9 +660,19 @@ export default function GalaxusDirectDeliveryPage() {
                       </span>
                     ) : null}
                   </div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-xs text-gray-600">
                     {new Date(order.orderDate).toLocaleDateString("fr-CH")} ·{" "}
-                    {order.linkedCount ?? 0}/{order._count?.lines ?? 0} linked
+                    <span
+                      className={
+                        needsLinking(order)
+                          ? "font-semibold text-red-700"
+                          : isFullyLinked(order)
+                            ? "font-semibold text-green-700"
+                            : "text-gray-500"
+                      }
+                    >
+                      {order.linkedCount ?? 0}/{order._count?.lines ?? 0} linked
+                    </span>
                     {order.hasPhysicalStock && order.physicalStockLabel ? (
                       <span className="block text-green-800 mt-0.5">{order.physicalStockLabel}</span>
                     ) : null}
@@ -858,14 +897,30 @@ export default function GalaxusDirectDeliveryPage() {
                             disabled={
                               loadingOrder ||
                               !selectedOrder ||
-                              String(selectedOrder?.id ?? "") !== String(selectedOrderId)
+                              String(selectedOrder?.id ?? "") !== String(selectedOrderId) ||
+                              isExternalBuyLine(line)
                             }
                             className="mt-1 px-2 py-1 bg-blue-600 text-white rounded disabled:opacity-50"
+                            title={
+                              isExternalBuyLine(line)
+                                ? "Use REI/WEL link panel below (not StockX)"
+                                : undefined
+                            }
                           >
                             Manual entry
                           </button>
                         </div>
                       </div>
+                      {isExternalBuyLine(line) ? (
+                        <GalaxusExternalBuyPanel
+                          orderId={selectedOrderId}
+                          line={line}
+                          onSaved={async () => {
+                            if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
+                            await loadOrders({ force: true });
+                          }}
+                        />
+                      ) : null}
                     </div>
                   );
                 })}

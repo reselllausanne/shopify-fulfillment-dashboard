@@ -20,7 +20,7 @@ import {
   getInvoicedQuantitiesByOrderLineId,
   prepareOutgoingInvoiceLines,
 } from "./invoiceCoverage";
-import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder, resolveSupplierVariant } from "../supplier/orders";
+import { getSupplierGateForOrder, placeSupplierOrderForGalaxusOrder } from "../supplier/orders";
 import { uploadDelrForOrder } from "@/galaxus/warehouse/delr";
 
 type IncomingResult = {
@@ -67,8 +67,6 @@ type OutgoingResult = {
   message?: string;
   shipmentId?: string;
 };
-
-type OrderResponseStatus = "ACCEPTED" | "REJECTED" | "OUT_OF_STOCK";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -202,7 +200,14 @@ export async function pollIncomingEdi(
             const [ingestRow] = await ingestGalaxusOrders([orderInput]);
             if (ingestRow) {
               ingestResult = ingestRow;
-              await placeSupplierOrderForGalaxusOrder(ingestRow.orderId);
+              // Never block ORDR on supplier placement — DD must confirm first.
+              await placeSupplierOrderForGalaxusOrder(ingestRow.orderId).catch((err: any) => {
+                console.error("[EDI][IN] placeSupplier failed", {
+                  orderId: ingestRow.orderId,
+                  galaxusOrderId: ingestRow.galaxusOrderId,
+                  error: err?.message ?? err,
+                });
+              });
             }
           } else if (docType === "CANP") {
             await recordCancelRequest(orderIdFromName, xml);
@@ -450,7 +455,7 @@ export async function sendOutgoingEdi(options: {
             type,
             order,
             type === "INVO" ? invoiceLines : order.lines,
-            { deliveryCharge: options.deliveryCharge }
+            { deliveryCharge: options.deliveryCharge, ordrMode: options.ordrMode }
           );
           await uploadTempThenRename(client, GALAXUS_SFTP_OUT_DIR, edi.filename, edi.content);
           const checksum = createHash("sha256").update(edi.content).digest("hex");
@@ -480,23 +485,16 @@ export async function sendOutgoingEdi(options: {
           });
           results.push({ docType: type, filename: edi.filename, status: "uploaded" });
           if (type === "ORDR") {
-            const ordrMode = options.ordrMode ?? null;
+            const ordrMode = edi.ordrMode ?? options.ordrMode ?? "WITHOUT_POSITIONS";
             await prisma.galaxusOrder.update({
               where: { id: order.id },
-              data: (ordrMode
-                ? {
-                    ordrSentAt: new Date(),
-                    ordrMode,
-                    ordrStatus: "SENT",
-                    ordrLastAttemptAt: new Date(),
-                    ordrLastError: null,
-                  }
-                : {
-                    ordrSentAt: new Date(),
-                    ordrStatus: "SENT",
-                    ordrLastAttemptAt: new Date(),
-                    ordrLastError: null,
-                  }) as unknown as Record<string, unknown>,
+              data: {
+                ordrSentAt: new Date(),
+                ordrMode,
+                ordrStatus: "SENT",
+                ordrLastAttemptAt: new Date(),
+                ordrLastError: null,
+              } as unknown as Record<string, unknown>,
             });
           }
         } catch (error: any) {
@@ -697,64 +695,21 @@ export async function sendPendingOutgoingEdi(limit = 5): Promise<OutgoingResult[
   return results;
 }
 
-async function attachOrderResponseStatus(lines: any[]): Promise<any[]> {
-  const enriched: any[] = [];
-  for (const line of lines) {
-    const existingStatus = (line as { responseStatus?: OrderResponseStatus }).responseStatus;
-    const existingReason = (line as { responseReason?: string | null }).responseReason;
-    if (existingStatus) {
-      enriched.push({ ...line, responseStatus: existingStatus, responseReason: existingReason ?? null });
-      continue;
-    }
-
-    let responseStatus: OrderResponseStatus = "ACCEPTED";
-    let responseReason: string | null = null;
-    const hasIdentifier = Boolean(line.gtin || line.providerKey || line.supplierVariantId || line.supplierSku);
-    if (!hasIdentifier) {
-      responseStatus = "REJECTED";
-      responseReason = "MISSING_PRODUCT_ID";
-    } else {
-      const variant = await resolveSupplierVariant(line);
-      if (!variant) {
-        responseStatus = "REJECTED";
-        responseReason = "NO_OFFER";
-      } else {
-        const stock = Number(variant.stock ?? 0);
-        const quantity = Number(line.quantity ?? 0);
-        if (!Number.isFinite(stock) || stock < quantity || stock <= 0) {
-          responseStatus = "OUT_OF_STOCK";
-          responseReason = "NO_STOCK";
-        }
-      }
-    }
-
-    enriched.push({ ...line, responseStatus, responseReason });
-  }
-
-  return enriched;
-}
-
-function deriveOrderResponseStatus(lines: Array<{ responseStatus?: OrderResponseStatus }>): OrderResponseStatus {
-  const statuses = lines.map((line) => line.responseStatus ?? "ACCEPTED");
-  if (statuses.some((status) => status === "ACCEPTED")) return "ACCEPTED";
-  if (statuses.some((status) => status === "OUT_OF_STOCK")) return "OUT_OF_STOCK";
-  return "REJECTED";
-}
-
 async function buildOutgoingXml(
   docType: EdiDocType,
   order: any,
   lines: any[],
-  options: { deliveryCharge?: number | null } = {}
+  options: { deliveryCharge?: number | null; ordrMode?: "WITH_ARRIVAL_DATES" | "WITHOUT_POSITIONS" } = {}
 ) {
   if (docType === "ORDR") {
-    const linesWithStatus = await attachOrderResponseStatus(lines);
-    const status = deriveOrderResponseStatus(linesWithStatus);
-    const arrivalByGtin = await buildArrivalByGtinForOrder(order);
-    return buildOrderResponse(order, linesWithStatus, {
+    const ordrMode = options.ordrMode === "WITH_ARRIVAL_DATES" ? "WITH_ARRIVAL_DATES" : "WITHOUT_POSITIONS";
+    const arrivalByGtin =
+      ordrMode === "WITH_ARRIVAL_DATES" ? await buildArrivalByGtinForOrder(order) : {};
+    return buildOrderResponse(order, ordrMode === "WITHOUT_POSITIONS" ? [] : lines, {
       supplierId: GALAXUS_SUPPLIER_ID,
-      status,
+      status: "ACCEPTED",
       arrivalByGtin,
+      ordrMode,
     });
   }
   if (docType === "CANR") {
