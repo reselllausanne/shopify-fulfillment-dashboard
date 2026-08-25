@@ -62,7 +62,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     label: "Essential Hoodie (in stock)",
     matchReason: "Essential Hoodie (fixed 59/89, cost 42)",
     skuBases: ["192HO246258F", "192HO246250F"],
-    titlePatterns: [/^Essentials Hoodie\b/i, /Fear of God Essentials.*Hoodie\b/i],
+    titlePatterns: [/^Essentials Hoodie\b/i, /Fear of God Essentials(?!.*\bFleece\b).*\bHoodie\b/i],
   },
   {
     costChf: ESSENTIALS_TEE_COST_CHF,
@@ -105,10 +105,10 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
       "15356478325122", // Check by Bathing Tee White/Beige
       "15356478357890", // Big Ape Head Tee White
     ],
+    // Titles only for the two warehouse retail SKUs — never all BAPE * Tee (dropship).
     titlePatterns: [
-      /^BAPE\b.*\bTee\b/i,
-      /A Bathing Ape.*\bTee\b/i,
-      /Big Ape Head Tee\b/i,
+      /^BAPE A Bathing Ape Check by Bathing Tee\b/i,
+      /^BAPE Big Ape Head Tee White\b/i,
     ],
   },
   {
@@ -140,7 +140,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
       "eadd2461-f6c4-45eb-86f8-83869bb034b3",
       "5ae9ed80-6772-46d8-922d-a7d03b251d01",
     ],
-    titlePatterns: [/Supreme Hanes Boxer Briefs\b/i],
+    titlePatterns: [/Supreme Hanes Boxer Briefs \(4 Pack\)/i],
   },
 ];
 

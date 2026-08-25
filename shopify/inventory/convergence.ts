@@ -398,8 +398,9 @@ export async function convergeVariant(
       (/phase4:liquidation/i.test(note) || /restock:liquidation/i.test(note));
     const wantNote = `in-stock:fixed-price ${fixedPriceRule.label}`;
 
-    // Registry is the floor. Keep a higher existing retail lock (e.g. Bape @ 89)
-    // so converge never cuts Money Kickz shelf prices down to the catalog default.
+    // Registry is the floor for most lanes. Boxers are a hard target (always 49) —
+    // stray STX sizes at 149 must not stick via max(). Other lanes keep the highest
+    // existing non-soldes retail (Bape 89, FOG 129) so we never cut shelf price.
     const dbSell = toNumber(stxRow?.manualPrice);
     const shopifySell = toNumber(shopifyVariant.price);
     const currentCompareAt = toNumber(shopifyVariant.compareAtPrice);
@@ -408,13 +409,18 @@ export async function convergeVariant(
       currentCompareAt > 0 &&
       shopifySell != null &&
       currentCompareAt > shopifySell;
+    const hardTarget = /boxer/i.test(fixedPriceRule.label);
     let sell = registrySell;
     if (registrySell != null && registrySell > 0) {
-      if (dbSell != null && dbSell >= registrySell) sell = dbSell;
-      else if (!onSoldesDisplay && shopifySell != null && shopifySell >= registrySell) {
-        sell = shopifySell;
-      } else {
+      if (hardTarget) {
         sell = registrySell;
+      } else {
+        const candidates = [registrySell];
+        if (dbSell != null && dbSell >= registrySell) candidates.push(dbSell);
+        if (!onSoldesDisplay && shopifySell != null && shopifySell >= registrySell) {
+          candidates.push(shopifySell);
+        }
+        sell = Math.max(...candidates);
       }
     }
 
@@ -520,21 +526,34 @@ export async function convergeVariant(
   // unit sits in Bussigny. Preserve Shopify sell + price_locked; clear false soldes flags.
   const jmoneyTagged = isJmoneyShopifyProduct(shopifyVariant?.productTags);
   const jmoneyNote = isJmoneyPriceLockNote(stxRow?.manualNote);
-  if ((jmoneyTagged || jmoneyNote) && shopifyVariant?.variantId && shopifyVariant.productId) {
+  const fixedStockNote = /in-stock:fixed-price/i.test(String(stxRow?.manualNote ?? ""));
+  if (
+    (jmoneyTagged || jmoneyNote || fixedStockNote) &&
+    shopifyVariant?.variantId &&
+    shopifyVariant.productId &&
+    !fixedPriceRule
+  ) {
     const shopifySell = toNumber(shopifyVariant.price);
     const dbSell = toNumber(stxRow?.manualPrice);
+    // Tagged jmoney products: Shopify shelf is source of truth (past soldes often
+    // left a stale STX−30% manualPrice). DB note locks prefer manualPrice.
     const retail =
-      jmoneyNote && dbSell != null && dbSell > 0
-        ? dbSell
-        : shopifySell != null && shopifySell > 0
-          ? shopifySell
-          : dbSell;
+      jmoneyTagged && shopifySell != null && shopifySell > 0
+        ? shopifySell
+        : dbSell != null && dbSell > 0
+          ? dbSell
+          : shopifySell != null && shopifySell > 0
+            ? shopifySell
+            : dbSell;
+    const keepNote = fixedStockNote
+      ? String(stxRow?.manualNote ?? "in-stock:fixed-price")
+      : JMONEY_PRICE_LOCK_NOTE;
 
     if (stxRow && retail != null && retail > 0) {
       const needDbUpdate =
         !stxRow.manualLock ||
         toNumber(stxRow.manualPrice) !== retail ||
-        String(stxRow.manualNote ?? "") !== JMONEY_PRICE_LOCK_NOTE;
+        String(stxRow.manualNote ?? "") !== keepNote;
       if (needDbUpdate) {
         await prisma.supplierVariant.update({
           where: { id: stxRow.id },
@@ -542,10 +561,10 @@ export async function convergeVariant(
             manualLock: true,
             manualPrice: retail,
             manualUpdatedAt: new Date(),
-            manualNote: JMONEY_PRICE_LOCK_NOTE,
+            manualNote: keepNote,
           },
         });
-        changes.push(`DB jmoney lock restored manualPrice=${retail.toFixed(2)}`);
+        changes.push(`DB retail lock restored manualPrice=${retail.toFixed(2)}`);
       }
     }
 
@@ -563,10 +582,10 @@ export async function convergeVariant(
             compareAtPrice: null,
           });
           changes.push(
-            `Shopify jmoney price=${retail.toFixed(2)}${needsClearCompare ? " compareAt cleared" : ""}`
+            `Shopify retail price=${retail.toFixed(2)}${needsClearCompare ? " compareAt cleared" : ""}`
           );
         } catch (err: any) {
-          warnings.push(`Shopify jmoney price write failed: ${err?.message ?? err}`);
+          warnings.push(`Shopify retail price write failed: ${err?.message ?? err}`);
         }
       }
     }
@@ -575,13 +594,13 @@ export async function convergeVariant(
       const isLocked = await readShopifyPriceLocked(shopifyVariant.variantId);
       if (!isLocked) {
         await writeShopifyPriceLocked(shopifyVariant.variantId, true);
-        changes.push("Shopify price_locked=true (jmoney)");
+        changes.push("Shopify price_locked=true (retail preserve)");
       }
     } catch (err: any) {
-      warnings.push(`Shopify jmoney lock failed: ${err?.message ?? err}`);
+      warnings.push(`Shopify retail lock failed: ${err?.message ?? err}`);
     }
 
-    // Never keep soldes-48h on Money Kickz retail.
+    // Never keep soldes-48h on fixed retail stock.
     await syncBussignyDelivery48h(shopifyVariant, cleanGtin, false, changes, warnings);
 
     return {
