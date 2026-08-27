@@ -124,8 +124,12 @@ export async function pushMarketplaceStockForProviderKeys(params: {
   }
 
   try {
-    await runDecathlonStockSync({ ensureProviderKeys: providerKeys });
-    out.decathlon = { ok: true };
+    if (isDecathlonSalesPaused()) {
+      out.decathlon = { ok: true, error: "decathlon_sales_permanently_disabled" };
+    } else {
+      await runDecathlonStockSync({ ensureProviderKeys: providerKeys });
+      out.decathlon = { ok: true };
+    }
   } catch (err: any) {
     out.ok = false;
     out.decathlon = { ok: false, error: err?.message ?? String(err) };

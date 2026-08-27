@@ -98,12 +98,12 @@ async function main() {
     "listing-scan"
   );
 
+  // Always re-zero known Mirakl offers. lastStock=0 in DB does NOT mean Mirakl qty is 0
+  // (hard-disable blocked later STO01, so leftover qty stays buyable).
   const fromSync = await withPrismaRetry(
     () =>
       (prisma as any).decathlonOfferSync.findMany({
-        where: {
-          OR: [{ lastStock: { gt: 0 } }, { lastStock: null }],
-        },
+        where: { offerCreatedAt: { not: null } },
         select: { providerKey: true },
       }),
     "sync-scan"

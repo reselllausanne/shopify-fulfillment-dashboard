@@ -1,4 +1,3 @@
-import { runDecathlonPriceSync, runDecathlonStockSync } from "@/decathlon/mirakl/sync";
 import { requestFeedPush } from "@/galaxus/ops/feedPipelineCore";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { prisma } from "@/app/lib/prisma";
@@ -98,8 +97,9 @@ export async function runMultiChannelStockSync(options: MultiChannelSyncOptions 
     let listingSnapshots: unknown = null;
 
     if (!dryRun) {
-      decathlonStock = await runDecathlonStockSync();
-      decathlonPrice = await runDecathlonPriceSync();
+      // Decathlon sell lane is off. Do not call Mirakl stock/price from inventory cron.
+      decathlonStock = { ok: true, skipped: true, reason: "decathlon_sales_permanently_disabled" };
+      decathlonPrice = { ok: true, skipped: true, reason: "decathlon_sales_permanently_disabled" };
       galaxusFeed = await requestFeedPush({
         origin,
         scope: "stock-price",
