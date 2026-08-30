@@ -7,7 +7,7 @@
 import "dotenv/config";
 import { prisma } from "@/app/lib/prisma";
 import { buildMiraklClient } from "@/decathlon/mirakl/client";
-import { buildSto01Csv } from "@/decathlon/mirakl/csv";
+import { buildPri01Csv, buildSto01Csv } from "@/decathlon/mirakl/csv";
 import { DECATHLON_MIRAKL_WAREHOUSE_CODE } from "@/decathlon/mirakl/config";
 
 const BATCH = 2000;
@@ -42,20 +42,24 @@ async function withPrismaRetry<T>(fn: () => Promise<T>, label: string, attempt =
 }
 
 async function importWithRetry(
+  kind: "STO01" | "PRI01",
   client: ReturnType<typeof buildMiraklClient>,
   csv: string,
   attempt = 1
 ): Promise<string> {
   try {
-    const res = await client.importStock(csv, { import_mode: "NORMAL" });
+    const res =
+      kind === "STO01"
+        ? await client.importStock(csv, { import_mode: "NORMAL" })
+        : await client.importPricing(csv, { import_mode: "NORMAL" });
     return String(res?.import_id ?? res?.id ?? "");
   } catch (err: any) {
     const msg = String(err?.message ?? err);
     if (msg.includes("429") && attempt <= 8) {
       const wait = SLEEP_MS * attempt;
-      console.log(`[zero-all-decathlon] 429 — wait ${wait}ms then retry #${attempt}`);
+      console.log(`[zero-all-decathlon][${kind}] 429 — wait ${wait}ms then retry #${attempt}`);
       await sleep(wait);
-      return importWithRetry(client, csv, attempt + 1);
+      return importWithRetry(kind, client, csv, attempt + 1);
     }
     throw err;
   }
@@ -124,11 +128,15 @@ async function main() {
   }
 
   const client = buildMiraklClient();
-  const importIds: string[] = [];
+  const stockImportIds: string[] = [];
+  const priceImportIds: string[] = [];
+  const batchCount = Math.ceil(skus.length / BATCH);
 
   for (let i = 0; i < skus.length; i += BATCH) {
     const chunk = skus.slice(i, i + BATCH);
-    const { csv } = buildSto01Csv(
+    const batchNo = Math.floor(i / BATCH) + 1;
+
+    const { csv: stockCsv } = buildSto01Csv(
       chunk.map((offerSku) => ({
         offerSku,
         quantity: 0,
@@ -136,10 +144,22 @@ async function main() {
         updateDelete: "UPDATE",
       }))
     );
-    const importId = await importWithRetry(client, csv);
-    importIds.push(importId);
+    const stockImportId = await importWithRetry("STO01", client, stockCsv);
+    stockImportIds.push(stockImportId);
     console.log(
-      `[zero-all-decathlon] batch ${Math.floor(i / BATCH) + 1}/${Math.ceil(skus.length / BATCH)} size=${chunk.length} import_id=${importId}`
+      `[zero-all-decathlon][STO01] batch ${batchNo}/${batchCount} size=${chunk.length} import_id=${stockImportId}`
+    );
+
+    const { csv: priceCsv } = buildPri01Csv(
+      chunk.map((offerSku) => ({
+        offerSku,
+        price: "0.00",
+      }))
+    );
+    const priceImportId = await importWithRetry("PRI01", client, priceCsv);
+    priceImportIds.push(priceImportId);
+    console.log(
+      `[zero-all-decathlon][PRI01] batch ${batchNo}/${batchCount} size=${chunk.length} import_id=${priceImportId}`
     );
 
     const now = new Date();
@@ -147,7 +167,7 @@ async function main() {
       () =>
         prisma.channelListingState.updateMany({
           where: { channel: "DECATHLON", providerKey: { in: chunk } },
-          data: { lastPushedStock: 0, status: "INACTIVE", updatedAt: now },
+          data: { lastPushedStock: 0, lastPushedPrice: 0, status: "INACTIVE", updatedAt: now },
         }),
       `listing-update-${i}`
     );
@@ -155,7 +175,13 @@ async function main() {
       () =>
         (prisma as any).decathlonOfferSync.updateMany({
           where: { providerKey: { in: chunk } },
-          data: { lastStock: 0, lastStockSyncedAt: now, updatedAt: now },
+          data: {
+            lastStock: 0,
+            lastPrice: 0,
+            lastStockSyncedAt: now,
+            lastPriceSyncedAt: now,
+            updatedAt: now,
+          },
         }),
       `sync-update-${i}`
     );
@@ -167,7 +193,18 @@ async function main() {
   await disableCron();
 
   console.log(
-    JSON.stringify({ ok: true, skus: skus.length, importIds, cronDisabled: true, salesPaused: true }, null, 2)
+    JSON.stringify(
+      {
+        ok: true,
+        skus: skus.length,
+        stockImportIds,
+        priceImportIds,
+        cronDisabled: true,
+        salesPaused: true,
+      },
+      null,
+      2
+    )
   );
 }
 
