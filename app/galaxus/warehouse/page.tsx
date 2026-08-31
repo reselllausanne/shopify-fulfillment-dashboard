@@ -50,6 +50,10 @@ export default function WarehouseBulkPage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
+  const [bulkSyncLog, setBulkSyncLog] = useState<string | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillLog, setBackfillLog] = useState<string | null>(null);
   const autoOrdrAttempted = useRef<Set<string>>(new Set());
   const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: OrderDetail | null }>>(new Map());
@@ -317,6 +321,117 @@ export default function WarehouseBulkPage() {
     }
   };
 
+  const runBulkStockxSyncVisible = async () => {
+    const targets = orders;
+    if (!targets.length) {
+      setError("No visible orders to sync.");
+      return;
+    }
+    setBulkStockxSyncing(true);
+    setError(null);
+    setBulkSyncLog(null);
+    let success = 0;
+    let failed = 0;
+    let skipped = 0;
+    const failures: Array<{ orderId: string; error: string }> = [];
+    try {
+      for (const order of targets) {
+        const orderId = String(order.id ?? "").trim();
+        if (!orderId) {
+          skipped += 1;
+          continue;
+        }
+        try {
+          const res = await fetch(`/api/galaxus/orders/${orderId}/stx/sync`, {
+            method: "POST",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) {
+            failed += 1;
+            failures.push({
+              orderId,
+              error: String(data?.error ?? `HTTP ${res.status}`),
+            });
+          } else {
+            success += 1;
+          }
+        } catch (err: any) {
+          failed += 1;
+          failures.push({
+            orderId,
+            error: String(err?.message ?? "Sync failed"),
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+      setBulkSyncLog(
+        JSON.stringify(
+          {
+            ok: failed === 0,
+            mode: "galaxus_warehouse_bulk_stockx_sync_visible",
+            total: targets.length,
+            success,
+            failed,
+            skipped,
+            failures: failures.slice(0, 25),
+          },
+          null,
+          2
+        )
+      );
+      await loadOrders({ force: true });
+      if (selectedOrderId) await loadDetail(selectedOrderId, { force: true });
+    } finally {
+      setBulkStockxSyncing(false);
+    }
+  };
+
+  const runAwbBackfill = async () => {
+    setBackfilling(true);
+    setError(null);
+    setBackfillLog(null);
+    try {
+      const res = await fetch("/api/db/backfill-awb", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          days: 45,
+          limit: 80,
+          dryRun: false,
+          includeFulfilled: false,
+          includeGalaxus: true,
+          includeDecathlon: false,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? `Backfill failed (HTTP ${res.status})`);
+      }
+      setBackfillLog(
+        JSON.stringify(
+          {
+            scanned: data.scanned,
+            candidates: data.candidates,
+            updated: data.updated,
+            galaxus: data.galaxus
+              ? { updated: data.galaxus.updated, scanned: data.galaxus.scanned }
+              : null,
+            abortedReason: data.abortedReason ?? null,
+          },
+          null,
+          2
+        )
+      );
+      await loadOrders({ force: true });
+      if (selectedOrderId) await loadDetail(selectedOrderId, { force: true });
+    } catch (err: any) {
+      setError(err?.message ?? "Backfill failed");
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
   useEffect(() => {
     void loadOrders();
   }, []);
@@ -378,16 +493,57 @@ export default function WarehouseBulkPage() {
           <button
             className="px-3 py-2 rounded bg-gray-100 text-sm"
             onClick={() => void ingestNewOrders()}
-            disabled={loading || busy !== null}
+            disabled={loading || busy !== null || bulkStockxSyncing || backfilling}
           >
             {busy === "ingest" ? "Ingesting..." : "Ingest new orders"}
           </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded bg-blue-700 text-white text-sm disabled:opacity-50"
+            onClick={() => void runBulkStockxSyncVisible()}
+            disabled={loading || busy !== null || bulkStockxSyncing || backfilling}
+            title="StockX sync sequentially on every visible warehouse order"
+          >
+            {bulkStockxSyncing ? "Bulk sync…" : "Sync all (StockX)"}
+          </button>
+          <button
+            type="button"
+            className="px-3 py-2 rounded bg-indigo-700 text-white text-sm disabled:opacity-50"
+            onClick={() => void runAwbBackfill()}
+            disabled={loading || busy !== null || bulkStockxSyncing || backfilling}
+            title="Backfill AWB / tracking for Galaxus warehouse StockX buys (last 45 days)"
+          >
+            {backfilling ? "Backfilling…" : "Backfill AWB"}
+          </button>
+          <a
+            href="/admin/awb-backfill"
+            className="px-3 py-2 rounded bg-gray-100 text-sm"
+            title="Open the full backfill console (paste token, tune window, dry run)"
+          >
+            Backfill console
+          </a>
           {detail && !detail.ordrSentAt && !detail.cancelledAt ? (
             <span className="text-xs text-amber-700">
               ORDR missing{busy === `ordr-${selectedOrderId}` ? " · sending…" : ""}
             </span>
           ) : null}
         </div>
+        {bulkStockxSyncing ? (
+          <div className="text-xs text-gray-500">Sequential StockX sync on visible warehouse orders…</div>
+        ) : null}
+        {backfilling ? (
+          <div className="text-xs text-gray-500">Running AWB backfill (Galaxus, 45 days)…</div>
+        ) : null}
+        {bulkSyncLog ? (
+          <pre className="text-[11px] bg-gray-50 border rounded p-2 overflow-auto max-h-48">
+            {bulkSyncLog}
+          </pre>
+        ) : null}
+        {backfillLog ? (
+          <pre className="text-[11px] bg-gray-50 border rounded p-2 overflow-auto max-h-48">
+            {backfillLog}
+          </pre>
+        ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4">
           <div className="border rounded p-2 max-h-[620px] overflow-auto">
