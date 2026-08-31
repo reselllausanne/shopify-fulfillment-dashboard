@@ -11,7 +11,7 @@
  * the current DB-computed sell price.
  *
  * Env:
- *   SHOPIFY_STX_SYNC_INTERVAL_MS   default 21600000 (6h)
+ *   SHOPIFY_STX_SYNC_INTERVAL_MS   default 86400000 (24h)
  *   SHOPIFY_STX_SYNC_INITIAL_DELAY_MS  default 120000
  *   SHOPIFY_STX_SYNC_BATCH_SIZE    default 50 gtins per call
  *   SHOPIFY_STX_SYNC_BATCH_SLEEP_MS  default 1500 (throttle Shopify writes)
@@ -20,7 +20,7 @@ import { prisma } from "../../app/lib/prisma";
 import { syncShopifyStxPricesForGtins } from "../../shopify/stx/syncShopifyStxPrices";
 
 const INTERVAL_MS = Number(
-  process.env.SHOPIFY_STX_SYNC_INTERVAL_MS ?? 6 * 60 * 60 * 1000
+  process.env.SHOPIFY_STX_SYNC_INTERVAL_MS ?? 24 * 60 * 60 * 1000
 );
 const INITIAL_DELAY_MS = Number(
   process.env.SHOPIFY_STX_SYNC_INITIAL_DELAY_MS ?? 120_000
