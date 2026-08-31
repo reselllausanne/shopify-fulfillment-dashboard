@@ -27,6 +27,7 @@ import { detectDelimiter, parseDelimitedCsv } from "./csvParse";
 import { buildOf01Csv, buildPri01Csv, buildSto01Csv } from "./csv";
 import { buildDecathlonDeltas, DecathlonSyncRow, miraklOfferSku } from "./deltas";
 import { prepareProductOnboarding, resolveProductStatus, type ProductStatusLookup } from "./products";
+import { isDecathlonSalesPaused } from "@/decathlon/exports/catalogPolicy";
 import type {
   MiraklErrorReport,
   MiraklImportFlow,
@@ -721,6 +722,19 @@ async function filterOffersBySuccessfulP41(
   return { eligible, blockedMissingP41 };
 }
 
+function skippedSalesImport(flow: MiraklImportFlow, mode: MiraklImportMode = "NORMAL"): ImportRunResult {
+  return {
+    runId: randomUUID(),
+    flow,
+    mode,
+    rowsSent: 0,
+    importId: null,
+    status: "SUCCESS",
+    linesInError: 0,
+    summary: { status: "SKIPPED", reason: "decathlon_sales_paused", linesInError: 0 },
+  };
+}
+
 /**
  * Daily physical-liquidation OF01: full list of in-stock location GTINs.
  * Uses Mirakl NORMAL (not REPLACE) so other live offers are not wiped.
@@ -751,6 +765,7 @@ export async function runOf01Import(params?: {
   /** If true, skip P41 upload and send all eligible offer delta rows directly. */
   offersOnly?: boolean;
 }) {
+  if (isDecathlonSalesPaused()) return skippedSalesImport("OF01", params?.mode ?? "NORMAL");
   // OF01 should default to full eligible dataset unless a limit is explicitly passed.
   const limit = params?.limit;
   /** Products (P41) and offers (OF01) are separate Mirakl jobs — do not chain P41 here (was causing very long waits). */
@@ -828,6 +843,7 @@ export async function runSto01Import(params?: {
   providerKeys?: string[];
   ensureProviderKeys?: string[];
 }) {
+  if (isDecathlonSalesPaused()) return skippedSalesImport("STO01");
   const limit = params?.limit ?? (DECATHLON_MIRAKL_TEST_MODE ? DECATHLON_MIRAKL_TEST_LIMIT : undefined);
   const delta = await buildDecathlonDeltas({
     limit,
@@ -856,6 +872,7 @@ export async function runSto01Import(params?: {
 }
 
 export async function runPri01Import(params?: { limit?: number }) {
+  if (isDecathlonSalesPaused()) return skippedSalesImport("PRI01");
   const limit = params?.limit ?? (DECATHLON_MIRAKL_TEST_MODE ? DECATHLON_MIRAKL_TEST_LIMIT : undefined);
   const delta = await buildDecathlonDeltas({ limit });
   const rows = delta.priceUpdates.map((row) => ({
