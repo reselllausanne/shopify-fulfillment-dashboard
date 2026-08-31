@@ -128,12 +128,6 @@ async function loadSkus(): Promise<string[]> {
         WHERE "offerCreatedAt" IS NOT NULL
           AND "providerKey" IS NOT NULL
           AND TRIM("providerKey") <> ''
-        UNION
-        SELECT DISTINCT "providerKey"
-        FROM "ChannelListingState"
-        WHERE channel = 'DECATHLON'
-          AND "providerKey" IS NOT NULL
-          AND TRIM("providerKey") <> ''
       `,
     "sku-scan"
   );
