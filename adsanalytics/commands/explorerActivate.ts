@@ -8,6 +8,7 @@ import {
   loadBatchById,
   writeExplorerReport,
 } from "@/adsanalytics/explorer/core";
+import { loadCampaignRegistry } from "@/adsanalytics/explorer/campaignRegistry";
 import { resolveAdsConfig } from "@/adsanalytics/config";
 import { searchAll } from "@/adsanalytics/google/adsClient";
 import {
@@ -75,18 +76,27 @@ export async function explorerActivateCommand(options: ExplorerActivateOptions =
           adGroupAdId?: string | number;
         }
       | undefined;
+    const registry = await loadCampaignRegistry();
+    const reg = registry.get("EXPLORER_ALL");
     const campaignResourceName =
       explorerCampaign?.campaignResourceName ??
+      reg?.campaignResourceName ??
       (batch.googleCampaignId
         ? `customers/${resolveAdsConfig().customerId}/campaigns/${batch.googleCampaignId}`
-        : "");
+        : reg?.campaignId
+          ? `customers/${resolveAdsConfig().customerId}/campaigns/${reg.campaignId}`
+          : "");
     const adGroupResourceName =
       explorerAdGroup?.adGroupResourceName ??
+      reg?.adGroupResourceName ??
       (explorerAdGroup?.adGroupId
         ? `customers/${resolveAdsConfig().customerId}/adGroups/${String(explorerAdGroup.adGroupId)}`
-        : "");
+        : reg?.adGroupId
+          ? `customers/${resolveAdsConfig().customerId}/adGroups/${reg.adGroupId}`
+          : "");
     const adGroupAdResourceName =
       explorerAdGroup?.adGroupAdResourceName ??
+      reg?.adGroupAdResourceName ??
       (explorerAdGroup?.adGroupId && explorerAdGroup?.adGroupAdId
         ? `customers/${resolveAdsConfig().customerId}/adGroupAds/${String(
             explorerAdGroup.adGroupId

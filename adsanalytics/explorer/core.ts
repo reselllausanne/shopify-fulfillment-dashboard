@@ -1401,11 +1401,14 @@ export async function updateBatchStatus(
   status: string,
   patch: { statsJson?: unknown; error?: string | null; activatedAt?: Date | null } = {}
 ): Promise<void> {
+  // Merge stats patches — never replace wholesale (merchant:apply used to wipe
+  // explorerCampaign from weekly attach and break explorer:activate).
   await prisma.$executeRaw(Prisma.sql`
     UPDATE "public"."ads_explorer_batches"
     SET
       "status" = ${status},
-      "stats_json" = COALESCE(${patch.statsJson ? JSON.stringify(patch.statsJson) : null}::jsonb, "stats_json"),
+      "stats_json" = COALESCE("stats_json", '{}'::jsonb)
+        || COALESCE(${patch.statsJson ? JSON.stringify(patch.statsJson) : null}::jsonb, '{}'::jsonb),
       "error" = ${patch.error ?? null},
       "activated_at" = COALESCE(${patch.activatedAt ?? null}::timestamptz, "activated_at"),
       "updated_at" = CURRENT_TIMESTAMP
