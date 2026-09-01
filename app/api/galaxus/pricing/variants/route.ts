@@ -129,7 +129,9 @@ export async function GET(request: Request) {
       if (isMerchant) {
         galaxusPriceExVat = buyPrice;
       } else {
-        galaxusPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, galaxusPartnerKeysLower);
+        galaxusPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, galaxusPartnerKeysLower, {
+          deliveryType: item?.deliveryType ?? null,
+        });
       }
     }
     if (galaxusPriceExVat !== null && galaxusPriceIncVat === null) {
