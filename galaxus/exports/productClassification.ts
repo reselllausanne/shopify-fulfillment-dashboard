@@ -11,6 +11,7 @@ import { classifyWelProductKind } from "@/galaxus/exports/welProductClassificati
 import { classifySnowleaderCategoryLabel } from "@/app/lib/snowleaderGalaxusCategories";
 import { classifyReicheltGalaxusKind } from "@/app/lib/reicheltGalaxusCategories";
 import { classifyNewsoleGalaxusKind } from "@/app/lib/newsoleGalaxusCategories";
+import { classifyXntGalaxusKind } from "@/app/lib/xntGalaxusCategories";
 import { buildLightingDescriptionBits } from "@/galaxus/exports/lightingSpecs";
 
 export type { GalaxusProductKind };
@@ -267,6 +268,10 @@ const CLOTHING_SIZE_KINDS = new Set<GalaxusProductKind>([
   "gaiters",
   "sport_bra",
   "ski_mask",
+  "dress",
+  "gloves",
+  "scarf",
+  "belt",
 ]);
 
 export function requiresGalaxusSizeSpec(kind: GalaxusProductKind): boolean {
@@ -299,6 +304,14 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
 
   if (supplierKey === "wel") {
     return classifyWelProductKind({
+      title: input.title,
+      brand: input.brand,
+      supplierProductType: input.supplierProductType,
+    });
+  }
+
+  if (supplierKey === "xnt") {
+    return classifyXntGalaxusKind({
       title: input.title,
       brand: input.brand,
       supplierProductType: input.supplierProductType,
@@ -487,6 +500,24 @@ export function resolveGalaxusDescription(input: {
   }
   if (kind === "active_component" || kind === "passive_component" || kind === "unknown") {
     return `${prefix}. Electronic product sourced for the Galaxus marketplace assortment.`;
+  }
+  if (kind === "drinking_glass" || kind === "mug" || kind === "plate" || kind === "bowl") {
+    return `${prefix}. Tableware piece for everyday dining and serving.`;
+  }
+  if (kind === "cutlery" || kind === "cookware" || kind === "kitchen_tool") {
+    return `${prefix}. Kitchen product designed for cooking and food preparation.`;
+  }
+  if (kind === "bedding" || kind === "towel") {
+    return `${prefix}. Home textile product for everyday comfort and use.`;
+  }
+  if (kind === "book") {
+    return `${prefix}. Book for reading and reference, in original publisher packaging.`;
+  }
+  if (kind === "belt" || kind === "gloves" || kind === "scarf" || kind === "dress") {
+    return `${prefix}. Fashion accessory or apparel piece designed for everyday wear.`;
+  }
+  if (kind === "home_accessory") {
+    return `${prefix}. Home accessory for everyday living and interior use.`;
   }
   return `${prefix}. Lifestyle sneakers with durable construction and all-day comfort.`;
 }
