@@ -6,6 +6,7 @@ import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { reicheltProxyPool } from "@/app/lib/reicheltClient";
 import {
   categoryPageUrl,
   extractFantasyweltProductUrls,
@@ -37,6 +38,37 @@ type ExistingVariantImage = {
   hostedImageUrl: string | null;
   imageSyncStatus: string | null;
 };
+
+type PlaywrightProxy = { server: string; username?: string; password?: string };
+
+let fanProxyCursor = 0;
+
+function parseHttpProxyUrl(raw: string): PlaywrightProxy | null {
+  try {
+    const u = new URL(raw);
+    if (!u.hostname || !u.port) return null;
+    const out: PlaywrightProxy = { server: `${u.protocol}//${u.hostname}:${u.port}` };
+    if (u.username) out.username = decodeURIComponent(u.username);
+    if (u.password) out.password = decodeURIComponent(u.password);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** Prefer FAN proxy envs; fallback to Reichelt LemonProxy pool (same DE residential list). */
+function nextFanProxy(): PlaywrightProxy | null {
+  const single = String(process.env.SCRAPER_FAN_PROXY || process.env.SCRAPER_PROXY || "").trim();
+  if (single) return parseHttpProxyUrl(single.startsWith("http") ? single : `http://${single}`);
+
+  const useRei = String(process.env.SCRAPER_FAN_USE_REI_PROXIES ?? "1") !== "0";
+  if (!useRei) return null;
+  const pool = reicheltProxyPool();
+  if (!pool.length) return null;
+  const url = pool[fanProxyCursor % pool.length]!;
+  fanProxyCursor = (fanProxyCursor + 1) % pool.length;
+  return parseHttpProxyUrl(url);
+}
 
 async function updateRun(runId: number, fields: Record<string, unknown>) {
   const keys = Object.keys(fields);
@@ -143,17 +175,18 @@ async function gotoFantasywelt(page: Page, url: string, cfg: ReturnType<typeof f
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-async function launchBrowser(): Promise<Browser> {
-  const proxy = process.env.SCRAPER_FAN_PROXY || process.env.SCRAPER_PROXY || "";
+async function launchBrowser(proxy: PlaywrightProxy | null): Promise<Browser> {
+  // Prefer headed Chromium on Xvfb (DISPLAY=:99) — headless_shell fails CF more often.
+  const headed = String(process.env.SCRAPER_FAN_HEADED ?? "1") !== "0" && Boolean(process.env.DISPLAY);
   return chromium.launch({
-    headless: true,
+    headless: !headed,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-blink-features=AutomationControlled",
       "--disable-dev-shm-usage",
     ],
-    ...(proxy ? { proxy: { server: proxy } } : {}),
+    ...(proxy ? { proxy } : {}),
   });
 }
 
@@ -161,12 +194,42 @@ async function newContext(browser: Browser, cfg: ReturnType<typeof fantasyweltCo
   const context = await browser.newContext({
     userAgent: cfg.userAgent,
     locale: "de-DE",
+    viewport: { width: 1400, height: 900 },
     extraHTTPHeaders: { "Accept-Language": "de-DE,de;q=0.9,en;q=0.8" },
   });
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => undefined });
   });
   return context;
+}
+
+async function withFreshBrowser(
+  cfg: ReturnType<typeof fantasyweltConfig>,
+  worker: (page: Page) => Promise<void>
+): Promise<void> {
+  const maxProxyAttempts = Math.max(1, Number(process.env.SCRAPER_FAN_PROXY_RETRIES || 8));
+  let lastErr: unknown = null;
+  for (let i = 0; i < maxProxyAttempts; i++) {
+    const proxy = nextFanProxy();
+    let browser: Browser | null = null;
+    try {
+      browser = await launchBrowser(proxy);
+      const context = await newContext(browser, cfg);
+      const page = await context.newPage();
+      await worker(page);
+      await page.close().catch(() => undefined);
+      await context.close().catch(() => undefined);
+      return;
+    } catch (err) {
+      lastErr = err;
+      const msg = String((err as Error)?.message || err);
+      console.warn(`[SCRAPER] fan browser attempt ${i + 1}/${maxProxyAttempts}: ${msg}`);
+      if (!/cloudflare/i.test(msg) && i > 0) break;
+    } finally {
+      await browser?.close().catch(() => undefined);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /** Discover product URLs by walking seed categories with ?seite=N pagination. */
@@ -347,107 +410,103 @@ export async function scrapeFantasyweltShop(
     return true;
   };
 
-  let browser: Browser | null = null;
-
   try {
-    browser = await launchBrowser();
-    const context = await newContext(browser, cfg);
-    const page = await context.newPage();
-
+    const proxyHint = reicheltProxyPool().length;
     await updateRun(runId, {
-      message: `source=fantasywelt-jtl discovery… cats=${cfg.categories.length} resume=${resume ? 1 : 0}`,
+      message: `source=fantasywelt-jtl discovery… cats=${cfg.categories.length} resume=${resume ? 1 : 0} proxies=${proxyHint}`,
     });
 
-    let productUrls = progress.discoveredUrls;
-    if (!progress.discoveryDone || !productUrls.length) {
-      productUrls = await discoverProductUrls(page, shop, cfg, progress, maxProducts);
-    } else if (maxProducts && productUrls.length > maxProducts) {
-      productUrls = productUrls.slice(0, maxProducts);
-    }
-    listed = productUrls.length;
-    await updateRun(runId, {
-      products_listed: listed,
-      message: `source=fantasywelt-jtl listed=${listed} fetching…`,
-    });
+    await withFreshBrowser(cfg, async (page) => {
+      let productUrls = progress.discoveredUrls;
+      if (!progress.discoveryDone || !productUrls.length) {
+        productUrls = await discoverProductUrls(page, shop, cfg, progress, maxProducts);
+      } else if (maxProducts && productUrls.length > maxProducts) {
+        productUrls = productUrls.slice(0, maxProducts);
+      }
+      listed = productUrls.length;
+      await updateRun(runId, {
+        products_listed: listed,
+        message: `source=fantasywelt-jtl listed=${listed} fetching…`,
+      });
 
-    for (const productUrl of productUrls) {
-      if (doneSet.has(productUrl)) continue;
-      if (maxProducts && processed >= maxProducts) break;
-      processed++;
-      try {
-        const html = await gotoFantasywelt(page, productUrl, cfg);
-        await sleep(cfg.requestDelayMs);
-        const product = parseFantasyweltProductHtml(html, productUrl);
-        if (!product) {
-          requestErrors++;
-          continue;
-        }
-        if (!product.gtin) {
-          skippedNoGtin++;
-        } else if (!product.priceEur || product.priceEur <= 0) {
-          skippedNoPrice++;
-        } else if (product.availability === "OutOfStock") {
-          skippedOos++;
-          const cost = computeFantasyweltLandedCost(product.priceEur);
-          if (cost) {
-            const ok = await upsertVariant(product, cost.sellPriceChf, 0);
-            if (ok) {
-              wrote++;
-              gtinMatched++;
-            }
-          }
-        } else {
-          const cost = computeFantasyweltLandedCost(product.priceEur);
-          if (!cost) {
+      for (const productUrl of productUrls) {
+        if (doneSet.has(productUrl)) continue;
+        if (maxProducts && processed >= maxProducts) break;
+        processed++;
+        try {
+          const html = await gotoFantasywelt(page, productUrl, cfg);
+          await sleep(cfg.requestDelayMs);
+          const product = parseFantasyweltProductHtml(html, productUrl);
+          if (!product) {
+            requestErrors++;
+          } else if (!product.gtin) {
+            skippedNoGtin++;
+          } else if (!product.priceEur || product.priceEur <= 0) {
             skippedNoPrice++;
+          } else if (product.availability === "OutOfStock") {
+            skippedOos++;
+            const cost = computeFantasyweltLandedCost(product.priceEur);
+            if (cost) {
+              const ok = await upsertVariant(product, cost.sellPriceChf, 0);
+              if (ok) {
+                wrote++;
+                gtinMatched++;
+              }
+            }
           } else {
-            const stock =
-              product.availability === "InStock" || product.availability === "PreOrder"
-                ? cfg.defaultStock
-                : 0;
-            const ok = await upsertVariant(product, cost.sellPriceChf, stock);
-            if (ok) {
-              wrote++;
-              gtinMatched++;
+            const cost = computeFantasyweltLandedCost(product.priceEur);
+            if (!cost) {
+              skippedNoPrice++;
+            } else {
+              const stock =
+                product.availability === "InStock" || product.availability === "PreOrder"
+                  ? cfg.defaultStock
+                  : 0;
+              const ok = await upsertVariant(product, cost.sellPriceChf, stock);
+              if (ok) {
+                wrote++;
+                gtinMatched++;
+              }
             }
           }
+        } catch (err) {
+          requestErrors++;
+          console.warn(`[SCRAPER] ${shop.key} product ${productUrl}:`, (err as Error)?.message || err);
+          if (/cloudflare/i.test(String((err as Error)?.message || err))) {
+            throw err;
+          }
         }
-      } catch (err) {
-        requestErrors++;
-        console.warn(`[SCRAPER] ${shop.key} product ${productUrl}:`, (err as Error)?.message || err);
-      }
 
-      doneSet.add(productUrl);
-      progress.doneUrls = [...doneSet];
-      if (processed % 25 === 0) {
-        saveProgress(cfg.progressFile, progress);
-        await updateRun(runId, {
-          products_listed: listed,
-          with_gtin: gtinMatched,
-          variants_upserted: wrote,
-          errors: requestErrors,
-          message: [
-            "source=fantasywelt-jtl",
-            `listed=${listed}`,
-            `processed=${processed}`,
-            `wrote=${wrote}`,
-            `skipped_no_gtin=${skippedNoGtin}`,
-            `skipped_no_price=${skippedNoPrice}`,
-            `skipped_oos=${skippedOos}`,
-          ].join(" "),
-        });
-      }
+        doneSet.add(productUrl);
+        progress.doneUrls = [...doneSet];
+        if (processed % 25 === 0) {
+          saveProgress(cfg.progressFile, progress);
+          await updateRun(runId, {
+            products_listed: listed,
+            with_gtin: gtinMatched,
+            variants_upserted: wrote,
+            errors: requestErrors,
+            message: [
+              "source=fantasywelt-jtl",
+              `listed=${listed}`,
+              `processed=${processed}`,
+              `wrote=${wrote}`,
+              `skipped_no_gtin=${skippedNoGtin}`,
+              `skipped_no_price=${skippedNoPrice}`,
+              `skipped_oos=${skippedOos}`,
+            ].join(" "),
+          });
+        }
 
-      if (!cfg.deferImageSync && imageSyncQueue.size >= IMAGE_SYNC_BATCH) {
-        const img = await flushImageSyncQueue(imageSyncQueue);
-        imageSynced += img.synced;
-        imageFailed += img.failed;
+        if (!cfg.deferImageSync && imageSyncQueue.size >= IMAGE_SYNC_BATCH) {
+          const img = await flushImageSyncQueue(imageSyncQueue);
+          imageSynced += img.synced;
+          imageFailed += img.failed;
+        }
       }
-    }
+    });
 
     saveProgress(cfg.progressFile, progress);
-    await page.close();
-    await context.close();
 
     if (!cfg.deferImageSync) {
       while (imageSyncQueue.size > 0) {
@@ -489,7 +548,5 @@ export async function scrapeFantasyweltShop(
       message: String(err?.message || err).slice(0, 2000),
     });
     throw err;
-  } finally {
-    await browser?.close().catch(() => undefined);
   }
 }
