@@ -20,7 +20,12 @@ nohup docker compose run --name resell-fan-scrape --rm \
   -e SCRAPER_STALE_RUN_MINUTES="${SCRAPER_STALE_RUN_MINUTES:-1440}" \
   -e SCRAPER_FAN_RESUME="${SCRAPER_FAN_RESUME:-1}" \
   -e SCRAPER_FAN_DEFER_IMAGE_SYNC="${SCRAPER_FAN_DEFER_IMAGE_SYNC:-1}" \
+  -e SCRAPER_FAN_HEADED="${SCRAPER_FAN_HEADED:-1}" \
+  -e SCRAPER_FAN_USE_REI_PROXIES="${SCRAPER_FAN_USE_REI_PROXIES:-1}" \
   -e SCRAPER_FAN_PROGRESS_FILE=/app/.data/fantasywelt-scrape-progress.json \
+  -e SCRAPER_REI_PROXY_FILE="${SCRAPER_REI_PROXY_FILE:-/app/.data/reichelt-proxies.txt}" \
+  -e DISPLAY=:99 \
+  -e PLAYWRIGHT_USE_XVFB=1 \
   web npx tsx scripts/run-fantasywelt-scrape.ts ${MAX_ARG} \
   >>"$LOG" 2>&1 &
 echo "[$(date -Is)] pid=$! log=$LOG"
