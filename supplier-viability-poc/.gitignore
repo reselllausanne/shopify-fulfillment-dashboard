@@ -1,0 +1,10 @@
+_raw/
+_probe/
+__pycache__/
+*.pyc
+data/exlibris_products.csv
+data/exlibris_checkpoint.json
+data/exlibris_scrape_meta.json
+data/*.csv
+!data/exlibris_sample.csv
+!data/exlibris_sample.tsv

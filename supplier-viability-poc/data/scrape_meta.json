@@ -1,0 +1,22 @@
+{
+  "berrybase": {
+    "written": 10,
+    "target": 300,
+    "note": "Partial sample 10/300: Cursor host allowlist capped bulk fetch; pipeline supports 300."
+  },
+  "pollin": {
+    "written": 8,
+    "target": 300,
+    "note": "Partial sample 8/300: same bulk-fetch constraint."
+  },
+  "farnell": {
+    "written": 0,
+    "blocked": true,
+    "note": "element14 Product Search API requires partner API key; no key in env."
+  },
+  "buerklin": {
+    "written": 0,
+    "blocked": true,
+    "note": "Cloudflare challenge (403) — stopped, no CAPTCHA bypass."
+  }
+}
