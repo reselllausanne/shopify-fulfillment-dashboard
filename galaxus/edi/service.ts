@@ -1192,7 +1192,15 @@ function findValueByPath(data: any, path: string[]): string | null {
 function findUdxValue(data: any, key: string): string | null {
   const node = getNestedNode(data, ["ORDER_HEADER", "ORDER_INFO", "HEADER_UDX"]);
   if (!node || typeof node !== "object") return null;
-  return (node[key] ?? node[key.toUpperCase()] ?? null) as string | null;
+  const value = node[key] ?? node[key.toUpperCase()] ?? null;
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (typeof value === "object" && value?.["#text"] != null) {
+    return String(value["#text"]);
+  }
+  return null;
 }
 
 function parseBoolean(value: string | null): boolean | null {
