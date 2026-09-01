@@ -20,6 +20,7 @@ nohup docker compose run --name resell-exl-scrape --rm \
   -e EXLIBRIS_LIMIT="${EXLIBRIS_LIMIT:-0}" \
   -e EXLIBRIS_DELAY="${EXLIBRIS_DELAY:-1.0}" \
   -e EXLIBRIS_FLUSH_EVERY="${EXLIBRIS_FLUSH_EVERY:-100}" \
+  -v "${REPO_DIR}/supplier-viability-poc:/app/supplier-viability-poc:ro" \
   -v "${REPO_DIR}/.data/exlibris:/app/supplier-viability-poc/data" \
   web bash supplier-viability-poc/scripts/run_exlibris_day.sh \
   >>"$LOG" 2>&1 &
