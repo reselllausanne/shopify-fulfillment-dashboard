@@ -111,14 +111,19 @@ export type ShopifyOrderSyncResult = {
 export async function runShopifyOrdersSync(options?: {
   startDate?: Date;
   pageSize?: number;
+  /** Cap pages so scheduled ticks cannot hang on full-year pagination. */
+  maxPages?: number;
 }): Promise<ShopifyOrderSyncResult> {
   const now = new Date();
-  const yearStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0));
-  const startDate = options?.startDate ? new Date(options.startDate) : yearStart;
+  // Default: last 14d (not YTD). Full-year walks timed out ops tick at 600s and killed the cron.
+  const defaultStart = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  defaultStart.setUTCHours(0, 0, 0, 0);
+  const startDate = options?.startDate ? new Date(options.startDate) : defaultStart;
   startDate.setUTCHours(0, 0, 0, 0);
   const iso = startDate.toISOString();
   const search = `created_at:>=${iso}`;
   const pageSize = Math.min(Math.max(Number(options?.pageSize ?? 60), 1), 250);
+  const maxPages = Math.min(Math.max(Number(options?.maxPages ?? 30), 1), 500);
 
   let hasNextPage = true;
   let cursor: string | null = null;
@@ -138,7 +143,7 @@ export async function runShopifyOrdersSync(options?: {
     upserted: 0,
   };
 
-  while (hasNextPage) {
+  while (hasNextPage && pages < maxPages) {
     pages += 1;
     const result: ShopifyGqlResult<ShopifyOrdersSyncData> =
       await shopifyGraphQL<ShopifyOrdersSyncData>(QUERY, {
