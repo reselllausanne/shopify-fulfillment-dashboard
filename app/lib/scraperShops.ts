@@ -8,14 +8,14 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
  *   Name = display name
  *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
  *   CURRENCY = optional ISO code (default CHF)
- *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae | fan
+ *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae | fan | exl
  *
  * Example:
  *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
  *   FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
  */
 
-export type ScraperPlatform = "shopify" | "hhv" | "snl" | "rei" | "nso" | "bae" | "fan";
+export type ScraperPlatform = "shopify" | "hhv" | "snl" | "rei" | "nso" | "bae" | "fan" | "exl";
 
 export type ScraperShop = {
   key: string; // lowercase, used as shop_id + VariantMapping.supplierKey
@@ -76,7 +76,9 @@ export function parseScraperShops(): ScraperShop[] {
                 ? "bae"
                 : platformCandidate === "fan"
                   ? "fan"
-                  : "shopify";
+                  : platformCandidate === "exl"
+                    ? "exl"
+                    : "shopify";
 
     out.push({
       key,

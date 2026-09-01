@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 CATALOG="${EXLIBRIS_CATALOG:-spiele}"
 LIMIT="${EXLIBRIS_LIMIT:-0}"
-DELAY="${EXLIBRIS_DELAY:-1.0}"
+DELAY="${EXLIBRIS_DELAY:-0.4}"
 FLUSH="${EXLIBRIS_FLUSH_EVERY:-100}"
 
 exec python3 scripts/scrape_exlibris.py \

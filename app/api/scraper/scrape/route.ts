@@ -7,6 +7,7 @@ import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
 import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
 import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
+import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -59,7 +60,9 @@ export async function POST(request: Request) {
                 ? scrapeBaechliShop
                 : shop.platform === "fan"
                   ? scrapeFantasyweltShop
-                  : scrapeShop;
+                  : shop.platform === "exl"
+                    ? scrapeExlibrisShop
+                    : scrapeShop;
     // Fire-and-forget: keep processing after the response returns.
     void runScrape(shop, runId, maxProducts).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);

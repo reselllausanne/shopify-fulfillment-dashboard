@@ -91,6 +91,7 @@ def main() -> int:
     DATA.mkdir(parents=True, exist_ok=True)
     catalogs = default_catalogs_for_name(args.catalog)
     session = Session(args.delay)
+    # Session enforces rate limit; runner must not double-sleep.
     fetch = make_fetch(session, 0)
 
     all_rows: list[dict] = []
@@ -115,7 +116,7 @@ def main() -> int:
         scraper = ExlibrisScraper(
             fetch,
             catalog=cat,
-            delay_s=args.delay,
+            delay_s=0,
             hydrate_pdp=args.hydrate_pdp,
             hydrate_every=args.hydrate_every,
             checkpoint_path=ckpt,
