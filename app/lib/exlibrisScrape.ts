@@ -89,14 +89,55 @@ async function flushImageSyncQueue(imageSyncQueue: Set<string>) {
 }
 
 function loadProgress(filePath: string, catalog: string): ExlibrisScrapeProgress {
-  if (!exlibrisConfig().resume || !fs.existsSync(filePath)) return emptyProgress(catalog);
-  try {
-    const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as ExlibrisScrapeProgress;
-    if (raw.catalog !== catalog) return emptyProgress(catalog);
-    return raw;
-  } catch {
-    return emptyProgress(catalog);
+  if (exlibrisConfig().resume && fs.existsSync(filePath)) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as ExlibrisScrapeProgress;
+      if (raw.catalog === catalog) return raw;
+    } catch {
+      /* try legacy checkpoint */
+    }
   }
+
+  const legacyPaths = [
+    path.join(process.cwd(), ".data/exlibris/exlibris_checkpoint.json"),
+    path.join(path.dirname(filePath), "exlibris/exlibris_checkpoint.json"),
+  ];
+  for (const legacyPath of legacyPaths) {
+    if (!fs.existsSync(legacyPath)) continue;
+    try {
+      const py = JSON.parse(fs.readFileSync(legacyPath, "utf8")) as {
+        catalog?: string;
+        catalog_root?: string;
+        seen_eans?: string[];
+        pending_categories?: string[];
+        done_categories?: string[];
+        category_pages?: Record<string, number>;
+        rows_written?: number;
+        requests?: number;
+      };
+      if (py.catalog && py.catalog !== catalog) continue;
+      const migrated: ExlibrisScrapeProgress = {
+        catalog,
+        catalogRoot: py.catalog_root || catalogPrefix(catalog),
+        seenEans: py.seen_eans ?? [],
+        pendingCategories: py.pending_categories ?? [],
+        doneCategories: py.done_categories ?? [],
+        categoryPages: py.category_pages ?? {},
+        rowsWritten: py.rows_written ?? 0,
+        requests: py.requests ?? 0,
+        updatedAt: new Date().toISOString(),
+      };
+      console.log(
+        `[SCRAPER] exl migrated python checkpoint from ${legacyPath}: ${migrated.seenEans.length} eans, page=${migrated.categoryPages["/de/hobby-spiele-brettspiele/"] ?? "?"}`
+      );
+      saveProgress(filePath, migrated);
+      return migrated;
+    } catch {
+      /* next path */
+    }
+  }
+
+  return emptyProgress(catalog);
 }
 
 function saveProgress(filePath: string, progress: ExlibrisScrapeProgress) {
