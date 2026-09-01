@@ -291,23 +291,34 @@ async function disableCron() {
 
 async function markDbInactive(skus: string[]) {
   if (skus.length === 0) return;
+  // Best-effort only — never block Mirakl wipe on Prisma stalls.
   const now = new Date();
-  await withPrismaRetry(
-    () =>
-      prisma.channelListingState.updateMany({
-        where: { channel: "DECATHLON", providerKey: { in: skus } },
-        data: { lastPushedStock: 0, status: "INACTIVE", updatedAt: now },
-      }),
-    "listing-update"
-  );
-  await withPrismaRetry(
-    () =>
-      (prisma as any).decathlonOfferSync.updateMany({
-        where: { providerKey: { in: skus } },
-        data: { lastStock: 0, lastStockSyncedAt: now, updatedAt: now },
-      }),
-    "sync-update"
-  );
+  const run = Promise.all([
+    withPrismaRetry(
+      () =>
+        prisma.channelListingState.updateMany({
+          where: { channel: "DECATHLON", providerKey: { in: skus } },
+          data: { lastPushedStock: 0, status: "INACTIVE", updatedAt: now },
+        }),
+      "listing-update"
+    ),
+    withPrismaRetry(
+      () =>
+        (prisma as any).decathlonOfferSync.updateMany({
+          where: { providerKey: { in: skus } },
+          data: { lastStock: 0, lastStockSyncedAt: now, updatedAt: now },
+        }),
+      "sync-update"
+    ),
+  ]);
+  await Promise.race([
+    run,
+    sleep(15_000).then(() => {
+      console.warn(`[zero-all-decathlon] markDbInactive timeout for ${skus.length} skus — continuing`);
+    }),
+  ]).catch((err) => {
+    console.warn("[zero-all-decathlon] markDbInactive failed", err?.message ?? err);
+  });
 }
 
 async function countLiveOffersSample(limitPages = 5): Promise<{ scanned: number; live: number }> {
