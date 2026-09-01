@@ -224,6 +224,22 @@ export type GalaxusProductKind =
   | "robot_kit"
   | "robot_module"
   | "robot_accessory"
+  /** Manufactum / XNT home + fashion accessories (partner category hints; Galaxus AI remaps). */
+  | "belt"
+  | "gloves"
+  | "scarf"
+  | "dress"
+  | "drinking_glass"
+  | "mug"
+  | "plate"
+  | "bowl"
+  | "cutlery"
+  | "cookware"
+  | "kitchen_tool"
+  | "bedding"
+  | "towel"
+  | "book"
+  | "home_accessory"
   | "unknown";
 
 /** German Galaxus merchant `ProductCategory` paths (Producttypes.xlsx). */
@@ -463,6 +479,21 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   robot_module: "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Robotik > Robotik Modul",
   robot_accessory:
     "IT + Multimedia > Drohnen + Elektronik > Robotik + Elektrotechnik > Robotik > Robotik Zubehör",
+  belt: "Mode > Alles in Mode > Accessoires > Gürtel",
+  gloves: "Mode > Alles in Mode > Accessoires > Handschuhe",
+  scarf: "Mode > Alles in Mode > Accessoires > Schals + Tücher",
+  dress: "Mode > Alles in Mode > Bekleidung > Kleider",
+  drinking_glass: "Wohnen > Küche + Essen > Geschirr > Gläser",
+  mug: "Wohnen > Küche + Essen > Geschirr > Tassen + Becher",
+  plate: "Wohnen > Küche + Essen > Geschirr > Teller",
+  bowl: "Wohnen > Küche + Essen > Geschirr > Schalen + Schüsseln",
+  cutlery: "Wohnen > Küche + Essen > Besteck > Besteck",
+  cookware: "Wohnen > Küche + Essen > Töpfe + Pfannen > Töpfe",
+  kitchen_tool: "Wohnen > Küche + Essen > Küchenhelfer > Küchenhelfer",
+  bedding: "Wohnen > Textilien > Bettwäsche > Bettwäsche",
+  towel: "Wohnen > Bad > Handtücher > Handtuch",
+  book: "Bücher + Medien > Bücher > Sachbücher",
+  home_accessory: "Wohnen > Wohnaccessoires > Dekoration > Dekorationartikel",
   unknown: "Mode > Alles in Mode > Schuhe > Sneakers",
 };
 
@@ -470,6 +501,7 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
 export function defaultGalaxusProductKind(supplierKey?: string | null): GalaxusProductKind {
   if (String(supplierKey ?? "").toLowerCase() === "wel") return "boardgame";
   if (String(supplierKey ?? "").toLowerCase() === "rei") return "passive_component";
+  if (String(supplierKey ?? "").toLowerCase() === "xnt") return "home_accessory";
   return "sneakers";
 }
 
