@@ -14,6 +14,8 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
  *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
  *   FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
  *   HAW|Hawk|https://www.hawk.ch|CHF|haw
+ *   WRK|Warenkontor|https://warenkontor.ch|CHF|shopify
+ *     (Shopify path; landed = shelf + CHF 6 Post/DPD + same % margin as REI)
  */
 
 export type ScraperPlatform =
