@@ -255,52 +255,26 @@ export default function GalaxusDirectDeliveryPage() {
     setBulkStockxSyncing(true);
     setError(null);
     setOpsLog(null);
-    let success = 0;
-    let failed = 0;
-    let skipped = 0;
-    const failures: Array<{ orderId: string; error: string }> = [];
     try {
-      for (const order of targets) {
-        const orderId = String(order.id ?? "").trim();
-        if (!orderId) {
-          skipped += 1;
-          continue;
-        }
-        try {
-          const res = await fetch(`/api/galaxus/orders/${orderId}/stx/sync`, {
-            method: "POST",
-            cache: "no-store",
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data?.ok) {
-            failed += 1;
-            failures.push({
-              orderId,
-              error: String(data?.error ?? `HTTP ${res.status}`),
-            });
-          } else {
-            success += 1;
-          }
-        } catch (err: any) {
-          failed += 1;
-          failures.push({
-            orderId,
-            error: String(err?.message ?? "Sync failed"),
-          });
-        }
-        await new Promise((resolve) => setTimeout(resolve, 450));
+      const orderIds = targets
+        .map((order) => String(order.id ?? "").trim())
+        .filter(Boolean);
+      const res = await fetch("/api/galaxus/orders/stx/bulk-sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ orderIds }),
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        setError(String(data?.error ?? `Bulk sync failed (HTTP ${res.status})`));
       }
       setOpsLog(
         JSON.stringify(
           {
-            ok: failed === 0,
-            mode: "galaxus_direct_bulk_stockx_sync_visible",
+            ...data,
             tab: leftTab,
-            total: targets.length,
-            success,
-            failed,
-            skipped,
-            failures: failures.slice(0, 25),
+            requested: orderIds.length,
           },
           null,
           2
@@ -308,6 +282,8 @@ export default function GalaxusDirectDeliveryPage() {
       );
       await loadOrders({ force: true });
       if (selectedOrderIdRef.current) await loadOrderDetail(selectedOrderIdRef.current, { force: true });
+    } catch (err: any) {
+      setError(String(err?.message ?? "Bulk sync failed"));
     } finally {
       setBulkStockxSyncing(false);
     }
@@ -530,6 +506,19 @@ export default function GalaxusDirectDeliveryPage() {
     }
   };
 
+  const lineNeedsManualTracking = (line: any, match: any, proc: any, procOk: boolean) => {
+    if (!procOk || line.physicalStock) return false;
+    const hint = proc?.warehouseStockHint;
+    if (hint === "GOLDEN" || hint === "MAISON" || hint === "NER_STOCK") return false;
+    const status = String(match?.stockxStatus ?? "").trim().toUpperCase();
+    if (status === "LOCAL_STOCK" || status === "ESSENTIAL_STOCK") return false;
+    const awb = String(match?.stockxAwb ?? proc?.awb ?? "").trim();
+    if (awb) return false;
+    const ref = String(match?.stockxOrderNumber ?? proc?.stockxOrderNumber ?? "").trim();
+    if (/^LOCAL-/i.test(ref)) return false;
+    return true;
+  };
+
   const lineStatusLabel = (line: any, match: any, proc: any, procOk: boolean) => {
     if (!procOk) return "Not linked";
     if (proc?.warehouseStockHint === "GOLDEN") {
@@ -549,7 +538,14 @@ export default function GalaxusDirectDeliveryPage() {
       return `Linked ${proc?.supplierKey ?? "EXT"} ${proc?.stockxOrderNumber ?? ""}`.trim();
     }
     if (proc?.source === "stx_sync") return `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`;
-    if (match) return `Linked ${match.stockxOrderNumber}`;
+    if (match) {
+      const base = `Linked ${match.stockxOrderNumber}`;
+      if (lineNeedsManualTracking(line, match, proc, procOk)) {
+        const goat = String(match.stockxStatus ?? "").toUpperCase() === "GOAT_VERIFY";
+        return goat ? `${base} · GOAT verify — add AWB` : `${base} · add AWB`;
+      }
+      return base;
+    }
     return "Linked";
   };
 
@@ -588,7 +584,7 @@ export default function GalaxusDirectDeliveryPage() {
             onClick={() => void runBulkStockxSyncVisible()}
             disabled={loadingOrders || polling || bulkStockxSyncing}
             className="px-3 py-2 bg-blue-700 text-white rounded text-sm disabled:opacity-50"
-            title="StockX sync on visible tab (sequential)"
+            title="One shared StockX crawl for all visible orders (PENDING + recent all-state)"
           >
             {bulkStockxSyncing ? "Bulk sync…" : "Bulk StockX sync"}
           </button>
@@ -597,7 +593,9 @@ export default function GalaxusDirectDeliveryPage() {
 
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
       {bulkStockxSyncing ? (
-        <div className="text-xs text-gray-500">Sequential StockX sync on visible orders…</div>
+        <div className="text-xs text-gray-500">
+          Shared StockX crawl + link across visible orders (not per-order)…
+        </div>
       ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -849,6 +847,16 @@ export default function GalaxusDirectDeliveryPage() {
                             {proc?.warehouseStockHint === "GOLDEN" ? (
                               <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-200 text-orange-950">
                                 GLD
+                              </span>
+                            ) : null}
+                            {lineNeedsManualTracking(line, match, proc, procOk) ? (
+                              <span
+                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-200 text-amber-950"
+                                title="Linked buy has no tracking yet — paste AWB in Manual entry after GOAT/StockX ships"
+                              >
+                                {String(match?.stockxStatus ?? "").toUpperCase() === "GOAT_VERIFY"
+                                  ? "GOAT → add AWB"
+                                  : "Add AWB"}
                               </span>
                             ) : null}
                           </div>
