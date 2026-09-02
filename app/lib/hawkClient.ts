@@ -1,4 +1,5 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import { scraperFetchText } from "@/app/lib/scraperProxy";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -262,27 +263,25 @@ export class HawkClient {
     let lastErr: unknown = null;
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
-        const res = await fetch(url, {
+        const text = await scraperFetchText(url, {
+          shopKey: "haw",
+          timeoutMs: cfg.requestTimeoutMs,
           headers: {
             "User-Agent": cfg.userAgent,
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "de-CH,de;q=0.9,en;q=0.8",
           },
-          signal: AbortSignal.timeout(cfg.requestTimeoutMs),
-          redirect: "follow",
         });
-        if (res.status === 429 || res.status === 503 || res.status === 502) {
-          lastErr = new Error(`HTTP ${res.status}`);
-          await sleep(Math.min(4_000 * 2 ** attempt, 90_000));
-          continue;
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
         if (useDelay) await sleep(cfg.requestDelayMs + Math.floor(Math.random() * 120));
         return text;
       } catch (err) {
         lastErr = err;
-        await sleep(Math.min(4_000 * 2 ** attempt, 90_000));
+        const msg = String((err as Error)?.message || err);
+        if (/HTTP (429|502|503)/.test(msg) || attempt < 4) {
+          await sleep(Math.min(4_000 * 2 ** attempt, 90_000));
+          continue;
+        }
+        break;
       }
     }
     throw new Error(`GET failed ${url}: ${lastErr}`);

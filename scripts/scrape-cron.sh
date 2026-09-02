@@ -4,13 +4,13 @@
 # from JWT_SECRET (in /opt/resell/.env) and POSTs the scrape endpoint.
 #
 # Cron examples:
-#   Daily all shops except skip-list:
-#     0 3 * * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
-#   Reichelt only every 3 days:
-#     0 3 */3 * * /opt/resell/scripts/scrape-cron.sh rei >> /opt/resell/scrape-rei-cron.log 2>&1
+#   All shops except skip-list every 3 days:
+#     0 3 */3 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
+#   Reichelt only every 3 days (detached):
+#     0 3 */3 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
 #
 # Env:
-#   SCRAPER_CRON_SKIP=rei   — comma/space keys skipped when no shop arg (default: rei)
+#   SCRAPER_CRON_SKIP=rei,fan   — comma/space keys skipped when no shop arg (default: rei)
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/opt/resell}"

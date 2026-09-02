@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch /opt/resell/.env for Hawk (HAW) Magento scraper."""
+"""Patch /opt/resell/.env for Hawk (HAW) Magento scraper + Galaxus allowlist."""
 from __future__ import annotations
 
 import re
@@ -32,14 +32,35 @@ if not re.search(r"(^|,)\s*HAW\|", raw, re.I):
 else:
     print("HAW already in SCRAPER_SHOPS")
 
-m2 = re.search(r"^SCRAPER_CRON_SKIP=(.*)$", text, re.M)
-skip = set()
-if m2:
-    skip = {s.strip().lower() for s in re.split(r"[\s,]+", m2.group(1)) if s.strip()}
-skip.update({"rei", "haw"})
-text, ch2 = upsert_line("SCRAPER_CRON_SKIP", ",".join(sorted(skip)), text)
+# Shared proxy file alias (reuse LemonProxy list)
+if not re.search(r"^SCRAPER_PROXY_FILE=", text, re.M):
+    text = text.rstrip() + "\nSCRAPER_PROXY_FILE=/app/.data/reichelt-proxies.txt\n"
+    changed = True
+    print("set SCRAPER_PROXY_FILE=/app/.data/reichelt-proxies.txt")
+
+# Cron: skip only heavy/broken adapters that have their own schedule
+# rei = detached every 3d; fan/exl often CF walls
+text, ch2 = upsert_line("SCRAPER_CRON_SKIP", "rei,fan,exl", text)
 changed = changed or ch2
-print("SCRAPER_CRON_SKIP=", ",".join(sorted(skip)))
+print("SCRAPER_CRON_SKIP=rei,fan,exl")
+
+# Galaxus allowlist — enable HAW feed push
+m_allow = re.search(r"^GALAXUS_FEED_SUPPLIER_ALLOWLIST=(.*)$", text, re.M)
+if m_allow:
+    allow = m_allow.group(1).strip().strip("\"'")
+    parts = [p.strip() for p in allow.split(",") if p.strip()]
+    lower = {p.lower() for p in parts}
+    if "haw" not in lower:
+        parts.append("haw")
+        text, _ = upsert_line("GALAXUS_FEED_SUPPLIER_ALLOWLIST", ",".join(parts), text)
+        changed = True
+        print("added haw to GALAXUS_FEED_SUPPLIER_ALLOWLIST")
+    else:
+        print("haw already in allowlist")
+else:
+    text, _ = upsert_line("GALAXUS_FEED_SUPPLIER_ALLOWLIST", "haw", text)
+    changed = True
+    print("created GALAXUS_FEED_SUPPLIER_ALLOWLIST=haw")
 
 defaults = {
     "SCRAPER_HAW_DEFER_IMAGE_SYNC": "1",
@@ -62,3 +83,5 @@ else:
 
 raw = re.search(r"^SCRAPER_SHOPS=(.*)$", Path("/opt/resell/.env").read_text(), re.M).group(1)
 print("shops:", [p.split("|")[0] for p in re.split(r"[\n,]+", raw) if p.strip()])
+allow = re.search(r"^GALAXUS_FEED_SUPPLIER_ALLOWLIST=(.*)$", Path("/opt/resell/.env").read_text(), re.M)
+print("allowlist:", allow.group(1) if allow else None)

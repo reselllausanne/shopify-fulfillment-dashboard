@@ -2,6 +2,7 @@
 
 import { isPhysicalExlibrisItem } from "@/app/lib/exlibrisFilters";
 import { validateGtin } from "@/app/lib/normalize";
+import { scraperFetchText } from "@/app/lib/scraperProxy";
 
 export const EXLIBRIS_BASE = "https://www.exlibris.ch";
 
@@ -268,17 +269,17 @@ export async function fetchExlibrisHtml(url: string): Promise<string> {
   const waitMs = cfg.requestDelayMs - (Date.now() - lastFetchAt);
   if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
 
-  const res = await fetch(url, {
+  const text = await scraperFetchText(url, {
+    shopKey: "exl",
+    timeoutMs: Number(process.env.SCRAPER_REQUEST_TIMEOUT_MS || 45_000),
     headers: {
       Accept: "text/html,application/json;q=0.9,*/*;q=0.8",
       "Accept-Language": "de,en;q=0.8",
       "User-Agent": UA,
     },
-    redirect: "follow",
   });
   lastFetchAt = Date.now();
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-  return res.text();
+  return text;
 }
 
 export function emptyProgress(catalog: string): ExlibrisScrapeProgress {
