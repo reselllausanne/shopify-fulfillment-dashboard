@@ -51,6 +51,23 @@ for k, v in defaults.items():
     changed = True
     print(f"set default {k}={v}")
 
+# Galaxus feed allowlist
+m_allow = re.search(r"^GALAXUS_FEED_SUPPLIER_ALLOWLIST=(.*)$", text, re.M)
+if m_allow:
+    allow_raw = m_allow.group(1).strip().strip("\"'")
+    keys = [k.strip().lower() for k in re.split(r"[\s,]+", allow_raw) if k.strip()]
+    if "tus" not in keys:
+        keys.append("tus")
+        text, _ = upsert_line("GALAXUS_FEED_SUPPLIER_ALLOWLIST", ",".join(keys), text)
+        changed = True
+        print("added tus to GALAXUS_FEED_SUPPLIER_ALLOWLIST")
+    else:
+        print("tus already in GALAXUS_FEED_SUPPLIER_ALLOWLIST")
+else:
+    text, _ = upsert_line("GALAXUS_FEED_SUPPLIER_ALLOWLIST", "tus", text)
+    changed = True
+    print("created GALAXUS_FEED_SUPPLIER_ALLOWLIST=tus")
+
 if changed:
     Path("/opt/resell/.env.bak.tus").write_text(path.read_text())
     path.write_text(text)

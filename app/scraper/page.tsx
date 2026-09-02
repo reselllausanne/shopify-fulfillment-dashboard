@@ -56,6 +56,7 @@ function platformLabel(platform: string) {
   if (platform === "haw") return "Hawk / Magento";
   if (platform === "bwz") return "Baby-Walz / HTML";
   if (platform === "tus") return "Uncommon Shop / WooCommerce";
+  if (platform === "alt") return "Alternate / JSON-LD";
   return "Shopify";
 }
 
@@ -180,7 +181,8 @@ HHV|HHV|https://www.hhv.de|EUR|hhv
 SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
 REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
 BAE|Bächli Bergsport|https://www.baechli-bergsport.ch/de|CHF|bae
-HAW|Hawk|https://www.hawk.ch|CHF|haw"`}
+HAW|Hawk|https://www.hawk.ch|CHF|haw
+ALT|Alternate|https://www.alternate.ch|CHF|alt"`}
             </pre>
           </div>
         ) : null}
