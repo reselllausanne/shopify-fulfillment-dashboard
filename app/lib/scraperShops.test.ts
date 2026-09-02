@@ -34,7 +34,8 @@ FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
 HAW|Hawk|https://www.hawk.ch|CHF|haw
 BWZ|Baby-Walz|https://www.baby-walz.ch/de|CHF|bwz
 TUS|The Uncommon Shop|https://theuncommonshop.ch|CHF|tus
-ALT|Alternate|https://www.alternate.ch|CHF|alt`;
+ALT|Alternate|https://www.alternate.ch|CHF|alt
+VEN|Venova|https://www.venova.ch/de|CHF|ven`;
     const shops = parseScraperShops();
     expect(shops.map((s) => s.key)).toEqual([
       "wel",
@@ -46,6 +47,7 @@ ALT|Alternate|https://www.alternate.ch|CHF|alt`;
       "bwz",
       "tus",
       "alt",
+      "ven",
     ]);
     expect(shops[3].platform).toBe("rei");
     expect(shops[3].currency).toBe("CHF");
@@ -64,5 +66,8 @@ ALT|Alternate|https://www.alternate.ch|CHF|alt`;
     expect(shops[8].platform).toBe("alt");
     expect(shops[8].currency).toBe("CHF");
     expect(shops[8].code).toBe("ALT");
+    expect(shops[9].platform).toBe("ven");
+    expect(shops[9].currency).toBe("CHF");
+    expect(shops[9].code).toBe("VEN");
   });
 });
