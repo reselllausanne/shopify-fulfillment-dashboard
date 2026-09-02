@@ -317,7 +317,11 @@ export async function scrapeExlibrisShop(
   );
 
   const progress = loadProgress(progressFile, catalog);
-  for (const e of progress.seenEans) seen.add(e);
+  // Only treat checkpoint EANs as done if already in DB — Python seen-set
+  // blocked ~14k CSV rows that never got upserted.
+  for (const e of progress.seenEans) {
+    if (existingById.has(`${shop.key}_${e}`)) seen.add(e);
+  }
 
   let queue = progress.pendingCategories.length
     ? [...progress.pendingCategories]
