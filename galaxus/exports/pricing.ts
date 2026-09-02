@@ -117,8 +117,23 @@ export function resolvePricingOverrides(overrides?: PricingOverrides | null) {
   };
 }
 
-/** Sell ex VAT = buy ex VAT (no uplift); same idea as NER. */
-const GALAXUS_ZERO_MARGIN_SUPPLIER_KEYS = new Set(["ner", "the"]);
+/**
+ * Sell ex VAT = DB price as-is (no second uplift).
+ * - ner / the: partner buy = sell
+ * - rei / wrk / fan / haw / exl / bae / ven / tus: scrapers already store landed×margin shelf
+ */
+const GALAXUS_ZERO_MARGIN_SUPPLIER_KEYS = new Set([
+  "ner",
+  "the",
+  "rei",
+  "wrk",
+  "fan",
+  "haw",
+  "exl",
+  "bae",
+  "ven",
+  "tus",
+]);
 const GALAXUS_GLD_SUPPLIER_KEYS = new Set(["golden", "gld"]);
 
 /** Golden PL→CH logistics defaults (overridable via env). */
@@ -336,6 +351,8 @@ export type ResolveGalaxusSellOptions = {
 /**
  * Galaxus retail feed:
  * - `ner` / `the` = sell ex VAT equals partner buy (0% margin)
+ * - `rei` / `wrk` / `fan` / `haw` / `exl` / `bae` / `ven` = scraper shelf already includes
+ *   ship + % margin — push DB price as-is (no second Galaxus net-margin pass)
  * - other partners = +10% on buy ex VAT
  * - `golden` / `gld` = (buy + ship + CH import VAT + douane) × 1.15
  * - WEL: (buy + ship + ≥1 CHF buffer) / (1 − ≥15% net), default ship CHF 7

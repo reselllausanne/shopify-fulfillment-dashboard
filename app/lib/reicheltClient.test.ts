@@ -91,6 +91,16 @@ describe("parseReicheltChfPrice", () => {
     expect(parseReicheltChfPrice('itemprop="price" content="2.95"> (3.20 CHF)', 2.95)).toBe(3.2);
   });
 
+  it("parses CHF thousands with narrow nbsp", () => {
+    expect(
+      parseReicheltChfPrice('<meta itemprop="price" content="2037.94"><small>(1\u202f906.08\u00a0CHF)</small>', 2037.94)
+    ).toBe(1906.08);
+  });
+
+  it("parses CHF thousands with apostrophe separators", () => {
+    expect(parseReicheltChfPrice("(1'763.26 CHF)", 1885.23)).toBe(1763.26);
+  });
+
   it("rejects absurd CHF when EUR is much lower", () => {
     expect(parseReicheltChfPrice("(368.00 CHF)", 60000)).toBeNull();
   });
@@ -99,6 +109,44 @@ describe("parseReicheltChfPrice", () => {
 describe("extractReicheltWeightGrams", () => {
   it("parses packaging weight in kg", () => {
     expect(extractReicheltWeightGrams(SAMPLE_PRODUCT_HTML)).toBe(204);
+  });
+
+  it("prefers packaging over absurd bare Poids kg", () => {
+    const html = `
+      <ul><li>Poids</li><li>121 kg</li></ul>
+      <ul><li>Poids de l'emballage</li><li>0.2 kg</li></ul>
+    `;
+    expect(extractReicheltWeightGrams(html)).toBe(200);
+  });
+
+  it("treats bare integer kg ≤500 as mislabeled grams", () => {
+    const html = `<ul><li>Poids</li><li>121 kg</li></ul>`;
+    expect(extractReicheltWeightGrams(html)).toBe(121);
+  });
+});
+
+describe("sanitizeReicheltShipWeightGrams", () => {
+  it("defaults cheap SKUs with 200kg+ scrapes (keyboard-class)", async () => {
+    const { sanitizeReicheltShipWeightGrams } = await import("@/app/lib/reicheltPricing");
+    const out = sanitizeReicheltShipWeightGrams({ weightGrams: 425000, productChf: 28 });
+    expect(out.weightGrams).toBe(500);
+    expect(out.weightSource).toBe("default");
+  });
+
+  it("caps 50–200kg scrapes at 50kg ship tier (chair/Brio-class)", async () => {
+    const { sanitizeReicheltShipWeightGrams } = await import("@/app/lib/reicheltPricing");
+    const brio = sanitizeReicheltShipWeightGrams({ weightGrams: 121000, productChf: 74 });
+    expect(brio.weightGrams).toBe(50_000);
+    expect(brio.weightSource).toBe("capped");
+    const chair = sanitizeReicheltShipWeightGrams({ weightGrams: 150000, productChf: 400 });
+    expect(chair.weightGrams).toBe(50_000);
+  });
+
+  it("caps heavy real freight SKUs at 50kg ship tier", async () => {
+    const { sanitizeReicheltShipWeightGrams } = await import("@/app/lib/reicheltPricing");
+    const out = sanitizeReicheltShipWeightGrams({ weightGrams: 317000, productChf: 7000 });
+    expect(out.weightGrams).toBe(50_000);
+    expect(out.weightSource).toBe("capped");
   });
 });
 
@@ -122,6 +170,34 @@ describe("computeReicheltLandedCost", () => {
     expect(cost?.shippingEur).toBe(10.21);
     expect(cost?.landedChf).toBeGreaterThan(12);
     expect(cost?.sellPriceChf).toBe(Math.round(cost!.landedChf * 1.3 * 100) / 100);
+  });
+
+  it("does not bake 121kg ship into Brio-class SKUs", () => {
+    const cost = computeReicheltLandedCost({
+      priceChf: 74.18,
+      priceEur: 79.12,
+      weightGrams: 121000,
+      marginPercent: 30,
+    });
+    expect(cost).not.toBeNull();
+    // No packaging in this path → cap 50kg (next scrape prefers 0.2kg packaging).
+    expect(cost!.weightGrams).toBe(50_000);
+    expect(cost!.shippingEur).toBe(29.56);
+    expect(cost!.sellPriceChf).toBeLessThan(160);
+    expect(cost!.sellPriceChf).toBeGreaterThan(100);
+  });
+
+  it("uses packaging-scale weight when provided", () => {
+    const cost = computeReicheltLandedCost({
+      priceChf: 74.18,
+      priceEur: 79.12,
+      weightGrams: 200,
+      marginPercent: 30,
+      weightKind: "packaging",
+    });
+    expect(cost!.weightGrams).toBe(200);
+    expect(cost!.shippingEur).toBe(10.21);
+    expect(cost!.sellPriceChf).toBeLessThan(120);
   });
 
   it("falls back to EUR + VAT when CHF missing", () => {

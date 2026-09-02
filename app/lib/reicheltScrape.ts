@@ -79,6 +79,8 @@ function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost:
     marginPercent: cost.marginPercent,
     sellPriceChf: cost.sellPriceChf,
     weightGrams: cost.weightGrams,
+    rawWeightGrams: cost.rawWeightGrams,
+    weightSource: cost.weightSource,
     eurChfRate: cost.eurChfRate,
     vatRate: cost.vatRate,
     stockStatus: product.stockStatus,
@@ -86,6 +88,7 @@ function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost:
     breadcrumbs: product.breadcrumbs,
     productUrl: product.productUrl,
     descriptionText: descriptionText || undefined,
+    techAttributes: product.techAttributes?.length ? product.techAttributes.slice(0, 80) : undefined,
     imageStoredInDb: false,
     stockSource: "availability_status",
   });

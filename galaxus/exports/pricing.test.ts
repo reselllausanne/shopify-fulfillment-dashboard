@@ -151,6 +151,9 @@ describe("Galaxus STX margin", () => {
     const nerSell = resolveGalaxusSellExVatForChannel(100, "ner", new Set());
     expect(nerSell).toBeLessThanOrEqual(100.05);
     expect(nerSell).toBeGreaterThanOrEqual(100);
+    // Scraper shelf already margined — no second Galaxus pass (Brio 218 bug).
+    expect(resolveGalaxusSellExVatForChannel(108.88, "rei", new Set())).toBeCloseTo(108.9, 2);
+    expect(resolveGalaxusSellExVatForChannel(99, "wrk", new Set())).toBeCloseTo(99, 1);
   });
 
   it("matches computeGalaxusSellPriceExVat for explicit inputs + STX bump", () => {
