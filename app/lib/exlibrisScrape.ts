@@ -57,12 +57,17 @@ async function updateRun(runId: number, fields: Record<string, unknown>) {
       `UPDATE scraper.scrape_runs SET ${sets}, heartbeat_at = NOW() WHERE id = $1`,
       [runId, ...keys.map((k) => fields[k])]
     );
-  } catch {
-    await scraperQuery(`ALTER TABLE scraper.scrape_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
-    await scraperQuery(
-      `UPDATE scraper.scrape_runs SET ${sets}, heartbeat_at = NOW() WHERE id = $1`,
-      [runId, ...keys.map((k) => fields[k])]
-    );
+  } catch (err) {
+    try {
+      await scraperQuery(`ALTER TABLE scraper.scrape_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
+      await scraperQuery(
+        `UPDATE scraper.scrape_runs SET ${sets}, heartbeat_at = NOW() WHERE id = $1`,
+        [runId, ...keys.map((k) => fields[k])]
+      );
+    } catch (err2) {
+      // Progress update must not kill a long scrape (schema drift, etc.).
+      console.warn(`[SCRAPER] exl updateRun failed:`, (err2 as Error)?.message || err2 || err);
+    }
   }
 }
 
@@ -367,9 +372,11 @@ export async function scrapeExlibrisShop(
         let newOnPage = 0;
         for (const tile of tiles) {
           if (maxProducts && stats.wrote >= maxProducts) break;
+          const tileId = `${shop.key}_${tile.ean}`;
           if (seen.has(tile.ean)) continue;
           seen.add(tile.ean);
           stats.listed++;
+          if (existingById.has(tileId)) continue;
 
           const result = await upsertExlibrisTile(shop, tile, existingById, imageSyncQueue);
           if (result) {
@@ -390,14 +397,15 @@ export async function scrapeExlibrisShop(
             saveProgress(progressFile, progress);
             await updateRun(runId, {
               products_listed: stats.listed,
-              products_written: stats.wrote,
+              variants_upserted: stats.wrote,
               message: `exl page=${page} cat=${catPath} wrote=${stats.wrote}`,
             });
           }
         }
 
         progress.categoryPages[catPath] = page + 1;
-        if (!tiles.length || newOnPage === 0) emptyStreak++;
+        // Empty page only — duplicates on resume must not end the category.
+        if (!tiles.length) emptyStreak++;
         else emptyStreak = 0;
         if (emptyStreak >= 2) break;
         page++;
@@ -411,7 +419,7 @@ export async function scrapeExlibrisShop(
       saveProgress(progressFile, progress);
       await updateRun(runId, {
         products_listed: stats.listed,
-        products_written: stats.wrote,
+        variants_upserted: stats.wrote,
         message: `exl cat_done=${catPath} wrote=${stats.wrote}`,
       });
     }
@@ -420,31 +428,32 @@ export async function scrapeExlibrisShop(
     imageSynced += img.synced;
     imageFailed += img.failed;
 
-    await scraperQuery(
-      `UPDATE scraper.scrape_runs SET status = 'completed', finished_at = NOW(), products_listed = $2, products_written = $3, message = $4 WHERE id = $1`,
-      [
-        runId,
-        stats.listed,
-        stats.wrote,
-        [
-          `source=exlibris-listing`,
-          `catalog=${catalog}`,
-          `listed=${stats.listed}`,
-          `wrote=${stats.wrote}`,
-          `req_errors=${stats.requestErrors}`,
-          `images_synced=${imageSynced}`,
-          deferExlImageSync() ? "image_sync=deferred" : "image_sync=inline",
-        ].join(" "),
-      ]
-    );
+    await updateRun(runId, {
+      status: "completed",
+      finished_at: new Date(),
+      products_listed: stats.listed,
+      variants_upserted: stats.wrote,
+      message: [
+        `source=exlibris-listing`,
+        `catalog=${catalog}`,
+        `listed=${stats.listed}`,
+        `wrote=${stats.wrote}`,
+        `req_errors=${stats.requestErrors}`,
+        `images_synced=${imageSynced}`,
+        deferExlImageSync() ? "image_sync=deferred" : "image_sync=inline",
+      ].join(" "),
+    });
   } catch (err) {
     progress.seenEans = [...seen];
     progress.rowsWritten = stats.wrote;
     saveProgress(progressFile, progress);
-    await scraperQuery(
-      `UPDATE scraper.scrape_runs SET status = 'error', finished_at = NOW(), products_listed = $2, products_written = $3, message = $4 WHERE id = $1`,
-      [runId, stats.listed, stats.wrote, String((err as Error)?.message || err).slice(0, 500)]
-    );
+    await updateRun(runId, {
+      status: "error",
+      finished_at: new Date(),
+      products_listed: stats.listed,
+      variants_upserted: stats.wrote,
+      message: String((err as Error)?.message || err).slice(0, 500),
+    });
     throw err;
   }
 }
