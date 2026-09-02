@@ -9,6 +9,7 @@ import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
+import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 function runScrapeForShop(shop: ScraperShop, runId: number) {
@@ -29,7 +30,9 @@ function runScrapeForShop(shop: ScraperShop, runId: number) {
                   ? scrapeExlibrisShop
                   : shop.platform === "haw"
                     ? scrapeHawkShop
-                    : scrapeShop;
+                    : shop.platform === "bwz"
+                      ? scrapeBabyWalzShop
+                      : scrapeShop;
   return runScrape(shop, runId);
 }
 

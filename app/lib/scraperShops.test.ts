@@ -31,9 +31,10 @@ HHV|HHV|https://www.hhv.de|EUR|hhv
 SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
 REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
 FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
-HAW|Hawk|https://www.hawk.ch|CHF|haw`;
+HAW|Hawk|https://www.hawk.ch|CHF|haw
+BWZ|Baby-Walz|https://www.baby-walz.ch/de|CHF|bwz`;
     const shops = parseScraperShops();
-    expect(shops.map((s) => s.key)).toEqual(["wel", "hhv", "snl", "rei", "fan", "haw"]);
+    expect(shops.map((s) => s.key)).toEqual(["wel", "hhv", "snl", "rei", "fan", "haw", "bwz"]);
     expect(shops[3].platform).toBe("rei");
     expect(shops[3].currency).toBe("CHF");
     expect(shops[4].platform).toBe("fan");
@@ -42,5 +43,8 @@ HAW|Hawk|https://www.hawk.ch|CHF|haw`;
     expect(shops[5].platform).toBe("haw");
     expect(shops[5].currency).toBe("CHF");
     expect(shops[5].code).toBe("HAW");
+    expect(shops[6].platform).toBe("bwz");
+    expect(shops[6].currency).toBe("CHF");
+    expect(shops[6].code).toBe("BWZ");
   });
 });

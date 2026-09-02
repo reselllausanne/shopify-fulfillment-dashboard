@@ -22,6 +22,8 @@ describe("Galaxus STX margin", () => {
     delete process.env.GALAXUS_WEL_TARGET_MARGIN;
     delete process.env.GALAXUS_WEL_BUFFER_CHF;
     delete process.env.GALAXUS_WEL_PRICE_BUFFER_CHF;
+    delete process.env.GALAXUS_BWZ_TARGET_NET_MARGIN;
+    delete process.env.GALAXUS_BWZ_TARGET_MARGIN;
     delete process.env.GALAXUS_PRICE_BUFFER_CHF;
     delete process.env.GALAXUS_BUFFER_CHF;
     delete process.env.GALAXUS_PRICE_ROUND_TO;
@@ -201,6 +203,23 @@ describe("Galaxus STX margin", () => {
     const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
     // (3 + 7 + 2) / 0.82 ≈ 14.634 → 14.65
     expect(welSell).toBe(14.65);
+  });
+
+  it("defaults BWZ to at least 15% net (default ship CHF 2)", () => {
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);
+    const bwzSell = resolveGalaxusSellExVatForChannel(45.95, "bwz", new Set());
+    // (45.95 + 2) / 0.85 ≈ 56.411 → 56.45
+    expect(bwzSell).toBe(56.45);
+  });
+
+  it("allows higher BWZ margin via env; floors below 15%", () => {
+    process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.12";
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);
+    process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.18";
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.18, 5);
+    const bwzSell = resolveGalaxusSellExVatForChannel(45.95, "bwz", new Set());
+    // (45.95 + 2) / 0.82 ≈ 58.475 → 58.50
+    expect(bwzSell).toBe(58.5);
   });
 });
 
