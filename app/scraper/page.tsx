@@ -57,6 +57,7 @@ function platformLabel(platform: string) {
   if (platform === "bwz") return "Baby-Walz / HTML";
   if (platform === "tus") return "Uncommon Shop / WooCommerce";
   if (platform === "alt") return "Alternate / JSON-LD";
+  if (platform === "ven") return "Venova / Shopware 5";
   return "Shopify";
 }
 
@@ -182,7 +183,8 @@ SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
 REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
 BAE|Bächli Bergsport|https://www.baechli-bergsport.ch/de|CHF|bae
 HAW|Hawk|https://www.hawk.ch|CHF|haw
-ALT|Alternate|https://www.alternate.ch|CHF|alt"`}
+ALT|Alternate|https://www.alternate.ch|CHF|alt
+VEN|Venova|https://www.venova.ch/de|CHF|ven"`}
             </pre>
           </div>
         ) : null}

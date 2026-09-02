@@ -12,6 +12,7 @@ import { scrapeHawkShop } from "@/app/lib/hawkScrape";
 import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
 import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
 import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
+import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,7 +75,9 @@ export async function POST(request: Request) {
                           ? scrapeUncommonShop
                           : shop.platform === "alt"
                             ? scrapeAlternateShop
-                            : scrapeShop;
+                            : shop.platform === "ven"
+                              ? scrapeVenovaShop
+                              : scrapeShop;
     // Fire-and-forget: keep processing after the response returns.
     void runScrape(shop, runId, maxProducts).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);

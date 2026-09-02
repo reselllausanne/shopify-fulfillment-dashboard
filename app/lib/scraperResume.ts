@@ -12,6 +12,7 @@ import { scrapeHawkShop } from "@/app/lib/hawkScrape";
 import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
 import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
 import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
+import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 function runScrapeForShop(shop: ScraperShop, runId: number) {
@@ -38,7 +39,9 @@ function runScrapeForShop(shop: ScraperShop, runId: number) {
                         ? scrapeUncommonShop
                         : shop.platform === "alt"
                           ? scrapeAlternateShop
-                          : scrapeShop;
+                          : shop.platform === "ven"
+                            ? scrapeVenovaShop
+                            : scrapeShop;
   return runScrape(shop, runId);
 }
 
