@@ -158,9 +158,22 @@ async function fetchTextViaCurl(
   return body;
 }
 
+function looksBlocked(status: number, body: string): boolean {
+  if (status === 403 || status === 429 || status === 502 || status === 503) return true;
+  const sample = body.slice(0, 4000).toLowerCase();
+  return (
+    sample.includes("cf-browser-verification") ||
+    sample.includes("just a moment") ||
+    sample.includes("attention required") ||
+    sample.includes("access denied") ||
+    sample.includes("myracloud") ||
+    sample.includes("<title>security check</title>")
+  );
+}
+
 /**
- * GET text: uses curl+proxy when a pool/override exists, else native fetch.
- * Rotates proxy on each call when using the shared pool.
+ * GET text — direct first. Proxy only when locked/blocked (or forceCurl / always mode).
+ * Modes: SCRAPER_PROXY_MODE=on_block (default) | always | off
  */
 export async function scraperFetchText(url: string, init: ScraperProxyFetchInit = {}): Promise<string> {
   const timeoutMs = Math.max(5_000, Number(init.timeoutMs || 45_000));
@@ -172,15 +185,37 @@ export async function scraperFetchText(url: string, init: ScraperProxyFetchInit 
     "Accept-Language": "de-CH,de;q=0.9,en;q=0.8",
     ...(init.headers || {}),
   };
-  const proxy = nextScraperProxyUrl(init.shopKey);
-  if (proxy || init.forceCurl) {
-    return fetchTextViaCurl(url, headers, proxy, timeoutMs);
+  const mode = String(process.env.SCRAPER_PROXY_MODE || "on_block").trim().toLowerCase();
+  const shopProxy = nextScraperProxyUrl(init.shopKey);
+  const poolHasProxy = Boolean(shopProxy) || scraperProxyPool().length > 0;
+
+  if (init.forceCurl || mode === "always") {
+    const proxy = shopProxy || nextScraperProxyUrl(init.shopKey);
+    if (proxy || init.forceCurl) {
+      return fetchTextViaCurl(url, headers, proxy, timeoutMs);
+    }
   }
-  const res = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(timeoutMs),
-    redirect: "follow",
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.text();
+
+  // Direct path (default / off)
+  try {
+    const res = await fetch(url, {
+      headers,
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: "follow",
+    });
+    const text = await res.text();
+    if (res.ok && !looksBlocked(res.status, text)) return text;
+    if (mode === "off" || !poolHasProxy) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    // fall through to proxy retry
+  } catch (err) {
+    if (mode === "off" || !poolHasProxy) throw err;
+    // proxy retry below
+  }
+
+  // Locked → one proxy attempt (rotate pool)
+  const proxy = nextScraperProxyUrl(init.shopKey);
+  if (!proxy) throw new Error(`HTTP blocked and no proxy configured for ${url}`);
+  return fetchTextViaCurl(url, headers, proxy, timeoutMs);
 }
