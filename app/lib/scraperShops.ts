@@ -8,13 +8,14 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
  *   Name = display name
  *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
  *   CURRENCY = optional ISO code (default CHF)
- *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae | fan | exl | haw | bwz
+ *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae | fan | exl | haw | bwz | tus
  *
  * Example:
  *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
  *   FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
  *   HAW|Hawk|https://www.hawk.ch|CHF|haw
  *   BWZ|Baby-Walz|https://www.baby-walz.ch/de|CHF|bwz
+ *   TUS|The Uncommon Shop|https://theuncommonshop.ch|CHF|tus
  *   WRK|Warenkontor|https://warenkontor.ch|CHF|shopify
  *     (Shopify path; landed = shelf + CHF 6 Post/DPD + same % margin as REI)
  */
@@ -29,7 +30,8 @@ export type ScraperPlatform =
   | "fan"
   | "exl"
   | "haw"
-  | "bwz";
+  | "bwz"
+  | "tus";
 
 export type ScraperShop = {
   key: string; // lowercase, used as shop_id + VariantMapping.supplierKey
@@ -96,7 +98,9 @@ export function parseScraperShops(): ScraperShop[] {
                       ? "haw"
                       : platformCandidate === "bwz"
                         ? "bwz"
-                        : "shopify";
+                        : platformCandidate === "tus"
+                          ? "tus"
+                          : "shopify";
 
     out.push({
       key,

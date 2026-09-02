@@ -10,6 +10,7 @@ import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
 import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
+import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +69,9 @@ export async function POST(request: Request) {
                       ? scrapeHawkShop
                       : shop.platform === "bwz"
                         ? scrapeBabyWalzShop
-                        : scrapeShop;
+                        : shop.platform === "tus"
+                          ? scrapeUncommonShop
+                          : scrapeShop;
     // Fire-and-forget: keep processing after the response returns.
     void runScrape(shop, runId, maxProducts).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);

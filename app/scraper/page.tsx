@@ -54,6 +54,8 @@ function platformLabel(platform: string) {
   if (platform === "fan") return "FantasyWelt / Playwright";
   if (platform === "exl") return "Ex Libris / Next.js";
   if (platform === "haw") return "Hawk / Magento";
+  if (platform === "bwz") return "Baby-Walz / HTML";
+  if (platform === "tus") return "Uncommon Shop / WooCommerce";
   return "Shopify";
 }
 

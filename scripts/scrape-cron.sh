@@ -8,6 +8,8 @@
 #     0 3 */3 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
 #   Reichelt only every 3 days (detached):
 #     0 3 */3 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#   The Uncommon Shop (TUS) every 3 days:
+#     0 4 */3 * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
 #
 # Env:
 #   SCRAPER_CRON_SKIP=rei,fan   — comma/space keys skipped when no shop arg (default: rei)
