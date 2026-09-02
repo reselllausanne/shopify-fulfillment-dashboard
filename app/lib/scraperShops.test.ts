@@ -30,13 +30,17 @@ describe("parseScraperShops", () => {
 HHV|HHV|https://www.hhv.de|EUR|hhv
 SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
 REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
-FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan`;
+FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
+HAW|Hawk|https://www.hawk.ch|CHF|haw`;
     const shops = parseScraperShops();
-    expect(shops.map((s) => s.key)).toEqual(["wel", "hhv", "snl", "rei", "fan"]);
+    expect(shops.map((s) => s.key)).toEqual(["wel", "hhv", "snl", "rei", "fan", "haw"]);
     expect(shops[3].platform).toBe("rei");
     expect(shops[3].currency).toBe("CHF");
     expect(shops[4].platform).toBe("fan");
     expect(shops[4].currency).toBe("EUR");
     expect(shops[4].code).toBe("FAN");
+    expect(shops[5].platform).toBe("haw");
+    expect(shops[5].currency).toBe("CHF");
+    expect(shops[5].code).toBe("HAW");
   });
 });

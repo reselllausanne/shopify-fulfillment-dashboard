@@ -1,13 +1,12 @@
 import { prisma } from "@/app/lib/prisma";
-import { normalizeSize } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import type { ScraperShop } from "@/app/lib/scraperShops";
-import { BaechliClient, baechliConfig, type BaechliProduct, type BaechliVariant } from "@/app/lib/baechliClient";
+import { HawkClient, hawkConfig, type HawkProduct } from "@/app/lib/hawkClient";
 import {
-  computeBaechliLandedCost,
-  isPlausibleBaechliSellPrice,
-  type BaechliLandedCost,
-} from "@/app/lib/baechliPricing";
+  computeHawkLandedCost,
+  isPlausibleHawkSellPrice,
+  type HawkLandedCost,
+} from "@/app/lib/hawkPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
 
@@ -16,8 +15,8 @@ export { startRun, hasRunningRun, recoverStaleRuns };
 const IMAGE_SYNC_CONCURRENCY = 5;
 const IMAGE_SYNC_BATCH = 200;
 
-function deferBaechliImageSync(): boolean {
-  return String(process.env.SCRAPER_BAE_DEFER_IMAGE_SYNC ?? "1") !== "0";
+function deferHawkImageSync(): boolean {
+  return String(process.env.SCRAPER_HAW_DEFER_IMAGE_SYNC ?? "1") !== "0";
 }
 
 type ExistingVariantImage = {
@@ -30,7 +29,10 @@ async function updateRun(runId: number, fields: Record<string, unknown>) {
   const keys = Object.keys(fields);
   if (!keys.length) return;
   const sets = keys.map((k, i) => `${k} = $${i + 2}`).join(", ");
-  await scraperQuery(`UPDATE scraper.scrape_runs SET ${sets} WHERE id = $1`, [runId, ...keys.map((k) => fields[k])]);
+  await scraperQuery(`UPDATE scraper.scrape_runs SET ${sets} WHERE id = $1`, [
+    runId,
+    ...keys.map((k) => fields[k]),
+  ]);
 }
 
 function needsImageHosting(
@@ -55,23 +57,17 @@ async function flushImageSyncQueue(imageSyncQueue: Set<string>) {
   return { synced: result.synced, failed: result.failed };
 }
 
-function formatBaechliNote(input: {
-  product: BaechliProduct;
-  variant: BaechliVariant;
-  gtinSource: string;
-  overlapSuppliers: string[];
-  cost: BaechliLandedCost;
-}) {
+function formatHawkNote(product: HawkProduct, cost: HawkLandedCost) {
   return JSON.stringify({
-    type: "baechli_landed_cost",
-    productUrl: input.product.productUrl,
-    supplierSku: input.variant.sku,
-    gtinSource: input.gtinSource,
-    sizeLabel: input.variant.sizeLabel,
-    overlapSuppliers: input.overlapSuppliers,
-    stockSource: "schema_org_availability",
-    buyPriceSource: "baechli_html",
-    ...input.cost,
+    type: "hawk_landed_cost",
+    productUrl: product.productUrl,
+    supplierSku: product.sku,
+    magentoProductId: product.magentoProductId,
+    mpn: product.mpn,
+    gtinSource: product.gtinSource,
+    stockSource: "json_ld_availability+stueck_an_lager",
+    buyPriceSource: "hawk_html",
+    ...cost,
   });
 }
 
@@ -85,21 +81,21 @@ async function runPool<T>(
     for (;;) {
       const i = idx++;
       if (i >= items.length) break;
-      await worker(items[i]);
+      await worker(items[i]!);
     }
   });
   await Promise.all(runners);
 }
 
-/** Bächli Bergsport (Rent-a-Shop) HTML + JSON-LD scrape. Gated from Galaxus unless allowlisted. */
-export async function scrapeBaechliShop(
+/** HAWK Electronics (Magento) HTML + JSON-LD scrape. Gated from Galaxus unless allowlisted. */
+export async function scrapeHawkShop(
   shop: ScraperShop,
   runId: number,
   maxProducts?: number
 ): Promise<void> {
   const prismaAny = prisma as any;
-  const cfg = baechliConfig();
-  const client = new BaechliClient(shop.baseUrl);
+  const cfg = hawkConfig();
+  const client = new HawkClient(shop.baseUrl);
 
   let listed = 0;
   let processed = 0;
@@ -133,64 +129,50 @@ export async function scrapeBaechliShop(
     ])
   );
 
-  const upsertVariant = async (input: {
-    gtin: string;
-    gtinSource: string;
-    supplierSku: string;
-    price: number;
-    stock: number;
-    brand: string | null;
-    name: string;
-    productType: string | null;
-    sizeRaw: string | null;
-    imageUrl: string | null;
-    manualNote: string;
-  }) => {
-    const supplierVariantId = `${shop.key}_${input.gtin}`;
-    if (seenGtins.has(input.gtin)) return false;
-    seenGtins.add(input.gtin);
-    const providerKey = buildProviderKey(input.gtin, supplierVariantId);
+  const upsertVariant = async (product: HawkProduct, cost: HawkLandedCost) => {
+    const supplierVariantId = `${shop.key}_${product.gtin}`;
+    if (seenGtins.has(product.gtin)) return false;
+    seenGtins.add(product.gtin);
+    const providerKey = buildProviderKey(product.gtin, supplierVariantId);
     if (!providerKey) return false;
 
     const existing = existingById.get(supplierVariantId);
-    const queueImage = !deferBaechliImageSync() && needsImageHosting(existing, input.imageUrl);
-    const sizeNormalized = normalizeSize(input.sizeRaw) ?? input.sizeRaw;
+    const queueImage = !deferHawkImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
+    const manualNote = formatHawkNote(product, cost);
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
       create: {
         supplierVariantId,
-        supplierSku: input.supplierSku,
+        supplierSku: product.sku,
         providerKey,
-        gtin: input.gtin,
-        price: input.price,
-        stock: input.stock,
-        sizeRaw: input.sizeRaw,
-        sizeNormalized,
-        supplierBrand: input.brand,
-        supplierProductName: input.name,
-        supplierProductType: input.productType,
-        sourceImageUrl: input.imageUrl,
-        images: input.imageUrl ? [input.imageUrl] : [],
-        manualNote: input.manualNote,
-        imageSyncStatus: input.imageUrl ? "PENDING" : null,
+        gtin: product.gtin,
+        price: cost.sellPriceChf,
+        stock: product.stock,
+        sizeRaw: null,
+        sizeNormalized: null,
+        supplierBrand: product.brand,
+        supplierProductName: product.name,
+        supplierProductType: product.productType,
+        sourceImageUrl: product.imageUrl,
+        images: product.imageUrl ? [product.imageUrl] : [],
+        manualNote,
+        imageSyncStatus: product.imageUrl ? "PENDING" : null,
         lastSyncAt: now,
       },
       update: {
-        supplierSku: input.supplierSku,
+        supplierSku: product.sku,
         providerKey,
-        gtin: input.gtin,
-        price: input.price,
-        stock: input.stock,
-        sizeRaw: input.sizeRaw,
-        sizeNormalized,
-        supplierBrand: input.brand,
-        supplierProductName: input.name,
-        supplierProductType: input.productType,
-        sourceImageUrl: input.imageUrl,
-        images: input.imageUrl ? [input.imageUrl] : [],
-        manualNote: input.manualNote,
+        gtin: product.gtin,
+        price: cost.sellPriceChf,
+        stock: product.stock,
+        supplierBrand: product.brand,
+        supplierProductName: product.name,
+        supplierProductType: product.productType,
+        sourceImageUrl: product.imageUrl,
+        images: product.imageUrl ? [product.imageUrl] : [],
+        manualNote,
         ...(queueImage
           ? {
               imageSyncStatus: "PENDING",
@@ -206,13 +188,13 @@ export async function scrapeBaechliShop(
       where: { supplierVariantId },
       create: {
         supplierVariantId,
-        gtin: input.gtin,
+        gtin: product.gtin,
         providerKey,
         supplierKey: shop.key,
         status: "SUPPLIER_GTIN",
       },
       update: {
-        gtin: input.gtin,
+        gtin: product.gtin,
         providerKey,
         supplierKey: shop.key,
         status: "SUPPLIER_GTIN",
@@ -220,7 +202,7 @@ export async function scrapeBaechliShop(
     });
 
     existingById.set(supplierVariantId, {
-      sourceImageUrl: input.imageUrl,
+      sourceImageUrl: product.imageUrl,
       hostedImageUrl: queueImage ? null : existing?.hostedImageUrl ?? null,
       imageSyncStatus: queueImage ? "PENDING" : existing?.imageSyncStatus ?? null,
     });
@@ -229,12 +211,12 @@ export async function scrapeBaechliShop(
   };
 
   try {
-    const productUrls = await client.listDeProductUrls(maxProducts);
+    const productUrls = await client.listProductUrls(maxProducts);
     listed = productUrls.length;
 
     await updateRun(runId, {
       products_listed: listed,
-      message: `source=baechli-rent-a-shop listed=${listed} fetching…`,
+      message: `source=hawk-magento listed=${listed} fetching…`,
     });
 
     await runPool(productUrls, cfg.productConcurrency, async (productUrl) => {
@@ -242,50 +224,25 @@ export async function scrapeBaechliShop(
       processed++;
       try {
         const product = await client.fetchProduct(productUrl);
-        if (!product) return;
+        if (!product) {
+          skippedNoGtin++;
+          return;
+        }
+        if (!product.priceChf || product.priceChf <= 0) {
+          skippedNoPrice++;
+          return;
+        }
 
-        for (const variant of product.variants) {
-          if (!variant.gtin || !variant.gtinSource) {
-            skippedNoGtin++;
-            continue;
-          }
-          const buyChf = variant.priceChf;
-          if (!buyChf || buyChf <= 0) {
-            skippedNoPrice++;
-            continue;
-          }
+        const cost = computeHawkLandedCost(product.priceChf);
+        if (!cost || !isPlausibleHawkSellPrice(cost)) {
+          skippedNoPrice++;
+          return;
+        }
 
-          const cost = computeBaechliLandedCost(buyChf);
-          if (!cost || !isPlausibleBaechliSellPrice(cost)) {
-            skippedNoPrice++;
-            continue;
-          }
-
-          const title = variant.sizeLabel ? `${product.name} — ${variant.sizeLabel}` : product.name;
-          const stock = variant.inStock ? cfg.defaultStock : 0;
-          const ok = await upsertVariant({
-            gtin: variant.gtin,
-            gtinSource: variant.gtinSource,
-            supplierSku: variant.sku,
-            price: cost.sellPriceChf,
-            stock,
-            brand: product.brand,
-            name: title,
-            productType: product.productType,
-            sizeRaw: variant.sizeLabel,
-            imageUrl: variant.imageUrl,
-            manualNote: formatBaechliNote({
-              product,
-              variant,
-              gtinSource: variant.gtinSource,
-              overlapSuppliers: [],
-              cost,
-            }),
-          });
-          if (ok) {
-            wrote++;
-            gtinMatched++;
-          }
+        const ok = await upsertVariant(product, cost);
+        if (ok) {
+          wrote++;
+          gtinMatched++;
         }
       } catch (err) {
         requestErrors++;
@@ -299,7 +256,7 @@ export async function scrapeBaechliShop(
           variants_upserted: wrote,
           errors: requestErrors,
           message: [
-            "source=baechli-rent-a-shop",
+            "source=hawk-magento",
             `listed=${listed}`,
             `processed=${processed}`,
             `wrote=${wrote}`,
@@ -309,14 +266,14 @@ export async function scrapeBaechliShop(
         });
       }
 
-      if (!deferBaechliImageSync() && imageSyncQueue.size >= IMAGE_SYNC_BATCH) {
+      if (!deferHawkImageSync() && imageSyncQueue.size >= IMAGE_SYNC_BATCH) {
         const img = await flushImageSyncQueue(imageSyncQueue);
         imageSynced += img.synced;
         imageFailed += img.failed;
       }
     });
 
-    if (!deferBaechliImageSync()) {
+    if (!deferHawkImageSync()) {
       while (imageSyncQueue.size > 0) {
         const img = await flushImageSyncQueue(imageSyncQueue);
         imageSynced += img.synced;
@@ -337,13 +294,13 @@ export async function scrapeBaechliShop(
       with_gtin: gtinMatched,
       errors: requestErrors,
       message: [
-        "source=baechli-rent-a-shop",
+        "source=hawk-magento",
         `listed=${listed}`,
         `processed=${processed}`,
         `wrote=${wrote}`,
         `skipped_no_gtin=${skippedNoGtin}`,
         `skipped_no_price=${skippedNoPrice}`,
-        deferBaechliImageSync() ? "image_sync=deferred" : `images_synced=${imageSynced}`,
+        deferHawkImageSync() ? "image_sync=deferred" : `images_synced=${imageSynced}`,
         `images_failed=${imageFailed}`,
       ].join(" "),
     });

@@ -7,6 +7,8 @@ import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
 import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
 import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
+import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
+import { scrapeHawkShop } from "@/app/lib/hawkScrape";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 
 function runScrapeForShop(shop: ScraperShop, runId: number) {
@@ -23,7 +25,11 @@ function runScrapeForShop(shop: ScraperShop, runId: number) {
               ? scrapeBaechliShop
               : shop.platform === "fan"
                 ? scrapeFantasyweltShop
-                : scrapeShop;
+                : shop.platform === "exl"
+                  ? scrapeExlibrisShop
+                  : shop.platform === "haw"
+                    ? scrapeHawkShop
+                    : scrapeShop;
   return runScrape(shop, runId);
 }
 
