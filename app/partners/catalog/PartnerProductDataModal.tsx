@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  mergeMoqIntoManualNote,
+  parseMoqFromManualNote,
+} from "@/galaxus/exports/stockMoq";
 
 export type PartnerProductDataModalProps = {
   open: boolean;
@@ -20,6 +24,11 @@ function field(v: VariantJson | null, key: string): string {
   return String(x);
 }
 
+/** Strip moq/oqs tokens so the note field stays human-editable. */
+function noteWithoutMoq(manualNote: unknown): string {
+  return mergeMoqIntoManualNote(String(manualNote ?? ""), null) ?? "";
+}
+
 export function PartnerProductDataModal({ open, supplierVariantId, isNer = false, onClose, onSaved }: PartnerProductDataModalProps) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -31,6 +40,7 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
   const [imageUrl1, setImageUrl1] = useState("");
   const [imageUrl2, setImageUrl2] = useState("");
   const [imageUrl3, setImageUrl3] = useState("");
+  const [moq, setMoq] = useState("");
 
   useEffect(() => {
     if (!open || !supplierVariantId) {
@@ -39,6 +49,7 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
       setImageUrl1("");
       setImageUrl2("");
       setImageUrl3("");
+      setMoq("");
       return;
     }
     setErr(null);
@@ -52,7 +63,14 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error ?? "Load failed");
         const variant = data.variant as VariantJson;
-        setV(variant);
+        const parsedMoq = parseMoqFromManualNote(
+          variant.manualNote != null ? String(variant.manualNote) : null
+        );
+        setMoq(parsedMoq ? String(parsedMoq.minimumOrderQuantity) : "");
+        setV({
+          ...variant,
+          manualNote: noteWithoutMoq(variant.manualNote),
+        });
         setMapping(data.mapping ?? null);
         // Populate image URL fields from images array, then fallback to hosted/source
         const rawImages = variant.images;
@@ -65,6 +83,7 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
       } catch (e: unknown) {
         setErr(e instanceof Error ? e.message : "Load failed");
         setV(null);
+        setMoq("");
       } finally {
         setLoading(false);
       }
@@ -96,6 +115,12 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
       const leadTimeDays = lead === "" ? null : Number.parseInt(lead, 10);
       if (lead !== "" && !Number.isFinite(leadTimeDays)) throw new Error("Invalid lead time days");
 
+      const moqTrim = moq.trim();
+      const moqValue = moqTrim === "" ? null : Number.parseInt(moqTrim, 10);
+      if (moqTrim !== "" && (!Number.isFinite(moqValue) || (moqValue ?? 0) < 1)) {
+        throw new Error("MOQ must be a positive integer");
+      }
+
       const iv = String(v.imageVersion ?? "").trim();
       const imageVersion = iv === "" ? null : Number.parseInt(iv, 10);
       if (iv !== "" && !Number.isFinite(imageVersion)) throw new Error("Invalid image version");
@@ -119,6 +144,7 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
         hostedImageUrl: null,
         leadTimeDays,
         manualNote: String(v.manualNote ?? "").trim() || null,
+        moq: moqValue,
       };
 
       // NER-only / internal fields — non-NER partners cannot edit these via the catalog API.
@@ -338,6 +364,18 @@ export function PartnerProductDataModal({ open, supplierVariantId, isNer = false
                   value={field(v, "leadTimeDays")}
                   onChange={(e) => setScalar("leadTimeDays", e.target.value)}
                 />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] font-medium text-slate-600">MOQ (Galaxus min order qty)</span>
+                <input
+                  className="w-full rounded border border-slate-200 px-2 py-1.5 text-right"
+                  value={moq}
+                  onChange={(e) => setMoq(e.target.value)}
+                  placeholder="1"
+                />
+                <span className="block text-[10px] text-slate-400">
+                  Blank = default 1. Clears existing moq= in note on save.
+                </span>
               </label>
               <label className="space-y-1 sm:col-span-2">
                 <span className="text-[11px] font-medium text-slate-600">Image 1 URL (main)</span>
