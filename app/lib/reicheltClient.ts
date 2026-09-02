@@ -36,6 +36,11 @@ export type ReicheltListItem = {
   imageUrl: string | null;
 };
 
+export type ReicheltTechAttribute = {
+  name: string;
+  value: string;
+};
+
 export type ReicheltProduct = {
   articleId: string;
   reicheltSku: string;
@@ -53,6 +58,8 @@ export type ReicheltProduct = {
   breadcrumbs: string[];
   productUrl: string;
   descriptionHtml: string | null;
+  /** Key/value pairs from `ul.articleAttribute` (FR/DE tech tables). */
+  techAttributes: ReicheltTechAttribute[];
 };
 
 type CookieJar = Map<string, string>;
@@ -66,8 +73,40 @@ function jitterMs(max = 400) {
 }
 
 function parseMoney(value: unknown): number | null {
-  const raw = String(value ?? "").trim().replace(",", ".");
-  const n = Number.parseFloat(raw);
+  let raw = String(value ?? "").trim();
+  if (!raw) return null;
+  raw = raw
+    .replace(/[\u00a0\u202f\u2009]/g, " ")
+    .replace(/[^\d.,' -]/g, "")
+    .trim();
+  if (!raw) return null;
+
+  // Normalize common thousands separators (spaces / apostrophes) before decimal inference.
+  let normalized = raw.replace(/[\s']/g, "");
+  const lastDot = normalized.lastIndexOf(".");
+  const lastComma = normalized.lastIndexOf(",");
+
+  if (lastDot >= 0 && lastComma >= 0) {
+    const decimalSep = lastDot > lastComma ? "." : ",";
+    const thousandsSep = decimalSep === "." ? "," : ".";
+    normalized = normalized.replace(new RegExp(`\\${thousandsSep}`, "g"), "");
+    if (decimalSep === ",") normalized = normalized.replace(/,/g, ".");
+  } else if (lastComma >= 0) {
+    const decimals = normalized.length - lastComma - 1;
+    normalized = decimals >= 1 && decimals <= 2 ? normalized.replace(/,/g, ".") : normalized.replace(/,/g, "");
+  } else {
+    const dotCount = (normalized.match(/\./g) ?? []).length;
+    if (dotCount > 1) {
+      const last = normalized.lastIndexOf(".");
+      const decimals = normalized.length - last - 1;
+      normalized =
+        decimals >= 1 && decimals <= 2
+          ? `${normalized.slice(0, last).replace(/\./g, "")}.${normalized.slice(last + 1)}`
+          : normalized.replace(/\./g, "");
+    }
+  }
+
+  const n = Number.parseFloat(normalized);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.round(n * 100) / 100;
 }
@@ -387,22 +426,36 @@ export function parseReicheltChfPrice(html: string, priceEur: number | null = nu
     const chf = parseMoney(raw);
     if (!chf || priceEur == null) return chf;
     if (chf > priceEur * 3) return null;
-    if (priceEur >= 100 && chf < priceEur * 0.05) return null;
-    if (priceEur >= 20 && chf < priceEur * 0.2) return null;
+    // Guard against clipped-thousands parse like "1 906.08 CHF" -> "906.08 CHF".
+    if (priceEur >= 100 && chf < priceEur * 0.6) return null;
+    if (priceEur >= 20 && chf < priceEur * 0.4) return null;
     return chf;
   };
 
-  const paren = html.match(/\(([\d.,]+)\s*CHF\)/i);
-  if (paren) {
-    const chf = pick(paren[1]);
-    if (chf) return chf;
+  const candidates: number[] = [];
+  const patterns: RegExp[] = [
+    /\(([0-9][\d.,' \u00a0\u202f]*)\s*CHF\)/gi,
+    /([0-9][\d.,' \u00a0\u202f]*)\s*CHF\b/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of html.matchAll(pattern)) {
+      const chf = pick(match[1]);
+      if (chf) candidates.push(chf);
+    }
   }
-  const inline = html.match(/([\d.,]+)\s*CHF\b/i);
-  if (inline) {
-    const chf = pick(inline[1]);
-    if (chf) return chf;
+  if (!candidates.length) return null;
+  if (priceEur == null) return Math.max(...candidates);
+
+  let best = candidates[0]!;
+  let bestDistance = Math.abs(best - priceEur);
+  for (const value of candidates.slice(1)) {
+    const distance = Math.abs(value - priceEur);
+    if (distance < bestDistance) {
+      best = value;
+      bestDistance = distance;
+    }
   }
-  return null;
+  return best;
 }
 
 export function parseReicheltStockStatus(html: string): { status: string | null; text: string | null; inStock: boolean } {
@@ -524,6 +577,7 @@ export function parseReicheltProductHtml(html: string, articleId: string, baseUr
     .map((m) => decodeHtml(m[1].replace(/\s+/g, " ").trim()))
     .filter((b) => b && !isJunkReicheltBreadcrumb(b));
   const descriptionHtml = html.match(/itemprop="description"[^>]*>([\s\S]*?)<\/div>/i)?.[1]?.trim() ?? null;
+  const techAttributes = parseReicheltArticleAttributes(html);
 
   return {
     articleId,
@@ -542,7 +596,29 @@ export function parseReicheltProductHtml(html: string, articleId: string, baseUr
     breadcrumbs,
     productUrl,
     descriptionHtml,
+    techAttributes,
   };
+}
+
+/** Parse Reichelt FR/DE `ul.articleAttribute` name/value pairs (tech + general). */
+export function parseReicheltArticleAttributes(html: string): ReicheltTechAttribute[] {
+  const out: ReicheltTechAttribute[] = [];
+  const seen = new Set<string>();
+  for (const block of html.matchAll(/<ul class="articleAttribute">([\s\S]*?)<\/ul>/gi)) {
+    const lis = [...block[1].matchAll(/<li>([\s\S]*?)<\/li>/gi)].map((m) =>
+      decodeHtml(m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())
+    );
+    for (let i = 0; i + 1 < lis.length; i += 2) {
+      const name = lis[i];
+      const value = lis[i + 1];
+      if (!name || !value) continue;
+      const key = `${name.toLowerCase()}::${value.toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ name, value });
+    }
+  }
+  return out;
 }
 
 export function extractReicheltArticleIdFromUrl(url: string): string | null {
