@@ -88,7 +88,6 @@ function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost:
     breadcrumbs: product.breadcrumbs,
     productUrl: product.productUrl,
     descriptionText: descriptionText || undefined,
-    techAttributes: product.techAttributes?.length ? product.techAttributes.slice(0, 80) : undefined,
     imageStoredInDb: false,
     stockSource: "availability_status",
   });
