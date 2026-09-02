@@ -34,6 +34,7 @@ type FormState = {
   supplierColorway: string;
   weightGrams: string;
   leadTimeDays: string;
+  moq: string;
   imageUrl1: string;
   imageUrl2: string;
   imageUrl3: string;
@@ -52,6 +53,7 @@ const EMPTY_FORM: FormState = {
   supplierColorway: "",
   weightGrams: "",
   leadTimeDays: "",
+  moq: "",
   imageUrl1: "",
   imageUrl2: "",
   imageUrl3: "",
@@ -141,6 +143,10 @@ export function CreateProductModal({
     if (form.gtin.trim() && !/^\d{8,14}$/.test(form.gtin.trim())) {
       return "GTIN must be 8/12/13/14 digits";
     }
+    if (form.moq.trim()) {
+      const moq = Number.parseInt(form.moq.trim(), 10);
+      if (!Number.isFinite(moq) || moq < 1) return "MOQ must be a positive integer";
+    }
     return null;
   }, [form]);
 
@@ -170,6 +176,9 @@ export function CreateProductModal({
         manualNote: form.manualNote.trim() || null,
         overwrite,
       };
+      if (form.moq.trim()) {
+        payload.moq = form.moq.trim();
+      }
       const res = await fetch("/api/partners/catalog/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -361,6 +370,12 @@ export function CreateProductModal({
               align="right"
             />
             <Field
+              label="MOQ (Galaxus min order qty)"
+              value={form.moq}
+              onChange={(v) => setField("moq", v)}
+              align="right"
+            />
+            <Field
               label="Image 1 URL (main)"
               value={form.imageUrl1}
               onChange={(v) => setField("imageUrl1", v)}
@@ -403,6 +418,7 @@ export function CreateProductModal({
             (ready for Galaxus & Decathlon feeds after you mark it ready in Catalog →
             Product data). Without GTIN, it is saved as <code>PENDING_GTIN</code> draft —
             it stays in your catalog but is not pushed to marketplaces.
+            Leave <strong>MOQ</strong> blank for 1; set e.g. 10 so Galaxus requires buying 10+.
           </p>
 
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-700 pt-3">

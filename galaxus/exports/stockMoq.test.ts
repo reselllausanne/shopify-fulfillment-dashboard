@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatGalaxusStockMoqFields,
   meetsGalaxusStockMoq,
+  mergeMoqIntoManualNote,
   resolveGalaxusStockMoq,
 } from "@/galaxus/exports/stockMoq";
 
@@ -73,6 +74,21 @@ describe("resolveGalaxusStockMoq", () => {
     expect(meetsGalaxusStockMoq(1, gld)).toBe(false);
     expect(meetsGalaxusStockMoq(0, gld)).toBe(false);
     expect(meetsGalaxusStockMoq(1, { minimumOrderQuantity: 1, orderQuantitySteps: 1 })).toBe(true);
+  });
+});
+
+describe("mergeMoqIntoManualNote", () => {
+  it("appends moq/oqs tokens and replaces existing ones", () => {
+    expect(mergeMoqIntoManualNote(null, 10)).toBe("moq=10 oqs=10");
+    expect(mergeMoqIntoManualNote("liquidation", 5)).toBe("liquidation moq=5 oqs=5");
+    expect(mergeMoqIntoManualNote("unit=67 moq=3 oqs=1", 10, 10)).toBe(
+      "unit=67 moq=10 oqs=10"
+    );
+  });
+
+  it("strips tokens when moq cleared", () => {
+    expect(mergeMoqIntoManualNote("unit=67 moq=10 oqs=10", null)).toBe("unit=67");
+    expect(mergeMoqIntoManualNote("moq=10", undefined)).toBe(null);
   });
 });
 

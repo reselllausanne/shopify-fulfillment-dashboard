@@ -15,6 +15,7 @@ import {
   normalizeProviderKey,
 } from "@/galaxus/supplier/providerKey";
 import { partnerOwnsSupplierVariant } from "@/app/lib/partnerCatalogScope";
+import { mergeMoqIntoManualNote } from "@/galaxus/exports/stockMoq";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +37,9 @@ type CreateBody = {
   sourceImageUrl?: string | null;
   images?: unknown;
   manualNote?: string | null;
+  /** Galaxus stock-feed minimum order qty (written into manualNote as moq=/oqs=). */
+  moq?: number | string | null;
+  orderQuantitySteps?: number | string | null;
   overwrite?: boolean;
 };
 
@@ -199,7 +203,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const manualNote = (body.manualNote ?? "").toString().trim() || null;
+    const moqProvided =
+      body.moq !== undefined && body.moq !== null && String(body.moq).trim() !== "";
+    const oqsProvided =
+      body.orderQuantitySteps !== undefined &&
+      body.orderQuantitySteps !== null &&
+      String(body.orderQuantitySteps).trim() !== "";
+    const moqRaw = moqProvided ? toIntOrNull(body.moq) : null;
+    const oqsRaw = oqsProvided ? toIntOrNull(body.orderQuantitySteps) : null;
+    if (moqProvided && (moqRaw == null || moqRaw < 1)) {
+      return NextResponse.json(
+        { ok: false, error: "MOQ must be a positive integer" },
+        { status: 400 }
+      );
+    }
+    if (oqsProvided && (oqsRaw == null || oqsRaw < 1)) {
+      return NextResponse.json(
+        { ok: false, error: "Order quantity steps must be a positive integer" },
+        { status: 400 }
+      );
+    }
+    const noteBase = (body.manualNote ?? "").toString().trim() || null;
+    const manualNote = moqProvided
+      ? mergeMoqIntoManualNote(noteBase, moqRaw, oqsProvided ? oqsRaw : null)
+      : noteBase;
     const now = new Date();
 
     if (gtin && providerKey) {
