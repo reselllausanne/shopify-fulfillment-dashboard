@@ -95,6 +95,7 @@ export type GalaxusProductKind =
   | "soldering_tool"
   | "multimeter"
   | "electronic_tool"
+  | "pressure_washer"
   | "pc_ssd"
   | "pc_hdd"
   | "pc_ram"
@@ -342,6 +343,8 @@ export const GALAXUS_CATEGORY_PATHS: Record<GalaxusProductKind, string> = {
   multimeter: "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Elektronikwerkzeug > Multimeter",
   electronic_tool:
     "Baumarkt + Garten > Elektrobedarf > Elektroinstallation > Elektronikwerkzeug > Bolzenschneider + Seitenschneider",
+  pressure_washer:
+    "Baumarkt + Garten > Gartenbau + Technik > Reinigungsmaschinen > Hochdruckreiniger",
   pc_ssd: "IT + Multimedia > PC Komponenten > Speicher > SSD",
   pc_hdd: "IT + Multimedia > PC Komponenten > Speicher > Festplatte",
   pc_ram: "IT + Multimedia > PC Komponenten > RAM",
