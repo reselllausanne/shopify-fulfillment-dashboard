@@ -731,7 +731,7 @@ function skippedSalesImport(flow: MiraklImportFlow, mode: MiraklImportMode = "NO
     importId: null,
     status: "SUCCESS",
     linesInError: 0,
-    summary: { status: "SKIPPED", reason: "decathlon_sales_paused", linesInError: 0 },
+    summary: { status: "SKIPPED", reasonStatus: "decathlon_sales_paused", linesInError: 0 },
   };
 }
 
