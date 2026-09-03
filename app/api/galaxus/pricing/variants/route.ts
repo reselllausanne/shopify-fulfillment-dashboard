@@ -6,6 +6,7 @@ import { getDefaultPricing, resolveGalaxusSellExVatForChannel, resolvePricingOve
 import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partnerPricing";
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { attachGtinReferenceMinPrices } from "@/galaxus/supplier/gtinReferenceMinPrice";
+import { mergeMoqIntoManualNote } from "@/galaxus/exports/stockMoq";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -174,6 +175,9 @@ type UpdatePayload = {
   manualStock?: number | null;
   manualLock?: boolean;
   manualNote?: string | null;
+  /** Galaxus stock-feed min order qty — merged into manualNote as moq=/oqs=. */
+  moq?: number | string | null;
+  orderQuantitySteps?: number | string | null;
   /** Calendar days — used in Stock feed RestockTime/RestockDate when no STX order ETA exists */
   leadTimeDays?: number | null;
   deliveryType?: string | null;
@@ -253,6 +257,46 @@ export async function POST(request: Request) {
           }
           if ("manualNote" in entry) {
             data.manualNote = entry.manualNote ?? null;
+            touchManualMeta = true;
+          }
+          if ("moq" in entry) {
+            const moqRaw =
+              entry.moq === null || entry.moq === undefined || String(entry.moq).trim() === ""
+                ? null
+                : Number.parseInt(String(entry.moq), 10);
+            if (moqRaw != null && (!Number.isFinite(moqRaw) || moqRaw < 1)) {
+              output.push({
+                ok: false,
+                error: "MOQ must be a positive integer or empty",
+                supplierVariantId: target.supplierVariantId,
+              });
+              continue;
+            }
+            const oqsProvided = "orderQuantitySteps" in entry;
+            const oqsRaw = !oqsProvided
+              ? null
+              : entry.orderQuantitySteps === null ||
+                  entry.orderQuantitySteps === undefined ||
+                  String(entry.orderQuantitySteps).trim() === ""
+                ? null
+                : Number.parseInt(String(entry.orderQuantitySteps), 10);
+            if (oqsProvided && oqsRaw != null && (!Number.isFinite(oqsRaw) || oqsRaw < 1)) {
+              output.push({
+                ok: false,
+                error: "Order quantity steps must be a positive integer or empty",
+                supplierVariantId: target.supplierVariantId,
+              });
+              continue;
+            }
+            const noteBase =
+              "manualNote" in data
+                ? ((data.manualNote as string | null) ?? null)
+                : (target.manualNote ?? null);
+            data.manualNote = mergeMoqIntoManualNote(
+              noteBase,
+              moqRaw,
+              oqsProvided ? oqsRaw : null
+            );
             touchManualMeta = true;
           }
           if ("leadTimeDays" in entry) {

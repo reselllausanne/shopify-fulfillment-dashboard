@@ -5,6 +5,10 @@ import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   resolveDecathlonBuyNow,
 } from "@/decathlon/exports/pricing";
+import {
+  mergeMoqIntoManualNote,
+  parseMoqFromManualNote,
+} from "@/galaxus/exports/stockMoq";
 
 type PricingVariantRow = {
   supplierVariantId: string;
@@ -87,10 +91,20 @@ type PricingEdit = {
   manualPrice?: string;
   manualStock?: string;
   leadTimeDays?: string;
+  moq?: string;
   manualLock?: boolean;
   manualNote?: string;
   clearManual?: boolean;
 };
+
+function noteWithoutMoq(manualNote: string | null | undefined): string {
+  return mergeMoqIntoManualNote(manualNote ?? "", null) ?? "";
+}
+
+function moqFromNote(manualNote: string | null | undefined): string {
+  const parsed = parseMoqFromManualNote(manualNote);
+  return parsed ? String(parsed.minimumOrderQuantity) : "";
+}
 
 function normalizeNumber(value: any): string {
   if (value === null || value === undefined) return "";
@@ -132,6 +146,7 @@ export default function GalaxusCatalogPage() {
   const [bulkStock, setBulkStock] = useState("");
   const [bulkLock, setBulkLock] = useState<"nochange" | "lock" | "unlock">("nochange");
   const [bulkNote, setBulkNote] = useState("");
+  const [bulkMoq, setBulkMoq] = useState("");
   const [log, setLog] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -378,6 +393,7 @@ export default function GalaxusCatalogPage() {
         if (bulkStock.trim()) existing.manualStock = bulkStock;
         if (bulkLock !== "nochange") existing.manualLock = bulkLock === "lock";
         if (bulkNote.trim()) existing.manualNote = bulkNote;
+        if (bulkMoq.trim()) existing.moq = bulkMoq;
         next[id] = existing;
       }
       return next;
@@ -389,13 +405,21 @@ export default function GalaxusCatalogPage() {
     setEdits((prev) => {
       const next = { ...prev };
       for (const id of selectedIds) {
-        next[id] = { clearManual: true, manualLock: false, manualPrice: "", manualStock: "", manualNote: "" };
+        next[id] = {
+          clearManual: true,
+          manualLock: false,
+          manualPrice: "",
+          manualStock: "",
+          manualNote: "",
+          moq: "",
+        };
       }
       return next;
     });
   };
 
   const saveChanges = async () => {
+    const itemById = new Map(items.map((item) => [item.supplierVariantId, item]));
     const updates = Object.entries(edits)
       .map(([supplierVariantId, edit]) => {
         if (edit.clearManual) {
@@ -405,8 +429,18 @@ export default function GalaxusCatalogPage() {
         if (edit.manualPrice !== undefined) payload.manualPrice = parseNumberOrNull(edit.manualPrice);
         if (edit.manualStock !== undefined) payload.manualStock = parseNumberOrNull(edit.manualStock);
         if (edit.manualLock !== undefined) payload.manualLock = edit.manualLock;
-        if (edit.manualNote !== undefined) payload.manualNote = edit.manualNote.trim() || null;
         if (edit.leadTimeDays !== undefined) payload.leadTimeDays = parseIntOrNull(edit.leadTimeDays);
+        if (edit.manualNote !== undefined || edit.moq !== undefined) {
+          const current = itemById.get(supplierVariantId);
+          const note =
+            edit.manualNote !== undefined
+              ? edit.manualNote.trim() || null
+              : noteWithoutMoq(current?.manualNote);
+          const moqStr =
+            edit.moq !== undefined ? edit.moq : moqFromNote(current?.manualNote);
+          payload.manualNote = note;
+          payload.moq = parseIntOrNull(moqStr);
+        }
         return payload;
       })
       .filter((entry) => Object.keys(entry).length > 1);
@@ -561,7 +595,7 @@ export default function GalaxusCatalogPage() {
 
           <div className="rounded border bg-white p-4 space-y-3">
             <div className="text-sm font-medium">Bulk edit selected</div>
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-5">
               <div className="space-y-1">
                 <div className="text-xs text-gray-500">Manual price (inc VAT)</div>
                 <input
@@ -591,6 +625,15 @@ export default function GalaxusCatalogPage() {
                   <option value="lock">Lock</option>
                   <option value="unlock">Unlock</option>
                 </select>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs text-gray-500">MOQ</div>
+                <input
+                  className="w-full border rounded px-2 py-1 text-sm"
+                  value={bulkMoq}
+                  onChange={(e) => setBulkMoq(e.target.value)}
+                  placeholder="10"
+                />
               </div>
               <div className="space-y-1">
                 <div className="text-xs text-gray-500">Note</div>
@@ -656,6 +699,12 @@ export default function GalaxusCatalogPage() {
                   >
                     Lead days
                   </th>
+                  <th
+                    className="px-2 py-2 text-right"
+                    title="Galaxus stock feed MinimumOrderQuantity (stored as moq= in note)"
+                  >
+                    MOQ
+                  </th>
                   <th className="px-2 py-2 text-right">Manual Price</th>
                   <th className="px-2 py-2 text-right">Manual Stock</th>
                   <th className="px-2 py-2 text-center">Lock</th>
@@ -670,7 +719,8 @@ export default function GalaxusCatalogPage() {
                   const manualPriceValue = edit.manualPrice ?? normalizeNumber(item.manualPrice ?? "");
                   const manualStockValue = edit.manualStock ?? normalizeNumber(item.manualStock ?? "");
                   const manualLockValue = edit.manualLock ?? Boolean(item.manualLock);
-                  const manualNoteValue = edit.manualNote ?? (item.manualNote ?? "");
+                  const manualNoteValue = edit.manualNote ?? noteWithoutMoq(item.manualNote);
+                  const moqValue = edit.moq ?? moqFromNote(item.manualNote);
                   const leadTimeValue = edit.leadTimeDays ?? normalizeNumber(item.leadTimeDays ?? "");
                   const sizeLabel = item.sizeNormalized ?? item.sizeRaw ?? "-";
                   const galaxusPriceValue =
@@ -738,6 +788,17 @@ export default function GalaxusCatalogPage() {
                       </td>
                       <td className="px-2 py-1 text-right">
                         <input
+                          className="w-12 border rounded px-1 py-0.5 text-right"
+                          type="number"
+                          min={1}
+                          step={1}
+                          title="Empty = default 1. Galaxus MinimumOrderQuantity"
+                          value={moqValue}
+                          onChange={(e) => updateEdit(item.supplierVariantId, { moq: e.target.value })}
+                        />
+                      </td>
+                      <td className="px-2 py-1 text-right">
+                        <input
                           className="w-24 border rounded px-1 py-0.5 text-right"
                           value={manualPriceValue}
                           onChange={(e) => updateEdit(item.supplierVariantId, { manualPrice: e.target.value })}
@@ -777,6 +838,7 @@ export default function GalaxusCatalogPage() {
                                 manualPrice: "",
                                 manualStock: "",
                                 manualNote: "",
+                                moq: "",
                               },
                             }))
                           }
@@ -795,7 +857,7 @@ export default function GalaxusCatalogPage() {
                 })}
                 {items.length === 0 ? (
                   <tr>
-                    <td colSpan={16} className="px-2 py-6 text-center text-xs text-gray-500">
+                    <td colSpan={17} className="px-2 py-6 text-center text-xs text-gray-500">
                       No items loaded.
                     </td>
                   </tr>
