@@ -861,7 +861,6 @@ export default function ScanPage() {
         return;
       }
       const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim();
-      const tracking = String(data.trackingNumber ?? "").trim();
       if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
         // Mark this order as done in the GTIN panel so it stops looking like both are still open.
         setResult((prev) => {
@@ -896,11 +895,7 @@ export default function ScanPage() {
             },
           };
         });
-        window.alert(
-          `Galaxus direct fulfilled: ${orderRef || orderDbId}` +
-            (tracking ? `\nTracking: ${tracking}` : "") +
-            `\n(Only oldest open — other GTIN matches untouched.)`
-        );
+        // No success alert — label popup is the operator signal.
       }
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
