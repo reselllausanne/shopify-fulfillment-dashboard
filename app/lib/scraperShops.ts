@@ -8,13 +8,34 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
  *   Name = display name
  *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
  *   CURRENCY = optional ISO code (default CHF)
- *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae
+ *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae | fan | exl | haw | bwz | tus | alt | ven
  *
  * Example:
  *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
+ *   FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
+ *   HAW|Hawk|https://www.hawk.ch|CHF|haw
+ *   BWZ|Baby-Walz|https://www.baby-walz.ch/de|CHF|bwz
+ *   TUS|The Uncommon Shop|https://theuncommonshop.ch|CHF|tus
+ *   ALT|Alternate|https://www.alternate.ch|CHF|alt
+ *   VEN|Venova|https://www.venova.ch/de|CHF|ven
+ *   WRK|Warenkontor|https://warenkontor.ch|CHF|shopify
+ *     (Shopify path; landed = shelf + CHF 6 Post/DPD + same % margin as REI)
  */
 
-export type ScraperPlatform = "shopify" | "hhv" | "snl" | "rei" | "nso" | "bae";
+export type ScraperPlatform =
+  | "shopify"
+  | "hhv"
+  | "snl"
+  | "rei"
+  | "nso"
+  | "bae"
+  | "fan"
+  | "exl"
+  | "haw"
+  | "bwz"
+  | "tus"
+  | "alt"
+  | "ven";
 
 export type ScraperShop = {
   key: string; // lowercase, used as shop_id + VariantMapping.supplierKey
@@ -73,7 +94,21 @@ export function parseScraperShops(): ScraperShop[] {
               ? "nso"
               : platformCandidate === "bae"
                 ? "bae"
-                : "shopify";
+                : platformCandidate === "fan"
+                  ? "fan"
+                  : platformCandidate === "exl"
+                    ? "exl"
+                    : platformCandidate === "haw"
+                      ? "haw"
+                      : platformCandidate === "bwz"
+                        ? "bwz"
+                        : platformCandidate === "tus"
+                          ? "tus"
+                          : platformCandidate === "alt"
+                            ? "alt"
+                            : platformCandidate === "ven"
+                              ? "ven"
+                              : "shopify";
 
     out.push({
       key,

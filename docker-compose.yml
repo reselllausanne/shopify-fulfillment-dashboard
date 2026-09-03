@@ -165,3 +165,18 @@ services:
     restart: unless-stopped
     depends_on:
       - web
+
+  worker-shopify-stx-price-sync:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=${SHOPIFY_STX_SYNC_NODE_OPTIONS:---max-old-space-size=2048}
+      - SHOPIFY_STX_SYNC_INTERVAL_MS=${SHOPIFY_STX_SYNC_INTERVAL_MS:-86400000}
+      - SHOPIFY_STX_SYNC_INITIAL_DELAY_MS=${SHOPIFY_STX_SYNC_INITIAL_DELAY_MS:-120000}
+      - SHOPIFY_STX_SYNC_BATCH_SIZE=${SHOPIFY_STX_SYNC_BATCH_SIZE:-50}
+      - SHOPIFY_STX_SYNC_BATCH_SLEEP_MS=${SHOPIFY_STX_SYNC_BATCH_SLEEP_MS:-1500}
+    command: ["npx", "tsx", "scripts/workers/shopifyStxPriceSyncWorker.ts"]
+    volumes:
+      - ./.data:/app/.data
+    restart: unless-stopped

@@ -54,6 +54,13 @@ const REI_LABEL_TO_KIND: Array<{ pattern: RegExp; kind: GalaxusProductKind }> = 
   { pattern: /meubles de camping|campingmöbel|campingstuhl|campingtisch|campingmobiliar|camping furniture/i, kind: "camping_furniture" },
   { pattern: /camping(?!lampe|licht|leuchte)/i, kind: "camping_tent" },
 
+  // garden cleaning machines — before brand catch-alls like "STANLEY TOOLS"
+  {
+    pattern:
+      /nettoyeur haute pression|hochdruckreiniger|pressure\s*wash|wasserstrahlreiniger|high.?pressure.?clean/i,
+    kind: "pressure_washer",
+  },
+
   // power tools — Fraiser + raboter (Galaxus Baumarkt > Fräsen + Hobeln)
   { pattern: /fraiseuse|fräse|fräsmaschine|fraesen|cnc.?fr|milling machine|router\b/i, kind: "power_router" },
   { pattern: /drehmaschine|tour\b|lathe/i, kind: "power_lathe" },
@@ -360,7 +367,8 @@ const REI_LABEL_TO_KIND: Array<{ pattern: RegExp; kind: GalaxusProductKind }> = 
   { pattern: /kabel|câble|cable\b|wire\b|fil\b|leitung/i, kind: "power_cable" },
   { pattern: /elektronik|electronic|électronique|electronique|composant|component|bauelement|elektrotechnik|robotik|robotique/i, kind: "passive_component" },
   { pattern: /messtechnik|measurement|test equipment|instrument/i, kind: "multimeter" },
-  { pattern: /werkzeug|tool|outil|outillage/i, kind: "electronic_tool" },
+  // Singular tool/outil only — do NOT match brand suffix "TOOLS" (STANLEY TOOLS → Bolzenschneider).
+  { pattern: /\bwerkzeuge?\b|\btool\b|\boutils?\b|\boutillage\b/i, kind: "electronic_tool" },
 ];
 
 function normalizeReicheltText(values: Array<string | null | undefined>): string {

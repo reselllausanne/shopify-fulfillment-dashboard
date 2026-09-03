@@ -80,6 +80,8 @@ function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost:
     marginPercent: cost.marginPercent,
     sellPriceChf: cost.sellPriceChf,
     weightGrams: cost.weightGrams,
+    rawWeightGrams: cost.rawWeightGrams,
+    weightSource: cost.weightSource,
     eurChfRate: cost.eurChfRate,
     vatRate: cost.vatRate,
     stockStatus: product.stockStatus,

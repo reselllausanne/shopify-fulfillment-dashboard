@@ -1,0 +1,26 @@
+{
+  "supplier": "exlibris",
+  "catalog": "hobby-spiele-brettspiele",
+  "catalog_total": 94321,
+  "sample_n": 50,
+  "categories_hit": [
+    "babyspielzeug",
+    "gesellschaftsspiele",
+    "lernspielzeug",
+    "mal-bastel",
+    "outdoor",
+    "pluesch",
+    "puppen",
+    "puzzles",
+    "rollenspiel",
+    "spielfahrzeuge"
+  ],
+  "gtin_valid_n": 50,
+  "out": "/Users/resell-lausanne/Projects/shopify-fulfillment-dashboard/supplier-viability-poc/data/exlibris_sample.csv",
+  "notes": [
+    "Stock unquantified (availability text/icon only)",
+    "EAN in URL /id/{ean}/",
+    "CHF gross list/sales from tiles",
+    "robots.txt Disallow /fr/ — used DE paths"
+  ]
+}

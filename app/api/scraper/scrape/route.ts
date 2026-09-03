@@ -6,6 +6,13 @@ import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
 import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
 import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
+import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
+import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
+import { scrapeHawkShop } from "@/app/lib/hawkScrape";
+import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
+import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
+import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
+import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +63,21 @@ export async function POST(request: Request) {
               ? scrapeNewsoleShop
               : shop.platform === "bae"
                 ? scrapeBaechliShop
-                : scrapeShop;
+                : shop.platform === "fan"
+                  ? scrapeFantasyweltShop
+                  : shop.platform === "exl"
+                    ? scrapeExlibrisShop
+                    : shop.platform === "haw"
+                      ? scrapeHawkShop
+                      : shop.platform === "bwz"
+                        ? scrapeBabyWalzShop
+                        : shop.platform === "tus"
+                          ? scrapeUncommonShop
+                          : shop.platform === "alt"
+                            ? scrapeAlternateShop
+                            : shop.platform === "ven"
+                              ? scrapeVenovaShop
+                              : scrapeShop;
     // Fire-and-forget: keep processing after the response returns.
     void runScrape(shop, runId, maxProducts).catch((e) => {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);

@@ -46,6 +46,33 @@ describe("resolveGalaxusExportClassification", () => {
       })
     ).toBe("phone");
   });
+
+  it("classifies sneaker fridge magnets as home accessory, not phone", () => {
+    expect(
+      classifyGalaxusProductKind({
+        title: "204L Sneakers Magnet",
+        brand: "New Balance",
+        supplierKey: "ner",
+      })
+    ).toBe("home_accessory");
+    expect(
+      resolveGalaxusProductCategoryPath({
+        title: "204L Sneakers Magnet",
+        brand: "New Balance",
+        supplierKey: "ner",
+      })
+    ).toContain("Dekorationartikel");
+  });
+
+  it("keeps New Balance Magnet colorway as sneakers, not phone", () => {
+    expect(
+      classifyGalaxusProductKind({
+        title: "New Balance 327 Grey Matter Magnet",
+        brand: "New Balance",
+        supplierKey: "stx",
+      })
+    ).toBe("sneakers");
+  });
 });
 
 describe("buildGalaxusSizeSpecRow", () => {

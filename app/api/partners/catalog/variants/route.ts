@@ -12,6 +12,7 @@ import {
   partnerCatalogVariantWhere,
   partnerOwnsSupplierVariant,
 } from "@/app/lib/partnerCatalogScope";
+import { mergeMoqIntoManualNote } from "@/galaxus/exports/stockMoq";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +43,9 @@ type UpdatePayload = {
   manualStock?: number | null;
   manualLock?: boolean;
   manualNote?: string | null;
+  /** Galaxus stock-feed min order qty — merged into manualNote as moq=/oqs=. */
+  moq?: number | string | null;
+  orderQuantitySteps?: number | string | null;
   supplierGender?: string | null;
   supplierColorway?: string | null;
 };
@@ -283,6 +287,8 @@ export async function POST(req: NextRequest) {
         "hostedImageUrl",
         "leadTimeDays",
         "manualNote",
+        "moq",
+        "orderQuantitySteps",
       ]);
       for (const entry of updates) {
         const id = String(entry.supplierVariantId ?? "").trim();
@@ -412,6 +418,45 @@ export async function POST(req: NextRequest) {
           }
           if ("manualNote" in entry) {
             data.manualNote = entry.manualNote ? String(entry.manualNote) : null;
+          }
+          if ("moq" in entry) {
+            const moqRaw =
+              entry.moq === null || entry.moq === undefined || String(entry.moq).trim() === ""
+                ? null
+                : Number.parseInt(String(entry.moq), 10);
+            if (moqRaw != null && (!Number.isFinite(moqRaw) || moqRaw < 1)) {
+              output.push({
+                ok: false,
+                error: "MOQ must be a positive integer or empty",
+                supplierVariantId,
+              });
+              continue;
+            }
+            const oqsProvided = "orderQuantitySteps" in entry;
+            const oqsRaw = !oqsProvided
+              ? null
+              : entry.orderQuantitySteps === null ||
+                  entry.orderQuantitySteps === undefined ||
+                  String(entry.orderQuantitySteps).trim() === ""
+                ? null
+                : Number.parseInt(String(entry.orderQuantitySteps), 10);
+            if (oqsProvided && oqsRaw != null && (!Number.isFinite(oqsRaw) || oqsRaw < 1)) {
+              output.push({
+                ok: false,
+                error: "Order quantity steps must be a positive integer or empty",
+                supplierVariantId,
+              });
+              continue;
+            }
+            const noteBase =
+              "manualNote" in data
+                ? ((data.manualNote as string | null) ?? null)
+                : (target.manualNote ?? null);
+            data.manualNote = mergeMoqIntoManualNote(
+              noteBase,
+              moqRaw,
+              oqsProvided ? oqsRaw : null
+            );
           }
           if ("supplierGender" in entry) {
             data.supplierGender = entry.supplierGender ? String(entry.supplierGender).trim() : null;

@@ -22,6 +22,8 @@ describe("Galaxus STX margin", () => {
     delete process.env.GALAXUS_WEL_TARGET_MARGIN;
     delete process.env.GALAXUS_WEL_BUFFER_CHF;
     delete process.env.GALAXUS_WEL_PRICE_BUFFER_CHF;
+    delete process.env.GALAXUS_BWZ_TARGET_NET_MARGIN;
+    delete process.env.GALAXUS_BWZ_TARGET_MARGIN;
     delete process.env.GALAXUS_PRICE_BUFFER_CHF;
     delete process.env.GALAXUS_BUFFER_CHF;
     delete process.env.GALAXUS_PRICE_ROUND_TO;
@@ -30,6 +32,10 @@ describe("Galaxus STX margin", () => {
     delete process.env.GALAXUS_VAT_RATE;
     delete process.env.GALAXUS_STX_TARGET_NET_MARGIN;
     delete process.env.GALAXUS_STX_MARGIN_ADJUSTMENT;
+    delete process.env.GALAXUS_STX_DD_SHIPPING_CHF;
+    delete process.env.GALAXUS_STX_DIRECT_DELIVERY_SHIPPING_CHF;
+    delete process.env.GALAXUS_STX_PRICE_BUMP_CHF;
+    delete process.env.GALAXUS_STX_PRICE_SURCHARGE_CHF;
     delete process.env.GALAXUS_GLD_TARGET_NET_MARGIN;
     delete process.env.GALAXUS_GLD_SHIP_EUR;
     delete process.env.GALAXUS_GLD_SHIP_PAIRS;
@@ -46,14 +52,92 @@ describe("Galaxus STX margin", () => {
     expect(resolveGalaxusTargetNetMarginForSupplier("stx")).toBeCloseTo(0.12, 5);
   });
 
-  it("sell = (StockX buy + 2 CHF ship) / (1 - 12%)", () => {
+  it("sell = (StockX buy + 2 CHF ship) / (1 - 12%) + 8 CHF STX bump", () => {
     const partners = new Set(["ner", "flo"]);
     const stockxBuy = 177;
     const stxSell = resolveGalaxusSellExVatForChannel(stockxBuy, "stx", partners);
-    expect(stxSell).toBeCloseTo(203.45, 2);
+    expect(stxSell).toBeCloseTo(211.45, 2);
+  });
+
+  it("adds flat +8 CHF on all STX regardless of delivery lane", () => {
+    const buy = 100;
+    const base = computeGalaxusSellPriceExVat({
+      buyPriceExVatCHF: buy,
+      shippingPerPairCHF: 2,
+      targetNetMargin: 0.12,
+      bufferPerPairCHF: 0,
+      roundTo: 0.05,
+    }).sellPriceExVatCHF;
+    const standard = resolveGalaxusSellExVatForChannel(buy, "stx", new Set(), {
+      deliveryType: "standard",
+    });
+    const express = resolveGalaxusSellExVatForChannel(buy, "stx", new Set(), {
+      deliveryType: "express_standard",
+    });
+    expect(standard - base).toBe(8);
+    expect(express - base).toBeGreaterThan(8);
+  });
+
+  it("STX bump disabled when GALAXUS_STX_PRICE_BUMP_CHF=0", () => {
+    process.env.GALAXUS_STX_PRICE_BUMP_CHF = "0";
+    const buy = 177;
+    const sell = resolveGalaxusSellExVatForChannel(buy, "stx", new Set());
+    const base = computeGalaxusSellPriceExVat({
+      buyPriceExVatCHF: buy,
+      shippingPerPairCHF: 2,
+      targetNetMargin: 0.12,
+      bufferPerPairCHF: 0,
+      roundTo: 0.05,
+    }).sellPriceExVatCHF;
+    expect(sell).toBe(base);
+  });
+
+  it("STX express / direct-delivery uses 9 CHF ship instead of 2", () => {
+    process.env.GALAXUS_STX_PRICE_BUMP_CHF = "0";
+    const buy = 177;
+    const standard = resolveGalaxusSellExVatForChannel(buy, "stx", new Set(), {
+      deliveryType: "standard",
+    });
+    const express = resolveGalaxusSellExVatForChannel(buy, "stx", new Set(), {
+      deliveryType: "express_standard",
+    });
+    const expectedStandard = computeGalaxusSellPriceExVat({
+      buyPriceExVatCHF: buy,
+      shippingPerPairCHF: 2,
+      targetNetMargin: 0.12,
+      bufferPerPairCHF: 0,
+      roundTo: 0.05,
+    }).sellPriceExVatCHF;
+    const expectedExpress = computeGalaxusSellPriceExVat({
+      buyPriceExVatCHF: buy,
+      shippingPerPairCHF: 9,
+      targetNetMargin: 0.12,
+      bufferPerPairCHF: 0,
+      roundTo: 0.05,
+    }).sellPriceExVatCHF;
+    expect(standard).toBe(expectedStandard);
+    expect(express).toBe(expectedExpress);
+    expect(express - standard).toBeGreaterThan(7);
+  });
+
+  it("allows STX DD shipping override via env", () => {
+    process.env.GALAXUS_STX_PRICE_BUMP_CHF = "0";
+    process.env.GALAXUS_STX_DD_SHIPPING_CHF = "11";
+    const sell = resolveGalaxusSellExVatForChannel(100, "stx", new Set(), {
+      deliveryType: "express_expedited",
+    });
+    const expected = computeGalaxusSellPriceExVat({
+      buyPriceExVatCHF: 100,
+      shippingPerPairCHF: 11,
+      targetNetMargin: 0.12,
+      bufferPerPairCHF: 0,
+      roundTo: 0.05,
+    }).sellPriceExVatCHF;
+    expect(sell).toBe(expected);
   });
 
   it("uses env overrides when set", () => {
+    process.env.GALAXUS_STX_PRICE_BUMP_CHF = "0";
     process.env.GALAXUS_STX_TARGET_NET_MARGIN = "0.11";
     process.env.GALAXUS_PRICE_SHIPPING_CHF = "3";
     expect(resolveGalaxusTargetNetMarginForSupplier("stx")).toBeCloseTo(0.11, 5);
@@ -67,11 +151,13 @@ describe("Galaxus STX margin", () => {
     const nerSell = resolveGalaxusSellExVatForChannel(100, "ner", new Set());
     expect(nerSell).toBeLessThanOrEqual(100.05);
     expect(nerSell).toBeGreaterThanOrEqual(100);
+    // Scraper shelf already margined — no second Galaxus pass (Brio 218 bug).
+    expect(resolveGalaxusSellExVatForChannel(108.88, "rei", new Set())).toBeCloseTo(108.9, 2);
+    expect(resolveGalaxusSellExVatForChannel(99, "wrk", new Set())).toBeCloseTo(99, 1);
   });
 
-  it("matches computeGalaxusSellPriceExVat for explicit inputs", () => {
+  it("matches computeGalaxusSellPriceExVat for explicit inputs + STX bump", () => {
     const buy = 151.07;
-    const stxSell = resolveGalaxusSellExVatForChannel(buy, "stx", new Set());
     const direct = computeGalaxusSellPriceExVat({
       buyPriceExVatCHF: buy,
       shippingPerPairCHF: 2,
@@ -79,8 +165,9 @@ describe("Galaxus STX margin", () => {
       bufferPerPairCHF: 0,
       roundTo: 0.05,
     }).sellPriceExVatCHF;
-    expect(stxSell).toBe(direct);
-    expect(stxSell).toBeCloseTo(173.95, 2);
+    const stxSell = resolveGalaxusSellExVatForChannel(buy, "stx", new Set());
+    expect(stxSell).toBe(direct + 8);
+    expect(stxSell).toBeCloseTo(181.95, 2);
   });
 
   it("uses higher default shipping for WEL own-catalog lines", () => {
@@ -119,6 +206,23 @@ describe("Galaxus STX margin", () => {
     const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
     // (3 + 7 + 2) / 0.82 ≈ 14.634 → 14.65
     expect(welSell).toBe(14.65);
+  });
+
+  it("defaults BWZ to at least 15% net (default ship CHF 2)", () => {
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);
+    const bwzSell = resolveGalaxusSellExVatForChannel(45.95, "bwz", new Set());
+    // (45.95 + 2) / 0.85 ≈ 56.411 → 56.45
+    expect(bwzSell).toBe(56.45);
+  });
+
+  it("allows higher BWZ margin via env; floors below 15%", () => {
+    process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.12";
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);
+    process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.18";
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.18, 5);
+    const bwzSell = resolveGalaxusSellExVatForChannel(45.95, "bwz", new Set());
+    // (45.95 + 2) / 0.82 ≈ 58.475 → 58.50
+    expect(bwzSell).toBe(58.5);
   });
 });
 

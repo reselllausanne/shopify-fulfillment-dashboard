@@ -47,6 +47,35 @@ export function parseMoqFromManualNote(manualNote?: string | null): GalaxusStock
   return { minimumOrderQuantity, orderQuantitySteps };
 }
 
+/**
+ * Write/replace `moq=` / `oqs=` tokens in a manual note.
+ * Pass null/undefined to strip MOQ tokens (leave rest of note intact).
+ * When only moq is set, also write oqs=moq so Galaxus checkout steps match.
+ */
+export function mergeMoqIntoManualNote(
+  manualNote: string | null | undefined,
+  moq: number | null | undefined,
+  oqs?: number | null
+): string | null {
+  const stripped = String(manualNote ?? "")
+    .replace(/\bmoq\s*=\s*\d+\b/gi, " ")
+    .replace(/\boqs\s*=\s*\d+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const minQty =
+    moq == null || !Number.isFinite(moq) ? null : Math.max(1, Math.floor(moq));
+  if (minQty == null) {
+    return stripped || null;
+  }
+
+  const stepsRaw =
+    oqs == null || !Number.isFinite(oqs) ? minQty : Math.max(1, Math.floor(oqs));
+  const steps = Math.min(stepsRaw, minQty);
+  const token = `moq=${minQty} oqs=${steps}`;
+  return stripped ? `${stripped} ${token}` : token;
+}
+
 export function resolveGalaxusStockMoq(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;

@@ -79,8 +79,13 @@ const RAIN_JACKET_RE = /\b(rain ?jacket|raincoat|waterproof jacket|shell jacket)
 const LIGHT_JACKET_RE = /\b(jacket|windbreaker|coach jacket|bomber|track ?top|anorak|coat)\b/i;
 const BACKPACK_RE = /\b(backpack|rucksack|bookbag|daypack)\b/i;
 const BAG_RE = /\b(bag|tote|duffel|duffle|gym ?bag|crossbody|sling ?bag|messenger ?bag|handbag|bum ?bag|fanny ?pack|waist ?bag)\b/i;
+// Do NOT match bare "magnet" — NB colorways ("Grey Matter Magnet") and fridge magnets
+// ("Sneakers Magnet") must not become Smartphone Zubehör. Phone locks still match via
+// the brick / phone / distraction / "magnet mount".
 const PHONE_RE =
-  /\b(phone|smartphone|ios|android|screen ?time|digital detox|nfc|magnet|distraction|app store|google play|the brick|getbrick|phone blocker|unbrick|bricked)\b/i;
+  /\b(phone|smartphone|ios|android|screen ?time|digital detox|nfc|magnet mount|distraction|app store|google play|the brick|getbrick|phone blocker|unbrick|bricked)\b/i;
+const DECORATIVE_MAGNET_RE =
+  /\b(fridge ?magnet|refrigerator ?magnet|kühlschrankmagnet|sneakers? magnet|shoe magnet|deko[- ]?magnet)\b/i;
 const POOL_ROBOT_RE =
   /\b(pool|pool cleaner|pool cleaning|pool robot|poolroboter|poolskimmer|skimmer|robotic pool|swimming pool|piscine|solar ?panel)\b/i;
 const TUMBLER_RE = /\b(tumbler|quencher|thermos|water bottle|hip flask)\b/i;
@@ -376,6 +381,7 @@ export function classifyGalaxusProductKind(input: ClassificationInput): GalaxusP
   if (TROUSERS_RE.test(text)) return "trousers";
   if (UNDERWEAR_RE.test(text)) return "underwear";
   if (POOL_ROBOT_RE.test(text)) return "pool_robot";
+  if (DECORATIVE_MAGNET_RE.test(text)) return "home_accessory";
   if (PHONE_RE.test(text)) return "phone";
   if (SLIPPERS_RE.test(text)) return "slippers";
   if (SANDALS_RE.test(text)) return "sandals";

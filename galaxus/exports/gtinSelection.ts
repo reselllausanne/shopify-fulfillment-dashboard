@@ -186,7 +186,9 @@ export function accumulateBestCandidates(
 
     let sellPriceExVat = buyPrice;
     if (!isMerchant) {
-      sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower);
+      sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower, {
+        deliveryType: variant?.deliveryType ?? null,
+      });
     }
 
     const stock = Number.parseInt(String(variant?.stock ?? 0), 10);

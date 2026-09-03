@@ -1,0 +1,69 @@
+{
+  "target_products_per_supplier": 300,
+  "request_delay_seconds": 1.0,
+  "user_agent": "SupplierViabilityPOC/1.0 (+read-only; respect robots.txt)",
+  "timezone": "Europe/Zurich",
+  "fx": {
+    "EURCHF": 0.94,
+    "source": "galaxus/exports/pricing.ts GLD_DEFAULT_EURCHF"
+  },
+  "margin": {
+    "target_net_margin": 0.12,
+    "source": "galaxus/exports/pricing.ts DEFAULT_TARGET_MARGIN",
+    "return_sav_provision": 0.02,
+    "galaxus_commission": 0.0,
+    "commission_note": "Project Galaxus B2B path has no Mirakl fee (see galaxus/orders/margin.ts)"
+  },
+  "suppliers": {
+    "farnell": {
+      "base_url": "https://ch.farnell.com/",
+      "preferred": "official_api",
+      "api_docs": "https://partner.element14.com/docs",
+      "api_key_env": ["FARNELL_API_KEY", "ELEMENT14_API_KEY"]
+    },
+    "buerklin": {
+      "base_url": "https://www.buerklin.com/",
+      "preferred": "html_or_api",
+      "note": "Cloudflare challenge observed"
+    },
+    "berrybase": {
+      "base_url": "https://www.berrybase.de/",
+      "preferred": "json_ld_html"
+    },
+    "pollin": {
+      "base_url": "https://www.pollin.de/",
+      "preferred": "sitemap_json_ld",
+      "ch_freight_eur": 19.9
+    },
+    "exlibris": {
+      "base_url": "https://www.exlibris.ch/",
+      "preferred": "next_data_html",
+      "catalogs": {
+        "spiele": "/de/hobby-spiele-brettspiele/",
+        "musik_cd": "/de/musik/cd/",
+        "musik_vinyl": "/de/musik/vinyl/",
+        "games": "/de/games/"
+      },
+      "note": "DE paths only (robots Disallow /fr/). EAN in /id/{ean}/. Stock unquantified."
+    }
+  },
+  "exlibris_margin": {
+    "margin_percent_env": "SCRAPER_EXL_MARGIN_PERCENT",
+    "margin_percent_fallback_env": "SCRAPER_REI_MARGIN_PERCENT",
+    "default_margin_percent": 30,
+    "shipping_chf_env": "SCRAPER_EXL_SHIPPING_CHF",
+    "default_shipping_chf": 0,
+    "formula": "sell_chf = (buy_chf + shipping_chf) * (1 + margin_percent/100)"
+  },
+  "galaxus_index_csv": "data/galaxus_gtin_index.csv",
+  "status_labels": [
+    "VIABLE_NOW",
+    "VIABLE_BATCH_ONLY",
+    "MANUAL_REVIEW",
+    "SHIPPING_UNCONFIRMED",
+    "NO_GALAXUS_MATCH",
+    "INSUFFICIENT_MARGIN",
+    "INVALID_GTIN",
+    "NOT_VIABLE"
+  ]
+}

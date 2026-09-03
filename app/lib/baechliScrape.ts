@@ -3,6 +3,11 @@ import { normalizeSize } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 import { BaechliClient, baechliConfig, type BaechliProduct, type BaechliVariant } from "@/app/lib/baechliClient";
+import {
+  computeBaechliLandedCost,
+  isPlausibleBaechliSellPrice,
+  type BaechliLandedCost,
+} from "@/app/lib/baechliPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
 
@@ -55,9 +60,10 @@ function formatBaechliNote(input: {
   variant: BaechliVariant;
   gtinSource: string;
   overlapSuppliers: string[];
+  cost: BaechliLandedCost;
 }) {
   return JSON.stringify({
-    type: "baechli_rent_a_shop",
+    type: "baechli_landed_cost",
     productUrl: input.product.productUrl,
     supplierSku: input.variant.sku,
     gtinSource: input.gtinSource,
@@ -65,6 +71,7 @@ function formatBaechliNote(input: {
     overlapSuppliers: input.overlapSuppliers,
     stockSource: "schema_org_availability",
     buyPriceSource: "baechli_html",
+    ...input.cost,
   });
 }
 
@@ -242,8 +249,14 @@ export async function scrapeBaechliShop(
             skippedNoGtin++;
             continue;
           }
-          const price = variant.priceChf;
-          if (!price || price <= 0) {
+          const buyChf = variant.priceChf;
+          if (!buyChf || buyChf <= 0) {
+            skippedNoPrice++;
+            continue;
+          }
+
+          const cost = computeBaechliLandedCost(buyChf);
+          if (!cost || !isPlausibleBaechliSellPrice(cost)) {
             skippedNoPrice++;
             continue;
           }
@@ -254,7 +267,7 @@ export async function scrapeBaechliShop(
             gtin: variant.gtin,
             gtinSource: variant.gtinSource,
             supplierSku: variant.sku,
-            price,
+            price: cost.sellPriceChf,
             stock,
             brand: product.brand,
             name: title,
@@ -266,6 +279,7 @@ export async function scrapeBaechliShop(
               variant,
               gtinSource: variant.gtinSource,
               overlapSuppliers: [],
+              cost,
             }),
           });
           if (ok) {

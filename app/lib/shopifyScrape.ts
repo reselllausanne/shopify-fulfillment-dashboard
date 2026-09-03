@@ -4,6 +4,12 @@ import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { ScraperShop } from "@/app/lib/scraperShops";
+import {
+  computeWarenkontorLandedCost,
+  formatWarenkontorNote,
+  isPlausibleWarenkontorSellPrice,
+  isWarenkontorShop,
+} from "@/app/lib/warenkontorPricing";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT || "LivioShopifyScraper/1.0 (+catalog sync)";
@@ -158,6 +164,7 @@ type EligibleRecord = {
   available: boolean;
   /// Real inventory qty from Shopify when tracked; null when untracked (continue-policy) or unknown.
   trackedQty: number | null;
+  manualNote?: string | null;
 };
 
 /** Normalize Shopify tags from products.json (string) or .js (array). */
@@ -220,7 +227,8 @@ export function resolveShopifyAvailable(
   product: any,
   productJs: any,
   variant: any,
-  jsV: any
+  jsV: any,
+  opts?: { trustAvailableWhenQtyHidden?: boolean }
 ): boolean {
   if (isShopifyPreorderSignal(product, productJs, variant, jsV)) return false;
 
@@ -233,6 +241,9 @@ export function resolveShopifyAvailable(
   // Tracked (e.g. "shopify") or management unknown (list-only / .js failed):
   // only sell when we have a positive quantity from .js.
   if (qty !== null) return qty > 0;
+  // Some stores (Warenkontor) hide inventory_quantity in public .js but still
+  // expose available + UI low-stock text — trust the available flag there.
+  if (opts?.trustAvailableWhenQtyHidden) return shopifyAvailableFlag(variant, jsV);
   return false;
 }
 
@@ -245,15 +256,33 @@ export function collectEligibleRecords(shop: ScraperShop, product: any, productJ
   const jsById = new Map<string, any>();
   for (const v of productJs?.variants || []) jsById.set(String(v?.id), v);
   const imgSource = productJs && Object.keys(productJs).length ? productJs : product;
+  const warenkontor = isWarenkontorShop(shop);
+  const handle = String(productJs?.handle ?? product?.handle ?? "").trim() || null;
 
   for (const variant of product?.variants || []) {
     const vid = String(variant?.id || "");
     const jsV = jsById.get(vid) || {};
     const gtin = normalizeBarcode(jsV.barcode) || normalizeBarcode(variant?.barcode);
     if (!gtin) continue; // galaxus needs GTIN
-    const price = priceFrom(jsV, variant);
-    if (!price || price <= 0) continue;
-    const available = resolveShopifyAvailable(product, productJs, variant, jsV);
+    const shelfPrice = priceFrom(jsV, variant);
+    if (!shelfPrice || shelfPrice <= 0) continue;
+
+    let price = shelfPrice;
+    let manualNote: string | null = null;
+    if (warenkontor) {
+      const cost = computeWarenkontorLandedCost(shelfPrice);
+      if (!cost || !isPlausibleWarenkontorSellPrice(cost)) continue;
+      price = cost.sellPriceChf;
+      manualNote = formatWarenkontorNote({
+        handle,
+        sku: String((jsV?.sku ?? variant?.sku) || "").trim() || null,
+        cost,
+      });
+    }
+
+    const available = resolveShopifyAvailable(product, productJs, variant, jsV, {
+      trustAvailableWhenQtyHidden: warenkontor,
+    });
     // Real qty only trusted when inventory is tracked (mgmt.value present).
     // Untracked/continue-policy variants report meaningless qty (often 0 with available:true).
     const mgmt = shopifyInventoryManagement(variant, jsV);
@@ -278,6 +307,7 @@ export function collectEligibleRecords(shop: ScraperShop, product: any, productJ
       sourceImageUrl: pickImage(imgSource, jsV.id ? jsV : variant) || null,
       available,
       trackedQty,
+      manualNote,
     });
   }
   return out;
@@ -460,6 +490,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               supplierProductName: r.supplierProductName,
               supplierProductType: r.supplierProductType,
               sourceImageUrl: r.sourceImageUrl,
+              ...(r.manualNote != null ? { manualNote: r.manualNote } : {}),
               imageSyncStatus: r.sourceImageUrl ? "PENDING" : null,
               lastSyncAt: now,
             },
@@ -473,6 +504,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               supplierProductName: r.supplierProductName,
               supplierProductType: r.supplierProductType,
               sourceImageUrl: r.sourceImageUrl,
+              ...(r.manualNote != null ? { manualNote: r.manualNote } : {}),
               ...(queueImage
                 ? {
                     imageSyncStatus: "PENDING",

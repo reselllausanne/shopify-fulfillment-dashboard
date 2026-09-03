@@ -16,32 +16,21 @@ export function scraperGalaxusFeedPushEnabled(): boolean {
   return String(process.env.SCRAPER_GALAXUS_FEED_PUSH ?? "1").trim() !== "0";
 }
 
-/** Host pending images, then queue Galaxus master-specs + stock-price SFTP uploads. */
+/**
+ * Queue Galaxus master-specs + stock-price immediately (uses sourceImageUrl when
+ * hosted not ready). Optionally host images in the background afterward; feed
+ * picker prefers hosted JPEG once SYNCED, so later master pushes switch over.
+ */
 export async function scheduleScraperGalaxusFeedPush(params: {
   shop: ScraperShop;
   wrote: number;
+  /** Host images in background after push (default true). Does not block push. */
   syncImages?: boolean;
 }): Promise<void> {
   const { shop, wrote, syncImages = true } = params;
   if (!scraperGalaxusFeedPushEnabled() || shop.gated || wrote <= 0) return;
 
   const origin = feedPushOrigin();
-
-  if (syncImages) {
-    try {
-      await runImageSync({
-        supplierKeys: [shop.key],
-        full: true,
-        limit: 5000,
-        concurrency: 8,
-      });
-    } catch (err) {
-      console.warn(
-        `[SCRAPER] ${shop.key} pre-push image sync failed:`,
-        (err as Error)?.message || err
-      );
-    }
-  }
 
   try {
     await requestFeedPush({ origin, scope: "master-specs", triggerSource: "scraper", runNow: true });
@@ -50,4 +39,34 @@ export async function scheduleScraperGalaxusFeedPush(params: {
   } catch (err) {
     console.warn(`[SCRAPER] ${shop.key} Galaxus feed push failed:`, (err as Error)?.message || err);
   }
+
+  if (!syncImages) return;
+
+  // Gradual host — do not delay the push above.
+  void (async () => {
+    try {
+      const result = await runImageSync({
+        supplierKeys: [shop.key],
+        full: true,
+        limit: 5000,
+        concurrency: 8,
+      });
+      const synced = Number((result as { synced?: number } | null)?.synced ?? 0);
+      console.info(`[SCRAPER] ${shop.key} background image sync done (synced=${synced})`);
+      if (synced > 0) {
+        // Re-push master so Galaxus picks hosted URLs for newly synced rows.
+        await requestFeedPush({
+          origin,
+          scope: "master-specs",
+          triggerSource: "scraper",
+          runNow: true,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        `[SCRAPER] ${shop.key} background image sync failed:`,
+        (err as Error)?.message || err
+      );
+    }
+  })();
 }
