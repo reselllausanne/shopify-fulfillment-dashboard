@@ -59,7 +59,9 @@ export async function printDirectDeliveryDocumentsLocally(options: {
       widthMm: browserPrintConfig?.widthMm,
       heightMm: browserPrintConfig?.heightMm,
     });
-    if (browserPrintConfig) {
+    // Suppress browser popup only when CUPS actually printed. Failed/skipped
+    // jobs must keep enabled so the scan page can open the label popup.
+    if (browserPrintConfig && printJobResult?.ok) {
       browserPrintConfig = { ...browserPrintConfig, enabled: false };
     }
   }

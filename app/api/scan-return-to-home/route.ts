@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
 import {
   findStockxInboundHomeRouteByCode,
   normalizeInboundHomeAwb,
@@ -22,11 +20,9 @@ import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
   process.env.SWISS_POST_LABEL_OUTPUT_DIR ||
   path.join(process.cwd(), "swiss-post-labels");
-const PRINT_COMMAND = process.env.SWISS_POST_PRINT_COMMAND || "lp";
 
 function extensionToMimeType(extension: string) {
   const ext = String(extension || "").trim().toLowerCase();
@@ -62,22 +58,6 @@ async function persistLabel(base64: string, extension: string, identifier: strin
   const filePath = path.join(LABEL_OUTPUT_DIR, `${safeId}-${Date.now()}.${extension}`);
   await fs.writeFile(filePath, Buffer.from(base64, "base64"));
   return filePath;
-}
-
-async function maybePrintLabel(filePath: string) {
-  const enabled = ["1", "true", "yes"].includes(
-    String(process.env.SWISS_POST_AUTO_PRINT || "").trim().toLowerCase()
-  );
-  const printer = String(process.env.SWISS_POST_PRINTER_NAME || "").trim();
-  if (!enabled || !printer) {
-    return { ok: false, skipped: true, message: "Auto print disabled" };
-  }
-  try {
-    const { stdout, stderr } = await execFile(PRINT_COMMAND, ["-d", printer, filePath]);
-    return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() };
-  } catch (error: any) {
-    return { ok: false, error: error?.message || String(error) };
-  }
 }
 
 export async function POST(req: NextRequest) {
@@ -140,6 +120,7 @@ export async function POST(req: NextRequest) {
 
     const localStation = isLocalStation();
     const browserPrintBase = resolveBrowserPrintConfig();
+    // CUPS only on packing Mac. VPS always returns label for browser popup.
     const printJobResult = localStation
       ? await maybePrintLabelLocally({
           base64: labelPayload.base64,
@@ -148,11 +129,11 @@ export async function POST(req: NextRequest) {
           widthMm: browserPrintBase.widthMm,
           heightMm: browserPrintBase.heightMm,
         })
-      : await maybePrintLabel(labelFilePath);
+      : { ok: false, skipped: true, message: "LOCAL_STATION not set — browser print" };
     const browserPrintConfig = {
       ...browserPrintBase,
-      // Local station prints server-side; skip popup so nothing pops up.
-      enabled: !localStation && browserPrintBase.enabled,
+      // Local station CUPS success → no popup. Otherwise keep browser print on.
+      enabled: !(localStation && printJobResult?.ok) && browserPrintBase.enabled,
     };
 
     return NextResponse.json({

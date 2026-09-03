@@ -166,12 +166,13 @@ export async function maybePrintLabelLocally(options: {
 
 /**
  * Packing-station CUPS label auto-print.
- * True when `LOCAL_STATION=1` or legacy `SWISS_POST_AUTO_PRINT=1` (Brother queue).
+ *
+ * Only when `LOCAL_STATION=1` (packing Mac with Brother on CUPS).
+ * VPS must never treat `SWISS_POST_AUTO_PRINT=1` as CUPS — that path has no
+ * local printer and used to disable the browser label popup for nothing.
  */
 export function shouldAutoPrintShippingLabel(): boolean {
-  return (
-    isLocalStation() || resolvePrintEnvFlag(process.env.SWISS_POST_AUTO_PRINT)
-  );
+  return isLocalStation();
 }
 
 /**

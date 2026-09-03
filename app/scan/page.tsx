@@ -530,6 +530,34 @@ const openLabelPreview = (payload: LabelDataPayload) => {
   return true;
 };
 
+/**
+ * Show label to operator. Skip popup only when CUPS actually printed
+ * (printJobResult.ok). VPS never succeeds CUPS → always opens popup.
+ * Ignores browserPrintConfig.enabled=false from stale server paths that
+ * attempted CUPS and then suppressed the popup for nothing.
+ */
+const presentScanLabel = (options: {
+  labelData?: LabelDataPayload | null;
+  browserPrintConfig?: BrowserPrintConfig | null;
+  printJobResult?: PrintJobClientResult | null;
+  deliveryNotePrintResult?: PrintJobClientResult | null;
+  blockedMessage: string;
+}): boolean => {
+  const cupsOk = options.printJobResult?.ok === true;
+  if (cupsOk) {
+    alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
+    return true;
+  }
+  if (!options.labelData?.base64) return false;
+  const opened = ENABLE_BROWSER_PRINT
+    ? openLabelPrintDialog(options.labelData, options.browserPrintConfig ?? undefined)
+    : openLabelPreview(options.labelData);
+  if (!opened) {
+    window.alert(options.blockedMessage);
+  }
+  return opened;
+};
+
 export default function ScanPage() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -784,22 +812,15 @@ export default function ScanPage() {
         );
         return;
       }
-      const serverPrinted = data.browserPrintConfig?.enabled === false;
-      const browserPrintEnabled =
-        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        if (serverPrinted) {
-          // CUPS already printed — no popup. DN goes to HP when present.
-          alertOnServerPrintFailure(data.printJobResult, "Label print");
-          alertOnServerPrintFailure(data.deliveryNotePrintResult, "Delivery note print");
-        } else {
-          const opened = browserPrintEnabled
-            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-            : openLabelPreview(data.labelData);
-          if (!opened) {
-            window.alert("Swiss Post label generated but popup blocked. Allow popups, then scan again.");
-          }
-        }
+        presentScanLabel({
+          labelData: data.labelData,
+          browserPrintConfig: data.browserPrintConfig,
+          printJobResult: data.printJobResult,
+          deliveryNotePrintResult: data.deliveryNotePrintResult,
+          blockedMessage:
+            "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
+        });
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
       }
@@ -881,21 +902,15 @@ export default function ScanPage() {
             `\n(Only oldest open — other GTIN matches untouched.)`
         );
       }
-      const serverPrinted = data.browserPrintConfig?.enabled === false;
-      const browserPrintEnabled =
-        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        if (serverPrinted) {
-          alertOnServerPrintFailure(data.printJobResult, "Label print");
-          alertOnServerPrintFailure(data.deliveryNotePrintResult, "Delivery note print");
-        } else {
-          const opened = browserPrintEnabled
-            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-            : openLabelPreview(data.labelData);
-          if (!opened) {
-            window.alert("Swiss Post label generated but popup blocked. Allow popups, then scan again.");
-          }
-        }
+        presentScanLabel({
+          labelData: data.labelData,
+          browserPrintConfig: data.browserPrintConfig,
+          printJobResult: data.printJobResult,
+          deliveryNotePrintResult: data.deliveryNotePrintResult,
+          blockedMessage:
+            "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
+        });
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
       }
@@ -923,20 +938,14 @@ export default function ScanPage() {
         trackingNumber?: string | null;
       } = await res.json();
       setFulfillResult(data);
-      const serverPrinted = data.browserPrintConfig?.enabled === false;
-      const browserPrintEnabled =
-        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        if (serverPrinted) {
-          alertOnServerPrintFailure(data.printJobResult);
-        } else {
-          const opened = browserPrintEnabled
-            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-            : openLabelPreview(data.labelData);
-          if (!opened) {
-            window.alert("Warehouse label loaded but popup blocked. Allow popups, then scan again.");
-          }
-        }
+        presentScanLabel({
+          labelData: data.labelData,
+          browserPrintConfig: data.browserPrintConfig,
+          printJobResult: data.printJobResult,
+          blockedMessage:
+            "Warehouse label loaded but popup blocked. Allow popups, then scan again.",
+        });
       } else if (res.status === 404) {
         window.alert(
           "Warehouse shipment has no label attached yet — open warehouse page to generate it."
@@ -1683,20 +1692,14 @@ export default function ScanPage() {
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
-      const serverPrinted = data.browserPrintConfig?.enabled === false;
-      const browserPrintEnabled =
-        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        if (serverPrinted) {
-          alertOnServerPrintFailure(data.printJobResult);
-        } else {
-          const opened = browserPrintEnabled
-            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-            : openLabelPreview(data.labelData);
-          if (!opened) {
-            window.alert("Home label generated but popup blocked. Allow popups, then scan again.");
-          }
-        }
+        presentScanLabel({
+          labelData: data.labelData,
+          browserPrintConfig: data.browserPrintConfig,
+          printJobResult: data.printJobResult,
+          blockedMessage:
+            "Home label generated but popup blocked. Allow popups, then scan again.",
+        });
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Home label generation failed");
       }
@@ -1742,20 +1745,14 @@ export default function ScanPage() {
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
-      const serverPrinted = data.browserPrintConfig?.enabled === false;
-      const browserPrintEnabled =
-        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        if (serverPrinted) {
-          alertOnServerPrintFailure(data.printJobResult);
-        } else {
-          const opened = browserPrintEnabled
-            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-            : openLabelPreview(data.labelData);
-          if (!opened) {
-            window.alert("Label generated but popup blocked. Allow popups for this page, then scan again.");
-          }
-        }
+        presentScanLabel({
+          labelData: data.labelData,
+          browserPrintConfig: data.browserPrintConfig,
+          printJobResult: data.printJobResult,
+          blockedMessage:
+            "Label generated but popup blocked. Allow popups for this page, then scan again.",
+        });
       } else if (!res.ok || !data.ok) {
         window.alert(
           formatFulfillErrorMessage(data) ||

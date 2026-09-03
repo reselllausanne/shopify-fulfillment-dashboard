@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
 import { prisma } from "@/app/lib/prisma";
 import {
   buildLineItemsByFulfillmentOrder,
@@ -30,12 +28,9 @@ import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses"
 import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
 import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
 
-const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
   process.env.SWISS_POST_LABEL_OUTPUT_DIR ||
   path.join(process.cwd(), "swiss-post-labels");
-const PRINT_COMMAND = process.env.SWISS_POST_PRINT_COMMAND || "lp";
-const DEFAULT_PRINT_MEDIA = "62x82.74mm";
 
 type PrintJobResult = {
   ok: boolean;
@@ -101,10 +96,6 @@ function isBrowserPrintAllowedForRole(role: "admin" | "logistics" | null) {
   return role === "logistics";
 }
 
-function isServerAutoPrintAllowedForRole(role: "admin" | "logistics" | null) {
-  return role === "admin";
-}
-
 async function ensureLabelDirectory() {
   try {
     await fs.mkdir(LABEL_OUTPUT_DIR, { recursive: true });
@@ -133,72 +124,6 @@ async function persistLabel(base64: string, extension: string, identifier: strin
   const buffer = Buffer.from(base64, "base64");
   await fs.writeFile(filePath, buffer);
   return filePath;
-}
-
-function resolveAutoPrintEnabled() {
-  const value = String(process.env.SWISS_POST_AUTO_PRINT || "").trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
-}
-
-function resolvePrinterName() {
-  return String(process.env.SWISS_POST_PRINTER_NAME || "").trim();
-}
-
-async function submitPrintJob(filePath: string): Promise<PrintJobResult> {
-  if (!resolveAutoPrintEnabled()) {
-    return { ok: false, skipped: true, message: "Auto print disabled" };
-  }
-  const printerName = resolvePrinterName();
-  if (!printerName) {
-    return { ok: false, message: "No printer configured (SWISS_POST_PRINTER_NAME)" };
-  }
-
-  try {
-    const media = String(process.env.SWISS_POST_PRINTER_MEDIA || DEFAULT_PRINT_MEDIA).trim();
-    const scaleRaw = Number(process.env.SWISS_POST_PRINT_SCALE || 100);
-    const scale = Number.isFinite(scaleRaw) ? Math.max(10, Math.min(200, scaleRaw)) : 100;
-    const offsetX = Number(process.env.SWISS_POST_PRINT_OFFSET_X || 0);
-    const offsetY = Number(process.env.SWISS_POST_PRINT_OFFSET_Y || 0);
-
-    const args = ["-d", printerName, "-o", "fit-to-page", "-o", `media=${media}`];
-    if (scale !== 100) {
-      args.push("-o", `scaling=${scale}`);
-    }
-    if (Number.isFinite(offsetX) && offsetX !== 0) {
-      args.push("-o", `page-left=${offsetX}`);
-    }
-    if (Number.isFinite(offsetY) && offsetY !== 0) {
-      args.push("-o", `page-top=${offsetY}`);
-    }
-    args.push(filePath);
-    const run = async (command: string) => {
-      const { stdout, stderr } = await execFile(command, args);
-      return { ok: true, stdout: stdout?.trim(), stderr: stderr?.trim() } as PrintJobResult;
-    };
-    try {
-      return await run(PRINT_COMMAND);
-    } catch (error: any) {
-      const message = error?.message || String(error);
-      const code = error?.code || "";
-      if ((code === "ENOENT" || /ENOENT/i.test(message)) && PRINT_COMMAND === "lp") {
-        // Common on daemons/PM2 where PATH does not include /usr/bin.
-        return await run("/usr/bin/lp");
-      }
-      throw error;
-    }
-  } catch (error: any) {
-    const message = error?.message || String(error);
-    const code = error?.code || "";
-    if (code === "ENOENT" || /ENOENT/i.test(message)) {
-      return {
-        ok: false,
-        skipped: true,
-        message: `Print command not found (${PRINT_COMMAND}). Install CUPS/lp or set SWISS_POST_PRINT_COMMAND.`,
-      };
-    }
-    console.error("[SWISS POST] Print job failed:", message);
-    return { ok: false, error: message };
-  }
 }
 
 function extractLabelPayload(response: any) {
@@ -496,12 +421,11 @@ export async function POST(req: NextRequest) {
     const scanCompletedAt = parseOptionalDate(body?.scanCompletedAt);
     const roleAllowsBrowserPrint =
       isBrowserPrintAllowedForRole(staffRole) || allowAlreadyFulfilled;
-    const roleAllowsServerAutoPrint = isServerAutoPrintAllowedForRole(staffRole);
     const browserPrintConfigBase = resolveBrowserPrintConfig();
     const localStation = isLocalStation();
     const browserPrintConfig: BrowserPrintConfig = {
       ...browserPrintConfigBase,
-      // Local packing station prints server-side via CUPS; suppress popup entirely.
+      // Packing Mac CUPS → no popup. VPS / non-local → browser popup.
       enabled:
         !localStation &&
         browserPrintConfigBase.enabled &&
@@ -837,13 +761,12 @@ export async function POST(req: NextRequest) {
                 widthMm: browserPrintConfigBase.widthMm,
                 heightMm: browserPrintConfigBase.heightMm,
               });
-            } else if (roleAllowsServerAutoPrint) {
-              printJobResult = await submitPrintJob(labelFilePath);
             } else {
+              // VPS / remote: never CUPS — scan page opens browser label popup.
               printJobResult = {
                 ok: false,
                 skipped: true,
-                message: "Server auto print disabled for this role; browser print is enabled.",
+                message: "LOCAL_STATION not set — browser print",
               };
             }
           } catch (persistError: any) {
