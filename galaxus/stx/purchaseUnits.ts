@@ -226,6 +226,27 @@ export function buildBucketsFromNeeds(
   });
 }
 
+/** One saved match covers one unit — never inflate qty>1 to fully linked. */
+export function applySavedMatchCountsToBuckets(
+  buckets: StxLinkBucket[],
+  matchLinks: Array<{ galaxusGtin?: unknown; stockxOrderNumber?: unknown }>
+): StxLinkBucket[] {
+  const matchCountByGtin = new Map<string, number>();
+  for (const row of matchLinks ?? []) {
+    if (!String(row?.stockxOrderNumber ?? "").trim()) continue;
+    const norm = normalizeGtinKey(String(row?.galaxusGtin ?? ""));
+    if (!norm) continue;
+    matchCountByGtin.set(norm, (matchCountByGtin.get(norm) ?? 0) + 1);
+  }
+  return buckets.map((bucket) => {
+    const savedCount = matchCountByGtin.get(normalizeGtinKey(bucket.gtin)) ?? 0;
+    return {
+      ...bucket,
+      linked: Math.max(bucket.linked, Math.min(bucket.needed, savedCount)),
+    };
+  });
+}
+
 export async function getStxLinkStatusForOrder(
   orderIdOrRef: string,
   preloadedOrder?: Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>> | null
@@ -286,25 +307,7 @@ export async function getStxLinkStatusForOrder(
       select: { galaxusGtin: true, stockxOrderNumber: true },
     })
     .catch(() => []);
-  const matchedGtins = new Set(
-    (matchLinks ?? [])
-      .filter((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0)
-      .map((row: any) => normalizeGtinKey(String(row?.galaxusGtin ?? "")))
-      .filter((gtin: string) => gtin.length > 0)
-  );
-  const enrichedBuckets = buckets.map((bucket) => {
-    const bucketNorm = normalizeGtinKey(bucket.gtin);
-    const savedMatch = bucketNorm && matchedGtins.has(bucketNorm);
-    if (savedMatch) {
-      // A saved `GalaxusStockxMatch` counts as “linked” for ops, but do not pretend ETA/AWB exist
-      // unless the match row or purchase units actually have them (avoids green UI with AWB: —).
-      return {
-        ...bucket,
-        linked: Math.max(bucket.linked, bucket.needed),
-      };
-    }
-    return bucket;
-  });
+  const enrichedBuckets = applySavedMatchCountsToBuckets(buckets, matchLinks ?? []);
   const hasStxItems = buckets.length > 0;
   const allLinked = enrichedBuckets.every((bucket) => bucket.linked >= bucket.needed);
   const allEtaPresent = enrichedBuckets.every((bucket) => bucket.linkedWithEta >= bucket.needed);
@@ -498,6 +501,19 @@ export async function migrateLinkedStxUnitsToCurrentNeeds(orderIdOrRef: string) 
   return { updated };
 }
 
+/**
+ * True when the linker result belongs to the current Galaxus order (either
+ * freshly linked or idempotent re-run). Callers should NOT persist a
+ * `GalaxusStockxMatch` row when this returns false — otherwise the same
+ * StockX buy ends up on two orders and the /scan flow auto-prints the wrong
+ * customer label. Pure decision function so unit tests can pin the guard.
+ */
+export function shouldWriteGalaxusMatchForLinkResult(linkResult: {
+  status: string;
+}): boolean {
+  return linkResult.status === "linked" || linkResult.status === "already_linked";
+}
+
 export async function linkOldestPendingStxUnit(params: {
   galaxusOrderId: string;
   supplierVariantId: string;
@@ -523,12 +539,37 @@ export async function linkOldestPendingStxUnit(params: {
     return { status: "missing_eta" as const };
   }
 
-  const alreadyLinked = await (prisma as any).stxPurchaseUnit.findUnique({
-    where: { stockxOrderId },
-    select: { id: true },
-  });
+  // One StockX buy can back only one Galaxus order. When the buy is already
+  // attached to a unit on a DIFFERENT galaxus order, refuse the write — the
+  // caller must not create a duplicate `GalaxusStockxMatch` on the current
+  // order (that stale match then drives auto-print + packing-session bugs).
+  let alreadyLinked:
+    | { id: string; galaxusOrderId: string; cancelledAt: Date | null }
+    | null = null;
+  try {
+    alreadyLinked = await (prisma as any).stxPurchaseUnit.findUnique({
+      where: { stockxOrderId },
+      select: { id: true, galaxusOrderId: true, cancelledAt: true },
+    });
+  } catch (error: any) {
+    if (!isUnknownCancelledAtArg(error)) throw error;
+    alreadyLinked = await (prisma as any).stxPurchaseUnit.findUnique({
+      where: { stockxOrderId },
+      select: { id: true, galaxusOrderId: true },
+    });
+    if (alreadyLinked) alreadyLinked.cancelledAt = null;
+  }
   if (alreadyLinked) {
-    return { status: "already_linked" as const, unitId: String(alreadyLinked.id) };
+    const sameOrder =
+      String(alreadyLinked.galaxusOrderId ?? "") === String(params.galaxusOrderId);
+    if (sameOrder) {
+      return { status: "already_linked" as const, unitId: String(alreadyLinked.id) };
+    }
+    return {
+      status: "already_linked_other_order" as const,
+      unitId: String(alreadyLinked.id),
+      otherGalaxusOrderId: String(alreadyLinked.galaxusOrderId ?? ""),
+    };
   }
 
   // Cross-channel guard: one StockX buy order must not be consumed by both Decathlon and Galaxus.

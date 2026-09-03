@@ -28,6 +28,7 @@ import {
 import { normalizeInboundHomeAwb } from "@/app/lib/stockxInboundHomeRoutes";
 import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses";
 import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
+import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
 
 const execFile = promisify(execFileCallback);
 const LABEL_OUTPUT_DIR =
@@ -91,7 +92,7 @@ function resolveBrowserPrintConfig(): BrowserPrintConfig {
   return {
     enabled: resolveBooleanFlag(process.env.SCAN_BROWSER_PRINT_ENABLED, true),
     widthMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_WIDTH_MM, 62, 20, 300),
-    heightMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_HEIGHT_MM, 86, 20, 400),
+    heightMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_HEIGHT_MM, 100, 20, 400),
     marginMm: resolveNumber(process.env.SCAN_BROWSER_PRINT_MARGIN_MM, 0, 0, 25),
   };
 }
@@ -476,6 +477,9 @@ export async function POST(req: NextRequest) {
     const selectedFrankingLicense = resolveSwissPostFrankingLicenseForRole(staffRole);
     const awb = normalizeAwb(body?.awb ?? body?.code);
     const requestedShopifyLineItemId = String(body?.shopifyLineItemId ?? "").trim() || null;
+    // GTIN-only fulfill: operator scanned product barcode, not inbound StockX AWB.
+    // Resolve by shopifyLineItemId and do NOT write the GTIN into stockxAwb.
+    const gtinFulfill = Boolean(body?.gtinFulfill);
     const trackingCompany = body?.trackingCompany ? String(body.trackingCompany).trim() : null;
     const trackingUrlFromBody = body?.trackingUrl ? String(body.trackingUrl).trim() : null;
     // Default ON: Shopify shipping confirmation must include Swiss Post tracking.
@@ -494,9 +498,14 @@ export async function POST(req: NextRequest) {
       isBrowserPrintAllowedForRole(staffRole) || allowAlreadyFulfilled;
     const roleAllowsServerAutoPrint = isServerAutoPrintAllowedForRole(staffRole);
     const browserPrintConfigBase = resolveBrowserPrintConfig();
+    const localStation = isLocalStation();
     const browserPrintConfig: BrowserPrintConfig = {
       ...browserPrintConfigBase,
-      enabled: browserPrintConfigBase.enabled && roleAllowsBrowserPrint,
+      // Local packing station prints server-side via CUPS; suppress popup entirely.
+      enabled:
+        !localStation &&
+        browserPrintConfigBase.enabled &&
+        roleAllowsBrowserPrint,
     };
     // Return label payload whenever client asks, even if browser print is disabled for role.
     // This allows UI fallback to preview/download when server print is skipped/unavailable.
@@ -520,29 +529,38 @@ export async function POST(req: NextRequest) {
       stockxTrackingUrl: true,
     } as const;
 
-    let matches = (await prisma.orderMatch.findMany({
-      where: { stockxAwb: awb },
-      select: matchSelect,
-    })) as OrderMatchSelection[];
+    let matches: OrderMatchSelection[] = [];
 
-    // The scan page resolves the order by AWB, tracking URL or StockX order number, so it can
-    // hand us a line item whose match row never received an AWB (StockX detail sync gaps).
-    // Fall back to that line item and store the scanned AWB so the next scan hits directly.
-    if (matches.length === 0 && requestedShopifyLineItemId) {
-      const byLineItem = (await prisma.orderMatch.findMany({
+    if (gtinFulfill && requestedShopifyLineItemId) {
+      matches = (await prisma.orderMatch.findMany({
         where: { shopifyLineItemId: requestedShopifyLineItemId },
         select: matchSelect,
       })) as OrderMatchSelection[];
-      if (byLineItem.length > 0) {
-        matches = byLineItem;
-        await prisma.orderMatch
-          .updateMany({
-            where: { shopifyLineItemId: requestedShopifyLineItemId, stockxAwb: null },
-            data: { stockxAwb: awb },
-          })
-          .catch((err: any) => {
-            console.error("[FULFILL-FROM-AWB] AWB persist failed:", err?.message || err);
-          });
+    } else {
+      matches = (await prisma.orderMatch.findMany({
+        where: { stockxAwb: awb },
+        select: matchSelect,
+      })) as OrderMatchSelection[];
+
+      // The scan page resolves the order by AWB, tracking URL or StockX order number, so it can
+      // hand us a line item whose match row never received an AWB (StockX detail sync gaps).
+      // Fall back to that line item and store the scanned AWB so the next scan hits directly.
+      if (matches.length === 0 && requestedShopifyLineItemId) {
+        const byLineItem = (await prisma.orderMatch.findMany({
+          where: { shopifyLineItemId: requestedShopifyLineItemId },
+          select: matchSelect,
+        })) as OrderMatchSelection[];
+        if (byLineItem.length > 0) {
+          matches = byLineItem;
+          await prisma.orderMatch
+            .updateMany({
+              where: { shopifyLineItemId: requestedShopifyLineItemId, stockxAwb: null },
+              data: { stockxAwb: awb },
+            })
+            .catch((err: any) => {
+              console.error("[FULFILL-FROM-AWB] AWB persist failed:", err?.message || err);
+            });
+        }
       }
     }
 
@@ -614,9 +632,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const existing = await prisma.shopifyFulfillmentRecord.findFirst({
-      where: { trackingNumber: awb },
-    });
+    // Skip GTIN-as-tracking lookup — product barcodes must not collide with real AWBs.
+    const existing = gtinFulfill
+      ? null
+      : await prisma.shopifyFulfillmentRecord.findFirst({
+          where: { trackingNumber: awb },
+        });
 
     const map = await withContext("fetchOrderFulfillmentMap", () =>
       fetchOrderFulfillmentMap(shopifyOrderId)
@@ -807,7 +828,16 @@ export async function POST(req: NextRequest) {
               labelPayload.extension,
               `${shopifyOrderId}-${labelPayload.identifier}`
             );
-            if (roleAllowsServerAutoPrint) {
+            if (localStation) {
+              // Local packing station: always print through the configured CUPS queue.
+              printJobResult = await maybePrintLabelLocally({
+                base64: labelPayload.base64,
+                extension: labelPayload.extension,
+                jobName: `${shopifyOrderId}-${labelPayload.identifier}`,
+                widthMm: browserPrintConfigBase.widthMm,
+                heightMm: browserPrintConfigBase.heightMm,
+              });
+            } else if (roleAllowsServerAutoPrint) {
               printJobResult = await submitPrintJob(labelFilePath);
             } else {
               printJobResult = {

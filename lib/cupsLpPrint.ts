@@ -29,6 +29,8 @@ export async function submitLpJob(options: {
   offsetX?: number;
   offsetY?: number;
   printCommand?: string;
+  /** Pass false for label printers where lp must not stretch to page. Default: true. */
+  fitToPage?: boolean;
 }): Promise<LpJobResult> {
   const printerName = String(options.printerName ?? "").trim();
   if (!printerName) {
@@ -41,8 +43,16 @@ export async function submitLpJob(options: {
   const offsetX = Number(options.offsetX ?? 0);
   const offsetY = Number(options.offsetY ?? 0);
   const printCommand = String(options.printCommand ?? process.env.SWISS_POST_PRINT_COMMAND ?? "lp").trim() || "lp";
+  // Label printers (Brother QL etc.) must NOT `fit-to-page` — CUPS otherwise stretches
+  // a 62×86 label to fill A4/Letter, producing giant broken output. Default off when
+  // the caller passes a Custom.<W>x<H>mm media, which is the label-printer signal.
+  const isCustomMedia = /^Custom\./i.test(media);
+  const fitToPage =
+    typeof options.fitToPage === "boolean" ? options.fitToPage : !isCustomMedia;
 
-  const args = ["-d", printerName, "-o", "fit-to-page", "-o", `media=${media}`];
+  const args = ["-d", printerName];
+  if (fitToPage) args.push("-o", "fit-to-page");
+  args.push("-o", `media=${media}`);
   if (scale !== 100) {
     args.push("-o", `scaling=${scale}`);
   }

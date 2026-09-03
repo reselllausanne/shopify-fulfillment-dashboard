@@ -87,17 +87,6 @@ export async function resolveStockxBuyForManualDecathlon(
   return resolveStockxBuyByOrderNumberWithToken(auth.token, stockxOrderNumberInput);
 }
 
-function isAuthLookupFailure(reason: string): boolean {
-  const s = reason.toLowerCase();
-  return (
-    s.includes("401") ||
-    s.includes("403") ||
-    s.includes("unauthorized") ||
-    s.includes("forbidden") ||
-    s.includes("missing stockx auth")
-  );
-}
-
 async function collectGalaxusLookupTokens(overrideToken?: string | null): Promise<string[]> {
   const out: string[] = [];
   const push = (raw: string | null | undefined) => {
@@ -106,10 +95,25 @@ async function collectGalaxusLookupTokens(overrideToken?: string | null): Promis
       .replace(/^Bearer\s+/i, "");
     if (cleaned && !out.includes(cleaned)) out.push(cleaned);
   };
+  // Optional browser paste first — may be the wrong StockX account; callers must
+  // keep trying after order_not_found (see resolveStockxBuyForManualGalaxus).
   push(overrideToken);
+  // Prefer Galaxus / contact@ file, then dashboard file, then DB cron token.
   push(await readGalaxusStockxToken());
   push(await readGalaxusStockxToken(DASHBOARD_STOCKX_TOKEN_FILE));
   push(await getSupplierToken());
+  // Also try listStockxAccountTokens when available (local / newer deploys).
+  try {
+    const mod = await import("@/lib/stockxToken");
+    const list = (mod as any).listStockxAccountTokens;
+    if (typeof list === "function") {
+      for (const account of await list()) {
+        push(account?.token);
+      }
+    }
+  } catch {
+    // older stockxToken without multi-account helper
+  }
   return out;
 }
 
@@ -126,8 +130,9 @@ export async function resolveStockxBuyForManualGalaxus(
     const result = await resolveStockxBuyByOrderNumberWithToken(token, stockxOrderNumberInput);
     if (result.ok) return result;
     last = result;
-    const reason = String(result.reason ?? "");
-    if (!isAuthLookupFailure(reason)) break;
+    // Keep going across accounts: browser token is often dashboard (reselllausanne)
+    // while the buy lives on contact@ / Galaxus. Only auth failures used to continue;
+    // order_not_found must also try the next bearer.
   }
   return last;
 }

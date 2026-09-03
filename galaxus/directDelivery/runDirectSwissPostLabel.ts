@@ -43,6 +43,25 @@ export type RunDirectSwissPostLabelResult = {
   swissPost?: unknown;
 };
 
+function alreadyFulfilledResult(params: {
+  shipmentId: string;
+  trackingNumber?: string | null;
+  browserPrintConfig: BrowserPrintConfig;
+  delr?: unknown;
+}): RunDirectSwissPostLabelResult {
+  return {
+    ok: true,
+    status: "ALREADY_FULFILLED",
+    error: "Order already fulfilled",
+    shipmentId: params.shipmentId,
+    trackingNumber: params.trackingNumber ?? null,
+    labelData: null,
+    // Suppress any client popup — scan must do nothing.
+    browserPrintConfig: { ...params.browserPrintConfig, enabled: false },
+    delr: params.delr,
+  };
+}
+
 type ShipmentRow = {
   id: string;
   delrSentAt: Date | null;
@@ -76,7 +95,7 @@ export function resolveBrowserPrintConfig(): BrowserPrintConfig {
   return {
     enabled: bool(process.env.SCAN_BROWSER_PRINT_ENABLED, true),
     widthMm: num(process.env.SCAN_BROWSER_PRINT_WIDTH_MM, 62, 20, 300),
-    heightMm: num(process.env.SCAN_BROWSER_PRINT_HEIGHT_MM, 86, 20, 400),
+    heightMm: num(process.env.SCAN_BROWSER_PRINT_HEIGHT_MM, 100, 20, 400),
     marginMm: num(process.env.SCAN_BROWSER_PRINT_MARGIN_MM, 0, 0, 25),
   };
 }
@@ -219,28 +238,38 @@ export async function runDirectSwissPostLabelForOrder(
   const finalized = shipments.filter(isFinalizedShipment);
   const open = shipments.filter((s) => !isFinalizedShipment(s));
 
-  // 1) Finalized DELR → reprint only (no new Post barcode).
+  // 1) Finalized DELR → already shipped (reprint only when explicitly allowed).
   if (finalized.length > 0) {
     const shipment = finalized.find((s) => String(s.trackingNumber ?? "").trim()) ?? finalized[0];
-    if (allowReprint) {
-      const existing = await loadExistingShippingLabelData(order.id, shipment.id);
-      if (existing) {
-        return {
-          ok: true,
-          status: "REPRINT",
-          url: existing.url,
-          version: existing.version,
-          trackingNumber: shipment.trackingNumber ?? null,
+    if (!allowReprint) {
+      return alreadyFulfilledResult({
+        shipmentId: shipment.id,
+        trackingNumber: shipment.trackingNumber,
+        browserPrintConfig,
+        delr: {
           shipmentId: shipment.id,
-          labelData: includeLabelData ? existing.labelData : null,
-          browserPrintConfig,
-          delr: {
-            shipmentId: shipment.id,
-            status: "skipped",
-            message: "already sent",
-          },
-        };
-      }
+          status: "skipped",
+          message: "already sent",
+        },
+      });
+    }
+    const existing = await loadExistingShippingLabelData(order.id, shipment.id);
+    if (existing) {
+      return {
+        ok: true,
+        status: "REPRINT",
+        url: existing.url,
+        version: existing.version,
+        trackingNumber: shipment.trackingNumber ?? null,
+        shipmentId: shipment.id,
+        labelData: includeLabelData ? existing.labelData : null,
+        browserPrintConfig,
+        delr: {
+          shipmentId: shipment.id,
+          status: "skipped",
+          message: "already sent",
+        },
+      };
     }
     return {
       ok: false,
@@ -251,10 +280,18 @@ export async function runDirectSwissPostLabelForOrder(
     };
   }
 
-  // 2) Open shipment already has tracking → retry DELR if needed, reprint label (no remint).
+  // 2) Open shipment already has tracking → already labeled / in flight.
+  //    Scan must not remint or reprint. Explicit allowReprint → DELR retry + reprint.
   const openWithTracking = open.find((s) => String(s.trackingNumber ?? "").trim());
   const openWithoutTracking = open.filter((s) => !String(s.trackingNumber ?? "").trim());
   if (openWithTracking && openWithoutTracking.length === 0) {
+    if (!allowReprint) {
+      return alreadyFulfilledResult({
+        shipmentId: openWithTracking.id,
+        trackingNumber: openWithTracking.trackingNumber,
+        browserPrintConfig,
+      });
+    }
     const { uploadDelrForShipment } = await import("@/galaxus/warehouse/delr");
     const delr = await uploadDelrForShipment(openWithTracking.id).catch((error: any) => ({
       status: "error",

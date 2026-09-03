@@ -311,21 +311,28 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     });
 
     let unitLink: Awaited<ReturnType<typeof linkOldestPendingStxUnit>> | null = null;
-    if (stockxOrderIdFinal && looksLikeStockxOrderNumber(stockxOrderNumberFinal)) {
+    // Always persist a StxPurchaseUnit when we have a real StockX order # — even if
+    // enrich failed (buy already delivered / left buying list). Match-only rows die
+    // on ORDP line rewrite; units keyed by order ref survive.
+    if (looksLikeStockxOrderNumber(stockxOrderNumberFinal)) {
       await reserveStxPurchaseUnitsForOrder(order.galaxusOrderId);
       const supplierVariantId = await resolveSupplierVariantIdForGalaxusLine(line);
       if (supplierVariantId) {
+        const durableOrderId =
+          stockxOrderIdFinal ||
+          normalizeStockxOrderNumberInput(stockxOrderNumberFinal);
         unitLink = await linkOldestPendingStxUnit({
           galaxusOrderId: order.galaxusOrderId,
           supplierVariantId,
           gtin: line.gtin,
-          stockxOrderId: stockxOrderIdFinal,
+          stockxOrderId: durableOrderId,
           stockxOrderNumber: stockxOrderNumberFinal,
           awb: payload.stockxAwb,
           etaMin: payload.stockxEstimatedDelivery,
           etaMax: payload.stockxLatestEstimatedDelivery,
           stockxSettledAmount: resolvedCost,
           stockxSettledCurrency: payload.stockxCurrencyCode,
+          allowMissingEta: true,
         });
       }
     }

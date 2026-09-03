@@ -94,6 +94,24 @@ describe("parseReicheltChfPrice", () => {
   it("rejects absurd CHF when EUR is much lower", () => {
     expect(parseReicheltChfPrice("(368.00 CHF)", 60000)).toBeNull();
   });
+
+  it("parses Swiss space-thousands format inside parens (CORSAIR DDR5 regression)", () => {
+    // Real Reichelt CH-FR render: `1 388.93 € (1 300.59 CHF)`.
+    // Bug pre-fix: captured "300.59" (0.22× EUR), stored 300 CHF DB → order sold at loss.
+    expect(parseReicheltChfPrice("1 388.93 € (1 300.59 CHF)", 1388.93)).toBe(1300.59);
+  });
+
+  it("parses NBSP thousands separator", () => {
+    expect(parseReicheltChfPrice("(1\u00a0300.59 CHF)", 1388.93)).toBe(1300.59);
+  });
+
+  it("parses Swiss apostrophe thousands separator", () => {
+    expect(parseReicheltChfPrice("(1'300.59 CHF)", 1388.93)).toBe(1300.59);
+  });
+
+  it("rejects CHF far below EUR (parse artifact from dropped leading digit)", () => {
+    expect(parseReicheltChfPrice("(300.59 CHF)", 1388.93)).toBeNull();
+  });
 });
 
 describe("extractReicheltWeightGrams", () => {

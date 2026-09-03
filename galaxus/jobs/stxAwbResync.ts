@@ -2,7 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { resolveStockxBuyByOrderNumberWithToken } from "@/decathlon/stx/manualStockxEnrich";
 import { fetchStockxBuyOrderDetails } from "@/galaxus/stx/stockxClient";
-import { readGalaxusStockxToken } from "@/lib/stockxGalaxusAuth";
+import { listStockxAccountTokens, resolveStockxBearerToken } from "@/lib/stockxToken";
 
 type StxAwbResyncResult = {
   scannedUnits: number;
@@ -16,6 +16,14 @@ type StxAwbResyncOptions = {
   minAgeHours?: number;
   limitUnits?: number;
   concurrency?: number;
+  /** Optional caller-provided bearer (hourly cron passes the freshly minted one). */
+  token?: string;
+  /**
+   * Additional bearers (multi-account). When set, each order is retried across
+   * all tokens until one returns a snapshot. Defaults to every account token
+   * known to the server when neither `token` nor `tokens` is passed.
+   */
+  tokens?: string[];
 };
 
 /**
@@ -28,8 +36,27 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
   const concurrency = Math.max(1, options.concurrency ?? 2);
   const cutoff = new Date(Date.now() - minAgeHours * 60 * 60 * 1000);
 
-  const token = await readGalaxusStockxToken();
-  if (!token) {
+  // Prefer the caller-provided bearer (hourly cron already minted one), then
+  // DB `StockXToken` (cron/dashboard refresh), then stale galaxus/dashboard
+  // token files. Reading the stale galaxus file only was the root cause of
+  // the orphaned-job invocation returning `missing_token` in practice.
+  const tokenPool: string[] = [];
+  const pushToken = (raw: string | null | undefined) => {
+    const cleaned = String(raw ?? "").trim().replace(/^bearer\s+/i, "");
+    if (cleaned && !tokenPool.includes(cleaned)) tokenPool.push(cleaned);
+  };
+  pushToken(options.token);
+  for (const extra of options.tokens ?? []) pushToken(extra);
+  if (tokenPool.length === 0) {
+    const resolved = await resolveStockxBearerToken();
+    pushToken(resolved?.token);
+    // Multi-account: also enumerate every stored token so a Galaxus warehouse
+    // AWB that lives on account B is filled even when the DB currently holds
+    // account A's freshly minted bearer.
+    const all = await listStockxAccountTokens();
+    for (const entry of all) pushToken(entry.token);
+  }
+  if (tokenPool.length === 0) {
     return {
       scannedUnits: 0,
       uniqueOrders: 0,
@@ -97,30 +124,36 @@ export async function runStxAwbResync(options: StxAwbResyncOptions = {}): Promis
         let chainId = chainByOrderId.get(stockxOrderId) ?? "";
         let details: Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>> | null = null;
 
-        if (chainId) {
-          try {
-            details = await fetchStockxBuyOrderDetails(token, {
-              chainId,
-              orderId: stockxOrderId,
-            });
-          } catch {
-            details = null;
+        // Iterate all account tokens until one returns a snapshot. StockX
+        // returns 404 for buys that don't belong to the calling account.
+        for (const attemptToken of tokenPool) {
+          if (chainId) {
+            try {
+              details = await fetchStockxBuyOrderDetails(attemptToken, {
+                chainId,
+                orderId: stockxOrderId,
+              });
+              if (details?.awb) break;
+            } catch {
+              details = null;
+            }
           }
-        }
-
-        if (!details?.awb) {
-          const lookupKey =
-            String(unitByOrderId.get(stockxOrderId)?.stockxOrderNumber ?? "").trim() ||
-            stockxOrderId;
-          const resolved = await resolveStockxBuyByOrderNumberWithToken(token, lookupKey);
-          if (!resolved.ok) return;
-          chainId = String(resolved.listNode.chainId ?? "").trim();
-          details = {
-            awb: resolved.details.awb,
-            etaMin: resolved.details.etaMin,
-            etaMax: resolved.details.etaMax,
-            order: resolved.details.order,
-          } as Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>>;
+          if (!details?.awb) {
+            const lookupKey =
+              String(unitByOrderId.get(stockxOrderId)?.stockxOrderNumber ?? "").trim() ||
+              stockxOrderId;
+            const resolved = await resolveStockxBuyByOrderNumberWithToken(attemptToken, lookupKey);
+            if (resolved.ok) {
+              chainId = String(resolved.listNode.chainId ?? "").trim();
+              details = {
+                awb: resolved.details.awb,
+                etaMin: resolved.details.etaMin,
+                etaMax: resolved.details.etaMax,
+                order: resolved.details.order,
+              } as Awaited<ReturnType<typeof fetchStockxBuyOrderDetails>>;
+              if (details.awb) break;
+            }
+          }
         }
 
         if (!details) return;

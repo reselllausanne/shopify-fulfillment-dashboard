@@ -17,6 +17,7 @@ import {
   buildSwissPostPayloadToHome,
   extractSwissPostLabelPayload,
 } from "@/lib/swissPostHomeLabel";
+import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -136,7 +137,23 @@ export async function POST(req: NextRequest) {
       labelPayload.extension,
       route.stockxOrderNumber
     );
-    const printJobResult = await maybePrintLabel(labelFilePath);
+
+    const localStation = isLocalStation();
+    const browserPrintBase = resolveBrowserPrintConfig();
+    const printJobResult = localStation
+      ? await maybePrintLabelLocally({
+          base64: labelPayload.base64,
+          extension: labelPayload.extension,
+          jobName: `home-${route.stockxOrderNumber}`,
+          widthMm: browserPrintBase.widthMm,
+          heightMm: browserPrintBase.heightMm,
+        })
+      : await maybePrintLabel(labelFilePath);
+    const browserPrintConfig = {
+      ...browserPrintBase,
+      // Local station prints server-side; skip popup so nothing pops up.
+      enabled: !localStation && browserPrintBase.enabled,
+    };
 
     return NextResponse.json({
       ok: true,
@@ -156,7 +173,7 @@ export async function POST(req: NextRequest) {
             extension: labelPayload.extension,
           }
         : null,
-      browserPrintConfig: resolveBrowserPrintConfig(),
+      browserPrintConfig,
     });
   } catch (error: any) {
     console.error("[SCAN-RETURN-TO-HOME]", error);

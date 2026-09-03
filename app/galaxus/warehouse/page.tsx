@@ -46,6 +46,22 @@ const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
 export default function WarehouseBulkPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+
+  // Auto-select order from `?orderId=<uuid>` (used by /scan packing session handoff).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get("orderId");
+      if (requested && requested !== selectedOrderId) {
+        setSelectedOrderId(requested);
+      }
+    } catch {
+      // ignore
+    }
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -88,8 +104,8 @@ export default function WarehouseBulkPage() {
     if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = cached.items;
       setOrders(items);
-      if (!selectedOrderId && items[0]?.id) {
-        setSelectedOrderId(items[0].id);
+      if (items[0]?.id) {
+        setSelectedOrderId((prev) => prev || items[0].id);
       }
       setLoading(false);
       return;
@@ -106,8 +122,8 @@ export default function WarehouseBulkPage() {
       const items = Array.isArray(data.items) ? data.items : [];
       ordersListCacheRef.current = { at: Date.now(), items };
       setOrders(items);
-      if (!selectedOrderId && items[0]?.id) {
-        setSelectedOrderId(items[0].id);
+      if (items[0]?.id) {
+        setSelectedOrderId((prev) => prev || items[0].id);
       }
     } catch (err: any) {
       setError(err?.message ?? "Failed to load orders");

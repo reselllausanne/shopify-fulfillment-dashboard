@@ -142,8 +142,10 @@ export function computeReicheltLandedCost(input: {
 
 export function isPlausibleReicheltSellPrice(cost: ReicheltLandedCost): boolean {
   if (!Number.isFinite(cost.sellPriceChf) || cost.sellPriceChf <= 0) return false;
-  if (cost.priceEur != null && cost.priceEur >= 100 && cost.productChf < cost.priceEur * 0.05) return false;
-  if (cost.rawPriceChf != null && cost.priceEur != null && cost.rawPriceChf < cost.priceEur * 0.05) return false;
+  // CHF/EUR ~0.90–1.05. Product CHF below 50% of EUR → thousands-separator parse artifact
+  // (regression: "1 300.59 CHF" captured as "300.59"). Guard applies at every price magnitude.
+  if (cost.priceEur != null && cost.priceEur > 0 && cost.productChf < cost.priceEur * 0.5) return false;
+  if (cost.rawPriceChf != null && cost.priceEur != null && cost.rawPriceChf < cost.priceEur * 0.5) return false;
   if (cost.sellPriceChf > 100_000) return false;
   return true;
 }

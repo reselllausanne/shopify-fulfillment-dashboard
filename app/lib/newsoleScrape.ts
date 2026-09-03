@@ -324,7 +324,14 @@ export async function scrapeNewsoleShop(
           skippedNoGtin++;
           return;
         }
-        const stock = variation.is_in_stock ? Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)) : 0;
+        // WooCommerce Store API only exposes is_in_stock bool for Newsole; no real qty.
+        // Default 1 to avoid Galaxus back-order overselling; raise via SCRAPER_NER_DEFAULT_STOCK.
+        const stock = variation.is_in_stock
+          ? Math.max(
+              1,
+              Number(process.env.SCRAPER_NER_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
+            )
+          : 0;
         const title = sizeLabel ? `${parent.name} — ${sizeLabel}` : parent.name;
         const ok = await upsertVariant({
           gtin,

@@ -46,6 +46,7 @@ type ReicheltRunStats = {
   skippedNoGtin: number;
   skippedNoPrice: number;
   skippedFresh: number;
+  markedDelisted: number;
   parseErrors: number;
   requestErrors: number;
   listed: number;
@@ -130,6 +131,7 @@ function runMessage(stats: ReicheltRunStats, discovery: string, imageSynced: num
     `skipped_no_gtin=${stats.skippedNoGtin}`,
     `skipped_no_price=${stats.skippedNoPrice}`,
     `skipped_fresh=${stats.skippedFresh}`,
+    `marked_delisted=${stats.markedDelisted}`,
     `req_errors=${stats.requestErrors}`,
     `images_synced=${imageSynced}`,
     `images_failed=${imageFailed}`,
@@ -329,6 +331,7 @@ export async function scrapeReicheltShop(
     skippedNoGtin: 0,
     skippedNoPrice: 0,
     skippedFresh: 0,
+    markedDelisted: 0,
     parseErrors: 0,
     requestErrors: 0,
     listed: 0,
@@ -368,6 +371,18 @@ export async function scrapeReicheltShop(
       },
     ])
   );
+  // Map articleId (stored in manualNote JSON) -> supplierVariantId so we can zero
+  // stock on rows whose Reichelt product page is now "no longer available".
+  const existingByArticleId = new Map<string, string>();
+  for (const row of existingRows) {
+    try {
+      const note = JSON.parse(String(row.manualNote || "")) as { articleId?: string };
+      const id = String(note?.articleId || "").trim();
+      if (id) existingByArticleId.set(id, row.supplierVariantId);
+    } catch {
+      /* ignore bad note */
+    }
+  }
   if (deltaDays > 0) {
     for (const row of existingRows) {
       if (!row.lastSyncAt || row.lastSyncAt.getTime() < freshCutoffMs) continue;
@@ -382,6 +397,30 @@ export async function scrapeReicheltShop(
     console.log(
       `[SCRAPER] rei delta: skip ${freshArticleIds.size} articles synced within ${deltaDays}d`
     );
+  }
+
+  async function markReicheltDelisted(articleId: string): Promise<boolean> {
+    const svId = existingByArticleId.get(articleId);
+    if (!svId) return false;
+    try {
+      await prismaAny.supplierVariant.update({
+        where: { supplierVariantId: svId },
+        data: {
+          stock: 0,
+          lastSyncAt: new Date(),
+          manualNote: JSON.stringify({
+            type: "reichelt_delisted",
+            articleId,
+            detectedAt: new Date().toISOString(),
+            reason: "product page no longer available",
+          }),
+        },
+      });
+      return true;
+    } catch (err) {
+      console.warn(`[SCRAPER] rei delist zero failed ${articleId}:`, (err as Error)?.message || err);
+      return false;
+    }
   }
 
   try {
@@ -422,11 +461,16 @@ export async function scrapeReicheltShop(
             }
           }
 
-          const product = await client.fetchProductByArticleId(articleId, productUrl);
-          if (!product) {
+          const fetched = await client.fetchProductByArticleId(articleId, productUrl);
+          if (!fetched.product) {
+            if (fetched.delisted) {
+              const zeroed = await markReicheltDelisted(articleId);
+              if (zeroed) stats.markedDelisted++;
+            }
             stats.skippedNoGtin++;
             return;
           }
+          const product = fetched.product;
           const cost = computeReicheltLandedCost({
             priceChf: product.priceChf,
             priceEur: product.priceEur,

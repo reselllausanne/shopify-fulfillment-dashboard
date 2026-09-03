@@ -71,7 +71,8 @@ describe("buildLinkedCountByOrderId", () => {
         },
       ],
     });
-    expect(map.get("uuid-1")).toBe(1);
+    expect(map.linked.get("uuid-1")).toBe(1);
+    expect(map.needsBuy.get("uuid-1")).toBe(0);
   });
 });
 

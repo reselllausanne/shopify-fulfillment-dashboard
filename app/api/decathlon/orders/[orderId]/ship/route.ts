@@ -46,7 +46,7 @@ const LABEL_OUTPUT_DIR =
   process.env.SWISS_POST_LABEL_OUTPUT_DIR ||
   path.join(process.cwd(), "swiss-post-labels");
 const PRINT_COMMAND = process.env.SWISS_POST_PRINT_COMMAND || "lp";
-const DEFAULT_PRINT_MEDIA = "62x66mm";
+const DEFAULT_PRINT_MEDIA = "62x100mm";
 
 type PrintJobResult = {
   ok: boolean;
@@ -93,7 +93,13 @@ async function submitPrintJob(filePath: string): Promise<PrintJobResult> {
   }
 
   try {
-    const media = String(process.env.SWISS_POST_PRINTER_MEDIA || DEFAULT_PRINT_MEDIA).trim();
+    const mediaRaw = String(process.env.SWISS_POST_PRINTER_MEDIA || DEFAULT_PRINT_MEDIA).trim();
+    // Brother QL expects Custom.WxHmm; accept bare "62x100mm" too.
+    const media = /^Custom\./i.test(mediaRaw)
+      ? mediaRaw
+      : mediaRaw.match(/^(\d+)\s*[x×]\s*(\d+)\s*mm$/i)
+        ? `Custom.${mediaRaw.replace(/\s+/g, "").replace(/×/g, "x")}`
+        : mediaRaw;
     const scaleRaw = Number(process.env.SWISS_POST_PRINT_SCALE || 100);
     const scale = Number.isFinite(scaleRaw) ? Math.max(10, Math.min(200, scaleRaw)) : 100;
     const offsetX = Number(process.env.SWISS_POST_PRINT_OFFSET_X || 0);

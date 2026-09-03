@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   galaxusLineWarehouseStockHint,
+  isCrocsLightningMcQueenLine,
   isGalaxusGldSupplierLine,
   isGalaxusStxSupplierLine,
 } from "@/galaxus/warehouse/lineInventorySource";
@@ -39,5 +40,22 @@ describe("GLD / Golden line detection", () => {
       })
     ).toBe(false);
     expect(isGalaxusStxSupplierLine({ providerKey: "STX_194500874848" })).toBe(true);
+  });
+
+  it("blocks Crocs Lightning McQueen from StockX even when listed STX_", () => {
+    expect(
+      isCrocsLightningMcQueenLine({
+        productName: "Crocs Lightning McQueen (41, 42)",
+        gtin: "191448430945",
+        providerKey: "STX_191448430945",
+      })
+    ).toBe(true);
+    expect(
+      isGalaxusStxSupplierLine({
+        providerKey: "STX_191448430945",
+        gtin: "191448430945",
+        productName: "Crocs Lightning McQueen (41, 42)",
+      })
+    ).toBe(false);
   });
 });

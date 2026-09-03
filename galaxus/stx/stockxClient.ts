@@ -445,7 +445,17 @@ export async function findBuyOrderListNodeByOrderNumber(
   if (hit) return hit;
 
   // Explicit common states in case null-state filter is ignored by API.
-  for (const state of ["PENDING", "COMPLETED", "AUTHENTICATED", "SHIPPED", "CANCELED"] as const) {
+  // HISTORICAL covers `BUYER_RECEIVED` / older deliveries — StockX excludes
+  // those from `state: null` on the current-bids feed, so warehouse lookups
+  // for AWBs on already-delivered buys otherwise return `order_not_found`.
+  for (const state of [
+    "HISTORICAL",
+    "PENDING",
+    "COMPLETED",
+    "AUTHENTICATED",
+    "SHIPPED",
+    "CANCELED",
+  ] as const) {
     addBatch(
       await fetchRecentStockxBuyingOrders(token, {
         first: 100,

@@ -66,8 +66,24 @@ function jitterMs(max = 400) {
 }
 
 function parseMoney(value: unknown): number | null {
-  const raw = String(value ?? "").trim().replace(",", ".");
-  const n = Number.parseFloat(raw);
+  // Handles CH-FR "1 300.59", CH-DE "1'300.59" / "1'300,59", DE "1.300,59", EN "1,300.59".
+  let s = String(value ?? "")
+    .replace(/[\s\u00A0\u202F\u2009\u2007']/g, "")
+    .trim();
+  if (!s) return null;
+  const lastDot = s.lastIndexOf(".");
+  const lastComma = s.lastIndexOf(",");
+  if (lastDot >= 0 && lastComma >= 0) {
+    if (lastDot > lastComma) {
+      s = s.replace(/,/g, "");
+    } else {
+      s = s.replace(/\./g, "").replace(",", ".");
+    }
+  } else if (lastComma >= 0) {
+    const decimalDigits = s.length - 1 - lastComma;
+    s = decimalDigits > 0 && decimalDigits <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  }
+  const n = Number.parseFloat(s);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.round(n * 100) / 100;
 }
@@ -291,7 +307,12 @@ export function reicheltConfig() {
     sitemapShardMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_MAX_RETRIES || 2)),
     sitemapShardRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_RETRY_BASE_MS || 2_000)),
     sitemapFallbackMaxShard: Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_FALLBACK_MAX_SHARD || 149)),
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
+    // Reichelt HTML exposes only in-stock class (status_1/4/6/16/100), no real qty.
+    // Default 1 to avoid Galaxus back-order overselling; raise via SCRAPER_REI_DEFAULT_STOCK.
+    defaultStock: Math.max(
+      1,
+      Number(process.env.SCRAPER_REI_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
+    ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 8)),
   };
 }
@@ -387,17 +408,21 @@ export function parseReicheltChfPrice(html: string, priceEur: number | null = nu
     const chf = parseMoney(raw);
     if (!chf || priceEur == null) return chf;
     if (chf > priceEur * 3) return null;
-    if (priceEur >= 100 && chf < priceEur * 0.05) return null;
-    if (priceEur >= 20 && chf < priceEur * 0.2) return null;
+    // CHF/EUR floats around 0.90–1.05. Anything below 50% of EUR is a parse artifact
+    // (space/NBSP thousands separator dropped a leading digit — e.g. "1 300.32" → "300.32").
+    if (chf < priceEur * 0.5) return null;
     return chf;
   };
 
-  const paren = html.match(/\(([\d.,]+)\s*CHF\)/i);
+  // Swiss number: digits, optional thousands separators (space/NBSP/narrow NBSP/thin space/apostrophe/dot/comma),
+  // must start and end with a digit. Anchored to avoid sweeping unrelated content.
+  const numGroup = "(\\d[\\d.,'\\s\\u00A0\\u202F\\u2009\\u2007]*\\d|\\d)";
+  const paren = html.match(new RegExp(`\\(\\s*${numGroup}\\s*CHF\\s*\\)`, "i"));
   if (paren) {
     const chf = pick(paren[1]);
     if (chf) return chf;
   }
-  const inline = html.match(/([\d.,]+)\s*CHF\b/i);
+  const inline = html.match(new RegExp(`${numGroup}\\s*CHF\\b`, "i"));
   if (inline) {
     const chf = pick(inline[1]);
     if (chf) return chf;
@@ -411,6 +436,18 @@ export function parseReicheltStockStatus(html: string): { status: string | null;
   const text = textMatch ? decodeHtml(textMatch[1].replace(/\s+/g, " ").trim()) : null;
   const inStock = status ? ["1", "4", "6", "16", "100"].includes(status) : /en stock|ex stock|lieferbar|disponible|in stock/i.test(text ?? "");
   return { status, text, inStock };
+}
+
+/**
+ * True when the Reichelt product page renders the discontinued marker.
+ * FR: "n'est … plus disponible" · DE: "nicht mehr verfügbar" · EN: "no longer available".
+ * Used to distinguish a delisted SKU (must zero stock) from a transient parse failure.
+ */
+export function isReicheltDelistedHtml(html: string): boolean {
+  if (!html) return false;
+  return /n['\u2019]est[^<]{0,60}plus\s+disponible|nicht\s+mehr\s+verf(ü|u)gbar|no\s+longer\s+available|status_0\b/i.test(
+    html
+  );
 }
 
 export function parseReicheltCategorySettings(html: string): ReicheltCategorySettings | null {
@@ -824,20 +861,26 @@ export class ReicheltClient {
     }
   }
 
-  async fetchProductByArticleId(articleId: string, productUrl?: string | null): Promise<ReicheltProduct | null> {
+  async fetchProductByArticleId(
+    articleId: string,
+    productUrl?: string | null
+  ): Promise<{ product: ReicheltProduct | null; delisted: boolean }> {
     const primary = resolveReicheltPrimaryProductUrl(articleId, productUrl, this.baseUrl);
     const deFallbackEnabled = String(process.env.SCRAPER_REI_DE_FALLBACK ?? "1") !== "0";
 
-    const tryOne = async (url: string): Promise<ReicheltProduct | null> => {
+    const tryOne = async (
+      url: string
+    ): Promise<{ product: ReicheltProduct | null; delisted: boolean }> => {
       const html = await this.fetchText(url);
-      return parseReicheltProductHtml(html, articleId, this.baseUrl);
+      const product = parseReicheltProductHtml(html, articleId, this.baseUrl);
+      if (product) return { product, delisted: false };
+      return { product: null, delisted: isReicheltDelistedHtml(html) };
     };
 
     try {
-      const product = await tryOne(primary);
-      if (product) return product;
-      // Soft miss (HTML ok, no GTIN) — do not burn a second full page on DE.
-      return null;
+      const res = await tryOne(primary);
+      if (res.product || res.delisted) return res;
+      return { product: null, delisted: false };
     } catch (err) {
       if (!deFallbackEnabled || !isHardReicheltFetchError(err)) {
         throw err instanceof Error ? err : new Error(String(err));
@@ -845,9 +888,7 @@ export class ReicheltClient {
       const de = productUrl ? toReicheltDeProductUrl(productUrl) : null;
       if (!de || de === primary) throw err instanceof Error ? err : new Error(String(err));
       try {
-        const product = await tryOne(de);
-        if (product) return product;
-        return null;
+        return await tryOne(de);
       } catch (deErr) {
         throw deErr instanceof Error ? deErr : new Error(String(deErr));
       }

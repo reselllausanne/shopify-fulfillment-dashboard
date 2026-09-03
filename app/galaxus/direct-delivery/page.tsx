@@ -17,6 +17,8 @@ type OrderListItem = {
   shippedCount?: number;
   fulfilledCount?: number;
   linkedCount?: number;
+  /** STX/external lines still missing a buy — drives red card (not total line count). */
+  needsBuyCount?: number;
   fulfillmentState?: "to_process" | "shipped" | "fulfilled";
   hasPhysicalStock?: boolean;
   physicalStockLineCount?: number;
@@ -44,6 +46,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [polling, setPolling] = useState(false);
   const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [sendingOrdr, setSendingOrdr] = useState(false);
+  const [reprintBusy, setReprintBusy] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
@@ -228,6 +231,14 @@ export default function GalaxusDirectDeliveryPage() {
     return withSlip?.deliveryNotePdfUrl ?? null;
   }, [selectedOrder]);
 
+  const shippingLabelUrl = useMemo(() => {
+    const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
+    const withLabel = shipments.find(
+      (shipment: any) => String(shipment?.shippingLabelPdfUrl ?? "").trim().length > 0
+    );
+    return withLabel?.shippingLabelPdfUrl ?? null;
+  }, [selectedOrder]);
+
   const buildLineTitle = (line: any) =>
     line.productName || line.description || line.supplierPid || "—";
 
@@ -314,12 +325,16 @@ export default function GalaxusDirectDeliveryPage() {
   };
 
   const needsLinking = (order: OrderListItem) => {
+    if (typeof order.needsBuyCount === "number") return order.needsBuyCount > 0;
     const lines = order._count?.lines ?? 0;
     const linked = order.linkedCount ?? 0;
     return lines > 0 && linked < lines;
   };
 
   const isFullyLinked = (order: OrderListItem) => {
+    if (typeof order.needsBuyCount === "number") {
+      return order.needsBuyCount === 0 && (order.linkedCount ?? 0) > 0;
+    }
     const lines = order._count?.lines ?? 0;
     const linked = order.linkedCount ?? 0;
     return lines > 0 && linked >= lines;
@@ -375,21 +390,85 @@ export default function GalaxusDirectDeliveryPage() {
       const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ includeLabelData: true, allowReprint: true }),
+        body: JSON.stringify({ includeLabelData: true, allowReprint: false }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Direct Swiss Post label failed");
+      if (data.status === "ALREADY_FULFILLED") {
+        setError("Order already fulfilled — use Reprint docs.");
+        setOpsLog(JSON.stringify(data, null, 2));
+        await loadOrderDetail(selectedOrderId, { force: true });
+        return;
+      }
       setOpsLog(JSON.stringify(data, null, 2));
-      if (data.status === "CREATED" || data.status === "REPRINT" || data.status === "ALREADY_FULFILLED") {
+      if (data.status === "CREATED" || data.status === "REPRINT") {
         setLeftTab("fulfilled");
       }
       await loadOrders({ force: true });
       if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
-      if (data?.url) {
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      if (serverPrinted) {
+        const labelFail = data.printJobResult && !data.printJobResult.ok && !data.printJobResult.skipped;
+        if (labelFail) {
+          setError(`Label print: ${data.printJobResult.error || data.printJobResult.message || "failed"}`);
+        }
+      } else if (data?.url) {
         window.open(String(data.url), "_blank", "noopener,noreferrer");
       }
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const reprintDirectDocuments = async () => {
+    if (!selectedOrderId) return;
+    setReprintBusy(true);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ includeLabelData: true, allowReprint: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Reprint failed");
+      setOpsLog(JSON.stringify(data, null, 2));
+      await loadOrderDetail(selectedOrderId, { force: true });
+
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const notes: string[] = [];
+      if (data.printJobResult?.ok) notes.push("Swiss Post label → Brother");
+      else if (data.printJobResult && !data.printJobResult.skipped) {
+        notes.push(`Label print fail: ${data.printJobResult.error || data.printJobResult.message}`);
+      }
+      if (data.deliveryNotePrintResult?.ok) notes.push("Delivery note → HP");
+      else if (data.deliveryNotePrintResult && !data.deliveryNotePrintResult.skipped) {
+        notes.push(
+          `Delivery note fail: ${data.deliveryNotePrintResult.error || data.deliveryNotePrintResult.message}`
+        );
+      } else if (!data.deliveryNotePrintResult && packingSlipUrl) {
+        notes.push("Delivery note on file — open Packing slip if HP skipped");
+      } else if (!packingSlipUrl && !selectedOrder?.physicalDeliveryNoteRequired) {
+        notes.push("No delivery note required");
+      }
+
+      if (serverPrinted) {
+        window.alert(
+          notes.length
+            ? `Reprint ${selectedOrder?.galaxusOrderId ?? ""}\n${notes.join("\n")}`
+            : "Reprint queued (check printers)."
+        );
+      } else if (data?.url) {
+        window.open(String(data.url), "_blank", "noopener,noreferrer");
+        if (packingSlipUrl) window.open(packingSlipUrl, "_blank", "noopener,noreferrer");
+      } else {
+        window.alert(notes.join("\n") || "Reprint done.");
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setReprintBusy(false);
     }
   };
 
@@ -752,22 +831,48 @@ export default function GalaxusDirectDeliveryPage() {
                   >
                     {sendingOrdr ? "ORDR…" : "Resend ORDR"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void generateDirectSwissPostLabel()}
-                    disabled={orderFulfilled}
-                    className="px-2 py-1.5 bg-indigo-700 text-white rounded text-xs disabled:opacity-50"
-                  >
-                    {orderFulfilled ? "Fulfilled" : "Swiss Post label"}
-                  </button>
-                  {selectedOrder?.physicalDeliveryNoteRequired && packingSlipUrl ? (
+                  {orderFulfilled ? (
+                    <span className="text-xs px-2 py-1.5 rounded bg-violet-100 text-violet-900">
+                      Fulfilled
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void generateDirectSwissPostLabel()}
+                      className="px-2 py-1.5 bg-indigo-700 text-white rounded text-xs disabled:opacity-50"
+                    >
+                      Swiss Post label
+                    </button>
+                  )}
+                  {(orderFulfilled || shippingLabelUrl || packingSlipUrl) && (
+                    <button
+                      type="button"
+                      onClick={() => void reprintDirectDocuments()}
+                      disabled={reprintBusy || !selectedOrderId}
+                      title="Reprint Swiss Post label (Brother) + delivery note (HP) if present"
+                      className="px-2 py-1.5 bg-amber-700 text-white rounded text-xs disabled:opacity-50"
+                    >
+                      {reprintBusy ? "Reprint…" : "Reprint docs"}
+                    </button>
+                  )}
+                  {packingSlipUrl ? (
                     <a
                       href={packingSlipUrl}
                       target="_blank"
                       rel="noreferrer"
                       className="px-2 py-1.5 bg-amber-600 text-white rounded text-xs"
                     >
-                      Packing slip
+                      Packing slip PDF
+                    </a>
+                  ) : null}
+                  {shippingLabelUrl ? (
+                    <a
+                      href={shippingLabelUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2 py-1.5 bg-gray-700 text-white rounded text-xs"
+                    >
+                      Label PDF
                     </a>
                   ) : null}
                   <button

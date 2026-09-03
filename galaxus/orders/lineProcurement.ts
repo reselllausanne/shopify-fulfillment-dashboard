@@ -472,6 +472,33 @@ export function countLinkedLinesForList(
 }
 
 /**
+ * Lines that still need a buy / link (STX or other external supplier without procurement.ok).
+ * Warehouse-hint / local / already-linked lines excluded → list red = real repurchase risk.
+ */
+export function countLinesNeedingBuy(
+  lines: any[],
+  stockxMatches: any[],
+  stxUnits: any[],
+  stx: any = null,
+  externalBuys: ExternalBuyRow[] = []
+): number {
+  if (!Array.isArray(lines) || lines.length === 0) return 0;
+  return attachProcurementToLines(
+    lines,
+    stx,
+    stockxMatches ?? [],
+    stxUnits ?? [],
+    externalBuys ?? []
+  ).filter((line) => {
+    if (Boolean(line?.procurement?.ok)) return false;
+    // Non-supplier / unknown lines: don't paint whole card red.
+    if (isGalaxusStxSupplierLine(line)) return true;
+    const pid = String(line?.supplierPid ?? line?.providerKey ?? "").toUpperCase();
+    return /^(REI_|WEL_|SNL_|BAE_|NER_|THE_|GLD_|HHV_|NEW_)/.test(pid);
+  }).length;
+}
+
+/**
  * Batch linkedCounts for `/api/galaxus/orders` list.
  * Counts GalaxusStockxMatch, StxPurchaseUnit (stx_sync), warehouse-stock, and external buys.
  */
@@ -482,7 +509,7 @@ export function buildLinkedCountByOrderId(params: {
   /** StxPurchaseUnit.galaxusOrderId is the external Galaxus order ref. */
   stxUnits: Array<{ galaxusOrderId: string } & Record<string, unknown>>;
   externalBuys?: ExternalBuyRow[];
-}): Map<string, number> {
+}): { linked: Map<string, number>; needsBuy: Map<string, number> } {
   const linesByOrderId = new Map<string, any[]>();
   for (const line of params.lines ?? []) {
     const oid = String(line?.orderId ?? "").trim();
@@ -517,21 +544,18 @@ export function buildLinkedCountByOrderId(params: {
     buysByOrderId.set(oid, arr);
   }
 
-  const out = new Map<string, number>();
+  const linked = new Map<string, number>();
+  const needsBuy = new Map<string, number>();
   for (const order of params.orders ?? []) {
     const id = String(order?.id ?? "").trim();
     if (!id) continue;
     const ref = String(order?.galaxusOrderId ?? "").trim();
-    out.set(
-      id,
-      countLinkedLinesForList(
-        linesByOrderId.get(id) ?? [],
-        matchesByOrderId.get(id) ?? [],
-        unitsByOrderRef.get(ref) ?? [],
-        null,
-        buysByOrderId.get(id) ?? []
-      )
-    );
+    const orderLines = linesByOrderId.get(id) ?? [];
+    const matches = matchesByOrderId.get(id) ?? [];
+    const units = unitsByOrderRef.get(ref) ?? [];
+    const buys = buysByOrderId.get(id) ?? [];
+    linked.set(id, countLinkedLinesForList(orderLines, matches, units, null, buys));
+    needsBuy.set(id, countLinesNeedingBuy(orderLines, matches, units, null, buys));
   }
-  return out;
+  return { linked, needsBuy };
 }

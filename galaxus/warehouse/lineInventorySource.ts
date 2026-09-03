@@ -1,5 +1,39 @@
 import { resolveGalaxusBuySourceOverride } from "@/galaxus/warehouse/buySourceOverride";
 
+/** Money Kickz / Bussigny Crocs Lightning McQueen GTINs — never StockX auto-buy. */
+const CROCS_LIGHTNING_MCQUEEN_GTINS = new Set([
+  "191448430891",
+  "191448430907",
+  "191448430921",
+  "191448430938",
+  "191448430945",
+  "191448430952",
+]);
+
+function digitsNoLeadingZeros(raw: string | null | undefined): string {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  return digits.replace(/^0+/, "") || "";
+}
+
+/** Crocs Lightning McQueen — warehouse/MK bulk. Do not reserve or auto-link StockX. */
+export function isCrocsLightningMcQueenLine(line: {
+  productName?: string | null;
+  description?: string | null;
+  gtin?: string | null;
+  providerKey?: string | null;
+  supplierSku?: string | null;
+  supplierPid?: string | null;
+}): boolean {
+  const gtin = digitsNoLeadingZeros(line.gtin);
+  if (gtin && CROCS_LIGHTNING_MCQUEEN_GTINS.has(gtin)) return true;
+  for (const raw of [line.providerKey, line.supplierPid, line.supplierSku]) {
+    const key = digitsNoLeadingZeros(raw);
+    if (key && CROCS_LIGHTNING_MCQUEEN_GTINS.has(key)) return true;
+  }
+  const title = `${line.productName ?? ""} ${line.description ?? ""}`;
+  return /lightning\s*mcqueen/i.test(title) && /crocs/i.test(title);
+}
+
 /** True when the Galaxus line is the StockX (STX) supplier channel (vs TRM/GLD, etc.). */
 export function isGalaxusStxSupplierLine(line: {
   supplierPid?: string | null;
@@ -7,9 +41,13 @@ export function isGalaxusStxSupplierLine(line: {
   providerKey?: string | null;
   gtin?: string | null;
   offerSupplierSku?: string | null;
+  productName?: string | null;
+  description?: string | null;
+  supplierSku?: string | null;
 }): boolean {
   // Listed as STX but buy-source override → treat as non-STX for auto-link / reserve.
   if (resolveGalaxusBuySourceOverride(line)) return false;
+  if (isCrocsLightningMcQueenLine(line)) return false;
   if (isGalaxusGldSupplierLine(line)) return false;
   const supplierPid = String(line?.supplierPid ?? "").trim().toUpperCase();
   if (supplierPid.startsWith("STX_")) return true;

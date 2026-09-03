@@ -41,7 +41,7 @@ async function findLinkedUnitsForOrder(galaxusOrderId: string) {
 }
 
 /** Persist GalaxusStockxMatch from linked StxPurchaseUnit when UI would show linked but match row missing. */
-async function ensureGalaxusStockxMatchesFromLinkedUnits(
+export async function ensureGalaxusStockxMatchesFromLinkedUnits(
   order: NonNullable<Awaited<ReturnType<typeof resolveGalaxusOrderByIdOrRef>>>
 ) {
   const prismaAny = prisma as any;
@@ -51,81 +51,102 @@ async function ensureGalaxusStockxMatchesFromLinkedUnits(
   const existingMatches = await prismaAny.galaxusStockxMatch.findMany({
     where: { galaxusOrderId: order.id },
   });
-  const matchByLineId = new Map<string, any>();
+  const matchesByLineId = new Map<string, any[]>();
+  const usedStockxIds = new Set<string>();
   for (const m of existingMatches) {
-    matchByLineId.set(String(m.galaxusOrderLineId), m);
+    const lid = String(m.galaxusOrderLineId);
+    const arr = matchesByLineId.get(lid) ?? [];
+    arr.push(m);
+    matchesByLineId.set(lid, arr);
+    const claimed = String(m.stockxOrderId ?? m.stockxOrderNumber ?? "").trim();
+    if (claimed) usedStockxIds.add(claimed);
   }
 
   let upserted = 0;
   for (const line of order.lines ?? []) {
     if (!isGalaxusStxSupplierLine(line) || galaxusLineWarehouseStockHint(line)) continue;
 
-    const existing = matchByLineId.get(String(line.id));
-    if (existing && String(existing.stockxOrderNumber ?? "").trim()) continue;
-
-    const gtinKeys = expandGtinsForDbLookup([String(line.gtin ?? "")]);
-    const unit =
-      linkedUnits.find(
-        (u: any) =>
-          gtinKeys.length > 0 &&
-          gtinKeys.some((g) => sameGtinKey(g, String(u.gtin ?? ""))) &&
-          String(u.stockxOrderId ?? "").trim()
-      ) ?? null;
-
-    if (!unit) continue;
-
-    const stockxOrderNumber =
-      String(unit.stockxOrderNumber ?? "").trim() || String(unit.stockxOrderId ?? "").trim();
-    if (!stockxOrderNumber) continue;
-
     const qty = Math.max(1, Math.round(Number(line.quantity ?? 1)));
-    const payload = {
-      galaxusOrderId: order.id,
-      galaxusOrderRef: order.galaxusOrderId,
-      galaxusOrderDate: order.orderDate ?? null,
-      galaxusOrderLineId: line.id,
-      unitIndex: 0,
-      galaxusLineNumber: line.lineNumber ?? null,
-      galaxusProductName: line.productName ?? "Item",
-      galaxusDescription: line.description ?? null,
-      galaxusSize: line.size ?? null,
-      galaxusGtin: line.gtin ?? null,
-      galaxusProviderKey: line.providerKey ?? null,
-      galaxusSupplierSku: line.supplierSku ?? null,
-      galaxusQuantity: qty,
-      galaxusUnitNetPrice: line.unitNetPrice,
-      galaxusLineNetAmount: line.lineNetAmount,
-      galaxusVatRate: line.vatRate,
-      galaxusCurrencyCode: order.currencyCode ?? "CHF",
-      stockxOrderId: unit.stockxOrderId ?? null,
-      stockxOrderNumber,
-      stockxVariantId: String(unit.supplierVariantId ?? "")
-        .replace(/^stx_/i, "")
-        .trim() || null,
-      stockxAmount:
-        unit.stockxSettledAmount != null && Number.isFinite(Number(unit.stockxSettledAmount))
-          ? Number(unit.stockxSettledAmount)
-          : null,
-      stockxCurrencyCode: unit.stockxSettledCurrency ?? null,
-      stockxEstimatedDelivery: unit.etaMin ?? null,
-      stockxLatestEstimatedDelivery: unit.etaMax ?? null,
-      stockxAwb: unit.awb ?? null,
-      matchType: "DB_RECONCILE",
-      matchReasons: JSON.stringify(["Linked StxPurchaseUnit persisted on order fetch"]),
-    };
-
-    await prismaAny.galaxusStockxMatch.upsert({
-      where: {
-        galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex: 0 },
-      },
-      update: {
-        ...payload,
-        updatedAt: new Date(),
-      },
-      create: payload,
+    const lineMatches = matchesByLineId.get(String(line.id)) ?? [];
+    const occupiedIndexes = new Set(
+      lineMatches
+        .filter((m: any) => String(m.stockxOrderNumber ?? "").trim())
+        .map((m: any) => Number(m.unitIndex ?? 0))
+    );
+    const gtinKeys = expandGtinsForDbLookup([String(line.gtin ?? "")]);
+    const availableUnits = linkedUnits.filter((u: any) => {
+      const sid = String(u.stockxOrderId ?? u.stockxOrderNumber ?? "").trim();
+      if (!sid || usedStockxIds.has(sid)) return false;
+      if (gtinKeys.length === 0) return false;
+      return gtinKeys.some((g) => sameGtinKey(g, String(u.gtin ?? "")));
     });
-    upserted += 1;
-    matchByLineId.set(String(line.id), payload);
+
+    let unitPtr = 0;
+    for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
+      if (occupiedIndexes.has(unitIndex)) continue;
+      let unit: any = null;
+      while (unitPtr < availableUnits.length) {
+        const candidate = availableUnits[unitPtr++];
+        const sid = String(candidate.stockxOrderId ?? candidate.stockxOrderNumber ?? "").trim();
+        if (!sid || usedStockxIds.has(sid)) continue;
+        unit = candidate;
+        break;
+      }
+      if (!unit) break;
+
+      const stockxOrderNumber =
+        String(unit.stockxOrderNumber ?? "").trim() || String(unit.stockxOrderId ?? "").trim();
+      if (!stockxOrderNumber) continue;
+
+      const payload = {
+        galaxusOrderId: order.id,
+        galaxusOrderRef: order.galaxusOrderId,
+        galaxusOrderDate: order.orderDate ?? null,
+        galaxusOrderLineId: line.id,
+        unitIndex,
+        galaxusLineNumber: line.lineNumber ?? null,
+        galaxusProductName: line.productName ?? "Item",
+        galaxusDescription: line.description ?? null,
+        galaxusSize: line.size ?? null,
+        galaxusGtin: line.gtin ?? null,
+        galaxusProviderKey: line.providerKey ?? null,
+        galaxusSupplierSku: line.supplierSku ?? null,
+        galaxusQuantity: qty,
+        galaxusUnitNetPrice: line.unitNetPrice,
+        galaxusLineNetAmount: line.lineNetAmount,
+        galaxusVatRate: line.vatRate,
+        galaxusCurrencyCode: order.currencyCode ?? "CHF",
+        stockxOrderId: unit.stockxOrderId ?? null,
+        stockxOrderNumber,
+        stockxVariantId: String(unit.supplierVariantId ?? "")
+          .replace(/^stx_/i, "")
+          .trim() || null,
+        stockxAmount:
+          unit.stockxSettledAmount != null && Number.isFinite(Number(unit.stockxSettledAmount))
+            ? Number(unit.stockxSettledAmount)
+            : null,
+        stockxCurrencyCode: unit.stockxSettledCurrency ?? null,
+        stockxEstimatedDelivery: unit.etaMin ?? null,
+        stockxLatestEstimatedDelivery: unit.etaMax ?? null,
+        stockxAwb: unit.awb ?? null,
+        matchType: "DB_RECONCILE",
+        matchReasons: JSON.stringify(["Linked StxPurchaseUnit persisted on order fetch"]),
+      };
+
+      await prismaAny.galaxusStockxMatch.upsert({
+        where: {
+          galaxusOrderLineId_unitIndex: { galaxusOrderLineId: line.id, unitIndex },
+        },
+        update: {
+          ...payload,
+          updatedAt: new Date(),
+        },
+        create: payload,
+      });
+      usedStockxIds.add(String(unit.stockxOrderId ?? stockxOrderNumber).trim());
+      usedStockxIds.add(stockxOrderNumber);
+      upserted += 1;
+    }
   }
 
   return { upserted };

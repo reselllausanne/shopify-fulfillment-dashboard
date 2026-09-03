@@ -20,7 +20,12 @@ const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const REQUEST_DELAY_MS = Number(process.env.SCRAPER_REQUEST_DELAY_MS || 120);
-const DEFAULT_STOCK = Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5));
+// HHV only exposes size-level availability boolean (no real qty). Default 1 to avoid
+// overselling; ops can raise via SCRAPER_HHV_DEFAULT_STOCK if pool is deep.
+const DEFAULT_STOCK = Math.max(
+  1,
+  Number(process.env.SCRAPER_HHV_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
+);
 const IMAGE_SYNC_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_IMAGE_SYNC_CONCURRENCY || 5));
 const HHV_CATALOG_PATH =
   process.env.SCRAPER_HHV_CATALOG_PATH || "/clothing/katalog/filter/sneaker-N418";

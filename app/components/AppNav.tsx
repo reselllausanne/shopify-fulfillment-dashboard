@@ -63,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Ops",
     links: [
       { label: "Scan", href: "/scan" },
+      { label: "Direct delivery (STX)", href: "/scan/direct-delivery", badge: "new" },
       { label: "Scan stats", href: "/scan/stats" },
       { label: "Restock", href: "/restock" },
     ],

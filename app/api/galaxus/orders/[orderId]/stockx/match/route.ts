@@ -9,7 +9,10 @@ import {
   fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
 } from "@/galaxus/stx/stockxClient";
-import { galaxusLineWarehouseStockHint } from "@/galaxus/warehouse/lineInventorySource";
+import {
+  galaxusLineWarehouseStockHint,
+  isCrocsLightningMcQueenLine,
+} from "@/galaxus/warehouse/lineInventorySource";
 import {
   buildStockxOrderClaimIndex,
   registerStockxOrderClaim,
@@ -163,7 +166,18 @@ export async function POST(
     for (const line of order.lines) {
       const qty = Math.max(Number(line.quantity ?? 1), 1);
       const whSkip = galaxusLineWarehouseStockHint(line);
-      // THE / NER / GLD — never auto-match to StockX buys.
+      // THE / NER / GLD / McQueen bulk — never auto-match to StockX buys.
+      if (isCrocsLightningMcQueenLine(line)) {
+        for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
+          results.push({
+            lineId: line.id,
+            unitIndex,
+            status: "skipped",
+            reason: "crocs_lightning_mcqueen_not_stockx",
+          });
+        }
+        continue;
+      }
       if (whSkip) {
         const reason =
           whSkip === "MAISON"

@@ -2,6 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import type { GalaxusOrderInput } from "./types";
 import { applyInventoryOrderLine } from "@/inventory/applyOrderLines";
 import { ensureLocalStockMatchesForOrder } from "@/galaxus/orders/localStockMatch";
+import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
+import { rewriteGalaxusOrderLinesPreservingLinks } from "@/galaxus/orders/rewriteLinesPreservingLinks";
 
 type IngestResult = {
   galaxusOrderId: string;
@@ -222,7 +224,8 @@ function normalizeOrder(order: GalaxusOrderInput) {
     recipientEmail: order.recipientEmail ?? null,
     recipientPhone: order.deliveryType === "direct_delivery" ? null : order.recipientPhone ?? null,
     referencePerson: order.referencePerson ?? null,
-    yourReference: order.yourReference ?? null,
+    // Galaxus sometimes sends these fields as XML numeric values; Prisma schema is String.
+    yourReference: order.yourReference != null ? String(order.yourReference) : null,
     afterSalesHandling: order.afterSalesHandling ?? false,
     orderNumber: order.orderNumber ?? null,
     customerType: order.customerType ?? null,
@@ -230,7 +233,8 @@ function normalizeOrder(order: GalaxusOrderInput) {
     isCollectiveOrder: order.isCollectiveOrder ?? null,
     physicalDeliveryNoteRequired: order.physicalDeliveryNoteRequired ?? false,
     saturdayDeliveryAllowed: order.saturdayDeliveryAllowed ?? null,
-    endCustomerOrderReference: order.endCustomerOrderReference ?? null,
+    endCustomerOrderReference:
+      order.endCustomerOrderReference != null ? String(order.endCustomerOrderReference) : null,
     buyerIdRef: order.buyerIdRef ?? null,
     supplierIdRef: order.supplierIdRef ?? null,
     supplierOrderId: order.supplierOrderId ?? null,
@@ -286,6 +290,8 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
       linesSkipped: 0,
       /** Incoming ORDP had fewer lines than DB — kept existing lines to avoid data loss */
       linesRewriteSkippedShrinkingPayload: 0,
+      matchesRemounted: 0,
+      externalBuysRemounted: 0,
       shipmentsWritten: 0,
       shipmentsSkipped: 0,
       shipmentItemsRewritten: 0,
@@ -555,36 +561,17 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
             payloadLineCount: lines.length,
           });
         } else {
-          await tx.galaxusOrderLine.deleteMany({
-            where: { orderId: savedOrder.id },
-          });
-          await tx.galaxusOrderLine.createMany({
-            data: lines.map((line) => ({
-              orderId: savedOrder.id,
-              lineNumber: line.lineNumber,
-              supplierPid: line.supplierPid,
-              buyerPid: line.buyerPid,
-              orderUnit: line.orderUnit,
-              supplierSku: line.supplierSku,
-              supplierVariantId: line.supplierVariantId,
-              productName: line.productName,
-              description: line.description,
-              size: line.size,
-              gtin: line.gtin,
-              providerKey: line.providerKey,
-              quantity: line.quantity,
-              qtyConfirmed: line.qtyConfirmed,
-              vatRate: line.vatRate,
-              taxAmountPerUnit: line.taxAmountPerUnit,
-              unitNetPrice: line.unitNetPrice,
-              lineNetAmount: line.lineNetAmount,
-              priceLineAmount: line.priceLineAmount,
-              arrivalDateStart: line.arrivalDateStart,
-              arrivalDateEnd: line.arrivalDateEnd,
-              currencyCode: line.currencyCode,
-            })),
-          });
+          // Preserve StockX / external-buy links across line UUID rewrite (ORDP price/ETA nudges).
+          const remounted = await rewriteGalaxusOrderLinesPreservingLinks(
+            tx,
+            savedOrder.id,
+            lines
+          );
           ingestStats.linesRewritten += 1;
+          ingestStats.matchesRemounted =
+            (ingestStats.matchesRemounted ?? 0) + remounted.remountedMatches;
+          ingestStats.externalBuysRemounted =
+            (ingestStats.externalBuysRemounted ?? 0) + remounted.remountedExternalBuys;
         }
       } else {
         ingestStats.linesSkipped += 1;
@@ -801,6 +788,15 @@ export async function ingestGalaxusOrders(orders: GalaxusOrderInput[]): Promise<
           error: err?.message ?? err,
         });
       });
+      // Remount survivors → ensure matches from StxPurchaseUnit (no auto-buy on ingest).
+      await reconcileGalaxusOrderProcurement(result.galaxusOrderId, { skipAutoLink: true }).catch(
+        (err: any) => {
+          console.warn("[galaxus][ingest] procurement reconcile failed", {
+            orderId: result.galaxusOrderId,
+            error: err?.message ?? err,
+          });
+        }
+      );
     }
 
     let inventoryApplied = 0;

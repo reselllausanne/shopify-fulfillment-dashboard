@@ -4,8 +4,11 @@ import { getShipmentPlacementByOrder } from "@/app/api/galaxus/shipments/_utils"
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { digitsOnlyGtin, sameGtinKey } from "@/galaxus/orders/gtinKey";
 import { attachProcurementToLines } from "@/galaxus/orders/lineProcurement";
-import { reserveStxPurchaseUnitsForOrder } from "@/galaxus/stx/purchaseUnits";
-import { resolveGalaxusLineOfferSupplierSku } from "@/galaxus/warehouse/lineInventorySource";
+import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
+import {
+  isGalaxusStxSupplierLine,
+  resolveGalaxusLineOfferSupplierSku,
+} from "@/galaxus/warehouse/lineInventorySource";
 import { enrichBuySourceOverrideCosts } from "@/galaxus/warehouse/enrichBuySourceOverrideCosts";
 import { parseOrderFromXml } from "@/galaxus/edi/service";
 import {
@@ -229,6 +232,8 @@ export async function GET(
     const viewFull = view !== "minimal";
     const ensureLocal = searchParams.get("ensureLocal") !== "0";
     const reserveStx = searchParams.get("reserveStx") !== "0";
+    const supplierScope = String(searchParams.get("supplierScope") ?? "").trim().toLowerCase();
+    const stxOnly = supplierScope === "stx";
 
     const order = await prisma.galaxusOrder.findFirst({
       where: { OR: [{ id: orderId }, { galaxusOrderId: orderId }] },
@@ -260,10 +265,13 @@ export async function GET(
 
     // Optional read-path optimization: some UIs only need display data, not read-time reservation writes.
     if (reserveStx) {
-      // Fast DB-only slot reservation; full reconcile runs on ingest / sync / manual entry.
-      await reserveStxPurchaseUnitsForOrder(orderRow.id, orderRow).catch((err) => {
-        console.warn("[GALAXUS][ORDERS] STX unit reserve skipped:", err?.message ?? err);
-      });
+      // Restore match rows from surviving StxPurchaseUnit links (ORDP cascade survivors).
+      // skipAutoLink: never buy/link on a read path — only remount persisted green.
+      await reconcileGalaxusOrderProcurement(orderRow.galaxusOrderId, { skipAutoLink: true }).catch(
+        (err) => {
+          console.warn("[GALAXUS][ORDERS] procurement reconcile skipped:", err?.message ?? err);
+        }
+      );
     }
 
     const orderLineIds = (orderRow.lines ?? []).map((line: any) => line.id);
@@ -572,7 +580,10 @@ export async function GET(
         orderBy: { createdAt: "desc" },
         select: { filename: true, createdAt: true },
       });
-      const minimalLines = linesWithProcurement.map((line: any) => ({
+      const scopedLines = stxOnly
+        ? linesWithProcurement.filter((line: any) => isGalaxusStxSupplierLine(line))
+        : linesWithProcurement;
+      const minimalLines = scopedLines.map((line: any) => ({
         id: line.id,
         lineNumber: line.lineNumber,
         supplierPid: line.supplierPid ?? null,

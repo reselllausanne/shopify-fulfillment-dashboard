@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
+import { printDirectDeliveryDocumentsLocally } from "@/galaxus/directDelivery/printDirectDocuments";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
@@ -23,7 +24,8 @@ export async function POST(req: NextRequest) {
     const rawCode = String(body?.awb ?? body?.code ?? "").trim();
     const awb = normalizeCode(rawCode);
     const includeLabelData = Boolean(body?.includeLabelData ?? true);
-    const allowReprint = Boolean(body?.allowReprint ?? true);
+    // Scan auto-flow must not reprint. Explicit UI can pass allowReprint: true.
+    const allowReprint = Boolean(body?.allowReprint ?? false);
 
     let resolvedOrderDbId = orderDbId;
     if (!resolvedOrderDbId && awb) {
@@ -35,7 +37,9 @@ export async function POST(req: NextRequest) {
         .map((candidate) => ({ stockxTrackingUrl: { contains: candidate } }));
       const stockxOrderFilters = awbCandidates
         .filter((candidate) => candidate.length >= 6)
-        .map((candidate) => ({ stockxOrderNumber: { contains: candidate, mode: "insensitive" as const } }));
+        .map((candidate) => ({
+          stockxOrderNumber: { contains: candidate, mode: "insensitive" as const },
+        }));
 
       const match = await prisma.galaxusStockxMatch.findFirst({
         where: {
@@ -122,8 +126,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const printed = await printDirectDeliveryDocumentsLocally({
+      orderRef: order.galaxusOrderId || order.id,
+      shipmentId: result.shipmentId,
+      status: result.status,
+      allowReprint,
+      labelData: result.labelData
+        ? { base64: result.labelData.base64, extension: result.labelData.extension }
+        : null,
+      browserPrintConfig: result.browserPrintConfig,
+    });
+
     return NextResponse.json({
       ...result,
+      browserPrintConfig: printed.browserPrintConfig ?? result.browserPrintConfig,
+      printJobResult: printed.printJobResult,
+      deliveryNotePrintResult: printed.deliveryNotePrintResult,
       orderNumber: order.orderNumber,
       galaxusOrderId: order.galaxusOrderId,
     });

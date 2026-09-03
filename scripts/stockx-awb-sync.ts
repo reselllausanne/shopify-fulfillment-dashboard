@@ -12,8 +12,10 @@ import path from "node:path";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
 import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
 import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
+import { runStxAwbResync } from "@/galaxus/jobs/stxAwbResync";
 import { refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken } from "@/lib/stockxServerToken";
+import { listStockxAccountTokens } from "@/lib/stockxToken";
 
 const STATE_FILE = path.join(process.cwd(), ".data", "stockx-awb-sync-state.json");
 const ALERT_DEDUPE_MS = 6 * 60 * 60 * 1000;
@@ -122,9 +124,28 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Multi-account: reuse every stored account token so a Galaxus warehouse
+  // AWB that lives on account B is filled even when cron only minted the
+  // primary (account A) bearer this hour. Dedup by JWT customer_uuid inside
+  // `listStockxAccountTokens`.
+  const accountTokens = await listStockxAccountTokens();
+  const extraTokens = accountTokens
+    .map((entry) => entry.token)
+    .filter((candidate) => candidate && candidate !== token) as string[];
+  if (accountTokens.length > 1) {
+    const summary = accountTokens
+      .map(
+        (entry) =>
+          `${entry.source}:${entry.customerUuid ? entry.customerUuid.slice(0, 8) : "?"}`
+      )
+      .join(",");
+    console.log(`[STOCKX-AWB-SYNC] multi-account tokens=${summary}`);
+  }
+
   const shopifyResult = await runAwbBackfill({ token, days, limit, dryRun, includeFulfilled: false });
   const galaxusResult = await runGalaxusAwbBackfill({
     token,
+    extraTokens,
     days,
     limit,
     dryRun,
@@ -146,6 +167,24 @@ async function main(): Promise<void> {
   console.log(
     `[STOCKX-AWB-SYNC] decathlon candidates=${decathlonResult.candidates} updated=${decathlonResult.updated}`
   );
+
+  // Second-pass AWB resync for Galaxus units older than 48h that still have
+  // null AWB — targets buys that left the PENDING buying list before AWB
+  // appeared (order-number lookup path). Uses the same freshly minted bearer.
+  try {
+    const resync = await runStxAwbResync({
+      token,
+      tokens: extraTokens,
+    });
+    console.log(
+      `[STOCKX-AWB-SYNC] stx-resync scanned=${resync.scannedUnits} orders=${resync.uniqueOrders} updatedUnits=${resync.updatedUnits} updatedOrders=${resync.updatedOrders}${
+        resync.skippedReason ? ` skipped=${resync.skippedReason}` : ""
+      }`
+    );
+  } catch (error: any) {
+    console.warn("[STOCKX-AWB-SYNC] stx-resync failed:", error?.message ?? error);
+  }
+
   const result = shopifyResult;
   for (const item of result.items.filter((entry) => entry.emailSent)) {
     console.log(

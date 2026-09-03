@@ -1,5 +1,3 @@
-import "server-only";
-
 import { prisma } from "@/app/lib/prisma";
 
 export type WarehouseLineShipmentCoverage = {

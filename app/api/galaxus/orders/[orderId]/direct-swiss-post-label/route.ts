@@ -1,12 +1,15 @@
-import { NextResponse } from "next/server";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
+import { printDirectDeliveryDocumentsLocally } from "@/galaxus/directDelivery/printDirectDocuments";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ orderId: string }> }) {
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ orderId: string }> }
+) {
   try {
     const staffRole = await getStaffRoleFromRequest(request);
     if (!staffRole) {
@@ -18,9 +21,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       allowReprint?: boolean;
       requireLinked?: boolean;
     };
+    const allowReprint = Boolean(body?.allowReprint);
+    const includeLabelData = body?.includeLabelData !== false;
+
     const result = await runDirectSwissPostLabelForOrder(orderId, {
-      includeLabelData: Boolean(body?.includeLabelData),
-      allowReprint: body?.allowReprint,
+      includeLabelData,
+      allowReprint,
       requireLinked: body?.requireLinked,
     });
 
@@ -40,7 +46,23 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json(result, { status });
     }
 
-    return NextResponse.json(result);
+    const printed = await printDirectDeliveryDocumentsLocally({
+      orderRef: orderId,
+      shipmentId: result.shipmentId,
+      status: result.status,
+      allowReprint,
+      labelData: result.labelData
+        ? { base64: result.labelData.base64, extension: result.labelData.extension }
+        : null,
+      browserPrintConfig: result.browserPrintConfig,
+    });
+
+    return NextResponse.json({
+      ...result,
+      browserPrintConfig: printed.browserPrintConfig ?? result.browserPrintConfig,
+      printJobResult: printed.printJobResult,
+      deliveryNotePrintResult: printed.deliveryNotePrintResult,
+    });
   } catch (error: any) {
     console.error("[GALAXUS][DIRECT-SWISS-POST-LABEL] Failed:", error);
     const message = String(error?.message ?? "Failed");

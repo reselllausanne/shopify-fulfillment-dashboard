@@ -28,6 +28,7 @@ export async function GET(request: Request) {
     const includeWarehouse = searchParams.get("includeWarehouse") !== "0";
     const q = String(searchParams.get("q") ?? "").trim();
     const warehouseOpen = searchParams.get("warehouseOpen") === "1";
+    const supplierScope = String(searchParams.get("supplierScope") ?? "").trim().toLowerCase();
 
     let baseWhere: Record<string, unknown> = {};
     if (view === "history") {
@@ -42,6 +43,22 @@ export async function GET(request: Request) {
       baseWhere.deliveryType = deliveryType;
     } else if (excludeDeliveryType) {
       baseWhere.deliveryType = { not: excludeDeliveryType };
+    }
+
+    // supplierScope=stx: only orders that carry ≥1 StockX (STX_ / stx_) line.
+    // Prefix-based; edge-case exclusions (GLD, buy-source override, Crocs MK)
+    // are re-applied when the detail endpoint filters lines with supplierScope=stx.
+    if (supplierScope === "stx") {
+      (baseWhere as Prisma.GalaxusOrderWhereInput).lines = {
+        some: {
+          OR: [
+            { supplierPid: { startsWith: "stx_", mode: "insensitive" } },
+            { supplierVariantId: { startsWith: "stx_", mode: "insensitive" } },
+            { providerKey: { startsWith: "stx_", mode: "insensitive" } },
+            { providerKey: { equals: "STX", mode: "insensitive" } },
+          ],
+        },
+      };
     }
 
     const where: Prisma.GalaxusOrderWhereInput =
@@ -122,6 +139,7 @@ export async function GET(request: Request) {
     // Align with order-detail procurement.ok (match rows OR StxPurchaseUnit OR warehouse stock).
     // Old SQL only counted GalaxusStockxMatch rows → STX-linked-via-units showed 0/N on left list.
     const linkedCountByOrderId = new Map<string, number>();
+    const needsBuyCountByOrderId = new Map<string, number>();
     if (includeLinked && orderIds.length > 0) {
       try {
         const orderRefs = orders.map((o) => o.galaxusOrderId).filter(Boolean);
@@ -208,8 +226,11 @@ export async function GET(request: Request) {
           stxUnits: Array.isArray(stxUnits) ? stxUnits : [],
           externalBuys: Array.isArray(externalBuys) ? externalBuys : [],
         });
-        for (const [id, count] of computed) {
+        for (const [id, count] of computed.linked) {
           linkedCountByOrderId.set(id, count);
+        }
+        for (const [id, count] of computed.needsBuy) {
+          needsBuyCountByOrderId.set(id, count);
         }
       } catch {
         // If tables aren't available yet, just skip linked counts.
@@ -251,6 +272,7 @@ export async function GET(request: Request) {
             return Boolean(shipment.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
           }).length;
       const linkedCount = includeLinked ? (linkedCountByOrderId.get(order.id) ?? 0) : 0;
+      const needsBuyCount = includeLinked ? (needsBuyCountByOrderId.get(order.id) ?? 0) : 0;
       const warehouseLinesShipped = includeWarehouse ? (warehouseShippedByOrderId.get(order.id) ?? 0) : 0;
       const warehouseOpenLineCount =
         warehouseOpenLineCountByOrderId != null
@@ -269,6 +291,7 @@ export async function GET(request: Request) {
         shippedCount,
         fulfilledCount,
         linkedCount,
+        needsBuyCount,
         warehouseLinesShipped,
         warehouseOpenLineCount,
         fulfillmentState,

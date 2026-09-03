@@ -7,7 +7,13 @@ import type { ScraperShop } from "@/app/lib/scraperShops";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT || "LivioShopifyScraper/1.0 (+catalog sync)";
-const DEFAULT_STOCK = Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5));
+// Fallback stock when Shopify variant.inventory_quantity is unknown (untracked / .js failed).
+// Default 1 to avoid overselling on shops using "continue" policy; real qty from
+// resolveShopifyInventoryQty always wins when present.
+const DEFAULT_STOCK = Math.max(
+  1,
+  Number(process.env.SCRAPER_SHOPIFY_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
+);
 
 function shopifyScrapeConfig() {
   return {
@@ -150,6 +156,8 @@ type EligibleRecord = {
   supplierProductType: string | null;
   sourceImageUrl: string | null;
   available: boolean;
+  /// Real inventory qty from Shopify when tracked; null when untracked (continue-policy) or unknown.
+  trackedQty: number | null;
 };
 
 /** Normalize Shopify tags from products.json (string) or .js (array). */
@@ -246,6 +254,10 @@ export function collectEligibleRecords(shop: ScraperShop, product: any, productJ
     const price = priceFrom(jsV, variant);
     if (!price || price <= 0) continue;
     const available = resolveShopifyAvailable(product, productJs, variant, jsV);
+    // Real qty only trusted when inventory is tracked (mgmt.value present).
+    // Untracked/continue-policy variants report meaningless qty (often 0 with available:true).
+    const mgmt = shopifyInventoryManagement(variant, jsV);
+    const trackedQty = mgmt.present && mgmt.value ? resolveShopifyInventoryQty(variant, jsV) : null;
     const vtitle = variant?.title && variant.title !== "Default Title" ? variant.title : "";
     const fullTitle = vtitle ? `${title} — ${vtitle}` : title;
     const sku = String((jsV?.sku ?? variant?.sku) || "").trim();
@@ -265,6 +277,7 @@ export function collectEligibleRecords(shop: ScraperShop, product: any, productJ
       supplierProductType: productType,
       sourceImageUrl: pickImage(imgSource, jsV.id ? jsV : variant) || null,
       available,
+      trackedQty,
     });
   }
   return out;
@@ -424,7 +437,13 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
       const now = new Date();
       for (const r of productRecords) {
         seenGtins.add(r.gtin);
-        const stock = r.available ? DEFAULT_STOCK : 0;
+        // Real Shopify qty when tracked (prevents overselling like WEL Padmé sleeves).
+        // Untracked/continue-policy → fall back to conservative DEFAULT_STOCK.
+        const stock = r.available
+          ? r.trackedQty !== null
+            ? Math.max(0, r.trackedQty)
+            : DEFAULT_STOCK
+          : 0;
         const existing = existingById.get(r.supplierVariantId);
         const queueImage = needsImageHosting(existing, r.sourceImageUrl);
         try {

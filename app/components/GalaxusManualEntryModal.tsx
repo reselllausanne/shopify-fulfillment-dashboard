@@ -102,44 +102,48 @@ export default function GalaxusManualEntryModal({
     const trimmed = orderNumber.trim().replace(/^#+/, "").trim();
     if (!trimmed || context !== "galaxus") return;
     const token = readSessionStockxToken();
-    if (!token) {
-      setLookupStatus("Paste StockX token in StockX tools below, then blur/save, then retry.");
-      return;
-    }
     setLookupBusy(true);
     setLookupStatus(null);
     try {
-      const viaProxy = await lookupGalaxusStockxBuyViaProxy(token, trimmed, {
-        getBuyOrderHash,
-      });
-      if (viaProxy.ok) {
-        applyLookupFields(viaProxy.fields);
-        setLookupStatus("Loaded from StockX");
-        return;
+      // Fast path: browser token (often wrong account — ok if it misses).
+      if (token) {
+        const viaProxy = await lookupGalaxusStockxBuyViaProxy(token, trimmed, {
+          getBuyOrderHash,
+        });
+        if (viaProxy.ok) {
+          applyLookupFields(viaProxy.fields);
+          setLookupStatus("Loaded from StockX");
+          return;
+        }
       }
 
       if (!stockxLookupOrderId) {
         setLookupStatus(
-          String(viaProxy.error ?? "Order not found on StockX") +
-            " — or enter Supplier Cost and save anyway."
+          token
+            ? "order_not_found_in_buying_list — or enter Supplier Cost and save anyway."
+            : "Paste StockX token in StockX tools below, or enter Supplier Cost and save anyway."
         );
         return;
       }
 
+      // Server walks ALL known StockX accounts (contact@ + dashboard). Do not
+      // force the browser bearer as the only try — that was the miss on kicks buys.
+      const headers: Record<string, string> = {};
+      if (token) headers["x-stockx-bearer"] = token;
       const res = await fetch(
         `/api/galaxus/orders/${encodeURIComponent(stockxLookupOrderId)}/stockx/lookup?orderNumber=${encodeURIComponent(trimmed)}`,
-        { headers: { "x-stockx-bearer": token } }
+        { headers }
       );
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok || !json.fields) {
         setLookupStatus(
-          String(json.error ?? viaProxy.error ?? "Order not found on StockX") +
+          String(json.error ?? "Order not found on StockX") +
             " — or enter Supplier Cost and save anyway."
         );
         return;
       }
       applyLookupFields(json.fields);
-      setLookupStatus("Loaded from StockX");
+      setLookupStatus("Loaded from StockX (server accounts)");
     } catch (error: any) {
       setLookupStatus(String(error?.message ?? "Lookup failed"));
     } finally {

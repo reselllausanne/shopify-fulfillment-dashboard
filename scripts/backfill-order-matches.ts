@@ -298,12 +298,22 @@ async function fetchStockxSupply(token: string): Promise<{
   raw: StockxBuyingNode[];
   normalized: NormalizedSupplierOrder[];
 }> {
-  const raw = await fetchRecentStockxBuyingOrders(token, {
-    first: 100,
-    maxPages: 40,
-    state: null,
-    query: null,
-  });
+  // StockX buying API collapses AUTHENTICATED/SHIPPED/COMPLETED/CANCELED into HISTORICAL.
+  // state:null returns 0; fetch PENDING (active) + HISTORICAL (settled).
+  const dedupe = new Map<string, StockxBuyingNode>();
+  for (const state of ["PENDING", "HISTORICAL"] as const) {
+    const batch = await fetchRecentStockxBuyingOrders(token, {
+      first: 100,
+      maxPages: 40,
+      state,
+      query: null,
+    });
+    for (const n of batch) {
+      const key = String(n.orderId || n.orderNumber || "");
+      if (key && !dedupe.has(key)) dedupe.set(key, n);
+    }
+  }
+  const raw = Array.from(dedupe.values());
   const normalized: NormalizedSupplierOrder[] = [];
   for (const n of raw) {
     const norm = normalizeStockxNode(n);

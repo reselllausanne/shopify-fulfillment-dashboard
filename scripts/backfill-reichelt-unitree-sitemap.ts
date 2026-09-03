@@ -83,7 +83,7 @@ async function fetchUnitreeProduct(
 ): Promise<ReicheltProduct | null> {
   for (const url of productUrlCandidates(articleId, productUrl)) {
     try {
-      const product = await client.fetchProductByArticleId(articleId, url);
+      const { product } = await client.fetchProductByArticleId(articleId, url);
       if (product) return product;
     } catch {
       /* try next URL */

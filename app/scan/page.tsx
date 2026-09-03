@@ -3,6 +3,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  isActiveStxInboundBuy,
+  shouldAutoAddToPackingSession,
+  shouldAutoGalaxusDirectLabelFor,
+} from "./scanInboundGuards";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
@@ -92,6 +97,16 @@ type ScanResult = {
     lineId?: string | null;
     miraklOrderLineId?: string | null;
     quantity?: number | null;
+    source?: "decathlon_stockx_match" | "decathlon_warehouse_shipment" | null;
+    warehouseShipment?: {
+      shipmentId: string;
+      trackingNumber?: string | null;
+      carrierRaw?: string | null;
+      carrierFinal?: string | null;
+      shippedAt?: string | null;
+      labelGeneratedAt?: string | null;
+      partnerKey?: string | null;
+    } | null;
   } | null;
   galaxus?: {
     matchId?: string | null;
@@ -103,6 +118,25 @@ type ScanResult = {
     allLinked?: boolean | null;
     alreadyFulfilled?: boolean;
     trackingNumber?: string | null;
+    source?: "galaxus_stockx_match" | "galaxus_warehouse_shipment" | null;
+    warehouseShipment?: {
+      shipmentId: string;
+      status?: string | null;
+      packageType?: string | null;
+      shipmentDeliveryType?: string | null;
+      shippedAt?: string | null;
+      delrStatus?: string | null;
+      delrSentAt?: string | null;
+      carrierFinal?: string | null;
+      carrierRaw?: string | null;
+      labelPdfUrl?: string | null;
+      recipient?: {
+        name?: string | null;
+        city?: string | null;
+        postalCode?: string | null;
+        countryCode?: string | null;
+      } | null;
+    } | null;
   } | null;
   inboundHome?: {
     routeId: string;
@@ -110,6 +144,97 @@ type ScanResult = {
     stockxAwb?: string | null;
     stockxTrackingUrl?: string | null;
   } | null;
+  gtin?: {
+    gtin: string;
+    productName?: string | null;
+    totalOpen: number;
+    openDirect: number;
+    openWarehouse: number;
+    openShopify?: number;
+    openDecathlon?: number;
+    autoDirectOrderDbId?: string | null;
+    autoShopify?: {
+      shopifyOrderId: string;
+      shopifyOrderName?: string | null;
+      shopifyLineItemId: string;
+    } | null;
+    autoDecathlon?: {
+      orderId: string;
+      orderDbId: string;
+      lineId: string;
+      quantity: number;
+    } | null;
+    autoDecathlonReprint?: {
+      orderId: string;
+      orderDbId: string;
+      shipmentId?: string | null;
+    } | null;
+    autoChannel?: "galaxus_direct" | "shopify" | "decathlon" | null;
+    orders: Array<{
+      channel?: "galaxus" | "shopify" | "decathlon";
+      lineId: string;
+      lineNumber?: number | null;
+      productName?: string | null;
+      quantity: number;
+      ordered?: number;
+      shipped?: number;
+      reserved?: number;
+      remaining?: number;
+      warehouseMarkedShippedAt?: string | null;
+      galaxusOrderDbId?: string;
+      galaxusOrderId?: string;
+      orderNumber?: string | null;
+      orderDate: string;
+      deliveryType?: string | null;
+      isDirectDelivery?: boolean;
+      ordrSentAt?: string | null;
+      cancelledAt?: string | null;
+      recipient: {
+        name?: string | null;
+        city?: string | null;
+        postalCode?: string | null;
+        countryCode?: string | null;
+      };
+      shipments?: Array<{
+        id: string;
+        trackingNumber?: string | null;
+        status?: string | null;
+        deliveryType?: string | null;
+        packageType?: string | null;
+        shippedAt?: string | null;
+        delrStatus?: string | null;
+      }>;
+      stockxLinks?: Array<{
+        stockxOrderNumber?: string | null;
+        awb?: string | null;
+        etaMin?: string | null;
+        etaMax?: string | null;
+        cancelledAt?: string | null;
+      }>;
+      hasAnyShipment?: boolean;
+      hasStockxLink?: boolean;
+      shopifyOrderId?: string;
+      shopifyOrderName?: string | null;
+      shopifyLineItemId?: string | null;
+      shopifySku?: string | null;
+      decathlonOrderDbId?: string;
+      decathlonOrderId?: string;
+      decathlonOrderState?: string | null;
+    }>;
+  } | null;
+  stxInboundBuy?: {
+    unitId: string;
+    galaxusOrderDbId: string | null;
+    galaxusOrderId: string | null;
+    galaxusOrderNumber: string | null;
+    stockxOrderNumber: string | null;
+    awb: string | null;
+    deliveryType: string | null;
+    isDirectDelivery: boolean;
+    isWarehouse: boolean;
+    orderCancelledAt: string | null;
+  } | null;
+  shopifyMatchSuppressed?: boolean;
   error?: { message?: string; code?: string };
 };
 
@@ -143,20 +268,27 @@ type LabelDataPayload = {
   extension?: string;
 };
 
+type PrintJobClientResult = {
+  ok?: boolean;
+  skipped?: boolean;
+  message?: string;
+  error?: string;
+};
+
 type FulfillResponse = {
   ok?: boolean;
   status?: string;
   error?: string;
   userErrors?: Array<{ message?: string }>;
   labelFilePath?: string | null;
-  printJobResult?: {
-    ok?: boolean;
-    skipped?: boolean;
-    message?: string;
-    error?: string;
-  } | null;
+  printJobResult?: PrintJobClientResult | null;
+  deliveryNotePrintResult?: PrintJobClientResult | null;
   labelData?: LabelDataPayload | null;
   browserPrintConfig?: BrowserPrintConfig;
+  orderNumber?: string | null;
+  galaxusOrderId?: string | null;
+  trackingNumber?: string | null;
+  shipmentId?: string | null;
 };
 
 const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
@@ -179,11 +311,107 @@ const ENABLE_AUTO_GALAXUS_DIRECT_LABEL = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_AUTO_GALAXUS_DIRECT_LABEL,
   true
 );
+const ENABLE_AUTO_GALAXUS_WAREHOUSE_LABEL = resolveClientFlag(
+  process.env.NEXT_PUBLIC_SCAN_AUTO_GALAXUS_WAREHOUSE_LABEL,
+  true
+);
 const ENABLE_BROWSER_PRINT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
   true
 );
 const SCAN_SESSION_STORAGE_KEY = "scan.fulfillment.session.key.v1";
+const PACKING_SESSION_STORAGE_KEY = "scan.packingSession.entries.v1";
+const PACKING_SESSION_CAP = 8;
+
+type PackingSessionEntry = {
+  scannedAt: string;
+  scanCode: string;
+  galaxusOrderId: string;
+  galaxusOrderDbId: string;
+  galaxusOrderNumber: string | null;
+  orderDate: string;
+  lineId: string;
+  lineNumber: number;
+  unitIndex: number;
+  supplierPid: string;
+  gtin: string | null;
+  productName: string | null;
+  sizeEU: string | null;
+  resolvedVia: string;
+};
+
+type PackingSessionApiResponse =
+  | {
+      ok: true;
+      sessionCap: number;
+      matched: {
+        galaxusOrderId: string;
+        galaxusOrderDbId: string;
+        galaxusOrderNumber: string | null;
+        orderDate: string;
+        orderCreatedAt: string;
+        lineId: string;
+        lineNumber: number;
+        unitIndex: number;
+        supplierPid: string;
+        gtin: string | null;
+        productName: string | null;
+        sizeEU: string | null;
+        remainingBefore: number;
+        resolvedVia: string;
+        notes?: string[];
+      };
+    }
+  | {
+      ok: false;
+      sessionCap: number;
+      rejected: { reason: string; scanCode: string };
+    };
+
+type SuggestKind = "galaxus_direct" | "galaxus_warehouse" | "decathlon" | "shopify";
+
+type SuggestItem = {
+  id: string;
+  kind: SuggestKind;
+  orderId: string;
+  orderDbId: string;
+  orderNumber: string | null;
+  orderDate: string;
+  lineId: string;
+  supplierPid: string;
+  buyerPid?: string | null;
+  gtin: string | null;
+  productName: string;
+  sizeEU?: string | null;
+  deliveryType?: string | null;
+  customerCity?: string | null;
+};
+
+const SUGGEST_LIMIT = 8;
+const SUGGEST_DEBOUNCE_MS = 150;
+const SCANNER_BURST_THRESHOLD_MS = 120;
+
+/**
+ * Heuristic: does this input value look like it was typed by a human vs
+ * pasted by a barcode scanner? We only surface suggestions for typing.
+ *
+ * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD..., >=8 digits pure numeric).
+ * - Accept short queries (<8 chars), values that contain letters, or values
+ *   with two consecutive identical chars (typists repeat, scanners don't).
+ */
+const looksLikeManualQuery = (value: string): boolean => {
+  const v = String(value ?? "").trim();
+  if (v.length < 2) return false;
+  const upper = v.toUpperCase();
+  if (upper.startsWith("1Z") && upper.length >= 10) return false;
+  if (upper.startsWith("JJD") && upper.length >= 10) return false;
+  if (upper.startsWith("JD") && upper.length >= 10) return false;
+  if (/^\d{8,}$/.test(v)) return false;
+  if (v.length < 8) return true;
+  if (/[a-z]/i.test(v)) return true;
+  if (/(.)\1/.test(v)) return true;
+  return false;
+};
 
 const ensureScanSessionKey = () => {
   if (typeof window === "undefined") return null;
@@ -228,7 +456,7 @@ const openLabelPrintDialog = (
   const heightMm =
     Number.isFinite(Number(config?.heightMm)) && Number(config?.heightMm) > 0
       ? Number(config?.heightMm)
-      : 86;
+      : 100;
   const marginMm =
     Number.isFinite(Number(config?.marginMm)) && Number(config?.marginMm) >= 0
       ? Number(config?.marginMm)
@@ -276,6 +504,17 @@ const openLabelPrintDialog = (
   return true;
 };
 
+const alertOnServerPrintFailure = (
+  result: PrintJobClientResult | undefined | null,
+  label = "Print"
+) => {
+  if (!result) return;
+  if (result.ok) return;
+  if (result.skipped) return;
+  const detail = result.error || result.message || "unknown";
+  window.alert(`${label} error: ${detail}`);
+};
+
 const openLabelPreview = (payload: LabelDataPayload) => {
   const base64 = String(payload?.base64 || "").trim();
   if (!base64) return false;
@@ -303,6 +542,25 @@ export default function ScanPage() {
   const [scanSessionKey, setScanSessionKey] = useState<string | null>(null);
   const [awbList, setAwbList] = useState<AwbListItem[]>([]);
   const [awbFilter, setAwbFilter] = useState("");
+  const [suggestions, setSuggestions] = useState<SuggestItem[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestFocusIdx, setSuggestFocusIdx] = useState<number>(-1);
+  const suggestCacheRef = useRef<Map<string, SuggestItem[]>>(new Map());
+  const suggestReqIdRef = useRef(0);
+  const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const firstKeystrokeAtRef = useRef<number | null>(null);
+  const [packingSession, setPackingSession] = useState<PackingSessionEntry[]>([]);
+  const [packingReject, setPackingReject] = useState<{ scanCode: string; reason: string } | null>(null);
+  const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
+  const [finalizeStatus, setFinalizeStatus] = useState<
+    { tone: "ok" | "error"; text: string } | null
+  >(null);
+  const packingSessionRef = useRef<PackingSessionEntry[]>([]);
+  useEffect(() => {
+    packingSessionRef.current = packingSession;
+  }, [packingSession]);
   const canceledStates = useMemo(
     () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
     []
@@ -315,6 +573,94 @@ export default function ScanPage() {
   useEffect(() => {
     setScanSessionKey(ensureScanSessionKey());
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(PACKING_SESSION_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          setPackingSession(parsed as PackingSessionEntry[]);
+          setPackingSessionReady(parsed.length >= PACKING_SESSION_CAP);
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        PACKING_SESSION_STORAGE_KEY,
+        JSON.stringify(packingSession)
+      );
+    } catch {
+      // ignore
+    }
+  }, [packingSession]);
+
+  useEffect(() => {
+    if (suggestDebounceRef.current) {
+      clearTimeout(suggestDebounceRef.current);
+      suggestDebounceRef.current = null;
+    }
+    const q = code.trim();
+    if (q.length < 2 || !looksLikeManualQuery(q)) {
+      setSuggestions([]);
+      setSuggestOpen(false);
+      setSuggestLoading(false);
+      setSuggestFocusIdx(-1);
+      return;
+    }
+    const cached = suggestCacheRef.current.get(q.toLowerCase());
+    if (cached) {
+      setSuggestions(cached);
+      setSuggestOpen(cached.length > 0);
+      setSuggestLoading(false);
+      setSuggestFocusIdx(-1);
+      return;
+    }
+    setSuggestLoading(true);
+    const reqId = ++suggestReqIdRef.current;
+    suggestDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/scan-awb/suggest?q=${encodeURIComponent(q)}&limit=${SUGGEST_LIMIT}`,
+          { cache: "no-store" }
+        );
+        const data = await res.json();
+        if (reqId !== suggestReqIdRef.current) return;
+        if (data?.ok && Array.isArray(data.items)) {
+          const items: SuggestItem[] = data.items;
+          suggestCacheRef.current.set(q.toLowerCase(), items);
+          setSuggestions(items);
+          setSuggestOpen(items.length > 0);
+        } else {
+          setSuggestions([]);
+          setSuggestOpen(false);
+        }
+      } catch {
+        if (reqId === suggestReqIdRef.current) {
+          setSuggestions([]);
+          setSuggestOpen(false);
+        }
+      } finally {
+        if (reqId === suggestReqIdRef.current) {
+          setSuggestLoading(false);
+          setSuggestFocusIdx(-1);
+        }
+      }
+    }, SUGGEST_DEBOUNCE_MS);
+    return () => {
+      if (suggestDebounceRef.current) {
+        clearTimeout(suggestDebounceRef.current);
+        suggestDebounceRef.current = null;
+      }
+    };
+  }, [code]);
 
   useEffect(() => {
     const loadAwbList = async () => {
@@ -403,12 +749,8 @@ export default function ScanPage() {
   const galaxusOrderRef = (g: NonNullable<ScanResult["galaxus"]>) =>
     String(g.orderNumber || g.orderId || g.orderDbId || "").trim() || "—";
 
-  const shouldAutoGalaxusDirectLabel = (scan: ScanResult) => {
-    const g = scan.galaxus;
-    if (!g?.isDirectDelivery) return false;
-    if (g.allLinked === false) return false;
-    return true;
-  };
+  const shouldAutoGalaxusDirectLabel = (scan: ScanResult) =>
+    shouldAutoGalaxusDirectLabelFor(scan);
 
   const runGalaxusDirectLabelFromScan = async (scan: ScanResult) => {
     if (!scan.galaxus?.orderDbId && !scan.awb) return;
@@ -422,7 +764,7 @@ export default function ScanPage() {
           awb: scan.awb,
           orderDbId: scan.galaxus?.orderDbId ?? null,
           includeLabelData: true,
-          allowReprint: true,
+          allowReprint: false,
         }),
       });
       const data: FulfillResponse & {
@@ -433,13 +775,30 @@ export default function ScanPage() {
         error?: string;
       } = await res.json();
       setFulfillResult(data);
-      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      const orderRef =
+        String(data.orderNumber || data.galaxusOrderId || scan.galaxus?.orderNumber || "").trim() ||
+        "—";
+      if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
+        window.alert(
+          `Galaxus direct ${orderRef}: already fulfilled — no reprint.`
+        );
+        return;
+      }
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const browserPrintEnabled =
+        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        const opened = browserPrintEnabled
-          ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-          : openLabelPreview(data.labelData);
-        if (!opened) {
-          window.alert("Swiss Post label generated but popup blocked. Allow popups, then scan again.");
+        if (serverPrinted) {
+          // CUPS already printed — no popup. DN goes to HP when present.
+          alertOnServerPrintFailure(data.printJobResult, "Label print");
+          alertOnServerPrintFailure(data.deliveryNotePrintResult, "Delivery note print");
+        } else {
+          const opened = browserPrintEnabled
+            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+            : openLabelPreview(data.labelData);
+          if (!opened) {
+            window.alert("Swiss Post label generated but popup blocked. Allow popups, then scan again.");
+          }
         }
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
@@ -447,6 +806,147 @@ export default function ScanPage() {
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Galaxus label network error");
+    } finally {
+      setFulfillLoading(false);
+    }
+  };
+
+  // Auto-fire direct-delivery Swiss Post label for the oldest open direct
+  // order matched by GTIN when nothing matched by AWB. Same print handling as
+  // runGalaxusDirectLabelFromScan (server print or browser popup). Silently
+  // swallows 409 (order not fully linked / already finalized) so the operator
+  // still sees the GTIN fallback panel and can pick manually.
+  const runDirectLabelForOrder = async (orderDbId: string) => {
+    if (!orderDbId) return;
+    setFulfillLoading(true);
+    setFulfillResult(null);
+    try {
+      const res = await fetch("/api/scan-galaxus-direct-label", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          orderDbId,
+          includeLabelData: true,
+          allowReprint: false,
+        }),
+      });
+      const data: FulfillResponse & { error?: string; orderNumber?: string | null; galaxusOrderId?: string | null } =
+        await res.json();
+      setFulfillResult(data);
+      if (res.status === 409) return;
+      if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
+        const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
+        window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
+        return;
+      }
+      const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim();
+      const tracking = String(data.trackingNumber ?? "").trim();
+      if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
+        // Mark this order as done in the GTIN panel so it stops looking like both are still open.
+        setResult((prev) => {
+          if (!prev?.gtin?.orders?.length) return prev;
+          const orders = prev.gtin.orders.map((c) => {
+            const same =
+              String(c.galaxusOrderDbId ?? "") === orderDbId ||
+              (orderRef && String(c.galaxusOrderId ?? "") === orderRef) ||
+              (data.orderNumber && String(c.orderNumber ?? "") === String(data.orderNumber));
+            if (!same) return c;
+            const ordered = Math.max(1, Number(c.ordered ?? c.quantity ?? 1));
+            return {
+              ...c,
+              remaining: 0,
+              shipped: Math.max(Number(c.shipped ?? 0), ordered),
+            };
+          });
+          const openDirect = orders.filter(
+            (c) =>
+              (c.channel ?? "galaxus") === "galaxus" &&
+              (c.isDirectDelivery || String(c.deliveryType ?? "").includes("direct")) &&
+              Number(c.remaining ?? 0) > 0
+          ).length;
+          const totalOpen = orders.reduce((n, c) => n + Math.max(0, Number(c.remaining ?? 0)), 0);
+          return {
+            ...prev,
+            gtin: {
+              ...prev.gtin,
+              orders,
+              openDirect,
+              totalOpen,
+            },
+          };
+        });
+        window.alert(
+          `Galaxus direct fulfilled: ${orderRef || orderDbId}` +
+            (tracking ? `\nTracking: ${tracking}` : "") +
+            `\n(Only oldest open — other GTIN matches untouched.)`
+        );
+      }
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const browserPrintEnabled =
+        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
+      if (res.ok && data.ok && data.labelData?.base64) {
+        if (serverPrinted) {
+          alertOnServerPrintFailure(data.printJobResult, "Label print");
+          alertOnServerPrintFailure(data.deliveryNotePrintResult, "Delivery note print");
+        } else {
+          const opened = browserPrintEnabled
+            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+            : openLabelPreview(data.labelData);
+          if (!opened) {
+            window.alert("Swiss Post label generated but popup blocked. Allow popups, then scan again.");
+          }
+        }
+      } else if (!res.ok || !data.ok) {
+        window.alert(data.error || "Galaxus Swiss Post label failed");
+      }
+    } catch (err: any) {
+      setFulfillResult({ ok: false, error: err?.message || "Network error" });
+      window.alert(err?.message || "Galaxus label network error");
+    } finally {
+      setFulfillLoading(false);
+    }
+  };
+
+  const runGalaxusWarehouseLabelFromScan = async (scan: ScanResult) => {
+    if (scan.galaxus?.source !== "galaxus_warehouse_shipment") return;
+    const shipmentId = scan.galaxus.warehouseShipment?.shipmentId;
+    if (!shipmentId) return;
+    setFulfillLoading(true);
+    setFulfillResult(null);
+    try {
+      const res = await fetch(
+        `/api/galaxus/warehouse-shipments/${encodeURIComponent(shipmentId)}/label`,
+        { method: "GET", cache: "no-store" }
+      );
+      const data: FulfillResponse & {
+        source?: "swiss_post_document" | "sscc_label";
+        trackingNumber?: string | null;
+      } = await res.json();
+      setFulfillResult(data);
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const browserPrintEnabled =
+        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
+      if (res.ok && data.ok && data.labelData?.base64) {
+        if (serverPrinted) {
+          alertOnServerPrintFailure(data.printJobResult);
+        } else {
+          const opened = browserPrintEnabled
+            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+            : openLabelPreview(data.labelData);
+          if (!opened) {
+            window.alert("Warehouse label loaded but popup blocked. Allow popups, then scan again.");
+          }
+        }
+      } else if (res.status === 404) {
+        window.alert(
+          "Warehouse shipment has no label attached yet — open warehouse page to generate it."
+        );
+      } else {
+        window.alert(data.error || "Warehouse label fetch failed");
+      }
+    } catch (err: any) {
+      setFulfillResult({ ok: false, error: err?.message || "Network error" });
+      window.alert(err?.message || "Warehouse label network error");
     } finally {
       setFulfillLoading(false);
     }
@@ -525,6 +1025,61 @@ export default function ScanPage() {
     URL.revokeObjectURL(urlObj);
   };
 
+  const printDecathlonLabelForOrder = async (orderRef: string) => {
+    try {
+      // CUPS reprint (uses SWISS_POST_PRINTER_MEDIA = 62x100mm).
+      void fetch(`/api/decathlon/orders/${encodeURIComponent(orderRef)}/documents/label`, {
+        method: "POST",
+      }).catch(() => null);
+
+      const res = await fetch(
+        `/api/decathlon/orders/${encodeURIComponent(orderRef)}/documents/label`
+      );
+      if (!res.ok) return false;
+      const blob = await res.blob();
+      const buffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+      const base64 = btoa(binary);
+      if (ENABLE_BROWSER_PRINT) {
+        openLabelPrintDialog(
+          { base64, mimeType: "application/pdf", extension: "pdf" },
+          { enabled: true, widthMm: 62, heightMm: 100, marginMm: 0 }
+        );
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const reprintDecathlonDocs = async (options: {
+    orderId: string;
+    shipmentId?: string | null;
+  }) => {
+    const orderRef = options.orderId;
+    if (!orderRef) return;
+    const shipmentId = String(options.shipmentId ?? "").trim();
+    const slipUrl = shipmentId
+      ? `/api/decathlon/orders/${orderRef}/documents/packing-slip?shipmentId=${encodeURIComponent(shipmentId)}`
+      : `/api/decathlon/orders/${orderRef}/documents/packing-slip`;
+    const slipName = shipmentId
+      ? `decathlon-delivery_${orderRef}_${shipmentId}.pdf`
+      : `decathlon-delivery_${orderRef}.pdf`;
+    try {
+      await downloadPackingSlipWithRetry(slipUrl, slipName);
+    } catch {
+      // OR72 may still be generating.
+    }
+    const printed = await printDecathlonLabelForOrder(orderRef);
+    window.alert(
+      printed
+        ? `Decathlon ${orderRef}: packing slip + Swiss Post label reprinted.`
+        : `Decathlon ${orderRef}: packing slip requested; label reprint failed (no stored PDF?).`
+    );
+  };
+
   const autoHandleDecathlon = async (match: ScanResult["decathlon"], awb: string) => {
     const orderRef = resolveDecathlonOrderRef(match);
     if (!orderRef) return;
@@ -537,7 +1092,7 @@ export default function ScanPage() {
     const qty = Number(match?.quantity ?? 0) || 0;
     if (!lineId || qty <= 0) {
       window.alert(
-        `Decathlon auto-fulfill skipped: missing line match for AWB ${awb}. Link AWB to line first.`
+        `Decathlon auto-fulfill skipped: missing line match for AWB ${awb || "(gtin)"}. Link AWB to line first.`
       );
       return;
     }
@@ -552,6 +1107,16 @@ export default function ScanPage() {
       });
       const shipData = await shipRes.json().catch(() => ({}));
       if (!shipRes.ok || !shipData.ok) {
+        // Already shipped on Mirakl/DB → fall back to reprint docs.
+        const msg = String(shipData.error ?? "").toLowerCase();
+        if (
+          msg.includes("already shipped") ||
+          msg.includes("already ship") ||
+          shipRes.status === 400
+        ) {
+          await reprintDecathlonDocs({ orderId: orderRef, shipmentId: null });
+          return;
+        }
         throw new Error(shipData.error ?? "Decathlon ship failed");
       }
       const shipmentId = String(shipData?.shipmentId ?? "").trim();
@@ -568,16 +1133,20 @@ export default function ScanPage() {
       } catch {
         // Non-blocking: shipping can be ok while OR72 is still generating.
       }
+      const labelPrinted = await printDecathlonLabelForOrder(orderRef);
+      const labelNote = labelPrinted
+        ? "Swiss Post label sent to printer / print dialog."
+        : "Label stored but browser print failed.";
       if (shipData.reconciled) {
         window.alert(
-          `Decathlon order ${orderRef}: Mirakl was already shipped; your dashboard DB is now synced. ${slipNote}`
+          `Decathlon order ${orderRef}: Mirakl was already shipped; your dashboard DB is now synced. ${slipNote} ${labelNote}`
         );
       } else {
-        window.alert(`Decathlon order ${orderRef} shipped. ${slipNote}`);
+        window.alert(`Decathlon order ${orderRef} shipped. ${slipNote} ${labelNote}`);
       }
     } catch (error: any) {
       window.alert(
-        `Decathlon auto-fulfill failed for AWB ${awb}: ${error?.message ?? "Unknown error"}`
+        `Decathlon auto-fulfill failed for AWB ${awb || "(gtin)"}: ${error?.message ?? "Unknown error"}`
       );
     }
   };
@@ -593,7 +1162,30 @@ export default function ScanPage() {
     }
     if (scan.galaxus) {
       const ref = galaxusOrderRef(scan.galaxus);
-      if (scan.galaxus.isDirectDelivery) {
+      const isWarehouseFallback = scan.galaxus.source === "galaxus_warehouse_shipment";
+      if (isWarehouseFallback) {
+        const ws = scan.galaxus.warehouseShipment;
+        const recipient = ws?.recipient
+          ? [ws.recipient.name, ws.recipient.postalCode, ws.recipient.city, ws.recipient.countryCode]
+              .filter(Boolean)
+              .join(" · ")
+          : "";
+        const shippedAt = ws?.shippedAt ? new Date(ws.shippedAt).toLocaleString("de-CH") : "—";
+        window.alert(
+          `Galaxus warehouse order ${ref}\nAWB matched on Shipment.trackingNumber (no direct-delivery match).\n` +
+            `Shipment: ${ws?.packageType ?? "PARCEL"} · ${ws?.shipmentDeliveryType ?? "warehouse"} · shipped ${shippedAt}\n` +
+            `Carrier: ${ws?.carrierFinal ?? ws?.carrierRaw ?? "—"}\n` +
+            `DELR: ${ws?.delrStatus ?? "—"}${ws?.delrSentAt ? ` (sent ${new Date(ws.delrSentAt).toLocaleString("de-CH")})` : ""}\n` +
+            (recipient ? `Recipient: ${recipient}` : "")
+        );
+        if (
+          ENABLE_AUTO_GALAXUS_WAREHOUSE_LABEL &&
+          ws?.shipmentId &&
+          !isActiveStxInboundBuy(scan)
+        ) {
+          await runGalaxusWarehouseLabelFromScan(scan);
+        }
+      } else if (scan.galaxus.isDirectDelivery) {
         if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && shouldAutoGalaxusDirectLabel(scan)) {
           await runGalaxusDirectLabelFromScan(scan);
         } else if (scan.galaxus.allLinked === false) {
@@ -608,13 +1200,37 @@ export default function ScanPage() {
           `Galaxus — order ${ref}\nAWB is stored on GalaxusStockxMatch (marketplace).\nNo Shopify label / fulfill on this page.`
         );
       }
+    } else if (
+      ENABLE_AUTO_GALAXUS_DIRECT_LABEL &&
+      scan.stxInboundBuy?.isDirectDelivery &&
+      scan.stxInboundBuy.galaxusOrderDbId &&
+      !scan.stxInboundBuy.orderCancelledAt
+    ) {
+      // AWB hit StxPurchaseUnit for a direct-delivery order but galaxusMatch
+      // payload was missing — still auto-print Swiss Post label via orderDbId.
+      await runDirectLabelForOrder(scan.stxInboundBuy.galaxusOrderDbId);
     }
     if (scan.decathlon) {
-      if (!scan.galaxus) {
-        const alertText = buildChannelAlert(scan);
-        if (alertText) window.alert(alertText);
+      const isDecWarehouseFallback = scan.decathlon.source === "decathlon_warehouse_shipment";
+      if (isDecWarehouseFallback) {
+        const ws = scan.decathlon.warehouseShipment;
+        const ref =
+          scan.decathlon.orderNumber ||
+          scan.decathlon.orderId ||
+          scan.decathlon.orderDbId ||
+          "—";
+        window.alert(
+          `Decathlon warehouse order ${ref}\nAWB matched on DecathlonShipment.trackingNumber.\n` +
+            `Carrier: ${ws?.carrierFinal ?? ws?.carrierRaw ?? "—"}\n` +
+            `Shipped: ${ws?.shippedAt ? new Date(ws.shippedAt).toLocaleString("de-CH") : "—"}`
+        );
+      } else {
+        if (!scan.galaxus) {
+          const alertText = buildChannelAlert(scan);
+          if (alertText) window.alert(alertText);
+        }
+        await autoHandleDecathlon(scan.decathlon, scan.awb);
       }
-      await autoHandleDecathlon(scan.decathlon, scan.awb);
     } else if (!scan.galaxus) {
       const alertText = buildChannelAlert(scan);
       if (alertText) window.alert(alertText);
@@ -628,9 +1244,245 @@ export default function ScanPage() {
     });
   };
 
-  const handleSubmit = async () => {
+  /**
+   * Best-effort packing-session resolver. Runs after the main scan.
+   * - If scan resolves to a pending warehouse pair, appends to the local box.
+   * - Silently no-ops on non-warehouse scans that were handled by other channels
+   *   (direct delivery, home return, decathlon warehouse fallback) so the box
+   *   isn't polluted.
+   * - When mainScanHandled is false and no pair matches, surfaces reject reason
+   *   as red text on the panel (never as an alert).
+   */
+  const tryAddScanToPackingSession = async (
+    scanCode: string,
+    opts: { mainScanHandled: boolean }
+  ) => {
+    if (!scanCode.trim()) return;
+    const current = packingSessionRef.current;
+    if (current.length >= PACKING_SESSION_CAP) {
+      // Don't nag when a direct-delivery / home-return / decathlon scan already ran.
+      if (!opts.mainScanHandled) {
+        setPackingReject({
+          scanCode,
+          reason: `Session full (${PACKING_SESSION_CAP}/${PACKING_SESSION_CAP}) — pack + close first.`,
+        });
+      }
+      return;
+    }
+    try {
+      const res = await fetch("/api/scan-awb/packing-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          scanCode,
+          scanSessionKey,
+          session: current.map((e) => ({
+            galaxusOrderId: e.galaxusOrderId,
+            galaxusOrderLineId: e.lineId,
+            unitIndex: e.unitIndex,
+            supplierPid: e.supplierPid,
+            gtin: e.gtin,
+          })),
+        }),
+      });
+      const data: PackingSessionApiResponse = await res.json();
+      if (data.ok) {
+        setPackingReject(null);
+        const entry: PackingSessionEntry = {
+          scannedAt: new Date().toISOString(),
+          scanCode,
+          galaxusOrderId: data.matched.galaxusOrderId,
+          galaxusOrderDbId: data.matched.galaxusOrderDbId,
+          galaxusOrderNumber: data.matched.galaxusOrderNumber,
+          orderDate: data.matched.orderDate,
+          lineId: data.matched.lineId,
+          lineNumber: data.matched.lineNumber,
+          unitIndex: data.matched.unitIndex,
+          supplierPid: data.matched.supplierPid,
+          gtin: data.matched.gtin,
+          productName: data.matched.productName,
+          sizeEU: data.matched.sizeEU,
+          resolvedVia: data.matched.resolvedVia,
+        };
+        setPackingSession((prev) => {
+          // Dedup: same lineId + unitIndex should never appear twice.
+          if (prev.some((p) => p.lineId === entry.lineId && p.unitIndex === entry.unitIndex)) {
+            return prev;
+          }
+          const next = [...prev, entry];
+          if (next.length >= PACKING_SESSION_CAP) setPackingSessionReady(true);
+          // Stale success/error line invalid once box changes.
+          setFinalizeStatus(null);
+          return next;
+        });
+      } else if (!opts.mainScanHandled) {
+        // Only nag when nothing else claimed this scan.
+        setPackingReject({
+          scanCode,
+          reason: data.rejected?.reason || "Rejected",
+        });
+      }
+    } catch (err: any) {
+      if (!opts.mainScanHandled) {
+        setPackingReject({
+          scanCode,
+          reason: err?.message || "Network error",
+        });
+      }
+    }
+  };
+
+  const closeSuggestions = () => {
+    setSuggestOpen(false);
+    setSuggestFocusIdx(-1);
+    firstKeystrokeAtRef.current = null;
+  };
+
+  const handleFinalizeSession = async () => {
+    if (finalizeBusy) return;
+    const snapshot = packingSessionRef.current;
+    if (snapshot.length === 0) return;
+    const entries = snapshot.map((e) => ({
+      galaxusOrderDbId: e.galaxusOrderDbId,
+      galaxusOrderLineId: e.lineId,
+      unitIndex: e.unitIndex,
+      supplierPid: e.supplierPid,
+      gtin: e.gtin,
+      productName: e.productName,
+    }));
+
+    // Pre-open exactly 3 tabs in the click handler (popup-blocker safe).
+    // Do NOT pass "noopener" — that makes window.open return null while still
+    // leaving orphan about:blank tabs (user saw ~5 blank pages).
+    const DOC_URLS_PER_SHIPMENT = 3; // packing slip, Swiss Post label, SSCC
+    const preOpened: Window[] = [];
+    for (let i = 0; i < DOC_URLS_PER_SHIPMENT; i += 1) {
+      try {
+        const win = window.open("about:blank", "_blank");
+        if (win) {
+          try {
+            win.opener = null;
+          } catch {
+            // ignore
+          }
+          preOpened.push(win);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    const consumeTab = (url: string) => {
+      const tab = preOpened.shift();
+      if (tab && !tab.closed) {
+        try {
+          tab.location.href = url;
+          return;
+        } catch {
+          try {
+            tab.close();
+          } catch {
+            // ignore
+          }
+        }
+      }
+      try {
+        window.open(url, "_blank");
+      } catch {
+        // ignore
+      }
+    };
+    const closeLeftoverTabs = () => {
+      while (preOpened.length > 0) {
+        const leftover = preOpened.shift();
+        try {
+          leftover?.close();
+        } catch {
+          // ignore
+        }
+      }
+    };
+
+    setFinalizeBusy(true);
+    setFinalizeStatus(null);
+    try {
+      const res = await fetch("/api/scan-awb/packing-session/finalize", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ entries, scanSessionKey }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const results: Array<{
+        ok?: boolean;
+        error?: string;
+        ssccUrl?: string | null;
+        packingSlipUrl?: string | null;
+        labelUrl?: string | null;
+      }> = Array.isArray(data?.results) ? data.results : [];
+
+      // Open SSCC → packing slip → Swiss Post label (warehouse UI order).
+      for (const r of results) {
+        if (!r?.ok) continue;
+        if (r.ssccUrl) consumeTab(r.ssccUrl);
+        if (r.packingSlipUrl) consumeTab(r.packingSlipUrl);
+        if (r.labelUrl) consumeTab(r.labelUrl);
+      }
+      closeLeftoverTabs();
+
+      const total = results.length || 0;
+      const failCount = Number(data?.errorCount ?? results.filter((r) => !r?.ok).length);
+      if (res.ok && data?.ok && total > 0 && failCount === 0) {
+        setFinalizeStatus({
+          tone: "ok",
+          text:
+            total === 1
+              ? `1 composite warehouse shipment done (${entries.length} pairs) — same as warehouse builder`
+              : `${total} composite shipments done (${entries.length} pairs)`,
+        });
+        // Auto-clear: only on full success. Partial failures keep entries so
+        // operator can retry. `packingSession` effect persists [] to
+        // localStorage key `scan.packingSession.entries.v1` automatically.
+        setPackingSession([]);
+        setPackingSessionReady(false);
+      } else if (total > 0) {
+        const firstError =
+          results.find((r) => !r?.ok)?.error || data?.error || "unknown error";
+        setFinalizeStatus({
+          tone: "error",
+          text: `${failCount}/${total} failed: ${firstError}`,
+        });
+      } else {
+        setFinalizeStatus({
+          tone: "error",
+          text: `${entries.length}/${entries.length} failed: ${
+            data?.error || `HTTP ${res.status}`
+          }`,
+        });
+      }
+    } catch (err: any) {
+      closeLeftoverTabs();
+      setFinalizeStatus({
+        tone: "error",
+        text: `${entries.length}/${entries.length} failed: ${err?.message || "Network error"}`,
+      });
+    } finally {
+      setFinalizeBusy(false);
+    }
+  };
+
+  const handleSuggestionSelect = (item: SuggestItem) => {
+    const canonical =
+      item.gtin || item.supplierPid || item.buyerPid || item.orderNumber || item.orderId || "";
+    setCode(canonical);
+    closeSuggestions();
+    // Run scan with the canonical code so we don't wait for React state.
+    void handleSubmit(canonical);
+  };
+
+  const handleSubmit = async (overrideCode?: string) => {
     const startedAt = Date.now();
-    if (!code.trim()) {
+    const rawCode = overrideCode !== undefined ? overrideCode : code;
+    const scanCodeForPacking = String(rawCode ?? "").trim();
+    if (!scanCodeForPacking) {
       setResult({
         ok: false,
         status: "UNMATCHED",
@@ -640,11 +1492,18 @@ export default function ScanPage() {
       return;
     }
     setLoading(true);
+    let mainScanHandled = false;
+    let hasActiveStxInboundBuy = false;
+    let inboundBuyForPacking: {
+      orderCancelledAt: string | null;
+      isWarehouse: boolean;
+      isDirectDelivery: boolean;
+    } | null = null;
     try {
       const res = await fetch("/api/scan-awb", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, scanSessionKey }),
+        body: JSON.stringify({ code: rawCode, scanSessionKey }),
       });
       const data: ScanResult = await res.json();
       setResult(data);
@@ -662,9 +1521,106 @@ export default function ScanPage() {
         return [entry, ...prev].slice(0, 20);
       });
 
+      hasActiveStxInboundBuy = isActiveStxInboundBuy(data);
+      if (data.stxInboundBuy) {
+        inboundBuyForPacking = {
+          orderCancelledAt: data.stxInboundBuy.orderCancelledAt ?? null,
+          isWarehouse: Boolean(data.stxInboundBuy.isWarehouse),
+          isDirectDelivery: Boolean(data.stxInboundBuy.isDirectDelivery),
+        };
+      }
+
+      // "Handled" means some channel took ownership. Used to silence packing
+      // reject noise when the scan was legitimately a non-warehouse-pair path.
+      mainScanHandled = Boolean(
+        data.ok ||
+          data.fulfillmentDemo ||
+          data.inboundHome ||
+          data.galaxus ||
+          data.decathlon ||
+          data.match ||
+          data.gtin
+      );
+
       await handleChannelActions(data);
 
-      if (ENABLE_AUTO_FULFILLMENT && data.ok && data.match && !data.galaxus && !data.inboundHome) {
+      // GTIN fallback auto-fulfill: AWB miss + product barcode hit.
+      // Oldest open across Galaxus direct / Shopify / Decathlon (server picks
+      // via `gtin.autoChannel`). Skip when any other channel already claimed.
+      const gtinBlockedByOtherChannel =
+        Boolean(data.galaxus) ||
+        Boolean(data.inboundHome) ||
+        Boolean(data.match) ||
+        Boolean(data.stxInboundBuy) ||
+        Boolean(data.decathlon);
+      const gtinAutoChannel = !gtinBlockedByOtherChannel
+        ? data.gtin?.autoChannel ?? null
+        : null;
+
+      if (gtinAutoChannel === "galaxus_direct") {
+        const gtinAutoDirectOrderDbId =
+          data.gtin?.autoDirectOrderDbId && (data.gtin.openDirect ?? 0) > 0
+            ? data.gtin.autoDirectOrderDbId
+            : null;
+        if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && gtinAutoDirectOrderDbId) {
+          await runDirectLabelForOrder(gtinAutoDirectOrderDbId);
+        }
+      } else if (gtinAutoChannel === "shopify" && ENABLE_AUTO_FULFILLMENT && data.gtin?.autoShopify) {
+        const auto = data.gtin.autoShopify;
+        await runFulfillFromScan(
+          {
+            ...data,
+            ok: true,
+            status: "FOUND",
+            match: {
+              shopifyOrderId: auto.shopifyOrderId,
+              shopifyOrderName: auto.shopifyOrderName ?? null,
+              shopifyLineItemId: auto.shopifyLineItemId,
+              trackingUrl: null,
+            },
+          },
+          {
+            scanStartedAt: new Date(startedAt).toISOString(),
+            scanCompletedAt: new Date(finishedAt).toISOString(),
+            gtinFulfill: true,
+          }
+        );
+      } else if (gtinAutoChannel === "decathlon" && data.gtin?.autoDecathlon) {
+        const auto = data.gtin.autoDecathlon;
+        // Do not pass product GTIN as Mirakl tracking — ship route falls back to
+        // orderId then replaces with Swiss Post barcode after label generation.
+        await autoHandleDecathlon(
+          {
+            orderId: auto.orderId,
+            orderDbId: auto.orderDbId,
+            orderNumber: null,
+            orderState: null,
+            lineId: auto.lineId,
+            quantity: auto.quantity,
+            source: null,
+          },
+          ""
+        );
+      } else if (
+        !gtinBlockedByOtherChannel &&
+        !gtinAutoChannel &&
+        data.gtin?.autoDecathlonReprint?.orderId
+      ) {
+        // GTIN hit an already-shipped Decathlon line — reprint packing slip + label.
+        await reprintDecathlonDocs({
+          orderId: data.gtin.autoDecathlonReprint.orderId,
+          shipmentId: data.gtin.autoDecathlonReprint.shipmentId,
+        });
+      }
+
+      if (
+        ENABLE_AUTO_FULFILLMENT &&
+        data.ok &&
+        data.match &&
+        !data.galaxus &&
+        !data.inboundHome &&
+        !data.stxInboundBuy
+      ) {
         await runFulfillFromScan(data, {
           scanStartedAt: new Date(startedAt).toISOString(),
           scanCompletedAt: new Date(finishedAt).toISOString(),
@@ -680,6 +1636,15 @@ export default function ScanPage() {
       });
     } finally {
       setLoading(false);
+      // Non-blocking: resolve packing-session assignment in the background so
+      // scanner focus returns immediately. Warehouse inbound StockX buys MUST
+      // be added to the box. Direct-delivery inbounds are skipped.
+      const scanShapeForGuard = {
+        stxInboundBuy: inboundBuyForPacking,
+      };
+      if (shouldAutoAddToPackingSession(scanShapeForGuard)) {
+        void tryAddScanToPackingSession(scanCodeForPacking, { mainScanHandled });
+      }
       focusInput();
     }
   };
@@ -718,13 +1683,19 @@ export default function ScanPage() {
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
-      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const browserPrintEnabled =
+        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        const opened = browserPrintEnabled
-          ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-          : openLabelPreview(data.labelData);
-        if (!opened) {
-          window.alert("Home label generated but popup blocked. Allow popups, then scan again.");
+        if (serverPrinted) {
+          alertOnServerPrintFailure(data.printJobResult);
+        } else {
+          const opened = browserPrintEnabled
+            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+            : openLabelPreview(data.labelData);
+          if (!opened) {
+            window.alert("Home label generated but popup blocked. Allow popups, then scan again.");
+          }
         }
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Home label generation failed");
@@ -739,10 +1710,16 @@ export default function ScanPage() {
 
   const runFulfillFromScan = async (
     scan: ScanResult,
-    options?: { allowAlreadyFulfilled?: boolean; scanStartedAt?: string; scanCompletedAt?: string }
+    options?: {
+      allowAlreadyFulfilled?: boolean;
+      scanStartedAt?: string;
+      scanCompletedAt?: string;
+      gtinFulfill?: boolean;
+    }
   ) => {
     if (!scan?.awb || !scan?.match || scan.galaxus) return;
     const allowAlreadyFulfilled = Boolean(options?.allowAlreadyFulfilled);
+    const gtinFulfill = Boolean(options?.gtinFulfill);
     setFulfillLoading(true);
     setFulfillResult(null);
     try {
@@ -755,6 +1732,7 @@ export default function ScanPage() {
           shopifyLineItemId: scan.match?.shopifyLineItemId || null,
           includeLabelData: true,
           allowAlreadyFulfilled,
+          gtinFulfill,
           // Clients need the Shopify shipping email with Swiss Post tracking.
           notifyCustomer: true,
           scanSessionKey,
@@ -764,13 +1742,19 @@ export default function ScanPage() {
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
-      const browserPrintEnabled = ENABLE_BROWSER_PRINT && (data.browserPrintConfig?.enabled ?? true);
+      const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const browserPrintEnabled =
+        ENABLE_BROWSER_PRINT && !serverPrinted && (data.browserPrintConfig?.enabled ?? true);
       if (res.ok && data.ok && data.labelData?.base64) {
-        const opened = browserPrintEnabled
-          ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
-          : openLabelPreview(data.labelData);
-        if (!opened) {
-          window.alert("Label generated but popup blocked. Allow popups for this page, then scan again.");
+        if (serverPrinted) {
+          alertOnServerPrintFailure(data.printJobResult);
+        } else {
+          const opened = browserPrintEnabled
+            ? openLabelPrintDialog(data.labelData, data.browserPrintConfig)
+            : openLabelPreview(data.labelData);
+          if (!opened) {
+            window.alert("Label generated but popup blocked. Allow popups for this page, then scan again.");
+          }
         }
       } else if (!res.ok || !data.ok) {
         window.alert(
@@ -795,12 +1779,12 @@ export default function ScanPage() {
   };
 
   const handleFulfill = async () => {
-    if (!result?.awb || !result?.match || result.galaxus) return;
+    if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
     await runFulfillFromScan(result);
   };
 
   const handleForceFulfill = async () => {
-    if (!result?.awb || !result?.match || result.galaxus) return;
+    if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
     await runFulfillFromScan(result, { allowAlreadyFulfilled: true });
   };
 
@@ -843,25 +1827,171 @@ export default function ScanPage() {
             Logout
           </button>
         </div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-6 text-center">📦 Scan AWB / Barcode</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-4 text-center">📦 Scan AWB / Barcode</h1>
 
         <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center gap-4">
-          <input
-            ref={inputRef}
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-            placeholder="Scan AWB / barcode (demo: 1000 Decathlon, 1001 Galaxus)"
-            className="w-full text-center text-xl px-4 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-          />
+          <div className="relative w-full">
+            <input
+              ref={inputRef}
+              value={code}
+              onChange={(e) => {
+                const next = e.target.value;
+                const prevEmpty = code.length === 0;
+                if (prevEmpty && next.length > 0) {
+                  firstKeystrokeAtRef.current = Date.now();
+                } else if (next.length === 0) {
+                  firstKeystrokeAtRef.current = null;
+                }
+                setCode(next);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  if (suggestOpen && suggestions.length > 0) {
+                    e.preventDefault();
+                    setSuggestFocusIdx((i) => (i + 1) % suggestions.length);
+                  }
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  if (suggestOpen && suggestions.length > 0) {
+                    e.preventDefault();
+                    setSuggestFocusIdx((i) =>
+                      i <= 0 ? suggestions.length - 1 : i - 1
+                    );
+                  }
+                  return;
+                }
+                if (e.key === "Escape") {
+                  if (suggestOpen) {
+                    e.preventDefault();
+                    closeSuggestions();
+                  }
+                  return;
+                }
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const startedAt = firstKeystrokeAtRef.current;
+                  const isScannerBurst =
+                    startedAt !== null &&
+                    Date.now() - startedAt < SCANNER_BURST_THRESHOLD_MS;
+                  if (
+                    !isScannerBurst &&
+                    suggestOpen &&
+                    suggestFocusIdx >= 0 &&
+                    suggestions[suggestFocusIdx]
+                  ) {
+                    handleSuggestionSelect(suggestions[suggestFocusIdx]);
+                    return;
+                  }
+                  closeSuggestions();
+                  void handleSubmit();
+                }
+              }}
+              onBlur={() => {
+                // Delay so mousedown on a row still fires selection.
+                setTimeout(() => setSuggestOpen(false), 120);
+              }}
+              onFocus={() => {
+                if (suggestions.length > 0 && looksLikeManualQuery(code)) {
+                  setSuggestOpen(true);
+                }
+              }}
+              placeholder="Scan AWB / barcode (GTIN / SKU auto-adds to packing box)"
+              className="w-full text-center text-xl px-4 py-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+            />
+            {suggestOpen && (suggestLoading || suggestions.length > 0) && (
+              <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-gray-300 rounded-lg shadow-lg max-h-96 overflow-y-auto text-left">
+                {suggestLoading && suggestions.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-500 flex items-center gap-2">
+                    <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-indigo-500 rounded-full animate-spin" />
+                    Searching…
+                  </div>
+                ) : null}
+                {(() => {
+                  const rows: JSX.Element[] = [];
+                  let lastGroup: string | null = null;
+                  suggestions.forEach((item, idx) => {
+                    const groupKey =
+                      (item.gtin || "").trim() ||
+                      item.productName.trim().toLowerCase();
+                    if (lastGroup !== null && groupKey !== lastGroup) {
+                      rows.push(
+                        <div
+                          key={`div-${idx}`}
+                          className="h-px bg-gray-200 mx-2"
+                        />
+                      );
+                    }
+                    lastGroup = groupKey;
+                    const isFocus = idx === suggestFocusIdx;
+                    const kindLabel =
+                      item.kind === "galaxus_direct"
+                        ? "Direct"
+                        : item.kind === "galaxus_warehouse"
+                          ? "Warehouse"
+                          : item.kind === "shopify"
+                            ? "Shopify"
+                            : "Decathlon";
+                    const kindClass =
+                      item.kind === "galaxus_direct"
+                        ? "bg-teal-100 text-teal-900"
+                        : item.kind === "galaxus_warehouse"
+                          ? "bg-sky-100 text-sky-900"
+                          : item.kind === "shopify"
+                            ? "bg-emerald-100 text-emerald-900"
+                            : "bg-amber-100 text-amber-900";
+                    rows.push(
+                      <button
+                        type="button"
+                        key={item.id}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSuggestionSelect(item);
+                        }}
+                        onMouseEnter={() => setSuggestFocusIdx(idx)}
+                        className={`w-full text-left px-3 py-2 text-sm border-b border-gray-100 last:border-b-0 ${
+                          isFocus ? "bg-indigo-50" : "bg-white hover:bg-gray-50"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium text-gray-900 truncate">
+                            {item.productName}
+                          </div>
+                          <span
+                            className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-semibold ${kindClass}`}
+                          >
+                            {kindLabel}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-600 mt-0.5 flex flex-wrap gap-x-2">
+                          <span>Size {item.sizeEU || "—"}</span>
+                          <span className="font-mono">
+                            SKU {item.supplierPid || "—"}
+                          </span>
+                          <span className="font-mono">
+                            GTIN {item.gtin || "—"}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-500 mt-0.5 flex flex-wrap gap-x-2">
+                          <span className="font-mono">
+                            {item.orderNumber || item.orderId}
+                          </span>
+                          <span>
+                            {new Date(item.orderDate).toLocaleDateString("de-CH")}
+                          </span>
+                          {item.customerCity ? <span>{item.customerCity}</span> : null}
+                        </div>
+                      </button>
+                    );
+                  });
+                  return rows;
+                })()}
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             <button
-              onClick={handleSubmit}
+              onClick={() => handleSubmit()}
               disabled={loading}
               className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-400"
             >
@@ -871,6 +2001,7 @@ export default function ScanPage() {
               onClick={() => {
                 setCode("");
                 setResult(null);
+                closeSuggestions();
                 focusInput();
               }}
               className="px-4 py-2 bg-gray-100 text-gray-800 rounded-md hover:bg-gray-200"
@@ -880,6 +2011,206 @@ export default function ScanPage() {
           </div>
         </div>
 
+        {/* Packing session panel — always visible. Empty until first warehouse-pair scan lands. */}
+        <div className="mt-6 border rounded-lg bg-white shadow p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="text-base font-semibold text-gray-900">
+                Packing session · {packingSession.length}/{PACKING_SESSION_CAP} pairs
+              </div>
+              <div className="flex gap-2">
+                {packingSession.length > 0 && packingSession.length < PACKING_SESSION_CAP && (
+                  <button
+                    type="button"
+                    onClick={() => setPackingSessionReady(true)}
+                    className="px-3 py-1.5 text-sm rounded bg-green-700 text-white hover:bg-green-800"
+                  >
+                    Mark session ready (Done)
+                  </button>
+                )}
+                {packingSession.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPackingSession([]);
+                      setPackingSessionReady(false);
+                      setPackingReject(null);
+                      setFinalizeStatus(null);
+                      setFinalizeBusy(false);
+                    }}
+                    className="px-3 py-1.5 text-sm rounded bg-gray-200 text-gray-800 hover:bg-gray-300"
+                  >
+                    Clear session
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {packingReject && (
+              <div className="mb-3 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <span className="font-mono">{packingReject.scanCode || "(empty)"}</span>{" "}
+                — {packingReject.reason}
+              </div>
+            )}
+
+            {packingSession.length === 0 ? (
+              <p className="text-sm text-gray-600">
+                Scan an AWB / GTIN / SKU per pair. Each scan is FIFO-matched to the oldest pending
+                warehouse Galaxus order that still needs that shoe.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b text-gray-600 text-left">
+                      <th className="py-1 pr-2">#</th>
+                      <th className="py-1 pr-2">Shoe</th>
+                      <th className="py-1 pr-2">Size</th>
+                      <th className="py-1 pr-2">GTIN / PID</th>
+                      <th className="py-1 pr-2">Order</th>
+                      <th className="py-1 pr-2">Order date</th>
+                      <th className="py-1 pr-2">Unit</th>
+                      <th className="py-1"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {packingSession.map((e, idx) => (
+                      <tr key={`${e.lineId}-${e.unitIndex}-${idx}`} className="border-b align-top">
+                        <td className="py-1 pr-2 font-mono">{idx + 1}</td>
+                        <td className="py-1 pr-2">
+                          {e.productName || "—"}
+                          <div className="text-[10px] text-gray-500">
+                            line #{e.lineNumber} · via {e.resolvedVia}
+                          </div>
+                        </td>
+                        <td className="py-1 pr-2">{e.sizeEU || "—"}</td>
+                        <td className="py-1 pr-2 font-mono">
+                          {e.gtin || "—"}
+                          <div className="text-[10px] text-gray-500">{e.supplierPid || "—"}</div>
+                        </td>
+                        <td className="py-1 pr-2 font-mono">
+                          {e.galaxusOrderId}
+                          {e.galaxusOrderNumber ? ` (${e.galaxusOrderNumber})` : ""}
+                        </td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {new Date(e.orderDate).toLocaleDateString("de-CH")}
+                        </td>
+                        <td className="py-1 pr-2">#{e.unitIndex + 1}</td>
+                        <td className="py-1 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = packingSession.filter((_, i) => i !== idx);
+                              setPackingSession(next);
+                              if (next.length < PACKING_SESSION_CAP) {
+                                setPackingSessionReady(false);
+                              }
+                            }}
+                            className="text-red-700 hover:underline text-[11px]"
+                          >
+                            remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {(packingSessionReady || packingSession.length >= PACKING_SESSION_CAP) &&
+              packingSession.length > 0 && (
+                <div className="mt-4 rounded-lg border border-green-400 bg-green-50 p-4 text-green-950">
+                  <div className="font-semibold text-green-900">
+                    Session ready — one warehouse shipment
+                  </div>
+                  <p className="text-sm mt-1">
+                    Put the {packingSession.length} pair
+                    {packingSession.length === 1 ? "" : "s"} in one box. One button = same as
+                    warehouse builder: <strong>one composite Shipment</strong> across these
+                    orders (one SSCC, one Swiss Post label, one delivery note). DELR only for
+                    the pairs in this box — not the rest of each order.
+                  </p>
+                  <p className="text-xs mt-1 text-green-800">
+                    Reminder: put the Swiss Post label + delivery note (+ any required customs docs)
+                    inside the parcel before sealing.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {(() => {
+                      const byOrder = new Map<
+                        string,
+                        {
+                          dbId: string;
+                          orderId: string;
+                          orderNumber: string | null;
+                          orderDate: string;
+                          count: number;
+                        }
+                      >();
+                      for (const e of packingSession) {
+                        const key = e.galaxusOrderDbId;
+                        const prev = byOrder.get(key);
+                        if (prev) {
+                          prev.count += 1;
+                        } else {
+                          byOrder.set(key, {
+                            dbId: e.galaxusOrderDbId,
+                            orderId: e.galaxusOrderId,
+                            orderNumber: e.galaxusOrderNumber,
+                            orderDate: e.orderDate,
+                            count: 1,
+                          });
+                        }
+                      }
+                      const rows = Array.from(byOrder.values()).sort(
+                        (a, b) =>
+                          new Date(a.orderDate).getTime() - new Date(b.orderDate).getTime()
+                      );
+                      if (finalizeStatus) {
+                        return (
+                          <div
+                            className={`rounded border px-3 py-2 text-sm font-medium ${
+                              finalizeStatus.tone === "ok"
+                                ? "border-green-500 bg-white text-green-900"
+                                : "border-red-500 bg-white text-red-800"
+                            }`}
+                          >
+                            {finalizeStatus.text}
+                          </div>
+                        );
+                      }
+                      return (
+                        <>
+                          {rows.map((r) => (
+                            <div
+                              key={r.dbId}
+                              className="rounded border border-green-300 bg-white px-3 py-2 text-sm"
+                            >
+                              <span className="font-mono">{r.orderId}</span>
+                              {r.orderNumber ? ` (${r.orderNumber})` : ""} ·{" "}
+                              <span className="text-gray-600">
+                                {new Date(r.orderDate).toLocaleDateString("de-CH")}
+                              </span>{" "}
+                              · {r.count} pair{r.count === 1 ? "" : "s"}
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => void handleFinalizeSession()}
+                            disabled={finalizeBusy || packingSession.length === 0}
+                            className="w-full mt-1 px-3 py-2 rounded bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
+                          >
+                            {finalizeBusy
+                              ? "Creating composite shipment…"
+                              : `Pack box — 1 shipment (${packingSession.length} pairs · ${rows.length} order${rows.length === 1 ? "" : "s"})`}
+                          </button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+        </div>
+
         {/* Result */}
         {result && (
           <div className={`mt-6 border rounded-lg p-4 ${statusColor}`}>
@@ -887,6 +2218,56 @@ export default function ScanPage() {
               <div className="text-lg font-semibold">Status: {result.status}</div>
               <div className="text-sm text-gray-600">AWB: {result.awb || "—"}</div>
             </div>
+            {result.stxInboundBuy && (
+              <div className="mt-4 rounded-lg border border-fuchsia-300 bg-fuchsia-50 p-4 text-fuchsia-950">
+                <div className="font-semibold text-fuchsia-900">
+                  Inbound StockX buy → Galaxus{" "}
+                  {result.stxInboundBuy.isDirectDelivery ? "direct-delivery" : "warehouse"} order
+                </div>
+                <p className="text-sm mt-1">
+                  Galaxus order:{" "}
+                  <span className="font-mono">
+                    {result.stxInboundBuy.galaxusOrderNumber ||
+                      result.stxInboundBuy.galaxusOrderId ||
+                      "—"}
+                  </span>
+                  {result.stxInboundBuy.stockxOrderNumber ? (
+                    <>
+                      {" "}
+                      · StockX{" "}
+                      <span className="font-mono">{result.stxInboundBuy.stockxOrderNumber}</span>
+                    </>
+                  ) : null}
+                  {result.stxInboundBuy.awb ? (
+                    <>
+                      {" "}
+                      · AWB <span className="font-mono">{result.stxInboundBuy.awb}</span>
+                    </>
+                  ) : null}
+                </p>
+                <p className="text-xs mt-1 text-fuchsia-800">
+                  {result.stxInboundBuy.isDirectDelivery
+                    ? "Shopify auto-fulfill blocked (stale OrderMatch). Galaxus Swiss Post label auto-prints for this direct-delivery inbound."
+                    : "Shopify auto-fulfill blocked. Warehouse inbound — pair goes to packing session, not a Shopify customer label."}
+                  {result.shopifyMatchSuppressed ? " (Stale OrderMatch with same AWB suppressed.)" : ""}
+                </p>
+                {result.stxInboundBuy.isDirectDelivery && result.stxInboundBuy.galaxusOrderDbId ? (
+                  <a
+                    href={`/galaxus/direct-delivery`}
+                    className="mt-2 inline-block text-sm font-medium text-fuchsia-800 underline hover:text-fuchsia-950"
+                  >
+                    Open Direct Delivery →
+                  </a>
+                ) : result.stxInboundBuy.galaxusOrderDbId ? (
+                  <a
+                    href={`/galaxus/warehouse?orderId=${encodeURIComponent(result.stxInboundBuy.galaxusOrderDbId)}`}
+                    className="mt-2 inline-block text-sm font-medium text-fuchsia-800 underline hover:text-fuchsia-950"
+                  >
+                    Open Galaxus warehouse for this order →
+                  </a>
+                ) : null}
+              </div>
+            )}
             {result.inboundHome && (
               <div className="mt-4 rounded-lg border border-violet-300 bg-violet-50 p-4 text-violet-950">
                 <div className="font-semibold text-violet-900">Inbound StockX → home</div>
@@ -934,7 +2315,103 @@ export default function ScanPage() {
                 </button>
               </div>
             )}
-            {result.galaxus && !result.fulfillmentDemo && (
+            {result.galaxus?.source === "galaxus_warehouse_shipment" && (
+              <div className="mt-4 rounded-lg border border-sky-300 bg-sky-50 p-4 text-sky-950">
+                <div className="font-semibold text-sky-900">
+                  Galaxus warehouse shipment (fallback)
+                </div>
+                <p className="text-sm mt-1">
+                  Order:{" "}
+                  <span className="font-mono">{galaxusOrderRef(result.galaxus)}</span>
+                  {result.galaxus.warehouseShipment?.packageType ? (
+                    <> · {result.galaxus.warehouseShipment.packageType}</>
+                  ) : null}
+                  {result.galaxus.warehouseShipment?.shipmentDeliveryType ? (
+                    <> · {result.galaxus.warehouseShipment.shipmentDeliveryType}</>
+                  ) : null}
+                </p>
+                <p className="text-sm mt-1">
+                  AWB matched on{" "}
+                  <code className="text-xs bg-sky-100 px-1 rounded">Shipment.trackingNumber</code>{" "}
+                  — no direct-delivery match, order is a warehouse shipment.
+                </p>
+                <div className="text-sm mt-2 grid grid-cols-1 md:grid-cols-2 gap-1">
+                  <div>
+                    Carrier:{" "}
+                    {result.galaxus.warehouseShipment?.carrierFinal ??
+                      result.galaxus.warehouseShipment?.carrierRaw ??
+                      "—"}
+                  </div>
+                  <div>
+                    Shipped:{" "}
+                    {result.galaxus.warehouseShipment?.shippedAt
+                      ? new Date(result.galaxus.warehouseShipment.shippedAt).toLocaleString("de-CH")
+                      : "—"}
+                  </div>
+                  <div>
+                    DELR: {result.galaxus.warehouseShipment?.delrStatus ?? "—"}
+                    {result.galaxus.warehouseShipment?.delrSentAt
+                      ? ` (${new Date(result.galaxus.warehouseShipment.delrSentAt).toLocaleString("de-CH")})`
+                      : ""}
+                  </div>
+                  <div>
+                    Recipient:{" "}
+                    {[
+                      result.galaxus.warehouseShipment?.recipient?.name,
+                      result.galaxus.warehouseShipment?.recipient?.postalCode,
+                      result.galaxus.warehouseShipment?.recipient?.city,
+                      result.galaxus.warehouseShipment?.recipient?.countryCode,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "—"}
+                  </div>
+                </div>
+                <a
+                  href="/galaxus/warehouse"
+                  className="mt-2 inline-block text-sm font-medium text-sky-800 underline hover:text-sky-950"
+                >
+                  Open Galaxus warehouse →
+                </a>
+              </div>
+            )}
+            {result.decathlon?.source === "decathlon_warehouse_shipment" && (
+              <div className="mt-4 rounded-lg border border-sky-300 bg-sky-50 p-4 text-sky-950">
+                <div className="font-semibold text-sky-900">
+                  Decathlon warehouse shipment (fallback)
+                </div>
+                <p className="text-sm mt-1">
+                  Order:{" "}
+                  <span className="font-mono">
+                    {result.decathlon.orderNumber ||
+                      result.decathlon.orderId ||
+                      result.decathlon.orderDbId ||
+                      "—"}
+                  </span>
+                </p>
+                <p className="text-sm mt-1">
+                  AWB matched on{" "}
+                  <code className="text-xs bg-sky-100 px-1 rounded">
+                    DecathlonShipment.trackingNumber
+                  </code>
+                  .
+                </p>
+                <div className="text-sm mt-2 grid grid-cols-1 md:grid-cols-2 gap-1">
+                  <div>
+                    Carrier:{" "}
+                    {result.decathlon.warehouseShipment?.carrierFinal ??
+                      result.decathlon.warehouseShipment?.carrierRaw ??
+                      "—"}
+                  </div>
+                  <div>
+                    Shipped:{" "}
+                    {result.decathlon.warehouseShipment?.shippedAt
+                      ? new Date(result.decathlon.warehouseShipment.shippedAt).toLocaleString("de-CH")
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+            )}
+            {result.galaxus && !result.fulfillmentDemo && result.galaxus.source !== "galaxus_warehouse_shipment" && (
               <div className="mt-4 rounded-lg border border-teal-300 bg-teal-50 p-4 text-teal-950">
                 <div className="font-semibold text-teal-900">
                   Galaxus {result.galaxus.isDirectDelivery ? "direct delivery" : "marketplace"}
@@ -986,6 +2463,133 @@ export default function ScanPage() {
                     Open Galaxus warehouse →
                   </a>
                 )}
+              </div>
+            )}
+            {result.gtin && (
+              <div className="mt-4 rounded-lg border border-fuchsia-300 bg-fuchsia-50 p-4 text-fuchsia-950">
+                <div className="font-semibold text-fuchsia-900">
+                  Product GTIN {result.gtin.gtin}
+                  {result.gtin.productName ? ` — ${result.gtin.productName}` : ""}
+                </div>
+                <p className="text-sm mt-1">
+                  {result.gtin.totalOpen} open · {result.gtin.openDirect} Galaxus direct ·{" "}
+                  {result.gtin.openWarehouse} Galaxus warehouse · {result.gtin.openShopify ?? 0}{" "}
+                  Shopify · {result.gtin.openDecathlon ?? 0} Decathlon (of{" "}
+                  {result.gtin.orders.length} recent lines).
+                </p>
+                <p className="text-xs mt-1 text-fuchsia-800">
+                  No shipping AWB matched this code; treating it as a product GTIN. Oldest open
+                  Galaxus-direct / Shopify / Decathlon line auto-fulfills.
+                </p>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-fuchsia-300 text-fuchsia-900 text-left">
+                        <th className="py-1 pr-2">Channel</th>
+                        <th className="py-1 pr-2">Order</th>
+                        <th className="py-1 pr-2">Type</th>
+                        <th className="py-1 pr-2">Ordered</th>
+                        <th className="py-1 pr-2">Recipient</th>
+                        <th className="py-1 pr-2">Qty</th>
+                        <th className="py-1 pr-2">Remaining</th>
+                        <th className="py-1 pr-2">Shipped/Reserved</th>
+                        <th className="py-1">Ref</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.gtin.orders.map((o) => {
+                        const remaining = Number(o.remaining ?? 0);
+                        const closed = remaining <= 0 || Boolean(o.cancelledAt);
+                        const channel = o.channel ?? "galaxus";
+                        const orderLabel =
+                          channel === "shopify"
+                            ? o.shopifyOrderName || o.shopifyOrderId || o.orderNumber || "—"
+                            : channel === "decathlon"
+                              ? o.decathlonOrderId || o.orderNumber || "—"
+                              : `${o.galaxusOrderId ?? ""}${o.orderNumber ? ` (${o.orderNumber})` : ""}`;
+                        const typeLabel =
+                          channel === "shopify"
+                            ? "shopify"
+                            : channel === "decathlon"
+                              ? "decathlon"
+                              : o.isDirectDelivery
+                                ? "direct"
+                                : o.deliveryType || "warehouse";
+                        const refLabel =
+                          channel === "shopify"
+                            ? o.shopifySku || o.shopifyLineItemId || "—"
+                            : channel === "decathlon"
+                              ? o.decathlonOrderState || "—"
+                              : (o.stockxLinks ?? [])
+                                  .map((l) => l.stockxOrderNumber || l.awb)
+                                  .filter(Boolean)
+                                  .join(", ") || "—";
+                        return (
+                          <tr
+                            key={`${channel}:${o.lineId}`}
+                            className={
+                              "border-b border-fuchsia-200 align-top " +
+                              (closed ? "opacity-60" : "")
+                            }
+                          >
+                            <td className="py-1 pr-2">
+                              <span className="inline-block px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-900">
+                                {channel}
+                              </span>
+                            </td>
+                            <td className="py-1 pr-2 font-mono">{orderLabel}</td>
+                            <td className="py-1 pr-2">
+                              <span
+                                className={
+                                  "inline-block px-1.5 py-0.5 rounded " +
+                                  (typeLabel === "direct"
+                                    ? "bg-teal-100 text-teal-900"
+                                    : typeLabel === "shopify"
+                                      ? "bg-emerald-100 text-emerald-900"
+                                      : typeLabel === "decathlon"
+                                        ? "bg-orange-100 text-orange-900"
+                                        : "bg-sky-100 text-sky-900")
+                                }
+                              >
+                                {typeLabel}
+                              </span>
+                            </td>
+                            <td className="py-1 pr-2 whitespace-nowrap">
+                              {new Date(o.orderDate).toLocaleDateString("de-CH")}
+                            </td>
+                            <td className="py-1 pr-2">
+                              {[
+                                o.recipient?.name,
+                                o.recipient?.postalCode,
+                                o.recipient?.city,
+                                o.recipient?.countryCode,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ") || "—"}
+                            </td>
+                            <td className="py-1 pr-2">{o.quantity}</td>
+                            <td className="py-1 pr-2">
+                              {closed ? (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">
+                                  {o.cancelledAt ? "cancelled" : "closed"}
+                                </span>
+                              ) : (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-900 font-semibold">
+                                  {remaining} left
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-1 pr-2 whitespace-nowrap">
+                              {(o.shipped ?? 0)}/{(o.reserved ?? 0)}
+                              {o.warehouseMarkedShippedAt ? " · marked" : ""}
+                            </td>
+                            <td className="py-1 font-mono text-[10px]">{refLabel}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
             {result.error && (
@@ -1105,23 +2709,42 @@ export default function ScanPage() {
               <div className="mt-4">
                 <div className="flex flex-wrap gap-2">
                   <button
-                    disabled={fulfillLoading || Boolean(result?.galaxus)}
+                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy)}
                     onClick={handleFulfill}
                     className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
-                    title={result?.galaxus ? "Galaxus orders: no Shopify label on this page" : undefined}
+                    title={
+                      result?.stxInboundBuy
+                        ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
+                        : result?.galaxus
+                          ? "Galaxus orders: no Shopify label on this page"
+                          : undefined
+                    }
                   >
                     {fulfillLoading ? "Processing..." : "Fulfill + Print Label"}
                   </button>
                   <button
-                    disabled={fulfillLoading || Boolean(result?.galaxus)}
+                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy)}
                     onClick={handleForceFulfill}
                     className="px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-gray-400"
-                    title={result?.galaxus ? "Galaxus orders: no Shopify label on this page" : undefined}
+                    title={
+                      result?.stxInboundBuy
+                        ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
+                        : result?.galaxus
+                          ? "Galaxus orders: no Shopify label on this page"
+                          : undefined
+                    }
                   >
                     {fulfillLoading ? "Processing..." : "Force Fulfill"}
                   </button>
                 </div>
-                {result?.galaxus ? (
+                {result?.stxInboundBuy ? (
+                  <p className="text-xs text-gray-600 mt-1">
+                    Disabled: AWB is an inbound StockX parcel for Galaxus{" "}
+                    {result.stxInboundBuy.isDirectDelivery ? "direct-delivery" : "warehouse"} order{" "}
+                    <span className="font-mono">{result.stxInboundBuy.galaxusOrderNumber || result.stxInboundBuy.galaxusOrderId}</span>.
+                    Old OrderMatch row with the same AWB was suppressed.
+                  </p>
+                ) : result?.galaxus ? (
                   <p className="text-xs text-gray-600 mt-1">Disabled: scan matched GalaxusStockxMatch (marketplace).</p>
                 ) : null}
                 <p className="text-xs text-gray-600 mt-1">
@@ -1131,8 +2754,18 @@ export default function ScanPage() {
                 {fulfillResult && (
                   <div className="mt-3 text-sm">
                     {fulfillResult.ok ? (
-                      <div className="text-green-700">
-                        ✅ {fulfillResult.status}
+                      <div className="text-green-700 space-y-0.5">
+                        <div>
+                          ✅ {fulfillResult.status}
+                          {fulfillResult.galaxusOrderId || fulfillResult.orderNumber
+                            ? ` · order ${fulfillResult.galaxusOrderId || fulfillResult.orderNumber}`
+                            : ""}
+                        </div>
+                        {fulfillResult.trackingNumber ? (
+                          <div className="text-xs font-mono text-green-800">
+                            Tracking {fulfillResult.trackingNumber}
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="text-red-700">
@@ -1144,15 +2777,17 @@ export default function ScanPage() {
                     )}
                   </div>
                 )}
-                {fulfillResult?.labelFilePath && (
+                {(fulfillResult?.labelFilePath || fulfillResult?.printJobResult) && (
                   <div className="mt-3 text-xs text-gray-700 whitespace-pre-wrap break-words">
-                    <div className={fulfillResult.ok ? "text-green-700" : "text-red-700"}>
-                      {fulfillResult.ok ? "✅ Label generated" : "❌ Label error"}
+                    <div className={fulfillResult?.ok ? "text-green-700" : "text-red-700"}>
+                      {fulfillResult?.ok ? "✅ Label generated" : "❌ Label error"}
                     </div>
-                    <div className="text-gray-500">
-                      Stored at <span className="font-mono">{fulfillResult.labelFilePath}</span>
-                    </div>
-                    {fulfillResult.printJobResult && (
+                    {fulfillResult?.labelFilePath && (
+                      <div className="text-gray-500">
+                        Stored at <span className="font-mono">{fulfillResult.labelFilePath}</span>
+                      </div>
+                    )}
+                    {fulfillResult?.printJobResult && (
                       <div className="mt-1 text-gray-600">
                         {fulfillResult.printJobResult.ok
                           ? "Print job sent to the configured printer"

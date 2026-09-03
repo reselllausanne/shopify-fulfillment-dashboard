@@ -2,6 +2,11 @@ import { prisma } from "@/app/lib/prisma";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 import { resolveStockxBuyByOrderNumberWithToken } from "@/decathlon/stx/manualStockxEnrich";
 import {
+  computeShipmentCoverageForOrders,
+  loadDelrShipmentIdsForOrders,
+  loadShipmentItemsForOrders,
+} from "@/galaxus/warehouse/shipmentLineCoverage";
+import {
   carrierFromTrackingUrl,
   fetchBuyOrder,
   isRealStockxBuyRef,
@@ -28,6 +33,12 @@ export type GalaxusAwbBackfillResult = Omit<AwbBackfillResult, "items" | "emails
 
 export type GalaxusAwbBackfillOptions = {
   token: string;
+  /**
+   * Additional bearer tokens to try when the primary token can't see a buy
+   * (e.g. multi-account setups where one warehouse label lives on account B
+   * but cron only refreshed account A's token). Deduped with `token`.
+   */
+  extraTokens?: string[];
   days?: number;
   limit?: number;
   dryRun?: boolean;
@@ -157,6 +168,7 @@ export async function selectGalaxusAwbCandidates(args: {
       galaxusOrderId: true,
       galaxusOrderRef: true,
       galaxusOrderDate: true,
+      galaxusOrderLineId: true,
       stockxOrderNumber: true,
       stockxChainId: true,
       stockxOrderId: true,
@@ -170,19 +182,48 @@ export async function selectGalaxusAwbCandidates(args: {
   const stockxRows = (pool as any[]).filter((row) => isRealStockxBuyRef(row.stockxOrderNumber));
   const orderIds = Array.from(new Set(stockxRows.map((row) => String(row.galaxusOrderId)).filter(Boolean)));
 
-  const fulfilledIds = new Set<string>();
+  // Line-level fulfilment gate: sibling line's DELR must not hide THIS line's missing AWB.
+  // Match rows carry `galaxusOrderLineId`; only skip candidates whose specific line is fully shipped.
+  const closedLineIds = new Set<string>();
   if (!args.includeFulfilled && orderIds.length > 0) {
-    const shipped = await prisma.shipment.findMany({
-      where: { orderId: { in: orderIds }, delrSentAt: { not: null } },
-      select: { orderId: true },
+    const orders = await prisma.galaxusOrder.findMany({
+      where: { id: { in: orderIds } },
+      select: {
+        id: true,
+        galaxusOrderId: true,
+        lines: {
+          select: {
+            id: true,
+            quantity: true,
+            buyerPid: true,
+            supplierPid: true,
+            gtin: true,
+            warehouseMarkedShippedAt: true,
+          },
+        },
+      },
     });
-    for (const row of shipped) {
-      if (row.orderId) fulfilledIds.add(String(row.orderId));
+    const orderRefs = Array.from(
+      new Set(orders.map((o) => String(o.galaxusOrderId ?? "").trim()).filter(Boolean))
+    );
+    const [delrShipmentIds, existingItems] = await Promise.all([
+      loadDelrShipmentIdsForOrders(orderIds, orderRefs),
+      loadShipmentItemsForOrders(orderIds),
+    ]);
+    const coverage = computeShipmentCoverageForOrders(orders, existingItems, delrShipmentIds);
+    for (const [lineId, cov] of Object.entries(coverage)) {
+      if ((cov?.remaining ?? 0) <= 0) closedLineIds.add(lineId);
     }
   }
 
   const open = stockxRows
-    .filter((row) => !fulfilledIds.has(String(row.galaxusOrderId)))
+    .filter((row) => {
+      const lineId = String(row.galaxusOrderLineId ?? "").trim();
+      // Direct-delivery matches may lack ShipmentItem coverage data → keep them.
+      const dt = String(row.order?.deliveryType ?? "").toLowerCase();
+      if (dt === "direct_delivery") return true;
+      return !lineId || !closedLineIds.has(lineId);
+    })
     .map((row) => ({
       ...row,
       deliveryType: row.order?.deliveryType ?? null,
@@ -199,6 +240,13 @@ export async function runGalaxusAwbBackfill(
 ): Promise<GalaxusAwbBackfillResult> {
   const token = String(options.token || "").trim().replace(/^bearer\s+/i, "");
   if (!token) throw new Error("Missing StockX bearer token");
+  const tokenPool: string[] = [];
+  const pushToken = (raw: string | null | undefined) => {
+    const cleaned = String(raw ?? "").trim().replace(/^bearer\s+/i, "");
+    if (cleaned && !tokenPool.includes(cleaned)) tokenPool.push(cleaned);
+  };
+  pushToken(token);
+  for (const extra of options.extraTokens ?? []) pushToken(extra);
 
   const days = Math.min(Math.max(Number(options.days ?? 45) || 45, 1), 180);
   const limit = Math.min(Math.max(Number(options.limit ?? 40) || 40, 1), 200);
@@ -225,7 +273,24 @@ export async function runGalaxusAwbBackfill(
     };
 
     try {
-      const { snapshot, httpStatus, error, authFailed } = await loadBuySnapshot(token, candidate);
+      let snapshot: BuySnapshot | null = null;
+      let httpStatus = 0;
+      let error: string | null = null;
+      let authFailed = false;
+      let lastAuthFailedFromMissing = false;
+      for (const attemptToken of tokenPool) {
+        const attempt = await loadBuySnapshot(attemptToken, candidate);
+        snapshot = attempt.snapshot;
+        httpStatus = attempt.httpStatus;
+        error = attempt.error;
+        authFailed = attempt.authFailed;
+        if (snapshot) break;
+        // 404 / "not found" on this token likely means the buy lives on the other
+        // account — try the next token before giving up. Auth failures also fall
+        // through so a stale account-A token doesn't mask account-B success.
+        lastAuthFailedFromMissing = authFailed;
+      }
+      authFailed = lastAuthFailedFromMissing && !snapshot;
 
       if (!snapshot) {
         items.push({
