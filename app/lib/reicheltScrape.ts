@@ -47,10 +47,26 @@ type ReicheltRunStats = {
   skippedNoPrice: number;
   skippedFresh: number;
   markedDelisted: number;
+  staleChecked: number;
+  staleZeroed: number;
   parseErrors: number;
   requestErrors: number;
   listed: number;
 };
+
+type ReicheltNoteFields = {
+  articleId?: string;
+  productUrl?: string;
+  type?: string;
+};
+
+function parseReicheltNoteFields(raw: string | null | undefined): ReicheltNoteFields {
+  try {
+    return (JSON.parse(String(raw || "")) as ReicheltNoteFields) || {};
+  } catch {
+    return {};
+  }
+}
 
 function deferReicheltImageSync(): boolean {
   return String(process.env.SCRAPER_REI_DEFER_IMAGE_SYNC ?? "1") !== "0";
@@ -134,6 +150,8 @@ function runMessage(stats: ReicheltRunStats, discovery: string, imageSynced: num
     `skipped_no_price=${stats.skippedNoPrice}`,
     `skipped_fresh=${stats.skippedFresh}`,
     `marked_delisted=${stats.markedDelisted}`,
+    `stale_checked=${stats.staleChecked}`,
+    `stale_zeroed=${stats.staleZeroed}`,
     `req_errors=${stats.requestErrors}`,
     `images_synced=${imageSynced}`,
     `images_failed=${imageFailed}`,
@@ -334,6 +352,8 @@ export async function scrapeReicheltShop(
     skippedNoPrice: 0,
     skippedFresh: 0,
     markedDelisted: 0,
+    staleChecked: 0,
+    staleZeroed: 0,
     parseErrors: 0,
     requestErrors: 0,
     listed: 0,
@@ -345,6 +365,15 @@ export async function scrapeReicheltShop(
   const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 3));
   const freshCutoffMs = deltaDays > 0 ? Date.now() - deltaDays * 86_400_000 : 0;
   const freshArticleIds = new Set<string>();
+  const staleSweepEnabled = String(process.env.SCRAPER_REI_STALE_SWEEP ?? "1") !== "0";
+  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 7));
+  const staleCutoffMs = Date.now() - staleDays * 86_400_000;
+  const staleSweepMaxEnv = Math.max(0, Number(process.env.SCRAPER_REI_STALE_SWEEP_MAX || 0));
+  const staleSweepMax = maxProducts
+    ? maxProducts
+    : staleSweepMaxEnv > 0
+      ? staleSweepMaxEnv
+      : Number.POSITIVE_INFINITY;
 
   const existingRows = (await prismaAny.supplierVariant.findMany({
     where: { supplierVariantId: { startsWith: `${shop.key}_` } },
@@ -355,12 +384,14 @@ export async function scrapeReicheltShop(
       imageSyncStatus: true,
       lastSyncAt: true,
       manualNote: true,
+      stock: true,
     },
   })) as Array<
     ExistingVariantImage & {
       supplierVariantId: string;
       lastSyncAt: Date | null;
       manualNote: string | null;
+      stock: number | null;
     }
   >;
   const existingById = new Map(
@@ -376,25 +407,20 @@ export async function scrapeReicheltShop(
   // Map articleId (stored in manualNote JSON) -> supplierVariantId so we can zero
   // stock on rows whose Reichelt product page is now "no longer available".
   const existingByArticleId = new Map<string, string>();
+  const articleProductUrl = new Map<string, string>();
   for (const row of existingRows) {
-    try {
-      const note = JSON.parse(String(row.manualNote || "")) as { articleId?: string };
-      const id = String(note?.articleId || "").trim();
-      if (id) existingByArticleId.set(id, row.supplierVariantId);
-    } catch {
-      /* ignore bad note */
-    }
+    const note = parseReicheltNoteFields(row.manualNote);
+    const id = String(note.articleId || "").trim();
+    if (!id) continue;
+    existingByArticleId.set(id, row.supplierVariantId);
+    const url = String(note.productUrl || "").trim();
+    if (url) articleProductUrl.set(id, url);
   }
   if (deltaDays > 0) {
     for (const row of existingRows) {
       if (!row.lastSyncAt || row.lastSyncAt.getTime() < freshCutoffMs) continue;
-      try {
-        const note = JSON.parse(String(row.manualNote || "")) as { articleId?: string };
-        const id = String(note?.articleId || "").trim();
-        if (id) freshArticleIds.add(id);
-      } catch {
-        /* ignore bad note */
-      }
+      const id = String(parseReicheltNoteFields(row.manualNote).articleId || "").trim();
+      if (id) freshArticleIds.add(id);
     }
     console.log(
       `[SCRAPER] rei delta: skip ${freshArticleIds.size} articles synced within ${deltaDays}d`
@@ -425,7 +451,124 @@ export async function scrapeReicheltShop(
     }
   }
 
+  /** Re-fetch in-stock DB rows not touched recently (sitemap drop / sold-out gap). */
+  async function sweepStaleInStockRows(): Promise<void> {
+    if (!staleSweepEnabled) return;
+
+    const targets: ArticleTarget[] = [];
+    for (const row of existingRows) {
+      if ((row.stock ?? 0) <= 0) continue;
+      if (row.lastSyncAt && row.lastSyncAt.getTime() >= staleCutoffMs) continue;
+      const articleId = String(parseReicheltNoteFields(row.manualNote).articleId || "").trim();
+      if (!articleId) continue;
+      targets.push({
+        articleId,
+        productUrl:
+          articleProductUrl.get(articleId) ||
+          `${shop.baseUrl.replace(/\/$/, "")}/shop/produit/-${articleId}`,
+      });
+      if (targets.length >= staleSweepMax) break;
+    }
+
+    console.log(
+      `[SCRAPER] rei stale sweep: ${targets.length} in-stock rows older than ${staleDays}d`
+    );
+    if (!targets.length) return;
+
+    await runTargetPool(
+      (async function* () {
+        for (const t of targets) yield t;
+      })(),
+      cfg.productConcurrency,
+      async ({ articleId, productUrl }) => {
+      stats.staleChecked++;
+      try {
+        const fetched = await client.fetchProductByArticleId(articleId, productUrl);
+        if (!fetched.product) {
+          if (fetched.delisted) {
+            const zeroed = await markReicheltDelisted(articleId);
+            if (zeroed) {
+              stats.markedDelisted++;
+              stats.staleZeroed++;
+            }
+          }
+          return;
+        }
+        const product = fetched.product;
+        if (!product.inStock) {
+          const svId = existingByArticleId.get(articleId);
+          if (!svId) return;
+          await prismaAny.supplierVariant.update({
+            where: { supplierVariantId: svId },
+            data: {
+              stock: 0,
+              lastSyncAt: new Date(),
+              manualNote: JSON.stringify({
+                type: "reichelt_oos",
+                articleId,
+                stockStatus: product.stockStatus,
+                stockText: product.stockText,
+                productUrl: product.productUrl,
+                detectedAt: new Date().toISOString(),
+                reason: "stale sweep: not in stock",
+              }),
+            },
+          });
+          stats.markedDelisted++;
+          stats.staleZeroed++;
+          freshArticleIds.add(articleId);
+          return;
+        }
+
+        const cost = computeReicheltLandedCost({
+          priceChf: product.priceChf,
+          priceEur: product.priceEur,
+          weightGrams: product.weightGrams,
+        });
+        if (!cost || !isPlausibleReicheltSellPrice(cost)) return;
+        const galaxusKind = classifyReicheltGalaxusKind({
+          breadcrumbs: product.breadcrumbs,
+          title: product.name,
+          supplierProductType: reicheltCategoryPathLabel(product.breadcrumbs),
+        });
+        if (!galaxusKind) return;
+        const ok = await upsertReicheltVariant(
+          prismaAny,
+          shop,
+          product,
+          galaxusKind,
+          cost,
+          existingById,
+          imageSyncQueue
+        );
+        if (!ok) return;
+        stats.wrote++;
+        stats.gtinMatched++;
+        freshArticleIds.add(articleId);
+      } catch (err) {
+        stats.requestErrors++;
+        console.warn(`[SCRAPER] rei stale ${articleId}:`, (err as Error)?.message || err);
+      }
+
+      if (stats.staleChecked % 25 === 0) {
+        await updateRun(runId, {
+          products_listed: stats.listed,
+          with_gtin: stats.gtinMatched,
+          variants_upserted: stats.wrote,
+          errors: stats.parseErrors + stats.requestErrors,
+          message: runMessage(stats, discovery, imageSynced, imageFailed),
+        });
+      }
+    });
+
+    console.log(
+      `[SCRAPER] rei stale sweep done: checked=${stats.staleChecked} zeroed=${stats.staleZeroed}`
+    );
+  }
+
   try {
+    await sweepStaleInStockRows();
+
     let stop = false;
     const source = iterArticleTargets(client, discovery, stats);
 
@@ -535,10 +678,14 @@ export async function scrapeReicheltShop(
       }
     }
 
-    if (stats.wrote > 0) {
+    if (stats.wrote > 0 || stats.markedDelisted > 0 || stats.staleZeroed > 0) {
       try {
         const { scheduleScraperGalaxusFeedPush } = await import("@/app/lib/scraperFeedPush");
-        await scheduleScraperGalaxusFeedPush({ shop, wrote: stats.wrote, syncImages: true });
+        await scheduleScraperGalaxusFeedPush({
+          shop,
+          wrote: stats.wrote + stats.markedDelisted,
+          syncImages: true,
+        });
       } catch (err) {
         console.warn(`[SCRAPER] rei feed push schedule failed:`, (err as Error)?.message || err);
       }

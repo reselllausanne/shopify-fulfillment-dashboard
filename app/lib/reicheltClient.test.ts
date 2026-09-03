@@ -20,6 +20,7 @@ import {
   reicheltShouldSendBrowserHints,
   resolveReicheltPrimaryProductUrl,
   isHardReicheltFetchError,
+  isReicheltDelistedHtml,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -221,6 +222,25 @@ describe("computeReicheltLandedCost", () => {
   it("falls back to EUR + VAT when CHF missing", () => {
     const resolved = resolveReicheltProductChf({ priceChf: null, priceEur: 10, eurChfRate: 1, vatRate: 0.081 });
     expect(resolved?.productChf).toBe(10.81);
+  });
+});
+
+describe("isReicheltDelistedHtml", () => {
+  it("matches FR plus disponible including malheureusement", () => {
+    expect(
+      isReicheltDelistedHtml("<b>Cet article n’est malheureusement plus disponible.</b>")
+    ).toBe(true);
+    expect(isReicheltDelistedHtml("Cet article n'est plus disponible.")).toBe(true);
+  });
+
+  it("matches DE/EN discontinued markers", () => {
+    expect(isReicheltDelistedHtml("Artikel ist nicht mehr verfügbar")).toBe(true);
+    expect(isReicheltDelistedHtml("This product is no longer available")).toBe(true);
+    expect(isReicheltDelistedHtml('class="availability status_0"')).toBe(true);
+  });
+
+  it("ignores in-stock pages", () => {
+    expect(isReicheltDelistedHtml('<div class="availability status_1">ex stock</div>')).toBe(false);
   });
 });
 
