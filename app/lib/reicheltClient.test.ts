@@ -21,6 +21,7 @@ import {
   resolveReicheltPrimaryProductUrl,
   isHardReicheltFetchError,
   isReicheltDelistedHtml,
+  isReicheltGoneHttpError,
 } from "@/app/lib/reicheltClient";
 
 const SAMPLE_PRODUCT_HTML = `
@@ -222,6 +223,15 @@ describe("computeReicheltLandedCost", () => {
   it("falls back to EUR + VAT when CHF missing", () => {
     const resolved = resolveReicheltProductChf({ priceChf: null, priceEur: 10, eurChfRate: 1, vatRate: 0.081 });
     expect(resolved?.productChf).toBe(10.81);
+  });
+});
+
+describe("isReicheltGoneHttpError", () => {
+  it("treats 404/410/451 as permanently gone", () => {
+    expect(isReicheltGoneHttpError(new Error("Reichelt curl HTTP 404 https://x"))).toBe(true);
+    expect(isReicheltGoneHttpError(new Error("Reichelt curl HTTP 410 https://x"))).toBe(true);
+    expect(isReicheltGoneHttpError(new Error("Reichelt curl HTTP 451 https://x"))).toBe(true);
+    expect(isReicheltGoneHttpError(new Error("Reichelt curl HTTP 503 https://x"))).toBe(false);
   });
 });
 

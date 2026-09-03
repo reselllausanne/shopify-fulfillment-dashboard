@@ -408,6 +408,12 @@ export function isHardReicheltFetchError(err: unknown): boolean {
   );
 }
 
+/** Product permanently gone from Reichelt (must zero stock). */
+export function isReicheltGoneHttpError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
+  return msg.includes("http 404") || msg.includes("http 410") || msg.includes("http 451");
+}
+
 /** Prefer slugged sitemap / CH-FR URL; avoid short `/-id` (often 451 + full body). */
 export function resolveReicheltPrimaryProductUrl(
   articleId: string,
@@ -938,6 +944,9 @@ export class ReicheltClient {
       if (res.product || res.delisted) return res;
       return { product: null, delisted: false };
     } catch (err) {
+      if (isReicheltGoneHttpError(err)) {
+        return { product: null, delisted: true };
+      }
       if (!deFallbackEnabled || !isHardReicheltFetchError(err)) {
         throw err instanceof Error ? err : new Error(String(err));
       }
@@ -946,6 +955,9 @@ export class ReicheltClient {
       try {
         return await tryOne(de);
       } catch (deErr) {
+        if (isReicheltGoneHttpError(deErr)) {
+          return { product: null, delisted: true };
+        }
         throw deErr instanceof Error ? deErr : new Error(String(deErr));
       }
     }
