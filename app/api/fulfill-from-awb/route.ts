@@ -24,6 +24,7 @@ import {
   resolveStockxDeliveredForMatches,
 } from "@/lib/fulfillmentTiming";
 import { normalizeInboundHomeAwb } from "@/app/lib/stockxInboundHomeRoutes";
+import { findBlockedDirectDeliveryRoute } from "@/app/api/fulfill-from-awb/directDeliveryGuard";
 import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses";
 import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
 import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
@@ -368,7 +369,8 @@ type FulfillStatus =
   | "CANCELLED"
   | "NOT_FOUND"
   | "INVALID"
-  | "SHOPIFY_ERROR";
+  | "SHOPIFY_ERROR"
+  | "BLOCKED_WAREHOUSE_DIRECT_DELIVERY";
 
 const normalizeAwb = (code?: string | null) => normalizeInboundHomeAwb(code);
 
@@ -556,6 +558,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const blockedRoute = await findBlockedDirectDeliveryRoute({
+      awb,
+      shopifyOrderName,
+      gtinFulfill,
+    });
+    if (blockedRoute) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "BLOCKED_WAREHOUSE_DIRECT_DELIVERY" as FulfillStatus,
+          awb,
+          shopifyOrderName,
+          error:
+            "Blocked: direct-delivery route detected for this scan. Use return-to-home / direct-delivery flow, never warehouse fulfill.",
+          directDeliveryRoute: {
+            id: blockedRoute.id,
+            stockxOrderNumber: blockedRoute.stockxOrderNumber,
+            shopifyOrderName: blockedRoute.shopifyOrderName ?? null,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
     // Skip GTIN-as-tracking lookup — product barcodes must not collide with real AWBs.
     const existing = gtinFulfill
       ? null
@@ -575,6 +601,31 @@ export async function POST(req: NextRequest) {
           error: "login to shopify order not found, manual search",
         },
         { status: 404 }
+      );
+    }
+
+    const blockedRouteFromCanonicalName = await findBlockedDirectDeliveryRoute({
+      awb,
+      shopifyOrderName: map.order.name,
+      gtinFulfill,
+    });
+    if (blockedRouteFromCanonicalName) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "BLOCKED_WAREHOUSE_DIRECT_DELIVERY" as FulfillStatus,
+          awb,
+          shopifyOrderId,
+          shopifyOrderName: map.order.name,
+          error:
+            "Blocked: direct-delivery route detected for this Shopify order. Use return-to-home / direct-delivery flow, never warehouse fulfill.",
+          directDeliveryRoute: {
+            id: blockedRouteFromCanonicalName.id,
+            stockxOrderNumber: blockedRouteFromCanonicalName.stockxOrderNumber,
+            shopifyOrderName: blockedRouteFromCanonicalName.shopifyOrderName ?? null,
+          },
+        },
+        { status: 409 }
       );
     }
 

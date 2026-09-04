@@ -1715,7 +1715,7 @@ export default function ScanPage() {
       gtinFulfill?: boolean;
     }
   ) => {
-    if (!scan?.awb || !scan?.match || scan.galaxus) return;
+    if (!scan?.awb || !scan?.match || scan.galaxus || scan.inboundHome || scan.stxInboundBuy) return;
     const allowAlreadyFulfilled = Boolean(options?.allowAlreadyFulfilled);
     const gtinFulfill = Boolean(options?.gtinFulfill);
     setFulfillLoading(true);
@@ -2701,35 +2701,43 @@ export default function ScanPage() {
               <div className="mt-4">
                 <div className="flex flex-wrap gap-2">
                   <button
-                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy)}
+                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy) || Boolean(result?.inboundHome)}
                     onClick={handleFulfill}
                     className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
                     title={
-                      result?.stxInboundBuy
-                        ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
-                        : result?.galaxus
-                          ? "Galaxus orders: no Shopify label on this page"
-                          : undefined
+                      result?.inboundHome
+                        ? "StockX direct-delivery route: use return-to-home flow, never Shopify warehouse fulfill"
+                        : result?.stxInboundBuy
+                          ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
+                          : result?.galaxus
+                            ? "Galaxus orders: no Shopify label on this page"
+                            : undefined
                     }
                   >
                     {fulfillLoading ? "Processing..." : "Fulfill + Print Label"}
                   </button>
                   <button
-                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy)}
+                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy) || Boolean(result?.inboundHome)}
                     onClick={handleForceFulfill}
                     className="px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-gray-400"
                     title={
-                      result?.stxInboundBuy
-                        ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
-                        : result?.galaxus
-                          ? "Galaxus orders: no Shopify label on this page"
-                          : undefined
+                      result?.inboundHome
+                        ? "StockX direct-delivery route: use return-to-home flow, never Shopify warehouse fulfill"
+                        : result?.stxInboundBuy
+                          ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
+                          : result?.galaxus
+                            ? "Galaxus orders: no Shopify label on this page"
+                            : undefined
                     }
                   >
                     {fulfillLoading ? "Processing..." : "Force Fulfill"}
                   </button>
                 </div>
-                {result?.stxInboundBuy ? (
+                {result?.inboundHome ? (
+                  <p className="text-xs text-gray-600 mt-1">
+                    Disabled: StockX direct-delivery route detected for <span className="font-mono">{result.inboundHome.stockxOrderNumber}</span>. Use return-to-home flow; never warehouse fulfill.
+                  </p>
+                ) : result?.stxInboundBuy ? (
                   <p className="text-xs text-gray-600 mt-1">
                     Disabled: AWB is an inbound StockX parcel for Galaxus{" "}
                     {result.stxInboundBuy.isDirectDelivery ? "direct-delivery" : "warehouse"} order{" "}
