@@ -37,6 +37,30 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+
+function normalizeShopifyOrderIdValue(value: unknown): unknown {
+  const raw = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  if (!raw) return value;
+  if (raw.startsWith("gid://")) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/Order/${raw}`;
+  return value;
+}
+
+function normalizeShopifyGraphQLVariables(input: unknown): unknown {
+  if (Array.isArray(input)) {
+    return input.map((item) => normalizeShopifyGraphQLVariables(item));
+  }
+  if (!input || typeof input !== "object") return input;
+
+  const entries = Object.entries(input as Record<string, unknown>).map(([key, value]) => {
+    if (key === "orderId") {
+      return [key, normalizeShopifyOrderIdValue(value)];
+    }
+    return [key, normalizeShopifyGraphQLVariables(value)];
+  });
+  return Object.fromEntries(entries);
+}
+
 function applyThrottleExtensions(extensions: ShopifyGraphQLExtensions | undefined): void {
   const status = extensions?.cost?.throttleStatus;
   if (!status) return;
@@ -153,6 +177,8 @@ export async function shopifyGraphQL<T>(
   variables: Record<string, any> = {},
   options?: { estimatedQueryCost?: number }
 ): Promise<ShopifyGraphQLResult<T>> {
+  const normalizedVariables = normalizeShopifyGraphQLVariables(variables) as Record<string, any>;
+
   const run = async (): Promise<ShopifyGraphQLResult<T>> => {
     let lastResult: ShopifyGraphQLResult<T> | null = null;
     const estimatedCost = Number(options?.estimatedQueryCost ?? 0);
@@ -166,7 +192,7 @@ export async function shopifyGraphQL<T>(
         await waitForShopifyCapacity(requiredCost);
       }
 
-      const result = await shopifyGraphQLOnce<T>(query, variables);
+      const result = await shopifyGraphQLOnce<T>(query, normalizedVariables);
       lastResult = result;
       applyThrottleExtensions(result.extensions);
 

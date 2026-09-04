@@ -120,6 +120,12 @@ async function searchGalaxus(q: string, limit: number): Promise<SuggestItem[]> {
           deliveryType: true,
           recipientCity: true,
           customerCity: true,
+          shipments: {
+            select: {
+              delrSentAt: true,
+              delrStatus: true,
+            },
+          },
         },
       },
     },
@@ -131,8 +137,13 @@ async function searchGalaxus(q: string, limit: number): Promise<SuggestItem[]> {
   for (const line of rows) {
     const deliveryType = String(line.order.deliveryType ?? "").toLowerCase();
     const isDirect = deliveryType === "direct_delivery";
+    const alreadyFulfilled = (line.order.shipments ?? []).some(
+      (s) => Boolean(s.delrSentAt) || String(s.delrStatus ?? "").toUpperCase() === "UPLOADED"
+    );
     // Line-level pending signal for warehouse: not yet warehouse-shipped.
     if (!isDirect && line.warehouseMarkedShippedAt) continue;
+    // Direct-delivery lines do not carry warehouseMarkedShippedAt; use shipment/DELR state.
+    if (isDirect && alreadyFulfilled) continue;
     items.push({
       id: `galaxus:${line.id}`,
       kind: isDirect ? "galaxus_direct" : "galaxus_warehouse",

@@ -111,6 +111,14 @@ type OrderFulfillmentMap = {
   } | null;
 };
 
+function toShopifyOrderGid(orderId: string): string {
+  const raw = String(orderId ?? "").trim();
+  if (!raw) return raw;
+  if (raw.startsWith("gid://")) return raw;
+  if (/^\d+$/.test(raw)) return `gid://shopify/Order/${raw}`;
+  return raw;
+}
+
 type FulfillmentOrderLineItemInput = {
   id: string;
   quantity: number;
@@ -331,9 +339,10 @@ export async function fetchOrderIdByName(orderName: string) {
 }
 
 export async function fetchOrderFulfillmentMap(orderId: string) {
+  const normalizedOrderId = toShopifyOrderGid(orderId);
   const { data, errors } = await shopifyGraphQL<OrderFulfillmentMap>(
     ORDER_FULFILLMENT_MAP_QUERY,
-    { orderId }
+    { orderId: normalizedOrderId }
   );
 
   if (errors?.length) {
@@ -344,11 +353,12 @@ export async function fetchOrderFulfillmentMap(orderId: string) {
 }
 
 export async function orderHasTrackingNumber(orderId: string, trackingNumber: string) {
+  const normalizedOrderId = toShopifyOrderGid(orderId);
   const { data, errors } = await shopifyGraphQL<{
     order: {
       fulfillments: { id: string; status: string; trackingInfo: { number?: string | null }[] }[];
     } | null;
-  }>(ORDER_FULFILLMENTS_TRACKING_QUERY, { orderId });
+  }>(ORDER_FULFILLMENTS_TRACKING_QUERY, { orderId: normalizedOrderId });
 
   if (errors?.length) {
     throw new Error(`Shopify errors: ${JSON.stringify(errors)}`);
@@ -392,6 +402,7 @@ mutation FulfillmentEventCreate($fulfillmentEvent: FulfillmentEventInput!) {
 export async function findFulfillmentIdByTrackingNumber(orderId: string, trackingNumber: string) {
   const trimmed = trackingNumber.trim();
   if (!trimmed) return null;
+  const normalizedOrderId = toShopifyOrderGid(orderId);
   const { data, errors } = await shopifyGraphQL<{
     order: {
       fulfillments: {
@@ -400,7 +411,7 @@ export async function findFulfillmentIdByTrackingNumber(orderId: string, trackin
         trackingInfo: { number?: string | null; url?: string | null; company?: string | null }[];
       }[];
     } | null;
-  }>(ORDER_FULFILLMENTS_TRACKING_QUERY, { orderId });
+  }>(ORDER_FULFILLMENTS_TRACKING_QUERY, { orderId: normalizedOrderId });
 
   if (errors?.length) {
     throw new Error(`Shopify errors: ${JSON.stringify(errors)}`);
@@ -701,9 +712,10 @@ type OrderShippingGraphQLResponse = {
 };
 
 export async function fetchOrderShippingInfo(orderId: string) {
+  const normalizedOrderId = toShopifyOrderGid(orderId);
   const { data, errors } = await shopifyGraphQL<OrderShippingGraphQLResponse>(
     ORDER_SHIPPING_QUERY,
-    { orderId }
+    { orderId: normalizedOrderId }
   );
 
   if (errors?.length) {
