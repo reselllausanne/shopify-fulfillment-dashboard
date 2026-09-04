@@ -337,6 +337,7 @@ type PackingSessionEntry = {
   gtin: string | null;
   productName: string | null;
   sizeEU: string | null;
+  physicalDeliveryNoteRequired: boolean;
   resolvedVia: string;
 };
 
@@ -357,6 +358,7 @@ type PackingSessionApiResponse =
         gtin: string | null;
         productName: string | null;
         sizeEU: string | null;
+        physicalDeliveryNoteRequired: boolean;
         remainingBefore: number;
         resolvedVia: string;
         notes?: string[];
@@ -585,6 +587,7 @@ export default function ScanPage() {
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
   >(null);
+  const [confirmDeliveryNoteIncluded, setConfirmDeliveryNoteIncluded] = useState(false);
   const packingSessionRef = useRef<PackingSessionEntry[]>([]);
   useEffect(() => {
     packingSessionRef.current = packingSession;
@@ -593,6 +596,25 @@ export default function ScanPage() {
     () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
     []
   );
+
+  const deliveryNoteRequiredOrders = useMemo(() => {
+    const byOrder = new Map<string, {
+      galaxusOrderDbId: string;
+      galaxusOrderId: string;
+      galaxusOrderNumber: string | null;
+    }>();
+    for (const entry of packingSession) {
+      if (!entry.physicalDeliveryNoteRequired) continue;
+      byOrder.set(entry.galaxusOrderDbId, {
+        galaxusOrderDbId: entry.galaxusOrderDbId,
+        galaxusOrderId: entry.galaxusOrderId,
+        galaxusOrderNumber: entry.galaxusOrderNumber ?? null,
+      });
+    }
+    return Array.from(byOrder.values());
+  }, [packingSession]);
+
+  const hasDeliveryNoteRequirement = deliveryNoteRequiredOrders.length > 0;
 
   useEffect(() => {
     focusInput();
@@ -629,6 +651,12 @@ export default function ScanPage() {
       // ignore
     }
   }, [packingSession]);
+
+  useEffect(() => {
+    if (!hasDeliveryNoteRequirement && confirmDeliveryNoteIncluded) {
+      setConfirmDeliveryNoteIncluded(false);
+    }
+  }, [hasDeliveryNoteRequirement, confirmDeliveryNoteIncluded]);
 
   useEffect(() => {
     if (suggestDebounceRef.current) {
@@ -1306,6 +1334,7 @@ export default function ScanPage() {
           gtin: data.matched.gtin,
           productName: data.matched.productName,
           sizeEU: data.matched.sizeEU,
+          physicalDeliveryNoteRequired: Boolean(data.matched.physicalDeliveryNoteRequired),
           resolvedVia: data.matched.resolvedVia,
         };
         setPackingSession((prev) => {
@@ -1354,6 +1383,20 @@ export default function ScanPage() {
       gtin: e.gtin,
       productName: e.productName,
     }));
+    const requiredOrders = Array.from(
+      new Set(
+        snapshot
+          .filter((entry) => entry.physicalDeliveryNoteRequired)
+          .map((entry) => entry.galaxusOrderDbId)
+      )
+    );
+    if (requiredOrders.length > 0 && !confirmDeliveryNoteIncluded) {
+      setFinalizeStatus({
+        tone: "error",
+        text: `Delivery note required for ${requiredOrders.length} order${requiredOrders.length === 1 ? "" : "s"}. Confirm checkbox first.`,
+      });
+      return;
+    }
 
     // Pre-open exactly 3 tabs in the click handler (popup-blocker safe).
     // Do NOT pass "noopener" — that makes window.open return null while still
@@ -1412,7 +1455,11 @@ export default function ScanPage() {
       const res = await fetch("/api/scan-awb/packing-session/finalize", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ entries, scanSessionKey }),
+        body: JSON.stringify({
+          entries,
+          scanSessionKey,
+          confirmDeliveryNoteIncluded,
+        }),
       });
       const data = await res.json().catch(() => ({}));
       const results: Array<{
@@ -1422,6 +1469,19 @@ export default function ScanPage() {
         packingSlipUrl?: string | null;
         labelUrl?: string | null;
       }> = Array.isArray(data?.results) ? data.results : [];
+
+      if (res.status === 409 && data?.code === "DELIVERY_NOTE_CONFIRMATION_REQUIRED") {
+        closeLeftoverTabs();
+        const required = Number(data?.deliveryNoteRequirement?.requiredOrders?.length ?? 0);
+        setFinalizeStatus({
+          tone: "error",
+          text:
+            required > 0
+              ? `Delivery note required for ${required} order${required === 1 ? "" : "s"}. Confirm checkbox and retry.`
+              : "Delivery note confirmation required. Confirm checkbox and retry.",
+        });
+        return;
+      }
 
       // Open SSCC → packing slip → Swiss Post label (warehouse UI order).
       for (const r of results) {
@@ -1447,6 +1507,7 @@ export default function ScanPage() {
         // localStorage key `scan.packingSession.entries.v1` automatically.
         setPackingSession([]);
         setPackingSessionReady(false);
+        setConfirmDeliveryNoteIncluded(false);
       } else if (total > 0) {
         const firstError =
           results.find((r) => !r?.ok)?.error || data?.error || "unknown error";
@@ -2026,6 +2087,7 @@ export default function ScanPage() {
                       setPackingSession([]);
                       setPackingSessionReady(false);
                       setPackingReject(null);
+                      setConfirmDeliveryNoteIncluded(false);
                       setFinalizeStatus(null);
                       setFinalizeBusy(false);
                     }}
@@ -2136,6 +2198,7 @@ export default function ScanPage() {
                           orderNumber: string | null;
                           orderDate: string;
                           count: number;
+                          requiresDeliveryNote: boolean;
                         }
                       >();
                       for (const e of packingSession) {
@@ -2143,6 +2206,8 @@ export default function ScanPage() {
                         const prev = byOrder.get(key);
                         if (prev) {
                           prev.count += 1;
+                          prev.requiresDeliveryNote =
+                            prev.requiresDeliveryNote || Boolean(e.physicalDeliveryNoteRequired);
                         } else {
                           byOrder.set(key, {
                             dbId: e.galaxusOrderDbId,
@@ -2150,6 +2215,7 @@ export default function ScanPage() {
                             orderNumber: e.galaxusOrderNumber,
                             orderDate: e.orderDate,
                             count: 1,
+                            requiresDeliveryNote: Boolean(e.physicalDeliveryNoteRequired),
                           });
                         }
                       }
@@ -2183,12 +2249,37 @@ export default function ScanPage() {
                                 {new Date(r.orderDate).toLocaleDateString("de-CH")}
                               </span>{" "}
                               · {r.count} pair{r.count === 1 ? "" : "s"}
+                              {r.requiresDeliveryNote ? " · delivery note required" : ""}
                             </div>
                           ))}
+                          {hasDeliveryNoteRequirement && (
+                            <div className="rounded border-2 border-red-500 bg-red-50 px-3 py-2 text-sm text-red-900">
+                              <div className="font-semibold">Delivery note required before sealing parcel.</div>
+                              <div className="mt-1 text-xs">
+                                Required for {deliveryNoteRequiredOrders.length} order
+                                {deliveryNoteRequiredOrders.length === 1 ? "" : "s"}.
+                              </div>
+                              <label className="mt-2 flex items-start gap-2 text-sm font-medium">
+                                <input
+                                  type="checkbox"
+                                  checked={confirmDeliveryNoteIncluded}
+                                  onChange={(event) =>
+                                    setConfirmDeliveryNoteIncluded(event.target.checked)
+                                  }
+                                  className="mt-0.5 h-4 w-4"
+                                />
+                                <span>I confirm physical delivery note inserted in parcel.</span>
+                              </label>
+                            </div>
+                          )}
                           <button
                             type="button"
                             onClick={() => void handleFinalizeSession()}
-                            disabled={finalizeBusy || packingSession.length === 0}
+                            disabled={
+                              finalizeBusy ||
+                              packingSession.length === 0 ||
+                              (hasDeliveryNoteRequirement && !confirmDeliveryNoteIncluded)
+                            }
                             className="w-full mt-1 px-3 py-2 rounded bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
                           >
                             {finalizeBusy

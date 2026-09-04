@@ -57,6 +57,48 @@ type ShipmentResult = {
   labelPrintJobResult?: LpJobResult | null;
 };
 
+type DeliveryNoteRequiredOrder = {
+  galaxusOrderDbId: string;
+  galaxusOrderId: string;
+  orderNumber: string | null;
+};
+
+type DeliveryNoteRequirement = {
+  required: boolean;
+  requiredOrders: DeliveryNoteRequiredOrder[];
+};
+
+function buildDeliveryNoteRequirement(
+  orderRows: Array<{
+    id: string;
+    galaxusOrderId: string;
+    orderNumber: string | null;
+    physicalDeliveryNoteRequired: boolean | null;
+  }>,
+  orderDbIds: string[]
+): DeliveryNoteRequirement {
+  const requiredOrders = orderDbIds
+    .map((id) => orderRows.find((row) => row.id === id))
+    .filter(
+      (row): row is {
+        id: string;
+        galaxusOrderId: string;
+        orderNumber: string | null;
+        physicalDeliveryNoteRequired: boolean | null;
+      } => Boolean(row && row.physicalDeliveryNoteRequired)
+    )
+    .map((row) => ({
+      galaxusOrderDbId: row.id,
+      galaxusOrderId: row.galaxusOrderId,
+      orderNumber: row.orderNumber ?? null,
+    }));
+
+  return {
+    required: requiredOrders.length > 0,
+    requiredOrders,
+  };
+}
+
 async function resolveLatestDeliveryNoteUrl(shipmentId: string): Promise<string | null> {
   const doc = await prisma.document.findFirst({
     where: { shipmentId, type: DocumentType.DELIVERY_NOTE },
@@ -133,6 +175,7 @@ function recipientKey(order: {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
+    const confirmDeliveryNoteIncluded = body?.confirmDeliveryNoteIncluded === true;
     const rawEntries: EntryIn[] = Array.isArray(body?.entries) ? body.entries : [];
     const entries = rawEntries
       .map((e) => ({
@@ -159,17 +202,33 @@ export async function POST(req: NextRequest) {
         id: true,
         galaxusOrderId: true,
         orderDate: true,
+        orderNumber: true,
+        physicalDeliveryNoteRequired: true,
         recipientPostalCode: true,
         recipientAddress1: true,
         recipientCity: true,
       },
     });
     const orderById = new Map(orderRows.map((o) => [o.id, o]));
+    const deliveryNoteRequirement = buildDeliveryNoteRequirement(orderRows, orderDbIds);
     const missingOrder = orderDbIds.find((id) => !orderById.has(id));
     if (missingOrder) {
       return NextResponse.json(
         { ok: false, error: `Order not found: ${missingOrder}` },
         { status: 400 }
+      );
+    }
+
+    if (deliveryNoteRequirement.required && !confirmDeliveryNoteIncluded) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Physical delivery note required for one or more orders. Confirm note inserted before finalizing.",
+          code: "DELIVERY_NOTE_CONFIRMATION_REQUIRED",
+          deliveryNoteRequirement,
+        },
+        { status: 409 }
       );
     }
 
@@ -346,6 +405,7 @@ export async function POST(req: NextRequest) {
       ok: errorCount === 0,
       results,
       errorCount,
+      deliveryNoteRequirement,
     });
   } catch (error: any) {
     console.error("[SCAN][PACKING-SESSION][FINALIZE] Failed", error);

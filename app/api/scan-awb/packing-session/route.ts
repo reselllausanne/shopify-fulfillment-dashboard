@@ -44,6 +44,7 @@ type MatchResponse = {
     gtin: string | null;
     productName: string | null;
     sizeEU: string | null;
+    physicalDeliveryNoteRequired: boolean;
     remainingBefore: number;
     resolvedVia: "awb_stx_purchase_unit" | "gtin" | "supplier_pid" | "buyer_pid" | "supplier_sku";
     notes?: string[];
@@ -232,6 +233,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
             orderDate: true,
             createdAt: true,
             deliveryType: true,
+            physicalDeliveryNoteRequired: true,
           },
         },
       },
@@ -356,6 +358,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
             gtin,
             productName: line.productName ?? null,
             sizeEU: line.size ?? null,
+            physicalDeliveryNoteRequired: Boolean(line.order.physicalDeliveryNoteRequired),
             remainingBefore: cov.remaining,
             resolvedVia,
             ...(notes.length > 0 ? { notes } : {}),
