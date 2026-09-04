@@ -662,10 +662,21 @@ export function buildLineItemsByFulfillmentOrder(
 
   const lineItemsByFulfillmentOrder: FulfillmentOrderLineItemsInput[] = [];
   for (const [fulfillmentOrderId, fulfillmentOrderLineItems] of grouped.entries()) {
-    if (fulfillmentOrderLineItems.length > 0) {
+    const mergedById = new Map<string, number>();
+    for (const row of fulfillmentOrderLineItems) {
+      const lineId = String(row.id || "").trim();
+      const qty = Number(row.quantity ?? 0);
+      if (!lineId || qty <= 0) continue;
+      mergedById.set(lineId, (mergedById.get(lineId) ?? 0) + qty);
+    }
+    const uniqueLineItems = Array.from(mergedById.entries()).map(([id, quantity]) => ({
+      id,
+      quantity,
+    }));
+    if (uniqueLineItems.length > 0) {
       lineItemsByFulfillmentOrder.push({
         fulfillmentOrderId,
-        fulfillmentOrderLineItems,
+        fulfillmentOrderLineItems: uniqueLineItems,
       });
     }
   }

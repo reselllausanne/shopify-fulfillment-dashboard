@@ -50,4 +50,30 @@ describe("buildLineItemsByFulfillmentOrder", () => {
     expect(totalQty).toBe(1);
     expect(items).toHaveLength(1);
   });
+
+  it("keeps unique fulfillment line item ids", () => {
+    const dbItems = [
+      {
+        sku: "SKU-1",
+        variantId: "variant_1",
+        title: "Test Product",
+        quantity: 1,
+        sourceId: "match_1",
+      },
+      {
+        sku: "SKU-1",
+        variantId: "variant_1",
+        title: "Test Product",
+        quantity: 1,
+        sourceId: "match_2",
+      },
+    ] as any;
+
+    const result = buildLineItemsByFulfillmentOrder(fulfillmentOrders, dbItems, orderLineItems);
+    const items = result.lineItemsByFulfillmentOrder[0]?.fulfillmentOrderLineItems ?? [];
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe("fol_1");
+    expect(items[0]?.quantity).toBe(2);
+  });
 });
