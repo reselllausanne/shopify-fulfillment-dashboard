@@ -86,6 +86,7 @@ type ScanResult = {
   ok: boolean;
   status: ScanStatus;
   awb: string;
+  manualShopifySuggest?: boolean;
   fulfillmentDemo?: ScanDemoChannel | null;
   match: ScanMatchPayload | null;
   decathlon?: {
@@ -1500,6 +1501,37 @@ export default function ScanPage() {
   const handleSuggestionSelect = (item: SuggestItem) => {
     const canonical =
       item.gtin || item.supplierPid || item.buyerPid || item.orderNumber || item.orderId || "";
+    if (item.kind === "shopify") {
+      const synthetic: ScanResult = {
+        ok: true,
+        status: "FOUND",
+        awb: canonical || item.lineId || item.orderId,
+        manualShopifySuggest: true,
+        match: {
+          shopifyOrderId: item.orderId,
+          shopifyOrderName: item.orderNumber ?? null,
+          shopifyLineItemId: item.lineId,
+          lineItem: {
+            title: item.productName,
+            variantTitle: item.sizeEU ?? null,
+            sku: item.supplierPid ?? null,
+            quantity: 1,
+          },
+          trackingUrl: null,
+        },
+        decathlon: null,
+        galaxus: null,
+        inboundHome: null,
+        gtin: null,
+        stxInboundBuy: null,
+      };
+      setCode(canonical);
+      setResult(synthetic);
+      setFulfillResult(null);
+      closeSuggestions();
+      focusInput();
+      return;
+    }
     setCode(canonical);
     closeSuggestions();
     // Run scan with the canonical code so we don't wait for React state.
@@ -1796,12 +1828,17 @@ export default function ScanPage() {
 
   const handleFulfill = async () => {
     if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
-    await runFulfillFromScan(result);
+    await runFulfillFromScan(result, {
+      gtinFulfill: Boolean(result.manualShopifySuggest),
+    });
   };
 
   const handleForceFulfill = async () => {
     if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
-    await runFulfillFromScan(result, { allowAlreadyFulfilled: true });
+    await runFulfillFromScan(result, {
+      allowAlreadyFulfilled: true,
+      gtinFulfill: Boolean(result.manualShopifySuggest),
+    });
   };
 
 
