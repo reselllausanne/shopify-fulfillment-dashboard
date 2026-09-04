@@ -604,6 +604,10 @@ export function buildLineItemsByFulfillmentOrder(
 
       const qty = Math.min(remainingQty, request.remaining);
       request.remaining -= qty;
+      const mirroredKeyRequest = requestedByKey.get(key);
+      if (mirroredKeyRequest) {
+        mirroredKeyRequest.remaining = Math.max(0, mirroredKeyRequest.remaining - qty);
+      }
 
       if (qty > 0) {
         const list = grouped.get(fo.id) || [];
