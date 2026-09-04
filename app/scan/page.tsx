@@ -587,7 +587,6 @@ export default function ScanPage() {
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
   >(null);
-  const [confirmDeliveryNoteIncluded, setConfirmDeliveryNoteIncluded] = useState(false);
   const packingSessionRef = useRef<PackingSessionEntry[]>([]);
   useEffect(() => {
     packingSessionRef.current = packingSession;
@@ -651,12 +650,6 @@ export default function ScanPage() {
       // ignore
     }
   }, [packingSession]);
-
-  useEffect(() => {
-    if (!hasDeliveryNoteRequirement && confirmDeliveryNoteIncluded) {
-      setConfirmDeliveryNoteIncluded(false);
-    }
-  }, [hasDeliveryNoteRequirement, confirmDeliveryNoteIncluded]);
 
   useEffect(() => {
     if (suggestDebounceRef.current) {
@@ -1383,21 +1376,6 @@ export default function ScanPage() {
       gtin: e.gtin,
       productName: e.productName,
     }));
-    const requiredOrders = Array.from(
-      new Set(
-        snapshot
-          .filter((entry) => entry.physicalDeliveryNoteRequired)
-          .map((entry) => entry.galaxusOrderDbId)
-      )
-    );
-    if (requiredOrders.length > 0 && !confirmDeliveryNoteIncluded) {
-      setFinalizeStatus({
-        tone: "error",
-        text: `Delivery note required for ${requiredOrders.length} order${requiredOrders.length === 1 ? "" : "s"}. Confirm checkbox first.`,
-      });
-      return;
-    }
-
     // Pre-open exactly 3 tabs in the click handler (popup-blocker safe).
     // Do NOT pass "noopener" — that makes window.open return null while still
     // leaving orphan about:blank tabs (user saw ~5 blank pages).
@@ -1458,7 +1436,6 @@ export default function ScanPage() {
         body: JSON.stringify({
           entries,
           scanSessionKey,
-          confirmDeliveryNoteIncluded,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1469,19 +1446,6 @@ export default function ScanPage() {
         packingSlipUrl?: string | null;
         labelUrl?: string | null;
       }> = Array.isArray(data?.results) ? data.results : [];
-
-      if (res.status === 409 && data?.code === "DELIVERY_NOTE_CONFIRMATION_REQUIRED") {
-        closeLeftoverTabs();
-        const required = Number(data?.deliveryNoteRequirement?.requiredOrders?.length ?? 0);
-        setFinalizeStatus({
-          tone: "error",
-          text:
-            required > 0
-              ? `Delivery note required for ${required} order${required === 1 ? "" : "s"}. Confirm checkbox and retry.`
-              : "Delivery note confirmation required. Confirm checkbox and retry.",
-        });
-        return;
-      }
 
       // Open SSCC → packing slip → Swiss Post label (warehouse UI order).
       for (const r of results) {
@@ -1507,7 +1471,6 @@ export default function ScanPage() {
         // localStorage key `scan.packingSession.entries.v1` automatically.
         setPackingSession([]);
         setPackingSessionReady(false);
-        setConfirmDeliveryNoteIncluded(false);
       } else if (total > 0) {
         const firstError =
           results.find((r) => !r?.ok)?.error || data?.error || "unknown error";
@@ -2087,7 +2050,6 @@ export default function ScanPage() {
                       setPackingSession([]);
                       setPackingSessionReady(false);
                       setPackingReject(null);
-                      setConfirmDeliveryNoteIncluded(false);
                       setFinalizeStatus(null);
                       setFinalizeBusy(false);
                     }}
@@ -2259,27 +2221,13 @@ export default function ScanPage() {
                                 Required for {deliveryNoteRequiredOrders.length} order
                                 {deliveryNoteRequiredOrders.length === 1 ? "" : "s"}.
                               </div>
-                              <label className="mt-2 flex items-start gap-2 text-sm font-medium">
-                                <input
-                                  type="checkbox"
-                                  checked={confirmDeliveryNoteIncluded}
-                                  onChange={(event) =>
-                                    setConfirmDeliveryNoteIncluded(event.target.checked)
-                                  }
-                                  className="mt-0.5 h-4 w-4"
-                                />
-                                <span>I confirm physical delivery note inserted in parcel.</span>
-                              </label>
+                              <div className="mt-2 text-xs">Finalize auto-opens delivery note + label for immediate print.</div>
                             </div>
                           )}
                           <button
                             type="button"
                             onClick={() => void handleFinalizeSession()}
-                            disabled={
-                              finalizeBusy ||
-                              packingSession.length === 0 ||
-                              (hasDeliveryNoteRequirement && !confirmDeliveryNoteIncluded)
-                            }
+                            disabled={finalizeBusy || packingSession.length === 0}
                             className="w-full mt-1 px-3 py-2 rounded bg-green-700 text-white text-sm font-semibold hover:bg-green-800 disabled:opacity-50"
                           >
                             {finalizeBusy

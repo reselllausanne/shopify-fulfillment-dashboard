@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
 import { createCompositeWarehouseShipment } from "@/galaxus/warehouse/shipments";
+import { DocumentService } from "@/galaxus/documents/DocumentService";
 import {
   applySuccessfulSwissPostLabelToShipment,
   extractLabelPayload,
@@ -100,8 +101,37 @@ function buildDeliveryNoteRequirement(
 }
 
 async function resolveLatestDeliveryNoteUrl(shipmentId: string): Promise<string | null> {
-  const doc = await prisma.document.findFirst({
+  const existing = await prisma.document.findFirst({
     where: { shipmentId, type: DocumentType.DELIVERY_NOTE },
+    orderBy: [{ version: "desc" }, { createdAt: "desc" }],
+    select: { id: true },
+  });
+  if (existing) return `/api/galaxus/documents/${existing.id}`;
+
+  try {
+    const documents = await new DocumentService().generateForShipment({
+      shipmentId,
+      types: [DocumentType.DELIVERY_NOTE],
+    });
+    const created =
+      documents.find((doc) => doc.type === DocumentType.DELIVERY_NOTE) ?? documents[0] ?? null;
+    return created ? `/api/galaxus/documents/${created.id}` : null;
+  } catch (error: any) {
+    console.error("[SCAN][PACKING-SESSION][FINALIZE] Delivery note generation failed", {
+      shipmentId,
+      error: error?.message ?? String(error),
+    });
+    return null;
+  }
+}
+
+async function resolveLatestShippingLabelUrl(shipmentId: string): Promise<string | null> {
+  const doc = await prisma.document.findFirst({
+    where: {
+      shipmentId,
+      type: DocumentType.LABEL,
+      storageUrl: { contains: "shipping-labels" },
+    },
     orderBy: [{ version: "desc" }, { createdAt: "desc" }],
     select: { id: true },
   });
@@ -175,7 +205,6 @@ function recipientKey(order: {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const confirmDeliveryNoteIncluded = body?.confirmDeliveryNoteIncluded === true;
     const rawEntries: EntryIn[] = Array.isArray(body?.entries) ? body.entries : [];
     const entries = rawEntries
       .map((e) => ({
@@ -216,19 +245,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { ok: false, error: `Order not found: ${missingOrder}` },
         { status: 400 }
-      );
-    }
-
-    if (deliveryNoteRequirement.required && !confirmDeliveryNoteIncluded) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Physical delivery note required for one or more orders. Confirm note inserted before finalizing.",
-          code: "DELIVERY_NOTE_CONFIRMATION_REQUIRED",
-          deliveryNoteRequirement,
-        },
-        { status: 409 }
       );
     }
 
@@ -342,7 +358,7 @@ export async function POST(req: NextRequest) {
         );
         result.trackingNumber = applied.trackingNumber ?? null;
         result.delrStatus = applied.delr?.status ?? null;
-        result.labelUrl = applied.url ?? null;
+        result.labelUrl = applied.url ?? (await resolveLatestShippingLabelUrl(shipment.id));
         result.ssccUrl = await resolveSsccLabelUrl(shipment.id);
         result.packingSlipUrl = await resolveLatestDeliveryNoteUrl(shipment.id);
 
