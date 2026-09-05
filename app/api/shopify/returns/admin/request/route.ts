@@ -3,7 +3,6 @@ import {
   ShopifyReturnRequestError,
   createAndOpenReturnFromFormData,
 } from "@/shopify/returns/createAndOpenReturn";
-import { toPublicReturnsErrorMessage } from "@/shopify/returns/publicApiErrors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +30,7 @@ export async function POST(request: Request) {
         details,
         items: Array.isArray(body?.items) ? body.items : undefined,
       },
-      { publicBaseUrl }
+      { publicBaseUrl, staffMode: true }
     );
 
     return NextResponse.json({ ok: true, ...result }, { status: 200 });
@@ -42,7 +41,7 @@ export async function POST(request: Request) {
           ok: false,
           success: false,
           code: error.code,
-          message: toPublicReturnsErrorMessage(error),
+          message: error.message,
           details: error.details ?? null,
         },
         { status: error.status }

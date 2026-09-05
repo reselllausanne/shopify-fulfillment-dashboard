@@ -155,6 +155,53 @@ query OrderLookupForReturn($first: Int!, $query: String!) {
 }
 `;
 
+const FULFILLED_LINE_ITEMS_QUERY = /* GraphQL */ `
+query FulfilledLineItemsForOrder($orderId: ID!) {
+  order(id: $orderId) {
+    fulfillments(first: 20) {
+      fulfillmentLineItems(first: 100) {
+        edges {
+          node {
+            id
+            quantity
+            lineItem {
+              id
+              title
+              sku
+              originalUnitPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              variant {
+                id
+                compareAtPrice
+                delivery48h: metafield(namespace: "custom", key: "delivery_48h") {
+                  value
+                }
+                priceLocked: metafield(namespace: "custom", key: "price_locked") {
+                  value
+                }
+                product {
+                  id
+                  tags
+                  collections(first: 20) {
+                    nodes {
+                      handle
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`;
+
 const RETURNABLE_FULFILLMENTS_QUERY = /* GraphQL */ `
 query ReturnableFulfillmentsForOrder($orderId: ID!, $first: Int!) {
   returnableFulfillments(orderId: $orderId, first: $first) {
@@ -398,13 +445,76 @@ function orderNodeEmail(node: ShopifyOrderNode) {
   );
 }
 
-function validateInput(input: ShopifyReturnRequestInput) {
-  const orderNumber = assertStrictPublicOrderNumber(String(input.orderNumber ?? ""));
+type ReturnLineItemFields = {
+  id?: string | null;
+  title?: string | null;
+  sku?: string | null;
+  originalUnitPriceSet?: {
+    shopMoney?: { amount?: string | null; currencyCode?: string | null } | null;
+  } | null;
+  variant?: {
+    id?: string | null;
+    compareAtPrice?: string | null;
+    delivery48h?: { value?: string | null } | null;
+    priceLocked?: { value?: string | null } | null;
+    product?: {
+      id?: string | null;
+      tags?: string[] | null;
+      collections?: { nodes?: Array<{ handle?: string | null } | null> | null } | null;
+    } | null;
+  } | null;
+};
+
+export type CreateReturnOptions = {
+  publicBaseUrl?: string;
+  /** Staff/admin form: skip 14-day window and sale/price exclusions. */
+  staffMode?: boolean;
+  /** Public portal only; ignored when staffMode is true. */
+  enforceReturnWindow?: boolean;
+};
+
+function buildReturnableLine(
+  fulfillmentLineItemId: string,
+  quantity: number,
+  lineItem: ReturnLineItemFields | null | undefined
+): ReturnableLine | null {
+  if (!fulfillmentLineItemId || quantity <= 0) return null;
+
+  const amountRaw = Number(lineItem?.originalUnitPriceSet?.shopMoney?.amount ?? NaN);
+  const compareAtRaw = Number(lineItem?.variant?.compareAtPrice ?? NaN);
+  const collectionHandles = (lineItem?.variant?.product?.collections?.nodes ?? [])
+    .map((node) => String(node?.handle ?? "").trim())
+    .filter(Boolean);
+  const productTags = Array.isArray(lineItem?.variant?.product?.tags)
+    ? lineItem!.variant!.product!.tags!.map((tag) => String(tag))
+    : [];
+
+  return {
+    fulfillmentLineItemId,
+    quantity,
+    title: lineItem?.title ?? null,
+    sku: lineItem?.sku ?? null,
+    lineItemId: lineItem?.id ?? null,
+    unitAmount: Number.isFinite(amountRaw) ? amountRaw : null,
+    currencyCode: lineItem?.originalUnitPriceSet?.shopMoney?.currencyCode ?? null,
+    compareAtPrice: Number.isFinite(compareAtRaw) ? compareAtRaw : null,
+    delivery48h: lineItem?.variant?.delivery48h?.value ?? null,
+    priceLocked: lineItem?.variant?.priceLocked?.value ?? null,
+    productTags,
+    collectionHandles,
+  };
+}
+
+function validateInput(input: ShopifyReturnRequestInput, staffMode = false) {
+  const orderNumber = staffMode
+    ? normalizeOrderNumber(String(input.orderNumber ?? ""))
+    : assertStrictPublicOrderNumber(String(input.orderNumber ?? ""));
   const emailRaw = String(input.email ?? "").trim();
   const email = emailRaw ? cleanEmail(emailRaw) : null;
   const customerProvidedEmail = String(input.customerProvidedEmail ?? "").trim();
-  const reason = String(input.reason ?? "").trim().toUpperCase();
-  const details = String(input.details ?? "").trim();
+  const reason = String(input.reason ?? "").trim().toUpperCase() || "OTHER";
+  const details =
+    String(input.details ?? "").trim() || (staffMode ? "Return opened by staff." : "");
   const requestedItems = normalizeRequestedItems(input.items);
 
   if (!orderNumber) {
@@ -421,7 +531,7 @@ function validateInput(input: ShopifyReturnRequestInput) {
       400
     );
   }
-  if (!reason) {
+  if (!staffMode && !String(input.reason ?? "").trim()) {
     throw new ShopifyReturnRequestError(
       "VALIDATION_ERROR",
       "Missing reason",
@@ -625,32 +735,12 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
       const fulfillmentLineItemId = edge.node.fulfillmentLineItem.id;
       const quantityRaw = Number(edge.node.quantity ?? 0);
       const quantity = Number.isFinite(quantityRaw) ? Math.max(0, Math.floor(quantityRaw)) : 0;
-      if (!fulfillmentLineItemId || quantity <= 0) continue;
-
-      const lineItem = edge.node.fulfillmentLineItem.lineItem;
-      const amountRaw = Number(lineItem?.originalUnitPriceSet?.shopMoney?.amount ?? NaN);
-      const compareAtRaw = Number(lineItem?.variant?.compareAtPrice ?? NaN);
-      const collectionHandles = (lineItem?.variant?.product?.collections?.nodes ?? [])
-        .map((node) => String(node?.handle ?? "").trim())
-        .filter(Boolean);
-      const productTags = Array.isArray(lineItem?.variant?.product?.tags)
-        ? lineItem!.variant!.product!.tags!.map((tag) => String(tag))
-        : [];
-
-      lines.push({
+      const line = buildReturnableLine(
         fulfillmentLineItemId,
         quantity,
-        title: lineItem?.title ?? null,
-        sku: lineItem?.sku ?? null,
-        lineItemId: lineItem?.id ?? null,
-        unitAmount: Number.isFinite(amountRaw) ? amountRaw : null,
-        currencyCode: lineItem?.originalUnitPriceSet?.shopMoney?.currencyCode ?? null,
-        compareAtPrice: Number.isFinite(compareAtRaw) ? compareAtRaw : null,
-        delivery48h: lineItem?.variant?.delivery48h?.value ?? null,
-        priceLocked: lineItem?.variant?.priceLocked?.value ?? null,
-        productTags,
-        collectionHandles,
-      });
+        edge.node.fulfillmentLineItem.lineItem
+      );
+      if (line) lines.push(line);
     }
   }
 
@@ -663,6 +753,74 @@ async function listReturnableLineItems(orderId: string): Promise<ReturnableLine[
   }
 
   return lines;
+}
+
+/** Staff-only fallback when Shopify returnableFulfillments is empty (e.g. outside store window). */
+async function listFulfilledLineItemsFromOrder(orderId: string): Promise<ReturnableLine[]> {
+  const { data, errors } = await shopifyGraphQL<{
+    order?: {
+      fulfillments?: Array<{
+        fulfillmentLineItems?: {
+          edges?: Array<{
+            node?: {
+              id?: string | null;
+              quantity?: number | null;
+              lineItem?: ReturnLineItemFields | null;
+            } | null;
+          } | null> | null;
+        } | null;
+      } | null> | null;
+    } | null;
+  }>(FULFILLED_LINE_ITEMS_QUERY, { orderId });
+
+  if (errors?.length) {
+    throw new ShopifyReturnRequestError(
+      "SERVER_ERROR",
+      "Shopify fulfilled items lookup failed",
+      502,
+      errors
+    );
+  }
+
+  const byLineId = new Map<string, ReturnableLine>();
+  for (const fulfillment of data?.order?.fulfillments ?? []) {
+    for (const edge of fulfillment?.fulfillmentLineItems?.edges ?? []) {
+      const fulfillmentLineItemId = String(edge?.node?.id ?? "").trim();
+      const quantityRaw = Number(edge?.node?.quantity ?? 0);
+      const quantity = Number.isFinite(quantityRaw) ? Math.max(0, Math.floor(quantityRaw)) : 0;
+      const parsed = buildReturnableLine(fulfillmentLineItemId, quantity, edge?.node?.lineItem);
+      if (!parsed) continue;
+      const existing = byLineId.get(parsed.fulfillmentLineItemId);
+      if (existing) {
+        existing.quantity += parsed.quantity;
+      } else {
+        byLineId.set(parsed.fulfillmentLineItemId, parsed);
+      }
+    }
+  }
+
+  return Array.from(byLineId.values());
+}
+
+/** Staff/admin: Shopify returnable lines first, then all fulfilled lines as fallback. */
+async function listReturnableLineItemsForStaff(orderId: string): Promise<ReturnableLine[]> {
+  try {
+    return await listReturnableLineItems(orderId);
+  } catch (error) {
+    if (!(error instanceof ShopifyReturnRequestError && error.code === "NO_RETURNABLE_ITEMS")) {
+      throw error;
+    }
+  }
+
+  const fallback = await listFulfilledLineItemsFromOrder(orderId);
+  if (!fallback.length) {
+    throw new ShopifyReturnRequestError(
+      "NO_RETURNABLE_ITEMS",
+      "No fulfilled items available on this order",
+      422
+    );
+  }
+  return fallback;
 }
 
 function pickRequestedLines(
@@ -841,7 +999,7 @@ export async function getReturnableItemsForOrderAdmin(input: {
     throw new ShopifyReturnRequestError("VALIDATION_ERROR", "Missing orderNumber", 400);
   }
   const order = await findOrderByNumberAndEmail(orderNumber, null);
-  const lines = await listReturnableLineItems(order.id);
+  const lines = await listReturnableLineItemsForStaff(order.id);
   return {
     success: true,
     orderId: order.id,
@@ -853,13 +1011,17 @@ export async function getReturnableItemsForOrderAdmin(input: {
 
 export async function createAndOpenReturnFromFormData(
   input: ShopifyReturnRequestInput,
-  options: { publicBaseUrl?: string; enforceReturnWindow?: boolean } = {}
+  options: CreateReturnOptions = {}
 ): Promise<CreateAndOpenResult> {
-  const validated = validateInput(input);
+  const staffMode = Boolean(options.staffMode);
+  const validated = validateInput(input, staffMode);
   const order = await findOrderByNumberAndEmail(validated.orderNumber, validated.email);
-  // Public portal sends email; staff admin form does not — only enforce window/policy for customers.
-  const enforcePublicRules = options.enforceReturnWindow ?? Boolean(validated.email);
-  const listed = await listReturnableLineItems(order.id);
+  const enforcePublicRules = staffMode
+    ? false
+    : (options.enforceReturnWindow ?? Boolean(validated.email));
+  const listed = staffMode
+    ? await listReturnableLineItemsForStaff(order.id)
+    : await listReturnableLineItems(order.id);
   const windowed = enforcePublicRules ? enforcePublicReturnWindow(order, listed) : listed;
   const allReturnableLines = enforcePublicRules
     ? enforcePublicReturnPolicy(windowed).allowed

@@ -3,7 +3,6 @@ import {
   ShopifyReturnRequestError,
   getReturnableItemsForOrderAdmin,
 } from "@/shopify/returns/createAndOpenReturn";
-import { toPublicReturnsErrorMessage } from "@/shopify/returns/publicApiErrors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +30,7 @@ export async function POST(request: Request) {
           ok: false,
           success: false,
           code: error.code,
-          message: toPublicReturnsErrorMessage(error),
+          message: error.message,
           details: error.details ?? null,
         },
         { status: error.status }

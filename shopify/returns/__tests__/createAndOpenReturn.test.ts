@@ -25,6 +25,7 @@ vi.mock("@/shopify/returns/label", () => ({
 import {
   ShopifyReturnRequestError,
   createAndOpenReturnFromFormData,
+  getReturnableItemsForOrderAdmin,
   mapFormReasonToShopify,
   normalizeOrderNumber,
 } from "../createAndOpenReturn";
@@ -486,5 +487,168 @@ describe("createAndOpenReturnFromFormData", () => {
         error.code === "SHOPIFY_USER_ERROR"
       );
     });
+  });
+
+  it("staff mode accepts bare order digits and skips public window/policy", async () => {
+    setupHappyPathGraphqlMocks();
+    prismaMock.marketplaceReturn.upsert.mockResolvedValue({});
+
+    const result = await createAndOpenReturnFromFormData(
+      {
+        orderNumber: "1234",
+        reason: "WRONG_SIZE",
+        details: "",
+      },
+      { publicBaseUrl: "https://solution.resell-lausanne.ch", staffMode: true }
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockShopifyGraphQL).toHaveBeenCalled();
+  });
+
+  it("staff mode falls back to fulfilled lines when returnableFulfillments is empty", async () => {
+    mockGenerateShopifyReturnLabel.mockResolvedValue({
+      labelKey: "abc123.pdf",
+      labelPublicUrl: "https://solution.resell-lausanne.ch/api/shopify/returns/label/abc123.pdf",
+      trackingNumber: "99.6000.1234.5678.90",
+      trackingUrl: "https://service.post.ch/ekp-web/ui/entry/search/99.6000.1234.5678.90",
+      filePath: "/tmp/abc123.pdf",
+      mimeType: "application/pdf",
+      swissResponse: { ok: true },
+    });
+
+    mockShopifyGraphQL.mockImplementation(async (query: string) => {
+      if (query.includes("query OrderLookupForReturn")) {
+        return {
+          data: {
+            orders: {
+              edges: [
+                {
+                  node: {
+                    id: "gid://shopify/Order/1",
+                    name: "#1234",
+                    email: "customer@example.com",
+                    customer: {
+                      id: "gid://shopify/Customer/1",
+                      email: "customer@example.com",
+                      defaultEmailAddress: { emailAddress: "customer@example.com" },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        };
+      }
+      if (query.includes("query ReturnableFulfillmentsForOrder")) {
+        return { data: { returnableFulfillments: { edges: [] } } };
+      }
+      if (query.includes("query FulfilledLineItemsForOrder")) {
+        return {
+          data: {
+            order: {
+              fulfillments: [
+                {
+                  fulfillmentLineItems: {
+                    edges: [
+                      {
+                        node: {
+                          id: "gid://shopify/FulfillmentLineItem/77",
+                          quantity: 1,
+                          lineItem: {
+                            id: "gid://shopify/LineItem/91",
+                            title: "Nike Dunk",
+                            sku: "SKU-1",
+                            originalUnitPriceSet: {
+                              shopMoney: { amount: "100.00", currencyCode: "CHF" },
+                            },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        };
+      }
+      if (query.includes("mutation ReturnRequestCreate")) {
+        return {
+          data: {
+            returnRequest: {
+              return: {
+                id: "gid://shopify/Return/12",
+                name: "#1234-R1",
+                status: "REQUESTED",
+                order: { id: "gid://shopify/Order/1", name: "#1234" },
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("mutation ReturnApproveRequest")) {
+        return {
+          data: {
+            returnApproveRequest: {
+              return: {
+                id: "gid://shopify/Return/12",
+                name: "#1234-R1",
+                status: "OPEN",
+                reverseFulfillmentOrders: {
+                  edges: [{ node: { id: "gid://shopify/ReverseFulfillmentOrder/44" } }],
+                },
+                order: {
+                  id: "gid://shopify/Order/1",
+                  name: "#1234",
+                  customer: {
+                    id: "gid://shopify/Customer/1",
+                    email: "customer@example.com",
+                  },
+                },
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("query ReturnLineItemsForReceipt")) {
+        return { data: { return: { returnLineItems: { edges: [] } } } };
+      }
+      if (query.includes("mutation CreateReverseDeliveryWithExternalLabel")) {
+        return {
+          data: {
+            reverseDeliveryCreateWithShipping: {
+              reverseDelivery: {
+                id: "gid://shopify/ReverseDelivery/1",
+                deliverable: {
+                  label: { publicFileUrl: "https://example.com/label.pdf" },
+                  tracking: { number: "99.6000.1234.5678.90", url: "https://example.com/track" },
+                },
+              },
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+    prismaMock.marketplaceReturn.upsert.mockResolvedValue({});
+
+    const listed = await getReturnableItemsForOrderAdmin({ orderNumber: "1234" });
+    expect(listed.items).toHaveLength(1);
+    expect(listed.items[0].fulfillmentLineItemId).toBe("gid://shopify/FulfillmentLineItem/77");
+
+    const created = await createAndOpenReturnFromFormData(
+      {
+        orderNumber: "1234",
+        reason: "OTHER",
+        details: "",
+      },
+      { publicBaseUrl: "https://solution.resell-lausanne.ch", staffMode: true }
+    );
+
+    expect(created.success).toBe(true);
   });
 });

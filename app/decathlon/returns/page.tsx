@@ -1,6 +1,14 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  digitsFromPublicOrderInput,
+  formatPublicOrderNumberFromDigits,
+} from "@/shopify/returns/publicOrderNumber";
+
+function normalizeAdminOrderNumber(raw: string): string {
+  return formatPublicOrderNumberFromDigits(digitsFromPublicOrderInput(raw));
+}
 
 type ReceiptReturn = {
   id: string;
@@ -349,7 +357,7 @@ export default function DecathlonReturnsReceiptPage() {
   };
 
   const loadReturnableItems = async () => {
-    const orderNumber = shopifyForm.orderNumber.trim();
+    const orderNumber = normalizeAdminOrderNumber(shopifyForm.orderNumber);
     if (!orderNumber) {
       setReturnableError("Enter an order number first.");
       return;
@@ -411,7 +419,7 @@ export default function DecathlonReturnsReceiptPage() {
 
   const submitShopifyReturn = async (event: FormEvent) => {
     event.preventDefault();
-    const orderNumber = shopifyForm.orderNumber.trim();
+    const orderNumber = normalizeAdminOrderNumber(shopifyForm.orderNumber);
     if (!orderNumber) {
       showToast("err", "Enter an order number.");
       return;
@@ -441,7 +449,7 @@ export default function DecathlonReturnsReceiptPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok || !data?.success) {
+      if (!res.ok || !data?.ok) {
         throw new Error(data?.message ?? data?.error ?? "Shopify return request failed");
       }
       showToast("ok", `Shopify return opened: ${data.name ?? data.returnId}`);
@@ -687,6 +695,9 @@ export default function DecathlonReturnsReceiptPage() {
         onSubmit={submitShopifyReturn}
         className="mb-6 grid gap-3 rounded-md border border-slate-200 bg-white p-4"
       >
+        <p className="text-sm text-slate-600">
+          Staff return opener — not subject to customer 14-day window, price cap, or sale exclusions.
+        </p>
         <div className="grid gap-3 md:grid-cols-1">
           <label className="text-sm">
             <span className="mb-1 block text-slate-600">Order number</span>
@@ -698,7 +709,7 @@ export default function DecathlonReturnsReceiptPage() {
                   setReturnableItems([]);
                   setReturnableError(null);
                 }}
-                placeholder="#1234"
+                placeholder="6368 or #6368"
                 className="flex-1 rounded-md border border-slate-300 px-3 py-2"
               />
               <button
@@ -783,14 +794,14 @@ export default function DecathlonReturnsReceiptPage() {
           </select>
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-slate-600">Details</span>
+          <span className="mb-1 block text-slate-600">Details (optional)</span>
           <textarea
             rows={3}
             value={shopifyForm.details}
             onChange={(e) =>
               setShopifyForm((prev) => ({ ...prev, details: e.target.value }))
             }
-            placeholder="Explain why customer wants to return."
+            placeholder="Optional staff note for Shopify return."
             className="w-full rounded-md border border-slate-300 px-3 py-2"
           />
         </label>
