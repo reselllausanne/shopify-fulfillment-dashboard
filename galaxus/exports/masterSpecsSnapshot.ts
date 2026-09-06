@@ -62,6 +62,9 @@ export async function rebuildMasterSpecsSnapshot(params?: {
   const built = await buildMasterSpecsFeedExport({
     supplier: params?.supplier ?? null,
     providerKeys: params?.providerKeys,
+    // Skip 2 × ~600 MB Buffer allocations we would immediately discard.
+    // Rebuild uses masterRows/specsRows arrays; final CSV is streamed on push.
+    skipCsvBuffers: true,
   });
 
   // Bake the same row-level filters legacy runFeedUpload applies in-memory:
@@ -88,17 +91,30 @@ export async function rebuildMasterSpecsSnapshot(params?: {
         (row) => !blocked.has(String(row.ProviderKey ?? "").trim())
       )
     : built.specsRows;
+  const masterRowCount = masterRows.length;
+  const specsRowCount = specsRows.length;
+
+  // Free the source arrays' hold on the giant candidate blob so the master
+  // upsert doesn't have to fight the specs graph for heap.
+  (built as { masterRows?: unknown }).masterRows = undefined;
 
   await replaceMasterSnapshotRows(masterRows);
+  // Free master rows once persisted — 1.1M objects × ~500B = ~550 MB.
+  masterRows.length = 0;
+  if (global.gc) global.gc();
+
+  (built as { specsRows?: unknown }).specsRows = undefined;
   await replaceSpecsSnapshotRows(specsRows);
+  specsRows.length = 0;
+  if (global.gc) global.gc();
 
   const now = new Date();
   await (prisma as any).galaxusFeedSnapshotMeta.upsert({
     where: { id: SNAPSHOT_META_ID },
     create: {
       id: SNAPSHOT_META_ID,
-      masterRowCount: masterRows.length,
-      specsRowCount: specsRows.length,
+      masterRowCount,
+      specsRowCount,
       masterHeadersJson: [...MASTER_CSV_HEADERS],
       specsHeadersJson: [...SPECS_CSV_HEADERS],
       masterRebuiltAt: now,
@@ -106,8 +122,8 @@ export async function rebuildMasterSpecsSnapshot(params?: {
       updatedAt: now,
     },
     update: {
-      masterRowCount: masterRows.length,
-      specsRowCount: specsRows.length,
+      masterRowCount,
+      specsRowCount,
       masterHeadersJson: [...MASTER_CSV_HEADERS],
       specsHeadersJson: [...SPECS_CSV_HEADERS],
       masterRebuiltAt: now,
@@ -117,18 +133,16 @@ export async function rebuildMasterSpecsSnapshot(params?: {
   });
 
   console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuilt", {
-    masterRowsIn: built.masterRows.length,
-    specsRowsIn: built.specsRows.length,
-    masterRowsOut: masterRows.length,
-    specsRowsOut: specsRows.length,
+    masterRowsOut: masterRowCount,
+    specsRowsOut: specsRowCount,
     blockedCriticalGtin: criticalGtinKeys.size,
     blockedWelPokemon: welPokemonKeys.size,
     ms: Date.now() - startedAt,
   });
 
   return {
-    masterRows: masterRows.length,
-    specsRows: specsRows.length,
+    masterRows: masterRowCount,
+    specsRows: specsRowCount,
     ms: Date.now() - startedAt,
     criticalGtinIssues: built.criticalGtinIssues,
     invalidSupplierVariantIds: built.invalidSupplierVariantIds,
