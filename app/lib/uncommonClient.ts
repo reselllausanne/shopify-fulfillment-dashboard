@@ -1,3 +1,4 @@
+import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import {
   availabilityTextImpliesDelayed,
   availabilityTextImpliesOos,
