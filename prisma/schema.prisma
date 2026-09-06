@@ -245,19 +245,19 @@ model GalaxusExternalBuy {
 
   galaxusOrderId     String
   galaxusOrderLineId String
-  unitIndex          Int     @default(0)
+  unitIndex          Int    @default(0)
 
   /// REI, WEL, SNL, BAE, …
-  supplierKey          String
-  supplierOrderNumber  String
-  costAmount           Decimal?  @db.Decimal(12, 2)
-  currencyCode         String    @default("CHF")
-  trackingNumber       String?
-  trackingUrl          String?
-  etaMin               DateTime?
-  etaMax               DateTime?
-  status               String?
-  note                 String?
+  supplierKey         String
+  supplierOrderNumber String
+  costAmount          Decimal?  @db.Decimal(12, 2)
+  currencyCode        String    @default("CHF")
+  trackingNumber      String?
+  trackingUrl         String?
+  etaMin              DateTime?
+  etaMax              DateTime?
+  status              String?
+  note                String?
 
   cancelledAt     DateTime?
   cancelledReason String?
@@ -341,15 +341,15 @@ model ShopifyFulfillmentRecord {
 
 /// Failed warehouse AWB scans (NOT_FOUND / UNMATCHED / ERROR). Pruned after ~30 days.
 model WarehouseScanMiss {
-  id             String   @id @default(uuid())
-  rawCode        String
-  normalizedAwb  String?
+  id               String   @id @default(uuid())
+  rawCode          String
+  normalizedAwb    String?
   lookupCandidates String[] @default([])
-  status         String
-  errorMessage   String?
-  scanSessionKey String?
-  userAgent      String?
-  createdAt      DateTime @default(now())
+  status           String
+  errorMessage     String?
+  scanSessionKey   String?
+  userAgent        String?
+  createdAt        DateTime @default(now())
 
   @@index([createdAt])
   @@index([normalizedAwb])
@@ -1081,49 +1081,60 @@ enum ShipmentDelrStatus {
 }
 
 model SupplierVariant {
-  id                          String    @id @default(uuid())
-  supplierVariantId           String    @unique
-  supplierSku                 String
-  providerKey                 String?
-  gtin                        String?
-  price                       Decimal   @db.Decimal(10, 2)
-  stock                       Int
-  sizeRaw                     String?
-  sizeNormalized              String?
-  supplierBrand               String?
-  supplierProductName         String?
+  id                                  String    @id @default(uuid())
+  supplierVariantId                   String    @unique
+  supplierSku                         String
+  providerKey                         String?
+  gtin                                String?
+  price                               Decimal   @db.Decimal(10, 2)
+  stock                               Int
+  sizeRaw                             String?
+  sizeNormalized                      String?
+  supplierBrand                       String?
+  supplierProductName                 String?
   /// WellPlayed Shopify product_type (Board Games, Card Games, …) — WEL category signal.
-  supplierProductType         String?
+  supplierProductType                 String?
   /// When KickDB is absent: feeds Decathlon `Genre` / Galaxus "Target group" (e.g. men, women, unisex).
-  supplierGender              String?
+  supplierGender                      String?
   /// When KickDB is absent: feeds Decathlon `Couleur` / Galaxus "Color" (e.g. Cement / Black).
-  supplierColorway            String?
-  weightGrams                 Int?
-  images                      Json?
-  sourceImageUrl              String?
-  hostedImageUrl              String?
-  imageSyncStatus             String?
-  imageVersion                Int       @default(1)
-  imageLastSyncedAt           DateTime?
-  imageSyncError              String?
-  manualPrice                 Decimal?  @db.Decimal(10, 2)
-  manualStock                 Int?
-  manualLock                  Boolean   @default(false)
-  manualNote                  String?
-  manualUpdatedAt             DateTime?
-  leadTimeDays                Int?
-  deliveryType                String?
+  supplierColorway                    String?
+  weightGrams                         Int?
+  images                              Json?
+  sourceImageUrl                      String?
+  hostedImageUrl                      String?
+  imageSyncStatus                     String?
+  imageVersion                        Int       @default(1)
+  imageLastSyncedAt                   DateTime?
+  imageSyncError                      String?
+  manualPrice                         Decimal?  @db.Decimal(10, 2)
+  manualStock                         Int?
+  manualLock                          Boolean   @default(false)
+  manualNote                          String?
+  manualUpdatedAt                     DateTime?
+  leadTimeDays                        Int?
+  deliveryType                        String?
   /// Galaxus `SuggestedRetailPriceInclVat_CHF` — recomputed whenever STX price sync runs.
-  suggestedRetailPriceInclVat Decimal?  @db.Decimal(10, 2)
+  suggestedRetailPriceInclVat         Decimal?  @db.Decimal(10, 2)
   /// StockX standard-lane estimated buy (CHF). Used for Shopify normal price + LEGO non-express feed.
-  standardBuyPrice            Decimal?  @db.Decimal(10, 2)
+  standardBuyPrice                    Decimal?  @db.Decimal(10, 2)
   /// StockX express-lane estimated buy (CHF). Used for Shopify express metafield.
-  expressBuyPrice             Decimal?  @db.Decimal(10, 2)
+  expressBuyPrice                     Decimal?  @db.Decimal(10, 2)
   /// Suggested retail for standard lane (Galaxus SRP when only standard is listed).
-  standardSuggestedRetailPriceInclVat Decimal? @db.Decimal(10, 2)
-  lastSyncAt                  DateTime?
-  createdAt                   DateTime  @default(now())
-  updatedAt                   DateTime  @updatedAt
+  standardSuggestedRetailPriceInclVat Decimal?  @db.Decimal(10, 2)
+  lastSyncAt                          DateTime?
+  createdAt                           DateTime  @default(now())
+  updatedAt                           DateTime  @updatedAt
+
+  /// Precomputed ordered image URL list (main + alternates) — filled by image sync so
+  /// master export doesn't reprocess `images` JSON per row.
+  resolvedImageUrls      Json?
+  /// Precomputed STX marketplace-publishable flag (deliveryType + product rules).
+  resolvedStxPublishable Boolean?
+  /// True whenever any field that feeds master/specs rows changed since the last
+  /// snapshot upsert. Set by scraper/enrich/image-sync writes; cleared by snapshot
+  /// refresher. Nightly rebuild processes only dirty rows.
+  galaxusFeedDirty       Boolean   @default(true)
+  galaxusFeedResolvedAt  DateTime?
 
   mappings          VariantMapping[]
   inventoryEvents   InventoryEvent[]
@@ -1134,6 +1145,7 @@ model SupplierVariant {
   @@index([providerKey])
   @@index([gtin])
   @@index([supplierSku])
+  @@index([galaxusFeedDirty])
   @@schema("public")
 }
 
@@ -1307,10 +1319,24 @@ model KickDBProduct {
   /// When rawJson was fetched from KicksDB (SSE listener, sweeper, or bootstrap).
   rawFetchedAt DateTime?
 
+  /// Precomputed classification fields for the Galaxus master/specs feeds — set at
+  /// enrich time so the nightly export never has to parse rawJson again. Recomputed
+  /// only when rawJson / description / brand changes.
+  resolvedCategoryPath String?
+  resolvedDescription  String?
+  resolvedProductKind  String?
+  resolvedSizeSpecKey  String?
+  resolvedBrand        String?
+  resolvedColor        String?
+  resolvedMaterial     String?
+  resolvedGender       String?
+  resolvedAt           DateTime?
+
   variants    KickDBVariant[]
   shopifySync ShopifySyncState?
 
   @@index([rawFetchedAt])
+  @@index([resolvedAt])
   @@schema("public")
 }
 
@@ -1373,7 +1399,7 @@ model ShopifyVariantLocationStock {
 /// matching/margin (which unit, why it's there, what cost to use on resale).
 /// No separate reservation table: sale matching decrements qtyAvailable in a tx.
 model LocalStockLot {
-  id                        String             @id @default(uuid())
+  id                        String              @id @default(uuid())
   shopifyProductId          String?
   shopifyVariantId          String
   inventoryItemId           String?
@@ -1384,21 +1410,21 @@ model LocalStockLot {
   locationName              String
   origin                    LocalStockOrigin
   costBasis                 LocalStockCostBasis
-  unitCostChf               Decimal            @db.Decimal(10, 2)
-  currencyCode              String             @default("CHF")
+  unitCostChf               Decimal             @db.Decimal(10, 2)
+  currencyCode              String              @default("CHF")
   qtyInitial                Int
   qtyAvailable              Int
-  qtySold                   Int                @default(0)
+  qtySold                   Int                 @default(0)
   /// OPEN | DEPLETED | QUARANTINED
-  status                    String             @default("OPEN")
+  status                    String              @default("OPEN")
   sourceOrderMatchId        String?
   sourceMarketplaceReturnId String?
-  enteredAt                 DateTime           @default(now())
+  enteredAt                 DateTime            @default(now())
   notes                     String?
   /// Idempotent migration / intake key (e.g. returnMatch:<id>).
-  migrationKey              String?            @unique
-  createdAt                 DateTime           @default(now())
-  updatedAt                 DateTime           @updatedAt
+  migrationKey              String?             @unique
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
 
   sourceOrderMatch OrderMatch?  @relation("LocalStockSourceMatch", fields: [sourceOrderMatchId], references: [id], onDelete: SetNull)
   saleMatches      OrderMatch[] @relation("LocalStockSaleLot")
@@ -2419,15 +2445,23 @@ model GalaxusExportManifest {
   @@schema("public")
 }
 
-/// Pre-built stock/offer CSV rows — full catalog read for fast post-sale SFTP (still full file).
+/// Pre-built stock/offer/master/specs CSV rows — full catalog read for fast SFTP push.
+/// Stock+offer landed first (Aug 2026); master+specs added Sep 2026 to stop the
+/// nightly OOM from rebuilding 900k product rows from KickDB rawJson in memory.
 model GalaxusFeedSnapshotMeta {
-  id               String    @id @default("default")
-  stockRowCount    Int       @default(0)
-  offerRowCount    Int       @default(0)
-  stockHeadersJson Json?
-  offerHeadersJson Json?
-  rebuiltAt        DateTime?
-  updatedAt        DateTime  @updatedAt
+  id                String    @id @default("default")
+  stockRowCount     Int       @default(0)
+  offerRowCount     Int       @default(0)
+  masterRowCount    Int?
+  specsRowCount     Int?
+  stockHeadersJson  Json?
+  offerHeadersJson  Json?
+  masterHeadersJson Json?
+  specsHeadersJson  Json?
+  rebuiltAt         DateTime?
+  masterRebuiltAt   DateTime?
+  specsRebuiltAt    DateTime?
+  updatedAt         DateTime  @updatedAt
 
   @@schema("public")
 }
@@ -2446,6 +2480,36 @@ model GalaxusFeedOfferSnapshot {
   rowJson     Json
   updatedAt   DateTime @updatedAt
 
+  @@index([updatedAt])
+  @@schema("public")
+}
+
+/// One row per ProviderKey — identity + media (title, brand, category, image URLs, description).
+/// Rebuilt from the mapping tournament + resolved KickDB signals; nightly push streams
+/// this table straight to CSV without touching KickDB rawJson.
+model GalaxusFeedMasterSnapshot {
+  providerKey String   @id
+  gtin        String?
+  supplierKey String?
+  rowJson     Json
+  updatedAt   DateTime @updatedAt
+
+  @@index([updatedAt])
+  @@index([supplierKey])
+  @@schema("public")
+}
+
+/// Many rows per ProviderKey — one per (providerKey, specificationKey). Primary-key
+/// order (providerKey ASC, specificationKey ASC) matches Galaxus expected sort so
+/// the exporter streams from the pk index — no JS-side sort of 2M rows.
+model GalaxusFeedSpecsSnapshot {
+  providerKey      String
+  specificationKey String
+  rowJson          Json
+  updatedAt        DateTime @updatedAt
+
+  @@id([providerKey, specificationKey])
+  @@index([providerKey])
   @@index([updatedAt])
   @@schema("public")
 }
@@ -2632,31 +2696,31 @@ model AdsProductDaily {
 /// Current inventory snapshot from Google Ads shopping_product (account scope),
 /// enriched with campaign inclusion union from per-campaign scope pulls.
 model AdsShoppingProductCurrent {
-  id             String   @id @default(uuid())
-  merchantId     BigInt   @map("merchant_id")
-  channel        String
-  languageCode   String   @map("language_code")
-  feedLabel      String   @map("feed_label")
-  offerId        String   @map("offer_id")
-  title          String   @default("")
-  brand          String   @default("")
-  productType    String   @default("") @map("product_type")
-  customAttr0    String   @default("") @map("custom_attr0")
-  customAttr1    String   @default("") @map("custom_attr1")
-  customAttr2    String   @default("") @map("custom_attr2")
-  customAttr3    String   @default("") @map("custom_attr3")
-  customAttr4    String   @default("") @map("custom_attr4")
-  status         String   @default("")
-  availability   String   @default("")
-  shopifyProductId BigInt? @map("shopify_product_id")
-  shopifyVariantId BigInt? @map("shopify_variant_id")
-  targetedCampaignIds String[] @default([]) @map("targeted_campaign_ids")
+  id                    String   @id @default(uuid())
+  merchantId            BigInt   @map("merchant_id")
+  channel               String
+  languageCode          String   @map("language_code")
+  feedLabel             String   @map("feed_label")
+  offerId               String   @map("offer_id")
+  title                 String   @default("")
+  brand                 String   @default("")
+  productType           String   @default("") @map("product_type")
+  customAttr0           String   @default("") @map("custom_attr0")
+  customAttr1           String   @default("") @map("custom_attr1")
+  customAttr2           String   @default("") @map("custom_attr2")
+  customAttr3           String   @default("") @map("custom_attr3")
+  customAttr4           String   @default("") @map("custom_attr4")
+  status                String   @default("")
+  availability          String   @default("")
+  shopifyProductId      BigInt?  @map("shopify_product_id")
+  shopifyVariantId      BigInt?  @map("shopify_variant_id")
+  targetedCampaignIds   String[] @default([]) @map("targeted_campaign_ids")
   targetedCampaignNames String[] @default([]) @map("targeted_campaign_names")
-  lastSeenRunId  String   @map("last_seen_run_id")
-  lastSeenAt     DateTime @map("last_seen_at") @db.Timestamptz(3)
-  isCurrent      Boolean  @default(true) @map("is_current")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lastSeenRunId         String   @map("last_seen_run_id")
+  lastSeenAt            DateTime @map("last_seen_at") @db.Timestamptz(3)
+  isCurrent             Boolean  @default(true) @map("is_current")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([merchantId, channel, languageCode, feedLabel, offerId], map: "ads_shopping_product_current_key")
   @@index([shopifyProductId], map: "ads_shopping_product_current_shopify_product_id_idx")
@@ -2746,38 +2810,38 @@ model AdsExplorerBatch {
 }
 
 model AdsExplorerBatchModel {
-  id                 String   @id @default(uuid())
-  batchId            String   @map("batch_id")
-  shopifyProductId   BigInt   @map("shopify_product_id")
-  sourceCampaignId   String   @map("source_campaign_id")
-  sourceCampaignName String   @map("source_campaign_name")
-  brand              String
-  lifecycleStatus    String   @map("lifecycle_status")
-  activeOfferCount   Int      @map("active_offer_count")
-  startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
-  exitedAt           DateTime? @map("exited_at") @db.Timestamptz(3)
-  exitReason         String?  @map("exit_reason")
-  impressions        BigInt   @default(0)
-  clicks             BigInt   @default(0)
-  costMicros         BigInt   @default(0) @map("cost_micros")
-  conversions        Decimal  @default(0) @db.Decimal(18, 6)
-  conversionValue    Decimal  @default(0) @map("conversion_value") @db.Decimal(18, 6)
-  ltImpressions      BigInt   @default(0) @map("lt_impressions")
-  ltClicks           BigInt   @default(0) @map("lt_clicks")
-  ltCostMicros       BigInt   @default(0) @map("lt_cost_micros")
-  ltConversions      Decimal  @default(0) @map("lt_conversions") @db.Decimal(18, 6)
-  ltConversionValue  Decimal  @default(0) @map("lt_conversion_value") @db.Decimal(18, 6)
-  metricsSyncedAt    DateTime? @map("metrics_synced_at") @db.Timestamptz(3)
+  id                   String    @id @default(uuid())
+  batchId              String    @map("batch_id")
+  shopifyProductId     BigInt    @map("shopify_product_id")
+  sourceCampaignId     String    @map("source_campaign_id")
+  sourceCampaignName   String    @map("source_campaign_name")
+  brand                String
+  lifecycleStatus      String    @map("lifecycle_status")
+  activeOfferCount     Int       @map("active_offer_count")
+  startedAt            DateTime? @map("started_at") @db.Timestamptz(3)
+  exitedAt             DateTime? @map("exited_at") @db.Timestamptz(3)
+  exitReason           String?   @map("exit_reason")
+  impressions          BigInt    @default(0)
+  clicks               BigInt    @default(0)
+  costMicros           BigInt    @default(0) @map("cost_micros")
+  conversions          Decimal   @default(0) @db.Decimal(18, 6)
+  conversionValue      Decimal   @default(0) @map("conversion_value") @db.Decimal(18, 6)
+  ltImpressions        BigInt    @default(0) @map("lt_impressions")
+  ltClicks             BigInt    @default(0) @map("lt_clicks")
+  ltCostMicros         BigInt    @default(0) @map("lt_cost_micros")
+  ltConversions        Decimal   @default(0) @map("lt_conversions") @db.Decimal(18, 6)
+  ltConversionValue    Decimal   @default(0) @map("lt_conversion_value") @db.Decimal(18, 6)
+  metricsSyncedAt      DateTime? @map("metrics_synced_at") @db.Timestamptz(3)
   /// Verified routing destination: CORE_ALL | EXPLORER_ALL | LONG_TAIL_ALL.
-  destination        String   @default("EXPLORER_ALL")
+  destination          String    @default("EXPLORER_ALL")
   /// Destination requested by the rule engine, awaiting Merchant readback.
-  pendingDestination String?  @map("pending_destination")
-  destinationReason  String?  @map("destination_reason")
+  pendingDestination   String?   @map("pending_destination")
+  destinationReason    String?   @map("destination_reason")
   destinationAppliedAt DateTime? @map("destination_applied_at") @db.Timestamptz(3)
-  retestAt           DateTime? @map("retest_at") @db.Timestamptz(3)
-  cooldownUntil      DateTime? @map("cooldown_until") @db.Timestamptz(3)
-  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  retestAt             DateTime? @map("retest_at") @db.Timestamptz(3)
+  cooldownUntil        DateTime? @map("cooldown_until") @db.Timestamptz(3)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([batchId, shopifyProductId], map: "ads_explorer_batch_models_batch_model_key")
   @@index([batchId, lifecycleStatus], map: "ads_explorer_batch_models_batch_status_idx")
@@ -2791,19 +2855,19 @@ model AdsExplorerBatchModel {
 
 /// Registry of the three routing campaigns (CORE_ALL PMax, Explorer All, Long Tail All).
 model AdsExplorerCampaign {
-  id                   String   @id @default(uuid())
-  role                 String
-  campaignId           String   @map("campaign_id")
-  campaignName         String   @map("campaign_name")
-  campaignResourceName String?  @map("campaign_resource_name")
-  adGroupId            String?  @map("ad_group_id")
-  adGroupResourceName  String?  @map("ad_group_resource_name")
-  adGroupAdResourceName String? @map("ad_group_ad_resource_name")
-  budgetResourceName   String?  @map("budget_resource_name")
-  includeLabel         String?  @map("include_label")
-  statsJson            Json?    @map("stats_json")
-  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                    String   @id @default(uuid())
+  role                  String
+  campaignId            String   @map("campaign_id")
+  campaignName          String   @map("campaign_name")
+  campaignResourceName  String?  @map("campaign_resource_name")
+  adGroupId             String?  @map("ad_group_id")
+  adGroupResourceName   String?  @map("ad_group_resource_name")
+  adGroupAdResourceName String?  @map("ad_group_ad_resource_name")
+  budgetResourceName    String?  @map("budget_resource_name")
+  includeLabel          String?  @map("include_label")
+  statsJson             Json?    @map("stats_json")
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([role], map: "ads_explorer_campaigns_role_key")
   @@index([campaignId], map: "ads_explorer_campaigns_campaign_idx")
@@ -2812,19 +2876,19 @@ model AdsExplorerCampaign {
 }
 
 model AdsExplorerOfferWrite {
-  id              String    @id @default(uuid())
-  batchId         String    @map("batch_id")
-  shopifyProductId BigInt   @map("shopify_product_id")
-  offerId         String    @map("offer_id")
-  contentLanguage String    @map("content_language")
-  feedLabel       String    @map("feed_label")
-  operation       String
-  status          String
-  attempts        Int       @default(0)
-  lastError       String?   @map("last_error")
-  processedAt     DateTime? @map("processed_at") @db.Timestamptz(3)
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id               String    @id @default(uuid())
+  batchId          String    @map("batch_id")
+  shopifyProductId BigInt    @map("shopify_product_id")
+  offerId          String    @map("offer_id")
+  contentLanguage  String    @map("content_language")
+  feedLabel        String    @map("feed_label")
+  operation        String
+  status           String
+  attempts         Int       @default(0)
+  lastError        String?   @map("last_error")
+  processedAt      DateTime? @map("processed_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([batchId, offerId, contentLanguage, feedLabel, operation], map: "ads_explorer_offer_writes_key")
   @@index([batchId, status], map: "ads_explorer_offer_writes_batch_status_idx")
@@ -2851,14 +2915,14 @@ model AdsExplorerListingBackup {
 }
 
 model AdsExplorerProductAge {
-  id                     String    @id @default(uuid())
-  shopifyProductId       BigInt    @map("shopify_product_id")
+  id                      String    @id @default(uuid())
+  shopifyProductId        BigInt    @map("shopify_product_id")
   shopifyProductCreatedAt DateTime? @map("shopify_product_created_at") @db.Timestamptz(3)
-  source                 String
-  unknownReason          String?   @map("unknown_reason")
-  capturedAt             DateTime  @default(now()) @map("captured_at") @db.Timestamptz(3)
-  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt              DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  source                  String
+  unknownReason           String?   @map("unknown_reason")
+  capturedAt              DateTime  @default(now()) @map("captured_at") @db.Timestamptz(3)
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([shopifyProductId], map: "ads_explorer_product_age_shopify_product_key")
   @@index([capturedAt], map: "ads_explorer_product_age_captured_idx")
@@ -3078,21 +3142,21 @@ model HealthBodyMeasurement {
 }
 
 model HealthNutritionDaily {
-  id             String   @id @default(uuid())
-  localDate      DateTime @map("local_date") @db.Date
-  source         String   @default("manual")
-  caloriesKcal   Float?   @map("calories_kcal")
-  carbsG         Float?   @map("carbs_g")
-  proteinG       Float?   @map("protein_g")
-  fatG           Float?   @map("fat_g")
-  fiberG         Float?   @map("fiber_g")
-  sodiumMg       Float?   @map("sodium_mg")
-  waterMl        Float?   @map("water_ml")
-  caffeineMg     Float?   @map("caffeine_mg")
-  importBatchId  String?  @map("import_batch_id")
-  notes          String?
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id            String   @id @default(uuid())
+  localDate     DateTime @map("local_date") @db.Date
+  source        String   @default("manual")
+  caloriesKcal  Float?   @map("calories_kcal")
+  carbsG        Float?   @map("carbs_g")
+  proteinG      Float?   @map("protein_g")
+  fatG          Float?   @map("fat_g")
+  fiberG        Float?   @map("fiber_g")
+  sodiumMg      Float?   @map("sodium_mg")
+  waterMl       Float?   @map("water_ml")
+  caffeineMg    Float?   @map("caffeine_mg")
+  importBatchId String?  @map("import_batch_id")
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([localDate, source], map: "health_nutrition_daily_key")
   @@index([localDate], map: "health_nutrition_daily_local_date_idx")
@@ -3128,18 +3192,18 @@ model HealthNutritionEvent {
 }
 
 model HealthSubjectiveCheckin {
-  id             String   @id @default(uuid())
-  localDate      DateTime @map("local_date") @db.Date
-  hunger         Int?
-  fatigue        Int?
-  motivation     Int?
-  pain           Int?
-  illness        Boolean  @default(false)
-  rpeSession     Float?   @map("rpe_session")
-  activityId     String?  @map("activity_id")
-  freeText       String?  @map("free_text")
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id         String   @id @default(uuid())
+  localDate  DateTime @map("local_date") @db.Date
+  hunger     Int?
+  fatigue    Int?
+  motivation Int?
+  pain       Int?
+  illness    Boolean  @default(false)
+  rpeSession Float?   @map("rpe_session")
+  activityId String?  @map("activity_id")
+  freeText   String?  @map("free_text")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([localDate], map: "health_subjective_checkins_local_date_key")
   @@map("health_subjective_checkins")
@@ -3147,26 +3211,26 @@ model HealthSubjectiveCheckin {
 }
 
 model HealthHydrationTest {
-  id                    String   @id @default(uuid())
-  testedAt              DateTime @map("tested_at") @db.Timestamptz(3)
-  localDate             DateTime @map("local_date") @db.Date
-  sport                 String
-  intensity             String?
-  durationHours         Float    @map("duration_hours")
-  weightBeforeKg        Float    @map("weight_before_kg")
-  weightAfterKg         Float    @map("weight_after_kg")
-  fluidConsumedL        Float    @map("fluid_consumed_l")
-  urineProducedL        Float    @map("urine_produced_l")
-  temperatureC          Float?   @map("temperature_c")
-  humidityPct           Float?   @map("humidity_pct")
-  sodiumConsumedMg      Float?   @map("sodium_consumed_mg")
-  sweatSodiumMgPerL     Float?   @map("sweat_sodium_mg_per_l")
-  sweatLossL            Float    @map("sweat_loss_l")
-  sweatRateLPerHour     Float    @map("sweat_rate_l_per_hour")
-  formulaVersion        String   @default("sweat_loss_v1") @map("formula_version")
-  notes                 String?
-  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                String   @id @default(uuid())
+  testedAt          DateTime @map("tested_at") @db.Timestamptz(3)
+  localDate         DateTime @map("local_date") @db.Date
+  sport             String
+  intensity         String?
+  durationHours     Float    @map("duration_hours")
+  weightBeforeKg    Float    @map("weight_before_kg")
+  weightAfterKg     Float    @map("weight_after_kg")
+  fluidConsumedL    Float    @map("fluid_consumed_l")
+  urineProducedL    Float    @map("urine_produced_l")
+  temperatureC      Float?   @map("temperature_c")
+  humidityPct       Float?   @map("humidity_pct")
+  sodiumConsumedMg  Float?   @map("sodium_consumed_mg")
+  sweatSodiumMgPerL Float?   @map("sweat_sodium_mg_per_l")
+  sweatLossL        Float    @map("sweat_loss_l")
+  sweatRateLPerHour Float    @map("sweat_rate_l_per_hour")
+  formulaVersion    String   @default("sweat_loss_v1") @map("formula_version")
+  notes             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([localDate], map: "health_hydration_tests_local_date_idx")
   @@map("health_hydration_tests")
@@ -3219,19 +3283,19 @@ model HealthDailyTrainingLoad {
 }
 
 model HealthPersonalBaseline {
-  id            String   @id @default(uuid())
-  metricKey     String   @map("metric_key")
-  windowDays    Int      @map("window_days")
-  asOfDate      DateTime @map("as_of_date") @db.Date
-  sampleCount   Int      @map("sample_count")
-  mean          Float?
-  median        Float?
-  stddev        Float?
-  trendSlope    Float?   @map("trend_slope")
-  metaJson      Json?    @map("meta_json")
-  computedAt    DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id          String   @id @default(uuid())
+  metricKey   String   @map("metric_key")
+  windowDays  Int      @map("window_days")
+  asOfDate    DateTime @map("as_of_date") @db.Date
+  sampleCount Int      @map("sample_count")
+  mean        Float?
+  median      Float?
+  stddev      Float?
+  trendSlope  Float?   @map("trend_slope")
+  metaJson    Json?    @map("meta_json")
+  computedAt  DateTime @default(now()) @map("computed_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@unique([metricKey, windowDays, asOfDate], map: "health_personal_baselines_key")
   @@index([metricKey, asOfDate], map: "health_personal_baselines_metric_date_idx")
@@ -3240,22 +3304,22 @@ model HealthPersonalBaseline {
 }
 
 model HealthGeneratedInsight {
-  id                  String    @id @default(uuid())
-  insightKey          String    @map("insight_key")
-  title               String
-  periodFrom          DateTime  @map("period_from") @db.Date
-  periodTo            DateTime  @map("period_to") @db.Date
-  factualObservation  String    @map("factual_observation")
-  hypothesis          String
-  confidence          String
-  dataUsedJson        Json      @map("data_used_json")
-  limitations         String
-  cautiousAction      String    @map("cautious_action")
-  medicalDisclaimer   String    @map("medical_disclaimer")
-  feedback            String?
-  generatedAt         DateTime  @default(now()) @map("generated_at") @db.Timestamptz(3)
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  id                 String   @id @default(uuid())
+  insightKey         String   @map("insight_key")
+  title              String
+  periodFrom         DateTime @map("period_from") @db.Date
+  periodTo           DateTime @map("period_to") @db.Date
+  factualObservation String   @map("factual_observation")
+  hypothesis         String
+  confidence         String
+  dataUsedJson       Json     @map("data_used_json")
+  limitations        String
+  cautiousAction     String   @map("cautious_action")
+  medicalDisclaimer  String   @map("medical_disclaimer")
+  feedback           String?
+  generatedAt        DateTime @default(now()) @map("generated_at") @db.Timestamptz(3)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([periodTo, insightKey], map: "health_generated_insights_period_key_idx")
   @@index([feedback], map: "health_generated_insights_feedback_idx")

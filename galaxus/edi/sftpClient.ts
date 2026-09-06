@@ -76,3 +76,31 @@ export async function uploadTempThenRename(
   await client.put(Buffer.isBuffer(content) ? content : Buffer.from(content), tempPath);
   await client.rename(tempPath, finalPath);
 }
+
+/**
+ * Same tmp → rename dance, but ssh2-sftp-client reads the local file as a
+ * stream so the whole CSV never lives in the Node heap. Use for master/specs
+ * feeds where the CSV can be several hundred MB.
+ */
+export async function uploadFilePathTempThenRename(
+  client: SftpClient,
+  remoteDir: string,
+  filename: string,
+  localFilePath: string
+): Promise<void> {
+  const dir = remoteDir.replace(/\/$/, "");
+  const tempName = `tmp_${filename}`;
+  const tempPath = `${dir}/${tempName}`;
+  const finalPath = `${dir}/${filename}`;
+  // fastPut opens a local read stream + parallel SFTP write — no Buffer in RAM.
+  const fastPut = (client as unknown as {
+    fastPut?: (localPath: string, remotePath: string) => Promise<unknown>;
+  }).fastPut;
+  if (typeof fastPut === "function") {
+    await fastPut.call(client, localFilePath, tempPath);
+  } else {
+    // Older ssh2-sftp-client: `put` accepts a local path string when it exists on disk.
+    await client.put(localFilePath, tempPath);
+  }
+  await client.rename(tempPath, finalPath);
+}

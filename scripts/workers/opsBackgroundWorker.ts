@@ -1,6 +1,8 @@
 import os from "os";
 import { resolveAppOriginForPartnerJobs } from "@/app/lib/partnerJobOrigin";
 import { rebuildFeedSnapshotFromExports } from "@/galaxus/exports/feedSnapshot";
+import { rebuildMasterSpecsSnapshot } from "@/galaxus/exports/masterSpecsSnapshot";
+import { MASTER_SPECS_REBUILD_JOB_NAME } from "@/galaxus/exports/masterSpecsSnapshotAsync";
 import { resolveImageSyncSupplierKeys, runImageSync } from "@/galaxus/jobs/imageSync";
 import { runStockPriceSync } from "@/galaxus/jobs/stockSync";
 import { claimJob, completeJob, failJob } from "@/galaxus/jobs/queue";
@@ -8,6 +10,7 @@ import { runOpsJob } from "@/galaxus/ops/jobRunner";
 import {
   OPS_GLD_REFRESH_JOB,
   OPS_IMAGE_SYNC_JOB,
+  OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
   OPS_SNAPSHOT_REBUILD_JOB,
 } from "@/galaxus/ops/opsBackgroundJobs";
 
@@ -16,7 +19,12 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function run() {
   const workerId = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
   const pollMs = Math.max(Number(process.env.WORKER_POLL_MS ?? "3000"), 500);
-  const jobTypes = [OPS_IMAGE_SYNC_JOB, OPS_SNAPSHOT_REBUILD_JOB, OPS_GLD_REFRESH_JOB];
+  const jobTypes = [
+    OPS_IMAGE_SYNC_JOB,
+    OPS_SNAPSHOT_REBUILD_JOB,
+    OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB,
+    OPS_GLD_REFRESH_JOB,
+  ];
   const defaultOrigin =
     resolveAppOriginForPartnerJobs(process.env.GALAXUS_FEED_WORKER_ORIGIN ?? null) ??
     "http://127.0.0.1:3000";
@@ -47,6 +55,8 @@ async function run() {
           );
         } else if (jobType === OPS_GLD_REFRESH_JOB) {
           await runOpsJob("gld-refresh", () => runStockPriceSync());
+        } else if (jobType === OPS_MASTER_SPECS_SNAPSHOT_REBUILD_JOB) {
+          await runOpsJob(MASTER_SPECS_REBUILD_JOB_NAME, () => rebuildMasterSpecsSnapshot());
         } else {
           await runOpsJob("feed-snapshot-rebuild", () => rebuildFeedSnapshotFromExports(origin));
         }
