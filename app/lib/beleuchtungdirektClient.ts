@@ -170,7 +170,7 @@ export function mapBldHitToProduct(hit: BldRawHit): BldProduct | null {
   const priceIncl = parsePositiveMoney(hit.price_with_tax?.CHF?.default);
   const priceExcl = parsePositiveMoney(hit.price?.CHF?.default);
   const priceChf = priceIncl ?? priceExcl;
-  const inStock = hit.in_stock === true || hit.in_stock === 1 || hit.in_stock === "1";
+  const inStock = hit.in_stock === true || hit.in_stock === 1 || String(hit.in_stock ?? "") === "1";
 
   return {
     objectId,
