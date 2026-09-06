@@ -2,6 +2,7 @@ import {
   availabilityTextImpliesDelayed,
   availabilityTextImpliesOos,
 } from "@/app/lib/scraperAvailability";
+import { validateGtin } from "@/app/lib/normalize";
 import { extractReicheltWeightGrams } from "@/app/lib/reicheltPricing";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
