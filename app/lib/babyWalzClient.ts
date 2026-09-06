@@ -1,4 +1,5 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import { isSchemaOfferInStock } from "@/app/lib/scraperAvailability";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -404,7 +405,7 @@ export function parseBabyWalzProductHtml(
     const priceChf = Number.parseFloat(String(offer?.price ?? ""));
     if (!Number.isFinite(priceChf) || priceChf <= 0) continue;
     const availability = String(offer?.availability ?? "").toLowerCase();
-    const inStock = !availability.includes("outofstock");
+    const inStock = isSchemaOfferInStock(availability);
     const name =
       decodeHtml(String(variant.name ?? group.name ?? "").trim()) ||
       decodeHtml(html.match(/<h1[^>]*>([^<]+)</i)?.[1]?.trim() ?? "");

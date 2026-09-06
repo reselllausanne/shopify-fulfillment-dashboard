@@ -1,5 +1,6 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import { scraperFetchText } from "@/app/lib/scraperProxy";
+import { htmlAvailabilityText, resolveScraperStock } from "@/app/lib/scraperAvailability";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -32,7 +33,7 @@ export function hawkConfig() {
       Number(process.env.SCRAPER_HAW_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 100)
     ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_HAW_CONCURRENCY || 6)),
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
+    defaultStock: Math.max(0, Number(process.env.SCRAPER_HAW_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)),
     sitemapUrl: String(process.env.SCRAPER_HAW_SITEMAP_URL || HAWK_SITEMAP_URL).trim(),
     excludePathPrefixes: parseHawkExcludePrefixes(),
   };
@@ -103,13 +104,6 @@ export function normalizeHawkGtin(raw: string | null | undefined): { gtin: strin
   if (!digits || /^0+$/.test(digits)) return null;
   if (!isValidGtin(digits)) return null;
   return { gtin: digits, source: digits.length === 13 ? "gtin13" : "gtin" };
-}
-
-function parseAvailability(value: string | null | undefined): boolean {
-  const raw = String(value ?? "").toLowerCase();
-  if (!raw) return true;
-  if (raw.includes("outofstock") || raw.includes("discontinued") || raw.includes("soldout")) return false;
-  return raw.includes("instock") || raw.includes("preorder") || raw.includes("backorder");
 }
 
 function parseJsonLdProduct(html: string): Record<string, unknown> | null {
@@ -215,11 +209,16 @@ export function parseHawkProductHtml(
   const priceChf = Number.parseFloat(String(priceRaw ?? ""));
   if (!Number.isFinite(priceChf) || priceChf <= 0) return null;
 
-  const inStock = parseAvailability(
-    typeof offer?.availability === "string" ? offer.availability : null
-  );
   const qty = parseStockQty(html);
-  const stock = !inStock ? 0 : qty != null ? qty : defaultStock;
+  const stockInfo = resolveScraperStock({
+    schemaAvailability: typeof offer?.availability === "string" ? offer.availability : null,
+    pageText: htmlAvailabilityText(html),
+    explicitQty: qty,
+    defaultStockWhenImmediate: defaultStock,
+    requireImmediateText: qty == null,
+  });
+  const inStock = stockInfo.inStock;
+  const stock = stockInfo.stock;
 
   const mpn =
     (typeof product.mpn === "string" ? product.mpn.trim() : null) ||

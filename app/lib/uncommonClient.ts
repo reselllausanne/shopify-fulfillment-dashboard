@@ -1,4 +1,7 @@
-import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import {
+  availabilityTextImpliesDelayed,
+  availabilityTextImpliesOos,
+} from "@/app/lib/scraperAvailability";
 
 const DEFAULT_UA =
   process.env.SCRAPER_USER_AGENT ||
@@ -183,7 +186,12 @@ export function parseUncommonStockQty(product: UncommonWooProduct): {
   const text = String(product.stock_availability?.text || "").trim();
   const cls = String(product.stock_availability?.class || "").toLowerCase();
 
-  if (/out-of-stock/.test(cls) || /nicht\s+(auf\s+lager|vorrätig|verfuegbar|verfügbar)/i.test(text)) {
+  if (
+    availabilityTextImpliesOos(text) ||
+    availabilityTextImpliesDelayed(text) ||
+    /out-of-stock/.test(cls) ||
+    /nicht\s+(auf\s+lager|vorrätig|verfuegbar|verfügbar)/i.test(text)
+  ) {
     return { qty: 0, source: "oos_text" };
   }
 

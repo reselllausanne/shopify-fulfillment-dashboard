@@ -2,6 +2,7 @@
 
 import { gunzipSync } from "node:zlib";
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import { isSchemaOfferInStock } from "@/app/lib/scraperAvailability";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -121,12 +122,7 @@ export function normalizeVenovaGtin(raw: string | null | undefined): { gtin: str
 }
 
 function parseAvailability(value: string | null | undefined): boolean {
-  const raw = String(value ?? "").toLowerCase();
-  if (!raw) return false;
-  if (raw.includes("outofstock") || raw.includes("discontinued") || raw.includes("soldout")) return false;
-  // LimitedAvailability = Liefertermin unbekannt — not sellable.
-  if (raw.includes("limitedavailability")) return false;
-  return raw.includes("instock") || raw.includes("preorder") || raw.includes("backorder");
+  return isSchemaOfferInStock(value);
 }
 
 function escapeRegExp(value: string): string {

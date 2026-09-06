@@ -161,10 +161,13 @@ function parseAvailability(
   if (h.includes("outofstock") || h.includes("soldout") || h.includes("discontinued")) {
     return "OutOfStock";
   }
-  if (h.includes("preorder")) return "PreOrder";
+  if (h.includes("preorder") || h.includes("backorder") || h.includes("limitedavailability")) {
+    return "OutOfStock";
+  }
+  if (/nicht\s+auf\s+lager|ausverkauft|nicht\s+lieferbar|off[\s-]?lager|lieferbar\s+ab|vorbestell|\d+\s*wochen/i.test(text)) {
+    return "OutOfStock";
+  }
   if (h.includes("instock")) return "InStock";
-  if (/nicht\s+auf\s+lager|ausverkauft|nicht\s+lieferbar/i.test(text)) return "OutOfStock";
-  if (/lieferbar\s+ab|vorbestell/i.test(text)) return "PreOrder";
   if (/auf\s+lager|sofort\s+lieferbar/i.test(text)) return "InStock";
   return "Unknown";
 }

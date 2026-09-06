@@ -250,7 +250,9 @@ export function exlibrisStockFromLabel(stockLabel: string, availabilityText: str
   const low = availabilityText.toLowerCase();
   if (
     stockLabel === "out_of_stock" ||
-    /vergriffen|nicht\s+lieferbar|ausverkauft/.test(low)
+    /vergriffen|nicht\s+lieferbar|ausverkauft|off[\s-]?lager|vorbestell|pre[\s-]?order|lieferbar\s+ab|\d+\s*wochen|\d+\s*monate/i.test(
+      low
+    )
   ) {
     return 0;
   }
