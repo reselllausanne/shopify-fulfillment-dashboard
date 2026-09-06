@@ -60,7 +60,6 @@ export function fantasyweltConfig() {
     gotoTimeoutMs: Math.max(15_000, Number(process.env.SCRAPER_FAN_GOTO_TIMEOUT_MS || 60_000)),
     cfWaitMs: Math.max(5_000, Number(process.env.SCRAPER_FAN_CF_WAIT_MS || 25_000)),
     maxCategoryPages: Math.max(1, Number(process.env.SCRAPER_FAN_MAX_CATEGORY_PAGES || 500)),
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
     categories,
     progressFile:
       process.env.SCRAPER_FAN_PROGRESS_FILE ||

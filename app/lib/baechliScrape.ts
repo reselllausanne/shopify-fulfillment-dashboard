@@ -262,7 +262,7 @@ export async function scrapeBaechliShop(
           }
 
           const title = variant.sizeLabel ? `${product.name} — ${variant.sizeLabel}` : product.name;
-          const stock = variant.inStock ? cfg.defaultStock : 0;
+          const stock = 0;
           const ok = await upsertVariant({
             gtin: variant.gtin,
             gtinSource: variant.gtinSource,

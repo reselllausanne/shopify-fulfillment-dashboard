@@ -1,5 +1,4 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
-import { isSchemaOfferInStock } from "@/app/lib/scraperAvailability";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -48,7 +47,6 @@ export function babyWalzConfig() {
       Number(process.env.SCRAPER_BWZ_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 120)
     ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_BWZ_CONCURRENCY || 4)),
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
     sitemapIndexUrl: String(
       process.env.SCRAPER_BWZ_SITEMAP_INDEX_URL || BABY_WALZ_SITEMAP_INDEX_URL
     ).trim(),
@@ -226,7 +224,7 @@ function productFromNuxt(
   payload: NuxtPayload,
   productUrl: string,
   articleId: string,
-  opts: { defaultStock: number; cdnBase: string }
+  opts: { cdnBase: string }
 ): BabyWalzProduct[] {
   const root = nuxtObj(payload, 1);
   if (!root) return [];
@@ -270,8 +268,8 @@ function productFromNuxt(
     const stockObj = nuxtObj(payload, variant.stock);
     const qty = stockObj ? nuxtNum(payload, stockObj.quantity) : null;
     const buyable = nuxtBool(payload, variant.isProductBuyable);
-    const inStock = !productSoldOut && buyable !== false && (qty == null || qty > 0);
-    const stock = !inStock ? 0 : qty != null && qty > 0 ? qty : opts.defaultStock;
+    const inStock = !productSoldOut && buyable !== false && qty != null && qty > 0;
+    const stock = inStock ? qty! : 0;
 
     const detail = nuxtObj(payload, variantDetails[variantReferenceKey]);
     const adv = detail ? nuxtObj(payload, detail.advancedAttributes) : null;
@@ -367,11 +365,7 @@ function parseJsonLdProductGroup(html: string): Record<string, unknown> | null {
  * Primary path: Nuxt SSR payload (EAN + stock qty + sizes).
  * Fallback: ProductGroup JSON-LD (no EAN on baby-walz → usually empty).
  */
-export function parseBabyWalzProductHtml(
-  html: string,
-  productUrl: string,
-  defaultStock = babyWalzConfig().defaultStock
-): BabyWalzProduct[] {
+export function parseBabyWalzProductHtml(html: string, productUrl: string): BabyWalzProduct[] {
   const cfg = babyWalzConfig();
   const articleId = articleIdFromBabyWalzUrl(productUrl);
   if (!articleId) return [];
@@ -379,7 +373,6 @@ export function parseBabyWalzProductHtml(
   const payload = parseNuxtPayload(html);
   if (payload) {
     const fromNuxt = productFromNuxt(payload, productUrl, articleId, {
-      defaultStock,
       cdnBase: cfg.cdnBase,
     });
     if (fromNuxt.length) return fromNuxt;
@@ -404,8 +397,6 @@ export function parseBabyWalzProductHtml(
     if (!barcode) continue;
     const priceChf = Number.parseFloat(String(offer?.price ?? ""));
     if (!Number.isFinite(priceChf) || priceChf <= 0) continue;
-    const availability = String(offer?.availability ?? "").toLowerCase();
-    const inStock = isSchemaOfferInStock(availability);
     const name =
       decodeHtml(String(variant.name ?? group.name ?? "").trim()) ||
       decodeHtml(html.match(/<h1[^>]*>([^<]+)</i)?.[1]?.trim() ?? "");
@@ -434,8 +425,8 @@ export function parseBabyWalzProductHtml(
       gtin: barcode.gtin,
       gtinSource: barcode.source,
       priceChf,
-      stock: inStock ? defaultStock : 0,
-      inStock,
+      stock: 0,
+      inStock: false,
       imageUrl: image,
       sizeRaw: null,
       masterKey: null,

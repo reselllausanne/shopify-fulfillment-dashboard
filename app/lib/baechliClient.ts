@@ -39,12 +39,6 @@ export function baechliConfig() {
     ),
     // Concurrency 20 hammered Rent-a-Shop into HTTP 503 storms.
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_BAE_CONCURRENCY || 6)),
-    // Bächli HTML exposes only boolean availability (variant.inStock), no real qty.
-    // Default 1 to avoid Galaxus back-order overselling; raise via SCRAPER_BAE_DEFAULT_STOCK.
-    defaultStock: Math.max(
-      0,
-      Number(process.env.SCRAPER_BAE_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-    ),
     skipIsbnGtins: String(process.env.SCRAPER_BAE_SKIP_ISBN ?? "1") !== "0",
     excludePathPrefixes: parseBaechliExcludePrefixes(),
   };

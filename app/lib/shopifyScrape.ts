@@ -13,13 +13,6 @@ import {
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT || "LivioShopifyScraper/1.0 (+catalog sync)";
-// Fallback stock when Shopify variant.inventory_quantity is unknown (untracked / .js failed).
-// Default 1 to avoid overselling on shops using "continue" policy; real qty from
-// resolveShopifyInventoryQty always wins when present.
-const DEFAULT_STOCK = Math.max(
-  1,
-  Number(process.env.SCRAPER_SHOPIFY_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-);
 
 function shopifyScrapeConfig() {
   return {
@@ -467,13 +460,8 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
       const now = new Date();
       for (const r of productRecords) {
         seenGtins.add(r.gtin);
-        // Real Shopify qty when tracked (prevents overselling like WEL Padmé sleeves).
-        // Untracked/continue-policy → fall back to conservative DEFAULT_STOCK.
-        const stock = r.available
-          ? r.trackedQty !== null
-            ? Math.max(0, r.trackedQty)
-            : DEFAULT_STOCK
-          : 0;
+        // Real Shopify qty when tracked; untracked / unknown → 0 (no invented stock).
+        const stock = r.available && r.trackedQty !== null ? Math.max(0, r.trackedQty) : 0;
         const existing = existingById.get(r.supplierVariantId);
         const queueImage = needsImageHosting(existing, r.sourceImageUrl);
         try {

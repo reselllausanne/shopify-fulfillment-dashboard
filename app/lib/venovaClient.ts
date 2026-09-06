@@ -38,10 +38,6 @@ export function venovaConfig() {
       Number(process.env.SCRAPER_VEN_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 120)
     ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_VEN_CONCURRENCY || 6)),
-    /** Only used when Sofort verfügbar but no qty signal and requireExactQty=0. */
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_VEN_DEFAULT_STOCK || 1)),
-    /** If 1: stock=0 unless we have stock--quantity or sQuantity max. */
-    requireExactQty: String(process.env.SCRAPER_VEN_REQUIRE_EXACT_QTY ?? "1") !== "0",
     sitemapIndexUrl: String(process.env.SCRAPER_VEN_SITEMAP_INDEX_URL || VENOVA_SITEMAP_INDEX_URL).trim(),
     locale: String(process.env.SCRAPER_VEN_LOCALE || "de").trim().toLowerCase() || "de",
     excludePathPrefixes: parseVenovaExcludePrefixes(),
@@ -219,8 +215,6 @@ export function resolveVenovaStock(input: {
   availability: string | null | undefined;
   deliveryHtml: string;
   pageHtml: string;
-  defaultStock: number;
-  requireExactQty: boolean;
 }): { inStock: boolean; stock: number; stockSource: string } {
   const schemaOk = parseAvailability(input.availability);
   const sofort = isVenovaSofortVerfuegbar(input.deliveryHtml);
@@ -242,10 +236,7 @@ export function resolveVenovaStock(input: {
     return { inStock: true, stock: selectMax, stockSource: "sQuantity_max" };
   }
 
-  if (input.requireExactQty) {
-    return { inStock: false, stock: 0, stockSource: "sofort_but_no_exact_qty" };
-  }
-  return { inStock: true, stock: input.defaultStock, stockSource: "default_stock" };
+  return { inStock: false, stock: 0, stockSource: "sofort_but_no_exact_qty" };
 }
 
 function parseJsonLdProduct(html: string): Record<string, unknown> | null {
@@ -344,11 +335,7 @@ function productTypeFromUrl(productUrl: string, locale: string): string | null {
   }
 }
 
-export function parseVenovaProductHtml(
-  html: string,
-  productUrl: string,
-  defaultStock = venovaConfig().defaultStock
-): VenovaProduct | null {
+export function parseVenovaProductHtml(html: string, productUrl: string): VenovaProduct | null {
   const product = parseJsonLdProduct(html);
   if (!product) return null;
 
@@ -388,8 +375,6 @@ export function parseVenovaProductHtml(
     availability: typeof offer?.availability === "string" ? offer.availability : null,
     deliveryHtml,
     pageHtml: html,
-    defaultStock: defaultStock ?? cfg.defaultStock,
-    requireExactQty: cfg.requireExactQty,
   });
 
   const mpn = parseMpn(html);

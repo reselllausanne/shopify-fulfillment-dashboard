@@ -1,7 +1,7 @@
 /**
  * Conservative scraper stock — Galaxus cancel-rate guard.
  * Off-lager, preorder/backorder, long lead times → stock 0.
- * Fake default qty only when schema InStock + immediate delivery copy on PDP.
+ * No invented qty: stock > 0 only with explicit supplier quantity.
  */
 
 /** schema.org Offer.availability — sellable only on explicit InStock. */
@@ -86,9 +86,6 @@ export type ResolveScraperStockInput = {
   schemaAvailability?: string | null;
   pageText?: string | null;
   explicitQty?: number | null;
-  /** Only when InStock + immediate copy, no explicit qty. Default 0 = safest. */
-  defaultStockWhenImmediate?: number;
-  requireImmediateText?: boolean;
 };
 
 export type ResolveScraperStockResult = {
@@ -97,6 +94,7 @@ export type ResolveScraperStockResult = {
   stockSource: string;
 };
 
+/** Stock > 0 only when explicit positive qty survives OOS/delay checks. */
 export function resolveScraperStock(input: ResolveScraperStockInput): ResolveScraperStockResult {
   const pageText = input.pageText ?? "";
 
@@ -105,11 +103,6 @@ export function resolveScraperStock(input: ResolveScraperStockInput): ResolveScr
   }
   if (availabilityTextImpliesDelayed(pageText)) {
     return { inStock: false, stock: 0, stockSource: "page_text_delayed" };
-  }
-
-  const schemaOk = isSchemaOfferInStock(input.schemaAvailability);
-  if (input.schemaAvailability && !schemaOk) {
-    return { inStock: false, stock: 0, stockSource: "schema_not_instock" };
   }
 
   const qty = input.explicitQty;
@@ -121,23 +114,21 @@ export function resolveScraperStock(input: ResolveScraperStockInput): ResolveScr
     return { inStock: true, stock: n, stockSource: "explicit_qty" };
   }
 
-  if (!schemaOk) {
-    return { inStock: false, stock: 0, stockSource: "no_stock_signal" };
+  const schemaOk = isSchemaOfferInStock(input.schemaAvailability);
+  if (input.schemaAvailability && !schemaOk) {
+    return { inStock: false, stock: 0, stockSource: "schema_not_instock" };
   }
 
-  const defaultStock = Math.max(0, Number(input.defaultStockWhenImmediate ?? 0));
-  if (defaultStock <= 0) {
-    return { inStock: false, stock: 0, stockSource: "no_explicit_qty" };
-  }
+  return { inStock: false, stock: 0, stockSource: "no_explicit_qty" };
+}
 
-  if (input.requireImmediateText) {
-    const immediate = /\b(sofort\s+(verf(?:ü|ue)gbar|lieferbar)|auf\s+lager|in\s+stock|lagernd|stück\s+an\s+lager|au\s+lager)\b/i.test(
-      pageText
-    );
-    if (!immediate) {
-      return { inStock: false, stock: 0, stockSource: "not_immediate" };
-    }
-  }
-
-  return { inStock: true, stock: defaultStock, stockSource: "default_instock" };
+/** Boolean in-stock flags without qty never justify listing stock. */
+export function stockFromExplicitQtyOnly(
+  sellable: boolean,
+  explicitQty: number | null | undefined
+): number {
+  if (!sellable) return 0;
+  const n = Number(explicitQty);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.trunc(n);
 }

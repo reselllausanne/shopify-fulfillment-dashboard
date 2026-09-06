@@ -79,8 +79,8 @@ describe("parseAlternateProductHtml", () => {
     expect(product?.mpn).toBe("76274");
     expect(product?.brand).toBe("goobay");
     expect(product?.productType).toBe("goobay");
-    expect(product?.stock).toBe(1);
-    expect(product?.inStock).toBe(true);
+    expect(product?.stock).toBe(0);
+    expect(product?.inStock).toBe(false);
     expect(product?.imageUrl).toContain("alternate.ch");
   });
 

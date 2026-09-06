@@ -36,8 +36,6 @@ export function alternateConfig() {
       Number(process.env.SCRAPER_ALT_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 120)
     ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_ALT_CONCURRENCY || 6)),
-    /** Auf Lager + immediate copy, no exact qty → this cap (default 1). */
-    defaultStock: Math.max(0, Number(process.env.SCRAPER_ALT_DEFAULT_STOCK || 1)),
     sitemapIndexUrl: String(
       process.env.SCRAPER_ALT_SITEMAP_INDEX_URL || ALTERNATE_SITEMAP_INDEX_URL
     ).trim(),
@@ -165,11 +163,7 @@ function gtinFromProduct(product: Record<string, unknown>, html: string): string
   return table ?? null;
 }
 
-export function parseAlternateProductHtml(
-  html: string,
-  productUrl: string,
-  defaultStock = alternateConfig().defaultStock
-): AlternateProduct | null {
+export function parseAlternateProductHtml(html: string, productUrl: string): AlternateProduct | null {
   const product = parseJsonLdProduct(html);
   if (!product) return null;
 
@@ -194,8 +188,6 @@ export function parseAlternateProductHtml(
   const stockInfo = resolveScraperStock({
     schemaAvailability: typeof offer?.availability === "string" ? offer.availability : null,
     pageText: htmlAvailabilityText(html),
-    defaultStockWhenImmediate: defaultStock,
-    requireImmediateText: true,
   });
   const inStock = stockInfo.inStock;
   const stock = stockInfo.stock;

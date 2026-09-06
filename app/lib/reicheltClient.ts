@@ -334,12 +334,6 @@ export function reicheltConfig() {
     sitemapShardMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_MAX_RETRIES || 2)),
     sitemapShardRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_RETRY_BASE_MS || 2_000)),
     sitemapFallbackMaxShard: Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_FALLBACK_MAX_SHARD || 149)),
-    // Reichelt HTML exposes only in-stock class (status_1/4/6/16/100), no real qty.
-    // Default 1 to avoid Galaxus back-order overselling; raise via SCRAPER_REI_DEFAULT_STOCK.
-    defaultStock: Math.max(
-      1,
-      Number(process.env.SCRAPER_REI_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-    ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 8)),
   };
 }

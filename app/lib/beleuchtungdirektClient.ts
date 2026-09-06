@@ -72,10 +72,6 @@ export function bldConfig() {
     maxRetries: Math.max(1, Number(process.env.SCRAPER_BLD_MAX_RETRIES || 3)),
     hitsPerPage: Math.max(10, Math.min(200, Number(process.env.SCRAPER_BLD_HITS_PER_PAGE || 120))),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_BLD_PRODUCT_CONCURRENCY || 8)),
-    defaultStock: Math.max(
-      1,
-      Number(process.env.SCRAPER_BLD_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-    ),
   };
 }
 

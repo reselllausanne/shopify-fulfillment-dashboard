@@ -33,7 +33,6 @@ export function hawkConfig() {
       Number(process.env.SCRAPER_HAW_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 100)
     ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_HAW_CONCURRENCY || 6)),
-    defaultStock: Math.max(0, Number(process.env.SCRAPER_HAW_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)),
     sitemapUrl: String(process.env.SCRAPER_HAW_SITEMAP_URL || HAWK_SITEMAP_URL).trim(),
     excludePathPrefixes: parseHawkExcludePrefixes(),
   };
@@ -179,11 +178,7 @@ function categoryFromUrl(productUrl: string): string | null {
   }
 }
 
-export function parseHawkProductHtml(
-  html: string,
-  productUrl: string,
-  defaultStock = hawkConfig().defaultStock
-): HawkProduct | null {
+export function parseHawkProductHtml(html: string, productUrl: string): HawkProduct | null {
   const product = parseJsonLdProduct(html);
   if (!product) return null;
 
@@ -214,8 +209,6 @@ export function parseHawkProductHtml(
     schemaAvailability: typeof offer?.availability === "string" ? offer.availability : null,
     pageText: htmlAvailabilityText(html),
     explicitQty: qty,
-    defaultStockWhenImmediate: defaultStock,
-    requireImmediateText: qty == null,
   });
   const inStock = stockInfo.inStock;
   const stock = stockInfo.stock;
