@@ -22,7 +22,6 @@ import {
   streamMasterCsvFromSnapshot,
   streamSpecsCsvFromSnapshot,
 } from "@/galaxus/exports/masterSpecsSnapshot";
-import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
 
 export type SnapshotUploadInput = {
   runId: string;
@@ -43,6 +42,56 @@ export type SnapshotUploadResult = {
   reason?: string;
   error?: string;
 };
+
+/**
+ * Refuse to push a snapshot much smaller than what Galaxus already has —
+ * they treat missing rows as retirements. Legacy path had the same implicit
+ * guard because the live catalog produced the row count; snapshot needs it
+ * explicitly.
+ */
+async function checkRowCountAgainstLastUpload(params: {
+  masterRows: number;
+  specsRows: number;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const minRatio = Math.max(
+    0.1,
+    Math.min(0.99, Number(process.env.GALAXUS_MASTER_SPECS_MIN_ROW_RATIO ?? 0.8))
+  );
+  const lastMaster = await (prisma as any).galaxusExportManifest.findFirst({
+    where: { exportType: "master", uploadStatus: "uploaded" },
+    orderBy: { createdAt: "desc" },
+    select: { productCount: true },
+  });
+  const lastSpecs = await (prisma as any).galaxusExportManifest.findFirst({
+    where: { exportType: "specs", uploadStatus: "uploaded" },
+    orderBy: { createdAt: "desc" },
+    select: { productCount: true },
+  });
+  const shrinkages: string[] = [];
+  if (lastMaster?.productCount && lastMaster.productCount > 0) {
+    const ratio = params.masterRows / lastMaster.productCount;
+    if (ratio < minRatio) {
+      shrinkages.push(
+        `master ${params.masterRows} vs last ${lastMaster.productCount} (ratio ${ratio.toFixed(3)} < min ${minRatio})`
+      );
+    }
+  }
+  if (lastSpecs?.productCount && lastSpecs.productCount > 0) {
+    const ratio = params.specsRows / lastSpecs.productCount;
+    if (ratio < minRatio) {
+      shrinkages.push(
+        `specs ${params.specsRows} vs last ${lastSpecs.productCount} (ratio ${ratio.toFixed(3)} < min ${minRatio})`
+      );
+    }
+  }
+  if (shrinkages.length > 0) {
+    return {
+      ok: false,
+      error: `Refusing snapshot upload — row count shrinkage: ${shrinkages.join("; ")}. Set GALAXUS_MASTER_SPECS_MIN_ROW_RATIO to override or investigate rebuild.`,
+    };
+  }
+  return { ok: true };
+}
 
 /** Streaming checksum of a file on disk (never loads whole file into RAM). */
 async function hashFilePath(path: string): Promise<string> {
@@ -79,11 +128,17 @@ export async function tryUploadMasterSpecsFromSnapshot(
   const specsPath = join(workDir, input.specsFilename);
 
   try {
-    // Streaming block list (wel-pokemon omissions + any future critical GTIN filters).
-    // The heavy validation pass is skipped here because snapshot rows are already
-    // validated at write time; only omit rows explicitly listed by the wel filter.
-    const welPokemonOmitKeys = await loadWelCardOmitProviderKeys();
-    const skipSet = welPokemonOmitKeys.size > 0 ? welPokemonOmitKeys : undefined;
+    // Snapshot rows are already filtered at rebuild time (critical-GTIN +
+    // wel-pokemon). No per-push validation pass — snapshot is authoritative.
+    // Escape hatch: comma-separated ProviderKeys in GALAXUS_MASTER_SPECS_UPLOAD_BLOCK
+    // for hot-patching a bad row between rebuilds.
+    const runtimeBlockList = String(
+      process.env.GALAXUS_MASTER_SPECS_UPLOAD_BLOCK ?? ""
+    )
+      .split(/[\s,]+/)
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const skipSet = runtimeBlockList.length ? new Set(runtimeBlockList) : undefined;
 
     const [masterOut, specsOut] = await Promise.all([
       streamMasterCsvFromSnapshot(masterPath, { skipProviderKeys: skipSet }),
@@ -100,6 +155,27 @@ export async function tryUploadMasterSpecsFromSnapshot(
         omittedByFeed: { master: masterOut.skipped, specs: specsOut.skipped },
         ms: Date.now() - startedAt,
         error: `Refusing upload: empty feed(s) from snapshot (master=${masterOut.rowCount}, specs=${specsOut.rowCount})`,
+      };
+    }
+
+    // Row-count guardrail: refuse if snapshot would push < MIN_RATIO of the last
+    // successful master upload. Guards against a botched rebuild silently
+    // retiring hundreds of thousands of Galaxus SKUs. Env override:
+    // GALAXUS_MASTER_SPECS_MIN_ROW_RATIO (default 0.8).
+    const guard = await checkRowCountAgainstLastUpload({
+      masterRows: masterOut.rowCount,
+      specsRows: specsOut.rowCount,
+    });
+    if (!guard.ok) {
+      return {
+        ok: false,
+        status: 409,
+        runId: input.runId,
+        uploaded: [],
+        counts: { master: masterOut.rowCount, specs: specsOut.rowCount },
+        omittedByFeed: { master: masterOut.skipped, specs: specsOut.skipped },
+        ms: Date.now() - startedAt,
+        error: guard.error,
       };
     }
 

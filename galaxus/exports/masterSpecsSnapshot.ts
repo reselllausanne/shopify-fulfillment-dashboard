@@ -1,7 +1,9 @@
 import { createHash } from "crypto";
 import { prisma } from "@/app/lib/prisma";
 import { openCsvWriter, type CsvRow } from "@/galaxus/exports/csvStream";
+import { collectCriticalGtinProviderKeys } from "@/galaxus/exports/feedValidation";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
+import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
 import { skipGalaxusFeedValidationForTrigger } from "@/galaxus/feedExecutor";
 
 const SNAPSHOT_META_ID = "default";
@@ -62,16 +64,41 @@ export async function rebuildMasterSpecsSnapshot(params?: {
     providerKeys: params?.providerKeys,
   });
 
-  await replaceMasterSnapshotRows(built.masterRows);
-  await replaceSpecsSnapshotRows(built.specsRows);
+  // Bake the same row-level filters legacy runFeedUpload applies in-memory:
+  //   1. critical GTIN issues (empty / invalid / wrong check digit) — from the
+  //      validation report attached to the build result.
+  //   2. wel-pokemon opt-outs — from the persisted omit list.
+  // Baking them at rebuild time keeps the snapshot upload path a byte-for-byte
+  // subset of what the legacy path would upload — no risk of pushing rows
+  // Galaxus would reject.
+  const criticalGtinKeys = collectCriticalGtinProviderKeys(built.report ?? {});
+  const welPokemonKeys = await loadWelCardOmitProviderKeys();
+  const blocked = new Set<string>([
+    ...Array.from(criticalGtinKeys),
+    ...Array.from(welPokemonKeys),
+  ]);
+
+  const masterRows = blocked.size
+    ? built.masterRows.filter(
+        (row) => !blocked.has(String(row.ProviderKey ?? "").trim())
+      )
+    : built.masterRows;
+  const specsRows = blocked.size
+    ? built.specsRows.filter(
+        (row) => !blocked.has(String(row.ProviderKey ?? "").trim())
+      )
+    : built.specsRows;
+
+  await replaceMasterSnapshotRows(masterRows);
+  await replaceSpecsSnapshotRows(specsRows);
 
   const now = new Date();
   await (prisma as any).galaxusFeedSnapshotMeta.upsert({
     where: { id: SNAPSHOT_META_ID },
     create: {
       id: SNAPSHOT_META_ID,
-      masterRowCount: built.masterRows.length,
-      specsRowCount: built.specsRows.length,
+      masterRowCount: masterRows.length,
+      specsRowCount: specsRows.length,
       masterHeadersJson: [...MASTER_CSV_HEADERS],
       specsHeadersJson: [...SPECS_CSV_HEADERS],
       masterRebuiltAt: now,
@@ -79,8 +106,8 @@ export async function rebuildMasterSpecsSnapshot(params?: {
       updatedAt: now,
     },
     update: {
-      masterRowCount: built.masterRows.length,
-      specsRowCount: built.specsRows.length,
+      masterRowCount: masterRows.length,
+      specsRowCount: specsRows.length,
       masterHeadersJson: [...MASTER_CSV_HEADERS],
       specsHeadersJson: [...SPECS_CSV_HEADERS],
       masterRebuiltAt: now,
@@ -90,14 +117,18 @@ export async function rebuildMasterSpecsSnapshot(params?: {
   });
 
   console.info("[GALAXUS][FEED][SNAPSHOT][MASTER_SPECS] rebuilt", {
-    masterRows: built.masterRows.length,
-    specsRows: built.specsRows.length,
+    masterRowsIn: built.masterRows.length,
+    specsRowsIn: built.specsRows.length,
+    masterRowsOut: masterRows.length,
+    specsRowsOut: specsRows.length,
+    blockedCriticalGtin: criticalGtinKeys.size,
+    blockedWelPokemon: welPokemonKeys.size,
     ms: Date.now() - startedAt,
   });
 
   return {
-    masterRows: built.masterRows.length,
-    specsRows: built.specsRows.length,
+    masterRows: masterRows.length,
+    specsRows: specsRows.length,
     ms: Date.now() - startedAt,
     criticalGtinIssues: built.criticalGtinIssues,
     invalidSupplierVariantIds: built.invalidSupplierVariantIds,
