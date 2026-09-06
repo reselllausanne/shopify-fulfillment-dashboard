@@ -12,6 +12,15 @@ export const REICHELT_CH_SHIPPING_EXTRA_EUR_PER_10KG = 5.91;
 /** Parcel-tier ceiling used when scraped weight is absurd / freight-only. */
 export const REICHELT_MAX_SHIP_WEIGHT_GRAMS_DEFAULT = 50_000;
 
+/** Swiss Post Sperrgut: longest side > 100 cm. */
+export const REICHELT_BULKY_LONGEST_SIDE_MM_DEFAULT = 1000;
+
+/**
+ * Customer-facing encombrant add-on (after margin, not ×1.3).
+ * Inbound DPD ~9.80 is free margin on bulk buys. Bake 5 only on long SKUs.
+ */
+export const REICHELT_BULKY_SURCHARGE_CHF_DEFAULT = 5;
+
 /**
  * Reichelt often mislabels grams as kg on the bare "Poids/Gewicht" row
  * (webcam "121 kg", keyboard "425 kg"). Integers in this band are treated as grams.
@@ -34,6 +43,10 @@ export type ReicheltLandedCost = {
   vatRate: number;
   priceEur: number | null;
   rawPriceChf: number | null;
+  /** Longest rigid side in mm (tech table + title). Null if unknown / flexible cable. */
+  longestSideMm: number | null;
+  bulkySurchargeChf: number;
+  bulky: boolean;
 };
 
 export function reicheltPricingConfig() {
@@ -52,7 +65,126 @@ export function reicheltPricingConfig() {
       Number(process.env.SCRAPER_REI_ABSURD_WEIGHT_PRODUCT_CHF || 500)
     ),
     applyVatOnEurFallback: String(process.env.SCRAPER_REI_EUR_FALLBACK_ADD_VAT ?? "1") !== "0",
+    bulkyLongestSideMm: Math.max(
+      100,
+      Number(process.env.SCRAPER_REI_BULKY_LONGEST_SIDE_MM || REICHELT_BULKY_LONGEST_SIDE_MM_DEFAULT)
+    ),
+    bulkySurchargeChf: Math.max(
+      0,
+      Number(process.env.SCRAPER_REI_BULKY_SURCHARGE_CHF || REICHELT_BULKY_SURCHARGE_CHF_DEFAULT)
+    ),
   };
+}
+
+const REICHELT_DIM_NAME =
+  /^(longueur|length|l[äa]nge|laenge|h[oö]he|hoehe|height|hauteur|breite|width|largeur|tiefe|depth|profondeur)$/i;
+const REICHELT_DIM_SKIP_NAME = /ø|durchmesser|diameter|diam[eè]tre|cable.?length|longueur du c[aâ]ble/i;
+const REICHELT_FLEXIBLE_LENGTH =
+  /c[aâ]ble|kabel|hdmi|usb|rj-?45|ethernet|patchcord|rallonge|verl[äa]nger|schlauch|tuyau|\bhose\b|bande(?:\s+\w+){0,2}\s*led|led[- ]?strip|maxled|film|folie|\blitze\b/i;
+const REICHELT_RIGID_LONG =
+  /tube|r[oö]hre|n[eé]on|leiste|wannen|aquaprofi|\bt8\b|\bt5\b|rail|profil[eé]?|antenne|antenna|r[eé]glette|lin[eé]aire|feuchtraum|damp[- ]?proof|submarine/i;
+
+export type ReicheltTechDim = { name: string; value: string };
+
+function normalizeReicheltMm(mm: number): number | null {
+  let value = mm;
+  // Reichelt FR titles: 12000 for 1200 mm tubes
+  if (value >= 6000 && value <= 20000 && value % 10 === 0) {
+    const fixed = value / 10;
+    if (fixed >= 300 && fixed <= 2000) value = fixed;
+  }
+  if (value < 50 || value > 5000) return null;
+  return Math.round(value);
+}
+
+/** Parse "1200 mm" / "1 500 mm" / "120 cm" / "1,2 m". */
+export function parseReicheltDimensionToMm(raw: string): number | null {
+  const s = String(raw ?? "")
+    .replace(/\u00a0/g, " ")
+    .replace(/'/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!s) return null;
+
+  const mmMatch = s.match(/^(\d{1,3}(?:[ ]\d{3})+|\d{3,5})\s*mm\b/i);
+  if (mmMatch) {
+    const n = Number(mmMatch[1].replace(/ /g, ""));
+    return Number.isFinite(n) ? normalizeReicheltMm(n) : null;
+  }
+
+  const cmMatch = s.match(/^(\d{2,3})\s*cm\b/i);
+  if (cmMatch) {
+    const cm = Number(cmMatch[1]);
+    if (Number.isFinite(cm) && cm >= 10 && cm <= 400) return cm * 10;
+  }
+
+  const mMatch = s.match(/^(\d+(?:[.,]\d+)?)\s*m\b/i);
+  if (mMatch) {
+    const meters = Number(mMatch[1].replace(",", "."));
+    if (Number.isFinite(meters) && meters >= 0.5 && meters <= 5) return Math.round(meters * 1000);
+  }
+  return null;
+}
+
+function collectTitleDimensionMm(title: string, allowMeters: boolean): number[] {
+  const t = String(title ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ");
+  const out: number[] = [];
+  for (const match of t.matchAll(/(\d{1,3}(?:[ ]\d{3})+|\d{3,5})\s*mm\b/gi)) {
+    const n = Number(match[1].replace(/ /g, ""));
+    const mm = Number.isFinite(n) ? normalizeReicheltMm(n) : null;
+    if (mm != null) out.push(mm);
+  }
+  for (const match of t.matchAll(/(?<![\d,.])(\d{2,3})\s*cm\b/gi)) {
+    const cm = Number(match[1]);
+    if (Number.isFinite(cm) && cm >= 10 && cm <= 400) out.push(cm * 10);
+  }
+  if (allowMeters) {
+    for (const match of t.matchAll(/(\d[,.]\d)\s*m\b/gi)) {
+      const meters = Number(match[1].replace(",", "."));
+      if (Number.isFinite(meters) && meters >= 0.5 && meters <= 5) out.push(Math.round(meters * 1000));
+    }
+  }
+  return out;
+}
+
+export function longestSideMmFromTechAttributes(attrs: ReicheltTechDim[] | null | undefined): number | null {
+  let max: number | null = null;
+  for (const attr of attrs ?? []) {
+    const name = String(attr.name ?? "").trim();
+    if (!name || REICHELT_DIM_SKIP_NAME.test(name) || !REICHELT_DIM_NAME.test(name)) continue;
+    const mm = parseReicheltDimensionToMm(attr.value);
+    if (mm == null) continue;
+    if (max == null || mm > max) max = mm;
+  }
+  return max;
+}
+
+/**
+ * Longest rigid side. Drops coiled cable / strip lengths (not Sperrgut).
+ */
+export function resolveReicheltLongestSideMm(input: {
+  title?: string | null;
+  techAttributes?: ReicheltTechDim[] | null;
+  breadcrumbs?: string[] | null;
+}): { longestSideMm: number | null; bulky: boolean } {
+  const title = String(input.title ?? "");
+  const blob = [title, ...(input.breadcrumbs ?? [])].join(" ");
+  const flexible = REICHELT_FLEXIBLE_LENGTH.test(blob);
+  const rigid = REICHELT_RIGID_LONG.test(blob);
+  const fromTech = longestSideMmFromTechAttributes(input.techAttributes);
+  const fromTitle = collectTitleDimensionMm(title, rigid);
+  const titleMax = fromTitle.length ? Math.max(...fromTitle) : null;
+  let longestSideMm: number | null = null;
+  for (const value of [fromTech, titleMax]) {
+    if (value == null) continue;
+    if (longestSideMm == null || value > longestSideMm) longestSideMm = value;
+  }
+  if (longestSideMm == null) return { longestSideMm: null, bulky: false };
+  if (flexible && !rigid) return { longestSideMm: null, bulky: false };
+  // 3m+ with no tube/fixture keyword = reel / coil, not a 3m carton.
+  if (!rigid && longestSideMm > 2500) return { longestSideMm: null, bulky: false };
+  const threshold = reicheltPricingConfig().bulkyLongestSideMm;
+  return { longestSideMm, bulky: longestSideMm >= threshold };
 }
 
 type WeightHit = {
@@ -225,7 +357,7 @@ export function resolveReicheltProductChf(input: {
   return { productChf: roundChf(converted), source: "eur_converted", eurChfRate };
 }
 
-/** Landed buy = product CHF + shipping CHF; DB price = landed × (1 + margin%). */
+/** Landed buy = product CHF + Reichelt DPD (weight). Sell = landed × (1 + margin%) + encombrant. */
 export function computeReicheltLandedCost(input: {
   priceChf: number | null;
   priceEur: number | null;
@@ -233,6 +365,10 @@ export function computeReicheltLandedCost(input: {
   marginPercent?: number;
   /** When known, marks packaging preference in weightSource. */
   weightKind?: "packaging" | "generic" | null;
+  title?: string | null;
+  techAttributes?: ReicheltTechDim[] | null;
+  breadcrumbs?: string[] | null;
+  longestSideMm?: number | null;
 }): ReicheltLandedCost | null {
   const cfg = reicheltPricingConfig();
   const resolved = resolveReicheltProductChf({
@@ -262,7 +398,16 @@ export function computeReicheltLandedCost(input: {
   const shippingChf = roundChf(shippingEur * resolved.eurChfRate);
   const landedChf = roundChf(resolved.productChf + shippingChf);
   const marginPercent = input.marginPercent ?? cfg.marginPercent;
-  const sellPriceChf = roundChf(landedChf * (1 + marginPercent / 100));
+  const dims =
+    input.longestSideMm != null && Number.isFinite(input.longestSideMm)
+      ? { longestSideMm: Math.round(input.longestSideMm), bulky: input.longestSideMm >= cfg.bulkyLongestSideMm }
+      : resolveReicheltLongestSideMm({
+          title: input.title,
+          techAttributes: input.techAttributes,
+          breadcrumbs: input.breadcrumbs,
+        });
+  const bulkySurchargeChf = dims.bulky ? roundChf(cfg.bulkySurchargeChf) : 0;
+  const sellPriceChf = roundChf(landedChf * (1 + marginPercent / 100) + bulkySurchargeChf);
 
   return {
     productChf: resolved.productChf,
@@ -279,6 +424,9 @@ export function computeReicheltLandedCost(input: {
     vatRate: cfg.vatRate,
     priceEur: input.priceEur,
     rawPriceChf: input.priceChf,
+    longestSideMm: dims.longestSideMm,
+    bulkySurchargeChf,
+    bulky: dims.bulky,
   };
 }
 
