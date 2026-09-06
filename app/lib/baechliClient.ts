@@ -1,10 +1,11 @@
+import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import { scraperFetchText } from "@/app/lib/scraperProxy";
 import {
   availabilityTextImpliesDelayed,
   availabilityTextImpliesOos,
   htmlAvailabilityText,
   isSchemaOfferInStock,
 } from "@/app/lib/scraperAvailability";
-import { scraperFetchText } from "@/app/lib/scraperProxy";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
