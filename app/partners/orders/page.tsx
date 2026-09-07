@@ -64,6 +64,7 @@ export default function PartnerOrdersPage() {
   const [selectedGalaxusOrderId, setSelectedGalaxusOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const [selectedGalaxusOrder, setSelectedGalaxusOrder] = useState<any | null>(null);
+  const [selectedGalaxusLineIds, setSelectedGalaxusLineIds] = useState<Record<string, boolean>>({});
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [loadingGalaxusOrders, setLoadingGalaxusOrders] = useState(false);
@@ -384,22 +385,56 @@ export default function PartnerOrdersPage() {
 
   const markGalaxusShipped = async () => {
     if (!selectedGalaxusOrderId) return;
+    const lines: any[] = Array.isArray(selectedGalaxusOrder?.lines) ? selectedGalaxusOrder.lines : [];
+    const openLineIds = lines
+      .filter((line) => !line?.warehouseMarkedShippedAt)
+      .map((line) => String(line?.id ?? "").trim())
+      .filter(Boolean);
+    const selectedLineIds = openLineIds.filter((lineId) => Boolean(selectedGalaxusLineIds[lineId]));
+    if (openLineIds.length > 1 && selectedLineIds.length === 0) {
+      setError("Select at least one open line to ship this order partially.");
+      return;
+    }
     setError(null);
     setMarkingGalaxus(true);
     try {
       const res = await fetch(`/api/partners/galaxus/orders/${selectedGalaxusOrderId}/mark-shipped`, {
         method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          lineIds: selectedLineIds,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Mark shipped failed");
       await loadGalaxusOrders({ force: true });
       await loadGalaxusOrderDetail(selectedGalaxusOrderId, { force: true });
+      setSelectedGalaxusLineIds({});
     } catch (err: any) {
       setError(err.message ?? "Mark shipped failed");
     } finally {
       setMarkingGalaxus(false);
     }
   };
+
+  useEffect(() => {
+    const lines: any[] = Array.isArray(selectedGalaxusOrder?.lines) ? selectedGalaxusOrder.lines : [];
+    const openIds = lines
+      .filter((line) => !line?.warehouseMarkedShippedAt)
+      .map((line) => String(line?.id ?? "").trim())
+      .filter(Boolean);
+    if (openIds.length <= 1) {
+      setSelectedGalaxusLineIds(openIds[0] ? { [openIds[0]]: true } : {});
+      return;
+    }
+    setSelectedGalaxusLineIds((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const id of openIds) {
+        if (prev[id]) next[id] = true;
+      }
+      return next;
+    });
+  }, [selectedGalaxusOrder]);
 
   return (
     <div className="space-y-4">
@@ -711,7 +746,7 @@ export default function PartnerOrdersPage() {
           <div className="flex justify-end gap-2">
             <button
               onClick={markGalaxusShipped}
-              disabled={!selectedGalaxusOrderId || markingGalaxus}
+              disabled={!selectedGalaxusOrderId || markingGalaxus || !selectedGalaxusOrder}
               className="px-3 py-1.5 bg-slate-900 text-white rounded text-xs"
             >
               {markingGalaxus ? "Marking…" : "Mark shipped"}
@@ -727,12 +762,40 @@ export default function PartnerOrdersPage() {
               {Array.isArray(selectedGalaxusOrder.lines) && selectedGalaxusOrder.lines.length > 0 ? (
                 <div className="rounded border border-slate-200 bg-slate-50/90 p-3 text-xs space-y-2">
                   <div className="font-semibold text-slate-900">Products sold</div>
+                  {(() => {
+                    const lines: any[] = selectedGalaxusOrder.lines;
+                    const openLines = lines.filter((line) => !line?.warehouseMarkedShippedAt);
+                    const selectedCount = openLines.filter((line) =>
+                      Boolean(selectedGalaxusLineIds[String(line?.id ?? "").trim()])
+                    ).length;
+                    return (
+                      <div className="text-[11px] text-slate-600">
+                        Open lines: {openLines.length} · selected: {selectedCount}
+                        {openLines.length > 1 ? " · choose lines then Mark shipped (partial allowed)" : ""}
+                      </div>
+                    );
+                  })()}
                   <ul className="space-y-1.5">
                     {selectedGalaxusOrder.lines.map((line: any) => (
                       <li
                         key={line.id}
                         className="flex flex-wrap gap-x-2 gap-y-0.5 text-sm text-slate-700 border-b border-slate-100 pb-1.5 last:border-0 last:pb-0"
                       >
+                        {!line.warehouseMarkedShippedAt ? (
+                          <input
+                            type="checkbox"
+                            className="mt-1"
+                            checked={Boolean(selectedGalaxusLineIds[String(line.id)])}
+                            onChange={(e) =>
+                              setSelectedGalaxusLineIds((prev) => ({
+                                ...prev,
+                                [String(line.id)]: e.target.checked,
+                              }))
+                            }
+                          />
+                        ) : (
+                          <span className="mt-0.5 text-[10px] text-emerald-700">✓</span>
+                        )}
                         <span className="min-w-0 flex-1 font-medium text-slate-900">
                           {line.productName ?? line.description ?? "—"}
                         </span>
@@ -740,6 +803,11 @@ export default function PartnerOrdersPage() {
                           {line.providerKey ?? line.gtin ?? "—"}
                         </span>
                         <span className="text-slate-500 shrink-0">×{line.quantity ?? "—"}</span>
+                        {line.warehouseMarkedShippedAt ? (
+                          <span className="text-[10px] text-emerald-700 shrink-0">
+                            shipped {new Date(line.warehouseMarkedShippedAt).toLocaleDateString("fr-CH")}
+                          </span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

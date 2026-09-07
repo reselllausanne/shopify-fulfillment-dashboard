@@ -274,16 +274,23 @@ export async function GET(request: Request) {
       const linkedCount = includeLinked ? (linkedCountByOrderId.get(order.id) ?? 0) : 0;
       const needsBuyCount = includeLinked ? (needsBuyCountByOrderId.get(order.id) ?? 0) : 0;
       const warehouseLinesShipped = includeWarehouse ? (warehouseShippedByOrderId.get(order.id) ?? 0) : 0;
+      const totalLines = Number(order._count?.lines ?? 0);
       const warehouseOpenLineCount =
         warehouseOpenLineCountByOrderId != null
           ? (warehouseOpenLineCountByOrderId.get(order.id) ?? 0)
           : null;
-      const fulfillmentState =
-        fulfilledCount > 0
+      const isWarehouseFullyShipped = !isDirect && totalLines > 0 && warehouseLinesShipped >= totalLines;
+      const fulfillmentState = isDirect
+        ? fulfilledCount > 0
           ? "fulfilled"
           : shippedCount > 0
-          ? "shipped"
-          : "to_process";
+            ? "shipped"
+            : "to_process"
+        : isWarehouseFullyShipped
+          ? "fulfilled"
+          : shippedCount > 0
+            ? "shipped"
+            : "to_process";
       const inv = invoiceProgressByOrderId?.get(order.id);
       const { shipments, ...rest } = order;
       return {
