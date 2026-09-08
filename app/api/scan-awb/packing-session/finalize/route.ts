@@ -35,6 +35,7 @@ export const dynamic = "force-dynamic";
 type EntryIn = {
   galaxusOrderDbId?: string;
   galaxusOrderLineId?: string;
+  quantity?: number;
   unitIndex?: number;
   supplierPid?: string;
   gtin?: string | null;
@@ -210,11 +211,12 @@ export async function POST(req: NextRequest) {
       .map((e) => ({
         galaxusOrderDbId: String(e?.galaxusOrderDbId ?? "").trim(),
         galaxusOrderLineId: String(e?.galaxusOrderLineId ?? "").trim(),
+        quantity: Math.max(1, Number(e?.quantity ?? 1) || 1),
         unitIndex: Math.max(0, Number(e?.unitIndex ?? 0)),
         supplierPid: String(e?.supplierPid ?? "").trim(),
         gtin: e?.gtin ? String(e.gtin).trim() : null,
       }))
-      .filter((e) => e.galaxusOrderDbId && e.galaxusOrderLineId);
+      .filter((e) => e.galaxusOrderDbId && e.galaxusOrderLineId && e.quantity > 0);
 
     if (entries.length === 0) {
       return NextResponse.json(
@@ -290,12 +292,12 @@ export async function POST(req: NextRequest) {
           const key = `${e.galaxusOrderDbId}|${e.galaxusOrderLineId}`;
           const prev = qtyByOrderLine.get(key);
           if (prev) {
-            prev.quantity += 1;
+            prev.quantity += Math.max(1, Number(e.quantity ?? 1));
           } else {
             qtyByOrderLine.set(key, {
               orderId: e.galaxusOrderDbId,
               lineId: e.galaxusOrderLineId,
-              quantity: 1,
+              quantity: Math.max(1, Number(e.quantity ?? 1)),
             });
           }
         }

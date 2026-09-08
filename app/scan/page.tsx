@@ -292,6 +292,11 @@ type FulfillResponse = {
   shipmentId?: string | null;
 };
 
+type LineSelectionPayload = {
+  shopifyLineItemId: string;
+  quantity: number;
+};
+
 const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return fallback;
@@ -327,6 +332,7 @@ const PACKING_SESSION_CAP = 8;
 type PackingSessionEntry = {
   scannedAt: string;
   scanCode: string;
+  quantity: number;
   galaxusOrderId: string;
   galaxusOrderDbId: string;
   galaxusOrderNumber: string | null;
@@ -568,6 +574,7 @@ export default function ScanPage() {
   const [loading, setLoading] = useState(false);
   const [fulfillLoading, setFulfillLoading] = useState(false);
   const [fulfillResult, setFulfillResult] = useState<FulfillResponse | null>(null);
+  const [fulfillQtyByLineId, setFulfillQtyByLineId] = useState<Record<string, string>>({});
   const [result, setResult] = useState<ScanResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [scanSessionKey, setScanSessionKey] = useState<string | null>(null);
@@ -592,6 +599,14 @@ export default function ScanPage() {
   useEffect(() => {
     packingSessionRef.current = packingSession;
   }, [packingSession]);
+  const packingSessionPairCount = useMemo(
+    () =>
+      packingSession.reduce(
+        (sum, entry) => sum + Math.max(1, Number(entry?.quantity ?? 1)),
+        0
+      ),
+    [packingSession]
+  );
   const canceledStates = useMemo(
     () => new Set(["CANCELED", "CANCELLED", "ORDER_CANCELLED", "CLOSED"]),
     []
@@ -631,14 +646,41 @@ export default function ScanPage() {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          setPackingSession(parsed as PackingSessionEntry[]);
-          setPackingSessionReady(parsed.length >= PACKING_SESSION_CAP);
+          const normalized = (parsed as any[])
+            .map((entry) => ({
+              ...entry,
+              quantity: Math.max(1, Number(entry?.quantity ?? 1)),
+            }))
+            .filter((entry) => String(entry?.lineId ?? "").trim().length > 0);
+          setPackingSession(normalized as PackingSessionEntry[]);
+          const total = normalized.reduce(
+            (sum, entry) => sum + Math.max(1, Number(entry?.quantity ?? 1)),
+            0
+          );
+          setPackingSessionReady(total >= PACKING_SESSION_CAP);
         }
       }
     } catch {
       // ignore
     }
   }, []);
+
+  useEffect(() => {
+    const lineItems = result?.match?.shopifyOrder?.lineItems ?? [];
+    if (!result?.match?.shopifyOrderId || lineItems.length === 0) {
+      setFulfillQtyByLineId({});
+      return;
+    }
+    const defaults: Record<string, string> = {};
+    for (const line of lineItems) {
+      defaults[line.id] = "0";
+    }
+    const scannedLineId = String(result.match.shopifyLineItemId ?? "").trim();
+    if (scannedLineId && defaults[scannedLineId] !== undefined) {
+      defaults[scannedLineId] = "1";
+    }
+    setFulfillQtyByLineId(defaults);
+  }, [result?.match?.shopifyOrderId, result?.match?.shopifyLineItemId, result?.awb]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1285,7 +1327,11 @@ export default function ScanPage() {
   ) => {
     if (!scanCode.trim()) return;
     const current = packingSessionRef.current;
-    if (current.length >= PACKING_SESSION_CAP) {
+    const currentPairs = current.reduce(
+      (sum, entry) => sum + Math.max(1, Number(entry?.quantity ?? 1)),
+      0
+    );
+    if (currentPairs >= PACKING_SESSION_CAP) {
       // Don't nag when a direct-delivery / home-return / decathlon scan already ran.
       if (!opts.mainScanHandled) {
         setPackingReject({
@@ -1308,6 +1354,7 @@ export default function ScanPage() {
             unitIndex: e.unitIndex,
             supplierPid: e.supplierPid,
             gtin: e.gtin,
+            quantity: Math.max(1, Number(e.quantity ?? 1)),
           })),
         }),
       });
@@ -1317,6 +1364,7 @@ export default function ScanPage() {
         const entry: PackingSessionEntry = {
           scannedAt: new Date().toISOString(),
           scanCode,
+          quantity: 1,
           galaxusOrderId: data.matched.galaxusOrderId,
           galaxusOrderDbId: data.matched.galaxusOrderDbId,
           galaxusOrderNumber: data.matched.galaxusOrderNumber,
@@ -1333,11 +1381,25 @@ export default function ScanPage() {
         };
         setPackingSession((prev) => {
           // Dedup: same lineId + unitIndex should never appear twice.
-          if (prev.some((p) => p.lineId === entry.lineId && p.unitIndex === entry.unitIndex)) {
-            return prev;
+          const duplicateIndex = prev.findIndex(
+            (p) => p.lineId === entry.lineId && p.unitIndex === entry.unitIndex
+          );
+          let next = prev;
+          if (duplicateIndex >= 0) {
+            next = [...prev];
+            const currentQty = Math.max(1, Number(next[duplicateIndex]?.quantity ?? 1));
+            next[duplicateIndex] = {
+              ...next[duplicateIndex],
+              quantity: currentQty + 1,
+            };
+          } else {
+            next = [...prev, entry];
           }
-          const next = [...prev, entry];
-          if (next.length >= PACKING_SESSION_CAP) setPackingSessionReady(true);
+          const totalPairs = next.reduce(
+            (sum, row) => sum + Math.max(1, Number(row?.quantity ?? 1)),
+            0
+          );
+          if (totalPairs >= PACKING_SESSION_CAP) setPackingSessionReady(true);
           // Stale success/error line invalid once box changes.
           setFinalizeStatus(null);
           return next;
@@ -1372,6 +1434,7 @@ export default function ScanPage() {
     const entries = snapshot.map((e) => ({
       galaxusOrderDbId: e.galaxusOrderDbId,
       galaxusOrderLineId: e.lineId,
+      quantity: Math.max(1, Number(e.quantity ?? 1)),
       unitIndex: e.unitIndex,
       supplierPid: e.supplierPid,
       gtin: e.gtin,
@@ -1673,19 +1736,7 @@ export default function ScanPage() {
         });
       }
 
-      if (
-        ENABLE_AUTO_FULFILLMENT &&
-        data.ok &&
-        data.match &&
-        !data.galaxus &&
-        !data.inboundHome &&
-        !data.stxInboundBuy
-      ) {
-        await runFulfillFromScan(data, {
-          scanStartedAt: new Date(startedAt).toISOString(),
-          scanCompletedAt: new Date(finishedAt).toISOString(),
-        });
-      }
+      // Manual confirm required for Shopify fulfillments (multi-line / partial shipping safe).
     } catch (err: any) {
       setResult({
         ok: false,
@@ -1769,6 +1820,7 @@ export default function ScanPage() {
       scanStartedAt?: string;
       scanCompletedAt?: string;
       gtinFulfill?: boolean;
+      lineSelections?: LineSelectionPayload[];
     }
   ) => {
     if (!scan?.awb || !scan?.match || scan.galaxus || scan.inboundHome || scan.stxInboundBuy) return;
@@ -1787,6 +1839,7 @@ export default function ScanPage() {
           includeLabelData: true,
           allowAlreadyFulfilled,
           gtinFulfill,
+          lineSelections: options?.lineSelections ?? [],
           // Clients need the Shopify shipping email with Swiss Post tracking.
           notifyCustomer: true,
           scanSessionKey,
@@ -1826,10 +1879,31 @@ export default function ScanPage() {
     }
   };
 
+  const buildLineSelectionsFromInputs = (): LineSelectionPayload[] => {
+    const lineItems = result?.match?.shopifyOrder?.lineItems ?? [];
+    if (lineItems.length === 0) return [];
+    return lineItems
+      .map((line) => {
+        const raw = fulfillQtyByLineId[line.id] ?? "0";
+        const parsed = Number(raw);
+        const qty = Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+        if (qty <= 0) return null;
+        return { shopifyLineItemId: line.id, quantity: qty };
+      })
+      .filter((row): row is LineSelectionPayload => Boolean(row));
+  };
+
   const handleFulfill = async () => {
     if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
+    const lineSelections = buildLineSelectionsFromInputs();
+    const hasSelectableLines = (result.match.shopifyOrder?.lineItems?.length ?? 0) > 0;
+    if (hasSelectableLines && lineSelections.length === 0) {
+      window.alert("Select shipped qty before fulfillment.");
+      return;
+    }
     await runFulfillFromScan(result, {
       gtinFulfill: Boolean(result.manualShopifySuggest),
+      lineSelections,
     });
   };
 
@@ -2068,10 +2142,10 @@ export default function ScanPage() {
         <div className="mt-6 border rounded-lg bg-white shadow p-4">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="text-base font-semibold text-gray-900">
-                Packing session · {packingSession.length}/{PACKING_SESSION_CAP} pairs
+                Packing session · {packingSessionPairCount}/{PACKING_SESSION_CAP} pairs
               </div>
               <div className="flex gap-2">
-                {packingSession.length > 0 && packingSession.length < PACKING_SESSION_CAP && (
+                {packingSessionPairCount > 0 && packingSessionPairCount < PACKING_SESSION_CAP && (
                   <button
                     type="button"
                     onClick={() => setPackingSessionReady(true)}
@@ -2122,6 +2196,7 @@ export default function ScanPage() {
                       <th className="py-1 pr-2">Order</th>
                       <th className="py-1 pr-2">Order date</th>
                       <th className="py-1 pr-2">Unit</th>
+                      <th className="py-1 pr-2">Qty</th>
                       <th className="py-1"></th>
                     </tr>
                   </thead>
@@ -2148,13 +2223,53 @@ export default function ScanPage() {
                           {new Date(e.orderDate).toLocaleDateString("de-CH")}
                         </td>
                         <td className="py-1 pr-2">#{e.unitIndex + 1}</td>
+                        <td className="py-1 pr-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={PACKING_SESSION_CAP}
+                            value={Math.max(1, Number(e.quantity ?? 1))}
+                            onChange={(ev) => {
+                              const parsed = Number(ev.target.value);
+                              setPackingSession((prev) => {
+                                const next = [...prev];
+                                const current = next[idx];
+                                if (!current) return prev;
+                                const safe = Number.isFinite(parsed) ? Math.floor(parsed) : 1;
+                                const base = Math.max(1, safe);
+                                const others = prev.reduce(
+                                  (sum, row, i) =>
+                                    i === idx ? sum : sum + Math.max(1, Number(row?.quantity ?? 1)),
+                                  0
+                                );
+                                const maxAllowedForRow = Math.max(1, PACKING_SESSION_CAP - others);
+                                const clamped = Math.max(1, Math.min(base, maxAllowedForRow));
+                                next[idx] = { ...current, quantity: clamped };
+                                const totalPairs = next.reduce(
+                                  (sum, row) => sum + Math.max(1, Number(row?.quantity ?? 1)),
+                                  0
+                                );
+                                if (totalPairs < PACKING_SESSION_CAP) {
+                                  setPackingSessionReady(false);
+                                }
+                                setFinalizeStatus(null);
+                                return next;
+                              });
+                            }}
+                            className="w-14 rounded border px-1 py-0.5 text-[11px]"
+                          />
+                        </td>
                         <td className="py-1 text-right">
                           <button
                             type="button"
                             onClick={() => {
                               const next = packingSession.filter((_, i) => i !== idx);
                               setPackingSession(next);
-                              if (next.length < PACKING_SESSION_CAP) {
+                              const nextPairs = next.reduce(
+                                (sum, row) => sum + Math.max(1, Number(row?.quantity ?? 1)),
+                                0
+                              );
+                              if (nextPairs < PACKING_SESSION_CAP) {
                                 setPackingSessionReady(false);
                               }
                             }}
@@ -2170,15 +2285,15 @@ export default function ScanPage() {
               </div>
             )}
 
-            {(packingSessionReady || packingSession.length >= PACKING_SESSION_CAP) &&
+            {(packingSessionReady || packingSessionPairCount >= PACKING_SESSION_CAP) &&
               packingSession.length > 0 && (
                 <div className="mt-4 rounded-lg border border-green-400 bg-green-50 p-4 text-green-950">
                   <div className="font-semibold text-green-900">
                     Session ready — one warehouse shipment
                   </div>
                   <p className="text-sm mt-1">
-                    Put the {packingSession.length} pair
-                    {packingSession.length === 1 ? "" : "s"} in one box. One button = same as
+                    Put the {packingSessionPairCount} pair
+                    {packingSessionPairCount === 1 ? "" : "s"} in one box. One button = same as
                     warehouse builder: <strong>one composite Shipment</strong> across these
                     orders (one SSCC, one Swiss Post label, one delivery note). DELR only for
                     the pairs in this box — not the rest of each order.
@@ -2203,8 +2318,9 @@ export default function ScanPage() {
                       for (const e of packingSession) {
                         const key = e.galaxusOrderDbId;
                         const prev = byOrder.get(key);
+                        const qty = Math.max(1, Number(e.quantity ?? 1));
                         if (prev) {
-                          prev.count += 1;
+                          prev.count += qty;
                           prev.requiresDeliveryNote =
                             prev.requiresDeliveryNote || Boolean(e.physicalDeliveryNoteRequired);
                         } else {
@@ -2213,7 +2329,7 @@ export default function ScanPage() {
                             orderId: e.galaxusOrderId,
                             orderNumber: e.galaxusOrderNumber,
                             orderDate: e.orderDate,
-                            count: 1,
+                            count: qty,
                             requiresDeliveryNote: Boolean(e.physicalDeliveryNoteRequired),
                           });
                         }
@@ -2269,7 +2385,7 @@ export default function ScanPage() {
                           >
                             {finalizeBusy
                               ? "Creating composite shipment…"
-                              : `Pack box — 1 shipment (${packingSession.length} pairs · ${rows.length} order${rows.length === 1 ? "" : "s"})`}
+                              : `Pack box — 1 shipment (${packingSessionPairCount} pairs · ${rows.length} order${rows.length === 1 ? "" : "s"})`}
                           </button>
                         </>
                       );
@@ -2745,14 +2861,15 @@ export default function ScanPage() {
                     </div>
                     {(result.match.shopifyOrder.lineItems || []).length > 0 && (
                       <div className="mt-2 overflow-x-auto">
-                        <div className="font-medium text-gray-700 mb-0.5">All line items</div>
+                        <div className="font-medium text-gray-700 mb-0.5">All line items (set shipped qty)</div>
                         <table className="w-full border-collapse text-left">
                           <thead>
                             <tr className="border-b text-gray-600">
                               <th className="py-0.5 pr-2">Qty</th>
                               <th className="py-0.5 pr-2">Title</th>
                               <th className="py-0.5 pr-2">Variant</th>
-                              <th className="py-0.5">SKU</th>
+                              <th className="py-0.5 pr-2">SKU</th>
+                              <th className="py-0.5 text-right">Ship now</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2761,11 +2878,27 @@ export default function ScanPage() {
                                 <td className="py-0.5 pr-2">{li.quantity}</td>
                                 <td className="py-0.5 pr-2">{li.title}</td>
                                 <td className="py-0.5 pr-2">{li.variantTitle || "—"}</td>
-                                <td className="py-0.5 font-mono">{li.sku || "—"}</td>
+                                <td className="py-0.5 pr-2 font-mono">{li.sku || "—"}</td>
+                                <td className="py-0.5 text-right">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={fulfillQtyByLineId[li.id] ?? "0"}
+                                    onChange={(e) => {
+                                      const next = e.target.value;
+                                      setFulfillQtyByLineId((prev) => ({ ...prev, [li.id]: next }));
+                                    }}
+                                    className="w-16 rounded border px-1 py-0.5 text-right text-xs"
+                                  />
+                                </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
+                        <div className="mt-1 text-[11px] text-gray-500">
+                          Set quantity shipped in this parcel. Use partial qty when order not fully packed.
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2777,7 +2910,14 @@ export default function ScanPage() {
               <div className="mt-4">
                 <div className="flex flex-wrap gap-2">
                   <button
-                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy) || Boolean(result?.inboundHome)}
+                    disabled={
+                      fulfillLoading ||
+                      Boolean(result?.galaxus) ||
+                      Boolean(result?.stxInboundBuy) ||
+                      Boolean(result?.inboundHome) ||
+                      ((result?.match?.shopifyOrder?.lineItems?.length ?? 0) > 0 &&
+                        buildLineSelectionsFromInputs().length === 0)
+                    }
                     onClick={handleFulfill}
                     className="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:bg-gray-400"
                     title={
@@ -2790,7 +2930,7 @@ export default function ScanPage() {
                             : undefined
                     }
                   >
-                    {fulfillLoading ? "Processing..." : "Fulfill + Print Label"}
+                    {fulfillLoading ? "Processing..." : "Fulfill selected qty + Print Label"}
                   </button>
                   <button
                     disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy) || Boolean(result?.inboundHome)}
@@ -2824,8 +2964,10 @@ export default function ScanPage() {
                   <p className="text-xs text-gray-600 mt-1">Disabled: scan matched GalaxusStockxMatch (marketplace).</p>
                 ) : null}
                 <p className="text-xs text-gray-600 mt-1">
-                  Force fulfill fulfills every remaining line on the order, then prints a label even if Shopify already
-                  has tracking.
+                  Force fulfill still fulfills every remaining line on order. Use only when you want full close.
+                </p>
+                <p className="text-xs text-gray-600 mt-1">
+                  Auto-fulfill disabled. Operator must choose shipped quantities before fulfillment.
                 </p>
                 {fulfillResult && (
                   <div className="mt-3 text-sm">

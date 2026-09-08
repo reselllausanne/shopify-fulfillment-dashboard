@@ -20,6 +20,7 @@ type SessionEntry = {
   unitIndex: number;
   supplierPid: string;
   gtin?: string | null;
+  quantity?: number;
 };
 
 type RejectResponse = {
@@ -89,10 +90,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
         unitIndex: Number(row?.unitIndex ?? 0) || 0,
         supplierPid: String(row?.supplierPid ?? "").trim(),
         gtin: row?.gtin ? String(row.gtin).trim() : null,
+        quantity: Math.max(1, Number(row?.quantity ?? 1) || 1),
       }))
       .filter((row: SessionEntry) => row.galaxusOrderLineId);
 
-    if (session.length >= PACKING_SESSION_CAP) {
+    const sessionPairCount = session.reduce(
+      (sum, row) => sum + Math.max(1, Number(row.quantity ?? 1)),
+      0
+    );
+    if (sessionPairCount >= PACKING_SESSION_CAP) {
       return reject(
         `Session already at cap ${PACKING_SESSION_CAP} pairs`,
         scanCodeRaw
@@ -294,9 +300,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ResponseBody>
     // Count in-session assignments per line.
     const sessionCountByLine = new Map<string, number>();
     for (const s of session) {
+      const qty = Math.max(1, Number(s.quantity ?? 1));
       sessionCountByLine.set(
         s.galaxusOrderLineId,
-        (sessionCountByLine.get(s.galaxusOrderLineId) ?? 0) + 1
+        (sessionCountByLine.get(s.galaxusOrderLineId) ?? 0) + qty
       );
     }
 
