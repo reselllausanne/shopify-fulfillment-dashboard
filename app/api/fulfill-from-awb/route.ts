@@ -164,6 +164,11 @@ type OrderMatchSelection = {
   stockxTrackingUrl: string | null;
 };
 
+type RequestedLineSelection = {
+  shopifyLineItemId: string;
+  quantity: number;
+};
+
 type SwissPostRecipient = {
   personallyAddressed?: boolean;
   name1?: string | null;
@@ -360,6 +365,19 @@ function buildSwissPostPayload(
   };
 }
 
+function normalizeRequestedLineSelections(raw: unknown): RequestedLineSelection[] {
+  if (!Array.isArray(raw)) return [];
+  const selections: RequestedLineSelection[] = [];
+  for (const row of raw) {
+    const shopifyLineItemId = String((row as any)?.shopifyLineItemId ?? "").trim();
+    const quantityRaw = Number((row as any)?.quantity ?? 0);
+    const quantity = Number.isFinite(quantityRaw) ? Math.floor(quantityRaw) : 0;
+    if (!shopifyLineItemId || quantity <= 0) continue;
+    selections.push({ shopifyLineItemId, quantity });
+  }
+  return selections;
+}
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -418,6 +436,7 @@ export async function POST(req: NextRequest) {
     const swissPostPayload = body?.swissPostPayload ?? null;
     const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
+    const requestedLineSelections = normalizeRequestedLineSelections(body?.lineSelections);
     const scanSessionKey = String(body?.scanSessionKey ?? "").trim() || null;
     const scanStartedAt = parseOptionalDate(body?.scanStartedAt);
     const scanCompletedAt = parseOptionalDate(body?.scanCompletedAt);
@@ -629,14 +648,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
-      sku: m.shopifySku ?? null,
-      title: m.shopifyProductTitle ?? null,
-      sizeEU: m.shopifySizeEU ?? null,
-      quantity: 1,
-      sourceId: m.id,
-    }));
-
     const orderInfo = await withContext("fetchOrderShippingInfo", () =>
       fetchOrderShippingInfo(shopifyOrderId)
     );
@@ -653,6 +664,43 @@ export async function POST(req: NextRequest) {
       );
     }
     const orderLineItems = orderInfo?.lineItems?.nodes || [];
+    let dbItems =
+      requestedLineSelections.length > 0
+        ? requestedLineSelections.map((selection) => {
+            const lineItem = orderLineItems.find((li) => li.id === selection.shopifyLineItemId);
+            return {
+              sku: lineItem?.sku ?? lineItem?.variantSku ?? null,
+              title: lineItem?.title ?? lineItem?.name ?? null,
+              sizeEU: lineItem?.variantTitle ?? null,
+              quantity: selection.quantity,
+              sourceId: `manual:${selection.shopifyLineItemId}`,
+            };
+          })
+        : selectedMatches.map((m: OrderMatchSelection) => ({
+            sku: m.shopifySku ?? null,
+            title: m.shopifyProductTitle ?? null,
+            sizeEU: m.shopifySizeEU ?? null,
+            quantity: 1,
+            sourceId: m.id,
+          }));
+
+    if (requestedLineSelections.length > 0) {
+      const missingLineItemIds = requestedLineSelections
+        .map((selection) => selection.shopifyLineItemId)
+        .filter((lineItemId) => !orderLineItems.some((line) => line.id === lineItemId));
+      if (missingLineItemIds.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "INVALID" as FulfillStatus,
+            awb,
+            error: "Requested Shopify line item does not belong to this order",
+            missingLineItemIds,
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     const buildResult = buildLineItemsByFulfillmentOrder(
       map.order.fulfillmentOrders.nodes,
