@@ -47,6 +47,8 @@ export default function GalaxusDirectDeliveryPage() {
   const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [sendingOrdr, setSendingOrdr] = useState(false);
   const [reprintBusy, setReprintBusy] = useState(false);
+  const [partialShipBusyLineId, setPartialShipBusyLineId] = useState<string | null>(null);
+  const [partialQtyByLineId, setPartialQtyByLineId] = useState<Record<string, string>>({});
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
@@ -242,12 +244,109 @@ export default function GalaxusDirectDeliveryPage() {
   const buildLineTitle = (line: any) =>
     line.productName || line.description || line.supplierPid || "—";
 
+  const shipDirectPartialForLine = useCallback(
+    async (line: any) => {
+      const orderId = selectedOrderId;
+      const orderDbId = String(selectedOrder?.id ?? "").trim();
+      const lineId = String(line?.id ?? "").trim();
+      if (!orderId || !orderDbId || !lineId) return;
+
+      const maxQty = Math.max(0, Number(line?.quantity ?? 0));
+      if (maxQty <= 0) {
+        setError("No remaining quantity to ship on this line.");
+        return;
+      }
+      const raw = partialQtyByLineId[lineId] ?? "1";
+      const qty = Math.floor(Number(raw));
+      if (!Number.isFinite(qty) || qty <= 0 || qty > maxQty) {
+        setError(`Invalid qty for line ${line?.lineNumber ?? "?"}. Allowed: 1..${maxQty}`);
+        return;
+      }
+
+      setPartialShipBusyLineId(lineId);
+      setError(null);
+      setOpsLog(null);
+      try {
+        const packRes = await fetch(`/api/galaxus/orders/${orderId}/shipments/pack`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            confirmReplace: true,
+            packages: [{ items: [{ lineId, quantity: qty }] }],
+          }),
+        });
+        const packData = await packRes.json().catch(() => ({}));
+        if (!packRes.ok || !packData?.ok) {
+          throw new Error(packData?.error ?? "Partial pack failed");
+        }
+
+        const labelRes = await fetch(`/api/galaxus/orders/${orderId}/direct-swiss-post-label`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ includeLabelData: true, allowReprint: false }),
+        });
+        const labelData = await labelRes.json().catch(() => ({}));
+        if (!labelRes.ok || !labelData?.ok) {
+          throw new Error(labelData?.error ?? "Swiss Post label failed");
+        }
+
+        setOpsLog(
+          JSON.stringify(
+            {
+              mode: "direct_partial_ship",
+              orderId,
+              lineId,
+              quantity: qty,
+              pack: { created: packData?.created, shipmentIds: packData?.shipmentIds },
+              label: {
+                status: labelData?.status,
+                trackingNumber: labelData?.trackingNumber,
+                shipmentId: labelData?.shipmentId,
+              },
+            },
+            null,
+            2
+          )
+        );
+        await loadOrders({ force: true });
+        await loadOrderDetail(orderId, { force: true });
+      } catch (err: any) {
+        setError(err?.message ?? "Direct partial ship failed");
+      } finally {
+        setPartialShipBusyLineId(null);
+      }
+    },
+    [
+      selectedOrderId,
+      selectedOrder?.id,
+      partialQtyByLineId,
+      loadOrders,
+      loadOrderDetail,
+    ]
+  );
+
   const orderedList = useMemo(() => {
     if (newOrderIds.size === 0) return orders;
     const fresh = orders.filter((o) => newOrderIds.has(o.id));
     const rest = orders.filter((o) => !newOrderIds.has(o.id));
     return [...fresh, ...rest];
   }, [orders, newOrderIds]);
+
+  useEffect(() => {
+    const lines: any[] = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : [];
+    if (lines.length === 0) {
+      setPartialQtyByLineId({});
+      return;
+    }
+    const next: Record<string, string> = {};
+    for (const line of lines) {
+      const id = String(line?.id ?? "").trim();
+      if (!id) continue;
+      next[id] = partialQtyByLineId[id] ?? "1";
+    }
+    setPartialQtyByLineId(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrder?.id]);
 
   const ordersByTab = useMemo(() => {
     return orderedList.filter((order) => {
@@ -884,6 +983,9 @@ export default function GalaxusDirectDeliveryPage() {
                   </button>
                 </div>
               </div>
+              <div className="text-[11px] text-gray-600">
+                Partial fulfill: set line qty then click <span className="font-medium">Ship qty</span>. No full-order auto-close.
+              </div>
 
               <div className="space-y-2">
                 {(selectedOrder.lines || []).map((line: any) => {
@@ -1003,6 +1105,37 @@ export default function GalaxusDirectDeliveryPage() {
                           <div className="text-gray-500">
                             Margin: {margin != null ? `CHF ${margin.toFixed(2)}` : "—"}
                             {marginPct != null ? ` (${marginPct.toFixed(1)}%)` : ""}
+                          </div>
+                          <div className="mt-1 flex items-center justify-end gap-1">
+                            <input
+                              type="number"
+                              min={1}
+                              max={Math.max(1, Number(line?.quantity ?? 1))}
+                              step={1}
+                              value={partialQtyByLineId[String(line.id)] ?? "1"}
+                              onChange={(e) =>
+                                setPartialQtyByLineId((prev) => ({
+                                  ...prev,
+                                  [String(line.id)]: e.target.value,
+                                }))
+                              }
+                              className="w-14 rounded border px-1 py-0.5 text-right text-[11px]"
+                              title="Qty to ship now"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void shipDirectPartialForLine(line)}
+                              disabled={
+                                partialShipBusyLineId !== null ||
+                                loadingOrder ||
+                                !selectedOrderId ||
+                                isExternalBuyLine(line)
+                              }
+                              className="px-2 py-1 bg-emerald-700 text-white rounded text-[11px] disabled:opacity-50"
+                              title="Create partial shipment for this quantity and generate Swiss Post label"
+                            >
+                              {partialShipBusyLineId === String(line.id) ? "Shipping…" : "Ship qty"}
+                            </button>
                           </div>
                           <button
                             type="button"

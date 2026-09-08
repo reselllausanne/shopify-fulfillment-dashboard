@@ -78,6 +78,11 @@ export function looksLikeSwissPostBusinessName(name: string): boolean {
   ].some((needle) => normalized.includes(needle));
 }
 
+function isGalaxusProxyName(name: string | null): boolean {
+  const normalized = normalizeSwissPostText(name).toLowerCase();
+  return normalized === "digitec galaxus ag";
+}
+
 function sameName(a: string | null | undefined, b: string | null | undefined): boolean {
   const left = normalizeSwissPostText(a).toLowerCase();
   const right = normalizeSwissPostText(b).toLowerCase();
@@ -174,7 +179,7 @@ export function buildSwissPostRecipientNameFields(input: {
 
     return {
       personallyAddressed: false,
-      name1: truncateSwissPostName(companyName),
+      name1: truncateSwissPostName(companyName || personName || "Recipient"),
       firstName: null,
       name2,
       name3,
@@ -204,7 +209,7 @@ export function buildSwissPostRecipientNameFields(input: {
 
   return {
     personallyAddressed: true,
-    name1: truncateSwissPostName(name1 || personName || company || ""),
+    name1: truncateSwissPostName(name1 || personName || company || "Recipient"),
     firstName: firstName ? truncateSwissPostName(firstName) : null,
     name2,
     name3: null,
@@ -347,16 +352,24 @@ export function buildSwissPostRecipientFromGalaxusOrder(order: {
     Boolean(order.recipientCountry) ||
     Boolean(order.recipientCountryCode);
 
-  const primaryName = hasRecipient
-    ? normalizeSwissPostText(order.recipientName)
-    : normalizeSwissPostText(order.customerName);
+  const rawRecipientName = normalizeSwissPostText(order.recipientName) || null;
   const customerName = normalizeSwissPostText(order.customerName) || null;
   const contact = normalizeSwissPostText(order.referencePerson) || null;
   const customerType = order.customerType ?? null;
+  const forcedBusiness = isSwissPostBusinessCustomerType(customerType);
+  const recipientProxy = isGalaxusProxyName(rawRecipientName);
+  const customerProxy = isGalaxusProxyName(customerName);
+  const primaryName = hasRecipient
+    ? !forcedBusiness && recipientProxy && contact
+      ? contact
+      : rawRecipientName
+    : !forcedBusiness && customerProxy && contact
+      ? contact
+      : customerName;
   const isBusiness =
     isSwissPostBusinessCustomerType(customerType) ||
     (!isSwissPostPrivateCustomerType(customerType) &&
-      (looksLikeSwissPostBusinessName(primaryName) ||
+      (looksLikeSwissPostBusinessName(primaryName ?? "") ||
         Boolean(contact && primaryName && !sameName(contact, primaryName))));
 
   // Always prefer a natural-person line when known (reference person, else distinct customer name).
