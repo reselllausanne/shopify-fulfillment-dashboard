@@ -66,12 +66,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     label: "Essential Hoodie (in stock)",
     matchReason: "Essential Hoodie (fixed 129/129, cost 42)",
     skuBases: ["192HO246258F", "192HO246250F"],
-    titlePatterns: [
-      /^Essentials Hoodie\b/i,
-      /Fear of God Essentials.*Fleece Hoodie.*FW24.*Black/i,
-      /Fear of God Essentials.*Hoodie.*Light Heather/i,
-      /Fear of God Essentials(?!.*\bFleece\b).*\bHoodie\b/i,
-    ],
+    // SKU-only — title patterns previously matched Kids / NBA hoodies by mistake.
   },
   {
     costChf: ESSENTIALS_TEE_COST_CHF,
