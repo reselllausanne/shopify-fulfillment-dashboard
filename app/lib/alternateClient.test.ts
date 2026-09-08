@@ -64,6 +64,7 @@ describe("parseAlternateProductHtml", () => {
   it("parses JSON-LD product + gtin8 field", () => {
     const html = `
       <h1>goobay Optisches Hybrid Ultra High-Speed HDMI Kabel (AOC) 8K / 60Hz</h1>
+      <p>Auf Lager — sofort lieferbar</p>
       <script type="application/ld+json">
       {"@context":"https://www.schema.org","@type":"Product","brand":{"@type":"Brand","name":"goobay"},"gtin8":"4040849762741","mpn":"76274","name":"Optisches Hybrid Ultra High-Speed HDMI Kabel (AOC) 8K / 60Hz","sku":100151565,"image":"https://www.alternate.ch/p/600x600/x.jpg","offers":{"@type":"Offer","availability":"InStock","price":"33.99","priceCurrency":"CHF"}}
       </script>
@@ -78,8 +79,8 @@ describe("parseAlternateProductHtml", () => {
     expect(product?.mpn).toBe("76274");
     expect(product?.brand).toBe("goobay");
     expect(product?.productType).toBe("goobay");
-    expect(product?.stock).toBe(5);
-    expect(product?.inStock).toBe(true);
+    expect(product?.stock).toBe(0);
+    expect(product?.inStock).toBe(false);
     expect(product?.imageUrl).toContain("alternate.ch");
   });
 

@@ -29,6 +29,7 @@ import {
   rebuildFeedSnapshotFromExports,
   tryExportCsvFromSnapshot,
 } from "@/galaxus/exports/feedSnapshot";
+import { tryUploadMasterSpecsFromSnapshot } from "@/galaxus/ops/masterSpecsSnapshotUpload";
 import type { FeedTriggerSource } from "@/galaxus/ops/types";
 
 export type FeedUploadInput = {
@@ -240,6 +241,48 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         success: false,
       },
     }))?.id ?? null;
+
+    // Snapshot fast path: streams master + specs from DB → tmp files → SFTP with
+    // O(1) memory. Only when a full-catalog rebuild has landed and this is not
+    // a supplier/providerKeys-scoped run (those still need row-level filtering).
+    // Env kill-switch: GALAXUS_MASTER_SPECS_SNAPSHOT_UPLOAD=0.
+    if (
+      useSinglePassMasterSpecs &&
+      !supplier &&
+      !providerKeysRaw &&
+      String(process.env.GALAXUS_MASTER_SPECS_SNAPSHOT_UPLOAD ?? "1").trim() !== "0"
+    ) {
+      const masterName = buildFeedFilename("product", providerName, assortmentFile);
+      const specsName = buildFeedFilename("specifications", providerName, assortmentFile);
+      const snapshotResult = await tryUploadMasterSpecsFromSnapshot({
+        runId,
+        auditId,
+        masterFilename: masterName,
+        specsFilename: specsName,
+        triggerSource: input.triggerSource ?? null,
+      });
+      if (snapshotResult) {
+        // Snapshot path is authoritative when ready — bail early with the same
+        // return shape the legacy path uses so the caller can't tell them apart.
+        return {
+          ok: snapshotResult.ok,
+          status: snapshotResult.status,
+          runId: snapshotResult.runId,
+          uploaded: snapshotResult.uploaded,
+          counts: {
+            master: snapshotResult.counts.master,
+            stock: null,
+            offer: null,
+            specs: snapshotResult.counts.specs,
+          },
+          omittedByFeed: snapshotResult.omittedByFeed,
+          error: snapshotResult.error,
+          source: "snapshot",
+        };
+      }
+      // else: snapshot not ready — fall through to legacy build.
+      console.info("[GALAXUS][FEEDS][UPLOAD] master-specs snapshot not ready, using legacy build");
+    }
 
     let masterCsv: string | Buffer = "";
     let stockCsv = "";

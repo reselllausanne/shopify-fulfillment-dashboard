@@ -1,5 +1,11 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import { scraperFetchText } from "@/app/lib/scraperProxy";
+import {
+  availabilityTextImpliesDelayed,
+  availabilityTextImpliesOos,
+  htmlAvailabilityText,
+  isSchemaOfferInStock,
+} from "@/app/lib/scraperAvailability";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -33,12 +39,6 @@ export function baechliConfig() {
     ),
     // Concurrency 20 hammered Rent-a-Shop into HTTP 503 storms.
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_BAE_CONCURRENCY || 6)),
-    // Bächli HTML exposes only boolean availability (variant.inStock), no real qty.
-    // Default 1 to avoid Galaxus back-order overselling; raise via SCRAPER_BAE_DEFAULT_STOCK.
-    defaultStock: Math.max(
-      1,
-      Number(process.env.SCRAPER_BAE_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-    ),
     skipIsbnGtins: String(process.env.SCRAPER_BAE_SKIP_ISBN ?? "1") !== "0",
     excludePathPrefixes: parseBaechliExcludePrefixes(),
   };
@@ -128,10 +128,7 @@ export function normalizeBaechliBarcode(input: {
 }
 
 function parseAvailability(value: string | null | undefined): boolean {
-  const raw = String(value ?? "").toLowerCase();
-  if (!raw) return true;
-  if (raw.includes("outofstock") || raw.includes("discontinued") || raw.includes("soldout")) return false;
-  return raw.includes("instock") || raw.includes("preorder") || raw.includes("backorder");
+  return isSchemaOfferInStock(value);
 }
 
 function parseJsonLdProducts(html: string): Map<
@@ -215,6 +212,10 @@ export function parseBaechliProductHtml(html: string, productUrl: string): Baech
   const brand = parseBrand(html);
   const breadcrumbs = parseBreadcrumbs(html);
   const productType = breadcrumbs.slice(0, 4).join(" > ") || null;
+  const pageText = htmlAvailabilityText(html);
+  const pageOos =
+    availabilityTextImpliesOos(pageText) || availabilityTextImpliesDelayed(pageText);
+
   const variants: BaechliVariant[] = [];
   const seenSkus = new Set<string>();
 
@@ -238,7 +239,7 @@ export function parseBaechliProductHtml(html: string, productUrl: string): Baech
       sku,
       sizeLabel,
       priceChf: Number.isFinite(priceChf) && priceChf > 0 ? priceChf : jsonLd?.priceChf ?? null,
-      inStock: jsonLd?.inStock ?? true,
+      inStock: pageOos ? false : jsonLd?.inStock ?? false,
       gtin,
       gtinSource: gtin ? jsonLd?.gtinSource ?? null : null,
       imageUrl: jsonLd?.imageUrl ?? null,
@@ -255,7 +256,7 @@ export function parseBaechliProductHtml(html: string, productUrl: string): Baech
         sku,
         sizeLabel,
         priceChf: jsonLd.priceChf,
-        inStock: jsonLd.inStock,
+        inStock: pageOos ? false : jsonLd.inStock,
         gtin: jsonLd.gtin,
         gtinSource: jsonLd.gtinSource,
         imageUrl: jsonLd.imageUrl,

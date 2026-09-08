@@ -1,4 +1,8 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import {
+  availabilityTextImpliesDelayed,
+  availabilityTextImpliesOos,
+} from "@/app/lib/scraperAvailability";
 
 const DEFAULT_UA =
   process.env.SCRAPER_USER_AGENT ||
@@ -91,7 +95,6 @@ export function uncommonConfig() {
     variationConcurrency: Math.max(1, Number(process.env.SCRAPER_TUS_VARIATION_CONCURRENCY || 8)),
     /** CH Post / same-day shop → short Galaxus lead. */
     leadTimeDays: Math.max(1, Number(process.env.SCRAPER_TUS_LEAD_TIME_DAYS || 2)),
-    requireExactQty: String(process.env.SCRAPER_TUS_REQUIRE_EXACT_QTY ?? "1") !== "0",
   };
 }
 
@@ -183,7 +186,12 @@ export function parseUncommonStockQty(product: UncommonWooProduct): {
   const text = String(product.stock_availability?.text || "").trim();
   const cls = String(product.stock_availability?.class || "").toLowerCase();
 
-  if (/out-of-stock/.test(cls) || /nicht\s+(auf\s+lager|vorrätig|verfuegbar|verfügbar)/i.test(text)) {
+  if (
+    availabilityTextImpliesOos(text) ||
+    availabilityTextImpliesDelayed(text) ||
+    /out-of-stock/.test(cls) ||
+    /nicht\s+(auf\s+lager|vorrätig|verfuegbar|verfügbar)/i.test(text)
+  ) {
     return { qty: 0, source: "oos_text" };
   }
 
@@ -216,12 +224,7 @@ export function parseUncommonStockQty(product: UncommonWooProduct): {
  * Sellable only with explicit positive qty + not preorder/backorder/gift.
  * Mirrors WEL fix: available:true + qty 0 / continue ≠ physical stock.
  */
-export function resolveUncommonSellable(
-  product: UncommonWooProduct,
-  opts?: { requireExactQty?: boolean }
-): UncommonSellDecision {
-  const requireExactQty = opts?.requireExactQty ?? uncommonConfig().requireExactQty;
-
+export function resolveUncommonSellable(product: UncommonWooProduct): UncommonSellDecision {
   if (isUncommonGiftCard(product)) {
     return { sellable: false, stock: 0, reason: "gift_card", stockSource: "n/a" };
   }
@@ -237,10 +240,7 @@ export function resolveUncommonSellable(
 
   const parsed = parseUncommonStockQty(product);
   if (parsed.qty === null) {
-    if (requireExactQty) {
-      return { sellable: false, stock: 0, reason: "qty_hidden", stockSource: parsed.source };
-    }
-    return { sellable: true, stock: 1, reason: "in_stock_no_qty", stockSource: parsed.source };
+    return { sellable: false, stock: 0, reason: "qty_hidden", stockSource: parsed.source };
   }
   if (parsed.qty <= 0) {
     return { sellable: false, stock: 0, reason: "qty_zero", stockSource: parsed.source };

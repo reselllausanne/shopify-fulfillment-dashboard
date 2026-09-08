@@ -404,8 +404,20 @@ export async function buildMasterSpecsFeedExport(params: {
   limit?: number | null;
   providerKeys?: string[];
   includeWeight?: boolean;
+  /**
+   * When true, skip toCsvBuffer for both master and specs — caller only wants
+   * the row arrays. Snapshot rebuild sets this to shave ~1GB peak heap
+   * (2 × 600MB Buffer allocations that would OOM the ops-background worker).
+   */
+  skipCsvBuffers?: boolean;
 }): Promise<MasterSpecsFeedExportResult> {
-  const { supplier, limit, providerKeys = [], includeWeight = false } = params;
+  const {
+    supplier,
+    limit,
+    providerKeys = [],
+    includeWeight = false,
+    skipCsvBuffers = false,
+  } = params;
   const all = !limit;
   const wallStarted = Date.now();
   const mark = (step: string, extra?: Record<string, unknown>) => {
@@ -526,16 +538,29 @@ export async function buildMasterSpecsFeedExport(params: {
   const report = buildMasterSpecsValidationReport(masterRows, specsRows);
   mark("validate:done");
 
-  mark("csv:start");
-  // Buffer — full-string join blows past V8's max string length on this catalog size.
-  const masterCsv = toCsvBuffer(masterHeaders, masterRows);
-  const specsCsv = toCsvBuffer(specsHeaders, specsRows);
-  mark("csv:done", {
-    masterBytes: masterCsv.length,
-    specsBytes: specsCsv.length,
-    masterRows: masterRows.length,
-    specsRows: specsRows.length,
-  });
+  let masterCsv: Buffer;
+  let specsCsv: Buffer;
+  if (skipCsvBuffers) {
+    // Snapshot rebuild path — skip 2 × ~600 MB Buffer allocations that would
+    // OOM the 10 GB worker on top of already-loaded candidates + rawJson.
+    mark("csv:skipped-for-snapshot", {
+      masterRows: masterRows.length,
+      specsRows: specsRows.length,
+    });
+    masterCsv = Buffer.alloc(0);
+    specsCsv = Buffer.alloc(0);
+  } else {
+    mark("csv:start");
+    // Buffer — full-string join blows past V8's max string length on this catalog size.
+    masterCsv = toCsvBuffer(masterHeaders, masterRows);
+    specsCsv = toCsvBuffer(specsHeaders, specsRows);
+    mark("csv:done", {
+      masterBytes: masterCsv.length,
+      specsBytes: specsCsv.length,
+      masterRows: masterRows.length,
+      specsRows: specsRows.length,
+    });
+  }
 
   return {
     masterCsv,

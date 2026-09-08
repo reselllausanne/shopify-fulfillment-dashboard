@@ -52,7 +52,6 @@ export type ExlibrisScrapeProgress = {
 
 export function exlibrisConfig() {
   return {
-    defaultStock: Math.max(0, Number(process.env.SCRAPER_EXL_DEFAULT_STOCK || 5)),
     requestDelayMs: Math.max(0, Number(process.env.SCRAPER_EXL_REQUEST_DELAY_MS || 400)),
     deferImageSync: String(process.env.SCRAPER_EXL_DEFER_IMAGE_SYNC ?? "1") !== "0",
     flushEvery: Math.max(1, Number(process.env.SCRAPER_EXL_FLUSH_EVERY || 100)),
@@ -246,16 +245,17 @@ export function discoverCategoryPaths(html: string, catalogRoot: string): string
 }
 
 export function exlibrisStockFromLabel(stockLabel: string, availabilityText: string): number {
-  const cfg = exlibrisConfig();
   const low = availabilityText.toLowerCase();
   if (
     stockLabel === "out_of_stock" ||
-    /vergriffen|nicht\s+lieferbar|ausverkauft/.test(low)
+    /vergriffen|nicht\s+lieferbar|ausverkauft|off[\s-]?lager|vorbestell|pre[\s-]?order|lieferbar\s+ab|\d+\s*wochen|\d+\s*monate/i.test(
+      low
+    )
   ) {
     return 0;
   }
   if (stockLabel === "preorder") return 0;
-  return cfg.defaultStock;
+  return 0;
 }
 
 const UA =

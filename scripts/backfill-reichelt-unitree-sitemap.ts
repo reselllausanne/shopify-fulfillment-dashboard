@@ -128,6 +128,9 @@ function formatNote(product: ReicheltProduct, galaxusKind: string, cost: Reichel
     marginPercent: cost.marginPercent,
     sellPriceChf: cost.sellPriceChf,
     weightGrams: cost.weightGrams,
+    longestSideMm: cost.longestSideMm,
+    bulky: cost.bulky,
+    bulkySurchargeChf: cost.bulkySurchargeChf,
     eurChfRate: cost.eurChfRate,
     vatRate: cost.vatRate,
     stockStatus: product.stockStatus,
@@ -193,6 +196,9 @@ async function main() {
         priceChf: product.priceChf,
         priceEur: product.priceEur,
         weightGrams: product.weightGrams,
+        title: product.name,
+        techAttributes: product.techAttributes,
+        breadcrumbs: product.breadcrumbs,
       });
       if (!cost || !isPlausibleReicheltSellPrice(cost)) {
         stats.skippedNoPrice++;
@@ -226,7 +232,7 @@ async function main() {
         continue;
       }
 
-      const stock = product.inStock ? cfg.defaultStock : 0;
+      const stock = 0;
       const now = new Date();
       await prismaAny.supplierVariant.upsert({
         where: { supplierVariantId },

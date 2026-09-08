@@ -49,17 +49,80 @@ export async function POST(
     const gtins = collectGtinsFromLines(order.lines);
     const partnerGtins = await resolvePartnerGtins(gtins, pk);
     const partnerLines = order.lines.filter((line) => lineMatchesPartnerScope(line, pk, partnerGtins));
-    const partnerLineIds = partnerLines.map((line) => line.id);
-
-    if (partnerLineIds.length === 0) {
+    if (partnerLines.length === 0) {
       return NextResponse.json({ ok: false, error: "No partner lines found" }, { status: 404 });
+    }
+
+    const body = (await req.json().catch(() => ({}))) as {
+      lineIds?: unknown;
+    };
+    const openPartnerLines = partnerLines.filter((line) => !line.warehouseMarkedShippedAt);
+    if (openPartnerLines.length === 0) {
+      return NextResponse.json({ ok: false, error: "All partner lines already shipped" }, { status: 409 });
+    }
+    const openLineIdSet = new Set(openPartnerLines.map((line) => String(line.id)));
+    const requestedLineIds = Array.isArray(body?.lineIds)
+      ? body.lineIds
+          .map((value) => String(value ?? "").trim())
+          .filter(Boolean)
+      : [];
+
+    let targetLineIds: string[] = [];
+    if (requestedLineIds.length > 0) {
+      const uniqueRequested = Array.from(new Set(requestedLineIds));
+      const invalid = uniqueRequested.filter((lineId) => !openLineIdSet.has(lineId));
+      if (invalid.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Some selected lines are invalid or already shipped",
+            invalidLineIds: invalid,
+          },
+          { status: 400 }
+        );
+      }
+      targetLineIds = uniqueRequested;
+    } else if (openPartnerLines.length === 1) {
+      targetLineIds = [String(openPartnerLines[0].id)];
+    } else {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Multiple open partner lines. Select lineIds for partial/full fulfillment.",
+          requiresLineSelection: true,
+          openLines: openPartnerLines.map((line) => ({
+            id: line.id,
+            lineNumber: line.lineNumber ?? null,
+            quantity: line.quantity ?? 0,
+            productName: line.productName ?? line.description ?? null,
+          })),
+        },
+        { status: 409 }
+      );
     }
 
     const now = new Date();
     await prisma.galaxusOrderLine.updateMany({
-      where: { id: { in: partnerLineIds } },
+      where: { id: { in: targetLineIds } },
       data: { warehouseMarkedShippedAt: now },
     });
+
+    const refreshedOrder =
+      (await prisma.galaxusOrder.findFirst({
+        where: { id: order.id },
+        include: { lines: true },
+      })) ?? order;
+    const refreshedGtins = collectGtinsFromLines(refreshedOrder.lines);
+    const refreshedPartnerGtins = await resolvePartnerGtins(refreshedGtins, pk);
+    const refreshedPartnerLines = refreshedOrder.lines.filter((line) =>
+      lineMatchesPartnerScope(line, pk, refreshedPartnerGtins)
+    );
+    const allPartnerLinesShipped =
+      refreshedPartnerLines.length > 0 &&
+      refreshedPartnerLines.every((line) => Boolean(line.warehouseMarkedShippedAt));
+    const nextPartnerOrderStatus = allPartnerLinesShipped ? "FULFILLED" : "PARTIAL";
+    const selectedLineSet = new Set(targetLineIds);
+    const selectedPartnerLines = partnerLines.filter((line) => selectedLineSet.has(String(line.id)));
 
     const existingPartnerOrder = await (prisma as any).partnerOrder.findFirst({
       where: { partnerId: session.partnerId, galaxusOrderId: order.galaxusOrderId },
@@ -76,12 +139,12 @@ export async function POST(
       create: {
         partnerId: session.partnerId,
         galaxusOrderId: order.galaxusOrderId,
-        status: "FULFILLED",
+        status: nextPartnerOrderStatus,
         sentAt: now,
         confirmedAt: now,
       },
       update: {
-        status: "FULFILLED",
+        status: nextPartnerOrderStatus,
         confirmedAt: now,
       },
     });
@@ -91,7 +154,7 @@ export async function POST(
     });
 
     await (prisma as any).partnerOrderLine.createMany({
-      data: partnerLines.map((line) => ({
+      data: selectedPartnerLines.map((line) => ({
         partnerOrderId: partnerOrder.id,
         partnerVariantId: null,
         supplierVariantId: line.supplierVariantId ?? null,
@@ -115,7 +178,9 @@ export async function POST(
 
     return NextResponse.json({
       ok: true,
-      updated: partnerLineIds.length,
+      updated: targetLineIds.length,
+      markedLineIds: targetLineIds,
+      fulfillmentState: allPartnerLinesShipped ? "fulfilled" : "partial",
       stock: {
         adjustedRows: stockResult.adjusted,
         skipped: stockResult.skipped,

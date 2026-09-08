@@ -1,3 +1,7 @@
+import {
+  availabilityTextImpliesDelayed,
+  availabilityTextImpliesOos,
+} from "@/app/lib/scraperAvailability";
 import { validateGtin } from "@/app/lib/normalize";
 import { extractReicheltWeightGrams } from "@/app/lib/reicheltPricing";
 import { execFile as execFileCallback } from "node:child_process";
@@ -330,12 +334,6 @@ export function reicheltConfig() {
     sitemapShardMaxRetries: Math.max(1, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_MAX_RETRIES || 2)),
     sitemapShardRetryBaseMs: Math.max(500, Number(process.env.SCRAPER_REI_SITEMAP_SHARD_RETRY_BASE_MS || 2_000)),
     sitemapFallbackMaxShard: Math.max(0, Number(process.env.SCRAPER_REI_SITEMAP_FALLBACK_MAX_SHARD || 149)),
-    // Reichelt HTML exposes only in-stock class (status_1/4/6/16/100), no real qty.
-    // Default 1 to avoid Galaxus back-order overselling; raise via SCRAPER_REI_DEFAULT_STOCK.
-    defaultStock: Math.max(
-      1,
-      Number(process.env.SCRAPER_REI_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-    ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_REI_PRODUCT_CONCURRENCY || 8)),
   };
 }
@@ -473,7 +471,12 @@ export function parseReicheltStockStatus(html: string): { status: string | null;
   const status = html.match(/class="availability status_(\d+)/i)?.[1] ?? null;
   const textMatch = html.match(/class="availability[^"]*"[^>]*>[\s\S]*?([^<]{5,160})/i);
   const text = textMatch ? decodeHtml(textMatch[1].replace(/\s+/g, " ").trim()) : null;
-  const inStock = status ? ["1", "4", "6", "16", "100"].includes(status) : /en stock|ex stock|lieferbar|disponible|in stock/i.test(text ?? "");
+  const textOos = availabilityTextImpliesOos(text) || availabilityTextImpliesDelayed(text);
+  const inStock =
+    !textOos &&
+    (status
+      ? ["1", "4", "6", "16", "100"].includes(status)
+      : /en stock|ex stock|lieferbar|disponible|in stock/i.test(text ?? ""));
   return { status, text, inStock };
 }
 

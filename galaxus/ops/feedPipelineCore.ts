@@ -10,6 +10,7 @@ import { runFeedUpload } from "@/galaxus/ops/runFeedUpload";
 import {
   notifyGalaxusFeedFailure,
   notifyGalaxusFeedStale,
+  notifyGalaxusMasterSpecsFeedStale,
 } from "@/galaxus/ops/feedFailureAlert";
 import type { FeedScope, FeedTriggerSource } from "./types";
 
@@ -652,13 +653,37 @@ export async function drainFeedPushQueue(
     return 0;
   });
 
+  // Heavy scopes rebuild the full catalog and each need multi-GB of heap. If
+  // one is already running (or we start one this tick) never let a second
+  // heavy scope run alongside it — that's how the worker OOMed on 2026-09-06.
+  // Light scopes (stock, price, stock-price) stay parallel: they read the
+  // stock/offer snapshot and are memory-flat.
+  const HEAVY_SCOPES = new Set(["master-specs", "full"]);
+  const activeHeavy = await (prisma as any).galaxusFeedRun.findFirst({
+    where: { finishedAt: null, scope: { in: Array.from(HEAVY_SCOPES) } },
+    select: { id: true, scope: true },
+  });
+
   const seenScopes = new Set<string>();
   let lastStarted: FeedPushStartResult | null = null;
+  let heavyRunning = Boolean(activeHeavy);
   for (const pending of pendingRows) {
     if (seenScopes.has(pending.scope)) continue;
     seenScopes.add(pending.scope);
+    if (HEAVY_SCOPES.has(pending.scope) && heavyRunning) {
+      // Leave the trigger PENDING; the next drain tick picks it up once the
+      // active heavy scope finishes.
+      console.info("[GALAXUS][FEED][QUEUE] deferring heavy scope until active finishes", {
+        pendingScope: pending.scope,
+        activeScope: activeHeavy?.scope ?? null,
+      });
+      continue;
+    }
     const started = await tryStartPendingFeedPush(origin, pending);
-    if (started) lastStarted = started;
+    if (started) {
+      lastStarted = started;
+      if (HEAVY_SCOPES.has(pending.scope)) heavyRunning = true;
+    }
   }
 
   if (!lastStarted) return { ok: true, drained: false };
@@ -711,6 +736,8 @@ export async function runPendingFeedTriggers(params: { origin: string; scope: Fe
 }
 
 const STALE_PRICE_FEED_MS = 6 * 60 * 60 * 1000;
+/** ProductData + SpecificationData are catalog-oriented — a full day is the right SLA. */
+const STALE_MASTER_SPECS_FEED_MS = 30 * 60 * 60 * 1000;
 /** A whole PriceData file is ~620k rows; sales in a burst share one delayed upload. */
 const POST_SALE_PRICE_FEED_COOLDOWN_MS = 10 * 60 * 1000;
 
@@ -759,6 +786,42 @@ export async function checkGalaxusPriceFeedHealth(): Promise<{
   const hoursSinceSuccess = Math.round((ageMs / 3600000) * 10) / 10;
   if (ageMs > STALE_PRICE_FEED_MS) {
     await notifyGalaxusFeedStale({
+      hoursSinceSuccess,
+      lastSuccessAt: new Date(at).toISOString(),
+    });
+    return { ok: false, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
+  }
+  return { ok: true, lastSuccessAt: new Date(at).toISOString(), hoursSinceSuccess };
+}
+
+/**
+ * Master/specs equivalent of {@link checkGalaxusPriceFeedHealth}. Catches the
+ * exact outage class from 2026-09-06 where price kept succeeding and hid a
+ * 24h-long master-specs failure.
+ */
+export async function checkGalaxusMasterSpecsFeedHealth(): Promise<{
+  ok: boolean;
+  lastSuccessAt: string | null;
+  hoursSinceSuccess: number | null;
+}> {
+  const prismaAny = prisma as any;
+  const lastOk = await prismaAny.galaxusFeedRun.findFirst({
+    where: { success: true, scope: "master-specs" },
+    orderBy: { finishedAt: "desc" },
+    select: { finishedAt: true, startedAt: true },
+  });
+  const at: Date | null = lastOk?.finishedAt ?? lastOk?.startedAt ?? null;
+  if (!at) {
+    await notifyGalaxusMasterSpecsFeedStale({
+      hoursSinceSuccess: null,
+      lastSuccessAt: null,
+    });
+    return { ok: false, lastSuccessAt: null, hoursSinceSuccess: null };
+  }
+  const ageMs = Date.now() - new Date(at).getTime();
+  const hoursSinceSuccess = Math.round((ageMs / 3600000) * 10) / 10;
+  if (ageMs > STALE_MASTER_SPECS_FEED_MS) {
+    await notifyGalaxusMasterSpecsFeedStale({
       hoursSinceSuccess,
       lastSuccessAt: new Date(at).toISOString(),
     });

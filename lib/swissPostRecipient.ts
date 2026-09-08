@@ -78,6 +78,11 @@ export function looksLikeSwissPostBusinessName(name: string): boolean {
   ].some((needle) => normalized.includes(needle));
 }
 
+function isGalaxusProxyName(name: string | null): boolean {
+  const normalized = normalizeSwissPostText(name).toLowerCase();
+  return normalized === "digitec galaxus ag";
+}
+
 function sameName(a: string | null | undefined, b: string | null | undefined): boolean {
   const left = normalizeSwissPostText(a).toLowerCase();
   const right = normalizeSwissPostText(b).toLowerCase();
@@ -347,16 +352,26 @@ export function buildSwissPostRecipientFromGalaxusOrder(order: {
     Boolean(order.recipientCountry) ||
     Boolean(order.recipientCountryCode);
 
-  const primaryName = hasRecipient
-    ? normalizeSwissPostText(order.recipientName)
-    : normalizeSwissPostText(order.customerName);
+  const rawRecipientName = normalizeSwissPostText(order.recipientName) || null;
   const customerName = normalizeSwissPostText(order.customerName) || null;
   const contact = normalizeSwissPostText(order.referencePerson) || null;
   const customerType = order.customerType ?? null;
+  const forcedBusiness = isSwissPostBusinessCustomerType(customerType);
+  const recipientProxy = isGalaxusProxyName(rawRecipientName);
+  const customerProxy = isGalaxusProxyName(customerName);
+  // After cancel/uncancel, recipientName can be wiped while address + Digitec customerName remain.
+  // Prefer recipient, then customerName (Digitec Galaxus AG), never invent "Recipient".
+  const primaryName = hasRecipient
+    ? (!forcedBusiness && recipientProxy && contact
+        ? contact
+        : rawRecipientName) || customerName || "Digitec Galaxus AG"
+    : (!forcedBusiness && customerProxy && contact
+        ? contact
+        : customerName) || "Digitec Galaxus AG";
   const isBusiness =
     isSwissPostBusinessCustomerType(customerType) ||
     (!isSwissPostPrivateCustomerType(customerType) &&
-      (looksLikeSwissPostBusinessName(primaryName) ||
+      (looksLikeSwissPostBusinessName(primaryName ?? "") ||
         Boolean(contact && primaryName && !sameName(contact, primaryName))));
 
   // Always prefer a natural-person line when known (reference person, else distinct customer name).

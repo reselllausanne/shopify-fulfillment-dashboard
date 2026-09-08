@@ -98,6 +98,9 @@ function formatReicheltNote(product: ReicheltProduct, galaxusKind: string, cost:
     weightGrams: cost.weightGrams,
     rawWeightGrams: cost.rawWeightGrams,
     weightSource: cost.weightSource,
+    longestSideMm: cost.longestSideMm,
+    bulky: cost.bulky,
+    bulkySurchargeChf: cost.bulkySurchargeChf,
     eurChfRate: cost.eurChfRate,
     vatRate: cost.vatRate,
     stockStatus: product.stockStatus,
@@ -185,7 +188,7 @@ async function upsertReicheltVariant(
   if (!providerKey) return false;
 
   const cfg = reicheltConfig();
-  const stock = product.inStock ? cfg.defaultStock : 0;
+  const stock = 0;
   const productType = reicheltCategoryPathLabel(product.breadcrumbs);
   const existing = existingById.get(supplierVariantId);
   const queueImage = !deferReicheltImageSync() && needsImageHosting(existing, product.imageUrl);
@@ -524,6 +527,9 @@ export async function scrapeReicheltShop(
           priceChf: product.priceChf,
           priceEur: product.priceEur,
           weightGrams: product.weightGrams,
+          title: product.name,
+          techAttributes: product.techAttributes,
+          breadcrumbs: product.breadcrumbs,
         });
         if (!cost || !isPlausibleReicheltSellPrice(cost)) return;
         const galaxusKind = classifyReicheltGalaxusKind({
@@ -620,6 +626,9 @@ export async function scrapeReicheltShop(
             priceChf: product.priceChf,
             priceEur: product.priceEur,
             weightGrams: product.weightGrams,
+            title: product.name,
+            techAttributes: product.techAttributes,
+            breadcrumbs: product.breadcrumbs,
           });
           if (!cost || !isPlausibleReicheltSellPrice(cost)) {
             stats.skippedNoPrice++;

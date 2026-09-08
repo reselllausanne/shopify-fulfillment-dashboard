@@ -470,7 +470,9 @@ export default function GalaxusWarehouseShipmentsPage() {
         delete next[lineId];
         return next;
       }
-      const qty = clampQty(Math.max(1, remaining), 1, Math.max(1, remaining));
+      // Safer default: selecting a line picks one unit first.
+      // Operator can still raise qty manually up to remaining.
+      const qty = clampQty(1, 1, Math.max(1, remaining));
       next[lineId] = { lineId, sourceOrderId, quantity: qty };
       return next;
     });

@@ -60,7 +60,6 @@ export function fantasyweltConfig() {
     gotoTimeoutMs: Math.max(15_000, Number(process.env.SCRAPER_FAN_GOTO_TIMEOUT_MS || 60_000)),
     cfWaitMs: Math.max(5_000, Number(process.env.SCRAPER_FAN_CF_WAIT_MS || 25_000)),
     maxCategoryPages: Math.max(1, Number(process.env.SCRAPER_FAN_MAX_CATEGORY_PAGES || 500)),
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
     categories,
     progressFile:
       process.env.SCRAPER_FAN_PROGRESS_FILE ||
@@ -161,10 +160,13 @@ function parseAvailability(
   if (h.includes("outofstock") || h.includes("soldout") || h.includes("discontinued")) {
     return "OutOfStock";
   }
-  if (h.includes("preorder")) return "PreOrder";
+  if (h.includes("preorder") || h.includes("backorder") || h.includes("limitedavailability")) {
+    return "OutOfStock";
+  }
+  if (/nicht\s+auf\s+lager|ausverkauft|nicht\s+lieferbar|off[\s-]?lager|lieferbar\s+ab|vorbestell|\d+\s*wochen/i.test(text)) {
+    return "OutOfStock";
+  }
   if (h.includes("instock")) return "InStock";
-  if (/nicht\s+auf\s+lager|ausverkauft|nicht\s+lieferbar/i.test(text)) return "OutOfStock";
-  if (/lieferbar\s+ab|vorbestell/i.test(text)) return "PreOrder";
   if (/auf\s+lager|sofort\s+lieferbar/i.test(text)) return "InStock";
   return "Unknown";
 }

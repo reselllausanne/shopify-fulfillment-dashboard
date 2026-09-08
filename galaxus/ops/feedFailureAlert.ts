@@ -93,3 +93,30 @@ export async function notifyGalaxusFeedStale(params: {
   ].join("\n");
   return postSlack(text);
 }
+
+/**
+ * No successful master/specs feed for too long — silent outage detector.
+ * 2026-09-06: master-specs OOMed every 10 min for 24h without paging because
+ * the price feed kept succeeding and only price was monitored.
+ */
+export async function notifyGalaxusMasterSpecsFeedStale(params: {
+  hoursSinceSuccess: number | null;
+  lastSuccessAt: string | null;
+}): Promise<{ sent: boolean; reason?: string }> {
+  if (!shouldSendAlert("stale:master-specs-feed")) {
+    return { sent: false, reason: "deduped" };
+  }
+  const age =
+    params.hoursSinceSuccess == null
+      ? "never / unknown"
+      : `${params.hoursSinceSuccess}h ago`;
+  const text = [
+    ":warning: *Galaxus master/specs feed STALE*",
+    `• last successful master-specs: ${params.lastSuccessAt ?? "none"} (${age})`,
+    `• at: ${new Date().toISOString()}`,
+    "",
+    "Product identity, images, and categories on Galaxus may be outdated.",
+    "Check Galaxus ops → Rebuild master/specs snapshot, then Push master/specs.",
+  ].join("\n");
+  return postSlack(text);
+}

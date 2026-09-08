@@ -20,12 +20,7 @@ const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const REQUEST_DELAY_MS = Number(process.env.SCRAPER_REQUEST_DELAY_MS || 120);
-// HHV only exposes size-level availability boolean (no real qty). Default 1 to avoid
-// overselling; ops can raise via SCRAPER_HHV_DEFAULT_STOCK if pool is deep.
-const DEFAULT_STOCK = Math.max(
-  1,
-  Number(process.env.SCRAPER_HHV_DEFAULT_STOCK || process.env.SCRAPER_DEFAULT_STOCK || 1)
-);
+// HHV only exposes availability bool — no qty → stock 0 unless we parse explicit qty later.
 const IMAGE_SYNC_CONCURRENCY = Math.max(1, Number(process.env.SCRAPER_IMAGE_SYNC_CONCURRENCY || 5));
 const HHV_CATALOG_PATH =
   process.env.SCRAPER_HHV_CATALOG_PATH || "/clothing/katalog/filter/sneaker-N418";
@@ -835,7 +830,7 @@ export async function scrapeHhvShop(shop: ScraperShop, runId: number, maxProduct
           if (seenSkus.has(r.supplierVariantId)) continue;
           seenSkus.add(r.supplierVariantId);
           if (r.gtin) gtinMatched++;
-          const stock = r.available ? DEFAULT_STOCK : 0;
+          const stock = 0;
           const existing = existingById.get(r.supplierVariantId);
           const queueImage = needsImageHosting(existing, r.sourceImageUrl);
           try {

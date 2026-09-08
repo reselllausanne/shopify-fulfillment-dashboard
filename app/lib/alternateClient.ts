@@ -3,6 +3,7 @@
 import { gunzipSync } from "node:zlib";
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import { scraperFetchText } from "@/app/lib/scraperProxy";
+import { htmlAvailabilityText, resolveScraperStock } from "@/app/lib/scraperAvailability";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -35,8 +36,6 @@ export function alternateConfig() {
       Number(process.env.SCRAPER_ALT_REQUEST_DELAY_MS ?? process.env.SCRAPER_REQUEST_DELAY_MS ?? 120)
     ),
     productConcurrency: Math.max(1, Number(process.env.SCRAPER_ALT_CONCURRENCY || 6)),
-    /** Auf Lager without exact qty → this default. */
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_ALT_DEFAULT_STOCK || 5)),
     sitemapIndexUrl: String(
       process.env.SCRAPER_ALT_SITEMAP_INDEX_URL || ALTERNATE_SITEMAP_INDEX_URL
     ).trim(),
@@ -86,15 +85,6 @@ export function normalizeAlternateGtin(
   if (!digits || /^0+$/.test(digits)) return null;
   if (!isValidGtin(digits)) return null;
   return { gtin: digits, source: digits.length === 13 ? "gtin13" : "gtin" };
-}
-
-function parseAvailability(value: string | null | undefined): boolean {
-  const raw = String(value ?? "").toLowerCase();
-  if (!raw) return true;
-  if (raw.includes("outofstock") || raw.includes("discontinued") || raw.includes("soldout")) {
-    return false;
-  }
-  return raw.includes("instock") || raw.includes("preorder") || raw.includes("backorder");
 }
 
 function parseJsonLdProduct(html: string): Record<string, unknown> | null {
@@ -173,11 +163,7 @@ function gtinFromProduct(product: Record<string, unknown>, html: string): string
   return table ?? null;
 }
 
-export function parseAlternateProductHtml(
-  html: string,
-  productUrl: string,
-  defaultStock = alternateConfig().defaultStock
-): AlternateProduct | null {
+export function parseAlternateProductHtml(html: string, productUrl: string): AlternateProduct | null {
   const product = parseJsonLdProduct(html);
   if (!product) return null;
 
@@ -199,11 +185,12 @@ export function parseAlternateProductHtml(
   );
   if (!Number.isFinite(priceChf) || priceChf <= 0) return null;
 
-  const inStock = parseAvailability(
-    typeof offer?.availability === "string" ? offer.availability : null
-  );
-  // Exact qty rare on Alternate CH — Auf Lager → defaultStock
-  const stock = inStock ? defaultStock : 0;
+  const stockInfo = resolveScraperStock({
+    schemaAvailability: typeof offer?.availability === "string" ? offer.availability : null,
+    pageText: htmlAvailabilityText(html),
+  });
+  const inStock = stockInfo.inStock;
+  const stock = stockInfo.stock;
 
   const mpn =
     (typeof product.mpn === "string" ? product.mpn.trim() : null) ||

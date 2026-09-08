@@ -2802,11 +2802,9 @@ export function GalaxusDashboardHome() {
         if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load summary");
         const items = Array.isArray(data.items) ? data.items : [];
         setTotalOrders(items.length);
-        const attention = items.filter((order: any) => {
-          const shipped = Number(order.shippedCount ?? 0);
-          const total = Number(order._count?.shipments ?? 0);
-          return total === 0 || shipped < total;
-        }).length;
+        const attention = items.filter(
+          (order: any) => String(order?.fulfillmentState ?? "").toLowerCase() !== "fulfilled"
+        ).length;
         setNeedsAttention(attention);
       } catch (err: any) {
         setError(err.message);

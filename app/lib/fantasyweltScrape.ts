@@ -458,10 +458,7 @@ export async function scrapeFantasyweltShop(
             if (!cost) {
               skippedNoPrice++;
             } else {
-              const stock =
-                product.availability === "InStock" || product.availability === "PreOrder"
-                  ? cfg.defaultStock
-                  : 0;
+              const stock = 0;
               const ok = await upsertVariant(product, cost.sellPriceChf, stock);
               if (ok) {
                 wrote++;

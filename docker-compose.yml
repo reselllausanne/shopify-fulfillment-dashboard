@@ -156,7 +156,13 @@ services:
     env_file:
       - .env
     environment:
-      - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=4096}
+      # Bumped from 4GB → 12GB (2026-09-06): master/specs snapshot rebuild
+      # calls buildMasterSpecsFeedExport() which peaks at 10-11GB while loading
+      # 900k candidate rows + 108k KickDB rawJson blobs + 2.3M row objects.
+      # --expose-gc lets rebuild call global.gc() between phases to shrink the
+      # heap before the specs upsert. Phase 2 rewrite (memory-flat two-pass)
+      # drops this back to 4GB.
+      - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=12288 --expose-gc}
       - WORKER_POLL_MS=${OPS_BACKGROUND_POLL_MS:-3000}
       - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
     command: ["npx", "tsx", "scripts/workers/opsBackgroundWorker.ts"]
