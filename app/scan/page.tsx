@@ -896,11 +896,6 @@ export default function ScanPage() {
     }
   };
 
-  // Auto-fire direct-delivery Swiss Post label for the oldest open direct
-  // order matched by GTIN when nothing matched by AWB. Same print handling as
-  // runGalaxusDirectLabelFromScan (server print or browser popup). Silently
-  // swallows 409 (order not fully linked / already finalized) so the operator
-  // still sees the GTIN fallback panel and can pick manually.
   const runDirectLabelForOrder = async (orderDbId: string) => {
     if (!orderDbId) return;
     setFulfillLoading(true);
@@ -924,43 +919,6 @@ export default function ScanPage() {
         window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
         return;
       }
-      const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim();
-      if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
-        // Mark this order as done in the GTIN panel so it stops looking like both are still open.
-        setResult((prev) => {
-          if (!prev?.gtin?.orders?.length) return prev;
-          const orders = prev.gtin.orders.map((c) => {
-            const same =
-              String(c.galaxusOrderDbId ?? "") === orderDbId ||
-              (orderRef && String(c.galaxusOrderId ?? "") === orderRef) ||
-              (data.orderNumber && String(c.orderNumber ?? "") === String(data.orderNumber));
-            if (!same) return c;
-            const ordered = Math.max(1, Number(c.ordered ?? c.quantity ?? 1));
-            return {
-              ...c,
-              remaining: 0,
-              shipped: Math.max(Number(c.shipped ?? 0), ordered),
-            };
-          });
-          const openDirect = orders.filter(
-            (c) =>
-              (c.channel ?? "galaxus") === "galaxus" &&
-              (c.isDirectDelivery || String(c.deliveryType ?? "").includes("direct")) &&
-              Number(c.remaining ?? 0) > 0
-          ).length;
-          const totalOpen = orders.reduce((n, c) => n + Math.max(0, Number(c.remaining ?? 0)), 0);
-          return {
-            ...prev,
-            gtin: {
-              ...prev.gtin,
-              orders,
-              openDirect,
-              totalOpen,
-            },
-          };
-        });
-        // No success alert — label popup is the operator signal.
-      }
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
           labelData: data.labelData,
@@ -976,6 +934,50 @@ export default function ScanPage() {
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Galaxus label network error");
+    } finally {
+      setFulfillLoading(false);
+    }
+  };
+
+  const runGtinDirectPartial = async (row: NonNullable<ScanResult["gtin"]>["orders"][number]) => {
+    const orderDbId = String(row.galaxusOrderDbId ?? "").trim();
+    const lineId = String(row.lineId ?? "").trim();
+    const remaining = Math.max(0, Number(row.remaining ?? 0));
+    if (!orderDbId || !lineId || remaining <= 0) return;
+
+    const qtyRaw = window.prompt(
+      `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
+      "1"
+    );
+    if (qtyRaw == null) return;
+    const qty = Math.floor(Number(qtyRaw));
+    if (!Number.isFinite(qty) || qty <= 0 || qty > remaining) {
+      window.alert(`Invalid quantity. Enter 1..${remaining}.`);
+      return;
+    }
+
+    setFulfillLoading(true);
+    setFulfillResult(null);
+    try {
+      const packRes = await fetch(
+        `/api/galaxus/orders/${encodeURIComponent(orderDbId)}/shipments/pack`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            confirmReplace: true,
+            packages: [{ items: [{ lineId, quantity: qty }] }],
+          }),
+        }
+      );
+      const packData = await packRes.json().catch(() => ({}));
+      if (!packRes.ok || !packData?.ok) {
+        throw new Error(packData?.error ?? `Package build failed (${packRes.status})`);
+      }
+      await runDirectLabelForOrder(orderDbId);
+    } catch (err: any) {
+      setFulfillResult({ ok: false, error: err?.message || "Network error" });
+      window.alert(err?.message || "Direct partial shipment failed");
     } finally {
       setFulfillLoading(false);
     }
@@ -1667,76 +1669,7 @@ export default function ScanPage() {
 
       await handleChannelActions(data);
 
-      // GTIN fallback auto-fulfill: AWB miss + product barcode hit.
-      // Oldest open across Galaxus direct / Shopify / Decathlon (server picks
-      // via `gtin.autoChannel`). Skip when any other channel already claimed.
-      const gtinBlockedByOtherChannel =
-        Boolean(data.galaxus) ||
-        Boolean(data.inboundHome) ||
-        Boolean(data.match) ||
-        Boolean(data.stxInboundBuy) ||
-        Boolean(data.decathlon);
-      const gtinAutoChannel = !gtinBlockedByOtherChannel
-        ? data.gtin?.autoChannel ?? null
-        : null;
-
-      if (gtinAutoChannel === "galaxus_direct") {
-        const gtinAutoDirectOrderDbId =
-          data.gtin?.autoDirectOrderDbId && (data.gtin.openDirect ?? 0) > 0
-            ? data.gtin.autoDirectOrderDbId
-            : null;
-        if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && gtinAutoDirectOrderDbId) {
-          await runDirectLabelForOrder(gtinAutoDirectOrderDbId);
-        }
-      } else if (gtinAutoChannel === "shopify" && ENABLE_AUTO_FULFILLMENT && data.gtin?.autoShopify) {
-        const auto = data.gtin.autoShopify;
-        await runFulfillFromScan(
-          {
-            ...data,
-            ok: true,
-            status: "FOUND",
-            match: {
-              shopifyOrderId: auto.shopifyOrderId,
-              shopifyOrderName: auto.shopifyOrderName ?? null,
-              shopifyLineItemId: auto.shopifyLineItemId,
-              trackingUrl: null,
-            },
-          },
-          {
-            scanStartedAt: new Date(startedAt).toISOString(),
-            scanCompletedAt: new Date(finishedAt).toISOString(),
-            gtinFulfill: true,
-          }
-        );
-      } else if (gtinAutoChannel === "decathlon" && data.gtin?.autoDecathlon) {
-        const auto = data.gtin.autoDecathlon;
-        // Do not pass product GTIN as Mirakl tracking — ship route falls back to
-        // orderId then replaces with Swiss Post barcode after label generation.
-        await autoHandleDecathlon(
-          {
-            orderId: auto.orderId,
-            orderDbId: auto.orderDbId,
-            orderNumber: null,
-            orderState: null,
-            lineId: auto.lineId,
-            quantity: auto.quantity,
-            source: null,
-          },
-          ""
-        );
-      } else if (
-        !gtinBlockedByOtherChannel &&
-        !gtinAutoChannel &&
-        data.gtin?.autoDecathlonReprint?.orderId
-      ) {
-        // GTIN hit an already-shipped Decathlon line — reprint packing slip + label.
-        await reprintDecathlonDocs({
-          orderId: data.gtin.autoDecathlonReprint.orderId,
-          shipmentId: data.gtin.autoDecathlonReprint.shipmentId,
-        });
-      }
-
-      // Manual confirm required for Shopify fulfillments (multi-line / partial shipping safe).
+      // GTIN path is manual only. No auto fulfill / auto direct-label / auto decathlon.
     } catch (err: any) {
       setResult({
         ok: false,
@@ -2662,8 +2595,8 @@ export default function ScanPage() {
                   {result.gtin.orders.length} recent lines).
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
-                  No shipping AWB matched this code; treating it as a product GTIN. Oldest open
-                  Galaxus-direct / Shopify / Decathlon line auto-fulfills.
+                  No shipping AWB matched this code; treating it as a product GTIN. Nothing auto-fulfills.
+                  Pick order + quantity manually.
                 </p>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
@@ -2677,7 +2610,8 @@ export default function ScanPage() {
                         <th className="py-1 pr-2">Qty</th>
                         <th className="py-1 pr-2">Remaining</th>
                         <th className="py-1 pr-2">Shipped/Reserved</th>
-                        <th className="py-1">Ref</th>
+                        <th className="py-1 pr-2">Ref</th>
+                        <th className="py-1 text-right">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2767,7 +2701,25 @@ export default function ScanPage() {
                               {(o.shipped ?? 0)}/{(o.reserved ?? 0)}
                               {o.warehouseMarkedShippedAt ? " · marked" : ""}
                             </td>
-                            <td className="py-1 font-mono text-[10px]">{refLabel}</td>
+                            <td className="py-1 pr-2 font-mono text-[10px]">{refLabel}</td>
+                            <td className="py-1 text-right">
+                              {channel === "galaxus" &&
+                              o.isDirectDelivery &&
+                              !closed &&
+                              o.galaxusOrderDbId ? (
+                                <button
+                                  type="button"
+                                  disabled={fulfillLoading}
+                                  onClick={() => void runGtinDirectPartial(o)}
+                                  className="px-2 py-0.5 rounded bg-teal-700 text-white disabled:opacity-50"
+                                  title="Create partial shipment for selected quantity, then generate direct label"
+                                >
+                                  {fulfillLoading ? "..." : "Ship qty"}
+                                </button>
+                              ) : (
+                                <span className="text-fuchsia-300">—</span>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
