@@ -179,7 +179,7 @@ export function buildSwissPostRecipientNameFields(input: {
 
     return {
       personallyAddressed: false,
-      name1: truncateSwissPostName(companyName || personName || "Recipient"),
+      name1: truncateSwissPostName(companyName),
       firstName: null,
       name2,
       name3,
@@ -209,7 +209,7 @@ export function buildSwissPostRecipientNameFields(input: {
 
   return {
     personallyAddressed: true,
-    name1: truncateSwissPostName(name1 || personName || company || "Recipient"),
+    name1: truncateSwissPostName(name1 || personName || company || ""),
     firstName: firstName ? truncateSwissPostName(firstName) : null,
     name2,
     name3: null,
@@ -359,13 +359,15 @@ export function buildSwissPostRecipientFromGalaxusOrder(order: {
   const forcedBusiness = isSwissPostBusinessCustomerType(customerType);
   const recipientProxy = isGalaxusProxyName(rawRecipientName);
   const customerProxy = isGalaxusProxyName(customerName);
+  // After cancel/uncancel, recipientName can be wiped while address + Digitec customerName remain.
+  // Prefer recipient, then customerName (Digitec Galaxus AG), never invent "Recipient".
   const primaryName = hasRecipient
-    ? !forcedBusiness && recipientProxy && contact
-      ? contact
-      : rawRecipientName
-    : !forcedBusiness && customerProxy && contact
-      ? contact
-      : customerName;
+    ? (!forcedBusiness && recipientProxy && contact
+        ? contact
+        : rawRecipientName) || customerName || "Digitec Galaxus AG"
+    : (!forcedBusiness && customerProxy && contact
+        ? contact
+        : customerName) || "Digitec Galaxus AG";
   const isBusiness =
     isSwissPostBusinessCustomerType(customerType) ||
     (!isSwissPostPrivateCustomerType(customerType) &&

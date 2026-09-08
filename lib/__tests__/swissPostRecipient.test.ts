@@ -111,6 +111,23 @@ describe("buildSwissPostRecipientFromGalaxusOrder", () => {
     expect(recipient.street).toBe("Ferroring 23");
   });
 
+  it("wiped recipientName after cancel → fall back to Digitec customerName", () => {
+    const recipient = buildSwissPostRecipientFromGalaxusOrder({
+      recipientName: null,
+      recipientAddress1: "Ferroring 23",
+      recipientAddress2: "Dock A19 - A39",
+      recipientPostalCode: "5612",
+      recipientCity: "Villmergen",
+      recipientCountryCode: "CH",
+      customerName: "Digitec Galaxus AG",
+      customerType: "company",
+    });
+    expect(recipient.personallyAddressed).toBe(false);
+    expect(recipient.name1).toBe("Digitec Galaxus AG");
+    expect(recipient.street).toBe("Ferroring 23");
+    expect(recipient.city).toBe("Villmergen");
+  });
+
   it("private_customer → person layout with name always present", () => {
     const recipient = buildSwissPostRecipientFromGalaxusOrder({
       recipientName: "Anna Keller",
@@ -123,6 +140,21 @@ describe("buildSwissPostRecipientFromGalaxusOrder", () => {
     expect(recipient.personallyAddressed).toBe(true);
     expect(recipient.firstName).toBe("Anna");
     expect(recipient.name1).toBe("Keller");
+  });
+
+  it("proxy recipient name + reference person → use real person on label", () => {
+    const recipient = buildSwissPostRecipientFromGalaxusOrder({
+      recipientName: "Digitec Galaxus AG",
+      recipientAddress1: "Kreuzstrasse 4",
+      recipientPostalCode: "8635",
+      recipientCity: "Dürnten",
+      recipientCountryCode: "CH",
+      referencePerson: "Manuel Peter",
+      customerType: null,
+    });
+    expect(recipient.personallyAddressed).toBe(true);
+    expect(recipient.firstName).toBe("Manuel");
+    expect(recipient.name1).toBe("Peter");
   });
 });
 
