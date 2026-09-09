@@ -18,7 +18,11 @@ const BATCH_SIZE = 200;
 
 function parseOutArg(): string {
   const raw = process.argv.find((a) => a.startsWith("--out="));
-  return raw ? raw.slice("--out=".length) : "tmp/galaxus-stx-full-match.json";
+  return raw ? raw.slice("--out=".length) : ".data/galaxus-stx-full-match.json";
+}
+
+function isReportOnly(): boolean {
+  return process.argv.includes("--report-only");
 }
 
 async function loadStxGalaxusOrderIds(): Promise<
@@ -127,22 +131,76 @@ async function listShippedLinkedMissingAwb() {
     }));
 }
 
+async function listGalaxusOrdersNeedingStockxBuy() {
+  const prismaAny = prisma as any;
+  const units = await prismaAny.stxPurchaseUnit.findMany({
+    where: {
+      stockxOrderId: null,
+      cancelledAt: null,
+    },
+    select: {
+      galaxusOrderId: true,
+      gtin: true,
+      supplierVariantId: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  const orderRefs = Array.from(new Set(units.map((u: any) => u.galaxusOrderId)));
+  const orders = orderRefs.length
+    ? await prisma.galaxusOrder.findMany({
+        where: { galaxusOrderId: { in: orderRefs } },
+        select: {
+          galaxusOrderId: true,
+          orderDate: true,
+          deliveryType: true,
+          lines: {
+            select: { gtin: true, productName: true, providerKey: true },
+          },
+        },
+      })
+    : [];
+  const orderByRef = new Map(orders.map((o) => [o.galaxusOrderId, o]));
+  return units.map((u: any) => {
+    const order = orderByRef.get(u.galaxusOrderId);
+    const line = order?.lines?.find((l) => String(l.gtin ?? "") === String(u.gtin ?? ""));
+    return {
+      galaxusOrderId: u.galaxusOrderId,
+      orderDate: order?.orderDate ?? null,
+      deliveryType: order?.deliveryType ?? null,
+      gtin: u.gtin,
+      supplierVariantId: u.supplierVariantId,
+      productName: line?.productName ?? null,
+      providerKey: line?.providerKey ?? null,
+    };
+  });
+}
+
 async function main() {
   const outPath = parseOutArg();
+  const reportOnly = isReportOnly();
   const startedAt = new Date().toISOString();
 
   const token = await readGalaxusStockxToken();
   if (!token) {
-    console.error("[galaxus-stx-full-match] Missing Galaxus StockX token (.data/stockx-token-galaxus.json)");
-    process.exit(1);
+    console.error(
+      "[galaxus-stx-full-match] Missing/expired Galaxus StockX token — refresh via /admin/stockx-login or VPS VNC then re-run."
+    );
+    if (!reportOnly) process.exit(1);
   }
 
-  const orders = await loadStxGalaxusOrderIds();
-  console.log(`[galaxus-stx-full-match] STX orders: ${orders.length}`);
+  const galaxusNeedingBuy = await listGalaxusOrdersNeedingStockxBuy();
+  const shippedMissingAwbBefore = await listShippedLinkedMissingAwb();
 
   const bulkResults: Awaited<ReturnType<typeof runGalaxusBulkStxSync>>[] = [];
-  for (let i = 0; i < orders.length; i += BATCH_SIZE) {
-    const batch = orders.slice(i, i + BATCH_SIZE).map((o) => o.id);
+  let ordersTotal = 0;
+  if (!reportOnly && token) {
+    const orders = await loadStxGalaxusOrderIds();
+    ordersTotal = orders.length;
+    console.log(`[galaxus-stx-full-match] STX orders: ${orders.length}`);
+
+    for (let i = 0; i < orders.length; i += BATCH_SIZE) {
+      const batch = orders.slice(i, i + BATCH_SIZE).map((o) => o.id);
     console.log(
       `[galaxus-stx-full-match] bulk sync batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(orders.length / BATCH_SIZE)} (${batch.length} orders)`
     );
@@ -151,22 +209,33 @@ async function main() {
     console.log(
       `[galaxus-stx-full-match]   linked=${result.linked} alreadyLinked=${result.alreadyLinked} awbBackfilled=${result.awbBackfilled} errors=${result.errors}`
     );
-    if (!result.ok && result.error) {
-      console.warn(`[galaxus-stx-full-match]   batch error: ${result.error}`);
+      if (!result.ok && result.error) {
+        console.warn(`[galaxus-stx-full-match]   batch error: ${result.error}`);
+      }
     }
+  } else if (reportOnly) {
+    console.log("[galaxus-stx-full-match] report-only mode (no StockX API sync)");
   }
 
-  console.log("[galaxus-stx-full-match] AWB refresh pass…");
-  const awbRefresh = await refreshMissingAwbForLinkedUnits(token);
+  let awbRefresh = { orderCount: 0, awbBackfilled: 0, refreshed: 0, failed: 0, failures: [] as any[] };
+  if (token && !reportOnly) {
+    console.log("[galaxus-stx-full-match] AWB refresh pass…");
+    awbRefresh = await refreshMissingAwbForLinkedUnits(token);
+  }
   const shippedMissingAwbAfter = await listShippedLinkedMissingAwb();
 
   console.log("[galaxus-stx-full-match] Unlinked StockX buys…");
-  const unlinkedReport = await listUnlinkedGalaxusStockxBuys();
+  const unlinkedReport = token
+    ? await listUnlinkedGalaxusStockxBuys()
+    : { ok: false, error: "no_token", totalFetched: 0, unlinked: [] as const };
 
   const summary = {
     startedAt,
     finishedAt: new Date().toISOString(),
-    ordersTotal: orders.length,
+    reportOnly,
+    tokenPresent: Boolean(token),
+    ordersTotal,
+    galaxusLinesNeedingStockxBuy: galaxusNeedingBuy,
     bulk: {
       batches: bulkResults.length,
       linked: bulkResults.reduce((s, r) => s + r.linked, 0),
@@ -176,6 +245,7 @@ async function main() {
       errors: bulkResults.reduce((s, r) => s + r.errors, 0),
     },
     awbRefresh,
+    shippedLinkedStillMissingAwbBefore: shippedMissingAwbBefore,
     shippedLinkedStillMissingAwb: shippedMissingAwbAfter,
     unlinkedStockxBuys: unlinkedReport,
   };
@@ -185,8 +255,20 @@ async function main() {
 
   console.log(`\n[galaxus-stx-full-match] wrote ${outPath}`);
   console.log(
-    `[galaxus-stx-full-match] linked=${summary.bulk.linked} unlinkedStockx=${unlinkedReport.unlinked.length} shippedMissingAwb=${shippedMissingAwbAfter.length}`
+    `[galaxus-stx-full-match] linked=${summary.bulk.linked} galaxusNeedingBuy=${galaxusNeedingBuy.length} unlinkedStockx=${unlinkedReport.unlinked.length} shippedMissingAwb=${shippedMissingAwbAfter.length}`
   );
+
+  if (galaxusNeedingBuy.length > 0) {
+    console.log("\n--- Galaxus STX lines still without StockX buy ---");
+    for (const row of galaxusNeedingBuy.slice(0, 80)) {
+      console.log(
+        `${row.galaxusOrderId} | ${row.deliveryType ?? "?"} | ${row.productName ?? row.gtin} | ${row.providerKey ?? ""}`
+      );
+    }
+    if (galaxusNeedingBuy.length > 80) {
+      console.log(`… and ${galaxusNeedingBuy.length - 80} more (see JSON)`);
+    }
+  }
 
   if (unlinkedReport.unlinked.length > 0) {
     console.log("\n--- Unlinked StockX buys (not on Galaxus) ---");
