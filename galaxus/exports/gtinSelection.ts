@@ -4,6 +4,7 @@ import { validateGtin } from "@/app/lib/normalize";
 import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
+import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
 
 type VariantCandidate = {
   mapping: any;
@@ -135,6 +136,28 @@ export function accumulateBestCandidates(
         variant,
       });
       continue;
+    }
+
+    // STX feed gate — Tali policy (2026-09-09): hard cap CHF 10k, mainstream
+    // brands > CHF 500 dropped, hand-curated aberrant overrides always dropped.
+    // Focus + luxury/haute-couture (incl. Bearbrick / KAWS / Travis Scott) stay.
+    {
+      const stxGate = shouldOmitStxFromGalaxusFeed({
+        supplierKey,
+        providerKey: variant?.providerKey ?? mapping?.providerKey,
+        supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
+        supplierBrand: variant?.supplierBrand,
+        price: variant?.price ?? null,
+      });
+      if (stxGate.omit) {
+        options?.onExclude?.({
+          reason: "SUPPLIER_BLOCKED",
+          supplierKey: supplierKey ?? "stx",
+          mapping,
+          variant,
+        });
+        continue;
+      }
     }
 
     const gtin = String(mapping.gtin ?? variant?.gtin ?? "").trim();

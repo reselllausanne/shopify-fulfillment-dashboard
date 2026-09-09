@@ -1,0 +1,4 @@
+{
+  "$comment": "Hand-approved STX rows to permanently gate from the Galaxus feed. Populated by scripts/stx-detect-aberrant.ts (dry-run). Add entries manually after review; remove entries manually to un-gate. Only providerKey is consumed at runtime.",
+  "entries": []
+}

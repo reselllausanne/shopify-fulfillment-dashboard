@@ -31,6 +31,7 @@ import { streamCsvToFile } from "@/galaxus/exports/csv";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
 import { countCriticalGtinIssues, collectCriticalGtinProviderKeys, filterCsvByProviderKeys } from "@/galaxus/exports/feedValidation";
 import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
+import { loadStxFeedGateProviderKeys } from "@/galaxus/exports/stxFeedGate";
 import { shouldSkipGalaxusFeedCheckAll } from "@/galaxus/feedExecutor";
 import {
   rebuildFeedSnapshotFromExports,
@@ -392,6 +393,8 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
     const blockedProviderKeys = collectCriticalGtinProviderKeys(report ?? {});
     const welPokemonOmitKeys = await loadWelCardOmitProviderKeys();
     for (const key of welPokemonOmitKeys) blockedProviderKeys.add(key);
+    const stxGateOmitKeys = await loadStxFeedGateProviderKeys();
+    for (const key of stxGateOmitKeys) blockedProviderKeys.add(key);
     const omittedByFeed: Record<string, number> = {};
     if (blockedProviderKeys.size > 0) {
       // Prefer row-level filter + Buffer re-serialize for master-specs (string filter OOMs).
@@ -438,9 +441,11 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         specsCount = specsCount != null ? Math.max(0, specsCount - (omittedByFeed.specs ?? 0)) : null;
       }
       console.info("[GALAXUS][FEEDS][UPLOAD] Omitted blocked rows", {
-        criticalGtinKeys: Array.from(blockedProviderKeys).filter((key) => !welPokemonOmitKeys.has(key))
-          .length,
+        criticalGtinKeys: Array.from(blockedProviderKeys).filter(
+          (key) => !welPokemonOmitKeys.has(key) && !stxGateOmitKeys.has(key)
+        ).length,
         welPokemonKeys: welPokemonOmitKeys.size,
+        stxGateKeys: stxGateOmitKeys.size,
         omittedByFeed,
       });
     }
