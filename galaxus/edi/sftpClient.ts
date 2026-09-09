@@ -79,8 +79,12 @@ export async function uploadTempThenRename(
 
 /**
  * Same temp-then-rename upload, but streams from a local file on disk instead of an
- * in-memory Buffer. `ssh2-sftp-client.put(localPath, …)` treats a string source as a
- * file path and pipes it, so an 800MB master feed never has to sit in the heap.
+ * in-memory Buffer, so an 800MB master feed never has to sit in the heap.
+ *
+ * Uses `fastPut`, NOT `put`: against the Galaxus SFTP server ssh2-sftp-client v12's
+ * stream/path `put` stalls indefinitely (0 bytes after 25min, probe hung >2h), while
+ * `fastPut` (chunked parallel WRITEs) transfers reliably at ~37MB/s. `put(Buffer)`
+ * also works but would defeat the whole point of streaming from disk.
  */
 export async function uploadLocalFileTempThenRename(
   client: SftpClient,
@@ -91,6 +95,9 @@ export async function uploadLocalFileTempThenRename(
   const dir = remoteDir.replace(/\/$/, "");
   const tempPath = `${dir}/tmp_${filename}`;
   const finalPath = `${dir}/${filename}`;
-  await client.put(localPath, tempPath);
+  // fastPut exists at runtime (ssh2-sftp-client v12) but is missing from the bundled types.
+  await (client as unknown as {
+    fastPut: (src: string, dst: string) => Promise<string>;
+  }).fastPut(localPath, tempPath);
   await client.rename(tempPath, finalPath);
 }
