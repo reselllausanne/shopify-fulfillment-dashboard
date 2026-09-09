@@ -227,9 +227,19 @@ function feedPushLockKey(scope: FeedScope) {
 }
 
 /** Active run for one scope — feeds no longer block each other globally. */
-export async function getActiveFeedRun(scope?: FeedScope) {
-  await reconcileStaleFeedRuns();
-  await reconcileStaleFeedTriggers();
+export async function getActiveFeedRun(
+  scope?: FeedScope,
+  opts?: { reconcile?: boolean }
+) {
+  // Reconcile is skippable so the advisory-xact-lock critical section stays short.
+  // Running the 5 reconcile updateMany queries inside the 60s transaction is what
+  // tipped it past timeout ("Transaction already closed … 173s") under the DB load
+  // of a concurrent master-specs build. Callers on the hot path reconcile first,
+  // outside the lock, then pass { reconcile: false }.
+  if (opts?.reconcile !== false) {
+    await reconcileStaleFeedRuns();
+    await reconcileStaleFeedTriggers();
+  }
   return (prisma as any).galaxusFeedRun.findFirst({
     where: {
       finishedAt: null,
@@ -554,9 +564,15 @@ export async function startFeedPushAsync(params: {
 
   const delegateToWorker = !galaxusFeedExecutorMayRunFeeds();
 
+  // Reap stale runs/triggers OUTSIDE the lock so the transaction below only does the
+  // lookup + insert — keeps it well under the 60s xact timeout even while master-specs
+  // hammers the DB.
+  await reconcileStaleFeedRuns().catch(() => undefined);
+  await reconcileStaleFeedTriggers().catch(() => undefined);
+
   // Per-scope lock: stock/price/master can run in parallel (Galaxus accepts all 4 SFTP files).
   const locked = await withAdvisoryXactLock(feedPushLockKey(params.scope), async () => {
-    const active = await getActiveFeedRun(params.scope);
+    const active = await getActiveFeedRun(params.scope, { reconcile: false });
     const cooldown =
       !active &&
       params.scope === "price" &&
@@ -607,7 +623,8 @@ async function tryStartPendingFeedPush(
 ): Promise<FeedPushStartResult | null> {
   const scope = pending.scope as FeedScope;
   const locked = await withAdvisoryXactLock(feedPushLockKey(scope), async () => {
-    const active = await getActiveFeedRun(scope);
+    // Reconcile already ran in drainFeedPushQueue, outside this lock — keep the tx short.
+    const active = await getActiveFeedRun(scope, { reconcile: false });
     if (active) return null;
 
     // Leave lighter pushes PENDING while master-specs builds — they drain next tick.
@@ -657,6 +674,10 @@ export async function drainFeedPushQueue(
   }
 
   const prismaAny = prisma as any;
+  // Reap stale runs/triggers once, up front and outside any lock, so each
+  // tryStartPendingFeedPush transaction below stays short.
+  await reconcileStaleFeedRuns().catch(() => undefined);
+  await reconcileStaleFeedTriggers().catch(() => undefined);
   const coalesced = await coalesceDuplicatePendingTriggers().catch(() => 0);
   if (coalesced > 0) {
     console.info("[GALAXUS][FEED][QUEUE] coalesced duplicate PENDING triggers", { coalesced });

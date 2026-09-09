@@ -76,3 +76,21 @@ export async function uploadTempThenRename(
   await client.put(Buffer.isBuffer(content) ? content : Buffer.from(content), tempPath);
   await client.rename(tempPath, finalPath);
 }
+
+/**
+ * Same temp-then-rename upload, but streams from a local file on disk instead of an
+ * in-memory Buffer. `ssh2-sftp-client.put(localPath, …)` treats a string source as a
+ * file path and pipes it, so an 800MB master feed never has to sit in the heap.
+ */
+export async function uploadLocalFileTempThenRename(
+  client: SftpClient,
+  remoteDir: string,
+  filename: string,
+  localPath: string
+): Promise<void> {
+  const dir = remoteDir.replace(/\/$/, "");
+  const tempPath = `${dir}/tmp_${filename}`;
+  const finalPath = `${dir}/${filename}`;
+  await client.put(localPath, tempPath);
+  await client.rename(tempPath, finalPath);
+}

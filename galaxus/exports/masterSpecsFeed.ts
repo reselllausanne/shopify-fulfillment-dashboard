@@ -1,4 +1,3 @@
-import { toCsvBuffer } from "@/galaxus/exports/csv";
 import {
   buildGalaxusAlternativeMasterRows,
   buildGalaxusAlternativeSpecRows,
@@ -385,9 +384,6 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
 }
 
 export type MasterSpecsFeedExportResult = {
-  /** Buffer — string join hits V8 max length on full catalog. */
-  masterCsv: Buffer;
-  specsCsv: Buffer;
   masterHeaders: string[];
   specsHeaders: string[];
   masterRows: ExportRow[];
@@ -526,20 +522,12 @@ export async function buildMasterSpecsFeedExport(params: {
   const report = buildMasterSpecsValidationReport(masterRows, specsRows);
   mark("validate:done");
 
-  mark("csv:start");
-  // Buffer — full-string join blows past V8's max string length on this catalog size.
-  const masterCsv = toCsvBuffer(masterHeaders, masterRows);
-  const specsCsv = toCsvBuffer(specsHeaders, specsRows);
-  mark("csv:done", {
-    masterBytes: masterCsv.length,
-    specsBytes: specsCsv.length,
-    masterRows: masterRows.length,
-    specsRows: specsRows.length,
-  });
+  // CSV serialization is deferred to the caller (runFeedUpload) and streamed straight
+  // to disk. Returning rows instead of an 800MB Buffer lets the candidate + rawJson
+  // graph GC as this function returns, so the two never coexist in the heap.
+  mark("rows-ready", { masterRows: masterRows.length, specsRows: specsRows.length });
 
   return {
-    masterCsv,
-    specsCsv,
     masterHeaders,
     specsHeaders,
     masterRows,
