@@ -7,6 +7,7 @@ import { prisma } from "../app/lib/prisma";
 import { convergeVariant } from "../shopify/inventory/convergence";
 import { findShopifyVariantByGtin } from "../shopify/restock/shopifyRestockInventory";
 import {
+  ESSENTIALS_HOODIE_EXPRESS_CHF,
   ESSENTIALS_HOODIE_SELL_CHF,
   resolveInStockFixedPriceRule,
 } from "../shopify/inventory/inStockFixedPrice";
@@ -139,7 +140,7 @@ async function main() {
       const res = await convergeVariant(row.gtin, { postPhysicalRestock: true });
       let expressChanged = false;
       if (match.variantId) {
-        await writeShopifyExpressPriceMetafield(match.variantId, ESSENTIALS_HOODIE_SELL_CHF);
+        await writeShopifyExpressPriceMetafield(match.variantId, ESSENTIALS_HOODIE_EXPRESS_CHF);
         expressChanged = true;
       }
 
@@ -150,8 +151,12 @@ async function main() {
           title: match.productTitle,
           beforePrice: match.price,
           sellTarget: ESSENTIALS_HOODIE_SELL_CHF,
+          expressTarget: ESSENTIALS_HOODIE_EXPRESS_CHF,
           changed: res.changed || expressChanged,
-          changes: [...res.changes, expressChanged ? "express_price=129 (direct)" : null].filter(Boolean),
+          changes: [
+            ...res.changes,
+            expressChanged ? `express_price=${ESSENTIALS_HOODIE_EXPRESS_CHF} (direct)` : null,
+          ].filter(Boolean),
           warnings: res.warnings,
         })
       );

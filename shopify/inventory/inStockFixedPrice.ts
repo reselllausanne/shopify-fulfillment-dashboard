@@ -5,7 +5,7 @@
  * Match by productId first (sizes share one product), then SKU base, then title.
  *
  * COGS: already-expensed owned stock → costChf 0 (full margin on dashboard).
- * Sell prices stay fixed (Essentials tee/shorts 59/89, hoodies 129/129, Bape 69/99, AP×Travis 89/109, boxers 49/69).
+ * Sell prices stay fixed (Essentials tee/shorts 59/89, hoodies 129/169, Bape 69/99, AP×Travis 89/109, boxers 49/69).
  * Never StockX −30% soldes / never soldes-48h collection (`delivery_48h`).
  */
 
@@ -14,9 +14,9 @@ export const ESSENTIALS_SELL_CHF = 59;
 /** Essentials express metafield price (CHF). Never overwritten by StockX. */
 export const ESSENTIALS_EXPRESS_CHF = 89;
 
-/** Light Heather + FW24 Black hoodies — retail 129, never 59/89 lane. */
+/** Light Heather + FW24 Black hoodies — retail 129, express 169, never 59/89 lane. */
 export const ESSENTIALS_HOODIE_SELL_CHF = 129;
-export const ESSENTIALS_HOODIE_EXPRESS_CHF = 129;
+export const ESSENTIALS_HOODIE_EXPRESS_CHF = 169;
 
 /** Audemars × Travis in-stock Shopify sell price (CHF). Never overwritten by StockX. */
 export const AUDEMARS_TRAVIS_SELL_CHF = 89;
@@ -64,7 +64,7 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     sellChf: ESSENTIALS_HOODIE_SELL_CHF,
     expressChf: ESSENTIALS_HOODIE_EXPRESS_CHF,
     label: "Essential Hoodie (in stock)",
-    matchReason: "Essential Hoodie (fixed 129/129, cost 42)",
+    matchReason: "Essential Hoodie (fixed 129/169, cost 42)",
     skuBases: ["192HO246258F", "192HO246250F"],
     // SKU-only — title patterns previously matched Kids / NBA hoodies by mistake.
   },

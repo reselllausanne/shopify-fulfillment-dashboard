@@ -22,17 +22,17 @@ describe("inStockFixedPrice", () => {
     expect(r?.expressChf).toBe(89);
   });
 
-  it("resolves Light Heather hoodie by SKU base with full-margin COGS 0 and sell 129/129", () => {
+  it("resolves Light Heather hoodie by SKU base with full-margin COGS 0 and sell 129/169", () => {
     const r = resolveInStockFixedPrice({ sku: "192HO246258F-M" });
     expect(r?.costChf).toBe(0);
     expect(r?.sellChf).toBe(129);
-    expect(r?.expressChf).toBe(129);
+    expect(r?.expressChf).toBe(169);
   });
 
-  it("resolves FW24 Black hoodie by SKU base with sell 129/129", () => {
+  it("resolves FW24 Black hoodie by SKU base with sell 129/169", () => {
     const r = resolveInStockFixedPrice({ sku: "192HO246250F-S" });
     expect(r?.sellChf).toBe(129);
-    expect(r?.expressChf).toBe(129);
+    expect(r?.expressChf).toBe(169);
   });
 
   it("resolves Bape by productId with full-margin COGS 0 and sell 69/99", () => {
