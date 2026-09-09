@@ -49,6 +49,9 @@ export default function GalaxusDirectDeliveryPage() {
   const [reprintBusy, setReprintBusy] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
+  // Partial (per-pair) shipping: lineId → quantity to ship now.
+  const [selectedPairs, setSelectedPairs] = useState<Record<string, number>>({});
+  const [shipping, setShipping] = useState(false);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [orderSearch, setOrderSearch] = useState("");
   const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
@@ -182,6 +185,7 @@ export default function GalaxusDirectDeliveryPage() {
   }, [loadOrders]);
 
   useEffect(() => {
+    setSelectedPairs({});
     if (!selectedOrderId) {
       setSelectedOrder(null);
       return;
@@ -215,13 +219,45 @@ export default function GalaxusDirectDeliveryPage() {
     return map;
   }, [selectedOrder]);
 
+  const lineRemaining = useCallback((line: any): number => {
+    const r = Number(line?.remainingQuantity);
+    if (Number.isFinite(r)) return Math.max(0, r);
+    if (line?.warehouseMarkedShippedAt) return 0;
+    const ordered = Number(line?.quantity ?? 0);
+    return Number.isFinite(ordered) ? Math.max(0, ordered) : 0;
+  }, []);
+
+  const lineShipped = useCallback((line: any): number => {
+    const s = Number(line?.shippedQuantity);
+    if (Number.isFinite(s)) return Math.max(0, s);
+    if (line?.warehouseMarkedShippedAt) return Number(line?.quantity ?? 0);
+    return 0;
+  }, []);
+
+  // Fully fulfilled only when every line has zero remaining (partial ships leave
+  // remaining pairs open). Prevents one DELR from flipping the whole order "done".
   const orderFulfilled = useMemo(() => {
-    const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
-    return shipments.some((shipment: any) => {
-      const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
-      return Boolean(shipment?.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
-    });
-  }, [selectedOrder]);
+    const lines = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : [];
+    if (lines.length === 0) return false;
+    const anyShipped = lines.some((l: any) => lineShipped(l) > 0);
+    const allDone = lines.every((l: any) => lineRemaining(l) === 0);
+    return anyShipped && allDone;
+  }, [selectedOrder, lineRemaining, lineShipped]);
+
+  const openLines = useMemo(
+    () => (Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : []).filter((l: any) => lineRemaining(l) > 0),
+    [selectedOrder, lineRemaining]
+  );
+
+  const partiallyShipped = useMemo(() => {
+    const lines = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : [];
+    return lines.some((l: any) => lineShipped(l) > 0) && openLines.length > 0;
+  }, [selectedOrder, openLines, lineShipped]);
+
+  const selectedPairCount = useMemo(
+    () => Object.values(selectedPairs).reduce((sum, qty) => sum + Math.max(0, Number(qty) || 0), 0),
+    [selectedPairs]
+  );
 
   const packingSlipUrl = useMemo(() => {
     const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
@@ -358,15 +394,23 @@ export default function GalaxusDirectDeliveryPage() {
     }
   };
 
-  const generateDirectSwissPostLabel = async () => {
+  const generateDirectSwissPostLabel = async (
+    selection?: Array<{ lineId: string; quantity: number }>
+  ) => {
     if (!selectedOrderId) return;
+    const isPartial = Array.isArray(selection) && selection.length > 0;
     setError(null);
     setOpsLog(null);
+    setShipping(true);
     try {
       const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ includeLabelData: true, allowReprint: false }),
+        body: JSON.stringify({
+          includeLabelData: true,
+          allowReprint: false,
+          ...(isPartial ? { selection } : {}),
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Direct Swiss Post label failed");
@@ -377,7 +421,9 @@ export default function GalaxusDirectDeliveryPage() {
         return;
       }
       setOpsLog(JSON.stringify(data, null, 2));
-      if (data.status === "CREATED" || data.status === "REPRINT") {
+      setSelectedPairs({});
+      // Only jump to Fulfilled for a full ship — partial ships keep the order in À traiter.
+      if (!isPartial && (data.status === "CREATED" || data.status === "REPRINT")) {
         setLeftTab("fulfilled");
       }
       await loadOrders({ force: true });
@@ -393,7 +439,52 @@ export default function GalaxusDirectDeliveryPage() {
       }
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setShipping(false);
     }
+  };
+
+  const buildRemainingSelection = () =>
+    (Array.isArray(selectedOrder?.lines) ? selectedOrder.lines : [])
+      .map((l: any) => ({ lineId: String(l.id), quantity: lineRemaining(l) }))
+      .filter((x: { quantity: number }) => x.quantity > 0);
+
+  // Ship every open pair. If pairs already shipped (partial), send the explicit
+  // remaining selection; otherwise use the whole-order path (one parcel).
+  const shipAllRemaining = () => {
+    const existingShipments = Array.isArray(selectedOrder?.shipments)
+      ? selectedOrder.shipments.length
+      : 0;
+    if (existingShipments > 0) return generateDirectSwissPostLabel(buildRemainingSelection());
+    return generateDirectSwissPostLabel();
+  };
+
+  const shipSelectedPairs = () => {
+    const selection = Object.entries(selectedPairs)
+      .map(([lineId, qty]) => ({ lineId, quantity: Math.max(0, Math.floor(Number(qty) || 0)) }))
+      .filter((x) => x.quantity > 0);
+    if (selection.length === 0) {
+      setError("Select at least one pair to ship.");
+      return;
+    }
+    return generateDirectSwissPostLabel(selection);
+  };
+
+  const togglePairSelected = (line: any, checked: boolean) => {
+    const lineId = String(line.id);
+    setSelectedPairs((prev) => {
+      const next = { ...prev };
+      if (checked) next[lineId] = Math.max(1, lineRemaining(line));
+      else delete next[lineId];
+      return next;
+    });
+  };
+
+  const setPairQuantity = (line: any, qty: number) => {
+    const lineId = String(line.id);
+    const max = Math.max(1, lineRemaining(line));
+    const clamped = Math.min(max, Math.max(1, Math.floor(qty) || 1));
+    setSelectedPairs((prev) => ({ ...prev, [lineId]: clamped }));
   };
 
   const reprintDirectDocuments = async () => {
@@ -834,13 +925,35 @@ export default function GalaxusDirectDeliveryPage() {
                       Fulfilled
                     </span>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => void generateDirectSwissPostLabel()}
-                      className="px-2 py-1.5 bg-indigo-700 text-white rounded text-xs disabled:opacity-50"
-                    >
-                      Swiss Post label
-                    </button>
+                    <>
+                      {partiallyShipped ? (
+                        <span
+                          className="text-xs px-2 py-1.5 rounded bg-amber-100 text-amber-900"
+                          title="Some pairs already shipped — remaining pairs still open"
+                        >
+                          Partial · {openLines.length} left
+                        </span>
+                      ) : null}
+                      {selectedPairCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void shipSelectedPairs()}
+                          disabled={shipping || !selectedOrderId}
+                          className="px-2 py-1.5 bg-emerald-700 text-white rounded text-xs disabled:opacity-50"
+                        >
+                          {shipping ? "Shipping…" : `Ship selected (${selectedPairCount})`}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void shipAllRemaining()}
+                        disabled={shipping || !selectedOrderId}
+                        className="px-2 py-1.5 bg-indigo-700 text-white rounded text-xs disabled:opacity-50"
+                        title="Ship every remaining pair in one Swiss Post parcel"
+                      >
+                        {shipping ? "Shipping…" : partiallyShipped ? "Ship all remaining" : "Swiss Post label"}
+                      </button>
+                    </>
                   )}
                   {(orderFulfilled || shippingLabelUrl || packingSlipUrl) && (
                     <button
@@ -890,6 +1003,11 @@ export default function GalaxusDirectDeliveryPage() {
                   const match = matchesByLine.get(line.id);
                   const proc = line.procurement;
                   const procOk = Boolean(proc?.ok || match || line.physicalStock);
+                  const remainingQty = lineRemaining(line);
+                  const shippedQty = lineShipped(line);
+                  const orderedQty = Number(line.quantity ?? 0);
+                  const selectedQty = selectedPairs[String(line.id)] ?? 0;
+                  const isSelected = selectedQty > 0;
                   const priceRaw = line.priceLineAmount ?? line.lineNetAmount ?? null;
                   const priceNumber = typeof priceRaw === "number" ? priceRaw : Number(priceRaw);
                   const priceText = Number.isFinite(priceNumber)
@@ -973,6 +1091,43 @@ export default function GalaxusDirectDeliveryPage() {
                             Size {line.size ?? line.sizeRaw ?? "—"} ·{" "}
                             {line.styleSku ?? line.supplierSku ?? "—"} · Qty {line.quantity} ·{" "}
                             {priceText}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {shippedQty > 0 ? (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-100 text-violet-900">
+                                Shipped {shippedQty}/{orderedQty}
+                              </span>
+                            ) : null}
+                            {remainingQty > 0 ? (
+                              <label className="flex items-center gap-1 text-[11px] text-gray-700">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  disabled={!procOk || shipping}
+                                  onChange={(e) => togglePairSelected(line, e.target.checked)}
+                                />
+                                Ship this pair
+                                {orderedQty > 1 ? (
+                                  <>
+                                    {" "}
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={remainingQty}
+                                      value={isSelected ? selectedQty : remainingQty}
+                                      disabled={!isSelected || shipping}
+                                      onChange={(e) => setPairQuantity(line, Number(e.target.value))}
+                                      className="w-12 border rounded px-1 py-0.5 text-[11px]"
+                                    />
+                                    <span className="text-gray-400">/ {remainingQty}</span>
+                                  </>
+                                ) : null}
+                              </label>
+                            ) : (
+                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                                Fully shipped
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-gray-500">
                             Key:{" "}

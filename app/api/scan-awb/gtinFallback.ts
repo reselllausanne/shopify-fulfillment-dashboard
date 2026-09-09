@@ -87,6 +87,8 @@ export type GtinFallbackPayload = {
   openShopify: number;
   openDecathlon: number;
   autoDirectOrderDbId: string | null;
+  autoDirectLineId: string | null;
+  autoDirectRemaining: number;
   autoShopify: {
     shopifyOrderId: string;
     shopifyOrderName: string | null;
@@ -554,6 +556,8 @@ export async function resolveGtinFallback(
     openShopify,
     openDecathlon,
     autoDirectOrderDbId: autoDirectOrder?.galaxusOrderDbId ?? null,
+    autoDirectLineId: autoDirectOrder?.lineId ?? null,
+    autoDirectRemaining: Math.max(0, Number(autoDirectOrder?.remaining ?? 0)),
     autoShopify:
       autoShopifyRow?.shopifyLineItemId && autoShopifyRow.shopifyOrderId
         ? {

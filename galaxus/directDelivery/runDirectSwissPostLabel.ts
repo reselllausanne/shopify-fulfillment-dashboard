@@ -2,8 +2,8 @@ import "server-only";
 
 import { DocumentType } from "@prisma/client";
 import { prisma } from "@/app/lib/prisma";
-import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
-import { createShipmentsForOrder } from "@/galaxus/warehouse/shipments";
+import { getStxLinkStatusForOrder, getStxLinkStatusForShipment } from "@/galaxus/stx/purchaseUnits";
+import { createManualShipmentsForOrder, createShipmentsForOrder } from "@/galaxus/warehouse/shipments";
 import { getStorageAdapter, getStorageAdapterForUrl } from "@/galaxus/storage/storage";
 import {
   applySuccessfulSwissPostLabelToShipment,
@@ -193,13 +193,40 @@ async function salvageSwissPostLabelToShipment(params: {
  * NEVER mint a Post barcode until a shipment row exists.
  * Prefer existing open/finalized shipments over creating new ones / burning barcodes.
  */
+export type DirectShipmentSelectionItem = { lineId: string; quantity?: number };
+
+async function deleteDirectShipmentCascade(shipmentId: string): Promise<void> {
+  const prismaAny = prisma as any;
+  await prismaAny.supplierOrder?.deleteMany?.({ where: { shipmentId } }).catch(() => undefined);
+  await prisma.document.deleteMany({ where: { shipmentId } }).catch(() => undefined);
+  await prisma.shipmentItem.deleteMany({ where: { shipmentId } }).catch(() => undefined);
+  await prisma.shipment.deleteMany({ where: { id: shipmentId } }).catch(() => undefined);
+}
+
 export async function runDirectSwissPostLabelForOrder(
   orderIdOrRef: string,
-  options?: { includeLabelData?: boolean; allowReprint?: boolean; requireLinked?: boolean }
+  options?: {
+    includeLabelData?: boolean;
+    allowReprint?: boolean;
+    requireLinked?: boolean;
+    /**
+     * Partial shipment: ship only the selected order lines (single pair / subset).
+     * Creates a dedicated Swiss Post parcel + DELR covering only these lines so the
+     * remaining pairs stay open. When omitted, the whole remaining order ships as one parcel.
+     */
+    selection?: DirectShipmentSelectionItem[];
+  }
 ): Promise<RunDirectSwissPostLabelResult> {
   const includeLabelData = Boolean(options?.includeLabelData ?? true);
   const allowReprint = Boolean(options?.allowReprint ?? true);
   const requireLinked = Boolean(options?.requireLinked ?? true);
+  const selection = (options?.selection ?? [])
+    .map((item) => ({
+      lineId: String(item?.lineId ?? "").trim(),
+      quantity: Math.max(0, Math.floor(Number(item?.quantity ?? 0))),
+    }))
+    .filter((item) => item.lineId);
+  const isPartial = selection.length > 0;
   const browserPrintConfig = resolveBrowserPrintConfig();
 
   const order = await prisma.galaxusOrder.findFirst({
@@ -227,116 +254,158 @@ export async function runDirectSwissPostLabelForOrder(
     };
   }
 
-  if (requireLinked) {
-    const linkStatus = await getStxLinkStatusForOrder(order.id).catch(() => null);
-    if (linkStatus && !linkStatus.allLinked) {
-      return { ok: false, error: "Order not fully linked yet" };
-    }
-  }
-
-  const shipments = (order.shipments ?? []) as ShipmentRow[];
-  const finalized = shipments.filter(isFinalizedShipment);
-  const open = shipments.filter((s) => !isFinalizedShipment(s));
-
-  // 1) Finalized DELR → already shipped (reprint only when explicitly allowed).
-  if (finalized.length > 0) {
-    const shipment = finalized.find((s) => String(s.trackingNumber ?? "").trim()) ?? finalized[0];
-    if (!allowReprint) {
-      return alreadyFulfilledResult({
-        shipmentId: shipment.id,
-        trackingNumber: shipment.trackingNumber,
-        browserPrintConfig,
-        delr: {
-          shipmentId: shipment.id,
-          status: "skipped",
-          message: "already sent",
-        },
-      });
-    }
-    const existing = await loadExistingShippingLabelData(order.id, shipment.id);
-    if (existing) {
-      return {
-        ok: true,
-        status: "REPRINT",
-        url: existing.url,
-        version: existing.version,
-        trackingNumber: shipment.trackingNumber ?? null,
-        shipmentId: shipment.id,
-        labelData: includeLabelData ? existing.labelData : null,
-        browserPrintConfig,
-        delr: {
-          shipmentId: shipment.id,
-          status: "skipped",
-          message: "already sent",
-        },
-      };
-    }
-    return {
-      ok: false,
-      error: "Order already has a finalized shipment (DELR sent)",
-      shipmentId: shipment.id,
-      trackingNumber: shipment.trackingNumber ?? null,
-      browserPrintConfig,
-    };
-  }
-
-  // 2) Open shipment already has tracking → already labeled / in flight.
-  //    Scan must not remint or reprint. Explicit allowReprint → DELR retry + reprint.
-  const openWithTracking = open.find((s) => String(s.trackingNumber ?? "").trim());
-  const openWithoutTracking = open.filter((s) => !String(s.trackingNumber ?? "").trim());
-  if (openWithTracking && openWithoutTracking.length === 0) {
-    if (!allowReprint) {
-      return alreadyFulfilledResult({
-        shipmentId: openWithTracking.id,
-        trackingNumber: openWithTracking.trackingNumber,
-        browserPrintConfig,
-      });
-    }
-    const { uploadDelrForShipment } = await import("@/galaxus/warehouse/delr");
-    const delr = await uploadDelrForShipment(openWithTracking.id).catch((error: any) => ({
-      status: "error",
-      message: error?.message ?? "DELR retry failed",
-    }));
-    const existing = await loadExistingShippingLabelData(order.id, openWithTracking.id);
-    if (existing) {
-      return {
-        ok: true,
-        status: "REPRINT",
-        url: existing.url,
-        version: existing.version,
-        trackingNumber: openWithTracking.trackingNumber,
-        shipmentId: openWithTracking.id,
-        labelData: includeLabelData ? existing.labelData : null,
-        browserPrintConfig,
-        delr,
-      };
-    }
-  }
-
-  // 3) Ensure we have a shipment row BEFORE calling Swiss Post.
-  // One parcel for the whole direct order (qty can be >1). Split-by-1 burned
-  // half-labeled NER carts; ask-how-many / cancel-request comes later.
-  let targetShipmentId = openWithTracking?.id ?? open[0]?.id ?? null;
+  let targetShipmentId: string | null = null;
   let createShipmentsStatus: string | undefined;
 
-  if (!targetShipmentId) {
-    const created = await createShipmentsForOrder({
+  if (isPartial) {
+    // Partial shipment: only the selected lines ship now, as their own Swiss Post
+    // parcel + DELR. createManualShipmentsForOrder enforces remaining-qty accounting
+    // (won't double-ship an already-shipped/reserved pair) and keeps prior partials.
+    const created = await createManualShipmentsForOrder({
       orderId: order.id,
-      allowSplit: false,
-      maxPairsPerParcel: 24,
       deliveryType: "direct_delivery",
+      packages: [
+        {
+          items: selection.map((item) => ({ lineId: item.lineId, quantity: item.quantity })),
+        },
+      ],
     });
-    createShipmentsStatus = created.status;
     if (created.status === "error" || !created.shipments?.length) {
       return {
         ok: false,
-        error: created.message ?? "Create shipments failed",
+        error: created.message ?? "Create partial shipment failed",
         createShipmentsStatus: created.status,
         browserPrintConfig,
       };
     }
-    // create may return skipped+existing or created — either way use first row.
+    createShipmentsStatus = created.status;
     targetShipmentId = created.shipments[0].id;
+
+    // Only the selected pair must be linked — check the parcel, not the whole order.
+    // Delete the fresh draft on failure so no Swiss Post barcode is burned and the
+    // pair is not left reserved.
+    if (requireLinked) {
+      const link = await getStxLinkStatusForShipment(targetShipmentId).catch(() => null);
+      if (link?.hasStxItems && !link.allLinked) {
+        await deleteDirectShipmentCascade(targetShipmentId);
+        return { ok: false, error: "Selected pair not linked yet", browserPrintConfig };
+      }
+    }
+  } else {
+    if (requireLinked) {
+      const linkStatus = await getStxLinkStatusForOrder(order.id).catch(() => null);
+      if (linkStatus && !linkStatus.allLinked) {
+        return { ok: false, error: "Order not fully linked yet" };
+      }
+    }
+
+    const shipments = (order.shipments ?? []) as ShipmentRow[];
+    const finalized = shipments.filter(isFinalizedShipment);
+    const open = shipments.filter((s) => !isFinalizedShipment(s));
+
+    // 1) Finalized DELR → already shipped (reprint only when explicitly allowed).
+    if (finalized.length > 0) {
+      const shipment = finalized.find((s) => String(s.trackingNumber ?? "").trim()) ?? finalized[0];
+      if (!allowReprint) {
+        return alreadyFulfilledResult({
+          shipmentId: shipment.id,
+          trackingNumber: shipment.trackingNumber,
+          browserPrintConfig,
+          delr: {
+            shipmentId: shipment.id,
+            status: "skipped",
+            message: "already sent",
+          },
+        });
+      }
+      const existing = await loadExistingShippingLabelData(order.id, shipment.id);
+      if (existing) {
+        return {
+          ok: true,
+          status: "REPRINT",
+          url: existing.url,
+          version: existing.version,
+          trackingNumber: shipment.trackingNumber ?? null,
+          shipmentId: shipment.id,
+          labelData: includeLabelData ? existing.labelData : null,
+          browserPrintConfig,
+          delr: {
+            shipmentId: shipment.id,
+            status: "skipped",
+            message: "already sent",
+          },
+        };
+      }
+      return {
+        ok: false,
+        error: "Order already has a finalized shipment (DELR sent)",
+        shipmentId: shipment.id,
+        trackingNumber: shipment.trackingNumber ?? null,
+        browserPrintConfig,
+      };
+    }
+
+    // 2) Open shipment already has tracking → already labeled / in flight.
+    //    Scan must not remint or reprint. Explicit allowReprint → DELR retry + reprint.
+    const openWithTracking = open.find((s) => String(s.trackingNumber ?? "").trim());
+    const openWithoutTracking = open.filter((s) => !String(s.trackingNumber ?? "").trim());
+    if (openWithTracking && openWithoutTracking.length === 0) {
+      if (!allowReprint) {
+        return alreadyFulfilledResult({
+          shipmentId: openWithTracking.id,
+          trackingNumber: openWithTracking.trackingNumber,
+          browserPrintConfig,
+        });
+      }
+      const { uploadDelrForShipment } = await import("@/galaxus/warehouse/delr");
+      const delr = await uploadDelrForShipment(openWithTracking.id).catch((error: any) => ({
+        status: "error",
+        message: error?.message ?? "DELR retry failed",
+      }));
+      const existing = await loadExistingShippingLabelData(order.id, openWithTracking.id);
+      if (existing) {
+        return {
+          ok: true,
+          status: "REPRINT",
+          url: existing.url,
+          version: existing.version,
+          trackingNumber: openWithTracking.trackingNumber,
+          shipmentId: openWithTracking.id,
+          labelData: includeLabelData ? existing.labelData : null,
+          browserPrintConfig,
+          delr,
+        };
+      }
+    }
+
+    // 3) Ensure we have a shipment row BEFORE calling Swiss Post.
+    // One parcel for the whole remaining direct order (qty can be >1). Use the
+    // per-pair "Ship selected" flow (selection) to split a multi-pair order.
+    targetShipmentId = openWithTracking?.id ?? open[0]?.id ?? null;
+
+    if (!targetShipmentId) {
+      const created = await createShipmentsForOrder({
+        orderId: order.id,
+        allowSplit: false,
+        maxPairsPerParcel: 24,
+        deliveryType: "direct_delivery",
+      });
+      createShipmentsStatus = created.status;
+      if (created.status === "error" || !created.shipments?.length) {
+        return {
+          ok: false,
+          error: created.message ?? "Create shipments failed",
+          createShipmentsStatus: created.status,
+          browserPrintConfig,
+        };
+      }
+      // create may return skipped+existing or created — either way use first row.
+      targetShipmentId = created.shipments[0].id;
+    }
+  }
+
+  if (!targetShipmentId) {
+    return { ok: false, error: "No shipment to label", createShipmentsStatus, browserPrintConfig };
   }
 
   const hint =
@@ -348,6 +417,9 @@ export async function runDirectSwissPostLabelForOrder(
   try {
     swissRes = await requestSwissPostLabelForOrderWithTrackingHint(order, hint);
   } catch (err: any) {
+    // Partial parcel is freshly created this call — drop it on label failure so the
+    // selected pair is not left reserved (blocking a retry).
+    if (isPartial) await deleteDirectShipmentCascade(targetShipmentId);
     return {
       ok: false,
       error: err?.message ?? "Swiss Post API unreachable",
@@ -357,6 +429,7 @@ export async function runDirectSwissPostLabelForOrder(
     };
   }
   if (!swissRes.ok) {
+    if (isPartial) await deleteDirectShipmentCascade(targetShipmentId);
     return {
       ok: false,
       error: "Swiss Post label generation failed",

@@ -372,10 +372,17 @@ export async function createManualShipmentsForOrder(
   const shippedAt = options.shippedAt ?? null;
   const storage = getStorageAdapter();
 
+  // Direct delivery = Swiss Post label per parcel (minted later). No SSCC, carrier is
+  // swisspost, delivery note only when Galaxus flags a physical note. Warehouse = SSCC + note.
+  const isDirect =
+    String(options.deliveryType ?? orderAny.deliveryType ?? "").toLowerCase() === "direct_delivery";
+  const requiresPhysicalDeliveryNote = Boolean(orderAny.physicalDeliveryNoteRequired);
+  const shouldGenerateDeliveryNote = !isDirect || requiresPhysicalDeliveryNote;
+
   const startIndex = existingShipments.length;
   for (let index = 0; index < packagesResolved.length; index += 1) {
     const pack = packagesResolved[index];
-    const packageId = await allocateSscc();
+    const packageId = isDirect ? null : await allocateSscc();
     const dispatchNotificationId = buildDispatchNotificationId(order.galaxusOrderId, startIndex + index);
     const trackingNumber = options.trackingNumbers?.[startIndex + index] ?? null;
     const packageType = options.packageType ?? "PARCEL";
@@ -392,7 +399,7 @@ export async function createManualShipmentsForOrder(
           incoterms: null,
           packageId,
           deliveryType: options.deliveryType ?? orderAny.deliveryType ?? "warehouse_delivery",
-          carrierRaw: options.carrierRaw ?? "eurosender",
+          carrierRaw: isDirect ? null : options.carrierRaw ?? "eurosender",
           carrierFinal: options.carrierFinal ?? null,
           trackingNumber,
           packageType,
@@ -415,63 +422,68 @@ export async function createManualShipmentsForOrder(
       return shipment;
     }, WAREHOUSE_TX_OPTIONS);
 
-    const deliveryNoteData = buildDeliveryNoteData(
-      orderAny,
-      pack.items,
-      created.dispatchNotificationId,
-      created.incoterms,
-      created.shipmentId
-    );
-    const isDirect = String(orderAny.deliveryType ?? "").toLowerCase() === "direct_delivery";
-    const deliveryNotePdf = await renderPdfFromHtml(
-      isDirect
-        ? {
-            html: renderDirectDeliveryNoteHtml(deliveryNoteData),
-            format: "A4",
-            showPageNumbers: false,
-            width: "8.268333in",
-            height: "11.693333in",
-            marginTop: "0",
-            marginRight: "0",
-            marginBottom: "0",
-            marginLeft: "0",
-            preferCssPageSize: true,
-          }
-        : {
-            html: renderDeliveryNoteHtml(deliveryNoteData),
-            format: "A4",
-            showPageNumbers: true,
-          }
-    );
-    const deliveryKey = `galaxus/${order.galaxusOrderId}/delivery_note/${created.id}.pdf`;
-    const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
-    await prismaAny.document.create({
-      data: {
-        orderId: order.id,
-        shipmentId: created.id,
-        type: "DELIVERY_NOTE",
-        version: 1,
-        storageUrl: deliveryStored.storageUrl,
-      },
-    });
+    let shipmentForList = created;
 
-    const label = await generateSsccLabelPdf(order, packageId, {
-      shipmentId: created.dispatchNotificationId ?? created.shipmentId ?? order.galaxusOrderId,
-      orderNumbers: [order.orderNumber ?? order.galaxusOrderId].filter(Boolean),
-    });
-    const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
-    const stored = await storage.uploadPdf(key, label.pdf);
+    if (shouldGenerateDeliveryNote) {
+      const deliveryNoteData = buildDeliveryNoteData(
+        orderAny,
+        pack.items,
+        created.dispatchNotificationId,
+        created.incoterms,
+        created.shipmentId
+      );
+      const deliveryNotePdf = await renderPdfFromHtml(
+        isDirect
+          ? {
+              html: renderDirectDeliveryNoteHtml(deliveryNoteData),
+              format: "A4",
+              showPageNumbers: false,
+              width: "8.268333in",
+              height: "11.693333in",
+              marginTop: "0",
+              marginRight: "0",
+              marginBottom: "0",
+              marginLeft: "0",
+              preferCssPageSize: true,
+            }
+          : {
+              html: renderDeliveryNoteHtml(deliveryNoteData),
+              format: "A4",
+              showPageNumbers: true,
+            }
+      );
+      const deliveryKey = `galaxus/${order.galaxusOrderId}/delivery_note/${created.id}.pdf`;
+      const deliveryStored = await storage.uploadPdf(deliveryKey, deliveryNotePdf);
+      await prismaAny.document.create({
+        data: {
+          orderId: order.id,
+          shipmentId: created.id,
+          type: "DELIVERY_NOTE",
+          version: 1,
+          storageUrl: deliveryStored.storageUrl,
+        },
+      });
+    }
 
-    const updated = await prismaAny.shipment.update({
-      where: { id: created.id },
-      data: {
-        labelZpl: label.zpl,
-        labelPdfUrl: stored.storageUrl,
-        labelGeneratedAt: new Date(),
-      },
-    });
+    if (!isDirect) {
+      const label = await generateSsccLabelPdf(order, String(packageId), {
+        shipmentId: created.dispatchNotificationId ?? created.shipmentId ?? order.galaxusOrderId,
+        orderNumbers: [order.orderNumber ?? order.galaxusOrderId].filter(Boolean),
+      });
+      const key = `galaxus/${order.galaxusOrderId}/shipments/${created.id}/sscc-label.pdf`;
+      const stored = await storage.uploadPdf(key, label.pdf);
 
-    shipments.push(updated);
+      shipmentForList = await prismaAny.shipment.update({
+        where: { id: created.id },
+        data: {
+          labelZpl: label.zpl,
+          labelPdfUrl: stored.storageUrl,
+          labelGeneratedAt: new Date(),
+        },
+      });
+    }
+
+    shipments.push(shipmentForList);
   }
 
   return {
