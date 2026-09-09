@@ -232,6 +232,7 @@ export async function GET(
     const viewFull = view !== "minimal";
     const ensureLocal = searchParams.get("ensureLocal") !== "0";
     const reserveStx = searchParams.get("reserveStx") !== "0";
+    const autoLinkStx = searchParams.get("autoLinkStx") === "1";
     const supplierScope = String(searchParams.get("supplierScope") ?? "").trim().toLowerCase();
     const stxOnly = supplierScope === "stx";
 
@@ -266,12 +267,12 @@ export async function GET(
     // Optional read-path optimization: some UIs only need display data, not read-time reservation writes.
     if (reserveStx) {
       // Restore match rows from surviving StxPurchaseUnit links (ORDP cascade survivors).
-      // skipAutoLink: never buy/link on a read path — only remount persisted green.
-      await reconcileGalaxusOrderProcurement(orderRow.galaxusOrderId, { skipAutoLink: true }).catch(
-        (err) => {
-          console.warn("[GALAXUS][ORDERS] procurement reconcile skipped:", err?.message ?? err);
-        }
-      );
+      // autoLinkStx=1 (Direct Delivery detail): crawl StockX and link unclaimed buys.
+      await reconcileGalaxusOrderProcurement(orderRow.galaxusOrderId, {
+        skipAutoLink: !autoLinkStx,
+      }).catch((err) => {
+        console.warn("[GALAXUS][ORDERS] procurement reconcile skipped:", err?.message ?? err);
+      });
     }
 
     const orderLineIds = (orderRow.lines ?? []).map((line: any) => line.id);

@@ -146,9 +146,9 @@ export default function GalaxusDirectDeliveryPage() {
     setLoadingOrder(true);
     setError(null);
     try {
-      // ensureLocal=1 so warehouse in-stock lane (Essentials/Bape/AP/boxers) auto-links
+      // ensureLocal + autoLinkStx: reserve STX slots and link unclaimed StockX buys on open.
       const res = await fetch(
-        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=1&reserveStx=0`,
+        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=1&reserveStx=1&autoLinkStx=1`,
         { cache: "no-store" }
       );
       const data = await res.json();

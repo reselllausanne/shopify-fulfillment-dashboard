@@ -697,6 +697,7 @@ export async function POST(
               stockxOrderNumber: stockxOrderNumberFromList,
               stockxSettledAmount,
               stockxSettledCurrency,
+              allowMissingEta: true,
             });
           } else if (needsEtaResolved) {
             if (!normalizedEtaMin && !normalizedEtaMax && !resolvedAwb && !checkoutType) {

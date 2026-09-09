@@ -423,17 +423,14 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
     if (!stockxOrderId) return;
     if (findStockxOrderClaim(claimIndex, stockxOrderId, stockxOrderNumber)) return;
 
+    // FIFO: oldest Galaxus order waiting for this variant wins (not closest purchase date).
     const candidates = stillNeedingLink
       .filter((need) => (need.remainingByVariant.get(buy.supplierVariantId) ?? 0) > 0)
-      .map((need) => ({
-        need,
-        diff: Math.abs(need.orderDateMs - parsePurchaseMs(buy.node)),
-      }))
-      .sort((a, b) => a.diff - b.diff || a.need.orderDateMs - b.need.orderDateMs);
+      .sort((a, b) => a.orderDateMs - b.orderDateMs);
 
     if (candidates.length === 0) return;
 
-    const { need } = candidates[0]!;
+    const need = candidates[0]!;
     const etaMin = buy.details.etaMin ?? buy.details.etaMax ?? null;
     const etaMax = buy.details.etaMax ?? buy.details.etaMin ?? null;
     const settledRaw = (buy.details as any)?.order?.payment?.settledAmount;
