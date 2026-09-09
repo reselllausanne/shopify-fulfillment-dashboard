@@ -3,13 +3,23 @@
 # Intended to be run by cron on the VPS host. Mints a short-lived admin JWT
 # from JWT_SECRET (in /opt/resell/.env) and POSTs the scrape endpoint.
 #
-# Cron examples:
-#   All shops except skip-list every 3 days:
+# Cron schedule (configure on VPS crontab — not auto-installed by repo):
+#
+#   Shared batch (all SCRAPER_SHOPS except SCRAPER_CRON_SKIP), typically every 3 days:
 #     0 3 */3 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
-#   Reichelt only every 3 days (detached):
+#
+#   Detached heavy scrapers (own container, survive web restarts):
 #     0 3 */3 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
-#   The Uncommon Shop (TUS) every 3 days:
+#     0 4 */7 * * /opt/resell/scripts/run-fantasywelt-detached.sh >> /opt/resell/scrape-fan-cron.log 2>&1
+#     0 5 */7 * * /opt/resell/scripts/run-exlibris-detached.sh >> /opt/resell/scrape-exl-cron.log 2>&1
+#
+#   Single-shop via API (examples from vps-patch scripts):
 #     0 4 */3 * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
+#
+#   SCRAPER_CRON_SKIP default: rei — detached Reichelt script. VPS typical: bwz,hhv,rei,wrk.
+#   EXL/FAN run on shared cron (fire-and-forget API). Optional detached: run-*-detached.sh.
+#   Shops on shared cron (when in SCRAPER_SHOPS and not skipped): haw, alt, ven, bwz, wrk, wel, …
+#   Galaxus feed push after scrape is automatic when variants_upserted > 0.
 #
 # Env:
 #   SCRAPER_CRON_SKIP=rei,fan   — comma/space keys skipped when no shop arg (default: rei)

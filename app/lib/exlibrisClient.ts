@@ -141,10 +141,13 @@ function normalizeTile(t: Record<string, unknown>): Record<string, unknown> | nu
     }
   }
 
+  const brand = medium || formatLabel || "Ex Libris";
+
   return {
     ean,
     title,
     medium,
+    brand,
     format: formatLabel,
     path: link,
     url: link.startsWith("http") ? link : `${EXLIBRIS_BASE}${link}`,
@@ -203,7 +206,8 @@ export function tileToProduct(tile: Record<string, unknown>, sampleBucket = ""):
     imageUrl: String(tile.image_url || ""),
     formatLabel: String(tile.format || ""),
     sampleBucket: sampleBucket || String(tile.format || ""),
-    brand: "",
+    brand:
+      String(tile.brand || tile.medium || tile.format || "").trim() || "Ex Libris",
   };
 }
 
