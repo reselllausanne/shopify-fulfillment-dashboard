@@ -18,9 +18,16 @@ import {
   GALAXUS_SUPPLIER_ID,
   assertSftpConfig,
 } from "@/galaxus/edi/config";
-import { uploadTempThenRename, withSftp } from "@/galaxus/edi/sftpClient";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import {
+  uploadLocalFileTempThenRename,
+  uploadTempThenRename,
+  withSftp,
+} from "@/galaxus/edi/sftpClient";
 import { runGalaxusExportGET } from "@/galaxus/ops/internalExportGet";
-import { toCsvBuffer } from "@/galaxus/exports/csv";
+import { streamCsvToFile } from "@/galaxus/exports/csv";
 import { buildMasterSpecsFeedExport } from "@/galaxus/exports/masterSpecsFeed";
 import { countCriticalGtinIssues, collectCriticalGtinProviderKeys, filterCsvByProviderKeys } from "@/galaxus/exports/feedValidation";
 import { loadWelCardOmitProviderKeys } from "@/galaxus/exports/welFeedOmit";
@@ -182,6 +189,8 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
   const runId = randomUUID();
   const startedAt = new Date();
   let auditId: string | null = null;
+  // Temp dir holding streamed master/specs CSVs — cleaned up in finally.
+  let tmpFeedDir: string | null = null;
   try {
     if (GALAXUS_FEED_UPLOADS_DISABLED) {
       return { ok: false, status: 403, error: "Feed uploads are disabled" };
@@ -254,6 +263,11 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
     let specsHeaders: string[] | null = null;
     let masterRowsForFilter: Array<Record<string, string>> | null = null;
     let specsRowsForFilter: Array<Record<string, string>> | null = null;
+    // Master/specs CSVs are streamed to disk (never a full Buffer in heap) and
+    // uploaded from these temp files. Bytes are identical to toCsvBuffer.
+    type StreamFile = { localPath: string; size: number; sha256: string; supplierKeys: string[] };
+    let masterStreamFile: StreamFile | null = null;
+    let specsStreamFile: StreamFile | null = null;
 
     if (useSinglePassMasterSpecs) {
       const providerKeys = providerKeysRaw
@@ -265,8 +279,6 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         limit,
         providerKeys,
       });
-      masterCsv = combined.masterCsv;
-      specsCsv = combined.specsCsv;
       masterHeaders = combined.masterHeaders;
       specsHeaders = combined.specsHeaders;
       masterRowsForFilter = combined.masterRows;
@@ -398,8 +410,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         );
         omittedByFeed.master = masterRowsForFilter.length - filteredMaster.length;
         omittedByFeed.specs = specsRowsForFilter.length - filteredSpecs.length;
-        masterCsv = toCsvBuffer(masterHeaders, filteredMaster);
-        specsCsv = toCsvBuffer(specsHeaders, filteredSpecs);
+        // Keep filtered rows — serialized to disk below, not into a Buffer here.
+        masterRowsForFilter = filteredMaster;
+        specsRowsForFilter = filteredSpecs;
         masterCount = filteredMaster.length;
         specsCount = filteredSpecs.length;
       } else {
@@ -431,8 +444,30 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         omittedByFeed,
       });
     }
-    // Drop the in-memory row graphs before SFTP. Master CSV is ~680MB; keeping 663k
-    // product objects + 1.4M spec objects beside it is what pushed RSS to 12GB.
+    // Serialize master/specs straight to disk (byte-identical to toCsvBuffer, proven in
+    // csv.test.ts) then drop the row arrays. Streaming means the 800MB+ CSV never lives
+    // in the heap as a Buffer, and the row graph (663k product + 1.4M spec objects) is
+    // freed before the SFTP upload — the two peaks that pushed RSS past the heap cap.
+    if (
+      useSinglePassMasterSpecs &&
+      masterHeaders &&
+      specsHeaders &&
+      masterRowsForFilter &&
+      specsRowsForFilter
+    ) {
+      const csvStreamStarted = Date.now();
+      tmpFeedDir = await mkdtemp(join(tmpdir(), "galaxus-feed-"));
+      const masterPath = join(tmpFeedDir, "ProductData.csv");
+      const specsPath = join(tmpFeedDir, "SpecificationData.csv");
+      masterStreamFile = { localPath: masterPath, ...(await streamCsvToFile(masterHeaders, masterRowsForFilter, masterPath)) };
+      specsStreamFile = { localPath: specsPath, ...(await streamCsvToFile(specsHeaders, specsRowsForFilter, specsPath)) };
+      console.info("[GALAXUS][FEEDS][UPLOAD] csv streamed to disk", {
+        masterBytes: masterStreamFile.size,
+        specsBytes: specsStreamFile.size,
+        ms: Date.now() - csvStreamStarted,
+      });
+    }
+    // Drop the in-memory row graphs before SFTP.
     masterRowsForFilter = null;
     specsRowsForFilter = null;
     const totalOmitted = Object.values(omittedByFeed).reduce((sum, value) => sum + value, 0);
@@ -443,11 +478,17 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       totalOmitted === 0 &&
       criticalGtinIssues === 0
     ) {
-      const blockedManifests = [];
-      if (needsMaster && masterCsv) {
+      const blockedManifests: Array<{
+        exportType: string;
+        csv?: string | Buffer;
+        streamFile?: StreamFile;
+        count: number;
+      }> = [];
+      if (needsMaster && (masterStreamFile || masterCsv)) {
         blockedManifests.push({
           exportType: "master",
-          csv: masterCsv,
+          csv: masterStreamFile ? undefined : masterCsv,
+          streamFile: masterStreamFile ?? undefined,
           count: masterCount ?? 0,
         });
       }
@@ -465,10 +506,11 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           count: offerCount ?? 0,
         });
       }
-    if (needsSpecs && specsCsv) {
+    if (needsSpecs && (specsStreamFile || specsCsv)) {
       blockedManifests.push({
         exportType: "specs",
-        csv: specsCsv,
+        csv: specsStreamFile ? undefined : specsCsv,
+        streamFile: specsStreamFile ?? undefined,
         count: specsCount ?? 0,
       });
     }
@@ -477,9 +519,11 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           data: {
             runId,
             exportType: entry.exportType,
-            supplierKeys: extractSupplierKeysFromCsv(entry.csv),
+            supplierKeys: entry.streamFile
+              ? entry.streamFile.supplierKeys
+              : extractSupplierKeysFromCsv(entry.csv ?? ""),
             productCount: entry.count ?? 0,
-            checksum: hashContent(entry.csv),
+            checksum: entry.streamFile ? entry.streamFile.sha256 : hashContent(entry.csv ?? ""),
             storagePointer: null,
             destination: null,
             uploadStatus: "blocked",
@@ -590,7 +634,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
     const uploads: UploadedFile[] = [];
     const manifestEntries: Array<{
       exportType: string;
-      csv: string | Buffer;
+      csv?: string | Buffer;
+      sha256?: string;
+      supplierKeys?: string[];
       count: number | null;
       name: string;
       path: string;
@@ -608,8 +654,17 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         const sftpStarted = Date.now();
         // One SFTP client — ops must stay sequential (ssh2-sftp is not concurrent-safe).
         if (needsMaster) {
-          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, masterName, masterCsv);
-          const masterSize = csvByteLength(masterCsv);
+          if (masterStreamFile) {
+            await uploadLocalFileTempThenRename(
+              client,
+              GALAXUS_SFTP_FEEDS_DIR,
+              masterName,
+              masterStreamFile.localPath
+            );
+          } else {
+            await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, masterName, masterCsv);
+          }
+          const masterSize = masterStreamFile ? masterStreamFile.size : csvByteLength(masterCsv);
           uploads.push({
             name: masterName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
@@ -617,7 +672,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           });
           manifestEntries.push({
             exportType: "master",
-            csv: masterCsv,
+            csv: masterStreamFile ? undefined : masterCsv,
+            sha256: masterStreamFile?.sha256,
+            supplierKeys: masterStreamFile?.supplierKeys,
             count: masterCount ?? null,
             name: masterName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${masterName}`,
@@ -663,8 +720,17 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         }
         if (needsSpecs) {
           const specsUploadStarted = Date.now();
-          await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, specsName, specsCsv);
-          const specsSize = csvByteLength(specsCsv);
+          if (specsStreamFile) {
+            await uploadLocalFileTempThenRename(
+              client,
+              GALAXUS_SFTP_FEEDS_DIR,
+              specsName,
+              specsStreamFile.localPath
+            );
+          } else {
+            await uploadTempThenRename(client, GALAXUS_SFTP_FEEDS_DIR, specsName, specsCsv);
+          }
+          const specsSize = specsStreamFile ? specsStreamFile.size : csvByteLength(specsCsv);
           uploads.push({
             name: specsName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
@@ -672,7 +738,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
           });
           manifestEntries.push({
             exportType: "specs",
-            csv: specsCsv,
+            csv: specsStreamFile ? undefined : specsCsv,
+            sha256: specsStreamFile?.sha256,
+            supplierKeys: specsStreamFile?.supplierKeys,
             count: specsCount ?? null,
             name: specsName,
             path: `${GALAXUS_SFTP_FEEDS_DIR.replace(/\/$/, "")}/${specsName}`,
@@ -694,9 +762,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         data: {
           runId,
           exportType: entry.exportType,
-          supplierKeys: extractSupplierKeysFromCsv(entry.csv),
+          supplierKeys: entry.supplierKeys ?? extractSupplierKeysFromCsv(entry.csv ?? ""),
           productCount: entry.count ?? 0,
-          checksum: hashContent(entry.csv),
+          checksum: entry.sha256 ?? hashContent(entry.csv ?? ""),
           storagePointer: entry.path,
           destination,
           uploadStatus: "uploaded",
@@ -772,5 +840,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       runId,
       error: error?.message ?? "Upload failed.",
     };
+  } finally {
+    if (tmpFeedDir) {
+      await rm(tmpFeedDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 }
