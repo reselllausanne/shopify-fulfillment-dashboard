@@ -90,28 +90,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const linkStatus = await getStxLinkStatusForOrder(order.id).catch(() => null);
-    if (linkStatus && !linkStatus.allLinked) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Order not fully linked yet",
-          orderNumber: order.orderNumber,
-          galaxusOrderId: order.galaxusOrderId,
-        },
-        { status: 409 }
-      );
+    const selection = Array.isArray(body?.selection)
+      ? body.selection
+          .map((item: { lineId?: string; quantity?: number }) => ({
+            lineId: String(item?.lineId ?? "").trim(),
+            quantity: Math.max(0, Math.floor(Number(item?.quantity ?? 0))),
+          }))
+          .filter((item: { lineId: string; quantity: number }) => item.lineId && item.quantity > 0)
+      : [];
+    const isPartial = selection.length > 0;
+
+    // Whole-order path: every line must be linked. Partial path checks only the
+    // selected parcel inside runDirectSwissPostLabelForOrder.
+    if (!isPartial) {
+      const linkStatus = await getStxLinkStatusForOrder(order.id).catch(() => null);
+      if (linkStatus && !linkStatus.allLinked) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Order not fully linked yet",
+            orderNumber: order.orderNumber,
+            galaxusOrderId: order.galaxusOrderId,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const result = await runDirectSwissPostLabelForOrder(order.id, {
       includeLabelData,
       allowReprint,
-      requireLinked: false,
+      requireLinked: !isPartial,
+      selection: isPartial ? selection : undefined,
     });
 
     if (!result.ok) {
       const status =
-        result.error === "Order already has a finalized shipment (DELR sent)"
+        result.error === "Order already has a finalized shipment (DELR sent)" ||
+        result.error === "Selected pair not linked yet"
           ? 409
           : result.swissPost
             ? 502

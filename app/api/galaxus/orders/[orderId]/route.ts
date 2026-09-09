@@ -22,6 +22,11 @@ import {
 } from "@/galaxus/orders/localStockMatch";
 import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import { supplierKeyFromVariantId } from "@/galaxus/supplier/supplierKeyGuards";
+import {
+  computeShipmentCoverageForOrders,
+  loadDelrShipmentIdsForOrders,
+  loadShipmentItemsForOrders,
+} from "@/galaxus/warehouse/shipmentLineCoverage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -584,27 +589,72 @@ export async function GET(
       const scopedLines = stxOnly
         ? linesWithProcurement.filter((line: any) => isGalaxusStxSupplierLine(line))
         : linesWithProcurement;
-      const minimalLines = scopedLines.map((line: any) => ({
-        id: line.id,
-        lineNumber: line.lineNumber,
-        supplierPid: line.supplierPid ?? null,
-        supplierKey: line.supplierKey ?? resolveOrderLineSupplierKey(line),
-        productKey: line.productKey ?? null,
-        providerKey: line.providerKey ?? null,
-        gtin: line.gtin ?? null,
-        quantity: line.quantity,
-        priceLineAmount: line.priceLineAmount ?? line.lineNetAmount ?? null,
-        lineNetAmount: line.lineNetAmount ?? null,
-        productName: line.productName ?? null,
-        size: line.size ?? null,
-        sizeRaw: line.sizeRaw ?? null,
-        supplierSku: line.supplierSku ?? null,
-        styleSku: line.styleSku ?? null,
-        offerSupplierSku: line.offerSupplierSku ?? null,
-        buyerPid: line.buyerPid ?? null,
-        warehouseMarkedShippedAt: line.warehouseMarkedShippedAt ?? null,
-        procurement: line.procurement ?? { ok: false, source: null, stockxOrderNumber: null, stockxOrderId: null, awb: null },
-      }));
+
+      // Per-line shipped/remaining so the Direct Delivery UI can offer per-pair
+      // (partial) shipping and hide the already-shipped pairs.
+      let lineCoverage: Record<
+        string,
+        { ordered: number; shipped: number; reserved: number; remaining: number }
+      > = {};
+      try {
+        const orderRef = String(orderRow.galaxusOrderId ?? "").trim();
+        const [coverageItems, delrShipmentIds] = await Promise.all([
+          loadShipmentItemsForOrders([orderRow.id]),
+          loadDelrShipmentIdsForOrders([orderRow.id], orderRef ? [orderRef] : []),
+        ]);
+        lineCoverage = computeShipmentCoverageForOrders(
+          [
+            {
+              id: orderRow.id,
+              galaxusOrderId: orderRow.galaxusOrderId,
+              lines: scopedLines.map((line: any) => ({
+                id: line.id,
+                quantity: line.quantity,
+                buyerPid: line.buyerPid ?? null,
+                supplierPid: line.supplierPid ?? null,
+                gtin: line.gtin ?? null,
+                warehouseMarkedShippedAt: line.warehouseMarkedShippedAt ?? null,
+              })),
+            },
+          ],
+          coverageItems,
+          delrShipmentIds
+        );
+      } catch (err) {
+        console.error("[GALAXUS][ORDERS] Direct line coverage failed:", err);
+      }
+
+      const minimalLines = scopedLines.map((line: any) => {
+        const cov = lineCoverage[String(line.id)];
+        const ordered = cov?.ordered ?? Number(line.quantity ?? 0);
+        const shipped = cov?.shipped ?? 0;
+        const reserved = cov?.reserved ?? 0;
+        const remaining = cov?.remaining ?? Math.max(0, ordered - shipped - reserved);
+        return {
+          id: line.id,
+          lineNumber: line.lineNumber,
+          supplierPid: line.supplierPid ?? null,
+          supplierKey: line.supplierKey ?? resolveOrderLineSupplierKey(line),
+          productKey: line.productKey ?? null,
+          providerKey: line.providerKey ?? null,
+          gtin: line.gtin ?? null,
+          quantity: line.quantity,
+          shippedQuantity: shipped,
+          reservedQuantity: reserved,
+          remainingQuantity: remaining,
+          priceLineAmount: line.priceLineAmount ?? line.lineNetAmount ?? null,
+          lineNetAmount: line.lineNetAmount ?? null,
+          productName: line.productName ?? null,
+          size: line.size ?? null,
+          sizeRaw: line.sizeRaw ?? null,
+          supplierSku: line.supplierSku ?? null,
+          styleSku: line.styleSku ?? null,
+          offerSupplierSku: line.offerSupplierSku ?? null,
+          buyerPid: line.buyerPid ?? null,
+          warehouseMarkedShippedAt: line.warehouseMarkedShippedAt ?? null,
+          procurement: line.procurement ?? { ok: false, source: null, stockxOrderNumber: null, stockxOrderId: null, awb: null },
+        };
+      });
       const minimalShipments = (normalized.shipments ?? []).map((shipment: any) => ({
         id: shipment.id,
         trackingNumber: shipment.trackingNumber ?? null,

@@ -260,6 +260,21 @@ export async function GET(request: Request) {
       }
     }
 
+    // Direct delivery supports partial (per-pair) shipments: an order is only "fulfilled"
+    // once every line has shipped. Without this, one DELR flipped the whole order to
+    // Fulfilled and the remaining pairs vanished from "À traiter".
+    const directOrderIds = orders
+      .filter((order) => String(order.deliveryType ?? "").toLowerCase() === "direct_delivery")
+      .map((order) => order.id);
+    let directOpenLineCountByOrderId: Map<string, number> | null = null;
+    if (directOrderIds.length > 0) {
+      try {
+        directOpenLineCountByOrderId = await getOpenWarehouseLineCountByOrderId(directOrderIds);
+      } catch (err) {
+        console.error("[GALAXUS][ORDERS] Direct open line counts failed:", err);
+      }
+    }
+
     const items = orders.map((order) => {
       const isDirect = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
       const shippedCount = isDirect
@@ -278,8 +293,20 @@ export async function GET(request: Request) {
         warehouseOpenLineCountByOrderId != null
           ? (warehouseOpenLineCountByOrderId.get(order.id) ?? 0)
           : null;
-      const fulfillmentState =
-        fulfilledCount > 0
+      const directOpenLines = isDirect ? directOpenLineCountByOrderId?.get(order.id) ?? null : null;
+      const fulfillmentState = isDirect
+        ? // Direct: fully shipped only when no line has remaining qty. Partial stays
+          // "to_process" so the unshipped pairs remain visible/actionable.
+          directOpenLines != null
+          ? directOpenLines === 0 && (fulfilledCount > 0 || shippedCount > 0)
+            ? "fulfilled"
+            : "to_process"
+          : fulfilledCount > 0
+          ? "fulfilled"
+          : shippedCount > 0
+          ? "shipped"
+          : "to_process"
+        : fulfilledCount > 0
           ? "fulfilled"
           : shippedCount > 0
           ? "shipped"

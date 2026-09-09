@@ -20,14 +20,24 @@ export async function POST(
       includeLabelData?: boolean;
       allowReprint?: boolean;
       requireLinked?: boolean;
+      selection?: Array<{ lineId?: string; quantity?: number }>;
     };
     const allowReprint = Boolean(body?.allowReprint);
     const includeLabelData = body?.includeLabelData !== false;
+    const selection = Array.isArray(body?.selection)
+      ? body.selection
+          .map((item) => ({
+            lineId: String(item?.lineId ?? "").trim(),
+            quantity: Math.max(0, Math.floor(Number(item?.quantity ?? 0))),
+          }))
+          .filter((item) => item.lineId && item.quantity > 0)
+      : [];
 
     const result = await runDirectSwissPostLabelForOrder(orderId, {
       includeLabelData,
       allowReprint,
       requireLinked: body?.requireLinked,
+      selection: selection.length > 0 ? selection : undefined,
     });
 
     if (!result.ok) {
@@ -36,7 +46,8 @@ export async function POST(
           ? 404
           : result.error === "Order is not direct_delivery"
             ? 400
-            : result.error === "Order not fully linked yet"
+            : result.error === "Order not fully linked yet" ||
+                result.error === "Selected pair not linked yet"
               ? 409
               : result.error === "Order already has a finalized shipment (DELR sent)"
                 ? 409

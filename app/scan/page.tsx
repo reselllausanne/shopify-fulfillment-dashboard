@@ -154,6 +154,8 @@ type ScanResult = {
     openShopify?: number;
     openDecathlon?: number;
     autoDirectOrderDbId?: string | null;
+    autoDirectLineId?: string | null;
+    autoDirectRemaining?: number;
     autoShopify?: {
       shopifyOrderId: string;
       shopifyOrderName?: string | null;
@@ -323,6 +325,23 @@ const ENABLE_BROWSER_PRINT = resolveClientFlag(
 const SCAN_SESSION_STORAGE_KEY = "scan.fulfillment.session.key.v1";
 const PACKING_SESSION_STORAGE_KEY = "scan.packingSession.entries.v1";
 const PACKING_SESSION_CAP = 8;
+
+type DirectQtyPromptState = {
+  orderDbId: string;
+  lineId: string;
+  orderLabel: string;
+  productName: string;
+  remaining: number;
+  qty: number;
+};
+
+type DirectRescanHint = {
+  gtin: string;
+  productName: string;
+  orderLabel: string;
+  shippedNow: number;
+  remaining: number;
+};
 
 type PackingSessionEntry = {
   scannedAt: string;
@@ -584,6 +603,9 @@ export default function ScanPage() {
   const [packingSession, setPackingSession] = useState<PackingSessionEntry[]>([]);
   const [packingReject, setPackingReject] = useState<{ scanCode: string; reason: string } | null>(null);
   const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
+  const [directQtyPrompt, setDirectQtyPrompt] = useState<DirectQtyPromptState | null>(null);
+  const directQtyPromptResolver = useRef<((qty: number | null) => void) | null>(null);
+  const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
@@ -854,13 +876,55 @@ export default function ScanPage() {
     }
   };
 
+  const closeDirectQtyPrompt = (qty: number | null) => {
+    directQtyPromptResolver.current?.(qty);
+    directQtyPromptResolver.current = null;
+    setDirectQtyPrompt(null);
+  };
+
+  /** Always ask how many to ship for GTIN → Galaxus direct (every scan). */
+  const promptDirectShipQuantity = (params: {
+    orderDbId: string;
+    lineId: string;
+    orderLabel: string;
+    productName: string;
+    remaining: number;
+  }): Promise<number | null> =>
+    new Promise((resolve) => {
+      const remaining = Math.max(1, Math.floor(Number(params.remaining) || 1));
+      directQtyPromptResolver.current = resolve;
+      setDirectQtyPrompt({
+        ...params,
+        remaining,
+        qty: 1,
+      });
+    });
+
+  const submitDirectQty = (qty: number) => {
+    if (!directQtyPrompt) return;
+    const clamped = Math.min(
+      directQtyPrompt.remaining,
+      Math.max(1, Math.floor(Number(qty) || 1))
+    );
+    closeDirectQtyPrompt(clamped);
+  };
+
+  const confirmDirectQtyPrompt = () => {
+    if (!directQtyPrompt) return;
+    submitDirectQty(directQtyPrompt.qty);
+  };
+
   // Auto-fire direct-delivery Swiss Post label for the oldest open direct
   // order matched by GTIN when nothing matched by AWB. Same print handling as
   // runGalaxusDirectLabelFromScan (server print or browser popup). Silently
   // swallows 409 (order not fully linked / already finalized) so the operator
   // still sees the GTIN fallback panel and can pick manually.
-  const runDirectLabelForOrder = async (orderDbId: string) => {
+  const runDirectLabelForOrder = async (
+    orderDbId: string,
+    selection?: { lineId: string; quantity: number }
+  ) => {
     if (!orderDbId) return;
+    const shippedQty = Math.max(1, Math.floor(Number(selection?.quantity) || 1));
     setFulfillLoading(true);
     setFulfillResult(null);
     try {
@@ -871,6 +935,9 @@ export default function ScanPage() {
           orderDbId,
           includeLabelData: true,
           allowReprint: false,
+          ...(selection?.lineId
+            ? { selection: [{ lineId: selection.lineId, quantity: shippedQty }] }
+            : {}),
         }),
       });
       const data: FulfillResponse & { error?: string; orderNumber?: string | null; galaxusOrderId?: string | null } =
@@ -885,19 +952,36 @@ export default function ScanPage() {
       const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim();
       if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
         // Mark this order as done in the GTIN panel so it stops looking like both are still open.
+        let leftAfterShip = 0;
+        let rescanMeta: DirectRescanHint | null = null;
         setResult((prev) => {
           if (!prev?.gtin?.orders?.length) return prev;
+          const targetLineId = String(selection?.lineId ?? "").trim();
           const orders = prev.gtin.orders.map((c) => {
-            const same =
+            const sameOrder =
               String(c.galaxusOrderDbId ?? "") === orderDbId ||
               (orderRef && String(c.galaxusOrderId ?? "") === orderRef) ||
               (data.orderNumber && String(c.orderNumber ?? "") === String(data.orderNumber));
-            if (!same) return c;
-            const ordered = Math.max(1, Number(c.ordered ?? c.quantity ?? 1));
+            if (!sameOrder) return c;
+            if (targetLineId && String(c.lineId ?? "") !== targetLineId) return c;
+            const prevRemaining = Math.max(0, Number(c.remaining ?? 0));
+            const nextRemaining = Math.max(0, prevRemaining - shippedQty);
+            if (targetLineId) {
+              leftAfterShip = nextRemaining;
+              if (nextRemaining > 0) {
+                rescanMeta = {
+                  gtin: String(prev.gtin?.gtin ?? "").trim(),
+                  productName: String(c.productName ?? prev.gtin?.productName ?? "").trim() || "Item",
+                  orderLabel: orderRef || orderDbId,
+                  shippedNow: shippedQty,
+                  remaining: nextRemaining,
+                };
+              }
+            }
             return {
               ...c,
-              remaining: 0,
-              shipped: Math.max(Number(c.shipped ?? 0), ordered),
+              remaining: nextRemaining,
+              shipped: Number(c.shipped ?? 0) + shippedQty,
             };
           });
           const openDirect = orders.filter(
@@ -917,7 +1001,16 @@ export default function ScanPage() {
             },
           };
         });
-        // No success alert — label popup is the operator signal.
+        if (rescanMeta && leftAfterShip > 0) {
+          setDirectRescanHint(rescanMeta);
+          setCode("");
+          requestAnimationFrame(() => {
+            inputRef.current?.focus();
+            inputRef.current?.select();
+          });
+        } else {
+          setDirectRescanHint(null);
+        }
       }
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
@@ -1551,6 +1644,7 @@ export default function ScanPage() {
       focusInput();
       return;
     }
+    setDirectRescanHint(null);
     setLoading(true);
     let mainScanHandled = false;
     let hasActiveStxInboundBuy = false;
@@ -1623,7 +1717,38 @@ export default function ScanPage() {
             ? data.gtin.autoDirectOrderDbId
             : null;
         if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && gtinAutoDirectOrderDbId) {
-          await runDirectLabelForOrder(gtinAutoDirectOrderDbId);
+          const autoLineId = String(data.gtin?.autoDirectLineId ?? "").trim();
+          const autoRow =
+            data.gtin?.orders?.find(
+              (o) =>
+                o.channel !== "shopify" &&
+                o.channel !== "decathlon" &&
+                String(o.galaxusOrderDbId ?? "") === gtinAutoDirectOrderDbId &&
+                o.isDirectDelivery &&
+                Math.max(0, Number(o.remaining ?? 0)) > 0
+            ) ?? null;
+          const lineId = autoLineId || String(autoRow?.lineId ?? "").trim();
+          const remaining = Math.max(
+            0,
+            Number(data.gtin?.autoDirectRemaining ?? autoRow?.remaining ?? 0)
+          );
+          if (lineId && remaining > 0) {
+            const orderLabel =
+              String(autoRow?.galaxusOrderId ?? data.gtin?.gtin ?? "").trim() ||
+              gtinAutoDirectOrderDbId;
+            const productName =
+              String(autoRow?.productName ?? data.gtin?.productName ?? "").trim() || "Item";
+            const qty = await promptDirectShipQuantity({
+              orderDbId: gtinAutoDirectOrderDbId,
+              lineId,
+              orderLabel,
+              productName,
+              remaining,
+            });
+            if (qty && qty > 0) {
+              await runDirectLabelForOrder(gtinAutoDirectOrderDbId, { lineId, quantity: qty });
+            }
+          }
         }
       } else if (gtinAutoChannel === "shopify" && ENABLE_AUTO_FULFILLMENT && data.gtin?.autoShopify) {
         const auto = data.gtin.autoShopify;
@@ -1883,6 +2008,22 @@ export default function ScanPage() {
         <h1 className="text-3xl font-bold text-gray-900 mb-4 text-center">📦 Scan AWB / Barcode</h1>
 
         <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center gap-4">
+          {directRescanHint ? (
+            <div className="w-full rounded-lg border-2 border-amber-400 bg-amber-50 px-4 py-3 text-amber-950">
+              <div className="font-semibold">Rescan GTIN for the next unit</div>
+              <p className="mt-1 text-sm">
+                Shipped {directRescanHint.shippedNow} ·{" "}
+                <span className="font-semibold">{directRescanHint.remaining} left</span> on order{" "}
+                <span className="font-mono">{directRescanHint.orderLabel}</span>
+                {directRescanHint.productName ? ` — ${directRescanHint.productName}` : ""}
+              </p>
+              <p className="mt-1 text-xs text-amber-900">
+                Scan barcode <span className="font-mono font-semibold">{directRescanHint.gtin}</span>{" "}
+                again when the next physical item is packed (or change qty in the popup to ship
+                several at once).
+              </p>
+            </div>
+          ) : null}
           <div className="relative w-full">
             <input
               ref={inputRef}
@@ -2546,8 +2687,8 @@ export default function ScanPage() {
                   {result.gtin.orders.length} recent lines).
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
-                  No shipping AWB matched this code; treating it as a product GTIN. Oldest open
-                  Galaxus-direct / Shopify / Decathlon line auto-fulfills.
+                  No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
+                  asks how many to ship (per order line) before printing a label.
                 </p>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
@@ -2912,6 +3053,100 @@ export default function ScanPage() {
             </div>
           </div>
         )}
+
+        {directQtyPrompt ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div
+              className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="direct-qty-prompt-title"
+            >
+              <h2 id="direct-qty-prompt-title" className="text-lg font-semibold text-gray-900">
+                Galaxus direct — how many to ship?
+              </h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Order{" "}
+                <span className="font-mono font-medium">{directQtyPrompt.orderLabel}</span>
+              </p>
+              <p className="text-sm text-gray-700">{directQtyPrompt.productName}</p>
+              <p className="mt-2 text-sm text-gray-600">
+                <span className="font-semibold text-emerald-800">{directQtyPrompt.remaining}</span>{" "}
+                left on this line.
+              </p>
+              {directQtyPrompt.remaining > 1 ? (
+                <>
+                  <p className="mt-3 text-xs text-gray-500">
+                    One unit per scan: ship 1, pack the next item, rescan the same GTIN. Or enter a
+                    higher qty below if several are ready in one box.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => submitDirectQty(1)}
+                    disabled={fulfillLoading}
+                    className="mt-3 w-full rounded-lg bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                  >
+                    Ship 1 — then rescan GTIN for next
+                  </button>
+                  <div className="my-3 text-center text-xs text-gray-400">— or ship several now —</div>
+                </>
+              ) : null}
+              <label className="block text-sm font-medium text-gray-800">
+                {directQtyPrompt.remaining > 1 ? "Quantity to ship in one go" : "Quantity to ship"}
+                <input
+                  type="number"
+                  min={1}
+                  max={directQtyPrompt.remaining}
+                  value={directQtyPrompt.qty}
+                  autoFocus={directQtyPrompt.remaining <= 1}
+                  onChange={(e) =>
+                    setDirectQtyPrompt((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            qty: Math.min(
+                              prev.remaining,
+                              Math.max(1, Math.floor(Number(e.target.value) || 1))
+                            ),
+                          }
+                        : prev
+                    )
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      confirmDirectQtyPrompt();
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeDirectQtyPrompt(null);
+                    }
+                  }}
+                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-lg font-semibold"
+                />
+              </label>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => closeDirectQtyPrompt(null)}
+                  className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDirectQtyPrompt}
+                  disabled={fulfillLoading}
+                  className="rounded bg-indigo-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {directQtyPrompt.remaining > 1 && directQtyPrompt.qty > 1
+                    ? `Ship ${directQtyPrompt.qty} now`
+                    : "Ship & print label"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* AWB List */}
         <div className="mt-8 bg-white rounded-lg shadow p-4">
