@@ -239,6 +239,22 @@ export async function getActiveFeedRun(scope?: FeedScope) {
   });
 }
 
+/**
+ * True when a master-specs build is in flight. Master alone can peak near the
+ * feed worker's whole heap on this catalog size, so a price/stock push starting
+ * during its heavy phase is what tips the box into OOM. While master runs we
+ * queue lighter pushes instead of racing it for RAM — they drain the moment it
+ * finishes, so the only cost is a short delay, never a dropped/changed feed.
+ * Stale master runs are reaped by getActiveFeedRun → reconcileStaleFeedRuns.
+ */
+async function masterSpecsRunActive(): Promise<boolean> {
+  const active = await (prisma as any).galaxusFeedRun.findFirst({
+    where: { finishedAt: null, scope: "master-specs" },
+    select: { id: true },
+  });
+  return Boolean(active);
+}
+
 export async function countPendingFeedPushTriggers(scope?: FeedScope) {
   const prismaAny = prisma as any;
   return prismaAny.galaxusFeedTrigger.count({
@@ -546,7 +562,10 @@ export async function startFeedPushAsync(params: {
       params.scope === "price" &&
       params.triggerSource === "shopify-post-sale" &&
       (await postSalePriceFeedCoolingDown());
-    if (active || delegateToWorker || cooldown) {
+    // Give master-specs the box to itself — queue lighter pushes while it builds.
+    const heavyMasterActive =
+      params.scope !== "master-specs" && (await masterSpecsRunActive());
+    if (active || delegateToWorker || cooldown || heavyMasterActive) {
       const queued = await enqueueFeedPushTrigger({
         scope: params.scope,
         triggerSource: params.triggerSource,
@@ -590,6 +609,9 @@ async function tryStartPendingFeedPush(
   const locked = await withAdvisoryXactLock(feedPushLockKey(scope), async () => {
     const active = await getActiveFeedRun(scope);
     if (active) return null;
+
+    // Leave lighter pushes PENDING while master-specs builds — they drain next tick.
+    if (scope !== "master-specs" && (await masterSpecsRunActive())) return null;
 
     const prismaAny = prisma as any;
     const row = await prismaAny.galaxusFeedTrigger.findUnique({

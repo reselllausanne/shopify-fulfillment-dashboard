@@ -46,6 +46,9 @@ function expandGtinQuerySet(gtins: string[]): {
 
 const FLAG_ENV = "RESOLVER_MERGE_PHYSICAL";
 
+/** Batch size for the GTIN `ANY(...)` lookup — full-catalog arrays hit statement_timeout. */
+const PHYSICAL_GTIN_QUERY_CHUNK_SIZE = 5000;
+
 export function isPhysicalMergeEnabled(): boolean {
   const v = (process.env[FLAG_ENV] ?? "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
@@ -86,20 +89,29 @@ export async function loadPhysicalMirrorStockByGtin(gtins: string[]): Promise<Ph
   const out: PhysicalStockMap = new Map();
   if (candidates.length === 0) return out;
 
-  const rows = await prisma.$queryRaw<
-    Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }>
-  >`
-    SELECT
-      s."gtin"                                       AS gtin,
-      SUM(s."available")::bigint                     AS qty,
-      (ARRAY_AGG(s."locationId"   ORDER BY s."priority" ASC))[1] AS loc_id,
-      (ARRAY_AGG(s."locationName" ORDER BY s."priority" ASC))[1] AS loc_name
-    FROM "public"."ShopifyVariantLocationStock" s
-    WHERE s."sourceType" = 'physical'
-      AND s."available"  > 0
-      AND s."gtin"       = ANY(${candidates}::text[])
-    GROUP BY s."gtin"
-  `;
+  // Chunk the GTIN set. One `ANY($1::text[])` over the whole catalog (~1.1M+
+  // candidates) makes Postgres cancel with statement_timeout (57014) during the
+  // nightly master build. Each GTIN is distinct and grouped independently, so
+  // querying in batches and concatenating rows is byte-identical to one query.
+  const rows: Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }> = [];
+  for (let offset = 0; offset < candidates.length; offset += PHYSICAL_GTIN_QUERY_CHUNK_SIZE) {
+    const chunk = candidates.slice(offset, offset + PHYSICAL_GTIN_QUERY_CHUNK_SIZE);
+    const chunkRows = await prisma.$queryRaw<
+      Array<{ gtin: string; qty: bigint; loc_id: string | null; loc_name: string | null }>
+    >`
+      SELECT
+        s."gtin"                                       AS gtin,
+        SUM(s."available")::bigint                     AS qty,
+        (ARRAY_AGG(s."locationId"   ORDER BY s."priority" ASC))[1] AS loc_id,
+        (ARRAY_AGG(s."locationName" ORDER BY s."priority" ASC))[1] AS loc_name
+      FROM "public"."ShopifyVariantLocationStock" s
+      WHERE s."sourceType" = 'physical'
+        AND s."available"  > 0
+        AND s."gtin"       = ANY(${chunk}::text[])
+      GROUP BY s."gtin"
+    `;
+    for (const r of chunkRows) rows.push(r);
+  }
 
   // Merge padded aliases under one norm key so dual-stored rows never double-count.
   const byNorm = new Map<
