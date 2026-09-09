@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import {
   GALAXUS_STOCKX_TOKEN_FILE,
   readGalaxusStockxToken,
+  sanitizeStockxBearerToken,
 } from "@/lib/stockxGalaxusAuth";
 import {
   DASHBOARD_STOCKX_TOKEN_FILE,
@@ -41,9 +42,7 @@ export async function getSupplierToken(): Promise<string | null> {
 
 /** Persist bearer into StockXToken (same table backfill / cron use). */
 export async function persistSupplierToken(token: string): Promise<void> {
-  const cleaned = String(token || "")
-    .trim()
-    .replace(/^Bearer\s+/i, "");
+  const cleaned = sanitizeStockxBearerToken(token);
   if (!cleaned) throw new Error("Invalid StockX token");
   const expiresAt = stockxTokenExpiresAt(cleaned) ?? new Date(Date.now() + 12 * 60 * 60 * 1000);
   await prisma.stockXToken.create({
@@ -120,9 +119,7 @@ export async function listStockxAccountTokens(): Promise<StockxAccountToken[]> {
   const seenUuid = new Set<string>();
   const seenToken = new Set<string>();
   const push = (token: string | null | undefined, source: StockxAccountToken["source"]) => {
-    const cleaned = String(token ?? "")
-      .trim()
-      .replace(/^Bearer\s+/i, "");
+    const cleaned = sanitizeStockxBearerToken(token);
     if (!cleaned || seenToken.has(cleaned)) return;
     // Skip legacy non-JWT stubs (short opaque strings) — they can't authenticate
     // against StockX and would waste a retry slot for every buy lookup.

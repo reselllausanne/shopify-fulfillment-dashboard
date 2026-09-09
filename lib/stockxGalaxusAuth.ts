@@ -19,10 +19,40 @@ type TokenPayload = {
   updatedAt: string;
 };
 
-function normalizeToken(raw: string | null | undefined): string | null {
+const STOCKX_JWT_RE = /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
+
+/** True when JWT payload looks like StockX (not Supabase / other pasted noise). */
+export function isStockxJwt(token: string): boolean {
+  const payload = decodeJwtPayload(token);
+  if (!payload) return false;
+  const iss = String(payload.iss ?? "");
+  if (iss.includes("stockx.com")) return true;
+  const aud = payload.aud;
+  if (Array.isArray(aud) && aud.some((a) => String(a).includes("stockx"))) return true;
+  if (typeof aud === "string" && aud.includes("stockx")) return true;
+  return false;
+}
+
+/**
+ * Manual paste sometimes appends a second JWT (e.g. Supabase) after the StockX bearer.
+ * Extract the StockX JWT only so listStockxAccountTokens / GraphQL auth work.
+ */
+export function sanitizeStockxBearerToken(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const value = raw.trim().replace(/^Bearer\s+/i, "");
-  return value.length > 0 ? value : null;
+  if (!value) return null;
+  if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)) {
+    return value;
+  }
+  const matches = value.match(STOCKX_JWT_RE) ?? [];
+  for (const candidate of matches) {
+    if (isStockxJwt(candidate)) return candidate;
+  }
+  return matches[0] ?? null;
+}
+
+function normalizeToken(raw: string | null | undefined): string | null {
+  return sanitizeStockxBearerToken(raw);
 }
 
 function decodeJwtPayload(token: string): Record<string, any> | null {
