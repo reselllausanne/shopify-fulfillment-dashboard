@@ -104,6 +104,7 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
     inventoryReconcileDrift?: unknown;
     shopifyVariantLocationStock?: unknown;
     localStockLot?: unknown;
+    galaxusExternalBuy?: unknown;
   };
   return Boolean(
     c.decathlonOrder &&
@@ -120,6 +121,7 @@ function prismaClientLooksCurrent(client: PrismaClient): boolean {
       c.inventoryReconcileDrift &&
       c.shopifyVariantLocationStock &&
       c.localStockLot &&
+      c.galaxusExternalBuy &&
       orderMatchHasLocalStockLotIdField()
   );
 }
