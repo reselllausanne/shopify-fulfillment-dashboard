@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   GALAXUS_STOCKX_TOKEN_FILE,
   readGalaxusStockxToken,
+  sanitizeStockxBearerToken,
 } from "@/lib/stockxGalaxusAuth";
 
 export const DASHBOARD_STOCKX_TOKEN_FILE = path.join(
@@ -17,9 +18,7 @@ type TokenFilePayload = {
 };
 
 function normalizeToken(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const value = String(raw).trim().replace(/^Bearer\s+/i, "");
-  return value.length > 0 ? value : null;
+  return sanitizeStockxBearerToken(raw);
 }
 
 function decodeJwtPayload(token: string): Record<string, any> | null {
