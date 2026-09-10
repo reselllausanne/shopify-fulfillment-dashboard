@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
 import { printDirectDeliveryDocumentsLocally } from "@/galaxus/directDelivery/printDirectDocuments";
-import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,19 +86,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { ok: false, error: "Order is not direct_delivery" },
         { status: 400 }
-      );
-    }
-
-    const linkStatus = await getStxLinkStatusForOrder(order.id).catch(() => null);
-    if (linkStatus && !linkStatus.allLinked) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Order not fully linked yet",
-          orderNumber: order.orderNumber,
-          galaxusOrderId: order.galaxusOrderId,
-        },
-        { status: 409 }
       );
     }
 

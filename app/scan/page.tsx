@@ -993,9 +993,16 @@ export default function ScanPage() {
       const data: FulfillResponse & { error?: string; orderNumber?: string | null; galaxusOrderId?: string | null } =
         await res.json();
       setFulfillResult(data);
-      if (res.status === 409) return;
+      const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
+      if (res.status === 409) {
+        if (data.status === "ALREADY_FULFILLED") {
+          window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
+        } else {
+          window.alert(data.error || `Galaxus direct ${orderRef}: label blocked.`);
+        }
+        return;
+      }
       if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
-        const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
         window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
         return;
       }
