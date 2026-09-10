@@ -32,6 +32,7 @@ from shopifyAPI_GQL import (
     create_variants_bulk,
     delete_variants_bulk,
     set_variant_express_price_metafields,
+    apply_stx_express_floor,
     calc_touch_price,
     calc_sell_price,
     RateLimitException,
@@ -295,6 +296,7 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
     variants_to_update = []
     variants_to_create = []
     express_metafields = []
+    express_variant_ids_to_delete = []
     new_variant_titles = set()  # Track which sizes exist in StockX data
     
     for variant in variants:
@@ -361,46 +363,36 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
         cost_value = calc_touch_price(raw_stockx_price, product_category, product_handle)
         sell_price = calc_sell_price(raw_stockx_price, product_category, is_express=False, product_handle=product_handle, brand=brand)
 
+        # Express sell: real StockX express lane (asks > 2) preferred; when the
+        # lane is missing we leave express_sell_price=None so the update path
+        # deletes the stale custom.express_price metafield rather than pushing a
+        # derived-from-standard number that only ever equals the floor.
         express_sell_price = None
         if express_prices:
             lowest_express_entry = min(express_prices, key=lambda x: x['price'])
             express_raw_price = lowest_express_entry['price']
-            express_sell_price = calc_sell_price(
+            express_calc = calc_sell_price(
                 express_raw_price,
                 product_category,
                 is_express=True,
                 product_handle=product_handle,
                 brand=brand,
             )
+            express_sell_price = apply_stx_express_floor(sell_price, express_calc)
+            if express_sell_price != express_calc:
+                print(
+                    f"[EXPRESS FLOOR] {title} - Size {eu_size}: express raised from "
+                    f"{express_calc} to {express_sell_price} CHF (standard={sell_price} CHF)"
+                )
             print(
                 f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
                 f"(type={lowest_express_entry['type']}, asks={lowest_express_entry['asks']}) "
                 f"SELL={express_sell_price} CHF"
             )
         else:
-            express_sell_price = calc_sell_price(
-                raw_stockx_price,
-                product_category,
-                is_express=True,
-                product_handle=product_handle,
-                brand=brand,
-            )
             print(
-                f"[CALCULATED EXPRESS] {title} - Size {eu_size}: no express lane — "
-                f"derived from standard RAW={raw_stockx_price} CHF → SELL={express_sell_price} CHF"
-            )
-        if express_sell_price <= sell_price:
-            fallback_express = calc_sell_price(
-                raw_stockx_price,
-                product_category,
-                is_express=True,
-                product_handle=product_handle,
-                brand=brand,
-            )
-            express_sell_price = max(express_sell_price, fallback_express, sell_price)
-            print(
-                f"[EXPRESS FLOOR] {title} - Size {eu_size}: express raised to {express_sell_price} CHF "
-                f"(standard={sell_price} CHF)"
+                f"[NO EXPRESS] {title} - Size {eu_size}: no StockX express lane "
+                f"(asks<=2 or removed) — express option will be hidden"
             )
         
         print(f"[STOCKX PRICE] {title} - Size {eu_size}: RAW STOCKX = {raw_stockx_price} CHF (type: {price_type}, asks: {asks_count})")
@@ -459,6 +451,8 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
                     'variantId': matched_variant['id'],
                     'price': express_sell_price,
                 })
+            else:
+                express_variant_ids_to_delete.append(matched_variant['id'])
 
             current_qty = matched_variant.get('inventoryQuantity', 0)
             if quantity != current_qty:
@@ -520,6 +514,12 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
             if express_metafields:
                 set_variant_express_price_metafields(express_metafields)
                 print(f"[SUCCESS] ✅ Updated express metafield on {len(express_metafields)} variants")
+            if express_variant_ids_to_delete:
+                try:
+                    from shopifyAPI_GQL import delete_variant_express_price_metafields
+                    delete_variant_express_price_metafields(express_variant_ids_to_delete)
+                except Exception as _e:
+                    print(f"[WARNING] delete_variant_express_price_metafields failed: {_e}")
         except Exception as e:
             print(f"[ERROR] Failed to update variants: {e}")
             return False

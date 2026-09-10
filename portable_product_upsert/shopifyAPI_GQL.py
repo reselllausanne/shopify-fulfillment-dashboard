@@ -407,6 +407,13 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
     return result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
+def is_adidas_lifestyle_full_cpa(product_handle="", brand="", product_category=""):
+    """FULL CPA bake (CAC~31) for thin adidas lifestyle: Samba/Gazelle/Spezial/Campus."""
+    blob = f"{product_handle} {brand} {product_category}".lower().replace("_", "-")
+    families = ("samba", "gazelle", "spezial", "campus")
+    return any(f in blob for f in families)
+
+
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
     HYBRID ADS-COST PRICING MODEL: ~12% EBITDA @ 35-37k CHF monthly revenue (calibration band)
@@ -441,11 +448,18 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
     
     # ---- Tunables (update monthly if needed) ----
+    # Blended CAC ~31 (MER≈7). Default HALF bake CPA_CAP=24; FULL=31 on adidas lifestyle.
     PSP = 0.032         # payment fee %
     VAT = 0.023         # VAT %
-    ADS_PCT = 0.19      # ads as % of revenue (~19 CHF per 100 CHF CA on low AOV; was 13%)
-    CPA_CAP = 17.0      # CHF per order (flat piece in CPA branch; Q4 updated)
-    CM2_TARGET = 0.19   # ~19% CM2 to land ~12% EBITDA at 35-37k CA band
+    ADS_PCT = 0.14      # ads as % of CA on low-AOV branch (blended MER≈7 → ~14%; was 19%)
+    CPA_CAP = 24.0      # CHF/order high-AOV (HALF default)
+    CM2_TARGET = 0.21   # ~21% after ads → ~12% after ops
+    if is_adidas_lifestyle_full_cpa(product_handle, brand, product_category):
+        CPA_CAP = 31.0  # FULL bake — thinnest leftover segment
+        print(
+            f"[PRICE DEBUG] FULL CPA bake (adidas lifestyle Samba/Gazelle/Spezial/Campus): "
+            f"CPA_CAP={CPA_CAP}"
+        )
     SHIP_F_STANDARD = 14.5  # STX dropship outbound (was 7 warehouse)
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price
@@ -556,7 +570,7 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
         if cand >= final_price_raw:
             final_price = cand
             break
-    
+
     print(f"[PRICE DEBUG] Final price: {final_price_raw:.2f} → Rounded to {final_price} CHF ({mode})")
     print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
     return final_price
@@ -570,6 +584,52 @@ def _psych_round_up(price: float) -> int:
         if candidate >= price:
             return candidate
     return base + 109
+
+
+def read_stx_express_surcharge_chf() -> float:
+    """
+    Flat CHF surcharge added on top of the standard sell price to guarantee a
+    meaningful express premium on STX dropship variants. Mirrors the warehouse
+    liquidation rule (LIQUIDATION_EXPRESS_SURCHARGE_CHF, default 20).
+    """
+    raw = (
+        os.environ.get("STX_EXPRESS_SURCHARGE_CHF")
+        or os.environ.get("SHOPIFY_STX_EXPRESS_SURCHARGE_CHF")
+        or "20"
+    )
+    try:
+        n = float(raw)
+    except (TypeError, ValueError):
+        return 20.0
+    if n < 0:
+        return 20.0
+    return n
+
+
+def apply_stx_express_floor(standard_sell, express_calc):
+    """
+    Floor the express sell so express is never < standard + surcharge.
+    Returns a psych-rounded int (matches calc_sell_price output shape).
+
+    - standard_sell: the standard-lane sell (int / float) already psych-rounded.
+    - express_calc: the express-lane sell computed via calc_sell_price(is_express=True)
+      (may be None when no express lane is available).
+    """
+    try:
+        std = float(standard_sell or 0)
+    except (TypeError, ValueError):
+        std = 0.0
+    if std <= 0:
+        return express_calc
+    surcharge = read_stx_express_surcharge_chf()
+    floor = _psych_round_up(std + surcharge)
+    if express_calc is None:
+        return floor
+    try:
+        exp = float(express_calc)
+    except (TypeError, ValueError):
+        exp = 0.0
+    return max(int(exp), floor)
 
 
 def calc_liquidation_sell_price(cost_chf) -> int:
@@ -1791,6 +1851,48 @@ def set_variant_express_price_metafields(variant_prices, namespace="custom", key
     else:
         print(f"[SUCCESS] Set express metafield on {len(result.get('metafields', []) or [])} variants")
     return response
+
+
+def delete_variant_express_price_metafields(variant_ids, namespace="custom", key="express_price"):
+    """
+    Bulk-delete custom.express_price metafield on variants whose express lane is
+    no longer available on StockX (< 2 asks or lane removed). Prevents stale
+    prices from being charged at checkout when the express option is hidden.
+    """
+    ids = [str(v).strip() for v in (variant_ids or []) if v]
+    if not ids:
+        return None
+
+    query = """
+    mutation DeleteVariantExpressMetafields($metafields: [MetafieldIdentifierInput!]!) {
+      metafieldsDelete(metafields: $metafields) {
+        deletedMetafields { ownerId key namespace }
+        userErrors { field message }
+      }
+    }
+    """
+
+    all_errors = []
+    deleted = 0
+    chunk_size = 25
+    for i in range(0, len(ids), chunk_size):
+        chunk = ids[i:i + chunk_size]
+        payload = [
+            {"ownerId": vid, "namespace": namespace, "key": key}
+            for vid in chunk
+        ]
+        resp = _run_query(query, {"metafields": payload})
+        result = (resp.get("metafieldsDelete") or {})
+        errs = result.get("userErrors") or []
+        if errs:
+            all_errors.extend(errs)
+        deleted += len(result.get("deletedMetafields") or [])
+
+    if all_errors:
+        print(f"[WARNING] delete_variant_express_price_metafields errors: {all_errors}")
+    else:
+        print(f"[INFO] Deleted custom.express_price on {deleted} variants (express lane vanished)")
+    return {"deleted": deleted, "errors": all_errors}
 
 
 def set_standard_metafields(product_id, attributes):

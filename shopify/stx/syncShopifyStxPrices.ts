@@ -1,7 +1,10 @@
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
-import { calcShopifySellPrice } from "@/shopify/pricing/calcShopifySellPrice";
+import {
+  applyStxExpressFloor,
+  calcShopifySellPrice,
+} from "@/shopify/pricing/calcShopifySellPrice";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
@@ -22,6 +25,30 @@ mutation SyncStxExpressMetafield($metafields: [MetafieldsSetInput!]!) {
   }
 }
 `;
+
+const EXPRESS_METAFIELD_DELETE_MUTATION = /* GraphQL */ `
+mutation DeleteStxExpressMetafield($metafields: [MetafieldIdentifierInput!]!) {
+  metafieldsDelete(metafields: $metafields) {
+    deletedMetafields { ownerId key namespace }
+    userErrors { field message }
+  }
+}
+`;
+
+/** Best-effort delete — never fails the parent sync if the metafield is absent. */
+async function deleteShopifyExpressPriceMetafield(variantId: string): Promise<void> {
+  try {
+    await shopifyGraphQL<{
+      metafieldsDelete: { userErrors: Array<{ message: string }> };
+    }>(EXPRESS_METAFIELD_DELETE_MUTATION, {
+      metafields: [
+        { ownerId: variantId, namespace: "custom", key: "express_price" },
+      ],
+    });
+  } catch {
+    /* swallow — stale metafield removal is opportunistic */
+  }
+}
 
 const PRICE_LOCK_QUERY = /* GraphQL */ `
 query StxPriceLock($id: ID!) {
@@ -195,7 +222,7 @@ function computeSellPrices(input: {
           false
         )
       : null);
-  const expressSell =
+  const expressCalc =
     expressBuy != null
       ? calcSellFromBuy(
           expressBuy,
@@ -204,6 +231,14 @@ function computeSellPrices(input: {
           input.stxRow.supplierBrand,
           true
         )
+      : null;
+
+  // Floor: express must beat standard by STX_EXPRESS_SURCHARGE_CHF (default 20).
+  // When there is no express buy price we return null so the caller deletes the
+  // stale custom.express_price metafield rather than pushing a derived number.
+  const expressSell =
+    expressCalc != null && normalSell != null
+      ? applyStxExpressFloor(normalSell, expressCalc)
       : null;
 
   return { normalSell, expressSell };
@@ -333,6 +368,10 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
         normalPrice: normalSell,
       };
     }
+  } else {
+    // No StockX express lane (or express buy missing) — clear stale metafield so
+    // checkout can never charge yesterday's express price on a hidden option.
+    await deleteShopifyExpressPriceMetafield(shopifyVariant.variantId);
   }
 
   return {
@@ -515,6 +554,9 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
         });
         continue;
       }
+    } else {
+      // No StockX express lane — clear stale metafield.
+      await deleteShopifyExpressPriceMetafield(match.variantId);
     }
 
     results.push({

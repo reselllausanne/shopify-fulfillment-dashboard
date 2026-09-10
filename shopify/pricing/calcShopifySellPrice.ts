@@ -15,6 +15,24 @@ export type CalcShopifySellPriceInput = {
   isExpress?: boolean;
 };
 
+/** FULL CPA bake for thin adidas lifestyle: Samba / Gazelle / Spezial / Campus. */
+export function isAdidasLifestyleFullCpa(input: {
+  productHandle?: string | null;
+  productName?: string | null;
+  brand?: string | null;
+  productCategory?: string | null;
+}): boolean {
+  const blob = [
+    input.productHandle,
+    input.productName,
+    input.brand,
+    input.productCategory,
+  ]
+    .map((v) => String(v ?? "").toLowerCase().replace(/_/g, "-"))
+    .join(" ");
+  return ["samba", "gazelle", "spezial", "campus"].some((f) => blob.includes(f));
+}
+
 /**
  * TypeScript port of Python `calc_sell_price` (shopifyAPI_GQL.py) — same hybrid
  * ads-cost model used on the Shopify storefront.
@@ -40,9 +58,17 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
 
   const PSP = 0.032;
   const VAT = 0.023;
-  const ADS_PCT = 0.19;
-  const CPA_CAP = 17.0;
-  const CM2_TARGET = 0.19;
+  const ADS_PCT = 0.14; // blended MER≈7
+  // HALF default; FULL (~31) on adidas lifestyle thin segment
+  const CPA_CAP = isAdidasLifestyleFullCpa({
+    productHandle,
+    productName,
+    brand,
+    productCategory: category,
+  })
+    ? 31.0
+    : 24.0;
+  const CM2_TARGET = 0.21;
   /** Outbound customer ship in hybrid base — STX dropship ≈ 14.5 CHF (was 7 warehouse). */
   const SHIP_F = isExpress ? 15.0 : 14.5;
   const EXPRESS_UPSELL_PCT = 0.05;
@@ -50,8 +76,6 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const LOW_AOV_MIN_MARGIN = 50.0;
   const LOW_AOV_FULFIL = isExpress ? 15.0 : 13.0;
 
-  // brand kept on input for API parity with Python; no brand/category margin cuts (Q4).
-  void brand;
   const isLego = category === "lego";
 
   let C: number;
@@ -89,6 +113,37 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   if (isExpress) finalPriceRaw *= 1 + EXPRESS_UPSELL_PCT;
 
   return psychRoundUp(finalPriceRaw);
+}
+
+/**
+ * Flat CHF surcharge added on top of the standard sell price to guarantee a
+ * meaningful express premium on STX dropship variants. Mirrors the warehouse
+ * liquidation rule (LIQUIDATION_EXPRESS_SURCHARGE_CHF, default 20).
+ */
+export function readStxExpressSurchargeChf(): number {
+  const raw =
+    process.env.STX_EXPRESS_SURCHARGE_CHF ??
+    process.env.SHOPIFY_STX_EXPRESS_SURCHARGE_CHF ??
+    "20";
+  const n = Number.parseFloat(String(raw));
+  if (!Number.isFinite(n) || n < 0) return 20;
+  return n;
+}
+
+/**
+ * Express sell floor: never < standard + surcharge.
+ * `expressCalc` may be null when there is no StockX express lane; the caller
+ * should decide whether to write the floor or delete the metafield entirely.
+ */
+export function applyStxExpressFloor(
+  standardSell: number,
+  expressCalc: number | null
+): number | null {
+  if (!Number.isFinite(standardSell) || standardSell <= 0) return expressCalc;
+  const surcharge = readStxExpressSurchargeChf();
+  const floor = psychRoundUp(standardSell + surcharge);
+  if (expressCalc == null) return floor;
+  return Math.max(expressCalc, floor);
 }
 
 /** StockX acquisition cost — port of Python `calc_touch_price`. */

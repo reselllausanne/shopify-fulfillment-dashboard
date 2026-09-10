@@ -37,6 +37,8 @@ from shopifyAPI_GQL import (
     is_basketball_shoe_product,
     sync_basketball_shoe_taxonomy,
     set_variant_express_price_metafields,
+    delete_variant_express_price_metafields,
+    apply_stx_express_floor,
     get_taxonomy_category_id,
     get_category_attributes,
     map_stockx_to_shopify_category,
@@ -1531,6 +1533,10 @@ def update_product_enhanced(url, title, product_info, existing_product):
         variants_to_update = []
         variants_to_create = []
         express_metafields_for_existing = []
+        # Variants whose StockX express lane vanished (asks <= 2 or lane removed):
+        # delete the stale custom.express_price metafield so checkout never charges
+        # yesterday's express price on a lane that is now hidden.
+        express_variant_ids_to_delete = []
         price_lock_skips = 0
 
         if not PRESERVE_COPY_ON_UPDATE:
@@ -1738,6 +1744,11 @@ def update_product_enhanced(url, title, product_info, existing_product):
                         "variantId": matched_variant["id"],
                         "price": express_price,
                     })
+                elif not is_locked:
+                    # No express lane on StockX (< 2 asks) — remove the stale money
+                    # metafield. Skip price-locked variants (Essentials/Bape/soldes)
+                    # whose express_price is managed by liquidation/inStockFixedPrice.
+                    express_variant_ids_to_delete.append(matched_variant["id"])
             else:
                 if NO_NEW_VARIANTS_MODE:
                     if variant_qty <= 0 or variant.get("sold_out"):
@@ -1858,6 +1869,12 @@ def update_product_enhanced(url, title, product_info, existing_product):
 
                 if express_metafields_for_existing:
                     set_variant_express_price_metafields(express_metafields_for_existing)
+
+                if express_variant_ids_to_delete:
+                    try:
+                        delete_variant_express_price_metafields(express_variant_ids_to_delete)
+                    except Exception as _e:
+                        print(f"[WARNING] delete_variant_express_price_metafields failed: {_e}")
 
                 # Structured metafields (US size, Google Shopping, express_available).
                 try:
@@ -2941,17 +2958,29 @@ def process_url(url, thread_id=0, prefetched=None):
                 )
 
             # Express sell price for metafield (only when asks > 2 on express lanes).
+            # When no express lane is available we leave express_sell_price=None
+            # and the update path deletes the stale custom.express_price metafield
+            # so checkout can never charge yesterday's express price on a lane
+            # that is now hidden (express_available=false).
             express_sell_price = None
             if express_prices:
                 lowest_express_entry = min(express_prices, key=lambda x: x["price"])
                 express_raw_price = lowest_express_entry["price"]
-                express_sell_price = calc_sell_price(
+                express_calc = calc_sell_price(
                     express_raw_price,
                     pc,
                     is_express=True,
                     product_handle=product_handle,
                     brand=brand,
                 )
+                # Floor: express must beat standard by at least STX_EXPRESS_SURCHARGE_CHF
+                # (default 20 CHF). Same rule the warehouse liquidation lane uses.
+                express_sell_price = apply_stx_express_floor(sell_price, express_calc)
+                if express_sell_price != express_calc:
+                    print(
+                        f"[EXPRESS FLOOR] {title} - Size {eu_size}: express raised from "
+                        f"{express_calc} to {express_sell_price} CHF (standard={sell_price} CHF)"
+                    )
                 print(
                     f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
                     f"(type={lowest_express_entry['type']}, asks={lowest_express_entry['asks']}) "
