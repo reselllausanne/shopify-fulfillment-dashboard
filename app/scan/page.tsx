@@ -1037,26 +1037,9 @@ export default function ScanPage() {
     }
   };
 
-  const shouldPromptDirectQty = (
-    row: NonNullable<ScanResult["gtin"]>["orders"][number],
-    allRows: NonNullable<ScanResult["gtin"]>["orders"]
-  ) => {
-    const orderDbId = String(row.galaxusOrderDbId ?? "").trim();
-    if (!orderDbId) return true;
-    const openDirectRowsForOrder = allRows.filter((candidate) => {
-      if (candidate.channel && candidate.channel !== "galaxus") return false;
-      if (!candidate.isDirectDelivery) return false;
-      const candidateOrderDbId = String(candidate.galaxusOrderDbId ?? "").trim();
-      if (!candidateOrderDbId || candidateOrderDbId !== orderDbId) return false;
-      const candidateRemaining = Math.max(0, Number(candidate.remaining ?? 0));
-      return candidateRemaining > 0 && !candidate.cancelledAt;
-    });
-    return openDirectRowsForOrder.length > 1;
-  };
-
   const runGtinDirectPartial = async (
     row: NonNullable<ScanResult["gtin"]>["orders"][number],
-    allRows: NonNullable<ScanResult["gtin"]>["orders"]
+    _allRows: NonNullable<ScanResult["gtin"]>["orders"]
   ) => {
     const orderDbId = String(row.galaxusOrderDbId ?? "").trim();
     const lineId = String(row.lineId ?? "").trim();
@@ -1064,35 +1047,47 @@ export default function ScanPage() {
     if (!orderDbId || !lineId || remaining <= 0) return;
 
     let qty = 1;
-    if (shouldPromptDirectQty(row, allRows)) {
-      try {
-        const order = await fetchInboundDirectOrder(orderDbId);
-        const openLines = (order.lines ?? []).filter((line) => Math.max(0, Number(line?.quantity ?? 0)) > 0);
-        if (openLines.length > 1) {
-          const summary = openLines
-            .map((line) => `L${line.lineNumber ?? "?"}: ${line.productName || line.description || line.supplierPid || "Item"}`)
-            .join("\n");
-          const selectedLine = `L${row.lineNumber ?? "?"}: ${row.productName || row.lineId || "Item"}`;
-          const ok = window.confirm(
-            `Order ${(row.galaxusOrderId ?? row.orderNumber ?? "").trim() || "—"} has multiple open products.\n` +
-              `Selected: ${selectedLine}\n\n` +
-              `${summary}\n\n` +
-              "Continue with selected line only?"
-          );
-          if (!ok) return;
-        }
-      } catch {
-        // Non-blocking: fallback to quantity prompt below.
+    try {
+      const order = await fetchInboundDirectOrder(orderDbId);
+      const orderLines = (order.lines ?? []).filter((line) => Math.max(0, Number(line?.quantity ?? 0)) > 0);
+      const multiProductOrder = orderLines.length > 1;
+      if (multiProductOrder) {
+        const summary = orderLines
+          .map((line) => `L${line.lineNumber ?? "?"}: ${line.productName || line.description || line.supplierPid || "Item"}`)
+          .join("\n");
+        const selectedLine = `L${row.lineNumber ?? "?"}: ${row.productName || row.lineId || "Item"}`;
+        const ok = window.confirm(
+          `Order ${(row.galaxusOrderId ?? row.orderNumber ?? "").trim() || "—"} has ${orderLines.length} products.\n` +
+            `Ship now: ${selectedLine}\n\n` +
+            `All lines:\n${summary}\n\n` +
+            "Continue with selected line only?"
+        );
+        if (!ok) return;
       }
-      const qtyRaw = window.prompt(
-        `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
-        "1"
-      );
-      if (qtyRaw == null) return;
-      qty = Math.floor(Number(qtyRaw));
-      if (!Number.isFinite(qty) || qty <= 0 || qty > remaining) {
-        window.alert(`Invalid quantity. Enter 1..${remaining}.`);
-        return;
+      if (multiProductOrder || remaining > 1) {
+        const qtyRaw = window.prompt(
+          `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
+          "1"
+        );
+        if (qtyRaw == null) return;
+        qty = Math.floor(Number(qtyRaw));
+        if (!Number.isFinite(qty) || qty <= 0 || qty > remaining) {
+          window.alert(`Invalid quantity. Enter 1..${remaining}.`);
+          return;
+        }
+      }
+    } catch {
+      if (remaining > 1) {
+        const qtyRaw = window.prompt(
+          `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
+          "1"
+        );
+        if (qtyRaw == null) return;
+        qty = Math.floor(Number(qtyRaw));
+        if (!Number.isFinite(qty) || qty <= 0 || qty > remaining) {
+          window.alert(`Invalid quantity. Enter 1..${remaining}.`);
+          return;
+        }
       }
     }
 
