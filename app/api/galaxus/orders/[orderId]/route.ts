@@ -23,11 +23,6 @@ import {
 import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
 import { supplierKeyFromVariantId } from "@/galaxus/supplier/supplierKeyGuards";
 import { hydrateLiveStxCatalogPricesByGtin } from "@/galaxus/stx/liveCatalogBuyPrice";
-import {
-  computeShipmentCoverageForOrders,
-  loadDelrShipmentIdsForOrders,
-  loadShipmentItemsForOrders,
-} from "@/galaxus/warehouse/shipmentLineCoverage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -592,28 +587,6 @@ export async function GET(
       const scopedLines = stxOnly
         ? linesWithProcurement.filter((line: any) => isGalaxusStxSupplierLine(line))
         : linesWithProcurement;
-      const [delrShipmentIds, shipmentItems] = await Promise.all([
-        loadDelrShipmentIdsForOrders([orderRow.id], [orderRow.galaxusOrderId]),
-        loadShipmentItemsForOrders([orderRow.id]),
-      ]);
-      const lineCoverage = computeShipmentCoverageForOrders(
-        [
-          {
-            id: orderRow.id,
-            galaxusOrderId: orderRow.galaxusOrderId,
-            lines: scopedLines.map((line: any) => ({
-              id: line.id,
-              quantity: line.quantity,
-              buyerPid: line.buyerPid ?? null,
-              supplierPid: line.supplierPid ?? null,
-              gtin: line.gtin ?? null,
-              warehouseMarkedShippedAt: line.warehouseMarkedShippedAt ?? null,
-            })),
-          },
-        ],
-        shipmentItems,
-        delrShipmentIds
-      );
       const minimalLines = scopedLines.map((line: any) => ({
         id: line.id,
         lineNumber: line.lineNumber,
@@ -623,10 +596,6 @@ export async function GET(
         providerKey: line.providerKey ?? null,
         gtin: line.gtin ?? null,
         quantity: line.quantity,
-        ordered: lineCoverage[line.id]?.ordered ?? line.quantity,
-        shipped: lineCoverage[line.id]?.shipped ?? 0,
-        reserved: lineCoverage[line.id]?.reserved ?? 0,
-        remaining: lineCoverage[line.id]?.remaining ?? line.quantity,
         priceLineAmount: line.priceLineAmount ?? line.lineNetAmount ?? null,
         lineNetAmount: line.lineNetAmount ?? null,
         productName: line.productName ?? null,
