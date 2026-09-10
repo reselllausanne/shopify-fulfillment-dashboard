@@ -1067,7 +1067,7 @@ export default function ScanPage() {
           const summary = openLines
             .map((line) => `L${line.lineNumber ?? "?"}: ${line.productName || line.description || line.supplierPid || "Item"}`)
             .join("\n");
-          const selectedLine = `L${row.lineNumber ?? "?"}: ${row.productName || row.supplierPid || "Item"}`;
+          const selectedLine = `L${row.lineNumber ?? "?"}: ${row.productName || row.lineId || "Item"}`;
           const ok = window.confirm(
             `Order ${(row.galaxusOrderId ?? row.orderNumber ?? "").trim() || "—"} has multiple open products.\n` +
               `Selected: ${selectedLine}\n\n` +
