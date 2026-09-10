@@ -316,7 +316,7 @@ export async function runDirectSwissPostLabelForOrder(
   // 3) Ensure we have a shipment row BEFORE calling Swiss Post.
   // One parcel for the whole direct order (qty can be >1). Split-by-1 burned
   // half-labeled NER carts; ask-how-many / cancel-request comes later.
-  let targetShipmentId = openWithTracking?.id ?? open[0]?.id ?? null;
+  let targetShipmentId = openWithoutTracking[0]?.id ?? openWithTracking?.id ?? open[0]?.id ?? null;
   let createShipmentsStatus: string | undefined;
 
   if (!targetShipmentId) {

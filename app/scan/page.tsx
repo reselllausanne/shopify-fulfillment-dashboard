@@ -965,6 +965,11 @@ export default function ScanPage() {
           blockedMessage:
             "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
         });
+      } else if (res.ok && data.ok && data.url) {
+        const opened = window.open(data.url, "_blank");
+        if (!opened) {
+          window.alert("Label created but popup blocked. Allow popups, then click Ship qty again.");
+        }
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
       }
@@ -1054,6 +1059,25 @@ export default function ScanPage() {
 
     let qty = 1;
     if (shouldPromptDirectQty(row, allRows)) {
+      try {
+        const order = await fetchInboundDirectOrder(orderDbId);
+        const openLines = (order.lines ?? []).filter((line) => Math.max(0, Number(line?.quantity ?? 0)) > 0);
+        if (openLines.length > 1) {
+          const summary = openLines
+            .map((line) => `L${line.lineNumber ?? "?"}: ${line.productName || line.description || line.supplierPid || "Item"}`)
+            .join("\n");
+          const selectedLine = `L${row.lineNumber ?? "?"}: ${row.productName || row.supplierPid || "Item"}`;
+          const ok = window.confirm(
+            `Order ${(row.galaxusOrderId ?? row.orderNumber ?? "").trim() || "—"} has multiple open products.\n` +
+              `Selected: ${selectedLine}\n\n` +
+              `${summary}\n\n` +
+              "Continue with selected line only?"
+          );
+          if (!ok) return;
+        }
+      } catch {
+        // Non-blocking: fallback to quantity prompt below.
+      }
       const qtyRaw = window.prompt(
         `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
         "1"
