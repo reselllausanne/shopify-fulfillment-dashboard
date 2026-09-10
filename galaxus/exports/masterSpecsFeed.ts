@@ -33,6 +33,11 @@ import {
   type PhysicalStockMap,
 } from "@/shopify/inventory/physicalAvailability";
 import { classifyGalaxusProductKind } from "@/galaxus/exports/productClassification";
+import {
+  appendGradedTradingCardToTitle,
+  extractGradedTradingCardLabel,
+  gradedTradingCardDescriptionSuffix,
+} from "@/galaxus/exports/gradedTradingCardFeed";
 
 type ExportRow = Record<string, string>;
 
@@ -245,7 +250,7 @@ function buildMasterRowsFromCandidates(
             description: product?.description ?? undefined,
           } as KickDbPayload)
         : null;
-    const title = fallbackTitle;
+    const title = appendGradedTradingCardToTitle(fallbackTitle, supplierVariant?.sizeRaw ?? null);
     const rawKickdbJson = (product as any)?.rawJson ?? null;
     const supplierKey = parseSupplierKeyFromVariantId(supplierVariantId);
     const supplierProductType = supplierVariant?.supplierProductType ?? null;
@@ -260,7 +265,7 @@ function buildMasterRowsFromCandidates(
     );
     const signals = extractKickdbClassificationSignals(rawKickdbJson);
     const noteDescription = parseReicheltNoteDescription(supplierVariant?.manualNote);
-    const description = resolveGalaxusDescription({
+    let description = resolveGalaxusDescription({
       description: payload?.description ?? noteDescription ?? null,
       title: fallbackTitle,
       brand: supplierBrand || payload?.brand || product?.brand || null,
@@ -276,6 +281,12 @@ function buildMasterRowsFromCandidates(
       supplierKey,
       supplierProductType,
     });
+    const gradeDescriptionSuffix = gradedTradingCardDescriptionSuffix(supplierVariant?.sizeRaw ?? null);
+    if (gradeDescriptionSuffix) {
+      description = description
+        ? `${description}\n\n${gradeDescriptionSuffix}`
+        : gradeDescriptionSuffix;
+    }
     const manufacturerBase = payload?.sku ?? product?.styleId ?? supplierVariant?.supplierSku ?? "";
     const manufacturerKey = buildManufacturerKey(
       manufacturerBase,
@@ -377,6 +388,14 @@ function buildSpecsRowsFromCandidates(exportCandidates: FeedExportCandidate[]): 
     }
     if (material) {
       rows.push({ ProviderKey: providerKey, SpecificationKey: "Material", SpecificationValue: material });
+    }
+    const gradeLabel = extractGradedTradingCardLabel(variant?.sizeRaw ?? null);
+    if (gradeLabel) {
+      rows.push({
+        ProviderKey: providerKey,
+        SpecificationKey: "Grade",
+        SpecificationValue: gradeLabel,
+      });
     }
   }
   rows.sort((a, b) => a.ProviderKey.localeCompare(b.ProviderKey));
