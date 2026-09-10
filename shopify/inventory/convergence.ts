@@ -409,7 +409,9 @@ export async function convergeVariant(
       currentCompareAt > 0 &&
       shopifySell != null &&
       currentCompareAt > shopifySell;
-    const hardTarget = /boxer/i.test(fixedPriceRule.label);
+    const hardTarget =
+      /boxer/i.test(fixedPriceRule.label) ||
+      /Essential Hoodie/i.test(fixedPriceRule.label);
     let sell = registrySell;
     if (registrySell != null && registrySell > 0) {
       if (hardTarget) {
