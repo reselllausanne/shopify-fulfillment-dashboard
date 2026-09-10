@@ -288,6 +288,7 @@ type FulfillResponse = {
   browserPrintConfig?: BrowserPrintConfig;
   orderNumber?: string | null;
   galaxusOrderId?: string | null;
+  url?: string | null;
   trackingNumber?: string | null;
   shipmentId?: string | null;
 };
