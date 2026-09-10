@@ -176,6 +176,7 @@ type ScanResult = {
       lineId: string;
       lineNumber?: number | null;
       productName?: string | null;
+      supplierPid?: string | null;
       quantity: number;
       ordered?: number;
       shipped?: number;
@@ -304,7 +305,9 @@ type InboundDirectLine = {
   productName?: string | null;
   description?: string | null;
   supplierPid?: string | null;
+  gtin?: string | null;
   quantity?: number | null;
+  remaining?: number | null;
 };
 
 type InboundDirectOrder = {
@@ -982,7 +985,31 @@ export default function ScanPage() {
     }
   };
 
-  const runDirectLabelForOrder = async (orderDbId: string) => {
+  const openDirectLabelResponse = (
+    data: FulfillResponse & { url?: string; status?: string; error?: string }
+  ) => {
+    if (data.labelData?.base64) {
+      presentScanLabel({
+        labelData: data.labelData,
+        browserPrintConfig: data.browserPrintConfig,
+        printJobResult: data.printJobResult,
+        deliveryNotePrintResult: data.deliveryNotePrintResult,
+        blockedMessage:
+          "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
+      });
+      return true;
+    }
+    if (data.url) {
+      const opened = window.open(data.url, "_blank");
+      if (!opened) {
+        window.alert("Label ready but popup blocked. Allow popups, then click Ship qty again.");
+      }
+      return true;
+    }
+    return false;
+  };
+
+  const runDirectLabelForOrder = async (orderDbId: string, shipmentId?: string) => {
     if (!orderDbId) return;
     setFulfillLoading(true);
     setFulfillResult(null);
@@ -992,42 +1019,31 @@ export default function ScanPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           orderDbId,
+          shipmentId: shipmentId || undefined,
           includeLabelData: true,
           allowReprint: false,
         }),
       });
-      const data: FulfillResponse & { error?: string; orderNumber?: string | null; galaxusOrderId?: string | null } =
-        await res.json();
+      const data: FulfillResponse & {
+        error?: string;
+        orderNumber?: string | null;
+        galaxusOrderId?: string | null;
+        url?: string;
+        status?: string;
+      } = await res.json();
       setFulfillResult(data);
       const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
-      if (res.status === 409) {
-        if (data.status === "ALREADY_FULFILLED") {
-          window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
-        } else {
-          window.alert(data.error || `Galaxus direct ${orderRef}: label blocked.`);
-        }
+      if (res.ok && data.ok && openDirectLabelResponse(data)) {
         return;
       }
-      if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
+      if (res.status === 409 || data.status === "ALREADY_FULFILLED") {
         window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
         return;
       }
-      if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
-          labelData: data.labelData,
-          browserPrintConfig: data.browserPrintConfig,
-          printJobResult: data.printJobResult,
-          deliveryNotePrintResult: data.deliveryNotePrintResult,
-          blockedMessage:
-            "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
-        });
-      } else if (res.ok && data.ok && data.url) {
-        const opened = window.open(data.url, "_blank");
-        if (!opened) {
-          window.alert("Label ready but popup blocked. Allow popups, then click Ship qty again.");
-        }
-      } else if (!res.ok || !data.ok) {
+      if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
+      } else {
+        window.alert("Label created but could not open — allow popups and retry.");
       }
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
@@ -1049,7 +1065,9 @@ export default function ScanPage() {
     let qty = 1;
     try {
       const order = await fetchInboundDirectOrder(orderDbId);
-      const orderLines = (order.lines ?? []).filter((line) => Math.max(0, Number(line?.quantity ?? 0)) > 0);
+      const lineRemaining = (line: InboundDirectLine) =>
+        Math.max(0, Number(line?.remaining ?? line?.quantity ?? 0));
+      const orderLines = (order.lines ?? []).filter((line) => lineRemaining(line) > 0);
       const multiProductOrder = orderLines.length > 1;
       if (multiProductOrder) {
         const summary = orderLines
@@ -1109,7 +1127,10 @@ export default function ScanPage() {
       if (!packRes.ok || !packData?.ok) {
         throw new Error(packData?.error ?? `Package build failed (${packRes.status})`);
       }
-      await runDirectLabelForOrder(orderDbId);
+      const shipmentId = Array.isArray(packData?.shipmentIds)
+        ? String(packData.shipmentIds[0] ?? "").trim()
+        : "";
+      await runDirectLabelForOrder(orderDbId, shipmentId || undefined);
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Direct partial shipment failed");
@@ -1978,7 +1999,7 @@ export default function ScanPage() {
     const orderDbId = String(result?.stxInboundBuy?.galaxusOrderDbId ?? "").trim();
     const lineId = String(line?.id ?? "").trim();
     if (!orderDbId || !lineId) return;
-    const maxQty = Math.max(0, Number(line?.quantity ?? 0));
+    const maxQty = Math.max(0, Number(line?.remaining ?? line?.quantity ?? 0));
     if (maxQty <= 0) {
       setInboundDirectError("No remaining quantity to ship on this line.");
       return;
@@ -2007,7 +2028,10 @@ export default function ScanPage() {
         throw new Error(packData?.error ?? "Partial pack failed");
       }
 
-      await runDirectLabelForOrder(orderDbId);
+      const shipmentId = Array.isArray(packData?.shipmentIds)
+        ? String(packData.shipmentIds[0] ?? "").trim()
+        : "";
+      await runDirectLabelForOrder(orderDbId, shipmentId || undefined);
       const fresh = await fetchInboundDirectOrder(orderDbId);
       setInboundDirectOrder(fresh);
     } catch (error: any) {
@@ -2559,10 +2583,10 @@ export default function ScanPage() {
                           </thead>
                           <tbody>
                             {(inboundDirectOrder?.lines ?? [])
-                              .filter((line) => Number(line?.quantity ?? 0) > 0)
+                              .filter((line) => Math.max(0, Number(line?.remaining ?? line?.quantity ?? 0)) > 0)
                               .map((line) => {
                                 const lineId = String(line?.id ?? "");
-                                const maxQty = Math.max(0, Number(line?.quantity ?? 0));
+                                const maxQty = Math.max(0, Number(line?.remaining ?? line?.quantity ?? 0));
                                 return (
                                   <tr key={lineId} className="border-b border-fuchsia-100 align-top">
                                     <td className="py-1 pr-2 font-mono">{line.lineNumber ?? "—"}</td>
@@ -2839,10 +2863,12 @@ export default function ScanPage() {
                       <tr className="border-b border-fuchsia-300 text-fuchsia-900 text-left">
                         <th className="py-1 pr-2">Channel</th>
                         <th className="py-1 pr-2">Order</th>
+                        <th className="py-1 pr-2">Line</th>
+                        <th className="py-1 pr-2">Product</th>
+                        <th className="py-1 pr-2">Supplier</th>
                         <th className="py-1 pr-2">Type</th>
                         <th className="py-1 pr-2">Ordered</th>
                         <th className="py-1 pr-2">Recipient</th>
-                        <th className="py-1 pr-2">Qty</th>
                         <th className="py-1 pr-2">Remaining</th>
                         <th className="py-1 pr-2">Shipped/Reserved</th>
                         <th className="py-1 pr-2">Ref</th>
@@ -2891,6 +2917,11 @@ export default function ScanPage() {
                               </span>
                             </td>
                             <td className="py-1 pr-2 font-mono">{orderLabel}</td>
+                            <td className="py-1 pr-2 font-mono">{o.lineNumber ?? "—"}</td>
+                            <td className="py-1 pr-2">{o.productName || "—"}</td>
+                            <td className="py-1 pr-2 font-mono text-[10px]">
+                              {o.supplierPid || "—"}
+                            </td>
                             <td className="py-1 pr-2">
                               <span
                                 className={
@@ -2920,7 +2951,6 @@ export default function ScanPage() {
                                 .filter(Boolean)
                                 .join(" · ") || "—"}
                             </td>
-                            <td className="py-1 pr-2">{o.quantity}</td>
                             <td className="py-1 pr-2">
                               {closed ? (
                                 <span className="inline-block px-1.5 py-0.5 rounded bg-gray-200 text-gray-700">

@@ -89,10 +89,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const shipmentId = String(body?.shipmentId ?? "").trim() || undefined;
     const result = await runDirectSwissPostLabelForOrder(order.id, {
       includeLabelData,
       allowReprint,
       requireLinked: false,
+      shipmentId,
     });
 
     if (!result.ok) {

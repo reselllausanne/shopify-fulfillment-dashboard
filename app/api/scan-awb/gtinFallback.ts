@@ -27,6 +27,7 @@ export type GtinOrderRow = {
   lineId: string;
   lineNumber: number | null;
   productName: string | null;
+  supplierPid?: string | null;
   quantity: number;
   ordered: number;
   shipped: number;
@@ -127,8 +128,8 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
       quantity: true,
       buyerPid: true,
       supplierPid: true,
-      warehouseMarkedShippedAt: true,
       gtin: true,
+      warehouseMarkedShippedAt: true,
       order: {
         select: {
           id: true,
@@ -230,6 +231,7 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
       lineId: line.id,
       lineNumber: line.lineNumber,
       productName: line.productName ?? null,
+      supplierPid: line.supplierPid ?? null,
       quantity: line.quantity,
       ordered,
       shipped,
