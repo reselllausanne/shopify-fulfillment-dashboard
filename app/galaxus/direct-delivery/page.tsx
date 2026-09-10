@@ -219,10 +219,13 @@ export default function GalaxusDirectDeliveryPage() {
 
   const orderFulfilled = useMemo(() => {
     const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
-    return shipments.some((shipment: any) => {
+    const totalLines = Array.isArray(selectedOrder?.lines) ? selectedOrder.lines.length : 0;
+    if (totalLines <= 0) return false;
+    const delrShipments = shipments.filter((shipment: any) => {
       const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
       return Boolean(shipment?.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
-    });
+    }).length;
+    return delrShipments >= totalLines;
   }, [selectedOrder]);
 
   const packingSlipUrl = useMemo(() => {

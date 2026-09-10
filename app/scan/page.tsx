@@ -1021,6 +1021,11 @@ export default function ScanPage() {
           blockedMessage:
             "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
         });
+      } else if (res.ok && data.ok && data.url) {
+        const opened = window.open(data.url, "_blank");
+        if (!opened) {
+          window.alert("Label ready but popup blocked. Allow popups, then click Ship qty again.");
+        }
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
       }

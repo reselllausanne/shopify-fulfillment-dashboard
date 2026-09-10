@@ -280,12 +280,12 @@ export async function GET(request: Request) {
           ? (warehouseOpenLineCountByOrderId.get(order.id) ?? 0)
           : null;
       const isWarehouseFullyShipped = !isDirect && totalLines > 0 && warehouseLinesShipped >= totalLines;
+      // Direct partial: one labeled line must not hide order from "to_process".
+      // Fulfilled only when every line has a DELR-sent shipment (1 shipment per line typical).
       const fulfillmentState = isDirect
-        ? fulfilledCount > 0
+        ? fulfilledCount >= totalLines && totalLines > 0
           ? "fulfilled"
-          : shippedCount > 0
-            ? "shipped"
-            : "to_process"
+          : "to_process"
         : isWarehouseFullyShipped
           ? "fulfilled"
           : shippedCount > 0

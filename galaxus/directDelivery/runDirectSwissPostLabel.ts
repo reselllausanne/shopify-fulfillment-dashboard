@@ -285,20 +285,16 @@ export async function runDirectSwissPostLabelForOrder(
   const openWithTracking = open.find((s) => String(s.trackingNumber ?? "").trim());
   const openWithoutTracking = open.filter((s) => !String(s.trackingNumber ?? "").trim());
   if (openWithTracking && openWithoutTracking.length === 0) {
-    if (!allowReprint) {
-      return alreadyFulfilledResult({
-        shipmentId: openWithTracking.id,
-        trackingNumber: openWithTracking.trackingNumber,
-        browserPrintConfig,
-      });
-    }
-    const { uploadDelrForShipment } = await import("@/galaxus/warehouse/delr");
-    const delr = await uploadDelrForShipment(openWithTracking.id).catch((error: any) => ({
-      status: "error",
-      message: error?.message ?? "DELR retry failed",
-    }));
     const existing = await loadExistingShippingLabelData(order.id, openWithTracking.id);
     if (existing) {
+      let delr: unknown;
+      if (allowReprint) {
+        const { uploadDelrForShipment } = await import("@/galaxus/warehouse/delr");
+        delr = await uploadDelrForShipment(openWithTracking.id).catch((error: any) => ({
+          status: "error",
+          message: error?.message ?? "DELR retry failed",
+        }));
+      }
       return {
         ok: true,
         status: "REPRINT",
@@ -310,6 +306,13 @@ export async function runDirectSwissPostLabelForOrder(
         browserPrintConfig,
         delr,
       };
+    }
+    if (!allowReprint) {
+      return alreadyFulfilledResult({
+        shipmentId: openWithTracking.id,
+        trackingNumber: openWithTracking.trackingNumber,
+        browserPrintConfig,
+      });
     }
   }
 
