@@ -297,6 +297,22 @@ type LineSelectionPayload = {
   quantity: number;
 };
 
+type InboundDirectLine = {
+  id: string;
+  lineNumber?: number | null;
+  productName?: string | null;
+  description?: string | null;
+  supplierPid?: string | null;
+  quantity?: number | null;
+};
+
+type InboundDirectOrder = {
+  id: string;
+  galaxusOrderId?: string | null;
+  orderNumber?: string | null;
+  lines?: InboundDirectLine[];
+};
+
 const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) return fallback;
@@ -595,6 +611,11 @@ export default function ScanPage() {
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
   >(null);
+  const [inboundDirectOrder, setInboundDirectOrder] = useState<InboundDirectOrder | null>(null);
+  const [inboundDirectLoading, setInboundDirectLoading] = useState(false);
+  const [inboundDirectError, setInboundDirectError] = useState<string | null>(null);
+  const [inboundDirectQtyByLineId, setInboundDirectQtyByLineId] = useState<Record<string, string>>({});
+  const [inboundDirectBusyLineId, setInboundDirectBusyLineId] = useState<string | null>(null);
   const packingSessionRef = useRef<PackingSessionEntry[]>([]);
   useEffect(() => {
     packingSessionRef.current = packingSession;
@@ -681,6 +702,65 @@ export default function ScanPage() {
     }
     setFulfillQtyByLineId(defaults);
   }, [result?.match?.shopifyOrderId, result?.match?.shopifyLineItemId, result?.awb]);
+
+  const fetchInboundDirectOrder = async (orderDbId: string): Promise<InboundDirectOrder> => {
+    const res = await fetch(
+      `/api/galaxus/orders/${encodeURIComponent(orderDbId)}?view=minimal&ensureLocal=1&reserveStx=0`,
+      { cache: "no-store" }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.ok || !data?.order) {
+      throw new Error(data?.error ?? "Failed to load direct order lines");
+    }
+    return data.order as InboundDirectOrder;
+  };
+
+  useEffect(() => {
+    const isDirectInbound = Boolean(result?.stxInboundBuy?.isDirectDelivery);
+    const orderDbId = String(result?.stxInboundBuy?.galaxusOrderDbId ?? "").trim();
+    if (!isDirectInbound || !orderDbId) {
+      setInboundDirectOrder(null);
+      setInboundDirectError(null);
+      setInboundDirectLoading(false);
+      setInboundDirectQtyByLineId({});
+      return;
+    }
+    let cancelled = false;
+    setInboundDirectLoading(true);
+    setInboundDirectError(null);
+    void (async () => {
+      try {
+        const order = await fetchInboundDirectOrder(orderDbId);
+        if (cancelled) return;
+        setInboundDirectOrder(order);
+      } catch (error: any) {
+        if (cancelled) return;
+        setInboundDirectOrder(null);
+        setInboundDirectError(error?.message ?? "Failed to load direct order lines");
+      } finally {
+        if (!cancelled) setInboundDirectLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.stxInboundBuy?.galaxusOrderDbId, result?.stxInboundBuy?.isDirectDelivery, result?.awb]);
+
+  useEffect(() => {
+    const lines = Array.isArray(inboundDirectOrder?.lines) ? inboundDirectOrder.lines : [];
+    if (!inboundDirectOrder?.id || lines.length === 0) {
+      setInboundDirectQtyByLineId({});
+      return;
+    }
+    const next: Record<string, string> = {};
+    for (const line of lines) {
+      const lineId = String(line?.id ?? "").trim();
+      if (!lineId) continue;
+      next[lineId] = inboundDirectQtyByLineId[lineId] ?? "1";
+    }
+    setInboundDirectQtyByLineId(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inboundDirectOrder?.id]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1293,15 +1373,6 @@ export default function ScanPage() {
           `Galaxus — order ${ref}\nAWB is stored on GalaxusStockxMatch (marketplace).\nNo Shopify label / fulfill on this page.`
         );
       }
-    } else if (
-      ENABLE_AUTO_GALAXUS_DIRECT_LABEL &&
-      scan.stxInboundBuy?.isDirectDelivery &&
-      scan.stxInboundBuy.galaxusOrderDbId &&
-      !scan.stxInboundBuy.orderCancelledAt
-    ) {
-      // AWB hit StxPurchaseUnit for a direct-delivery order but galaxusMatch
-      // payload was missing — still auto-print Swiss Post label via orderDbId.
-      await runDirectLabelForOrder(scan.stxInboundBuy.galaxusOrderDbId);
     }
     if (scan.decathlon) {
       const isDecWarehouseFallback = scan.decathlon.source === "decathlon_warehouse_shipment";
@@ -1871,6 +1942,49 @@ export default function ScanPage() {
     });
   };
 
+  const runInboundDirectPartialFromScan = async (line: InboundDirectLine) => {
+    const orderDbId = String(result?.stxInboundBuy?.galaxusOrderDbId ?? "").trim();
+    const lineId = String(line?.id ?? "").trim();
+    if (!orderDbId || !lineId) return;
+    const maxQty = Math.max(0, Number(line?.quantity ?? 0));
+    if (maxQty <= 0) {
+      setInboundDirectError("No remaining quantity to ship on this line.");
+      return;
+    }
+    const raw = inboundDirectQtyByLineId[lineId] ?? "1";
+    const qty = Math.floor(Number(raw));
+    if (!Number.isFinite(qty) || qty <= 0 || qty > maxQty) {
+      setInboundDirectError(`Invalid qty for line ${line?.lineNumber ?? "?"}. Allowed: 1..${maxQty}`);
+      return;
+    }
+
+    setInboundDirectBusyLineId(lineId);
+    setInboundDirectError(null);
+    setFulfillResult(null);
+    try {
+      const packRes = await fetch(`/api/galaxus/orders/${encodeURIComponent(orderDbId)}/shipments/pack`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          confirmReplace: true,
+          packages: [{ items: [{ lineId, quantity: qty }] }],
+        }),
+      });
+      const packData = await packRes.json().catch(() => ({}));
+      if (!packRes.ok || !packData?.ok) {
+        throw new Error(packData?.error ?? "Partial pack failed");
+      }
+
+      await runDirectLabelForOrder(orderDbId);
+      const fresh = await fetchInboundDirectOrder(orderDbId);
+      setInboundDirectOrder(fresh);
+    } catch (error: any) {
+      setInboundDirectError(error?.message ?? "Direct partial ship failed");
+    } finally {
+      setInboundDirectBusyLineId(null);
+    }
+  };
+
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -2387,10 +2501,76 @@ export default function ScanPage() {
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
                   {result.stxInboundBuy.isDirectDelivery
-                    ? "Shopify auto-fulfill blocked (stale OrderMatch). Galaxus Swiss Post label auto-prints for this direct-delivery inbound."
+                    ? "Shopify auto-fulfill blocked (stale OrderMatch). Pick direct line + qty below, then Ship qty."
                     : "Shopify auto-fulfill blocked. Warehouse inbound — pair goes to packing session, not a Shopify customer label."}
                   {result.shopifyMatchSuppressed ? " (Stale OrderMatch with same AWB suppressed.)" : ""}
                 </p>
+                {result.stxInboundBuy.isDirectDelivery && result.stxInboundBuy.galaxusOrderDbId ? (
+                  <div className="mt-3 rounded border border-fuchsia-300 bg-white p-3">
+                    <div className="text-xs font-semibold text-fuchsia-900">Direct lines (manual partial fulfill)</div>
+                    {inboundDirectLoading ? (
+                      <div className="mt-2 text-xs text-fuchsia-800">Loading lines…</div>
+                    ) : inboundDirectError ? (
+                      <div className="mt-2 text-xs text-red-700">{inboundDirectError}</div>
+                    ) : (
+                      <div className="mt-2 overflow-x-auto">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-fuchsia-200 text-left">
+                              <th className="py-1 pr-2">Line</th>
+                              <th className="py-1 pr-2">Product</th>
+                              <th className="py-1 pr-2">Supplier</th>
+                              <th className="py-1 pr-2">Remaining</th>
+                              <th className="py-1 pr-2">Qty</th>
+                              <th className="py-1 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(inboundDirectOrder?.lines ?? [])
+                              .filter((line) => Number(line?.quantity ?? 0) > 0)
+                              .map((line) => {
+                                const lineId = String(line?.id ?? "");
+                                const maxQty = Math.max(0, Number(line?.quantity ?? 0));
+                                return (
+                                  <tr key={lineId} className="border-b border-fuchsia-100 align-top">
+                                    <td className="py-1 pr-2 font-mono">{line.lineNumber ?? "—"}</td>
+                                    <td className="py-1 pr-2">
+                                      {line.productName || line.description || "—"}
+                                    </td>
+                                    <td className="py-1 pr-2 font-mono">{line.supplierPid || "—"}</td>
+                                    <td className="py-1 pr-2">{maxQty}</td>
+                                    <td className="py-1 pr-2">
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={Math.max(1, maxQty)}
+                                        value={inboundDirectQtyByLineId[lineId] ?? "1"}
+                                        onChange={(e) => {
+                                          const next = e.target.value;
+                                          setInboundDirectQtyByLineId((prev) => ({ ...prev, [lineId]: next }));
+                                        }}
+                                        className="w-14 rounded border px-1 py-0.5 text-[11px]"
+                                      />
+                                    </td>
+                                    <td className="py-1 text-right">
+                                      <button
+                                        type="button"
+                                        disabled={fulfillLoading || inboundDirectBusyLineId === lineId}
+                                        onClick={() => void runInboundDirectPartialFromScan(line)}
+                                        className="px-2 py-0.5 rounded bg-fuchsia-700 text-white disabled:opacity-50"
+                                      >
+                                        {inboundDirectBusyLineId === lineId ? "..." : "Ship qty"}
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 {result.stxInboundBuy.isDirectDelivery && result.stxInboundBuy.galaxusOrderDbId ? (
                   <a
                     href={`/galaxus/direct-delivery`}
