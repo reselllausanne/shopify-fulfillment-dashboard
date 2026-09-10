@@ -6,7 +6,8 @@ services:
     environment:
       # Do not inherit NODE_OPTIONS from .env — that 10GB cap is for the feed worker.
       # Web + feed both at 10GB on a 15GB box is what OOM-killed next-server today.
-      - NODE_OPTIONS=${WEB_NODE_OPTIONS:---max-old-space-size=4096}
+      # 8GB: feed snapshot rebuild (cron exec web) OOM'd at 4GB on ~983k rows.
+      - NODE_OPTIONS=${WEB_NODE_OPTIONS:---max-old-space-size=8192}
       - GALAXUS_FEED_RUN_ON=${GALAXUS_FEED_RUN_ON:-worker}
       - PLAYWRIGHT_USE_XVFB=${PLAYWRIGHT_USE_XVFB:-1}
       - PLAYWRIGHT_ENABLE_REMOTE_DESKTOP=${PLAYWRIGHT_ENABLE_REMOTE_DESKTOP:-1}
@@ -156,7 +157,7 @@ services:
     env_file:
       - .env
     environment:
-      - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=4096}
+      - NODE_OPTIONS=${OPS_BACKGROUND_NODE_OPTIONS:---max-old-space-size=8192}
       - WORKER_POLL_MS=${OPS_BACKGROUND_POLL_MS:-3000}
       - GALAXUS_FEED_WORKER_ORIGIN=${GALAXUS_FEED_WORKER_ORIGIN:-http://127.0.0.1:3000}
     command: ["npx", "tsx", "scripts/workers/opsBackgroundWorker.ts"]
