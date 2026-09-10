@@ -939,21 +939,47 @@ export default function ScanPage() {
     }
   };
 
-  const runGtinDirectPartial = async (row: NonNullable<ScanResult["gtin"]>["orders"][number]) => {
+  const shouldPromptDirectQty = (
+    row: NonNullable<ScanResult["gtin"]>["orders"][number],
+    allRows: NonNullable<ScanResult["gtin"]>["orders"]
+  ) => {
+    const orderDbId = String(row.galaxusOrderDbId ?? "").trim();
+    if (!orderDbId) return true;
+    const openDirectRowsForOrder = allRows.filter((candidate) => {
+      if (candidate.channel && candidate.channel !== "galaxus") return false;
+      if (!candidate.isDirectDelivery) return false;
+      const candidateOrderDbId = String(candidate.galaxusOrderDbId ?? "").trim();
+      if (!candidateOrderDbId || candidateOrderDbId !== orderDbId) return false;
+      const candidateRemaining = Math.max(0, Number(candidate.remaining ?? 0));
+      return candidateRemaining > 0 && !candidate.cancelledAt;
+    });
+    if (openDirectRowsForOrder.length > 1) return true;
+    const ordered = Math.max(0, Number(row.ordered ?? row.quantity ?? 0));
+    const remaining = Math.max(0, Number(row.remaining ?? 0));
+    return ordered > 1 || remaining > 1;
+  };
+
+  const runGtinDirectPartial = async (
+    row: NonNullable<ScanResult["gtin"]>["orders"][number],
+    allRows: NonNullable<ScanResult["gtin"]>["orders"]
+  ) => {
     const orderDbId = String(row.galaxusOrderDbId ?? "").trim();
     const lineId = String(row.lineId ?? "").trim();
     const remaining = Math.max(0, Number(row.remaining ?? 0));
     if (!orderDbId || !lineId || remaining <= 0) return;
 
-    const qtyRaw = window.prompt(
-      `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
-      "1"
-    );
-    if (qtyRaw == null) return;
-    const qty = Math.floor(Number(qtyRaw));
-    if (!Number.isFinite(qty) || qty <= 0 || qty > remaining) {
-      window.alert(`Invalid quantity. Enter 1..${remaining}.`);
-      return;
+    let qty = 1;
+    if (shouldPromptDirectQty(row, allRows)) {
+      const qtyRaw = window.prompt(
+        `Direct order ${row.galaxusOrderId ?? row.orderNumber ?? "—"}\nHow many units shipped now? (max ${remaining})`,
+        "1"
+      );
+      if (qtyRaw == null) return;
+      qty = Math.floor(Number(qtyRaw));
+      if (!Number.isFinite(qty) || qty <= 0 || qty > remaining) {
+        window.alert(`Invalid quantity. Enter 1..${remaining}.`);
+        return;
+      }
     }
 
     setFulfillLoading(true);
@@ -2710,7 +2736,7 @@ export default function ScanPage() {
                                 <button
                                   type="button"
                                   disabled={fulfillLoading}
-                                  onClick={() => void runGtinDirectPartial(o)}
+                                  onClick={() => void runGtinDirectPartial(o, result.gtin!.orders)}
                                   className="px-2 py-0.5 rounded bg-teal-700 text-white disabled:opacity-50"
                                   title="Create partial shipment for selected quantity, then generate direct label"
                                 >
