@@ -953,10 +953,7 @@ export default function ScanPage() {
       const candidateRemaining = Math.max(0, Number(candidate.remaining ?? 0));
       return candidateRemaining > 0 && !candidate.cancelledAt;
     });
-    if (openDirectRowsForOrder.length > 1) return true;
-    const ordered = Math.max(0, Number(row.ordered ?? row.quantity ?? 0));
-    const remaining = Math.max(0, Number(row.remaining ?? 0));
-    return ordered > 1 || remaining > 1;
+    return openDirectRowsForOrder.length > 1;
   };
 
   const runGtinDirectPartial = async (
