@@ -736,7 +736,13 @@ export default function ScanPage() {
       try {
         const order = await fetchInboundDirectOrder(orderDbId);
         if (cancelled) return;
-        setInboundDirectOrder(order);
+        setInboundDirectOrder({
+          ...order,
+          lines: (order.lines ?? []).map((line) => ({
+            ...line,
+            remaining: Math.max(0, Number(line?.remaining ?? line?.quantity ?? 0)),
+          })),
+        });
       } catch (error: any) {
         if (cancelled) return;
         setInboundDirectOrder(null);
@@ -2032,8 +2038,20 @@ export default function ScanPage() {
         ? String(packData.shipmentIds[0] ?? "").trim()
         : "";
       await runDirectLabelForOrder(orderDbId, shipmentId || undefined);
-      const fresh = await fetchInboundDirectOrder(orderDbId);
-      setInboundDirectOrder(fresh);
+      setInboundDirectOrder((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          lines: (prev.lines ?? []).map((row) =>
+            row.id === lineId
+              ? {
+                  ...row,
+                  remaining: Math.max(0, Number(row.remaining ?? row.quantity ?? 0) - qty),
+                }
+              : row
+          ),
+        };
+      });
     } catch (error: any) {
       setInboundDirectError(error?.message ?? "Direct partial ship failed");
     } finally {
