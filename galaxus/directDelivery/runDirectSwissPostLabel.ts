@@ -199,6 +199,8 @@ export async function runDirectSwissPostLabelForOrder(
     includeLabelData?: boolean;
     allowReprint?: boolean;
     requireLinked?: boolean;
+    /** Block until ORDR/DELR finish (scan auto-fulfill). */
+    waitForEdi?: boolean;
     /** Label this parcel only (e.g. shipment just created by pack). */
     shipmentId?: string;
   }
@@ -206,6 +208,7 @@ export async function runDirectSwissPostLabelForOrder(
   const includeLabelData = Boolean(options?.includeLabelData ?? true);
   const allowReprint = Boolean(options?.allowReprint ?? true);
   const requireLinked = Boolean(options?.requireLinked ?? true);
+  const waitForEdi = Boolean(options?.waitForEdi ?? false);
   const explicitShipmentId = String(options?.shipmentId ?? "").trim();
   const browserPrintConfig = resolveBrowserPrintConfig();
 
@@ -307,6 +310,7 @@ export async function runDirectSwissPostLabelForOrder(
       targetShipmentId: explicit.id,
       includeLabelData,
       browserPrintConfig,
+      waitForEdi,
     });
   }
 
@@ -420,6 +424,7 @@ export async function runDirectSwissPostLabelForOrder(
     includeLabelData,
     browserPrintConfig,
     createShipmentsStatus,
+    waitForEdi,
   });
 }
 
@@ -429,9 +434,16 @@ async function mintDirectSwissPostLabel(params: {
   includeLabelData: boolean;
   browserPrintConfig: BrowserPrintConfig;
   createShipmentsStatus?: string;
+  waitForEdi?: boolean;
 }): Promise<RunDirectSwissPostLabelResult> {
-  const { order, targetShipmentId, includeLabelData, browserPrintConfig, createShipmentsStatus } =
-    params;
+  const {
+    order,
+    targetShipmentId,
+    includeLabelData,
+    browserPrintConfig,
+    createShipmentsStatus,
+    waitForEdi,
+  } = params;
   const hint =
     String(order.galaxusOrderId ?? "").trim() ||
     String(targetShipmentId) ||
@@ -461,7 +473,10 @@ async function mintDirectSwissPostLabel(params: {
   }
 
   try {
-    const result = await applySuccessfulSwissPostLabelToShipment(targetShipmentId, swissRes.data);
+    const result = await applySuccessfulSwissPostLabelToShipment(targetShipmentId, swissRes.data, {
+      waitForEdi: Boolean(waitForEdi),
+      delrActor: { type: "staff" },
+    });
     const labelPayload = extractLabelPayload(swissRes.data);
     return {
       ok: true,

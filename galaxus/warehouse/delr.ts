@@ -278,15 +278,20 @@ export async function uploadDelrForShipment(
   const hasStockxMatch =
     (stxMatches ?? []).some((row: any) => String(row?.stockxOrderNumber ?? "").trim().length > 0);
   const isDirect = String(shipment.order?.deliveryType ?? "").toLowerCase() === "direct_delivery";
-  const allowDelrByMatch = Boolean(shipment.order?.ordrSentAt) && hasStockxMatch;
-  // Direct Swiss Post: StockX link only required when the order actually has STX lines.
-  // NER / physical / local stock has no GalaxusStockxMatch — old gate blocked DELR forever.
+  const orderRef = String(shipment.order?.galaxusOrderId ?? shipment.orderId ?? "").trim();
+  const stxLink = orderRef
+    ? await getStxLinkStatusForOrder(orderRef).catch(() => null)
+    : null;
+  const allowDelrByStxUnits = Boolean(stxLink?.hasStxItems && stxLink.allLinked);
+  const allowDelrByMatch =
+    Boolean(shipment.order?.ordrSentAt) && (hasStockxMatch || allowDelrByStxUnits);
+  const shipmentHasStxLine = dispatchItems.some((it) => {
+    const pid = String(it?.supplierPid ?? "").trim().toUpperCase();
+    return pid.startsWith("STX_") || pid === "STX";
+  });
+  // Direct partial: only require StockX link when this parcel includes STX lines.
   if (isDirect && !options.force && !allowDelrByMatch) {
-    const orderRef = String(shipment.order?.galaxusOrderId ?? shipment.orderId ?? "").trim();
-    const stxLink = orderRef
-      ? await getStxLinkStatusForOrder(orderRef).catch(() => null)
-      : null;
-    if (stxLink?.hasStxItems) {
+    if (shipmentHasStxLine && stxLink?.hasStxItems && !stxLink.allLinked) {
       return {
         shipmentId,
         status: "error",

@@ -36,12 +36,33 @@ export function isActiveStxInboundBuy(scan: ScanLike): boolean {
 
 /** True when scan should auto-print the Galaxus direct-delivery Swiss Post label. */
 export function shouldAutoGalaxusDirectLabelFor(scan: ScanLike): boolean {
+  // Inbound StockX → direct Galaxus uses pack+label+DELR auto (single line) or manual table (multi).
+  if (isActiveStxInboundBuy(scan) && scan?.stxInboundBuy?.isDirectDelivery) {
+    return false;
+  }
   const g = scan?.galaxus;
   if (!g?.isDirectDelivery) return false;
   if (g.allLinked === false) return false;
-  // stxInboundBuy must NOT suppress this — inbound StockX AWB for a
-  // direct-delivery Galaxus order is exactly when we print the Swiss Post label.
   return true;
+}
+
+export type DirectLineLike = {
+  quantity?: number | null;
+  remaining?: number | null;
+};
+
+export function countOpenDirectLines(lines: DirectLineLike[] | undefined | null): number {
+  return (lines ?? []).filter((line) => directLineRemaining(line) > 0).length;
+}
+
+export function directLineRemaining(line: DirectLineLike): number {
+  return Math.max(0, Number(line?.remaining ?? line?.quantity ?? 0));
+}
+
+/** Inbound StockX AWB for a direct Galaxus order — eligible for one-click fulfill when one line left. */
+export function shouldAutoStxInboundDirectFulfill(scan: ScanLike): boolean {
+  if (!isActiveStxInboundBuy(scan)) return false;
+  return Boolean(scan?.stxInboundBuy?.isDirectDelivery);
 }
 
 /**

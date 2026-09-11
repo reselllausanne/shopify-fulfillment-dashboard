@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     const includeLabelData = Boolean(body?.includeLabelData ?? true);
     // Scan auto-flow must not reprint. Explicit UI can pass allowReprint: true.
     const allowReprint = Boolean(body?.allowReprint ?? false);
+    const waitForEdi = Boolean(body?.waitForEdi ?? false);
 
     let resolvedOrderDbId = orderDbId;
     if (!resolvedOrderDbId && awb) {
@@ -95,6 +96,7 @@ export async function POST(req: NextRequest) {
       allowReprint,
       requireLinked: false,
       shipmentId,
+      waitForEdi,
     });
 
     if (!result.ok) {

@@ -4,9 +4,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  countOpenDirectLines,
+  directLineRemaining,
   isActiveStxInboundBuy,
   shouldAutoAddToPackingSession,
   shouldAutoGalaxusDirectLabelFor,
+  shouldAutoStxInboundDirectFulfill,
 } from "./scanInboundGuards";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
@@ -620,6 +623,7 @@ export default function ScanPage() {
   const [inboundDirectError, setInboundDirectError] = useState<string | null>(null);
   const [inboundDirectQtyByLineId, setInboundDirectQtyByLineId] = useState<Record<string, string>>({});
   const [inboundDirectBusyLineId, setInboundDirectBusyLineId] = useState<string | null>(null);
+  const [inboundDirectAutoDone, setInboundDirectAutoDone] = useState(false);
   const packingSessionRef = useRef<PackingSessionEntry[]>([]);
   useEffect(() => {
     packingSessionRef.current = packingSession;
@@ -1015,7 +1019,11 @@ export default function ScanPage() {
     return false;
   };
 
-  const runDirectLabelForOrder = async (orderDbId: string, shipmentId?: string) => {
+  const runDirectLabelForOrder = async (
+    orderDbId: string,
+    shipmentId?: string,
+    options?: { waitForEdi?: boolean }
+  ) => {
     if (!orderDbId) return;
     setFulfillLoading(true);
     setFulfillResult(null);
@@ -1028,6 +1036,7 @@ export default function ScanPage() {
           shipmentId: shipmentId || undefined,
           includeLabelData: true,
           allowReprint: false,
+          waitForEdi: Boolean(options?.waitForEdi),
         }),
       });
       const data: FulfillResponse & {
@@ -1036,11 +1045,18 @@ export default function ScanPage() {
         galaxusOrderId?: string | null;
         url?: string;
         status?: string;
+        delr?: { status?: string; message?: string };
       } = await res.json();
       setFulfillResult(data);
       const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
       if (res.ok && data.ok && openDirectLabelResponse(data)) {
-        return;
+        const delrStatus = String((data as any)?.delr?.status ?? "").toLowerCase();
+        if (options?.waitForEdi && delrStatus && delrStatus !== "uploaded" && delrStatus !== "skipped") {
+          window.alert(
+            `Galaxus direct ${orderRef}: label printed but DELR failed — ${(data as any)?.delr?.message ?? delrStatus}. Retry from Direct Delivery.`
+          );
+        }
+        return data;
       }
       if (res.status === 409 || data.status === "ALREADY_FULFILLED") {
         window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
@@ -1054,6 +1070,88 @@ export default function ScanPage() {
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Galaxus label network error");
+    } finally {
+      setFulfillLoading(false);
+    }
+    return null;
+  };
+
+  const runDirectPartialPackAndLabel = async (params: {
+    orderDbId: string;
+    lineId: string;
+    qty: number;
+    waitForEdi?: boolean;
+  }) => {
+    const packRes = await fetch(
+      `/api/galaxus/orders/${encodeURIComponent(params.orderDbId)}/shipments/pack`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          confirmReplace: true,
+          packages: [{ items: [{ lineId: params.lineId, quantity: params.qty }] }],
+        }),
+      }
+    );
+    const packData = await packRes.json().catch(() => ({}));
+    if (!packRes.ok || !packData?.ok) {
+      throw new Error(packData?.error ?? `Package build failed (${packRes.status})`);
+    }
+    const shipmentId = Array.isArray(packData?.shipmentIds)
+      ? String(packData.shipmentIds[0] ?? "").trim()
+      : "";
+    await runDirectLabelForOrder(params.orderDbId, shipmentId || undefined, {
+      waitForEdi: params.waitForEdi,
+    });
+    return { shipmentId, packData };
+  };
+
+  const autoHandleStxInboundDirect = async (scan: ScanResult) => {
+    if (!ENABLE_AUTO_GALAXUS_DIRECT_LABEL || !shouldAutoStxInboundDirectFulfill(scan)) {
+      return;
+    }
+    const orderDbId = String(scan.stxInboundBuy?.galaxusOrderDbId ?? "").trim();
+    if (!orderDbId) return;
+
+    setInboundDirectAutoDone(false);
+    setInboundDirectError(null);
+    setFulfillLoading(true);
+    try {
+      const order = await fetchInboundDirectOrder(orderDbId);
+      const openLines = (order.lines ?? []).filter((line) => directLineRemaining(line) > 0);
+      if (countOpenDirectLines(openLines) !== 1) {
+        setInboundDirectOrder({
+          ...order,
+          lines: (order.lines ?? []).map((line) => ({
+            ...line,
+            remaining: directLineRemaining(line),
+          })),
+        });
+        return;
+      }
+      const line = openLines[0];
+      const lineId = String(line?.id ?? "").trim();
+      const qty = Math.min(1, directLineRemaining(line));
+      if (!lineId || qty <= 0) return;
+
+      await runDirectPartialPackAndLabel({
+        orderDbId,
+        lineId,
+        qty,
+        waitForEdi: true,
+      });
+      setInboundDirectAutoDone(true);
+      setInboundDirectOrder({
+        ...order,
+        lines: (order.lines ?? []).map((row) =>
+          row.id === lineId
+            ? { ...row, remaining: Math.max(0, directLineRemaining(row) - qty) }
+            : { ...row, remaining: directLineRemaining(row) }
+        ),
+      });
+    } catch (error: any) {
+      setInboundDirectError(error?.message ?? "Direct auto-ship failed");
+      window.alert(error?.message ?? "Direct auto-ship failed");
     } finally {
       setFulfillLoading(false);
     }
@@ -1118,25 +1216,7 @@ export default function ScanPage() {
     setFulfillLoading(true);
     setFulfillResult(null);
     try {
-      const packRes = await fetch(
-        `/api/galaxus/orders/${encodeURIComponent(orderDbId)}/shipments/pack`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            confirmReplace: true,
-            packages: [{ items: [{ lineId, quantity: qty }] }],
-          }),
-        }
-      );
-      const packData = await packRes.json().catch(() => ({}));
-      if (!packRes.ok || !packData?.ok) {
-        throw new Error(packData?.error ?? `Package build failed (${packRes.status})`);
-      }
-      const shipmentId = Array.isArray(packData?.shipmentIds)
-        ? String(packData.shipmentIds[0] ?? "").trim()
-        : "";
-      await runDirectLabelForOrder(orderDbId, shipmentId || undefined);
+      await runDirectPartialPackAndLabel({ orderDbId, lineId, qty, waitForEdi: true });
     } catch (err: any) {
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Direct partial shipment failed");
@@ -1386,6 +1466,10 @@ export default function ScanPage() {
   const handleChannelActions = async (scan: ScanResult) => {
     if (scan.fulfillmentDemo) {
       await runFulfillmentDemoFromScan(scan);
+      return;
+    }
+    if (isActiveStxInboundBuy(scan) && scan.stxInboundBuy?.isDirectDelivery) {
+      await autoHandleStxInboundDirect(scan);
       return;
     }
     if (scan.inboundHome && ENABLE_AUTO_HOME_RETURN) {
@@ -1770,6 +1854,7 @@ export default function ScanPage() {
       return;
     }
     setLoading(true);
+    setInboundDirectAutoDone(false);
     let mainScanHandled = false;
     let hasActiveStxInboundBuy = false;
     let inboundBuyForPacking: {
@@ -2021,23 +2106,8 @@ export default function ScanPage() {
     setInboundDirectError(null);
     setFulfillResult(null);
     try {
-      const packRes = await fetch(`/api/galaxus/orders/${encodeURIComponent(orderDbId)}/shipments/pack`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          confirmReplace: true,
-          packages: [{ items: [{ lineId, quantity: qty }] }],
-        }),
-      });
-      const packData = await packRes.json().catch(() => ({}));
-      if (!packRes.ok || !packData?.ok) {
-        throw new Error(packData?.error ?? "Partial pack failed");
-      }
-
-      const shipmentId = Array.isArray(packData?.shipmentIds)
-        ? String(packData.shipmentIds[0] ?? "").trim()
-        : "";
-      await runDirectLabelForOrder(orderDbId, shipmentId || undefined);
+      await runDirectPartialPackAndLabel({ orderDbId, lineId, qty, waitForEdi: true });
+      setInboundDirectAutoDone(false);
       setInboundDirectOrder((prev) => {
         if (!prev) return prev;
         return {
@@ -2575,11 +2645,20 @@ export default function ScanPage() {
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
                   {result.stxInboundBuy.isDirectDelivery
-                    ? "Shopify auto-fulfill blocked (stale OrderMatch). Pick direct line + qty below, then Ship qty."
+                    ? inboundDirectAutoDone
+                      ? "Single-product order — packed, label printed, DELR sent to Galaxus."
+                      : countOpenDirectLines(inboundDirectOrder?.lines) > 1
+                        ? "Multi-product order — pick direct line + qty below, then Ship qty (label + DELR)."
+                        : fulfillLoading
+                          ? "Single-product order — auto packing, printing label, sending DELR…"
+                          : "Single-product order — scan auto-ships (label + DELR). Multi-product uses table below."
                     : "Shopify auto-fulfill blocked. Warehouse inbound — pair goes to packing session, not a Shopify customer label."}
                   {result.shopifyMatchSuppressed ? " (Stale OrderMatch with same AWB suppressed.)" : ""}
                 </p>
-                {result.stxInboundBuy.isDirectDelivery && result.stxInboundBuy.galaxusOrderDbId ? (
+                {result.stxInboundBuy.isDirectDelivery &&
+                result.stxInboundBuy.galaxusOrderDbId &&
+                !inboundDirectAutoDone &&
+                countOpenDirectLines(inboundDirectOrder?.lines) > 1 ? (
                   <div className="mt-3 rounded border border-fuchsia-300 bg-white p-3">
                     <div className="text-xs font-semibold text-fuchsia-900">Direct lines (manual partial fulfill)</div>
                     {inboundDirectLoading ? (

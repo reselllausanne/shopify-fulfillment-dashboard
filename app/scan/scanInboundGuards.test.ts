@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  countOpenDirectLines,
   isActiveStxInboundBuy,
   shouldAutoAddToPackingSession,
   shouldAutoGalaxusDirectLabelFor,
+  shouldAutoStxInboundDirectFulfill,
 } from "./scanInboundGuards";
 
 describe("isActiveStxInboundBuy", () => {
@@ -43,13 +45,13 @@ describe("shouldAutoGalaxusDirectLabelFor", () => {
     ).toBe(false);
   });
 
-  it("still auto-prints Galaxus direct label when inbound StockX AWB is present", () => {
+  it("defers galaxus auto-label to inbound direct fulfill when StockX AWB is present", () => {
     expect(
       shouldAutoGalaxusDirectLabelFor({
         galaxus: { isDirectDelivery: true, allLinked: true },
         stxInboundBuy: { orderCancelledAt: null, isDirectDelivery: true },
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("still prints when the inbound buy's parent order is cancelled", () => {
@@ -59,6 +61,35 @@ describe("shouldAutoGalaxusDirectLabelFor", () => {
         stxInboundBuy: { orderCancelledAt: "2026-08-31T00:00:00.000Z" },
       })
     ).toBe(true);
+  });
+});
+
+describe("shouldAutoStxInboundDirectFulfill", () => {
+  it("true for active direct inbound buy", () => {
+    expect(
+      shouldAutoStxInboundDirectFulfill({
+        stxInboundBuy: { orderCancelledAt: null, isDirectDelivery: true },
+      })
+    ).toBe(true);
+  });
+
+  it("false for warehouse inbound", () => {
+    expect(
+      shouldAutoStxInboundDirectFulfill({
+        stxInboundBuy: { orderCancelledAt: null, isWarehouse: true, isDirectDelivery: false },
+      })
+    ).toBe(false);
+  });
+});
+
+describe("countOpenDirectLines", () => {
+  it("counts lines with remaining qty", () => {
+    expect(
+      countOpenDirectLines([
+        { quantity: 1, remaining: 1 },
+        { quantity: 1, remaining: 0 },
+      ])
+    ).toBe(1);
   });
 });
 
