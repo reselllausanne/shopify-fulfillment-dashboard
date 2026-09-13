@@ -2,8 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import {
+  applyStxExpressFloor,
   calcShopifySellPrice,
-  calcStxExpressSellFromStandard,
 } from "@/shopify/pricing/calcShopifySellPrice";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
@@ -222,10 +222,21 @@ function computeSellPrices(input: {
           false
         )
       : null);
-  // Express buy price → lane availability only. Customer price = standard + 20 CHF.
+  const expressCalc =
+    expressBuy != null
+      ? calcSellFromBuy(
+          expressBuy,
+          input.productHandle,
+          input.stxRow.supplierProductName,
+          input.stxRow.supplierBrand,
+          true
+        )
+      : null;
+  // Express price comes from express ask calculation, with +20 floor only when
+  // it collides with/undercuts the standard sell.
   const expressSell =
     expressBuy != null && normalSell != null
-      ? calcStxExpressSellFromStandard(normalSell)
+      ? applyStxExpressFloor(normalSell, expressCalc)
       : null;
 
   return { normalSell, expressSell };

@@ -2965,12 +2965,19 @@ def process_url(url, thread_id=0, prefetched=None):
             express_sell_price = None
             if express_prices:
                 lowest_express_entry = min(express_prices, key=lambda x: x["price"])
-                # Express StockX raw → availability only. Customer price = standard + 20 CHF.
-                express_sell_price = apply_stx_express_floor(sell_price)
+                express_raw_price = lowest_express_entry["price"]
+                express_calc = calc_sell_price(
+                    express_raw_price,
+                    pc,
+                    is_express=True,
+                    product_handle=product_handle,
+                    brand=brand,
+                )
+                express_sell_price = apply_stx_express_floor(sell_price, express_calc)
                 print(
-                    f"[CALCULATED EXPRESS] {title} - Size {eu_size}: lane "
+                    f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
                     f"type={lowest_express_entry['type']} asks={lowest_express_entry['asks']} "
-                    f"→ SELL={express_sell_price} CHF (standard={sell_price} + surcharge)"
+                    f"→ SELL={express_sell_price} CHF (standard={sell_price} floor guarded)"
                 )
         else:
             print(f"[Thread {thread_id}] [WARNING] Invalid price for {title} size {eu_size}, skipping variant.")

@@ -606,24 +606,28 @@ def read_stx_express_surcharge_chf() -> float:
     return n
 
 
-def calc_stx_express_sell_from_standard(standard_sell):
+def apply_stx_express_floor(standard_sell, express_calc=None):
     """
-    STX dropship express checkout price = standard sell + flat surcharge (default 20 CHF).
-    StockX express-lane raw is used only for availability (asks > 2), never for pricing —
-    same variant, same standard price, +20 for express delivery.
+    Preserve express-ask pricing, but guarantee express never lands at/under
+    standard by applying a +surcharge floor (default 20 CHF).
     """
     try:
         std = float(standard_sell or 0)
     except (TypeError, ValueError):
-        return None
+        std = 0.0
     if std <= 0:
-        return None
-    return _psych_round_up(std + read_stx_express_surcharge_chf())
+        return express_calc
 
-
-def apply_stx_express_floor(standard_sell, express_calc=None):
-    """Alias for calc_stx_express_sell_from_standard (express_calc ignored)."""
-    return calc_stx_express_sell_from_standard(standard_sell)
+    floor = _psych_round_up(std + read_stx_express_surcharge_chf())
+    if express_calc is None:
+        return floor
+    try:
+        exp = float(express_calc)
+    except (TypeError, ValueError):
+        exp = 0.0
+    if exp <= std:
+        return floor
+    return max(int(exp), floor)
 
 
 def calc_liquidation_sell_price(cost_chf) -> int:

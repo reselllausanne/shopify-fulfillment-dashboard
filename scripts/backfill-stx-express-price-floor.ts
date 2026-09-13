@@ -22,7 +22,7 @@
  */
 import { shopifyGraphQL } from "../lib/shopifyAdmin";
 import {
-  calcStxExpressSellFromStandard,
+  applyStxExpressFloor,
   readStxExpressSurchargeChf,
 } from "../shopify/pricing/calcShopifySellPrice";
 import { parseExpressPriceMetafieldAmount } from "../shopify/restock/liquidationExpressPrice";
@@ -176,9 +176,10 @@ async function main() {
         continue;
       }
 
-      // Case B: express available → set metafield to standard + surcharge (flat +20).
+      // Case B: express available -> preserve express-ask pricing, but floor to
+      // standard+surcharge when express collides with/undercuts standard.
       if (expressAvail && currentExpress != null) {
-        const target = calcStxExpressSellFromStandard(priceNum);
+        const target = applyStxExpressFloor(priceNum, currentExpress);
         if (target != null && Math.abs(target - currentExpress) > 0.5) {
           if (isLocked) {
             buckets.skip_locked += 1;
