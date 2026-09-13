@@ -358,6 +358,60 @@ describe("convergeVariant — 48h/soldes coupled to liquidation lock", () => {
     expect(result.changes.some((c) => c.includes("67"))).toBe(false);
   });
 
+  it("Essential Hoodie warehouse stock — hard-locks 129 retail, never 59/89", async () => {
+    mockedStxFindFirst.mockResolvedValue({
+      id: "sv-hoodie",
+      supplierVariantId: "stx_hoodie",
+      price: 89,
+      manualLock: true,
+      manualPrice: 89,
+      manualStock: null,
+      manualNote: "phase4:liquidation home=0 warehouse=1",
+    });
+    mockedFindVariant.mockResolvedValue({
+      match: variantDetail({
+        productTitle: "Fear Of God Essentials Fleece Hoodie (FW24) Black",
+        sku: "192HO246250F-S",
+        price: 89,
+        compareAtPrice: 219,
+        onSale: true,
+      }),
+      ambiguous: false,
+      rawMatches: [],
+    });
+    mockedPricing.mockResolvedValue({
+      stockxRaw: 120,
+      cost: 144,
+      compareAt: 219,
+      sellPrice: 89,
+      source: "kickdb-live-size",
+    });
+    mockedRead48h.mockResolvedValue(true);
+
+    const result = await convergeVariant(GTIN);
+
+    expect(result.desired).toBe("dropship");
+    expect(prisma.supplierVariant.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          manualLock: true,
+          manualPrice: 129,
+          manualNote: expect.stringMatching(/in-stock:fixed-price.*Essential Hoodie/i),
+        }),
+      })
+    );
+    const priceWrites = mockedGraphQL.mock.calls.filter((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string }> } | undefined;
+      return vars?.variants?.[0]?.price != null;
+    });
+    expect(priceWrites.some((call) => {
+      const vars = call[1] as { variants?: Array<{ price?: string; compareAtPrice?: string | null }> };
+      return vars?.variants?.[0]?.price === "129.00" && vars?.variants?.[0]?.compareAtPrice == null;
+    })).toBe(true);
+    expect(mockedWrite48h).toHaveBeenCalledWith("gid://shopify/ProductVariant/1", false);
+    expect(result.changes.some((c) => c.includes("89"))).toBe(false);
+  });
+
   it("jmoney-kicks tag + Bussigny stock — keeps 99 retail, never STX −30% soldes", async () => {
     mockedStxFindFirst.mockResolvedValue({
       id: "sv-jmoney",
