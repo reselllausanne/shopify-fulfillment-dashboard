@@ -29,7 +29,7 @@ export const EXPLORER_GROSS_MARGIN = 0.3035;
 export const EXPLORER_BREAK_EVEN_ROAS = 1 / EXPLORER_GROSS_MARGIN;
 export const EXPLORER_TARGET_ROAS = 5;
 export const EXPLORER_DEFAULT_BUDGET_MICROS = 50_000_000;
-export const EXPLORER_DEFAULT_MAX_CPC_MICROS = 200_000; // CHF 0.20
+export const EXPLORER_DEFAULT_MAX_CPC_MICROS = 450_000; // CHF 0.45
 export const EXPLORER_DEFAULT_BATCH_DAYS = 10;
 export const EXPLORER_DEFAULT_FEED_LABEL = "CH";
 export const EXPLORER_DEFAULT_MERCHANT_ID = "669442699";
@@ -258,9 +258,25 @@ export async function computeExplorerEligibilityDebug(
   const end = defaultEndDate();
   const start = addDays(end, -(lookbackDays - 1));
 
-  const inventoryOfferCounts = await prisma.$queryRaw<
-    Array<{ total_offers: number; offers_with_model: number; models_with_id: number }>
-  >(Prisma.sql`
+  // Eligibility joins are heavy. LOCAL set_config dies between Prisma queries —
+  // wrap the SQL pack in one interactive transaction so 300s applies to every statement.
+  const {
+    inventoryOfferCounts,
+    baseRows,
+    ads30Rows,
+    adsAllRows,
+    ageRows,
+    salesRows,
+    blockedRows,
+  } = await prisma.$transaction(
+    async (tx) => {
+      // Brand weekly plans re-run this pack under load; 5m still timed out on Adidas/Nike.
+      // Prefer non-local so PgBouncer/session resets cannot drop a LOCAL-only setting mid-tx.
+      await tx.$executeRawUnsafe(`SET statement_timeout = '900s'`);
+
+      const inventoryOfferCounts = await tx.$queryRaw<
+        Array<{ total_offers: number; offers_with_model: number; models_with_id: number }>
+      >(Prisma.sql`
     SELECT
       COUNT(*)::int AS total_offers,
       COUNT(*) FILTER (WHERE "shopify_product_id" IS NOT NULL)::int AS offers_with_model,
@@ -270,18 +286,18 @@ export async function computeExplorerEligibilityDebug(
       AND "merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
   `);
 
-  const baseRows = await prisma.$queryRaw<
-    Array<{
-      shopify_product_id: string;
-      brand: string;
-      offer_count: number;
-      has_valid_offer_id: boolean;
-      has_valid_language: boolean;
-      has_valid_feed_label: boolean;
-      approved: boolean;
-      in_stock: boolean;
-    }>
-  >(Prisma.sql`
+      const baseRows = await tx.$queryRaw<
+        Array<{
+          shopify_product_id: string;
+          brand: string;
+          offer_count: number;
+          has_valid_offer_id: boolean;
+          has_valid_language: boolean;
+          has_valid_feed_label: boolean;
+          approved: boolean;
+          in_stock: boolean;
+        }>
+      >(Prisma.sql`
     SELECT
       "shopify_product_id"::text AS shopify_product_id,
       COALESCE(MAX(NULLIF("brand", '')), '(empty)') AS brand,
@@ -298,8 +314,9 @@ export async function computeExplorerEligibilityDebug(
     GROUP BY "shopify_product_id"
   `);
 
-  const ads30Rows = await prisma.$queryRaw<Array<{ shopify_product_id: string; impressions_30d: number }>>(
-    Prisma.sql`
+      const ads30Rows = await tx.$queryRaw<
+        Array<{ shopify_product_id: string; impressions_30d: number }>
+      >(Prisma.sql`
       SELECT
         "shopify_product_id"::text AS shopify_product_id,
         COALESCE(SUM("impressions"), 0)::float8 AS impressions_30d
@@ -307,26 +324,29 @@ export async function computeExplorerEligibilityDebug(
       WHERE "shopify_product_id" IS NOT NULL
         AND "date" BETWEEN ${start}::date AND ${end}::date
       GROUP BY "shopify_product_id"
-    `
-  );
-  const adsAllRows = await prisma.$queryRaw<Array<{ shopify_product_id: string; conversions_all_time: number }>>(
-    Prisma.sql`
+    `);
+      const adsAllRows = await tx.$queryRaw<
+        Array<{ shopify_product_id: string; conversions_all_time: number }>
+      >(Prisma.sql`
       SELECT
         "shopify_product_id"::text AS shopify_product_id,
         COALESCE(SUM("conversions"), 0)::float8 AS conversions_all_time
       FROM "public"."ads_product_daily"
       WHERE "shopify_product_id" IS NOT NULL
       GROUP BY "shopify_product_id"
-    `
-  );
-  const ageRows = await prisma.$queryRaw<Array<{ shopify_product_id: string; created_at: string }>>(Prisma.sql`
+    `);
+      const ageRows = await tx.$queryRaw<
+        Array<{ shopify_product_id: string; created_at: string }>
+      >(Prisma.sql`
     SELECT
       "shopify_product_id"::text AS shopify_product_id,
       "shopify_product_created_at"::text AS created_at
     FROM "public"."ads_explorer_product_age"
     WHERE "shopify_product_created_at" IS NOT NULL
   `);
-  const salesRows = await prisma.$queryRaw<Array<{ shopify_product_id: string; sales_365: number }>>(Prisma.sql`
+      const salesRows = await tx.$queryRaw<
+        Array<{ shopify_product_id: string; sales_365: number }>
+      >(Prisma.sql`
     SELECT
       src."shopify_product_id"::text AS shopify_product_id,
       COUNT(*)::int AS sales_365
@@ -345,9 +365,9 @@ export async function computeExplorerEligibilityDebug(
       AND src."shopify_product_id" IS NOT NULL
     GROUP BY src."shopify_product_id"
   `);
-  const blockedRows = await prisma.$queryRaw<
-    Array<{ shopify_product_id: string; in_active_batch: boolean; in_cooldown: boolean }>
-  >(Prisma.sql`
+      const blockedRows = await tx.$queryRaw<
+        Array<{ shopify_product_id: string; in_active_batch: boolean; in_cooldown: boolean }>
+      >(Prisma.sql`
     SELECT
       "shopify_product_id"::text AS shopify_product_id,
       BOOL_OR("lifecycle_status" IN ('selected','labeling','active')) AS in_active_batch,
@@ -358,6 +378,19 @@ export async function computeExplorerEligibilityDebug(
     FROM "public"."ads_explorer_batch_models"
     GROUP BY "shopify_product_id"
   `);
+
+      return {
+        inventoryOfferCounts,
+        baseRows,
+        ads30Rows,
+        adsAllRows,
+        ageRows,
+        salesRows,
+        blockedRows,
+      };
+    },
+    { maxWait: 60_000, timeout: 960_000 }
+  );
 
   const ads30Map = new Map(ads30Rows.map((r) => [r.shopify_product_id, r.impressions_30d]));
   const adsAllMap = new Map(adsAllRows.map((r) => [r.shopify_product_id, r.conversions_all_time]));

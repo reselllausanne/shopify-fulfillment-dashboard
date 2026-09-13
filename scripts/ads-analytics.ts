@@ -32,6 +32,7 @@ import { explorerApprovalAuditCommand } from "../adsanalytics/commands/explorerA
 import { explorerAgeBackfillCommand } from "../adsanalytics/commands/explorerAgeBackfill";
 import { explorerBatchSupersedeCommand } from "../adsanalytics/commands/explorerBatchSupersede";
 import { explorerCampaignCreateCommand } from "../adsanalytics/commands/explorerCampaignCreate";
+import { explorerCpcUpdateCommand } from "../adsanalytics/commands/explorerCpcUpdate";
 import { explorerCampaignDiscoverCommand } from "../adsanalytics/commands/explorerCampaignDiscover";
 import { explorerCampaignRegisterCommand } from "../adsanalytics/commands/explorerCampaignRegister";
 import { explorerCoreExclusionsCommand } from "../adsanalytics/commands/explorerCoreExclusions";
@@ -60,9 +61,13 @@ import { longTailCampaignCreateCommand } from "../adsanalytics/commands/longTail
 import { merchantAuthCheckCommand } from "../adsanalytics/commands/merchantAuthCheck";
 import { merchantAuthExchangeCommand } from "../adsanalytics/commands/merchantAuthExchange";
 import { merchantAuthUrlCommand } from "../adsanalytics/commands/merchantAuthUrl";
+import { merchantPricingCandidatesCommand } from "../adsanalytics/commands/merchantPricingCandidates";
+import { merchantPricingSmokeCommand } from "../adsanalytics/commands/merchantPricingSmoke";
+import { merchantPricingWouldMoveCommand } from "../adsanalytics/commands/merchantPricingWouldMove";
 import { merchantRegisterGcpCommand } from "../adsanalytics/commands/merchantRegisterGcp";
 import { merchantSourcesAuditCommand } from "../adsanalytics/commands/merchantSourcesAudit";
 import { overlapVerifyCommand } from "../adsanalytics/commands/overlapVerify";
+import { pmaxBrandCampaignCreateCommand } from "../adsanalytics/commands/pmaxBrandCampaignCreate";
 import { pmaxExcludeRoutedLabelsCommand } from "../adsanalytics/commands/pmaxExcludeRoutedLabels";
 import { probeCommand } from "../adsanalytics/commands/probe";
 import { syncSpendCommand } from "../adsanalytics/commands/syncSpend";
@@ -97,6 +102,12 @@ Commands:
   merchant:auth-check        Validate Merchant API auth for configured merchant account
   merchant:auth:url          Generate Merchant OAuth consent URL (content scope)
   merchant:auth:exchange     Exchange OAuth code for Merchant refresh token
+  merchant:pricing-smoke [--account=669442699] [--country=CH] [--limit=50]
+                             Read-only Price Competitiveness + Price Insights smoke test
+  merchant:pricing-would-move [--limit=200] [--threshold=10] [--examples=5]
+                             Read-only hypothetical move examples vs CH benchmark (no writes)
+  merchant:pricing-candidates [--limit=200] [--threshold=8] [--min-impressions=20]
+                             Read-only: KickDB/buy margin floor + Ads demand → best pocket×perf price
   merchant:register-gcp --merchant-id=<id> --email=<email>
                              Register current GCP project for Merchant API access
   merchant:sources:audit     Audit Merchant data sources + custom_label_3 usage
@@ -137,6 +148,8 @@ Commands:
                              Activation gate checks (live enable blocked this phase)
   explorer:monitor --batch=<id>
                              Batch metrics snapshot (concentration/ROAS/exposure)
+  explorer:cpc:update [--max-cpc-micros=450000] [--validate-only|--confirm=<hash>]
+                             Raise max CPC on every live Explorer Shopping campaign
   explorer:metrics:sync --batch=<id> [--from= --to=] [--skip-ingest]
                              Ingest offer-level Ads metrics and roll them up per model
   explorer:reconcile --batch=<id> [--dry-run] [--skip-ingest] [--force]
@@ -151,6 +164,10 @@ Commands:
                              Create the persistent Long Tail All shopping campaign (PAUSED)
   explorer:core-exclusions:extend [--label=long_tail_all] [--validate-only|--confirm=<hash>]
                              Add a missing routed-label exclusion to the core campaign
+  pmax:brand-campaign:create [--brand=ugg] [--name=UGG PM Feed Only]
+                             [--budget-micros=100000000] [--target-roas=5]
+                             [--validate-only|--confirm=<hash>] [--paused]
+                             Create a brand-scoped Performance Max retail campaign (feed only).
   pmax:exclude-routed-labels --campaign-id=<id> [--labels=explorer_active,long_tail_all]
                              [--validate-only|--confirm=<hash>]
                              Idempotent: subdivide UNIT_INCLUDED leaves + extend CL3 subdivisions
@@ -158,11 +175,12 @@ Commands:
   explorer:overlap:proof     Prove each routed label is targeted by exactly one campaign
   explorer:rollback --batch=<id> --confirm=<planHash>
                              Idempotent rollback state transition (live calls blocked)
-  explorer:weekly:plan       Self-serve weekly cycle for source_campaign=all:
-                             plan (1000 models, seed=weekly-YYYYWww) → preflight
-                             → core-exclusions validate → merchant prepare/apply
-                             → activate. Idempotent per ISO week. Reuses the
-                             registered EXPLORER_ALL campaign; never creates one.
+  explorer:weekly:plan [--sources=all,adidas,nike,jordan]
+                             Self-serve weekly cycle for every configured PMax source:
+                             plan → preflight → core-exclusions validate → merchant
+                             prepare/apply → activate. Idempotent per ISO week + source.
+                             Reuses existing Explorer Shopping campaigns; never creates.
+                             Default sources: all + adidas + nike + jordan. Shared LT.
   explorer:batch:supersede --old-batch=<id> --new-batch=<id>
                              Mark old batch superseded after new plan success
 
@@ -273,6 +291,30 @@ async function main(): Promise<number> {
         code: stringFlag(args, "code"),
         writeEnv: flag(args, "write-env") ? true : undefined,
       });
+    case "merchant:pricing-smoke":
+      return merchantPricingSmokeCommand({
+        account: stringFlag(args, "account"),
+        country: stringFlag(args, "country") ?? "CH",
+        limit: intFlag(args, "limit", 50),
+      });
+    case "merchant:pricing-would-move":
+      return merchantPricingWouldMoveCommand({
+        account: stringFlag(args, "account"),
+        country: stringFlag(args, "country") ?? "CH",
+        limit: intFlag(args, "limit", 200),
+        thresholdPercent: intFlag(args, "threshold", 10),
+        examples: intFlag(args, "examples", 5),
+      });
+    case "merchant:pricing-candidates":
+      return merchantPricingCandidatesCommand({
+        account: stringFlag(args, "account"),
+        country: stringFlag(args, "country") ?? "CH",
+        limit: intFlag(args, "limit", 150),
+        thresholdPercent: intFlag(args, "threshold", 8),
+        minImpressions: intFlag(args, "min-impressions", 50),
+        examples: intFlag(args, "examples", 8),
+        merchantLimit: intFlag(args, "merchant-limit", 2000),
+      });
     case "merchant:sources:audit":
       return merchantSourcesAuditCommand();
     case "merchant:register-gcp":
@@ -345,6 +387,14 @@ async function main(): Promise<number> {
       });
     case "explorer:monitor":
       return explorerMonitorCommand({ batch: stringFlag(args, "batch") });
+    case "explorer:cpc:update":
+      return explorerCpcUpdateCommand({
+        maxCpcMicros: stringFlag(args, "max-cpc-micros")
+          ? intFlag(args, "max-cpc-micros", 0)
+          : undefined,
+        validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
+        confirm: stringFlag(args, "confirm"),
+      });
     case "explorer:metrics:sync":
       return explorerMetricsSyncCommand({
         batch: stringFlag(args, "batch"),
@@ -398,6 +448,20 @@ async function main(): Promise<number> {
         validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
         confirm: stringFlag(args, "confirm"),
       });
+    case "pmax:brand-campaign:create":
+      return pmaxBrandCampaignCreateCommand({
+        brand: stringFlag(args, "brand"),
+        name: stringFlag(args, "name"),
+        budgetMicros: stringFlag(args, "budget-micros")
+          ? intFlag(args, "budget-micros", 0)
+          : undefined,
+        targetRoas: stringFlag(args, "target-roas")
+          ? Number(stringFlag(args, "target-roas"))
+          : undefined,
+        validateOnly: flag(args, "validate-only") || !stringFlag(args, "confirm"),
+        confirm: stringFlag(args, "confirm"),
+        paused: flag(args, "paused") ? true : undefined,
+      });
     case "pmax:exclude-routed-labels":
       return pmaxExcludeRoutedLabelsCommand({
         campaignId: stringFlag(args, "campaign-id"),
@@ -422,7 +486,9 @@ async function main(): Promise<number> {
         confirm: stringFlag(args, "confirm"),
       });
     case "explorer:weekly:plan":
-      return explorerWeeklyPlanCommand();
+      return explorerWeeklyPlanCommand({
+        sources: stringFlag(args, "sources"),
+      });
     case "explorer:batch:supersede":
       return explorerBatchSupersedeCommand({
         oldBatch: stringFlag(args, "old-batch"),

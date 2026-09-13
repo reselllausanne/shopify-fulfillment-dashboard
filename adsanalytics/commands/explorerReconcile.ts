@@ -22,6 +22,8 @@ import {
   decideBatchClosure,
   decideDestination,
   loadExplorerRuleConfig,
+  planDominanceDecisions,
+  type BatchModelMetricsRow,
   type ExplorerRuleConfig,
   type ModelRuleInput,
   type RuleDecision,
@@ -48,6 +50,7 @@ type ModelRow = {
   clicks: number;
   conversions: number;
   lt_conversions: number;
+  cost_micros: number;
 };
 
 function requiredBatchId(batchId: string | undefined): string {
@@ -65,7 +68,8 @@ async function loadModelsForDecision(batchId: string): Promise<ModelRow[]> {
       COALESCE("impressions", 0)::float8 AS impressions,
       COALESCE("clicks", 0)::float8 AS clicks,
       COALESCE("conversions", 0)::float8 AS conversions,
-      COALESCE("lt_conversions", 0)::float8 AS lt_conversions
+      COALESCE("lt_conversions", 0)::float8 AS lt_conversions,
+      COALESCE("cost_micros", 0)::float8 AS cost_micros
     FROM "public"."ads_explorer_batch_models"
     WHERE "batch_id" = ${batchId}
     ORDER BY "shopify_product_id"
@@ -96,8 +100,19 @@ export function planReconcileDecisions(
   elapsedDays: number,
   now: Date
 ): RuleDecision[] {
-  const decisions: RuleDecision[] = [];
+  const metricRows: BatchModelMetricsRow[] = rows.map((r) => ({
+    shopify_product_id: r.shopify_product_id,
+    destination: r.destination,
+    impressions: r.impressions,
+    clicks: r.clicks,
+    cost_micros: r.cost_micros,
+  }));
+  const dominance = planDominanceDecisions(metricRows, config, now);
+  const dominanceIds = new Set(dominance.map((d) => d.modelId));
+
+  const decisions: RuleDecision[] = [...dominance];
   for (const row of rows) {
+    if (dominanceIds.has(row.shopify_product_id)) continue;
     const input = toRuleInput(row, elapsedDays);
     const decision = decideDestination(input, config, now) ?? decideBatchClosure(input, config, now);
     if (!decision) continue;
@@ -148,11 +163,19 @@ export async function explorerReconcileCommand(
     const config = loadExplorerRuleConfig();
     const elapsedDays = elapsedDaysSince(batch.activatedAt, now);
 
+    const batchStats =
+      batch.statsJson && typeof batch.statsJson === "object"
+        ? (batch.statsJson as Record<string, unknown>)
+        : {};
+    const explorerActiveLabel =
+      typeof batchStats.explorerLabel === "string" ? batchStats.explorerLabel.trim() : null;
+
     const ctx: DestinationContext = {
       batchId,
       merchantId: EXPLORER_DEFAULT_MERCHANT_ID,
       dataSource: "",
       dryRun,
+      explorerActiveLabel,
     };
 
     // 2. Resume: models mutated in an earlier run whose readback had not propagated.

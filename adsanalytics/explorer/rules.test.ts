@@ -7,6 +7,8 @@ import {
   decideExplorerDestination,
   decideLongTailDestination,
   loadExplorerRuleConfig,
+  planDominanceDecisions,
+  type BatchModelMetricsRow,
   type ModelRuleInput,
 } from "@/adsanalytics/explorer/rules";
 
@@ -148,6 +150,46 @@ describe("long tail phase 1", () => {
         NOW
       )
     ).toBeNull();
+  });
+});
+
+describe("dominance early promotion", () => {
+  function row(overrides: Partial<BatchModelMetricsRow> = {}): BatchModelMetricsRow {
+    return {
+      shopify_product_id: "1",
+      destination: "EXPLORER_ALL",
+      impressions: 0,
+      clicks: 0,
+      cost_micros: 0,
+      ...overrides,
+    };
+  }
+
+  it("promotes a hogger that owns most batch spend", () => {
+    const decisions = planDominanceDecisions(
+      [
+        row({ shopify_product_id: "1", impressions: 400, clicks: 3, cost_micros: 900_000 }),
+        row({ shopify_product_id: "2", impressions: 50, clicks: 1, cost_micros: 100_000 }),
+      ],
+      DEFAULT_EXPLORER_RULES,
+      NOW
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      modelId: "1",
+      destination: "CORE_ALL",
+      reason: "dominant_winner",
+    });
+  });
+
+  it("does not promote without enough clicks", () => {
+    expect(
+      planDominanceDecisions(
+        [row({ impressions: 900, clicks: 1, cost_micros: 900_000 })],
+        DEFAULT_EXPLORER_RULES,
+        NOW
+      )
+    ).toHaveLength(0);
   });
 });
 

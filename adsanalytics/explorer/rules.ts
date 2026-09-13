@@ -17,6 +17,14 @@ export type ExplorerRuleConfig = {
   batchDays: number;
   /** Days before a Long Tail model is offered for a new Explorer test. */
   retestAfterDays: number;
+  /** Min clicks before a hogger can graduate early to core. */
+  dominantMinClicks: number;
+  /** Batch impression share (0–1) that triggers early core promotion. */
+  dominantImpressionShare: number;
+  /** Batch spend share (0–1) that triggers early core promotion. */
+  dominantSpendShare: number;
+  /** Absolute model spend in micros that triggers early core promotion. */
+  dominantSpendMicros: number;
 };
 
 export const DEFAULT_EXPLORER_RULES: ExplorerRuleConfig = {
@@ -26,6 +34,10 @@ export const DEFAULT_EXPLORER_RULES: ExplorerRuleConfig = {
   underexposedImpressions: 50,
   batchDays: 10,
   retestAfterDays: 60,
+  dominantMinClicks: 2,
+  dominantImpressionShare: 0.12,
+  dominantSpendShare: 0.2,
+  dominantSpendMicros: 500_000,
 };
 
 const ENV_KEYS: Record<keyof ExplorerRuleConfig, string> = {
@@ -35,6 +47,10 @@ const ENV_KEYS: Record<keyof ExplorerRuleConfig, string> = {
   underexposedImpressions: "ADS_EXPLORER_RULE_UNDEREXPOSED_IMPRESSIONS",
   batchDays: "ADS_EXPLORER_RULE_BATCH_DAYS",
   retestAfterDays: "ADS_EXPLORER_RULE_RETEST_AFTER_DAYS",
+  dominantMinClicks: "ADS_EXPLORER_RULE_DOMINANT_MIN_CLICKS",
+  dominantImpressionShare: "ADS_EXPLORER_RULE_DOMINANT_IMPRESSION_SHARE",
+  dominantSpendShare: "ADS_EXPLORER_RULE_DOMINANT_SPEND_SHARE",
+  dominantSpendMicros: "ADS_EXPLORER_RULE_DOMINANT_SPEND_MICROS",
 };
 
 export function loadExplorerRuleConfig(
@@ -75,6 +91,16 @@ export type ModelRuleInput = {
   ltConversions: number;
   /** Days elapsed since batch activation. */
   elapsedDays: number;
+  /** Ads cost attributed to this model since batch activation (micros). */
+  costMicros?: number;
+};
+
+export type BatchModelMetricsRow = {
+  shopify_product_id: string;
+  destination: string;
+  impressions: number;
+  clicks: number;
+  cost_micros: number;
 };
 
 export type RuleDecision = {
@@ -131,6 +157,42 @@ export function decideExplorerDestination(
     ruleId: "explorer_inconclusive",
     retestAt: addDaysUtc(now, config.retestAfterDays),
   };
+}
+
+/**
+ * Early core promotion when one model hogs Explorer exposure/spend so the rest of
+ * the batch can rotate. Runs before per-model rules during reconcile planning.
+ */
+export function planDominanceDecisions(
+  rows: BatchModelMetricsRow[],
+  config: ExplorerRuleConfig,
+  now: Date = new Date()
+): RuleDecision[] {
+  void now;
+  const explorers = rows.filter((r) => r.destination === "EXPLORER_ALL");
+  const totalImp = explorers.reduce((s, r) => s + r.impressions, 0);
+  const totalCost = explorers.reduce((s, r) => s + r.cost_micros, 0);
+  const decisions: RuleDecision[] = [];
+
+  for (const row of explorers) {
+    if (row.clicks < config.dominantMinClicks) continue;
+    const impShare = totalImp > 0 ? row.impressions / totalImp : 0;
+    const spendShare = totalCost > 0 ? row.cost_micros / totalCost : 0;
+    const hogger =
+      impShare >= config.dominantImpressionShare ||
+      spendShare >= config.dominantSpendShare ||
+      row.cost_micros >= config.dominantSpendMicros;
+    if (!hogger) continue;
+    decisions.push({
+      modelId: row.shopify_product_id,
+      destination: "CORE_ALL",
+      reason: "dominant_winner",
+      ruleId: "explorer_dominant_winner",
+      cooldownUntil: null,
+      retestAt: null,
+    });
+  }
+  return decisions;
 }
 
 /** Long Tail phase 1: any conversion promotes the model back to the core campaign. */

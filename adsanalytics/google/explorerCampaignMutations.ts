@@ -1,6 +1,6 @@
 import type { AdsConfig } from "@/adsanalytics/config";
 import { addDays, toIsoDate } from "@/adsanalytics/dates";
-import { googleAdsMutate } from "@/adsanalytics/google/adsClient";
+import { googleAdsMutate, searchAll } from "@/adsanalytics/google/adsClient";
 import { CUSTOM_LABEL_3_INDEX, EXPLORER_ACTIVE_LABEL } from "@/adsanalytics/explorer/labels";
 
 export type ExplorerCampaignSpec = {
@@ -444,6 +444,111 @@ export type PurchaseConversionCheck = {
   primaryPurchaseActions: string[];
   note: string;
 };
+
+export async function listExplorerShoppingCampaignIds(
+  config: AdsConfig
+): Promise<Array<{ campaignId: string; campaignName: string }>> {
+  const { rows } = await searchAll(
+    config,
+    [
+      "SELECT campaign.id, campaign.name",
+      "FROM campaign",
+      "WHERE campaign.advertising_channel_type = 'SHOPPING'",
+      "  AND campaign.name LIKE 'Explorer%'",
+      "  AND campaign.status != 'REMOVED'",
+    ].join("\n")
+  );
+  return rows
+    .map((row) => {
+      const campaign = row.campaign as Record<string, unknown> | undefined;
+      const campaignId = String(campaign?.id ?? "");
+      const campaignName = String(campaign?.name ?? "");
+      return campaignId ? { campaignId, campaignName } : null;
+    })
+    .filter((r): r is { campaignId: string; campaignName: string } => r != null);
+}
+
+export async function updateExplorerShoppingMaxCpc(
+  config: AdsConfig,
+  campaignId: string,
+  maxCpcMicros: number,
+  options: { validateOnly?: boolean } = {}
+): Promise<{ adGroupUpdates: number; criterionUpdates: number }> {
+  const id = campaignId.trim();
+  if (!id) throw new Error("Missing campaignId");
+  if (!Number.isFinite(maxCpcMicros) || maxCpcMicros <= 0) {
+    throw new Error(`Invalid maxCpcMicros=${maxCpcMicros}`);
+  }
+  const bid = String(Math.round(maxCpcMicros));
+
+  const { rows: adGroupRows } = await searchAll(
+    config,
+    [
+      "SELECT ad_group.resource_name, ad_group.id",
+      "FROM ad_group",
+      `WHERE campaign.id = ${id}`,
+      "  AND ad_group.status != 'REMOVED'",
+      "LIMIT 1",
+    ].join("\n")
+  );
+  const adGroup = adGroupRows[0]?.adGroup as Record<string, unknown> | undefined;
+  const adGroupResourceName = String(adGroup?.resourceName ?? "");
+  if (!adGroupResourceName) throw new Error(`No ad group found for campaign ${id}`);
+
+  const { rows: criterionRows } = await searchAll(
+    config,
+    [
+      "SELECT ad_group_criterion.resource_name, ad_group_criterion.negative, ad_group_criterion.listing_group.type",
+      "FROM ad_group_criterion",
+      `WHERE campaign.id = ${id}`,
+      "  AND ad_group_criterion.type = 'LISTING_GROUP'",
+      "  AND ad_group_criterion.status = 'ENABLED'",
+    ].join("\n")
+  );
+
+  const mutateOperations: unknown[] = [
+    {
+      adGroupOperation: {
+        update: {
+          resourceName: adGroupResourceName,
+          cpcBidMicros: bid,
+        },
+        updateMask: "cpc_bid_micros",
+      },
+    },
+  ];
+
+  let criterionUpdates = 0;
+  for (const row of criterionRows) {
+    const criterion = row.adGroupCriterion as Record<string, unknown> | undefined;
+    const resourceName = String(criterion?.resourceName ?? "");
+    if (!resourceName) continue;
+    if (criterion?.negative === true) continue;
+    const listingGroup = criterion?.listingGroup as Record<string, unknown> | undefined;
+    const type = String(listingGroup?.type ?? "");
+    if (type !== "UNIT") continue;
+    mutateOperations.push({
+      adGroupCriterionOperation: {
+        update: {
+          resourceName,
+          cpcBidMicros: bid,
+        },
+        updateMask: "cpc_bid_micros",
+      },
+    });
+    criterionUpdates += 1;
+  }
+
+  const response = await googleAdsMutate(config, mutateOperations, {
+    validateOnly: options.validateOnly === true,
+    partialFailure: false,
+  });
+  if (response.partialFailureError) {
+    throw new Error(`Explorer CPC update failed: ${JSON.stringify(response.partialFailureError)}`);
+  }
+
+  return { adGroupUpdates: 1, criterionUpdates };
+}
 
 export async function verifyPurchasePrimaryConversion(
   config: AdsConfig,
