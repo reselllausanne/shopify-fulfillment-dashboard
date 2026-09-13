@@ -34,11 +34,26 @@ function parseDateMs(value: unknown): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
-function computeTimeDiffHours(orderDate: unknown, purchaseDate: unknown): number | null {
+function signedHoursAfterSale(orderDate: unknown, purchaseDate: unknown): number | null {
   const orderMs = parseDateMs(orderDate);
   const purchaseMs = parseDateMs(purchaseDate);
   if (orderMs == null || purchaseMs == null) return null;
-  return Math.abs((purchaseMs - orderMs) / (1000 * 60 * 60));
+  return (purchaseMs - orderMs) / (1000 * 60 * 60);
+}
+
+function isValidGalaxusStockxCausalBuy(
+  orderDate: unknown,
+  purchaseDate: unknown,
+  skewMinutes = 5
+): boolean {
+  const signed = signedHoursAfterSale(orderDate, purchaseDate);
+  if (signed == null) return false;
+  return signed >= -(skewMinutes / 60);
+}
+
+function computeTimeDiffHours(orderDate: unknown, purchaseDate: unknown): number | null {
+  const signed = signedHoursAfterSale(orderDate, purchaseDate);
+  return signed == null ? null : Math.abs(signed);
 }
 
 export type AutoLinkGalaxusStockxBuysOptions = {
@@ -192,6 +207,9 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
       .filter(({ node }) => {
         const vid = extractStockxVariantId(node, null);
         if (!vid || vid !== variantId) return false;
+        if (!isValidGalaxusStockxCausalBuy(orderDateIso, node.purchaseDate ?? node.creationDate ?? null)) {
+          return false;
+        }
         return !findStockxOrderClaim(claimIndex, node.orderId, node.orderNumber);
       })
       .map(({ node, token }) => ({
