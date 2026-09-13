@@ -1,7 +1,11 @@
 import "server-only";
 
 import { prisma } from "@/app/lib/prisma";
-import { requestSwissPostLabel } from "@/lib/swissPost";
+import {
+  formatSwissPostItemErrors,
+  normalizeSwissPostRecipientPhone,
+  requestSwissPostLabel,
+} from "@/lib/swissPost";
 import { buildSwissPostRecipientFromGalaxusOrder } from "@/lib/swissPostRecipient";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
@@ -71,7 +75,7 @@ function buildRecipient(order: any) {
     zip: recipient.zip,
     city: recipient.city,
     country: recipient.country,
-    phone: recipient.phone,
+    phone: normalizeSwissPostRecipientPhone(recipient.phone, recipient.country),
     email: recipient.email,
   };
 }
@@ -256,6 +260,10 @@ export async function applySuccessfulSwissPostLabelToShipment(
     throw new Error("Shipment not found");
   }
 
+  const swissPostErrors = formatSwissPostItemErrors(swissData);
+  if (swissPostErrors) {
+    throw new Error(`Swiss Post label rejected: ${swissPostErrors}`);
+  }
   const swissPostLabelId = extractSwissPostTracking(swissData);
   if (!swissPostLabelId) {
     throw new Error("Swiss Post identCode missing from label response");

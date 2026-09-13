@@ -63,10 +63,28 @@ export function normalizeSwissPostRecipientPhone(
   const dialCode = COUNTRY_DIAL_CODES[country];
   if (!dialCode) return null;
 
-  const local = digits.startsWith("0") ? digits.slice(1) : digits;
+  let local = digits.startsWith("0") ? digits.slice(1) : digits;
+  // Galaxus/Mirakl often store CH mobiles as 41789108855 (country code without +).
+  if (local.startsWith(dialCode)) {
+    local = local.slice(dialCode.length);
+  }
   if (!local) return null;
   const normalized = `+${dialCode}${local}`;
   return E164_PHONE_REGEX.test(normalized) ? normalized : null;
+}
+
+/** Swiss Post returns HTTP 200 with item.errors when validation fails (no identCode). */
+export function formatSwissPostItemErrors(data: unknown): string | null {
+  const item = Array.isArray((data as any)?.item) ? (data as any).item[0] : (data as any)?.item;
+  const errors = item?.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  return errors
+    .map((entry: any) => {
+      const code = String(entry?.code ?? "ERR").trim();
+      const message = String(entry?.message ?? "validation failed").trim();
+      return code ? `${code}: ${message}` : message;
+    })
+    .join("; ");
 }
 
 function getTokenEndpoint() {
