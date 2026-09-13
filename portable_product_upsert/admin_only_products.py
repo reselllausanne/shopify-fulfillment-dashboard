@@ -7,7 +7,8 @@ Chemin qty for these. Keep in sync with:
   shopify/inventory/inStockFixedPrice.ts
 
 Essentials sacred prices (in-stock):
-  sell = 59 CHF, express = 89 CHF
+  tees/shorts: sell = 59 CHF, express = 89 CHF
+  hoodies (192HO246258F / 192HO246250F): sell = 129 CHF, express = 169 CHF
 
 Env override (comma-separated numeric or GID ids):
   SHOPIFY_ADMIN_ONLY_PRODUCT_IDS=15340410732930,...
@@ -22,6 +23,8 @@ from typing import Optional
 # Essentials storefront — never StockX
 ESSENTIALS_SELL_CHF = 59
 ESSENTIALS_EXPRESS_CHF = 89
+ESSENTIALS_HOODIE_SELL_CHF = 129
+ESSENTIALS_HOODIE_EXPRESS_CHF = 169
 
 # Audemars × Travis — never StockX; express only when physical stock > 0
 AUDEMARS_TRAVIS_SELL_CHF = 89

@@ -65,8 +65,12 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
     expressChf: ESSENTIALS_HOODIE_EXPRESS_CHF,
     label: "Essential Hoodie (in stock)",
     matchReason: "Essential Hoodie (fixed 129/169, cost 42)",
+    productIds: [
+      "15139794682242", // Fleece Hoodie Light Heather Gray
+      "15139794616706", // Fleece Hoodie (FW24) Black
+    ],
     skuBases: ["192HO246258F", "192HO246250F"],
-    // SKU-only — title patterns previously matched Kids / NBA hoodies by mistake.
+    // SKU + productId only — title patterns matched Kids / NBA hoodies by mistake.
   },
   {
     costChf: ESSENTIALS_TEE_COST_CHF,
