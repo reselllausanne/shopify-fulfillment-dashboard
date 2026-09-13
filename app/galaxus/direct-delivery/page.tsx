@@ -34,6 +34,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [loadingMoreOrders, setLoadingMoreOrders] = useState(false);
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [opsLog, setOpsLog] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +44,7 @@ export default function GalaxusDirectDeliveryPage() {
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
   const detailLoadSeq = useRef(0);
+  const ordersLoadSeq = useRef(0);
   const [polling, setPolling] = useState(false);
   const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [sendingOrdr, setSendingOrdr] = useState(false);
@@ -72,6 +74,7 @@ export default function GalaxusDirectDeliveryPage() {
   }, [orderSearch]);
 
   const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
+    const seq = ++ordersLoadSeq.current;
     const force = Boolean(opts?.force);
     const query = debouncedOrderSearch;
     const cacheKey = query.toLowerCase();
@@ -84,39 +87,61 @@ export default function GalaxusDirectDeliveryPage() {
         setSelectedOrderId(items[0].id);
       }
       setLoadingOrders(false);
+      setLoadingMoreOrders(false);
       return;
     }
     setLoadingOrders(true);
+    setLoadingMoreOrders(false);
     setError(null);
     try {
-      const buildUrl = (limit: number, offset: number, view: "active" | "all") => {
+      const buildUrl = (limit: number, offset: number) => {
         const params = new URLSearchParams({
           limit: String(limit),
           offset: String(offset),
-          view,
+          view: "active",
           sort: "orderDate",
           deliveryType: "direct_delivery",
           includeInvoice: "0",
+          includeWarehouse: "0",
         });
         if (query) params.set("q", query);
         return `/api/galaxus/orders?${params.toString()}`;
       };
-      const items: OrderListItem[] = [];
-      const pageLimit = 200;
-      const maxRows = 5000;
-      let offset = 0;
-      while (items.length < maxRows) {
-        const res = await fetch(buildUrl(pageLimit, offset, "active"), { cache: "no-store" });
+      const fetchPage = async (limit: number, offset: number) => {
+        const res = await fetch(buildUrl(limit, offset), { cache: "no-store" });
         const data = await res.json();
         if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-        const page: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
-        if (page.length === 0) break;
-        items.push(...page);
-        const nextOffset = Number(data.nextOffset ?? NaN);
-        if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-        offset = nextOffset;
-        if (page.length < pageLimit) break;
+        return {
+          items: (Array.isArray(data.items) ? data.items : []) as OrderListItem[],
+          nextOffset: Number.isFinite(Number(data.nextOffset)) ? Number(data.nextOffset) : null,
+        };
+      };
+
+      const firstPage = await fetchPage(120, 0);
+      if (seq !== ordersLoadSeq.current) return;
+
+      let items = firstPage.items;
+      setOrders(items);
+      setLoadingOrders(false);
+
+      const current = selectedOrderIdRef.current;
+      if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
+        setSelectedOrderId(items[0].id);
       }
+
+      let offset = firstPage.nextOffset;
+      if (offset != null) {
+        setLoadingMoreOrders(true);
+        while (offset != null) {
+          const page = await fetchPage(200, offset);
+          if (seq !== ordersLoadSeq.current) return;
+          items = [...items, ...page.items];
+          setOrders(items);
+          offset = page.nextOffset;
+        }
+        setLoadingMoreOrders(false);
+      }
+
       const fresh = new Set<string>();
       for (const item of items) {
         if (!knownOrderIds.current.has(item.id)) fresh.add(item.id);
@@ -124,16 +149,14 @@ export default function GalaxusDirectDeliveryPage() {
       setNewOrderIds(fresh.size > 0 ? fresh : new Set());
       knownOrderIds.current = new Set(items.map((item) => item.id));
       ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
-      setOrders(items);
-
-      const current = selectedOrderIdRef.current;
-      if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
-        setSelectedOrderId(items[0].id);
-      }
     } catch (err: any) {
+      if (seq !== ordersLoadSeq.current) return;
       setError(err.message);
     } finally {
-      setLoadingOrders(false);
+      if (seq === ordersLoadSeq.current) {
+        setLoadingOrders(false);
+        setLoadingMoreOrders(false);
+      }
     }
   }, [debouncedOrderSearch]);
 
@@ -848,8 +871,11 @@ export default function GalaxusDirectDeliveryPage() {
                 </button>
               );
             })}
-            {ordersByTab.length === 0 ? (
+            {ordersByTab.length === 0 && !loadingOrders ? (
               <div className="text-xs text-gray-500">No orders in this tab.</div>
+            ) : null}
+            {loadingMoreOrders ? (
+              <div className="text-xs text-gray-400 pt-1">Loading more orders…</div>
             ) : null}
           </div>
         </div>
