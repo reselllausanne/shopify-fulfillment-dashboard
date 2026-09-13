@@ -26,6 +26,27 @@ type OrderListItem = {
   _count?: { lines: number; shipments: number };
 };
 
+function deriveListCountsFromOrderDetail(order: any): { linkedCount: number; needsBuyCount: number } {
+  const lines = Array.isArray(order?.lines) ? order.lines : [];
+  const matches = new Map<string, any>();
+  for (const m of Array.isArray(order?.stockxMatches) ? order.stockxMatches : []) {
+    matches.set(String(m?.galaxusOrderLineId ?? ""), m);
+  }
+
+  let linkedCount = 0;
+  let needsBuyCount = 0;
+
+  for (const line of lines) {
+    const lineId = String(line?.id ?? "");
+    const match = matches.get(lineId);
+    const procOk = Boolean(line?.procurement?.ok || match || line?.physicalStock);
+    if (procOk) linkedCount += 1;
+    if (!procOk && !line?.physicalStock) needsBuyCount += 1;
+  }
+
+  return { linkedCount, needsBuyCount };
+}
+
 const ORDERS_LIST_CACHE_TTL_MS = 30_000;
 const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
 
@@ -186,6 +207,11 @@ export default function GalaxusDirectDeliveryPage() {
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
       orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: data.order });
       setSelectedOrder(data.order);
+      setOrders((prev) =>
+        prev.map((row) =>
+          row.id === orderId ? { ...row, ...deriveListCountsFromOrderDetail(data.order) } : row
+        )
+      );
       setLoadingOrder(false);
 
       // Warehouse in-stock auto-link only — no StockX crawl on open.
@@ -198,6 +224,13 @@ export default function GalaxusDirectDeliveryPage() {
           if (!enriched?.ok || !enriched?.order) return;
           orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: enriched.order });
           setSelectedOrder(enriched.order);
+          setOrders((prev) =>
+            prev.map((row) =>
+              row.id === orderId
+                ? { ...row, ...deriveListCountsFromOrderDetail(enriched.order) }
+                : row
+            )
+          );
         })
         .catch(() => {});
     } catch (err: any) {
