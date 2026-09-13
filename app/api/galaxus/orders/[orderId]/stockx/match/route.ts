@@ -10,10 +10,6 @@ import {
   fetchStockxBuyOrderDetailsFull,
 } from "@/galaxus/stx/stockxClient";
 import {
-  isValidGalaxusStockxCausalBuy,
-  signedHoursAfterSale,
-} from "@/galaxus/orders/autoLinkStockxBuys";
-import {
   galaxusLineWarehouseStockHint,
   isCrocsLightningMcQueenLine,
 } from "@/galaxus/warehouse/lineInventorySource";
@@ -89,6 +85,23 @@ function parseDateMs(value: string | null | undefined): number | null {
   if (!value) return null;
   const time = new Date(value).getTime();
   return Number.isNaN(time) ? null : time;
+}
+
+function signedHoursAfterSale(orderDate: string, purchaseDate: string): number | null {
+  const orderMs = parseDateMs(orderDate);
+  const purchaseMs = parseDateMs(purchaseDate);
+  if (orderMs == null || purchaseMs == null) return null;
+  return (purchaseMs - orderMs) / (1000 * 60 * 60);
+}
+
+function isValidGalaxusStockxCausalBuy(
+  orderDate: string,
+  purchaseDate: string,
+  skewMinutes = 5
+): boolean {
+  const signed = signedHoursAfterSale(orderDate, purchaseDate);
+  if (signed == null) return false;
+  return signed >= -(skewMinutes / 60);
 }
 
 function computeTimeDiffHours(orderDate: string, purchaseDate: string): number | null {

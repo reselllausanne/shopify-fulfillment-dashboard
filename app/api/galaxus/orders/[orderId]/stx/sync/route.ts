@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { prisma } from "@/app/lib/prisma";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
-import { isValidGalaxusStockxCausalBuy } from "@/galaxus/orders/autoLinkStockxBuys";
 import {
   expandGtinsForDbLookup,
   getStxLinkStatusForOrder,
@@ -43,6 +42,23 @@ const GALAXUS_STX_DETAIL_CONCURRENCY = Math.max(
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseDateMs(value: unknown): number | null {
+  if (!value) return null;
+  const ms = new Date(String(value)).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isValidGalaxusStockxCausalBuy(
+  orderDate: unknown,
+  purchaseDate: unknown,
+  skewMinutes = 5
+): boolean {
+  const orderMs = parseDateMs(orderDate);
+  const buyMs = parseDateMs(purchaseDate);
+  if (orderMs == null || buyMs == null) return false;
+  return buyMs >= orderMs - skewMinutes * 60_000;
 }
 
 function isUnknownCancelledAtArg(error: any): boolean {

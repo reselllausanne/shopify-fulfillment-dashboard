@@ -13,7 +13,6 @@ import {
   findStockxOrderClaim,
 } from "@/app/lib/stockxCrossChannelClaims";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
-import { isValidGalaxusStockxCausalBuy } from "@/galaxus/orders/autoLinkStockxBuys";
 import { isLocalOrManualStockxRef } from "@/galaxus/orders/localStockMatch";
 import {
   linkOldestPendingStxUnit,
@@ -39,6 +38,23 @@ function parseMaybeNumber(value: any): number | null {
 
 function trimStr(v: unknown): string {
   return String(v ?? "").trim();
+}
+
+function parseDateMs(value: unknown): number | null {
+  if (!value) return null;
+  const ms = new Date(String(value)).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isValidGalaxusStockxCausalBuy(
+  orderDate: unknown,
+  purchaseDate: unknown,
+  skewMinutes = 5
+): boolean {
+  const orderMs = parseDateMs(orderDate);
+  const buyMs = parseDateMs(purchaseDate);
+  if (orderMs == null || buyMs == null) return false;
+  return buyMs >= orderMs - skewMinutes * 60_000;
 }
 
 function normalizeBearer(raw: unknown): string | null {
