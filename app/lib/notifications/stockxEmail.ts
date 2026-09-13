@@ -23,6 +23,17 @@ type SendResult = {
   matchId: string;
 };
 
+const MILESTONE_MAX_AGE_DAYS = Math.min(
+  365,
+  Math.max(1, Number(process.env.STOCKX_MILESTONE_MAX_AGE_DAYS || 60))
+);
+
+function isOlderThanDays(value: Date | null | undefined, days: number): boolean {
+  if (!value) return true;
+  const ageMs = Date.now() - value.getTime();
+  return ageMs > days * 24 * 60 * 60 * 1000;
+}
+
 const toNumberMaybe = (v: any): number | null => {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -56,8 +67,10 @@ export async function sendMilestoneEmailForMatch({
     where: { id: matchId },
     select: {
       id: true,
+      createdAt: true,
       shopifyOrderId: true,
       shopifyOrderName: true,
+      shopifyCreatedAt: true,
       matchType: true,
       customerTrackingToken: true,
       shopifyProductTitle: true,
@@ -69,6 +82,7 @@ export async function sendMilestoneEmailForMatch({
       shopifyCustomerLastName: true,
       shopifyLineItemImageUrl: true,
       stockxOrderNumber: true,
+      stockxPurchaseDate: true,
       stockxTrackingUrl: true,
       stockxAwb: true,
       stockxStatus: true,
@@ -87,15 +101,19 @@ export async function sendMilestoneEmailForMatch({
     return { ok: false, error: "Match not found", matchId };
   }
 
-  // Safety: backfilled accounting links must not trigger customer lifecycle emails.
-  if (match.matchType === "auto_backfill") {
-    return { ok: true, skipped: true, reason: "auto_backfill_notifications_disabled", matchId };
-  }
-
   // Safety: never notify for cancelled/refunded supplier orders.
   const stockxStatusKey = String(match.stockxStatus ?? "").trim().toUpperCase();
   if (stockxStatusKey.includes("CANCEL") || stockxStatusKey.includes("REFUND")) {
     return { ok: true, skipped: true, reason: "stockx_cancelled_or_refunded", matchId };
+  }
+
+  // Safety: auto_backfill is reconciliation. Allow emails only for recent orders.
+  if (match.matchType === "auto_backfill") {
+    const recencyAnchor =
+      match.shopifyCreatedAt ?? match.stockxPurchaseDate ?? match.createdAt ?? null;
+    if (isOlderThanDays(recencyAnchor, MILESTONE_MAX_AGE_DAYS)) {
+      return { ok: true, skipped: true, reason: "historical_auto_backfill", matchId };
+    }
   }
 
   if (skipIfFulfilled && match.shopifyOrderId) {

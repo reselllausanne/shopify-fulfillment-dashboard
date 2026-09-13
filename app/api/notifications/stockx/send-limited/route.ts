@@ -7,6 +7,11 @@ import { sendMilestoneEmailForMatch } from "@/app/lib/notifications/stockxEmail"
 
 export const runtime = "nodejs";
 
+const DEFAULT_SCAN_DAYS = Math.min(
+  120,
+  Math.max(1, Number(process.env.STOCKX_EMAIL_SCAN_DEFAULT_DAYS || 45))
+);
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -22,12 +27,21 @@ export async function POST(req: NextRequest) {
       sinceDateParsed && !isNaN(sinceDateParsed.getTime()) ? sinceDateParsed : null;
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
+    const defaultSince = new Date(Date.now() - DEFAULT_SCAN_DAYS * 24 * 60 * 60 * 1000);
 
     const matches = await prisma.orderMatch.findMany({
       where: {
         stockxStates: { not: Prisma.DbNull },
         ...(onlyToday ? { stockxPurchaseDate: { gte: startOfToday } } : {}),
         ...(sinceDate ? { stockxPurchaseDate: { gte: sinceDate } } : {}),
+        ...(!onlyToday && !sinceDate
+          ? {
+              OR: [
+                { stockxPurchaseDate: { gte: defaultSince } },
+                { stockxStatesUpdatedAt: { gte: defaultSince } },
+              ],
+            }
+          : {}),
       },
       select: {
         id: true,
