@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { prisma } from "@/app/lib/prisma";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
+import { isValidGalaxusStockxCausalBuy } from "@/galaxus/orders/autoLinkStockxBuys";
 import {
   expandGtinsForDbLookup,
   getStxLinkStatusForOrder,
@@ -379,6 +380,9 @@ export async function POST(
 
     /** Link `StxPurchaseUnit` rows using chain/order (or order # lookup) already stored on `GalaxusStockxMatch` from manual save — the PENDING feed alone never sees shipped buys. */
     const galaxusOrderRow = await resolveGalaxusOrderByIdOrRef(orderId);
+    const galaxusOrderDateIso = galaxusOrderRow?.orderDate
+      ? new Date(galaxusOrderRow.orderDate).toISOString()
+      : null;
     if (galaxusOrderRow) {
       const savedMatches = await prismaAny.galaxusStockxMatch.findMany({
         where: { galaxusOrderId: galaxusOrderRow.id },
@@ -418,6 +422,24 @@ export async function POST(
         if (!details) {
           errors += 1;
           console.error("[GALAXUS][STX][SYNC][SAVED_MATCH_FETCH]", buyKey, "details_failed");
+          savedMatchSkipped += 1;
+          continue;
+        }
+        const savedPurchaseDate = match.stockxPurchaseDate
+          ? new Date(match.stockxPurchaseDate).toISOString()
+          : String(details?.order?.created ?? "").trim() || null;
+        if (
+          galaxusOrderDateIso &&
+          savedPurchaseDate &&
+          !isValidGalaxusStockxCausalBuy(galaxusOrderDateIso, savedPurchaseDate)
+        ) {
+          console.warn("[GALAXUS][STX][SYNC][SAVED_MATCH_SKIP_CAUSAL]", {
+            galaxusOrderId: reservation.galaxusOrderId,
+            stockxOrderNumber: orderNumRaw || null,
+            stockxOrderId: buyOrderId,
+            galaxusOrderDate: galaxusOrderDateIso,
+            stockxPurchaseDate: savedPurchaseDate,
+          });
           savedMatchSkipped += 1;
           continue;
         }
@@ -678,6 +700,27 @@ export async function POST(
               : null;
           const settledBackfillKey = `${stockxOrderId}::${resolvedSupplierVariantId}`;
           const needsSettledBackfill = settledBackfillKeys.has(settledBackfillKey);
+          const purchaseDateRaw =
+            String((listNode as any)?.purchaseDate ?? "").trim() ||
+            String((listNode as any)?.creationDate ?? "").trim() ||
+            String(details?.order?.created ?? "").trim() ||
+            null;
+          const violatesCausality =
+            isPendingResolved &&
+            Boolean(galaxusOrderDateIso) &&
+            Boolean(purchaseDateRaw) &&
+            !isValidGalaxusStockxCausalBuy(galaxusOrderDateIso as string, purchaseDateRaw);
+          if (violatesCausality) {
+            skippedNotPendingVariant += 1;
+            console.warn("[GALAXUS][STX][SYNC][SKIP_CAUSAL]", {
+              galaxusOrderId: reservation.galaxusOrderId,
+              stockxOrderId,
+              stockxOrderNumber: stockxOrderNumberFromList,
+              galaxusOrderDate: galaxusOrderDateIso,
+              stockxPurchaseDate: purchaseDateRaw,
+            });
+            return;
+          }
 
           let linkResult:
             | Awaited<ReturnType<typeof linkOldestPendingStxUnit>>
