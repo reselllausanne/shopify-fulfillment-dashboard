@@ -74,6 +74,7 @@ export default function LogisticsDirectDeliveryPage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<OrderDetail | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [loadingMoreOrders, setLoadingMoreOrders] = useState(false);
   const [loadingOrder, setLoadingOrder] = useState(false);
   const [labelBusy, setLabelBusy] = useState(false);
   const [opsLog, setOpsLog] = useState<string | null>(null);
@@ -82,6 +83,7 @@ export default function LogisticsDirectDeliveryPage() {
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: OrderDetail }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
   const detailLoadSeq = useRef(0);
+  const ordersLoadSeq = useRef(0);
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [orderSearch, setOrderSearch] = useState("");
   const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
@@ -95,9 +97,11 @@ export default function LogisticsDirectDeliveryPage() {
 
   const loadOrders = useCallback(
     async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
+      const seq = ++ordersLoadSeq.current;
       const force = Boolean(opts?.force);
       const query = debouncedOrderSearch;
-      const cacheKey = query.toLowerCase();
+      const fulfillmentState = leftTab === "fulfilled" ? "fulfilled" : "to_process";
+      const cacheKey = `${fulfillmentState}::${query.toLowerCase()}`;
       const cached = ordersListCacheRef.current;
       if (!force && cached && cached.key === cacheKey && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
         setOrders(cached.items);
@@ -106,9 +110,11 @@ export default function LogisticsDirectDeliveryPage() {
           setSelectedOrderId(cached.items[0].id);
         }
         setLoadingOrders(false);
+        setLoadingMoreOrders(false);
         return;
       }
       setLoadingOrders(true);
+      setLoadingMoreOrders(false);
       setError(null);
       try {
         const buildUrl = (limit: number, offset: number) => {
@@ -121,39 +127,58 @@ export default function LogisticsDirectDeliveryPage() {
             supplierScope: "stx",
             includeInvoice: "0",
             includeWarehouse: "0",
+            fulfillmentState,
           });
           if (query) params.set("q", query);
           return `/api/galaxus/orders?${params.toString()}`;
         };
-        const items: OrderListItem[] = [];
-        const pageLimit = 200;
-        const maxRows = 5000;
-        let offset = 0;
-        while (items.length < maxRows) {
-          const res = await fetch(buildUrl(pageLimit, offset), { cache: "no-store" });
+        const fetchPage = async (limit: number, offset: number) => {
+          const res = await fetch(buildUrl(limit, offset), { cache: "no-store" });
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-          const page: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
-          if (page.length === 0) break;
-          items.push(...page);
-          const nextOffset = Number(data.nextOffset ?? NaN);
-          if (!Number.isFinite(nextOffset) || nextOffset <= offset) break;
-          offset = nextOffset;
-          if (page.length < pageLimit) break;
-        }
-        ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
+          return {
+            items: (Array.isArray(data.items) ? data.items : []) as OrderListItem[],
+            nextOffset: Number.isFinite(Number(data.nextOffset)) ? Number(data.nextOffset) : null,
+          };
+        };
+
+        const firstPage = await fetchPage(120, 0);
+        if (seq !== ordersLoadSeq.current) return;
+
+        let items = firstPage.items;
         setOrders(items);
+        setLoadingOrders(false);
+
         const current = selectedOrderIdRef.current;
         if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
           setSelectedOrderId(items[0].id);
         }
+
+        let offset = firstPage.nextOffset;
+        if (offset != null) {
+          setLoadingMoreOrders(true);
+          while (offset != null) {
+            const page = await fetchPage(200, offset);
+            if (seq !== ordersLoadSeq.current) return;
+            items = [...items, ...page.items];
+            setOrders(items);
+            offset = page.nextOffset;
+          }
+          setLoadingMoreOrders(false);
+        }
+
+        ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
       } catch (err: any) {
+        if (seq !== ordersLoadSeq.current) return;
         setError(err.message);
       } finally {
-        setLoadingOrders(false);
+        if (seq === ordersLoadSeq.current) {
+          setLoadingOrders(false);
+          setLoadingMoreOrders(false);
+        }
       }
     },
-    [debouncedOrderSearch]
+    [debouncedOrderSearch, leftTab]
   );
 
   const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
@@ -224,13 +249,7 @@ export default function LogisticsDirectDeliveryPage() {
   const buildLineTitle = (line: OrderLine) =>
     line.productName || line.description || line.supplierPid || "—";
 
-  const ordersByTab = useMemo(() => {
-    return orders.filter((order) => {
-      const state = order.fulfillmentState ?? "to_process";
-      if (leftTab === "fulfilled") return state === "fulfilled";
-      return state === "to_process";
-    });
-  }, [orders, leftTab]);
+  const ordersByTab = orders;
 
   const needsLinking = (order: OrderListItem) => {
     const lines = order._count?.lines ?? 0;
@@ -290,7 +309,7 @@ export default function LogisticsDirectDeliveryPage() {
         }
       } else if (data?.url) {
         window.open(String(data.url), "_blank", "noopener,noreferrer");
-        if (reprint && packingSlipUrl) {
+        if (reprint && packingSlipUrl && selectedOrder?.physicalDeliveryNoteRequired) {
           window.open(packingSlipUrl, "_blank", "noopener,noreferrer");
         }
       }
@@ -404,8 +423,11 @@ export default function LogisticsDirectDeliveryPage() {
                 </button>
               );
             })}
-            {ordersByTab.length === 0 ? (
+            {ordersByTab.length === 0 && !loadingOrders ? (
               <div className="text-xs text-gray-500">No orders in this tab.</div>
+            ) : null}
+            {loadingMoreOrders ? (
+              <div className="text-xs text-gray-400 pt-1">Loading more orders…</div>
             ) : null}
           </div>
         </div>

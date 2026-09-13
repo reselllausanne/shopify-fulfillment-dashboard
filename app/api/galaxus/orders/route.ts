@@ -5,9 +5,47 @@ import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDis
 import { getInvoiceLineProgressByOrderIds } from "@/galaxus/edi/invoiceCoverage";
 import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
 import { getOpenWarehouseLineCountByOrderId } from "@/galaxus/warehouse/shipmentLineCoverage";
+import {
+  fetchDirectDeliveryOrderIdsForList,
+  type DirectDeliveryFulfillmentState,
+} from "@/galaxus/orders/directDeliveryFulfillmentList";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const galaxusOrderListSelect = {
+  id: true,
+  galaxusOrderId: true,
+  orderNumber: true,
+  orderDate: true,
+  deliveryType: true,
+  customerName: true,
+  recipientName: true,
+  createdAt: true,
+  ordrSentAt: true,
+  ordrStatus: true,
+  archivedAt: true,
+  cancelledAt: true,
+  cancelReason: true,
+  shipments: {
+    select: {
+      status: true,
+      shippedAt: true,
+      trackingNumber: true,
+      galaxusShippedAt: true,
+      delrSentAt: true,
+      delrStatus: true,
+    },
+  },
+  _count: {
+    select: {
+      lines: true,
+      shipments: true,
+    },
+  },
+} as const;
+
+type GalaxusOrderListRow = Prisma.GalaxusOrderGetPayload<{ select: typeof galaxusOrderListSelect }>;
 
 export async function GET(request: Request) {
   try {
@@ -29,6 +67,13 @@ export async function GET(request: Request) {
     const q = String(searchParams.get("q") ?? "").trim();
     const warehouseOpen = searchParams.get("warehouseOpen") === "1";
     const supplierScope = String(searchParams.get("supplierScope") ?? "").trim().toLowerCase();
+    const fulfillmentStateRaw = String(searchParams.get("fulfillmentState") ?? "")
+      .trim()
+      .toLowerCase();
+    const fulfillmentState: DirectDeliveryFulfillmentState | null =
+      fulfillmentStateRaw === "to_process" || fulfillmentStateRaw === "fulfilled"
+        ? fulfillmentStateRaw
+        : null;
 
     let baseWhere: Record<string, unknown> = {};
     if (view === "history") {
@@ -89,43 +134,45 @@ export async function GET(request: Request) {
           }
         : (baseWhere as Prisma.GalaxusOrderWhereInput);
 
-    const orders = await prisma.galaxusOrder.findMany({
-      where,
-      orderBy,
-      take: limit,
-      skip: offset,
-      select: {
-        id: true,
-        galaxusOrderId: true,
-        orderNumber: true,
-        orderDate: true,
-        deliveryType: true,
-        customerName: true,
-        recipientName: true,
-        createdAt: true,
-        ordrSentAt: true,
-        ordrStatus: true,
-        archivedAt: true,
-        cancelledAt: true,
-        cancelReason: true,
-        shipments: {
-          select: {
-            status: true,
-            shippedAt: true,
-            trackingNumber: true,
-            galaxusShippedAt: true,
-            delrSentAt: true,
-            delrStatus: true,
-          },
-        },
-        _count: {
-          select: {
-            lines: true,
-            shipments: true,
-          },
-        },
-      },
-    });
+    let nextOffset: number | null = null;
+    let orders: GalaxusOrderListRow[];
+
+    if (
+      fulfillmentState &&
+      deliveryType.toLowerCase() === "direct_delivery" &&
+      !excludeDeliveryType
+    ) {
+      const idPage = await fetchDirectDeliveryOrderIdsForList({
+        fulfillmentState,
+        view: view as "active" | "history" | "all",
+        q,
+        limit,
+        offset,
+        sort: sort === "orderdate" ? "orderdate" : "createdat",
+        supplierScope: supplierScope || undefined,
+      });
+      nextOffset = idPage.nextOffset;
+      if (idPage.ids.length === 0) {
+        return NextResponse.json({ ok: true, items: [], nextOffset: null });
+      }
+      const rows = await prisma.galaxusOrder.findMany({
+        where: { id: { in: idPage.ids } },
+        select: galaxusOrderListSelect,
+      });
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      orders = idPage.ids
+        .map((id) => byId.get(id))
+        .filter((row): row is GalaxusOrderListRow => Boolean(row));
+    } else {
+      orders = await prisma.galaxusOrder.findMany({
+        where,
+        orderBy,
+        take: limit,
+        skip: offset,
+        select: galaxusOrderListSelect,
+      });
+      nextOffset = orders.length === limit ? offset + limit : null;
+    }
 
     const orderIds = orders.map((order) => order.id);
     let invoiceProgressByOrderId: Awaited<ReturnType<typeof getInvoiceLineProgressByOrderIds>> | null = null;
@@ -311,7 +358,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       items,
-      nextOffset: orders.length === limit ? offset + limit : null,
+      nextOffset,
     });
   } catch (error: any) {
     console.error("[GALAXUS][ORDERS] List failed:", error);
