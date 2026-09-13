@@ -10,6 +10,10 @@ import {
   fetchStockxBuyOrderDetailsFull,
 } from "@/galaxus/stx/stockxClient";
 import {
+  isValidGalaxusStockxCausalBuy,
+  signedHoursAfterSale,
+} from "@/galaxus/orders/autoLinkStockxBuys";
+import {
   galaxusLineWarehouseStockHint,
   isCrocsLightningMcQueenLine,
 } from "@/galaxus/warehouse/lineInventorySource";
@@ -88,10 +92,8 @@ function parseDateMs(value: string | null | undefined): number | null {
 }
 
 function computeTimeDiffHours(orderDate: string, purchaseDate: string): number | null {
-  const orderMs = parseDateMs(orderDate);
-  const purchaseMs = parseDateMs(purchaseDate);
-  if (orderMs == null || purchaseMs == null) return null;
-  return Math.abs((purchaseMs - orderMs) / (1000 * 60 * 60));
+  const signed = signedHoursAfterSale(orderDate, purchaseDate);
+  return signed == null ? null : Math.abs(signed);
 }
 
 async function fetchTrackingDetails(token: string, chainId: string, orderId: string) {
@@ -221,8 +223,9 @@ export async function POST(
             .map((c) => ({
               order: c,
               timeDiff: computeTimeDiffHours(orderDate, c.purchaseDate),
+              isCausal: isValidGalaxusStockxCausalBuy(orderDate, c.purchaseDate),
             }))
-            .filter((c) => c.timeDiff != null)
+            .filter((c) => c.timeDiff != null && c.isCausal)
             .sort((a, b) => (a.timeDiff ?? 0) - (b.timeDiff ?? 0));
           if (scored.length > 0) {
             match = {
@@ -248,6 +251,27 @@ export async function POST(
 
         const matchedOrderNumber = String(match.supplierOrder.supplierOrderNumber ?? "").trim();
         const matchedOrderId = String(match.supplierOrder.orderId ?? "").trim();
+        const matchedPurchaseDate = String(match.supplierOrder.purchaseDate ?? "").trim();
+        const orderDateIso =
+          typeof order.orderDate === "string"
+            ? order.orderDate
+            : order.orderDate
+              ? new Date(order.orderDate).toISOString()
+              : "";
+        if (
+          orderDateIso &&
+          matchedPurchaseDate &&
+          !isValidGalaxusStockxCausalBuy(orderDateIso, matchedPurchaseDate)
+        ) {
+          results.push({
+            lineId: line.id,
+            unitIndex,
+            status: "skipped",
+            reason: "stockx_purchase_before_galaxus_sale",
+            stockxOrderNumber: matchedOrderNumber || null,
+          });
+          continue;
+        }
         if (
           (matchedOrderNumber && usedSupplierNumbers.has(matchedOrderNumber)) ||
           (matchedOrderId && usedSupplierOrderIds.has(matchedOrderId))

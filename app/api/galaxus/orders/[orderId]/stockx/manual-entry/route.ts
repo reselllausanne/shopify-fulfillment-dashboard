@@ -13,6 +13,7 @@ import {
   findStockxOrderClaim,
 } from "@/app/lib/stockxCrossChannelClaims";
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
+import { isValidGalaxusStockxCausalBuy } from "@/galaxus/orders/autoLinkStockxBuys";
 import { isLocalOrManualStockxRef } from "@/galaxus/orders/localStockMatch";
 import {
   linkOldestPendingStxUnit,
@@ -173,6 +174,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     const stockxOrderIdFinal =
       trimStr(data.stockxOrderId) || trimStr(a.stockxOrderId) || trimStr(existing?.stockxOrderId) || null;
 
+    const resolvedPurchaseDate =
+      parseMaybeDate(data.stockxPurchaseDate) ?? a.stockxPurchaseDate ?? existing?.stockxPurchaseDate ?? null;
+    if (
+      looksLikeStockxOrderNumber(stockxOrderNumberFinal) &&
+      resolvedPurchaseDate &&
+      !isValidGalaxusStockxCausalBuy(order.orderDate, resolvedPurchaseDate)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "StockX purchase date is older than Galaxus order date. Rejecting non-causal link.",
+          reason: "stockx_purchase_before_galaxus_sale",
+          galaxusOrderDate: order.orderDate,
+          stockxPurchaseDate: resolvedPurchaseDate,
+        },
+        { status: 422 }
+      );
+    }
+
     // LOCAL-/MANUAL- refs are not real StockX buys — skip cross-channel claim gate.
     const claimableRef =
       !isLocalOrManualStockxRef(stockxOrderNumberFinal) &&
@@ -266,8 +287,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
         trimStr(data.stockxProductName) || trimStr(a.stockxProductName) || trimStr(existing?.stockxProductName) || null,
       stockxSkuKey: trimStr(data.stockxSkuKey) || trimStr(a.stockxSkuKey) || trimStr(existing?.stockxSkuKey) || null,
       stockxSizeEU: trimStr(data.stockxSizeEU) || trimStr(a.stockxSizeEU) || trimStr(existing?.stockxSizeEU) || null,
-      stockxPurchaseDate:
-        parseMaybeDate(data.stockxPurchaseDate) ?? a.stockxPurchaseDate ?? existing?.stockxPurchaseDate ?? null,
+      stockxPurchaseDate: resolvedPurchaseDate,
       stockxAmount: resolvedCost,
       stockxCurrencyCode:
         trimStr(data.shopifyCurrencyCode ?? data.stockxCurrencyCode) ||
