@@ -2,8 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import {
-  applyStxExpressFloor,
   calcShopifySellPrice,
+  calcStxExpressSellFromStandard,
 } from "@/shopify/pricing/calcShopifySellPrice";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
@@ -222,23 +222,10 @@ function computeSellPrices(input: {
           false
         )
       : null);
-  const expressCalc =
-    expressBuy != null
-      ? calcSellFromBuy(
-          expressBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          true
-        )
-      : null;
-
-  // Floor: express must beat standard by STX_EXPRESS_SURCHARGE_CHF (default 20).
-  // When there is no express buy price we return null so the caller deletes the
-  // stale custom.express_price metafield rather than pushing a derived number.
+  // Express buy price → lane availability only. Customer price = standard + 20 CHF.
   const expressSell =
-    expressCalc != null && normalSell != null
-      ? applyStxExpressFloor(normalSell, expressCalc)
+    expressBuy != null && normalSell != null
+      ? calcStxExpressSellFromStandard(normalSell)
       : null;
 
   return { normalSell, expressSell };

@@ -131,19 +131,21 @@ export function readStxExpressSurchargeChf(): number {
 }
 
 /**
- * Express sell floor: never < standard + surcharge.
- * `expressCalc` may be null when there is no StockX express lane; the caller
- * should decide whether to write the floor or delete the metafield entirely.
+ * STX dropship express checkout price = standard sell + flat surcharge (default 20 CHF).
+ * StockX express-lane raw is used only for availability (asks > 2), never for pricing —
+ * same variant, same standard price, +20 for express delivery.
  */
+export function calcStxExpressSellFromStandard(standardSell: number): number | null {
+  if (!Number.isFinite(standardSell) || standardSell <= 0) return null;
+  return psychRoundUp(standardSell + readStxExpressSurchargeChf());
+}
+
+/** @deprecated Use calcStxExpressSellFromStandard — expressCalc is ignored. */
 export function applyStxExpressFloor(
   standardSell: number,
-  expressCalc: number | null
+  _expressCalc: number | null
 ): number | null {
-  if (!Number.isFinite(standardSell) || standardSell <= 0) return expressCalc;
-  const surcharge = readStxExpressSurchargeChf();
-  const floor = psychRoundUp(standardSell + surcharge);
-  if (expressCalc == null) return floor;
-  return Math.max(expressCalc, floor);
+  return calcStxExpressSellFromStandard(standardSell);
 }
 
 /** StockX acquisition cost — port of Python `calc_touch_price`. */

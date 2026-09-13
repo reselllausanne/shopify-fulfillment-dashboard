@@ -22,7 +22,7 @@
  */
 import { shopifyGraphQL } from "../lib/shopifyAdmin";
 import {
-  applyStxExpressFloor,
+  calcStxExpressSellFromStandard,
   readStxExpressSurchargeChf,
 } from "../shopify/pricing/calcShopifySellPrice";
 import { parseExpressPriceMetafieldAmount } from "../shopify/restock/liquidationExpressPrice";
@@ -176,10 +176,10 @@ async function main() {
         continue;
       }
 
-      // Case B: express is available AND metafield present → enforce floor.
+      // Case B: express available → set metafield to standard + surcharge (flat +20).
       if (expressAvail && currentExpress != null) {
-        const floor = applyStxExpressFloor(priceNum, currentExpress) ?? currentExpress;
-        if (floor > currentExpress + 0.5) {
+        const target = calcStxExpressSellFromStandard(priceNum);
+        if (target != null && Math.abs(target - currentExpress) > 0.5) {
           if (isLocked) {
             buckets.skip_locked += 1;
             continue;
@@ -190,11 +190,11 @@ async function main() {
               handle: v.product.handle,
               variant: v.id,
               from: currentExpress,
-              to: floor,
+              to: target,
               price: priceNum,
             });
           if (WRITE) {
-            const err = await setExpressPrice(v.id, floor);
+            const err = await setExpressPrice(v.id, target);
             if (err) errorsList.push({ variantId: v.id, kind: "set", error: err });
             else changed += 1;
           }
