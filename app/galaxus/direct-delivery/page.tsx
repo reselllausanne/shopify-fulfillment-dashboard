@@ -171,10 +171,14 @@ export default function GalaxusDirectDeliveryPage() {
     const seq = ++detailLoadSeq.current;
     setLoadingOrder(true);
     setError(null);
+    const detailUrl = (params: Record<string, string>) => {
+      const q = new URLSearchParams({ view: "minimal", ...params });
+      return `/api/galaxus/orders/${orderId}?${q.toString()}`;
+    };
     try {
-      // ensureLocal + autoLinkStx: reserve STX slots and link unclaimed StockX buys on open.
+      // Fast read first (~2–3s). autoLinkStx=1 crawls StockX and blocked the whole page ~30s+.
       const res = await fetch(
-        `/api/galaxus/orders/${orderId}?view=minimal&ensureLocal=1&reserveStx=1&autoLinkStx=1`,
+        detailUrl({ ensureLocal: "0", reserveStx: "0", autoLinkStx: "0" }),
         { cache: "no-store" }
       );
       const data = await res.json();
@@ -182,11 +186,24 @@ export default function GalaxusDirectDeliveryPage() {
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
       orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: data.order });
       setSelectedOrder(data.order);
+      setLoadingOrder(false);
+
+      // Warehouse in-stock auto-link only — no StockX crawl on open.
+      void fetch(detailUrl({ ensureLocal: "1", reserveStx: "0", autoLinkStx: "0" }), {
+        cache: "no-store",
+      })
+        .then((r) => r.json())
+        .then((enriched) => {
+          if (seq !== detailLoadSeq.current) return;
+          if (!enriched?.ok || !enriched?.order) return;
+          orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: enriched.order });
+          setSelectedOrder(enriched.order);
+        })
+        .catch(() => {});
     } catch (err: any) {
       if (seq !== detailLoadSeq.current) return;
       setError(err.message);
-    } finally {
-      if (seq === detailLoadSeq.current) setLoadingOrder(false);
+      setLoadingOrder(false);
     }
   }, []);
 
