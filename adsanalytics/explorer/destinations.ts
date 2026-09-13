@@ -40,7 +40,22 @@ export function destinationForLabel(label: string | null | undefined): Destinati
   return "CORE_ALL";
 }
 
-export function labelForDestination(destination: Destination): string | null {
+/**
+ * Resolve the Merchant custom_label_3 for a destination.
+ * Brand Explorer batches keep a brand-specific explorer_active_* label while still
+ * using the EXPLORER_ALL destination enum — pass explorerActiveLabel from batch stats.
+ */
+export function labelForDestination(
+  destination: Destination,
+  explorerActiveLabel?: string | null
+): string | null {
+  if (destination === "EXPLORER_ALL") {
+    const override = explorerActiveLabel?.trim();
+    if (override && (EXPLORER_LABELS as readonly string[]).includes(override)) {
+      return override;
+    }
+    return EXPLORER_ACTIVE_LABEL;
+  }
   return DESTINATION_LABEL[destination];
 }
 
@@ -56,6 +71,8 @@ export type DestinationContext = {
   dataSource: string;
   concurrency?: number;
   dryRun?: boolean;
+  /** Brand batch override for EXPLORER_ALL → explorer_active_{brand}. */
+  explorerActiveLabel?: string | null;
 };
 
 export type OfferReadback = {
@@ -224,7 +241,7 @@ export async function readbackOffers(
   offers: ModelOffer[],
   destination: Destination
 ): Promise<OfferReadback[]> {
-  const targetLabel = labelForDestination(destination);
+  const targetLabel = labelForDestination(destination, ctx.explorerActiveLabel);
   const limit = createLimiter(ctx.concurrency ?? DEFAULT_CONCURRENCY);
   return Promise.all(
     offers.map((offer) =>
@@ -269,7 +286,7 @@ async function mutateOffers(
   offers: ModelOffer[],
   destination: Destination
 ): Promise<{ mutated: number; errors: string[] }> {
-  const targetLabel = labelForDestination(destination);
+  const targetLabel = labelForDestination(destination, ctx.explorerActiveLabel);
   const limit = createLimiter(ctx.concurrency ?? DEFAULT_CONCURRENCY);
   const errors: string[] = [];
   let mutated = 0;
@@ -367,7 +384,7 @@ export async function setModelDestination(
   } = {}
 ): Promise<SetModelDestinationResult> {
   const offers = options.offers ?? (await loadOffersForModel(ctx.batchId, shopifyProductId));
-  const targetLabel = labelForDestination(destination);
+  const targetLabel = labelForDestination(destination, ctx.explorerActiveLabel);
   const dryRun = ctx.dryRun === true;
   const base: SetModelDestinationResult = {
     modelId: shopifyProductId,
