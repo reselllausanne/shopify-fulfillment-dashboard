@@ -58,6 +58,7 @@ export async function sendMilestoneEmailForMatch({
       id: true,
       shopifyOrderId: true,
       shopifyOrderName: true,
+      matchType: true,
       customerTrackingToken: true,
       shopifyProductTitle: true,
       shopifySku: true,
@@ -70,6 +71,7 @@ export async function sendMilestoneEmailForMatch({
       stockxOrderNumber: true,
       stockxTrackingUrl: true,
       stockxAwb: true,
+      stockxStatus: true,
       stockxEstimatedDelivery: true,
       stockxLatestEstimatedDelivery: true,
       stockxCheckoutType: true,
@@ -83,6 +85,17 @@ export async function sendMilestoneEmailForMatch({
 
   if (!match) {
     return { ok: false, error: "Match not found", matchId };
+  }
+
+  // Safety: backfilled accounting links must not trigger customer lifecycle emails.
+  if (match.matchType === "auto_backfill") {
+    return { ok: true, skipped: true, reason: "auto_backfill_notifications_disabled", matchId };
+  }
+
+  // Safety: never notify for cancelled/refunded supplier orders.
+  const stockxStatusKey = String(match.stockxStatus ?? "").trim().toUpperCase();
+  if (stockxStatusKey.includes("CANCEL") || stockxStatusKey.includes("REFUND")) {
+    return { ok: true, skipped: true, reason: "stockx_cancelled_or_refunded", matchId };
   }
 
   if (skipIfFulfilled && match.shopifyOrderId) {

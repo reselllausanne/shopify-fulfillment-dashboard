@@ -294,6 +294,14 @@ function normalizeStockxNode(n: StockxBuyingNode): NormalizedSupplierOrder | nul
   } as NormalizedSupplierOrder;
 }
 
+function isStockxOrderMatchable(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey ?? "").trim().toUpperCase();
+  if (!key) return true;
+  if (key.includes("CANCEL")) return false;
+  if (key.includes("REFUND")) return false;
+  return true;
+}
+
 async function fetchStockxSupply(token: string): Promise<{
   raw: StockxBuyingNode[];
   normalized: NormalizedSupplierOrder[];
@@ -317,7 +325,9 @@ async function fetchStockxSupply(token: string): Promise<{
   const normalized: NormalizedSupplierOrder[] = [];
   for (const n of raw) {
     const norm = normalizeStockxNode(n);
-    if (norm) normalized.push(norm);
+    if (!norm) continue;
+    if (!isStockxOrderMatchable(norm.statusKey)) continue;
+    normalized.push(norm);
   }
   return { raw, normalized };
 }
