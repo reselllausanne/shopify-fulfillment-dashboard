@@ -31,6 +31,7 @@ import {
 } from "@/galaxus/exports/stockMoq";
 import {
   isGalaxusCatalogReady,
+  isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
 } from "@/galaxus/exports/feedEligibility";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
@@ -298,6 +299,30 @@ export async function GET(request: Request) {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;
+    // XNT Pollin / Berrybase: actively delist by pushing stock=0. Bypass the
+    // catalog-ready gate and MOQ gate so previously published ProviderKeys
+    // still receive the zero-quantity row and Galaxus removes the listing.
+    if (isXntFeedBlockedBrand(variant)) {
+      rows.push({
+        ProviderKey: providerKey,
+        QuantityOnStock: "0",
+        RestockTime: "",
+        RestockDate: "",
+        ...formatGalaxusStockMoqFields(
+          resolveGalaxusStockMoq({
+            supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+            supplierVariantId: String(variant?.supplierVariantId ?? ""),
+            providerKey,
+            manualNote: variant?.manualNote ?? null,
+          })
+        ),
+        TradeUnit: "",
+        LogisticUnit: "",
+        WarehouseCountry: "Poland",
+        DirectDeliverySupported: "0",
+      });
+      return;
+    }
     const sellPrice = Number(candidate.sellPriceExVat);
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);

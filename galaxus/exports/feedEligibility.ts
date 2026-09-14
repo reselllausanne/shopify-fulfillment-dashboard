@@ -58,10 +58,14 @@ export function isXntFeedBlockedBrand(variant: CatalogVariant): boolean {
  * Stock/offer must not publish ProviderKeys that cannot appear in master —
  * Galaxus treats stock-only keys as "Add" and fails with "GTIN is missing"
  * when catalog rows never arrived (common for incomplete NER).
+ *
+ * Note: XNT-brand block (Pollin / Berrybase) is NOT applied here anymore.
+ * The stock feed must still be able to emit stock=0 for those rows so Galaxus
+ * delists what was previously pushed. Master + offer routes call
+ * `isXntFeedBlockedBrand` explicitly to skip catalog/offer updates.
  */
 export function isGalaxusCatalogReady(variant: CatalogVariant): boolean {
   if (!variant) return false;
-  if (isXntFeedBlockedBrand(variant)) return false;
   if (pickGalaxusProductImageList(variant).length === 0) return false;
   const name = String(variant.supplierProductName ?? "").trim();
   const brand = String(variant.supplierBrand ?? "").trim();

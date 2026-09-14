@@ -38,35 +38,9 @@ describe("isGalaxusCatalogReady", () => {
     ).toBe(true);
   });
 
-  it("rejects XNT variants for Pollin / Berrybase brands", () => {
-    expect(
-      isGalaxusCatalogReady({
-        supplierProductName: "Some Board",
-        supplierBrand: "Pollin",
-        supplierVariantId: "xnt_abc123",
-        hostedImageUrl: "https://cdn.example.com/x.jpg",
-      })
-    ).toBe(false);
-    expect(
-      isGalaxusCatalogReady({
-        supplierProductName: "Raspberry Pi Case",
-        supplierBrand: "BerryBase",
-        supplierKey: "xnt",
-        hostedImageUrl: "https://cdn.example.com/x.jpg",
-      })
-    ).toBe(false);
-  });
-
-  it("keeps non-XNT variants with same brand unaffected", () => {
-    expect(
-      isGalaxusCatalogReady({
-        supplierProductName: "Berrybase Cable",
-        supplierBrand: "Berrybase",
-        supplierVariantId: "rei_abc",
-        hostedImageUrl: "https://cdn.example.com/x.jpg",
-      })
-    ).toBe(true);
-  });
+  // XNT Pollin/Berrybase block is now enforced at the master + offer route
+  // level (not inside isGalaxusCatalogReady) so the stock route can still push
+  // stock=0 rows to delist. See isXntFeedBlockedBrand tests below.
 });
 
 describe("isXntFeedBlockedBrand", () => {

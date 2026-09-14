@@ -27,6 +27,7 @@ import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPr
 import {
   isGalaxusCatalogReady,
   isGalaxusSellableStock,
+  isXntFeedBlockedBrand,
 } from "@/galaxus/exports/feedEligibility";
 import {
   isPhysicalMergeEnabled,
@@ -227,6 +228,9 @@ export async function GET(request: Request) {
     const variant = candidate.variant as any;
     const product = candidate.product as any;
     const providerKey = candidate.providerKey ?? "";
+    // XNT Pollin / Berrybase: no offer/price updates (block cascades from
+    // master feed skip). Stock feed emits 0 to actively delist prior pushes.
+    if (isXntFeedBlockedBrand(variant)) continue;
     const sellPrice = Number(candidate.sellPriceExVat);
     const vatRate = vatRateDefault;
     const manualLock = Boolean(variant?.manualLock);

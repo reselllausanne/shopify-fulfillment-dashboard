@@ -19,7 +19,7 @@ import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
-import { isGalaxusSellableStock } from "@/galaxus/exports/feedEligibility";
+import { isGalaxusSellableStock, isXntFeedBlockedBrand } from "@/galaxus/exports/feedEligibility";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -379,6 +379,12 @@ export async function GET(request: Request) {
     const supplierVariant = candidate.variant as any;
     const product = candidate.product as any;
     const providerKey = candidate.providerKey ?? "";
+    // XNT Pollin / Berrybase: fully removed from master feed (no product refresh,
+    // no new imports). Stock feed still emits stock=0 to delist prior pushes.
+    if (isXntFeedBlockedBrand(supplierVariant)) {
+      if (providerKey) skippedProviderKeys.push(providerKey);
+      continue;
+    }
     const sellPrice = Number(candidate.sellPriceExVat);
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) {
       if (providerKey) skippedProviderKeys.push(providerKey);
