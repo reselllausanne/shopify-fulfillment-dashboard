@@ -133,7 +133,9 @@ export default function WarehouseBulkPage() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load orders");
-      const items = dedupeById(Array.isArray(data.items) ? data.items : []);
+      const items = dedupeById<OrderListItem>(
+        Array.isArray(data.items) ? (data.items as OrderListItem[]) : []
+      );
       ordersListCacheRef.current = { at: Date.now(), items };
       setOrders(items);
       if (items[0]?.id) {

@@ -302,13 +302,13 @@ export default function GalaxusWarehouseShipmentsPage() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load orders");
-      const items = Array.isArray(data.items) ? data.items : [];
-      const filtered = items.filter((item: any) => {
+      const items: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+      const filtered = items.filter((item) => {
         if (isDirectDelivery(item)) return false;
         if (isHiddenOrder(item)) return false;
         const totalLines = Number(item?._count?.lines ?? 0);
         if (!Number.isFinite(totalLines) || totalLines <= 0) return false;
-        const openLines = item?.warehouseOpenLineCount;
+        const openLines = (item as any)?.warehouseOpenLineCount;
         if (openLines != null && Number.isFinite(Number(openLines))) {
           return Number(openLines) > 0;
         }
@@ -317,10 +317,10 @@ export default function GalaxusWarehouseShipmentsPage() {
       const unique = dedupeById(filtered);
       setOrders(unique);
       ordersListCacheRef.current = { at: Date.now(), query, items: unique };
-      if (!selectedOrderId && filtered[0]?.id) {
-        setSelectedOrderId(filtered[0].id);
-      } else if (selectedOrderId && !filtered.some((item: any) => item.id === selectedOrderId)) {
-        setSelectedOrderId(filtered[0]?.id ?? "");
+      if (!selectedOrderId && unique[0]?.id) {
+        setSelectedOrderId(unique[0].id);
+      } else if (selectedOrderId && !unique.some((item) => item.id === selectedOrderId)) {
+        setSelectedOrderId(unique[0]?.id ?? "");
       }
     } catch (err: any) {
       setError(err?.message ?? "Failed to load orders");
@@ -353,7 +353,9 @@ export default function GalaxusWarehouseShipmentsPage() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load eligible orders");
-      const nextOrders = dedupeById(Array.isArray(data.orders) ? data.orders : []);
+      const nextOrders = dedupeById<EligibleOrder>(
+        Array.isArray(data.orders) ? (data.orders as EligibleOrder[]) : []
+      );
       const nextInvoiceCoverage = data.invoiceCoverage ?? {};
       const nextShipmentCoverage = data.shipmentCoverage ?? {};
       setEligibleOrders(nextOrders);
