@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
@@ -49,6 +50,28 @@ function deriveListCountsFromOrderDetail(order: any): { linkedCount: number; nee
 
 const ORDERS_LIST_CACHE_TTL_MS = 30_000;
 const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
+const KNOWN_ORDERS_STORAGE_KEY = "galaxus-direct-delivery-known-order-ids";
+
+function readKnownOrderIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = sessionStorage.getItem(KNOWN_ORDERS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeKnownOrderIds(ids: Set<string>) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(KNOWN_ORDERS_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // ignore quota / private mode
+  }
+}
 
 export default function GalaxusDirectDeliveryPage() {
   const [orders, setOrders] = useState<OrderListItem[]>([]);
@@ -60,7 +83,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [opsLog, setOpsLog] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
-  const knownOrderIds = useRef<Set<string>>(new Set());
+  const knownOrderIds = useRef<Set<string>>(readKnownOrderIds());
   const ordersListCacheRef = useRef<{ at: number; key: string; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
@@ -101,7 +124,7 @@ export default function GalaxusDirectDeliveryPage() {
     const cacheKey = query.toLowerCase();
     const cached = ordersListCacheRef.current;
     if (!force && cached && cached.key === cacheKey && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
-      const items = cached.items;
+      const items = dedupeById(cached.items);
       setOrders(items);
       const current = selectedOrderIdRef.current;
       if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
@@ -141,7 +164,7 @@ export default function GalaxusDirectDeliveryPage() {
       const firstPage = await fetchPage(120, 0);
       if (seq !== ordersLoadSeq.current) return;
 
-      let items = firstPage.items;
+      let items = dedupeById(firstPage.items);
       setOrders(items);
       setLoadingOrders(false);
 
@@ -153,22 +176,30 @@ export default function GalaxusDirectDeliveryPage() {
       let offset = firstPage.nextOffset;
       if (offset != null) {
         setLoadingMoreOrders(true);
-        while (offset != null) {
-          const page = await fetchPage(200, offset);
-          if (seq !== ordersLoadSeq.current) return;
-          items = [...items, ...page.items];
-          setOrders(items);
-          offset = page.nextOffset;
+        try {
+          while (offset != null) {
+            const page = await fetchPage(200, offset);
+            if (seq !== ordersLoadSeq.current) return;
+            items = dedupeById([...items, ...page.items]);
+            offset = page.nextOffset;
+          }
+        } finally {
+          if (seq === ordersLoadSeq.current) {
+            setOrders(items);
+            setLoadingMoreOrders(false);
+          }
         }
-        setLoadingMoreOrders(false);
       }
 
+      const prevKnown = knownOrderIds.current;
       const fresh = new Set<string>();
       for (const item of items) {
-        if (!knownOrderIds.current.has(item.id)) fresh.add(item.id);
+        if (!prevKnown.has(item.id)) fresh.add(item.id);
       }
-      setNewOrderIds(fresh.size > 0 ? fresh : new Set());
-      knownOrderIds.current = new Set(items.map((item) => item.id));
+      setNewOrderIds(fresh);
+      const nextKnown = new Set([...prevKnown, ...items.map((item) => item.id)]);
+      knownOrderIds.current = nextKnown;
+      writeKnownOrderIds(nextKnown);
       ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
     } catch (err: any) {
       if (seq !== ordersLoadSeq.current) return;

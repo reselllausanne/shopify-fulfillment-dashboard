@@ -540,6 +540,12 @@ export function buildLineItemsByFulfillmentOrder(
   }
 
   const foLineItemsByKey = new Map<string, FulfillmentOrderLineItemNode>();
+  // Track live remaining per fulfillment-order line item across BOTH matching
+  // passes. Section 1 (title+size) iterated request.items but always read the
+  // unmutated `foLineItem.remainingQuantity`, so 2 DB pairs for the same line
+  // could each get `quantity: remaining` scheduled, then merge to 2× → Shopify:
+  // "Invalid fulfillment order line item quantity requested."
+  const foLineItemRemaining = new Map<string, number>();
   for (const fo of fulfillableFOs) {
     for (const lineItem of fo.lineItems?.nodes || []) {
       console.log("DEBUG: foLineItem", { fulfillmentOrderId: fo.id, lineItemId: lineItem.id, sku: lineItem.variant?.sku, variantId: lineItem.variant?.id, remaining: lineItem.remainingQuantity });
@@ -547,6 +553,10 @@ export function buildLineItemsByFulfillmentOrder(
       const sku = lineItem.variant?.sku || null;
       if (variantId) foLineItemsByKey.set(`variant:${variantId}`, lineItem);
       if (sku) foLineItemsByKey.set(`sku:${sku}`, lineItem);
+      foLineItemRemaining.set(
+        lineItem.id,
+        Math.max(0, Number(lineItem.remainingQuantity ?? 0))
+      );
     }
   }
 
@@ -599,21 +609,21 @@ export function buildLineItemsByFulfillmentOrder(
       );
       if (!fo) continue;
 
-      const remainingQty = Number(foLineItem.remainingQuantity ?? 0);
+      const remainingQty = foLineItemRemaining.get(foLineItem.id) ?? 0;
       if (remainingQty <= 0) continue;
 
       const qty = Math.min(remainingQty, request.remaining);
+      if (qty <= 0) continue;
       request.remaining -= qty;
+      foLineItemRemaining.set(foLineItem.id, remainingQty - qty);
       const mirroredKeyRequest = requestedByKey.get(key);
       if (mirroredKeyRequest) {
         mirroredKeyRequest.remaining = Math.max(0, mirroredKeyRequest.remaining - qty);
       }
 
-      if (qty > 0) {
-        const list = grouped.get(fo.id) || [];
-        list.push({ id: foLineItem.id, quantity: qty });
-        grouped.set(fo.id, list);
-      }
+      const list = grouped.get(fo.id) || [];
+      list.push({ id: foLineItem.id, quantity: qty });
+      grouped.set(fo.id, list);
     }
   }
 
@@ -632,17 +642,17 @@ export function buildLineItemsByFulfillmentOrder(
         (skuKey ? requestedByKey.get(skuKey) : undefined);
       if (!request || request.remaining <= 0) continue;
 
-      const remainingQty = Number(lineItem.remainingQuantity ?? 0);
+      const remainingQty = foLineItemRemaining.get(lineItem.id) ?? 0;
       if (remainingQty <= 0) continue;
 
       const quantity = Math.min(remainingQty, request.remaining);
+      if (quantity <= 0) continue;
       request.remaining -= quantity;
+      foLineItemRemaining.set(lineItem.id, remainingQty - quantity);
 
-      if (quantity > 0) {
-        const list = grouped.get(fo.id) || [];
-        list.push({ id: lineItem.id, quantity });
-        grouped.set(fo.id, list);
-      }
+      const list = grouped.get(fo.id) || [];
+      list.push({ id: lineItem.id, quantity });
+      grouped.set(fo.id, list);
     }
   }
 
@@ -660,6 +670,17 @@ export function buildLineItemsByFulfillmentOrder(
     }
   }
 
+  // Rebuild absolute-remaining map so the safety clamp below cannot exceed
+  // Shopify's original per-lineItem remainingQuantity.
+  const foLineItemMaxRemaining = new Map<string, number>();
+  for (const fo of fulfillableFOs) {
+    for (const lineItem of fo.lineItems?.nodes || []) {
+      foLineItemMaxRemaining.set(
+        lineItem.id,
+        Math.max(0, Number(lineItem.remainingQuantity ?? 0))
+      );
+    }
+  }
   const lineItemsByFulfillmentOrder: FulfillmentOrderLineItemsInput[] = [];
   for (const [fulfillmentOrderId, fulfillmentOrderLineItems] of grouped.entries()) {
     const mergedById = new Map<string, number>();
@@ -669,10 +690,23 @@ export function buildLineItemsByFulfillmentOrder(
       if (!lineId || qty <= 0) continue;
       mergedById.set(lineId, (mergedById.get(lineId) ?? 0) + qty);
     }
-    const uniqueLineItems = Array.from(mergedById.entries()).map(([id, quantity]) => ({
-      id,
-      quantity,
-    }));
+    const uniqueLineItems: FulfillmentOrderLineItemInput[] = [];
+    for (const [id, quantity] of mergedById.entries()) {
+      const cap = foLineItemMaxRemaining.get(id) ?? 0;
+      const clamped = Math.min(quantity, cap);
+      if (clamped <= 0) {
+        warnings.push(
+          `Line item ${id} clamped from ${quantity} to 0 (Shopify remaining=${cap})`
+        );
+        continue;
+      }
+      if (clamped < quantity) {
+        warnings.push(
+          `Line item ${id} clamped from ${quantity} to ${clamped} (Shopify remaining=${cap})`
+        );
+      }
+      uniqueLineItems.push({ id, quantity: clamped });
+    }
     if (uniqueLineItems.length > 0) {
       lineItemsByFulfillmentOrder.push({
         fulfillmentOrderId,

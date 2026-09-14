@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { getInvoicedQuantitiesByOrderLineId } from "@/galaxus/edi/invoiceCoverage";
 import { resolveOrderLineProductKey } from "@/galaxus/supplier/providerKey";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -220,7 +221,9 @@ export async function GET(request: Request) {
       select: ORDER_SELECT,
     });
 
-    const ordersWithAnchor = orders.some((o) => o.id === anchor.id) ? orders : [anchor, ...orders];
+    const ordersWithAnchor = dedupeById(
+      orders.some((o) => o.id === anchor.id) ? orders : [anchor, ...orders]
+    );
     const orderIds = ordersWithAnchor.map((o) => o.id);
 
     const invoiceCoverage: Record<string, { ordered: number; invoiced: number }> = {};

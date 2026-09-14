@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 
 type OrderListItem = {
   id: string;
@@ -286,7 +287,7 @@ export default function GalaxusWarehouseShipmentsPage() {
         Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS
       ) {
         const filtered = cached.items;
-        setOrders(filtered);
+        setOrders(dedupeById(filtered));
         if (!selectedOrderId && filtered[0]?.id) {
           setSelectedOrderId(filtered[0].id);
         } else if (selectedOrderId && !filtered.some((item: any) => item.id === selectedOrderId)) {
@@ -313,8 +314,9 @@ export default function GalaxusWarehouseShipmentsPage() {
         }
         return true;
       });
-      setOrders(filtered);
-      ordersListCacheRef.current = { at: Date.now(), query, items: filtered };
+      const unique = dedupeById(filtered);
+      setOrders(unique);
+      ordersListCacheRef.current = { at: Date.now(), query, items: unique };
       if (!selectedOrderId && filtered[0]?.id) {
         setSelectedOrderId(filtered[0].id);
       } else if (selectedOrderId && !filtered.some((item: any) => item.id === selectedOrderId)) {
@@ -339,7 +341,7 @@ export default function GalaxusWarehouseShipmentsPage() {
     try {
       const cached = eligibilityCacheRef.current.get(orderId);
       if (!options?.force && cached && Date.now() - cached.at < ELIGIBILITY_CACHE_TTL_MS) {
-        setEligibleOrders(cached.orders);
+        setEligibleOrders(dedupeById(cached.orders));
         setInvoiceCoverage(cached.invoiceCoverage);
         setShipmentCoverage(cached.shipmentCoverage);
         return;
@@ -351,7 +353,7 @@ export default function GalaxusWarehouseShipmentsPage() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load eligible orders");
-      const nextOrders = Array.isArray(data.orders) ? data.orders : [];
+      const nextOrders = dedupeById(Array.isArray(data.orders) ? data.orders : []);
       const nextInvoiceCoverage = data.invoiceCoverage ?? {};
       const nextShipmentCoverage = data.shipmentCoverage ?? {};
       setEligibleOrders(nextOrders);
@@ -454,7 +456,9 @@ export default function GalaxusWarehouseShipmentsPage() {
         const reserved = coverage?.reserved ?? 0;
         return Math.max(0, ordered - shipped - reserved) > 0;
       });
-    const filtered = eligibleOrders.filter((order) => !isHiddenOrder(order) && hasRemaining(order));
+    const filtered = dedupeById(
+      eligibleOrders.filter((order) => !isHiddenOrder(order) && hasRemaining(order))
+    );
     const anchor = filtered.find((order) => order.id === selectedOrderId);
     const others = filtered.filter((order) => order.id !== selectedOrderId);
     return anchor ? [anchor, ...others] : filtered;
@@ -1171,7 +1175,7 @@ export default function GalaxusWarehouseShipmentsPage() {
             const renderLineRow = (m: (typeof lineMetas)[0], dimmed: boolean) => {
               const { line, lid, orderedSafe, invoicedQty, fullyInvoiced, shippedQty, reservedQty, remainingQty, selected, disabled, lineNet } = m;
               return (
-                <tr key={lid} className={`border-t ${dimmed ? "opacity-60 bg-gray-50/80" : ""}`}>
+                <tr key={`${order.id}-${lid}`} className={`border-t ${dimmed ? "opacity-60 bg-gray-50/80" : ""}`}>
                   <td className="px-2 py-1.5">
                     <input
                       type="checkbox"

@@ -5,6 +5,7 @@ import { isGalaxusShipmentDispatchConfirmed } from "@/galaxus/orders/shipmentDis
 import { getInvoiceLineProgressByOrderIds } from "@/galaxus/edi/invoiceCoverage";
 import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
 import { getOpenWarehouseLineCountByOrderId } from "@/galaxus/warehouse/shipmentLineCoverage";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,8 +20,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid view filter" }, { status: 400 });
     }
     const sort = (searchParams.get("sort") ?? "createdAt").toLowerCase();
-    const orderBy =
-      sort === "orderdate" ? { orderDate: "desc" as const } : { createdAt: "desc" as const };
+    const orderBy: Prisma.GalaxusOrderOrderByWithRelationInput[] =
+      sort === "orderdate"
+        ? [{ orderDate: "desc" }, { id: "desc" }]
+        : [{ createdAt: "desc" }, { id: "desc" }];
     const deliveryType = String(searchParams.get("deliveryType") ?? "").trim();
     const excludeDeliveryType = String(searchParams.get("excludeDeliveryType") ?? "").trim();
     const includeInvoice = searchParams.get("includeInvoice") !== "0";
@@ -330,7 +333,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      items,
+      items: dedupeById(items),
       nextOffset: orders.length === limit ? offset + limit : null,
     });
   } catch (error: any) {

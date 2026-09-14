@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 import GalaxusManualEntryModal from "@/app/components/GalaxusManualEntryModal";
 import { PhysicalStockBadge, PhysicalStockHintText } from "@/app/components/PhysicalStockBadge";
 import { StockxOrderTools } from "@/app/galaxus/_components/StockxOrderTools";
@@ -203,20 +204,21 @@ export default function DecathlonOrdersPage() {
         lastBatch = batch.length;
         offset += limit;
       } while (lastBatch === limit && offset < 600);
+      const uniqueItems = dedupeById(items);
       const fresh = new Set<string>();
-      for (const item of items) {
+      for (const item of uniqueItems) {
         if (!knownOrderIds.current.has(item.id)) {
           fresh.add(item.id);
         }
       }
       setNewOrderIds(fresh.size > 0 ? fresh : new Set());
-      knownOrderIds.current = new Set(items.map((item) => item.id));
-      ordersListCacheRef.current.set(cacheKey, { at: Date.now(), items });
-      setOrders(items);
+      knownOrderIds.current = new Set(uniqueItems.map((item) => item.id));
+      ordersListCacheRef.current.set(cacheKey, { at: Date.now(), items: uniqueItems });
+      setOrders(uniqueItems);
       setSelectedOrderId((prev) => {
-        if (items.length === 0) return null;
-        if (prev && items.some((i) => i.id === prev)) return prev;
-        return items[0].id;
+        if (uniqueItems.length === 0) return null;
+        if (prev && uniqueItems.some((i) => i.id === prev)) return prev;
+        return uniqueItems[0].id;
       });
     } catch (err: any) {
       setError(err.message);

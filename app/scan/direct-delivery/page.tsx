@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 
 type OrderListItem = {
   id: string;
@@ -103,7 +104,7 @@ export default function LogisticsDirectDeliveryPage() {
       const cacheKey = query.toLowerCase();
       const cached = ordersListCacheRef.current;
       if (!force && cached && cached.key === cacheKey && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
-        setOrders(cached.items);
+        setOrders(dedupeById(cached.items));
         const current = selectedOrderIdRef.current;
         if (opts?.selectFirstIfEmpty && !current && cached.items[0]?.id) {
           setSelectedOrderId(cached.items[0].id);
@@ -143,7 +144,7 @@ export default function LogisticsDirectDeliveryPage() {
         const firstPage = await fetchPage(120, 0);
         if (seq !== ordersLoadSeq.current) return;
 
-        let items = firstPage.items;
+        let items = dedupeById(firstPage.items);
         setOrders(items);
         setLoadingOrders(false);
 
@@ -155,14 +156,19 @@ export default function LogisticsDirectDeliveryPage() {
         let offset = firstPage.nextOffset;
         if (offset != null) {
           setLoadingMoreOrders(true);
-          while (offset != null) {
-            const page = await fetchPage(200, offset);
-            if (seq !== ordersLoadSeq.current) return;
-            items = [...items, ...page.items];
-            setOrders(items);
-            offset = page.nextOffset;
+          try {
+            while (offset != null) {
+              const page = await fetchPage(200, offset);
+              if (seq !== ordersLoadSeq.current) return;
+              items = dedupeById([...items, ...page.items]);
+              offset = page.nextOffset;
+            }
+          } finally {
+            if (seq === ordersLoadSeq.current) {
+              setOrders(items);
+              setLoadingMoreOrders(false);
+            }
           }
-          setLoadingMoreOrders(false);
         }
 
         ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };

@@ -9,6 +9,8 @@ import GalaxusExternalBuyPanel, {
 } from "@/app/galaxus/_components/GalaxusExternalBuyPanel";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
 import { galaxusLineNetRevenueChf, galaxusProfitFromRevenueAndStockxCost } from "@/galaxus/orders/margin";
+import { isGalaxusStxSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
+import { dedupeById } from "@/galaxus/_lib/dedupeById";
 
 type OrderListItem = {
   id: string;
@@ -73,6 +75,18 @@ export default function WarehouseBulkPage() {
   const autoOrdrAttempted = useRef<Set<string>>(new Set());
   const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: OrderDetail | null }>>(new Map());
+  const [lineStxStockById, setLineStxStockById] = useState<
+    Record<
+      string,
+      {
+        status: "OK" | "OUT_OF_STOCK" | "UNKNOWN" | "NO_VARIANT";
+        stock: number | null;
+        source?: string;
+        stxUpdatedAt?: string | null;
+        deliveryType?: string | null;
+      }
+    >
+  >({});
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
     mode: "create" | "edit";
@@ -102,7 +116,7 @@ export default function WarehouseBulkPage() {
     const force = Boolean(opts?.force);
     const cached = ordersListCacheRef.current;
     if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
-      const items = cached.items;
+      const items = dedupeById(cached.items);
       setOrders(items);
       if (items[0]?.id) {
         setSelectedOrderId((prev) => prev || items[0].id);
@@ -119,7 +133,7 @@ export default function WarehouseBulkPage() {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.ok) throw new Error(data?.error ?? "Failed to load orders");
-      const items = Array.isArray(data.items) ? data.items : [];
+      const items = dedupeById(Array.isArray(data.items) ? data.items : []);
       ordersListCacheRef.current = { at: Date.now(), items };
       setOrders(items);
       if (items[0]?.id) {
@@ -198,6 +212,32 @@ export default function WarehouseBulkPage() {
       await loadDetail(orderId, { force: true });
     } catch (err: any) {
       setError(err?.message ?? "ORDR send failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const checkLineStxStock = async (line: any, live = false) => {
+    if (!selectedOrderId) return;
+    setBusy(`stx-stock-${line.id}`);
+    setError(null);
+    try {
+      const url = `/api/galaxus/orders/${selectedOrderId}/lines/${line.id}/stock${live ? "?live=1" : ""}`;
+      const res = await fetch(url, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!data.ok) throw new Error(data.error ?? "StockX stock check failed");
+      setLineStxStockById((prev) => ({
+        ...prev,
+        [line.id]: {
+          status: data.status,
+          stock: typeof data.stock === "number" ? data.stock : null,
+          source: data.source ?? "db",
+          stxUpdatedAt: data.stxUpdatedAt ?? null,
+          deliveryType: data.deliveryType ?? line.stxAvailability?.deliveryType ?? null,
+        },
+      }));
+    } catch (err: any) {
+      setError(err?.message ?? "StockX stock check failed");
     } finally {
       setBusy(null);
     }
@@ -668,6 +708,22 @@ export default function WarehouseBulkPage() {
                           : null;
                       const stockxLinkedSource =
                         proc?.source === "galaxus_match" || proc?.source === "stx_sync";
+                      const stxAvailability =
+                        lineStxStockById[line.id] ??
+                        (line.stxAvailability
+                          ? {
+                              status: line.stxAvailability.status,
+                              stock: line.stxAvailability.stock ?? null,
+                              source: line.stxAvailability.source ?? "db",
+                              stxUpdatedAt: line.stxAvailability.updatedAt ?? null,
+                              deliveryType: line.stxAvailability.deliveryType ?? null,
+                            }
+                          : null);
+                      const stxSoldOut =
+                        isGalaxusStxSupplierLine(line) &&
+                        !linked &&
+                        !physicalOnHand &&
+                        stxAvailability?.status === "OUT_OF_STOCK";
                       const sourceLabel =
                         proc?.source === "galaxus_match"
                           ? "Saved match"
@@ -754,6 +810,14 @@ export default function WarehouseBulkPage() {
                                       : ""}
                                   </span>
                                 ) : null}
+                                {stxSoldOut ? (
+                                  <span
+                                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-900 shrink-0"
+                                    title="StockX has no asks for this size (SupplierVariant.stock = 0)"
+                                  >
+                                    StockX sold out
+                                  </span>
+                                ) : null}
                               </div>
                               <div className="text-gray-600 text-xs">
                                 Size raw: {line.sizeRaw ?? "—"} · Size: {line.size ?? "—"}
@@ -779,7 +843,35 @@ export default function WarehouseBulkPage() {
                                 ) : null}
                                 {line.catalogPrice != null ? (
                                   <span className="ml-2 text-blue-600">
-                                    DB: <span className="font-mono">{Number(line.catalogPrice).toFixed(2)}</span>
+                                    DB buy:{" "}
+                                    <span className="font-mono">{Number(line.catalogPrice).toFixed(2)}</span>
+                                    {line.stxBuyLane === "standard" ||
+                                    (stxAvailability?.deliveryType ?? line.stxAvailability?.deliveryType) ===
+                                      "standard" ? (
+                                      <span className="text-amber-700 ml-1">(standard)</span>
+                                    ) : line.stxBuyLane === "express" ? (
+                                      <span className="text-amber-700 ml-1">(express)</span>
+                                    ) : null}
+                                  </span>
+                                ) : null}
+                                {stxAvailability && isGalaxusStxSupplierLine(line) ? (
+                                  <span
+                                    className={`ml-2 ${
+                                      stxAvailability.status === "OUT_OF_STOCK"
+                                        ? "text-red-700"
+                                        : "text-emerald-700"
+                                    }`}
+                                  >
+                                    STX asks:{" "}
+                                    <span className="font-mono">
+                                      {stxAvailability.stock ?? "?"}
+                                    </span>
+                                    {stxAvailability.stxUpdatedAt ? (
+                                      <span className="text-gray-400 ml-1">
+                                        · sync{" "}
+                                        {new Date(stxAvailability.stxUpdatedAt).toLocaleDateString("fr-CH")}
+                                      </span>
+                                    ) : null}
                                   </span>
                                 ) : null}
                               </div>
@@ -815,7 +907,7 @@ export default function WarehouseBulkPage() {
                                 <div className="mt-1 space-y-1">
                                   {proc.units.map((unit: any) => (
                                     <div
-                                      key={unit.unitIndex}
+                                      key={`${line.id}-unit-${unit.unitIndex}`}
                                       className={`text-[11px] flex items-center gap-2 px-1.5 py-0.5 rounded ${
                                         unit.linked ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"
                                       }`}
@@ -861,6 +953,22 @@ export default function WarehouseBulkPage() {
                                           : "GLD/Golden — do not buy on StockX. Order on Golden manually, then mark shipped."
                                         : "Supplier SKU THE_/the_ or NER_/ner_ — no StockX link. Mark shipped when ready."}
                                     </span>
+                                  ) : stxSoldOut ? (
+                                    <span>
+                                      StockX sold out for this size (0 asks
+                                      {stxAvailability?.stxUpdatedAt
+                                        ? ` · DB sync ${new Date(stxAvailability.stxUpdatedAt).toLocaleDateString("fr-CH")}`
+                                        : ""}
+                                      ). Do not buy — cancel the Galaxus line or find another source.{" "}
+                                      <button
+                                        type="button"
+                                        onClick={() => void checkLineStxStock(line, true)}
+                                        disabled={busy !== null}
+                                        className="underline disabled:opacity-50"
+                                      >
+                                        Refresh live
+                                      </button>
+                                    </span>
                                   ) : (
                                     <span>Sync or manual supplier entry to link, then you can mark shipped.</span>
                                   )}
@@ -876,6 +984,16 @@ export default function WarehouseBulkPage() {
                                   className="px-2 py-1 rounded bg-slate-800 text-white text-[10px] whitespace-nowrap disabled:opacity-50"
                                 >
                                   {shipBusy ? "…" : "Mark shipped"}
+                                </button>
+                              ) : null}
+                              {isGalaxusStxSupplierLine(line) && !isExternalBuyLine(line) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void checkLineStxStock(line, false)}
+                                  disabled={busy !== null || !detail}
+                                  className="px-2 py-1 rounded bg-slate-600 text-white text-[10px] disabled:opacity-50"
+                                >
+                                  {busy === `stx-stock-${line.id}` ? "…" : "Check STX stock"}
                                 </button>
                               ) : null}
                               <button
