@@ -138,57 +138,34 @@ export default function GalaxusDirectDeliveryPage() {
     setLoadingMoreOrders(false);
     setError(null);
     try {
-      const buildUrl = (limit: number, offset: number) => {
-        const params = new URLSearchParams({
-          limit: String(limit),
-          offset: String(offset),
-          view: "active",
-          sort: "orderDate",
-          deliveryType: "direct_delivery",
-          includeInvoice: "0",
-          includeWarehouse: "0",
-        });
-        if (query) params.set("q", query);
-        return `/api/galaxus/orders?${params.toString()}`;
-      };
-      const fetchPage = async (limit: number, offset: number) => {
-        const res = await fetch(buildUrl(limit, offset), { cache: "no-store" });
-        const data = await res.json();
-        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-        return {
-          items: (Array.isArray(data.items) ? data.items : []) as OrderListItem[],
-          nextOffset: Number.isFinite(Number(data.nextOffset)) ? Number(data.nextOffset) : null,
-        };
-      };
-
-      const firstPage = await fetchPage(120, 0);
+      // Single 500-row page. Pagination via OFFSET was firing 4 sequential API
+      // calls per refresh and, with a shared orderDate, was returning the same
+      // row on multiple pages → visual duplicates in the list. One request +
+      // stable orderDate+id sort on the server keeps the list clean and fast.
+      const params = new URLSearchParams({
+        limit: "500",
+        offset: "0",
+        view: "active",
+        sort: "orderDate",
+        deliveryType: "direct_delivery",
+        includeInvoice: "0",
+        includeWarehouse: "0",
+      });
+      if (query) params.set("q", query);
+      const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
+        cache: "no-store",
+      });
+      const data = await res.json();
       if (seq !== ordersLoadSeq.current) return;
-
-      let items = dedupeById(firstPage.items);
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+      const items = dedupeById<OrderListItem>(
+        Array.isArray(data.items) ? (data.items as OrderListItem[]) : []
+      );
       setOrders(items);
-      setLoadingOrders(false);
 
       const current = selectedOrderIdRef.current;
       if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
         setSelectedOrderId(items[0].id);
-      }
-
-      let offset = firstPage.nextOffset;
-      if (offset != null) {
-        setLoadingMoreOrders(true);
-        try {
-          while (offset != null) {
-            const page = await fetchPage(200, offset);
-            if (seq !== ordersLoadSeq.current) return;
-            items = dedupeById([...items, ...page.items]);
-            offset = page.nextOffset;
-          }
-        } finally {
-          if (seq === ordersLoadSeq.current) {
-            setOrders(items);
-            setLoadingMoreOrders(false);
-          }
-        }
       }
 
       const prevKnown = knownOrderIds.current;
@@ -506,6 +483,19 @@ export default function GalaxusDirectDeliveryPage() {
     setError(null);
     setOpsLog(null);
     setShipping(true);
+    // Pre-open blank tabs while we are still inside the user-gesture stack.
+    // window.open() after `await fetch()` gets blocked by every popup blocker;
+    // opening about:blank first, then navigating, keeps the popup allowed.
+    const requiresPackingSlip = Boolean(selectedOrder?.physicalDeliveryNoteRequired);
+    const labelWin = typeof window !== "undefined" ? window.open("", "_blank", "noopener,noreferrer") : null;
+    const packingSlipWin =
+      requiresPackingSlip && typeof window !== "undefined"
+        ? window.open("", "_blank", "noopener,noreferrer")
+        : null;
+    const closeUnused = () => {
+      try { labelWin?.close(); } catch {}
+      try { packingSlipWin?.close(); } catch {}
+    };
     try {
       const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
@@ -521,6 +511,7 @@ export default function GalaxusDirectDeliveryPage() {
       if (data.status === "ALREADY_FULFILLED") {
         setError("Order already fulfilled — use Reprint docs.");
         setOpsLog(JSON.stringify(data, null, 2));
+        closeUnused();
         await loadOrderDetail(selectedOrderId, { force: true });
         return;
       }
@@ -533,15 +524,44 @@ export default function GalaxusDirectDeliveryPage() {
       await loadOrders({ force: true });
       if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
       const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const labelUrl = String(data?.url ?? "").trim();
       if (serverPrinted) {
+        // Server printed everything locally (Brother + HP). No browser popup.
+        closeUnused();
         const labelFail = data.printJobResult && !data.printJobResult.ok && !data.printJobResult.skipped;
         if (labelFail) {
           setError(`Label print: ${data.printJobResult.error || data.printJobResult.message || "failed"}`);
         }
-      } else if (data?.url) {
-        window.open(String(data.url), "_blank", "noopener,noreferrer");
+      } else {
+        if (labelUrl && labelWin) {
+          labelWin.location.href = labelUrl;
+        } else {
+          try { labelWin?.close(); } catch {}
+        }
+        // Packing slip: physical delivery note required → open the PDF now
+        // (fresh selectedOrder shipments carry deliveryNotePdfUrl after reload).
+        const slipUrl = (() => {
+          const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
+          const withSlip = shipments.find(
+            (shipment: any) => String(shipment?.deliveryNotePdfUrl ?? "").trim().length > 0
+          );
+          return withSlip?.deliveryNotePdfUrl ?? null;
+        })();
+        if (requiresPackingSlip && slipUrl && packingSlipWin) {
+          packingSlipWin.location.href = String(slipUrl);
+        } else {
+          try { packingSlipWin?.close(); } catch {}
+          if (requiresPackingSlip && !slipUrl) {
+            setError((prev) =>
+              prev
+                ? `${prev} · Packing slip not ready yet — reprint docs to fetch.`
+                : "Packing slip not ready yet — reprint docs to fetch."
+            );
+          }
+        }
       }
     } catch (err: any) {
+      closeUnused();
       setError(err.message);
     } finally {
       setShipping(false);
@@ -596,6 +616,16 @@ export default function GalaxusDirectDeliveryPage() {
     setReprintBusy(true);
     setError(null);
     setOpsLog(null);
+    const requiresPackingSlip = Boolean(selectedOrder?.physicalDeliveryNoteRequired);
+    const labelWin = typeof window !== "undefined" ? window.open("", "_blank", "noopener,noreferrer") : null;
+    const packingSlipWin =
+      requiresPackingSlip && typeof window !== "undefined"
+        ? window.open("", "_blank", "noopener,noreferrer")
+        : null;
+    const closeUnused = () => {
+      try { labelWin?.close(); } catch {}
+      try { packingSlipWin?.close(); } catch {}
+    };
     try {
       const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
@@ -625,18 +655,25 @@ export default function GalaxusDirectDeliveryPage() {
       }
 
       if (serverPrinted) {
+        closeUnused();
         window.alert(
           notes.length
             ? `Reprint ${selectedOrder?.galaxusOrderId ?? ""}\n${notes.join("\n")}`
             : "Reprint queued (check printers)."
         );
       } else if (data?.url) {
-        window.open(String(data.url), "_blank", "noopener,noreferrer");
-        if (packingSlipUrl) window.open(packingSlipUrl, "_blank", "noopener,noreferrer");
+        if (labelWin) labelWin.location.href = String(data.url);
+        if (packingSlipWin && packingSlipUrl) {
+          packingSlipWin.location.href = String(packingSlipUrl);
+        } else {
+          try { packingSlipWin?.close(); } catch {}
+        }
       } else {
+        closeUnused();
         window.alert(notes.join("\n") || "Reprint done.");
       }
     } catch (err: any) {
+      closeUnused();
       setError(err.message);
     } finally {
       setReprintBusy(false);

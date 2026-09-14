@@ -117,58 +117,31 @@ export default function LogisticsDirectDeliveryPage() {
       setLoadingMoreOrders(false);
       setError(null);
       try {
-        const buildUrl = (limit: number, offset: number) => {
-          const params = new URLSearchParams({
-            limit: String(limit),
-            offset: String(offset),
-            view: "active",
-            sort: "orderDate",
-            deliveryType: "direct_delivery",
-            supplierScope: "stx",
-            includeInvoice: "0",
-            includeWarehouse: "0",
-          });
-          if (query) params.set("q", query);
-          return `/api/galaxus/orders?${params.toString()}`;
-        };
-        const fetchPage = async (limit: number, offset: number) => {
-          const res = await fetch(buildUrl(limit, offset), { cache: "no-store" });
-          const data = await res.json();
-          if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-          return {
-            items: (Array.isArray(data.items) ? data.items : []) as OrderListItem[],
-            nextOffset: Number.isFinite(Number(data.nextOffset)) ? Number(data.nextOffset) : null,
-          };
-        };
-
-        const firstPage = await fetchPage(120, 0);
+        const params = new URLSearchParams({
+          limit: "500",
+          offset: "0",
+          view: "active",
+          sort: "orderDate",
+          deliveryType: "direct_delivery",
+          supplierScope: "stx",
+          includeInvoice: "0",
+          includeWarehouse: "0",
+        });
+        if (query) params.set("q", query);
+        const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
         if (seq !== ordersLoadSeq.current) return;
-
-        let items = dedupeById(firstPage.items);
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+        const items = dedupeById<OrderListItem>(
+          Array.isArray(data.items) ? (data.items as OrderListItem[]) : []
+        );
         setOrders(items);
-        setLoadingOrders(false);
 
         const current = selectedOrderIdRef.current;
         if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
           setSelectedOrderId(items[0].id);
-        }
-
-        let offset = firstPage.nextOffset;
-        if (offset != null) {
-          setLoadingMoreOrders(true);
-          try {
-            while (offset != null) {
-              const page = await fetchPage(200, offset);
-              if (seq !== ordersLoadSeq.current) return;
-              items = dedupeById([...items, ...page.items]);
-              offset = page.nextOffset;
-            }
-          } finally {
-            if (seq === ordersLoadSeq.current) {
-              setOrders(items);
-              setLoadingMoreOrders(false);
-            }
-          }
         }
 
         ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
