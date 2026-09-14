@@ -1033,7 +1033,23 @@ export default function GalaxusDirectDeliveryPage() {
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="text-sm min-w-0">
-                  <div className="font-medium text-gray-900">
+                  {/* End customer (EDI-parsed) always shown first — needed when
+                      recipient block is a Galaxus warehouse and the actual
+                      client is only visible in customerName / customer address. */}
+                  {selectedOrder.customerName ? (
+                    <div className="font-medium text-gray-900">
+                      {selectedOrder.customerName}
+                      {selectedOrder.customerCity ? (
+                        <span className="text-gray-500 text-xs font-normal">
+                          {" "}
+                          · {selectedOrder.customerPostalCode ?? ""} {selectedOrder.customerCity}{" "}
+                          {selectedOrder.customerCountryCode ?? selectedOrder.customerCountry ?? ""}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <div className={selectedOrder.customerName ? "text-gray-700 text-xs mt-1" : "font-medium text-gray-900"}>
+                    {selectedOrder.customerName ? "Ship to: " : ""}
                     {selectedOrder.recipientName ?? "—"}
                   </div>
                   <div className="text-gray-500 text-xs">

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isGalaxusCatalogReady,
   isGalaxusSellableStock,
+  isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
 } from "@/galaxus/exports/feedEligibility";
 
@@ -35,6 +36,74 @@ describe("isGalaxusCatalogReady", () => {
         hostedImageUrl: "https://cdn.example.com/af1.jpg",
       })
     ).toBe(true);
+  });
+
+  it("rejects XNT variants for Pollin / Berrybase brands", () => {
+    expect(
+      isGalaxusCatalogReady({
+        supplierProductName: "Some Board",
+        supplierBrand: "Pollin",
+        supplierVariantId: "xnt_abc123",
+        hostedImageUrl: "https://cdn.example.com/x.jpg",
+      })
+    ).toBe(false);
+    expect(
+      isGalaxusCatalogReady({
+        supplierProductName: "Raspberry Pi Case",
+        supplierBrand: "BerryBase",
+        supplierKey: "xnt",
+        hostedImageUrl: "https://cdn.example.com/x.jpg",
+      })
+    ).toBe(false);
+  });
+
+  it("keeps non-XNT variants with same brand unaffected", () => {
+    expect(
+      isGalaxusCatalogReady({
+        supplierProductName: "Berrybase Cable",
+        supplierBrand: "Berrybase",
+        supplierVariantId: "rei_abc",
+        hostedImageUrl: "https://cdn.example.com/x.jpg",
+      })
+    ).toBe(true);
+  });
+});
+
+describe("isXntFeedBlockedBrand", () => {
+  it("matches by supplierVariantId prefix", () => {
+    expect(
+      isXntFeedBlockedBrand({
+        supplierVariantId: "xnt_123",
+        supplierBrand: "Pollin",
+      })
+    ).toBe(true);
+  });
+
+  it("matches by supplierKey", () => {
+    expect(
+      isXntFeedBlockedBrand({
+        supplierKey: "xnt",
+        supplierBrand: "Berry Base",
+      })
+    ).toBe(true);
+  });
+
+  it("case + accent insensitive", () => {
+    expect(
+      isXntFeedBlockedBrand({
+        supplierKey: "xnt",
+        supplierBrand: "POLLIN GmbH",
+      })
+    ).toBe(true);
+  });
+
+  it("passes through allowed brands", () => {
+    expect(
+      isXntFeedBlockedBrand({
+        supplierKey: "xnt",
+        supplierBrand: "Le Creuset",
+      })
+    ).toBe(false);
   });
 });
 
