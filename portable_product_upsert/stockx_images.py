@@ -9,7 +9,7 @@ left profile (symmetric “orbit card” like common PDP grids).
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from typing import Any, Dict, List, Sequence
 
 # Around vertical axis (StockX img01 ≈ 0°, progression clockwise).
@@ -37,6 +37,25 @@ def _dedupe_preserve(urls: Sequence[str]) -> List[str]:
         seen.add(key)
         out.append(u)
     return out
+
+
+def _declared_pixel_area(url: str) -> int:
+    """Best-effort source size from StockX/imgix URL params, including DPR."""
+    try:
+        query = parse_qs(urlsplit(url).query)
+        width = int(float((query.get("w") or query.get("width") or ["0"])[0]))
+        height = int(float((query.get("h") or query.get("height") or ["0"])[0]))
+        dpr = float((query.get("dpr") or ["1"])[0])
+    except (TypeError, ValueError):
+        return 0
+    if width <= 0 or height <= 0 or dpr <= 0:
+        return 0
+    return int(width * dpr) * int(height * dpr)
+
+
+def _largest_declared_first(urls: Sequence[str]) -> List[str]:
+    """Stable order for equal/unknown sizes; prevent API thumbnails becoming hero."""
+    return sorted(urls, key=_declared_pixel_area, reverse=True)
 
 
 def _url_match_keys(u: Any) -> set[str]:
@@ -130,7 +149,7 @@ def select_stockx_product_images(
             if u:
                 flat.append(u)
     flat = _dedupe_preserve(flat)
-    return flat[:MAX_STATIC_FALLBACK]
+    return _largest_declared_first(flat)[:MAX_STATIC_FALLBACK]
 
 
 def list_all_gallery_360_urls(product_data: Dict[str, Any]) -> List[str]:
