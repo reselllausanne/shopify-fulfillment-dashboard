@@ -14,6 +14,8 @@ export const dynamic = 'force-dynamic';
  *   - confidence: "high" | "medium" | "low" (filter by match confidence)
  *   - includeProtection: "true" to include package-protection auto rows (hidden by default)
  *   - lineItemIds: comma-separated Shopify line item GIDs (targeted restore for matching UI)
+ *   - orderIds: comma-separated Shopify order GIDs (fallback restore when line item IDs changed)
+ *   - orderNames: comma-separated Shopify order names (secondary fallback)
  */
 export async function GET(req: NextRequest) {
   try {
@@ -22,6 +24,16 @@ export async function GET(req: NextRequest) {
     const confidenceFilter = searchParams.get("confidence");
     const includeProtection = searchParams.get("includeProtection") === "true";
     const lineItemIds = String(searchParams.get("lineItemIds") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 500);
+    const orderIds = String(searchParams.get("orderIds") || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 500);
+    const orderNames = String(searchParams.get("orderNames") || "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean)
@@ -44,8 +56,20 @@ export async function GET(req: NextRequest) {
       where.matchConfidence = confidenceFilter;
     }
 
+    const targetedWhere: any[] = [];
     if (lineItemIds.length > 0) {
-      where.shopifyLineItemId = { in: lineItemIds };
+      targetedWhere.push({ shopifyLineItemId: { in: lineItemIds } });
+    }
+    if (orderIds.length > 0) {
+      targetedWhere.push({ shopifyOrderId: { in: orderIds } });
+    }
+    if (orderNames.length > 0) {
+      targetedWhere.push({ shopifyOrderName: { in: orderNames } });
+    }
+    if (targetedWhere.length === 1) {
+      Object.assign(where, targetedWhere[0]);
+    } else if (targetedWhere.length > 1) {
+      where.OR = targetedWhere;
     }
 
     if (!includeProtection) {
@@ -55,6 +79,8 @@ export async function GET(req: NextRequest) {
     console.log(`[DB] Fetching matches with filters:`, {
       ...where,
       shopifyLineItemId: lineItemIds.length ? { in: `${lineItemIds.length} ids` } : undefined,
+      shopifyOrderId: orderIds.length ? { in: `${orderIds.length} ids` } : undefined,
+      shopifyOrderName: orderNames.length ? { in: `${orderNames.length} names` } : undefined,
     });
 
     const matches = await prisma.orderMatch.findMany({

@@ -55,7 +55,6 @@ export default function OrderMatchingSection({
   const highMatchableCount = matchResults.filter(
     (r) =>
       r.bestMatch?.confidence === "high" &&
-      !r.alreadySaved &&
       !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
   ).length;
 

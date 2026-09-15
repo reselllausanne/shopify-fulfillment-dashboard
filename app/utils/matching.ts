@@ -196,7 +196,12 @@ export interface MatchResult {
 
 /** Minimal DB row shape used to restore a saved match into the matching UI. */
 export type DbSavedMatchRow = {
+  shopifyOrderId?: string | null;
+  shopifyOrderName?: string | null;
   shopifyLineItemId: string;
+  shopifyProductTitle?: string | null;
+  shopifySku?: string | null;
+  shopifySizeEU?: string | null;
   stockxOrderNumber?: string | null;
   stockxChainId?: string | null;
   stockxOrderId?: string | null;

@@ -47,6 +47,15 @@ type LocalStockAllocation = {
   remaining: number;
 };
 
+type AutoSetSentRow = {
+  shopifyOrderName: string;
+  shopifyLineItemId: string;
+  supplierOrderNumber: string;
+  shopifyCreatedAt: string;
+  shopifyAgeDays: number;
+  wasAlreadySaved: boolean;
+};
+
 async function loadAvailableLocalStockBySku(
   items: ShopifyLineItem[]
 ): Promise<Map<string, LocalStockAllocation>> {
@@ -105,6 +114,31 @@ function localStockLotIdFromOrder(
   return order?.localStockLot?.lotId ?? null;
 }
 
+function normalizeKeyPart(value: string | null | undefined): string {
+  return String(value || "").trim().toUpperCase();
+}
+
+function normalizeTitle(value: string | null | undefined): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function candidateMatchScore(item: ShopifyLineItem, row: DbSavedMatchRow): number {
+  const itemSku = normalizeKeyPart(item.sku);
+  const rowSku = normalizeKeyPart(row.shopifySku);
+  const itemSize = normalizeKeyPart(item.sizeEU || item.variantTitle);
+  const rowSize = normalizeKeyPart(row.shopifySizeEU);
+  const itemTitle = normalizeTitle(item.title);
+  const rowTitle = normalizeTitle(row.shopifyProductTitle);
+  let score = 0;
+  if (itemSku && rowSku && itemSku === rowSku) score += 10;
+  if (itemSize && rowSize && itemSize === rowSize) score += 6;
+  if (itemTitle && rowTitle && itemTitle === rowTitle) score += 4;
+  return score;
+}
+
 function reserveExistingLocalMatches(
   allocations: Map<string, LocalStockAllocation>,
   results: MatchResult[]
@@ -153,16 +187,20 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
   const autoSaveHighMatchesFromResults = async (
     results: MatchResult[],
     options?: { skipConfirm?: boolean }
-  ): Promise<{ successCount: number; failCount: number; total: number }> => {
+  ): Promise<{
+    successCount: number;
+    failCount: number;
+    total: number;
+    sent: AutoSetSentRow[];
+  }> => {
     const highMatches = results.filter(
       (r) =>
         r.bestMatch?.confidence === "high" &&
-        !r.alreadySaved &&
         !isShopifyFinancialRefunded(r.shopifyItem.displayFinancialStatus)
     );
 
     if (highMatches.length === 0) {
-      return { successCount: 0, failCount: 0, total: 0 };
+      return { successCount: 0, failCount: 0, total: 0, sent: [] };
     }
 
     if (
@@ -171,11 +209,12 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         `🚀 Auto-save ${highMatches.length} HIGH confidence matches?\n\nThis will:\n- Save all matches to database\n- No manual approval for each one\n\nContinue?`
       )
     ) {
-      return { successCount: 0, failCount: 0, total: highMatches.length };
+      return { successCount: 0, failCount: 0, total: highMatches.length, sent: [] };
     }
 
     let successCount = 0;
     let failCount = 0;
+    const sent: AutoSetSentRow[] = [];
 
     for (const result of highMatches) {
       const shopifyItem = result.shopifyItem as ShopifyLineItem;
@@ -295,6 +334,19 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         });
 
         successCount++;
+        const createdAtMs = new Date(shopifyItem.createdAt).getTime();
+        const ageDays =
+          Number.isFinite(createdAtMs) && createdAtMs > 0
+            ? Math.max(0, Math.floor((Date.now() - createdAtMs) / (1000 * 60 * 60 * 24)))
+            : 0;
+        sent.push({
+          shopifyOrderName: shopifyItem.orderName,
+          shopifyLineItemId: shopifyItem.lineItemId,
+          supplierOrderNumber,
+          shopifyCreatedAt: shopifyItem.createdAt,
+          shopifyAgeDays: ageDays,
+          wasAlreadySaved: Boolean(result.alreadySaved),
+        });
         await new Promise((r) => setTimeout(r, 300));
       } catch (err) {
         console.error("[AUTO-SET] error", err);
@@ -306,16 +358,17 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       await reloadDb();
     }
 
-    return { successCount, failCount, total: highMatches.length };
+    return { successCount, failCount, total: highMatches.length, sent };
   };
 
-  const loadDbSavedMatchesByLineId = async (
-    lineItemIds?: string[]
+  const loadDbSavedMatchesForItems = async (
+    items?: ShopifyLineItem[]
   ): Promise<Map<string, DbSavedMatchRow>> => {
     const out = new Map<string, DbSavedMatchRow>();
     try {
+      const rows = items ?? [];
       const ids = Array.from(
-        new Set((lineItemIds ?? []).map((id) => String(id || "").trim()).filter(Boolean))
+        new Set(rows.map((item) => String(item.lineItemId || "").trim()).filter(Boolean))
       );
       // Targeted lookup when we know the Shopify lines — avoids huge /api/db/matches payloads
       // and reliably restores manual matches on refresh.
@@ -328,8 +381,64 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
         console.warn("[MATCHING] DB matches fetch failed", dbRes.status);
         return out;
       }
-      for (const row of dbRes.data?.matches ?? []) {
+      const directMatches = dbRes.data?.matches ?? [];
+      for (const row of directMatches) {
         if (row?.shopifyLineItemId) out.set(row.shopifyLineItemId, row);
+      }
+
+      // Fallback restore: Shopify can regenerate lineItem IDs after edits/exchanges.
+      // Recover saved links by order id/name + strict SKU/size/title scoring.
+      const missingItems = rows.filter((item) => !out.has(item.lineItemId));
+      if (!missingItems.length) return out;
+
+      const missingOrderIds = Array.from(
+        new Set(missingItems.map((item) => String(item.shopifyOrderId || "").trim()).filter(Boolean))
+      );
+      const missingOrderNames = Array.from(
+        new Set(missingItems.map((item) => String(item.orderName || "").trim()).filter(Boolean))
+      );
+      if (!missingOrderIds.length && !missingOrderNames.length) return out;
+
+      const fallbackParams: string[] = [];
+      if (missingOrderIds.length) {
+        fallbackParams.push(`orderIds=${encodeURIComponent(missingOrderIds.join(","))}`);
+      }
+      if (missingOrderNames.length) {
+        fallbackParams.push(`orderNames=${encodeURIComponent(missingOrderNames.join(","))}`);
+      }
+      fallbackParams.push("limit=2000");
+      const fallbackUrl = `/api/db/matches?${fallbackParams.join("&")}`;
+      const fallbackRes = await getJson<{ matches?: DbSavedMatchRow[] }>(fallbackUrl);
+      if (!fallbackRes.ok) {
+        console.warn("[MATCHING] DB fallback matches fetch failed", fallbackRes.status);
+        return out;
+      }
+
+      const fallbackMatches = fallbackRes.data?.matches || [];
+      const usedLegacyLineIds = new Set<string>();
+      for (const item of missingItems) {
+        const candidates = fallbackMatches
+          .filter((row) => {
+            if (!row?.shopifyLineItemId) return false;
+            if (usedLegacyLineIds.has(row.shopifyLineItemId)) return false;
+            const sameOrderId =
+              normalizeKeyPart(row.shopifyOrderId || "") !== "" &&
+              normalizeKeyPart(row.shopifyOrderId || "") === normalizeKeyPart(item.shopifyOrderId || "");
+            const sameOrderName =
+              normalizeKeyPart(row.shopifyOrderName || "") !== "" &&
+              normalizeKeyPart(row.shopifyOrderName || "") === normalizeKeyPart(item.orderName || "");
+            if (!sameOrderId && !sameOrderName) return false;
+            return candidateMatchScore(item, row) >= 10;
+          })
+          .sort((a, b) => candidateMatchScore(item, b) - candidateMatchScore(item, a));
+
+        const best = candidates[0];
+        if (!best) continue;
+        usedLegacyLineIds.add(best.shopifyLineItemId);
+        out.set(item.lineItemId, {
+          ...best,
+          shopifyLineItemId: item.lineItemId,
+        });
       }
     } catch (err) {
       console.warn("Error fetching DB matches", err);
@@ -337,7 +446,11 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     return out;
   };
 
-  const runMatching = async (items: ShopifyLineItem[]): Promise<MatchResult[]> => {
+  const runMatching = async (
+    items: ShopifyLineItem[],
+    options?: { restoreSaved?: boolean }
+  ): Promise<MatchResult[]> => {
+    const restoreSaved = options?.restoreSaved !== false;
     setShopifyItems(items);
 
     // Normalize Supplier orders for matching (use enriched if available)
@@ -392,14 +505,16 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     const withSupplierCostB = normalizedSupplier.filter((o) => o.totalTTC !== null).length;
     console.log(`[MATCHING] ${withSupplierCostB}/${normalizedSupplier.length} orders have totalTTC (Query B supplier cost)`);
 
-    const dbByLineId = await loadDbSavedMatchesByLineId(items.map((i) => i.lineItemId));
+    const dbByLineId = restoreSaved
+      ? await loadDbSavedMatchesForItems(items)
+      : new Map<string, DbSavedMatchRow>();
     const usedSupplierFromDb = new Set<string>();
     for (const row of dbByLineId.values()) {
       if (row.stockxOrderNumber) usedSupplierFromDb.add(row.stockxOrderNumber);
     }
-    const availableSupplier = normalizedSupplier.filter(
-      (order) => !usedSupplierFromDb.has(order.supplierOrderNumber)
-    );
+    const availableSupplier = restoreSaved
+      ? normalizedSupplier.filter((order) => !usedSupplierFromDb.has(order.supplierOrderNumber))
+      : normalizedSupplier;
     console.log(
       `🔒 Filtered out ${usedSupplierFromDb.size} already-matched Supplier orders; restoring ${dbByLineId.size} saved Shopify lines`
     );
@@ -415,7 +530,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
 
     for (const item of sortedItems) {
       const saved = dbByLineId.get(item.lineItemId);
-      if (saved) {
+      if (saved && restoreSaved) {
         const restored = matchResultFromDbSaved(item, saved);
         resultsById.set(item.lineItemId, restored);
         restoredCount += 1;
@@ -456,7 +571,9 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
     }
 
     setMatchResults(results);
-    console.log(`Matched ${results.length} Shopify items (restored ${restoredCount} from DB)`);
+    console.log(
+      `Matched ${results.length} Shopify items (${restoreSaved ? `restored ${restoredCount} from DB` : "fresh rematch mode"})`
+    );
     return results;
   };
 
@@ -523,9 +640,7 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       };
     });
 
-    const dbByLineId = await loadDbSavedMatchesByLineId(
-      fetchedLineItems.map((i) => i.lineItemId)
-    );
+    const dbByLineId = await loadDbSavedMatchesForItems(fetchedLineItems);
     const usedSupplierFromDb = new Set<string>();
     for (const row of dbByLineId.values()) {
       if (row.stockxOrderNumber) usedSupplierFromDb.add(row.stockxOrderNumber);
@@ -1493,7 +1608,9 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       }
     },
     autoSetAllHighMatches: async () => {
-      const stats = await autoSaveHighMatchesFromResults(matchResults);
+      const sourceResults =
+        shopifyItems.length > 0 ? await runMatching(shopifyItems, { restoreSaved: false }) : matchResults;
+      const stats = await autoSaveHighMatchesFromResults(sourceResults);
       if (stats.total === 0) {
         alert("⚠️ No HIGH confidence matches to set (refunded lines excluded)");
         return;
@@ -1501,10 +1618,20 @@ export function useMatching({ enrichedOrders, orders, pricingByOrder, reloadDb }
       if (stats.successCount === 0 && stats.failCount === 0) {
         return;
       }
+      const sentList =
+        stats.sent.length > 0
+          ? stats.sent
+              .map((row, idx) => {
+                const oldTag = row.shopifyAgeDays >= 365 ? ` ⚠️ OLD ${row.shopifyAgeDays}d` : "";
+                return `${idx + 1}. ${row.shopifyOrderName} → ${row.supplierOrderNumber}${oldTag}`;
+              })
+              .join("\n")
+          : "(none)";
       alert(
         `✅ Auto-Set Complete!\n\n` +
           `Success: ${stats.successCount}/${stats.total}\n` +
           `Failed: ${stats.failCount}\n\n` +
+          `Sent updates (${stats.sent.length}):\n${sentList}\n\n` +
           `All successful matches are now synced to Shopify and saved to database.`
       );
     },
