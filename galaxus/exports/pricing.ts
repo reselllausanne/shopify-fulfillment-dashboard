@@ -52,8 +52,14 @@ const WEL_DEFAULT_SHIPPING = 7;
 /** WellPlayed own-catalog: at least 15% net + CHF 1 fixed buffer. */
 const WEL_DEFAULT_TARGET_MARGIN = 0.15;
 const WEL_DEFAULT_BUFFER = 1;
-/** baby-walz.ch catalog: at least 15% net (default ship/buffer). */
-const BWZ_DEFAULT_TARGET_MARGIN = 0.15;
+/** baby-walz.ch: tier fallback when buy price unknown (mid tier). */
+const BWZ_DEFAULT_TARGET_MARGIN = 0.2;
+/** Buy under 80 CHF → 30% net; 80–300 → 20%; above 300 → 15%. Boundaries: 80 and 300 in the 20% tier. */
+const BWZ_TIER_HIGH_BUY_CHF = 80;
+const BWZ_TIER_MID_MAX_BUY_CHF = 300;
+const BWZ_MARGIN_UNDER_80 = 0.3;
+const BWZ_MARGIN_80_TO_300 = 0.2;
+const BWZ_MARGIN_OVER_300 = 0.15;
 
 function roundUpToIncrement(value: number, increment: number): number {
   if (increment <= 0) return value;
@@ -255,13 +261,25 @@ function isBwzGalaxusSupplierKey(supplierKey: string | null): boolean {
     .toLowerCase() === "bwz";
 }
 
+/** baby-walz.ch net margin tier from supplier buy ex VAT (CHF). */
+export function resolveBwzTargetNetMarginForBuyPrice(buyPriceExVatCHF: number): number {
+  if (!Number.isFinite(buyPriceExVatCHF) || buyPriceExVatCHF <= 0) {
+    return BWZ_MARGIN_80_TO_300;
+  }
+  if (buyPriceExVatCHF < BWZ_TIER_HIGH_BUY_CHF) return BWZ_MARGIN_UNDER_80;
+  if (buyPriceExVatCHF <= BWZ_TIER_MID_MAX_BUY_CHF) return BWZ_MARGIN_80_TO_300;
+  return BWZ_MARGIN_OVER_300;
+}
+
 /**
  * STX / WEL / BWZ feed margin: optional explicit override, else default target (+ optional env adjustment).
+ * BWZ uses buy-price tiers unless env override is set.
  * NER/THE/partners use other rules — not this helper.
  */
 export function resolveGalaxusTargetNetMarginForSupplier(
   supplierKey: string | null,
-  defaultTargetMargin?: number
+  defaultTargetMargin?: number,
+  buyPriceExVatCHF?: number
 ): number {
   const base = defaultTargetMargin ?? getDefaultPricing().targetMargin;
 
@@ -278,7 +296,10 @@ export function resolveGalaxusTargetNetMarginForSupplier(
     const explicitRaw = readNumberEnv(BWZ_TARGET_MARGIN_KEYS, Number.NaN);
     if (Number.isFinite(explicitRaw)) {
       const explicit = normalizeMarginFraction(explicitRaw);
-      if (isValidTargetMargin(explicit)) return Math.max(explicit, BWZ_DEFAULT_TARGET_MARGIN);
+      if (isValidTargetMargin(explicit)) return explicit;
+    }
+    if (buyPriceExVatCHF != null && Number.isFinite(buyPriceExVatCHF)) {
+      return resolveBwzTargetNetMarginForBuyPrice(buyPriceExVatCHF);
     }
     return BWZ_DEFAULT_TARGET_MARGIN;
   }
@@ -356,7 +377,8 @@ export type ResolveGalaxusSellOptions = {
  * - other partners = +10% on buy ex VAT
  * - `golden` / `gld` = (buy + ship + CH import VAT + douane) × 1.15
  * - WEL: (buy + ship + ≥1 CHF buffer) / (1 − ≥15% net), default ship CHF 7
- * - BWZ: (buy + ship) / (1 − ≥15% net), default ship CHF 2 (env GALAXUS_BWZ_TARGET_NET_MARGIN)
+ * - BWZ: (buy + ship) / (1 − net%), default ship CHF 2; tiers: under 80 → 30%, 80–300 → 20%, above 300 → 15%
+ *   (env GALAXUS_BWZ_TARGET_NET_MARGIN overrides tiers)
  * - STX: (buy + outbound ship) / (1 − target net margin), default 12% + 2 CHF ship
  *   (express / direct-delivery lanes: +9 CHF ship — Galaxus ~6 ship reimbursement gap)
  *   + flat price bump on all STX (default +8 CHF ex VAT, env GALAXUS_STX_PRICE_BUMP_CHF)
@@ -386,7 +408,11 @@ export function resolveGalaxusSellExVatForChannel(
     return roundUpToIncrement(buyPriceExVatCHF * 1.10, roundTo);
   }
 
-  const targetNetMargin = resolveGalaxusTargetNetMarginForSupplier(supplierKey, defaults.targetMargin);
+  const targetNetMargin = resolveGalaxusTargetNetMarginForSupplier(
+    supplierKey,
+    defaults.targetMargin,
+    buyPriceExVatCHF
+  );
   const shippingPerPair = resolveShippingPerPairForSupplier(
     supplierKey,
     defaults.shippingPerPair,
