@@ -33,6 +33,10 @@ type GalaxusOrderListItem = {
   fulfillmentState?: string | null;
 };
 
+type PartnerIdentity = {
+  key?: string | null;
+};
+
 const ORDERS_LIST_CACHE_TTL_MS = 30_000;
 const ORDER_DETAIL_CACHE_TTL_MS = 30_000;
 
@@ -70,6 +74,7 @@ export default function PartnerOrdersPage() {
   const [loadingGalaxusOrder, setLoadingGalaxusOrder] = useState(false);
   const [markingGalaxus, setMarkingGalaxus] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [partnerKey, setPartnerKey] = useState<string>("");
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [productSearchInput, setProductSearchInput] = useState("");
   const [productSearch, setProductSearch] = useState("");
@@ -83,9 +88,37 @@ export default function PartnerOrdersPage() {
     return () => clearTimeout(t);
   }, [productSearchInput]);
 
+  const hideSoldHistory = partnerKey === "XNT";
+  const activeLeftTab: "to_process" | "fulfilled" = hideSoldHistory ? "to_process" : leftTab;
+
+  useEffect(() => {
+    let active = true;
+    const loadPartnerIdentity = async () => {
+      try {
+        const res = await fetch("/api/partners/me", { cache: "no-store" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok || !active) return;
+        const partner: PartnerIdentity | null = data.partner ?? null;
+        setPartnerKey(String(partner?.key ?? "").trim().toUpperCase());
+      } catch {
+        // silent
+      }
+    };
+    void loadPartnerIdentity();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hideSoldHistory && leftTab !== "to_process") {
+      setLeftTab("to_process");
+    }
+  }, [hideSoldHistory, leftTab]);
+
   const loadOrders = useCallback(async (opts?: { force?: boolean }) => {
     const force = Boolean(opts?.force);
-    const cacheKey = `${leftTab}::${productSearch.toLowerCase()}`;
+    const cacheKey = `${activeLeftTab}::${productSearch.toLowerCase()}`;
     const cached = decathlonListCacheRef.current.get(cacheKey);
     if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = cached.items;
@@ -102,7 +135,7 @@ export default function PartnerOrdersPage() {
     try {
       const qs = new URLSearchParams({
         limit: "100",
-        view: leftTab,
+        view: activeLeftTab,
         scope: "partner",
       });
       if (productSearch) qs.set("product", productSearch);
@@ -123,7 +156,7 @@ export default function PartnerOrdersPage() {
     } finally {
       setLoadingOrders(false);
     }
-  }, [leftTab, productSearch]);
+  }, [activeLeftTab, productSearch]);
 
   const loadGalaxusOrders = async (opts?: { force?: boolean }) => {
     const force = Boolean(opts?.force);
@@ -236,10 +269,10 @@ export default function PartnerOrdersPage() {
     return orders.filter((order) => {
       const state = normalizeState(order.orderState);
       const isShipped = isPartnerOrderFulfilled(order);
-      if (leftTab === "fulfilled") return isShipped;
+      if (activeLeftTab === "fulfilled") return isShipped;
       return !isShipped && !canceledStates.has(state);
     });
-  }, [orders, leftTab, canceledStates]);
+  }, [orders, activeLeftTab, canceledStates]);
 
   const shippedPartnerBreakdown = useMemo(() => {
     if (!selectedOrder?.shipments?.length) return [];
@@ -436,14 +469,16 @@ export default function PartnerOrdersPage() {
             >
               To process
             </button>
-            <button
-              className={`rounded border px-2 py-1 ${
-                leftTab === "fulfilled" ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"
-              }`}
-              onClick={() => setLeftTab("fulfilled")}
-            >
-              Fulfilled
-            </button>
+            {!hideSoldHistory ? (
+              <button
+                className={`rounded border px-2 py-1 ${
+                  leftTab === "fulfilled" ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200"
+                }`}
+                onClick={() => setLeftTab("fulfilled")}
+              >
+                Fulfilled
+              </button>
+            ) : null}
           </div>
           <label className="block mb-2">
             <span className="sr-only">Search orders</span>
