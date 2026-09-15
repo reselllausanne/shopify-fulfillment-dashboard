@@ -52,14 +52,14 @@ describe("Galaxus STX margin", () => {
     expect(resolveGalaxusTargetNetMarginForSupplier("stx")).toBeCloseTo(0.12, 5);
   });
 
-  it("sell = (StockX buy + 2 CHF ship) / (1 - 12%) + 8 CHF STX bump", () => {
+  it("sell = (StockX buy + 2 CHF ship) / (1 - 12%) by default", () => {
     const partners = new Set(["ner", "flo"]);
     const stockxBuy = 177;
     const stxSell = resolveGalaxusSellExVatForChannel(stockxBuy, "stx", partners);
-    expect(stxSell).toBeCloseTo(211.45, 2);
+    expect(stxSell).toBeCloseTo(203.45, 2);
   });
 
-  it("adds flat +8 CHF on all STX regardless of delivery lane", () => {
+  it("defaults STX bump to 0 CHF", () => {
     const buy = 100;
     const base = computeGalaxusSellPriceExVat({
       buyPriceExVatCHF: buy,
@@ -74,12 +74,12 @@ describe("Galaxus STX margin", () => {
     const express = resolveGalaxusSellExVatForChannel(buy, "stx", new Set(), {
       deliveryType: "express_standard",
     });
-    expect(standard - base).toBe(8);
-    expect(express - base).toBeGreaterThan(8);
+    expect(standard).toBe(base);
+    expect(express).toBeGreaterThan(base);
   });
 
-  it("STX bump disabled when GALAXUS_STX_PRICE_BUMP_CHF=0", () => {
-    process.env.GALAXUS_STX_PRICE_BUMP_CHF = "0";
+  it("allows explicit STX bump via env", () => {
+    process.env.GALAXUS_STX_PRICE_BUMP_CHF = "8";
     const buy = 177;
     const sell = resolveGalaxusSellExVatForChannel(buy, "stx", new Set());
     const base = computeGalaxusSellPriceExVat({
@@ -89,7 +89,7 @@ describe("Galaxus STX margin", () => {
       bufferPerPairCHF: 0,
       roundTo: 0.05,
     }).sellPriceExVatCHF;
-    expect(sell).toBe(base);
+    expect(sell).toBe(base + 8);
   });
 
   it("STX express / direct-delivery uses 9 CHF ship instead of 2", () => {
@@ -156,7 +156,7 @@ describe("Galaxus STX margin", () => {
     expect(resolveGalaxusSellExVatForChannel(99, "wrk", new Set())).toBeCloseTo(99, 1);
   });
 
-  it("matches computeGalaxusSellPriceExVat for explicit inputs + STX bump", () => {
+  it("matches computeGalaxusSellPriceExVat for explicit inputs by default", () => {
     const buy = 151.07;
     const direct = computeGalaxusSellPriceExVat({
       buyPriceExVatCHF: buy,
@@ -166,8 +166,8 @@ describe("Galaxus STX margin", () => {
       roundTo: 0.05,
     }).sellPriceExVatCHF;
     const stxSell = resolveGalaxusSellExVatForChannel(buy, "stx", new Set());
-    expect(stxSell).toBe(direct + 8);
-    expect(stxSell).toBeCloseTo(181.95, 2);
+    expect(stxSell).toBe(direct);
+    expect(stxSell).toBeCloseTo(173.95, 2);
   });
 
   it("uses higher default shipping for WEL own-catalog lines", () => {
