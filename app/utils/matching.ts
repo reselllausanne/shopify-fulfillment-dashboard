@@ -226,6 +226,11 @@ function toIsoOrNull(value: string | Date | null | undefined): string | null {
   return String(value);
 }
 
+function toNonEmptyStringOrNull(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  return text ? text : null;
+}
+
 function toNumberOrNull(value: number | string | null | undefined): number | null {
   if (value == null || value === "") return null;
   const n = typeof value === "number" ? value : Number(value);
@@ -257,8 +262,8 @@ export function matchResultFromDbSaved(
     statusKey: row.stockxStatus || "SAVED",
     statusTitle: "Saved match",
     currencyCode: shopifyItem.currencyCode || "CHF",
-    awb: row.stockxAwb ?? null,
-    trackingUrl: row.stockxTrackingUrl ?? null,
+    awb: toNonEmptyStringOrNull(row.stockxAwb),
+    trackingUrl: toNonEmptyStringOrNull(row.stockxTrackingUrl),
   };
   const bestMatch: MatchCandidate = {
     supplierOrder,

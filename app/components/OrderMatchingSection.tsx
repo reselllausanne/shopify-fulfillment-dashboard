@@ -393,6 +393,29 @@ export default function OrderMatchingSection({
                           <p>
                             <span className="font-medium">Status:</span> {match.supplierOrder.statusKey || "—"}
                           </p>
+                          <p>
+                            <span className="font-medium">AWB:</span>{" "}
+                            {(() => {
+                              const awb = String(match.supplierOrder.awb || "").trim();
+                              const trackingUrl = String(match.supplierOrder.trackingUrl || "").trim();
+                              if (!awb) {
+                                return <span className="text-amber-700">— not yet</span>;
+                              }
+                              if (trackingUrl) {
+                                return (
+                                  <a
+                                    href={trackingUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-mono text-blue-700 underline"
+                                  >
+                                    {awb}
+                                  </a>
+                                );
+                              }
+                              return <span className="font-mono">{awb}</span>;
+                            })()}
+                          </p>
                         </div>
                         <div className="mt-2 pt-2 border-t border-gray-200">
                           <div className="flex items-center gap-2 text-xs">
