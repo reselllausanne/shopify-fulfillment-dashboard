@@ -27,6 +27,14 @@ type OrderListItem = {
   _count?: { lines: number; shipments: number };
 };
 
+function firstNonEmptyText(...values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
 function deriveListCountsFromOrderDetail(order: any): { linkedCount: number; needsBuyCount: number } {
   const lines = Array.isArray(order?.lines) ? order.lines : [];
   const matches = new Map<string, any>();
@@ -729,6 +737,10 @@ export default function GalaxusDirectDeliveryPage() {
     const sizePrefill = String(line.size ?? "");
     const skuPrefill = String(line.supplierSku ?? "N/A");
     const orderLabel = `${selectedOrder?.galaxusOrderId ?? ""}${selectedOrder?.recipientName ? ` · ${selectedOrder.recipientName}` : ""}`;
+    const resolvedOrderNumber = firstNonEmptyText(match?.stockxOrderNumber, proc?.stockxOrderNumber);
+    const resolvedOrderId = firstNonEmptyText(match?.stockxOrderId, proc?.stockxOrderId);
+    const resolvedAwb = firstNonEmptyText(match?.stockxAwb, proc?.awb);
+    const resolvedTrackingUrl = firstNonEmptyText(match?.stockxTrackingUrl, proc?.trackingUrl);
     const initialData = {
       shopifyOrderId: selectedOrder?.id ?? "",
       shopifyOrderName: orderLabel,
@@ -739,16 +751,16 @@ export default function GalaxusDirectDeliveryPage() {
       shopifySizeEU: sizePrefill || "N/A",
       shopifyTotalPrice: Number.isFinite(priceNumber) ? priceNumber : null,
       shopifyCurrencyCode: selectedOrder?.currencyCode ?? "CHF",
-      stockxOrderNumber: match?.stockxOrderNumber ?? proc?.stockxOrderNumber ?? "",
+      stockxOrderNumber: resolvedOrderNumber,
       stockxChainId: String(line.supplierPid ?? "").trim(),
-      stockxOrderId: match?.stockxOrderId ?? proc?.stockxOrderId ?? "",
+      stockxOrderId: resolvedOrderId,
       stockxProductName: match?.stockxProductName ?? "",
       stockxSizeEU: match?.stockxSizeEU ?? "",
       stockxSkuKey: match?.stockxSkuKey ?? "",
       stockxPurchaseDate: match?.stockxPurchaseDate ?? null,
       stockxStatus: match?.stockxStatus ?? "MANUAL",
-      stockxAwb: match?.stockxAwb ?? proc?.awb ?? "",
-      stockxTrackingUrl: match?.stockxTrackingUrl ?? "",
+      stockxAwb: resolvedAwb,
+      stockxTrackingUrl: resolvedTrackingUrl,
       stockxEstimatedDelivery:
         match?.stockxEstimatedDelivery ?? proc?.stockxEstimatedDelivery ?? null,
       stockxLatestEstimatedDelivery:
@@ -836,9 +848,9 @@ export default function GalaxusDirectDeliveryPage() {
     if (hint === "GOLDEN" || hint === "MAISON" || hint === "NER_STOCK") return false;
     const status = String(match?.stockxStatus ?? "").trim().toUpperCase();
     if (status === "LOCAL_STOCK" || status === "ESSENTIAL_STOCK") return false;
-    const awb = String(match?.stockxAwb ?? proc?.awb ?? "").trim();
+    const awb = firstNonEmptyText(match?.stockxAwb, proc?.awb);
     if (awb) return false;
-    const ref = String(match?.stockxOrderNumber ?? proc?.stockxOrderNumber ?? "").trim();
+    const ref = firstNonEmptyText(match?.stockxOrderNumber, proc?.stockxOrderNumber);
     if (/^LOCAL-/i.test(ref)) return false;
     return true;
   };
@@ -861,9 +873,13 @@ export default function GalaxusDirectDeliveryPage() {
     if (proc?.source === "external_buy") {
       return `Linked ${proc?.supplierKey ?? "EXT"} ${proc?.stockxOrderNumber ?? ""}`.trim();
     }
-    if (proc?.source === "stx_sync") return `Linked (sync)${proc?.awb ? ` · AWB ${proc.awb}` : ""}`;
+    if (proc?.source === "stx_sync") {
+      const awb = firstNonEmptyText(proc?.awb, match?.stockxAwb);
+      return `Linked (sync)${awb ? ` · AWB ${awb}` : ""}`;
+    }
     if (match) {
-      const base = `Linked ${match.stockxOrderNumber}`;
+      const baseRef = firstNonEmptyText(match?.stockxOrderNumber, proc?.stockxOrderNumber);
+      const base = baseRef ? `Linked ${baseRef}` : "Linked";
       if (lineNeedsManualTracking(line, match, proc, procOk)) {
         const goat = String(match.stockxStatus ?? "").toUpperCase() === "GOAT_VERIFY";
         return goat ? `${base} · GOAT verify — add AWB` : `${base} · add AWB`;
