@@ -40,7 +40,7 @@ const STX_DD_SHIPPING_KEYS = [
 ];
 /** Flat ex-VAT surcharge on every STX Galaxus sell (next feed send). Set env to 0 to disable. */
 const STX_PRICE_BUMP_KEYS = ["GALAXUS_STX_PRICE_BUMP_CHF", "GALAXUS_STX_PRICE_SURCHARGE_CHF"];
-const STX_DEFAULT_PRICE_BUMP = 8;
+const STX_DEFAULT_PRICE_BUMP = 0;
 const WEL_SHIPPING_KEYS = ["GALAXUS_WEL_SHIPPING_CHF", "GALAXUS_WEL_PRICE_SHIPPING_CHF"];
 const WEL_TARGET_MARGIN_KEYS = ["GALAXUS_WEL_TARGET_NET_MARGIN", "GALAXUS_WEL_TARGET_MARGIN"];
 const WEL_BUFFER_KEYS = ["GALAXUS_WEL_BUFFER_CHF", "GALAXUS_WEL_PRICE_BUFFER_CHF"];
@@ -162,7 +162,7 @@ export function isStxGalaxusSupplierKey(supplierKey: string | null | undefined):
     .toLowerCase() === "stx";
 }
 
-/** Flat CHF added on top of computed STX Galaxus sell ex VAT (all lanes). Default 8. */
+/** Flat CHF added on top of computed STX Galaxus sell ex VAT (all lanes). Default 0. */
 export function resolveStxGalaxusPriceBumpChf(): number {
   const raw = readNumberEnv(STX_PRICE_BUMP_KEYS, STX_DEFAULT_PRICE_BUMP);
   if (!Number.isFinite(raw) || raw < 0) return STX_DEFAULT_PRICE_BUMP;
@@ -359,7 +359,7 @@ export type ResolveGalaxusSellOptions = {
  * - BWZ: (buy + ship) / (1 − ≥15% net), default ship CHF 2 (env GALAXUS_BWZ_TARGET_NET_MARGIN)
  * - STX: (buy + outbound ship) / (1 − target net margin), default 12% + 2 CHF ship
  *   (express / direct-delivery lanes: +9 CHF ship — Galaxus ~6 ship reimbursement gap)
- *   + flat price bump on all STX (default +8 CHF ex VAT, env GALAXUS_STX_PRICE_BUMP_CHF)
+ *   + flat price bump on all STX (default +0 CHF ex VAT, env GALAXUS_STX_PRICE_BUMP_CHF)
  */
 export function resolveGalaxusSellExVatForChannel(
   buyPriceExVatCHF: number,
