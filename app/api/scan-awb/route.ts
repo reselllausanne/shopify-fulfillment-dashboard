@@ -347,6 +347,7 @@ export async function POST(req: NextRequest) {
               galaxusOrderId: true,
               orderNumber: true,
               deliveryType: true,
+              physicalDeliveryNoteRequired: true,
               shipments: {
                 select: {
                   id: true,
@@ -382,6 +383,7 @@ export async function POST(req: NextRequest) {
               galaxusOrderId: true,
               orderNumber: true,
               deliveryType: true,
+              physicalDeliveryNoteRequired: true,
               recipientName: true,
               recipientCity: true,
               recipientPostalCode: true,
@@ -628,6 +630,7 @@ export async function POST(req: NextRequest) {
         orderNumber: galaxusOrder?.orderNumber ?? null,
         deliveryType: galaxusOrder?.deliveryType ?? null,
         isDirectDelivery: deliveryType === "direct_delivery",
+        physicalDeliveryNoteRequired: Boolean(galaxusOrder?.physicalDeliveryNoteRequired),
         allLinked: linkStatus?.allLinked ?? null,
         alreadyFulfilled,
         trackingNumber:
@@ -653,6 +656,7 @@ export async function POST(req: NextRequest) {
         orderNumber: galaxusOrder?.orderNumber ?? null,
         deliveryType: galaxusOrder?.deliveryType ?? null,
         isDirectDelivery: deliveryType === "direct_delivery",
+        physicalDeliveryNoteRequired: Boolean(galaxusOrder?.physicalDeliveryNoteRequired),
         allLinked: linkStatus?.allLinked ?? null,
         alreadyFulfilled,
         trackingNumber: galaxusWarehouseShipment.trackingNumber ?? null,
