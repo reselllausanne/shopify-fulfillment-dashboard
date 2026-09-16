@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { shopifyMatchMinCreatedAt } from "@/app/lib/shopifyMatchEligibility";
+import {
+  catalogSkuHitIndexes,
+  resolveCatalogSkuHits,
+} from "@/app/api/scan-awb/catalogSkuLookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +18,9 @@ export const dynamic = "force-dynamic";
  * Decathlon + Shopify lines whose identifiers or product name match the typed
  * text and return up to `limit` results. Ranking prefers exact identifier hits,
  * then prefix, then contains, tie-broken by oldest orderDate.
+ *
+ * Also resolves catalog `SupplierVariant.supplierSku` (e.g. Reichelt `MW 3A03GS`)
+ * → GTIN / providerKey so typed style SKUs find open Galaxus/Decathlon lines.
  */
 
 type SuggestKind = "galaxus_direct" | "galaxus_warehouse" | "decathlon" | "shopify";
@@ -28,6 +35,8 @@ type SuggestItem = {
   lineId: string;
   supplierPid: string;
   buyerPid?: string | null;
+  /** Catalog style SKU (SupplierVariant.supplierSku), e.g. MW 3A03GS. */
+  styleSku?: string | null;
   gtin: string | null;
   productName: string;
   sizeEU?: string | null;
@@ -77,7 +86,11 @@ function tierFor(fields: Array<string | null | undefined>, q: string): 0 | 1 | 2
   return bestTier;
 }
 
-async function searchGalaxus(q: string, limit: number): Promise<SuggestItem[]> {
+async function searchGalaxus(
+  q: string,
+  limit: number,
+  catalog?: { gtins: string[]; providerKeys: string[]; skuByGtin: Map<string, string> }
+): Promise<SuggestItem[]> {
   const contains: Prisma.StringFilter = { contains: q, mode: "insensitive" };
   const lineOr: Prisma.GalaxusOrderLineWhereInput[] = [
     { supplierPid: contains },
@@ -90,6 +103,11 @@ async function searchGalaxus(q: string, limit: number): Promise<SuggestItem[]> {
     { order: { orderNumber: contains } },
     { order: { galaxusOrderId: contains } },
   ];
+  if (catalog?.gtins.length) lineOr.push({ gtin: { in: catalog.gtins } });
+  if (catalog?.providerKeys.length) {
+    lineOr.push({ providerKey: { in: catalog.providerKeys } });
+    lineOr.push({ supplierPid: { in: catalog.providerKeys } });
+  }
 
   const rows = await prisma.galaxusOrderLine.findMany({
     where: {
@@ -144,6 +162,8 @@ async function searchGalaxus(q: string, limit: number): Promise<SuggestItem[]> {
     if (!isDirect && line.warehouseMarkedShippedAt) continue;
     // Direct-delivery lines do not carry warehouseMarkedShippedAt; use shipment/DELR state.
     if (isDirect && alreadyFulfilled) continue;
+    const gtin = line.gtin ?? null;
+    const styleSku = gtin ? catalog?.skuByGtin.get(gtin) ?? null : null;
     items.push({
       id: `galaxus:${line.id}`,
       kind: isDirect ? "galaxus_direct" : "galaxus_warehouse",
@@ -154,7 +174,8 @@ async function searchGalaxus(q: string, limit: number): Promise<SuggestItem[]> {
       lineId: line.id,
       supplierPid: String(line.supplierPid ?? line.buyerPid ?? "").trim(),
       buyerPid: line.buyerPid ?? null,
-      gtin: line.gtin ?? null,
+      styleSku,
+      gtin,
       productName: line.productName || line.description || line.supplierPid || "—",
       sizeEU: line.size ?? null,
       deliveryType: line.order.deliveryType ?? null,
@@ -252,7 +273,11 @@ async function searchShopify(q: string, limit: number): Promise<SuggestItem[]> {
   return items;
 }
 
-async function searchDecathlon(q: string, limit: number): Promise<SuggestItem[]> {
+async function searchDecathlon(
+  q: string,
+  limit: number,
+  catalog?: { gtins: string[]; providerKeys: string[]; skuByGtin: Map<string, string> }
+): Promise<SuggestItem[]> {
   const contains: Prisma.StringFilter = { contains: q, mode: "insensitive" };
   const lineOr: Prisma.DecathlonOrderLineWhereInput[] = [
     { offerSku: contains },
@@ -265,6 +290,10 @@ async function searchDecathlon(q: string, limit: number): Promise<SuggestItem[]>
     { order: { orderNumber: contains } },
     { order: { orderId: contains } },
   ];
+  if (catalog?.gtins.length) lineOr.push({ gtin: { in: catalog.gtins } });
+  if (catalog?.providerKeys.length) {
+    lineOr.push({ providerKey: { in: catalog.providerKeys } });
+  }
 
   const rows = await prisma.decathlonOrderLine.findMany({
     where: {
@@ -298,26 +327,32 @@ async function searchDecathlon(q: string, limit: number): Promise<SuggestItem[]>
     take: limit * FETCH_MULTIPLIER,
   });
 
-  return rows.map((line) => ({
-    id: `decathlon:${line.id}`,
-    kind: "decathlon" as const,
-    orderId: line.order.orderId,
-    orderDbId: line.order.id,
-    orderNumber: line.order.orderNumber ?? null,
-    orderDate: line.order.orderDate.toISOString(),
-    lineId: line.id,
-    supplierPid: String(line.offerSku ?? line.productSku ?? line.supplierSku ?? "").trim(),
-    buyerPid: null,
-    gtin: line.gtin ?? null,
-    productName: line.productTitle || line.description || line.offerSku || "—",
-    sizeEU: line.size ?? null,
-    deliveryType: null,
-    customerCity: line.order.recipientCity ?? line.order.customerCity ?? null,
-  }));
+  return rows.map((line) => {
+    const gtin = line.gtin ?? null;
+    const styleSku = gtin ? catalog?.skuByGtin.get(gtin) ?? null : null;
+    return {
+      id: `decathlon:${line.id}`,
+      kind: "decathlon" as const,
+      orderId: line.order.orderId,
+      orderDbId: line.order.id,
+      orderNumber: line.order.orderNumber ?? null,
+      orderDate: line.order.orderDate.toISOString(),
+      lineId: line.id,
+      supplierPid: String(line.offerSku ?? line.productSku ?? line.supplierSku ?? "").trim(),
+      buyerPid: null,
+      styleSku,
+      gtin,
+      productName: line.productTitle || line.description || line.offerSku || "—",
+      sizeEU: line.size ?? null,
+      deliveryType: null,
+      customerCity: line.order.recipientCity ?? line.order.customerCity ?? null,
+    };
+  });
 }
 
 function rankFieldsFor(item: SuggestItem): Array<string | null | undefined> {
   return [
+    item.styleSku,
     item.supplierPid,
     item.buyerPid,
     item.gtin,
@@ -342,9 +377,15 @@ export async function GET(req: NextRequest): Promise<NextResponse<SuggestRespons
       return NextResponse.json<SuggestResponse>({ ok: true, items: [], total: 0 });
     }
 
+    // Catalog style SKU (MW 3A03GS, …) → GTIN before line search.
+    const catalogHits = /[a-z]/i.test(q)
+      ? await resolveCatalogSkuHits(q, limit * FETCH_MULTIPLIER)
+      : [];
+    const catalog = catalogSkuHitIndexes(catalogHits);
+
     const [galaxusItems, decathlonItems, shopifyItems] = await Promise.all([
-      searchGalaxus(q, limit),
-      searchDecathlon(q, limit),
+      searchGalaxus(q, limit, catalog),
+      searchDecathlon(q, limit, catalog),
       searchShopify(q, limit),
     ]);
 

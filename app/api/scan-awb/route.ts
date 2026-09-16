@@ -15,6 +15,10 @@ import {
 } from "@/lib/warehouseScanMiss";
 import { resolveGtinFallback } from "@/app/api/scan-awb/gtinFallback";
 import {
+  catalogSkuHitIndexes,
+  resolveCatalogSkuHits,
+} from "@/app/api/scan-awb/catalogSkuLookup";
+import {
   isShopifyOrderMatchFresh,
   shopifyMatchMinCreatedAt,
 } from "@/app/lib/shopifyMatchEligibility";
@@ -524,8 +528,8 @@ export async function POST(req: NextRequest) {
     );
 
     // GTIN fallback: product barcode on the box (8–14 digit EAN/UPC/ITF14)
-    // instead of shipping AWB. Parallel lookup across Galaxus + Shopify +
-    // Decathlon — only runs on AWB miss so the hot path stays fast.
+    // instead of shipping AWB. Also resolve catalog style SKUs (MW 3A03GS)
+    // typed into /scan → SupplierVariant.supplierSku → GTIN.
     const gtinCandidates = Array.from(
       new Set(
         awbCandidates.filter(
@@ -533,6 +537,21 @@ export async function POST(req: NextRequest) {
         )
       )
     );
+
+    if (
+      !hasShipmentMatch &&
+      gtinCandidates.length === 0 &&
+      /[a-z]/i.test(rawClean) &&
+      rawClean.length >= 2
+    ) {
+      const catalogHits = await resolveCatalogSkuHits(rawClean, 20);
+      const { gtins } = catalogSkuHitIndexes(catalogHits);
+      for (const g of gtins) {
+        if (/^\d{8,14}$/.test(g) && !gtinCandidates.includes(g)) {
+          gtinCandidates.push(g);
+        }
+      }
+    }
 
     const gtinFallback =
       !hasShipmentMatch && gtinCandidates.length > 0
