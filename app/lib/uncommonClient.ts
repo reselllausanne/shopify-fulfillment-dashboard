@@ -311,13 +311,6 @@ export function isUncommonPdpSoldOut(html: string): boolean {
   return hasOosCopy && !hasVisibleQty;
 }
 
-/** Store API cart CTA when variation is actually purchasable on TUS. */
-export function isUncommonPurchasableCartText(text: string | null | undefined): boolean {
-  const t = String(text ?? "").trim().toLowerCase();
-  if (!t) return false;
-  return /in den warenkorb|add to cart|ajouter au panier|acheter/.test(t);
-}
-
 export function isRetryableUncommonError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
   return (
