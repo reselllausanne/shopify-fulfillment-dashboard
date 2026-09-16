@@ -290,6 +290,34 @@ export function isSchemaPreorderAvailability(html: string): boolean {
   return /schema\.org\/PreOrder/i.test(html) || /"availability"\s*:\s*"[^"]*PreOrder/i.test(html);
 }
 
+/**
+ * TUS storefront often shows Woodmart waitlist/OOS while Store API still reports qty.
+ * Trust visible PDP copy over WooCommerce Store API stock fields.
+ */
+export function isUncommonPdpSoldOut(html: string): boolean {
+  const hasOosCopy =
+    /dieses produkt ist derzeit ausverkauft/i.test(html) ||
+    /this product is currently out of stock/i.test(html) ||
+    /ce produit est actuellement en rupture/i.test(html) ||
+    /notify me when available/i.test(html) ||
+    /informieren sie mich[^<]{0,80}(wieder auf lager|verfügbar)/i.test(html);
+
+  const hasVisibleQty =
+    /verf(?:ü|ue)gbar:\s*\d+/i.test(html) ||
+    /\d+\s*vor(?:r)?(?:ä|ae?)tig/i.test(html) ||
+    /available:\s*\d+/i.test(html) ||
+    /disponible[s]?\s*:\s*\d+/i.test(html);
+
+  return hasOosCopy && !hasVisibleQty;
+}
+
+/** Store API cart CTA when variation is actually purchasable on TUS. */
+export function isUncommonPurchasableCartText(text: string | null | undefined): boolean {
+  const t = String(text ?? "").trim().toLowerCase();
+  if (!t) return false;
+  return /in den warenkorb|add to cart|ajouter au panier|acheter/.test(t);
+}
+
 export function isRetryableUncommonError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err ?? "").toLowerCase();
   return (
@@ -404,7 +432,7 @@ export class UncommonClient {
     const priceChf = parseUncommonChfPrice(product.prices);
     if (!priceChf || priceChf <= 0) return null;
 
-    const productUrl = String(product.permalink || "").split("?")[0] || "";
+    const productUrl = String(product.permalink || "").trim();
     if (!productUrl) return null;
 
     let html = "";
@@ -418,10 +446,18 @@ export class UncommonClient {
     let sellable = decision.sellable;
     let stock = decision.stock;
     let reason = decision.reason;
+    let stockSource = decision.stockSource;
     if (sellable && isSchemaPreorderAvailability(html)) {
       sellable = false;
       stock = 0;
       reason = "schema_preorder";
+      stockSource = "pdp_schema_preorder";
+    }
+    if (sellable && isUncommonPdpSoldOut(html)) {
+      sellable = false;
+      stock = 0;
+      reason = "pdp_oos";
+      stockSource = "pdp_html";
     }
 
     const gtin = extractUncommonGtinFromHtml(html);
@@ -452,7 +488,7 @@ export class UncommonClient {
       stock: sellable ? stock : 0,
       sellable,
       sellReason: reason,
-      stockSource: decision.stockSource,
+      stockSource,
       imageUrl: product.images?.[0]?.src || null,
       categories: (product.categories || []).map((c) => c.slug),
       variationLabel,
