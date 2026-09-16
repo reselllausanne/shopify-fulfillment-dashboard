@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildGalaxusForceZeroStockRow,
+  galaxusStockFeedActiveSupplierCodes,
   isGalaxusCatalogReady,
   isGalaxusSellableStock,
+  isGalaxusStockFeedInactiveSupplier,
   isXntFeedBlockedBrand,
+  resetGalaxusStockFeedActiveSupplierCodesCache,
   resolveGalaxusDirectDeliverySupported,
+  resolveGalaxusFeedSupplierCode,
 } from "@/galaxus/exports/feedEligibility";
 
 describe("isGalaxusCatalogReady", () => {
@@ -95,6 +100,55 @@ describe("isGalaxusSellableStock", () => {
     expect(isGalaxusSellableStock(1, { providerKey: "NER_123" })).toBe(true);
     expect(isGalaxusSellableStock(1, { providerKey: "STX_123" })).toBe(true);
     expect(isGalaxusSellableStock(0, { providerKey: "NER_123" })).toBe(false);
+  });
+});
+
+describe("galaxus stock feed active suppliers", () => {
+  const prevActive = process.env.GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS;
+
+  afterEach(() => {
+    if (prevActive === undefined) delete process.env.GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS;
+    else process.env.GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS = prevActive;
+    resetGalaxusStockFeedActiveSupplierCodesCache();
+  });
+
+  it("defaults to NER/STX/REI/WEL", () => {
+    delete process.env.GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS;
+    resetGalaxusStockFeedActiveSupplierCodesCache();
+    expect([...galaxusStockFeedActiveSupplierCodes()].sort()).toEqual(["NER", "REI", "STX", "WEL"]);
+  });
+
+  it("marks GLD/XNT/THE inactive", () => {
+    expect(
+      isGalaxusStockFeedInactiveSupplier({ providerKey: "GLD_4018412327116" })
+    ).toBe(true);
+    expect(
+      isGalaxusStockFeedInactiveSupplier({ providerKey: "XNT_4018412327116" })
+    ).toBe(true);
+    expect(
+      isGalaxusStockFeedInactiveSupplier({ supplierVariantId: "the_123" })
+    ).toBe(true);
+  });
+
+  it("keeps NER/STX/REI/WEL active", () => {
+    expect(isGalaxusStockFeedInactiveSupplier({ providerKey: "NER_123" })).toBe(false);
+    expect(isGalaxusStockFeedInactiveSupplier({ providerKey: "STX_123" })).toBe(false);
+    expect(isGalaxusStockFeedInactiveSupplier({ providerKey: "REI_123" })).toBe(false);
+    expect(isGalaxusStockFeedInactiveSupplier({ providerKey: "WEL_123" })).toBe(false);
+  });
+
+  it("resolves golden supplier id to GLD", () => {
+    expect(resolveGalaxusFeedSupplierCode({ supplierVariantId: "golden_99" })).toBe("GLD");
+  });
+
+  it("builds zero-stock row", () => {
+    const row = buildGalaxusForceZeroStockRow({
+      providerKey: "GLD_4018412327116",
+      supplierVariantId: "golden_99",
+    });
+    expect(row.ProviderKey).toBe("GLD_4018412327116");
+    expect(row.QuantityOnStock).toBe("0");
+    expect(row.DirectDeliverySupported).toBe("0");
   });
 });
 

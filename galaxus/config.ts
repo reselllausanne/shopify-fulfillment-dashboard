@@ -68,6 +68,9 @@ export const GALAXUS_FEED_SUPPLIER_ALLOWLIST =
 /** Comma-separated supplier id prefixes (e.g. `get`) excluded from Galaxus TRM feeds only. Decathlon export is unchanged. */
 export const GALAXUS_FEED_SUPPLIER_BLOCKLIST =
   process.env.GALAXUS_FEED_SUPPLIER_BLOCKLIST ?? "";
+/** Galaxus stock feed keeps real qty only for these 3-letter provider codes; all others emit QuantityOnStock=0. */
+export const GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS =
+  process.env.GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS ?? "ner,stx,rei,wel";
 const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";
 export const GALAXUS_FEED_UPLOADS_DISABLED = !["0", "false", "no"].includes(
   uploadsDisabledRaw.toLowerCase()
