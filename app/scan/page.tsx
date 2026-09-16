@@ -116,6 +116,7 @@ type ScanResult = {
     orderNumber?: string | null;
     deliveryType?: string | null;
     isDirectDelivery?: boolean;
+    physicalDeliveryNoteRequired?: boolean;
     allLinked?: boolean | null;
     alreadyFulfilled?: boolean;
     trackingNumber?: string | null;
@@ -190,6 +191,7 @@ type ScanResult = {
       orderDate: string;
       deliveryType?: string | null;
       isDirectDelivery?: boolean;
+      physicalDeliveryNoteRequired?: boolean;
       ordrSentAt?: string | null;
       cancelledAt?: string | null;
       recipient: {
@@ -292,6 +294,9 @@ type FulfillResponse = {
   galaxusOrderId?: string | null;
   trackingNumber?: string | null;
   shipmentId?: string | null;
+  physicalDeliveryNoteRequired?: boolean;
+  deliveryNoteUrl?: string | null;
+  deliveryNoteNotice?: string | null;
 };
 
 const resolveClientFlag = (value: string | undefined, fallback: boolean) => {
@@ -333,6 +338,7 @@ type DirectQtyPromptState = {
   productName: string;
   remaining: number;
   qty: number;
+  requiresDeliveryNote: boolean;
 };
 
 type DirectRescanHint = {
@@ -581,6 +587,59 @@ const presentScanLabel = (options: {
   return opened;
 };
 
+/** Open Galaxus physical delivery note alongside Swiss Post label (popup-safe). */
+const presentDirectDeliveryNote = (options: {
+  required?: boolean;
+  url?: string | null;
+  preOpenedWin?: Window | null;
+  orderRef?: string;
+}): { opened: boolean; message: string | null } => {
+  const required = Boolean(options.required);
+  const url = String(options.url ?? "").trim();
+  const orderRef = options.orderRef || "order";
+  const closePreOpened = () => {
+    try {
+      options.preOpenedWin?.close();
+    } catch {
+      // ignore
+    }
+  };
+  if (!required) {
+    closePreOpened();
+    return { opened: false, message: null };
+  }
+  if (url && options.preOpenedWin && !options.preOpenedWin.closed) {
+    try {
+      options.preOpenedWin.location.href = url;
+      return {
+        opened: true,
+        message: `Delivery note required — opened with Swiss Post label for ${orderRef}. Put both in the parcel.`,
+      };
+    } catch {
+      closePreOpened();
+    }
+  }
+  if (url) {
+    closePreOpened();
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      return {
+        opened: false,
+        message: `Delivery note required for ${orderRef} — popup blocked. Allow popups, then open: ${url}`,
+      };
+    }
+    return {
+      opened: true,
+      message: `Delivery note required — opened with Swiss Post label for ${orderRef}. Put both in the parcel.`,
+    };
+  }
+  closePreOpened();
+  return {
+    opened: false,
+    message: `Delivery note required for ${orderRef} — PDF not ready. Reprint from direct delivery.`,
+  };
+};
+
 export default function ScanPage() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -606,6 +665,7 @@ export default function ScanPage() {
   const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
   const [directQtyPrompt, setDirectQtyPrompt] = useState<DirectQtyPromptState | null>(null);
   const directQtyPromptResolver = useRef<((qty: number | null) => void) | null>(null);
+  const pendingDirectDeliveryNoteWinRef = useRef<Window | null>(null);
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
@@ -829,6 +889,12 @@ export default function ScanPage() {
     if (!scan.galaxus?.orderDbId && !scan.awb) return;
     setFulfillLoading(true);
     setFulfillResult(null);
+    const requiresDeliveryNote = Boolean(scan.galaxus?.physicalDeliveryNoteRequired);
+    // Pre-open while still near the scan gesture so the DN tab is not blocked.
+    const deliveryNoteWin =
+      requiresDeliveryNote && typeof window !== "undefined"
+        ? window.open("", "_blank", "noopener,noreferrer")
+        : null;
     try {
       const res = await fetch("/api/scan-galaxus-direct-label", {
         method: "POST",
@@ -847,16 +913,32 @@ export default function ScanPage() {
         trackingNumber?: string | null;
         error?: string;
       } = await res.json();
-      setFulfillResult(data);
       const orderRef =
         String(data.orderNumber || data.galaxusOrderId || scan.galaxus?.orderNumber || "").trim() ||
         "—";
       if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
+        try {
+          deliveryNoteWin?.close();
+        } catch {
+          // ignore
+        }
+        setFulfillResult(data);
         window.alert(
           `Galaxus direct ${orderRef}: already fulfilled — no reprint.`
         );
         return;
       }
+      const dn = presentDirectDeliveryNote({
+        required:
+          Boolean(data.physicalDeliveryNoteRequired) || requiresDeliveryNote,
+        url: data.deliveryNoteUrl,
+        preOpenedWin: deliveryNoteWin,
+        orderRef,
+      });
+      setFulfillResult({
+        ...data,
+        deliveryNoteNotice: dn.message,
+      });
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
           labelData: data.labelData,
@@ -868,8 +950,15 @@ export default function ScanPage() {
         });
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
+      } else if (dn.message && !dn.opened) {
+        window.alert(dn.message);
       }
     } catch (err: any) {
+      try {
+        deliveryNoteWin?.close();
+      } catch {
+        // ignore
+      }
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Galaxus label network error");
     } finally {
@@ -878,6 +967,14 @@ export default function ScanPage() {
   };
 
   const closeDirectQtyPrompt = (qty: number | null) => {
+    if (qty == null) {
+      try {
+        pendingDirectDeliveryNoteWinRef.current?.close();
+      } catch {
+        // ignore
+      }
+      pendingDirectDeliveryNoteWinRef.current = null;
+    }
     directQtyPromptResolver.current?.(qty);
     directQtyPromptResolver.current = null;
     setDirectQtyPrompt(null);
@@ -890,6 +987,7 @@ export default function ScanPage() {
     orderLabel: string;
     productName: string;
     remaining: number;
+    requiresDeliveryNote?: boolean;
   }): Promise<number | null> =>
     new Promise((resolve) => {
       const remaining = Math.max(1, Math.floor(Number(params.remaining) || 1));
@@ -898,6 +996,7 @@ export default function ScanPage() {
         ...params,
         remaining,
         qty: 1,
+        requiresDeliveryNote: Boolean(params.requiresDeliveryNote),
       });
     });
 
@@ -907,6 +1006,19 @@ export default function ScanPage() {
       directQtyPrompt.remaining,
       Math.max(1, Math.floor(Number(qty) || 1))
     );
+    // Pre-open DN tab inside the click gesture (before async label fetch).
+    if (directQtyPrompt.requiresDeliveryNote && typeof window !== "undefined") {
+      try {
+        pendingDirectDeliveryNoteWinRef.current?.close();
+      } catch {
+        // ignore
+      }
+      pendingDirectDeliveryNoteWinRef.current = window.open(
+        "",
+        "_blank",
+        "noopener,noreferrer"
+      );
+    }
     closeDirectQtyPrompt(clamped);
   };
 
@@ -915,6 +1027,7 @@ export default function ScanPage() {
     submitDirectQty(directQtyPrompt.qty);
   };
 
+
   // Auto-fire direct-delivery Swiss Post label for the oldest open direct
   // order matched by GTIN when nothing matched by AWB. Same print handling as
   // runGalaxusDirectLabelFromScan (server print or browser popup). Silently
@@ -922,12 +1035,20 @@ export default function ScanPage() {
   // still sees the GTIN fallback panel and can pick manually.
   const runDirectLabelForOrder = async (
     orderDbId: string,
-    selection?: { lineId: string; quantity: number }
+    selection?: { lineId: string; quantity: number },
+    options?: { requiresDeliveryNote?: boolean }
   ) => {
     if (!orderDbId) return;
     const shippedQty = Math.max(1, Math.floor(Number(selection?.quantity) || 1));
     setFulfillLoading(true);
     setFulfillResult(null);
+    const requiresDeliveryNoteHint = Boolean(options?.requiresDeliveryNote);
+    const deliveryNoteWin =
+      pendingDirectDeliveryNoteWinRef.current ??
+      (requiresDeliveryNoteHint && typeof window !== "undefined"
+        ? window.open("", "_blank", "noopener,noreferrer")
+        : null);
+    pendingDirectDeliveryNoteWinRef.current = null;
     try {
       const res = await fetch("/api/scan-galaxus-direct-label", {
         method: "POST",
@@ -943,14 +1064,26 @@ export default function ScanPage() {
       });
       const data: FulfillResponse & { error?: string; orderNumber?: string | null; galaxusOrderId?: string | null } =
         await res.json();
-      setFulfillResult(data);
-      if (res.status === 409) return;
+      if (res.status === 409) {
+        try {
+          deliveryNoteWin?.close();
+        } catch {
+          // ignore
+        }
+        setFulfillResult(data);
+        return;
+      }
+      const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
       if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
-        const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim() || "—";
+        try {
+          deliveryNoteWin?.close();
+        } catch {
+          // ignore
+        }
+        setFulfillResult(data);
         window.alert(`Galaxus direct ${orderRef}: already fulfilled — no reprint.`);
         return;
       }
-      const orderRef = String(data.galaxusOrderId || data.orderNumber || "").trim();
       if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
         // Mark this order as done in the GTIN panel so it stops looking like both are still open.
         let leftAfterShip = 0;
@@ -1013,6 +1146,17 @@ export default function ScanPage() {
           setDirectRescanHint(null);
         }
       }
+      const dn = presentDirectDeliveryNote({
+        required:
+          Boolean(data.physicalDeliveryNoteRequired) || requiresDeliveryNoteHint,
+        url: data.deliveryNoteUrl,
+        preOpenedWin: deliveryNoteWin,
+        orderRef,
+      });
+      setFulfillResult({
+        ...data,
+        deliveryNoteNotice: dn.message,
+      });
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
           labelData: data.labelData,
@@ -1024,8 +1168,15 @@ export default function ScanPage() {
         });
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
+      } else if (dn.message && !dn.opened) {
+        window.alert(dn.message);
       }
     } catch (err: any) {
+      try {
+        deliveryNoteWin?.close();
+      } catch {
+        // ignore
+      }
       setFulfillResult({ ok: false, error: err?.message || "Network error" });
       window.alert(err?.message || "Galaxus label network error");
     } finally {
@@ -1745,9 +1896,14 @@ export default function ScanPage() {
               orderLabel,
               productName,
               remaining,
+              requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired),
             });
             if (qty && qty > 0) {
-              await runDirectLabelForOrder(gtinAutoDirectOrderDbId, { lineId, quantity: qty });
+              await runDirectLabelForOrder(
+                gtinAutoDirectOrderDbId,
+                { lineId, quantity: qty },
+                { requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired) }
+              );
             }
           }
         }
@@ -2648,6 +2804,12 @@ export default function ScanPage() {
                     <> — AWB linked on <code className="text-xs bg-teal-100 px-1 rounded">GalaxusStockxMatch</code>. No Shopify label step here.</>
                   )}
                 </p>
+                {result.galaxus.isDirectDelivery && result.galaxus.physicalDeliveryNoteRequired ? (
+                  <div className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
+                    <span className="font-semibold">Delivery note required.</span> Generating the
+                    Swiss Post label also opens the delivery note — put both in the parcel.
+                  </div>
+                ) : null}
                 {result.galaxus.isDirectDelivery ? (
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
@@ -2689,7 +2851,9 @@ export default function ScanPage() {
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
                   No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
-                  asks how many to ship (per order line) before printing a label.
+                  asks how many to ship (per order line) before printing a label. When Galaxus
+                  requires a physical delivery note, that warning shows before ship and the note
+                  opens with the Post label.
                 </p>
                 <div className="mt-3 overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
@@ -2723,7 +2887,9 @@ export default function ScanPage() {
                             : channel === "decathlon"
                               ? "decathlon"
                               : o.isDirectDelivery
-                                ? "direct"
+                                ? o.physicalDeliveryNoteRequired
+                                  ? "direct · DN required"
+                                  : "direct"
                                 : o.deliveryType || "warehouse";
                         const refLabel =
                           channel === "shopify"
@@ -2984,6 +3150,30 @@ export default function ScanPage() {
                             Tracking {fulfillResult.trackingNumber}
                           </div>
                         ) : null}
+                        {fulfillResult.deliveryNoteNotice ? (
+                          <div
+                            className={`mt-1 rounded border px-2 py-1 text-xs ${
+                              fulfillResult.deliveryNoteUrl
+                                ? "border-amber-300 bg-amber-50 text-amber-950"
+                                : "border-red-200 bg-red-50 text-red-800"
+                            }`}
+                          >
+                            {fulfillResult.deliveryNoteNotice}
+                            {fulfillResult.deliveryNoteUrl ? (
+                              <>
+                                {" "}
+                                <a
+                                  href={fulfillResult.deliveryNoteUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="font-semibold underline"
+                                >
+                                  Open delivery note
+                                </a>
+                              </>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="text-red-700">
@@ -3075,6 +3265,15 @@ export default function ScanPage() {
                 <span className="font-semibold text-emerald-800">{directQtyPrompt.remaining}</span>{" "}
                 left on this line.
               </p>
+              {directQtyPrompt.requiresDeliveryNote ? (
+                <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  <div className="font-semibold">Delivery note required</div>
+                  <div className="mt-0.5 text-xs">
+                    Galaxus asked for a physical delivery note. Confirming ships the Post label and
+                    opens the delivery note together — put both in the parcel.
+                  </div>
+                </div>
+              ) : null}
               {directQtyPrompt.remaining > 1 ? (
                 <>
                   <p className="mt-3 text-xs text-gray-500">
