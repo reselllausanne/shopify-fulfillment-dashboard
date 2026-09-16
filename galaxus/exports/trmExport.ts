@@ -59,11 +59,22 @@ function buildSupplierBlocklistFilter(keys: string[]) {
   return or.length > 0 ? { NOT: { OR: or } } : null;
 }
 
-export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagnostics = true) {
+export type FeedMappingsWhereOptions = {
+  /** Stock feed must include delisted suppliers so we can push QuantityOnStock=0. */
+  skipAllowlist?: boolean;
+};
+
+export function buildFeedMappingsWhere(
+  supplier?: string | null,
+  includeTrmDiagnostics = true,
+  options?: FeedMappingsWhereOptions
+) {
   const normalizedSupplier = supplier ? normalizeSupplierKey(supplier) : "";
-  const allowlistKeys = GALAXUS_FEED_SUPPLIER_ALLOWLIST.split(",")
-    .map(normalizeSupplierKey)
-    .filter(Boolean);
+  const allowlistKeys = options?.skipAllowlist
+    ? []
+    : GALAXUS_FEED_SUPPLIER_ALLOWLIST.split(",")
+        .map(normalizeSupplierKey)
+        .filter(Boolean);
   const allowlistFilter = buildSupplierScopeFilter(allowlistKeys);
   const supplierFilter = normalizedSupplier ? buildSupplierScopeFilter([normalizedSupplier]) : null;
   const combinedSupplierFilter =
@@ -102,6 +113,14 @@ export function buildFeedMappingsWhere(supplier?: string | null, includeTrmDiagn
     return { AND: [supplierScope, statusFilter] };
   }
   return statusFilter;
+}
+
+/** Stock CSV scope: all eligible mappings (ignores feed allowlist) so inactive suppliers can be zeroed. */
+export function buildStockFeedMappingsWhere(
+  supplier?: string | null,
+  includeTrmDiagnostics = true
+) {
+  return buildFeedMappingsWhere(supplier, includeTrmDiagnostics, { skipAllowlist: true });
 }
 
 export function createTrmFeedExclusionStats(): TrmFeedExclusionStats {

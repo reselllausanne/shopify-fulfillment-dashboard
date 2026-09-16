@@ -8,7 +8,7 @@ import {
   loadAlternativeProductsForExport,
 } from "@/galaxus/exports/alternative";
 import {
-  buildFeedMappingsWhere,
+  buildStockFeedMappingsWhere,
   createTrmFeedExclusionStats,
   recordTrmFeedExclusion,
   totalTrmFeedExclusions,
@@ -30,7 +30,9 @@ import {
   resolveGalaxusStockMoq,
 } from "@/galaxus/exports/stockMoq";
 import {
+  buildGalaxusForceZeroStockRow,
   isGalaxusCatalogReady,
+  isGalaxusStockFeedInactiveSupplier,
   isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
 } from "@/galaxus/exports/feedEligibility";
@@ -86,7 +88,7 @@ export async function GET(request: Request) {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  const mappingsWhere = buildFeedMappingsWhere(supplier, all);
+  const mappingsWhere = buildStockFeedMappingsWhere(supplier, all);
   const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
 
   const headers = [
@@ -299,28 +301,26 @@ export async function GET(request: Request) {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;
-    // XNT Pollin / Berrybase: actively delist by pushing stock=0. Bypass the
-    // catalog-ready gate and MOQ gate so previously published ProviderKeys
-    // still receive the zero-quantity row and Galaxus removes the listing.
-    if (isXntFeedBlockedBrand(variant)) {
-      rows.push({
-        ProviderKey: providerKey,
-        QuantityOnStock: "0",
-        RestockTime: "",
-        RestockDate: "",
-        ...formatGalaxusStockMoqFields(
-          resolveGalaxusStockMoq({
-            supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
-            supplierVariantId: String(variant?.supplierVariantId ?? ""),
-            providerKey,
-            manualNote: variant?.manualNote ?? null,
-          })
-        ),
-        TradeUnit: "",
-        LogisticUnit: "",
-        WarehouseCountry: "Poland",
-        DirectDeliverySupported: "0",
-      });
+    const supplierKey = (candidate as any)?.mapping?.supplierKey ?? null;
+    const supplierVariantIdForGate = String(variant?.supplierVariantId ?? "");
+    // Inactive suppliers + XNT Pollin/Berrybase: push stock=0 so Galaxus delists
+    // without dropping the ProviderKey from the feed.
+    if (
+      isGalaxusStockFeedInactiveSupplier({
+        providerKey,
+        supplierKey,
+        supplierVariantId: supplierVariantIdForGate,
+      }) ||
+      isXntFeedBlockedBrand(variant)
+    ) {
+      rows.push(
+        buildGalaxusForceZeroStockRow({
+          providerKey,
+          supplierKey,
+          supplierVariantId: supplierVariantIdForGate,
+          manualNote: variant?.manualNote ?? null,
+        })
+      );
       return;
     }
     const sellPrice = Number(candidate.sellPriceExVat);

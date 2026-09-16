@@ -1,9 +1,15 @@
+import { GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS } from "@/galaxus/config";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import {
+  formatGalaxusStockMoqFields,
   meetsGalaxusStockMoq,
   resolveGalaxusStockMoq,
   type GalaxusStockMoq,
 } from "@/galaxus/exports/stockMoq";
+import {
+  extractProviderKeyFromOrderKey,
+  resolveSupplierCode,
+} from "@/galaxus/supplier/providerKey";
 
 type CatalogVariant = {
   images?: unknown;
@@ -117,4 +123,72 @@ export function resolveGalaxusDirectDeliverySupported(input: {
     return "0";
   }
   return "1";
+}
+
+let stockFeedActiveSupplierCodesCache: Set<string> | null = null;
+
+export function galaxusStockFeedActiveSupplierCodes(): Set<string> {
+  if (stockFeedActiveSupplierCodesCache) return stockFeedActiveSupplierCodesCache;
+  stockFeedActiveSupplierCodesCache = new Set(
+    GALAXUS_STOCK_FEED_ACTIVE_SUPPLIERS.split(",")
+      .map((entry) => entry.trim().toUpperCase())
+      .filter((entry) => /^[A-Z]{3}$/.test(entry))
+  );
+  return stockFeedActiveSupplierCodesCache;
+}
+
+/** Reset cached active-supplier set (tests). */
+export function resetGalaxusStockFeedActiveSupplierCodesCache() {
+  stockFeedActiveSupplierCodesCache = null;
+}
+
+export function resolveGalaxusFeedSupplierCode(input: {
+  providerKey?: string | null;
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+}): string {
+  const fromProvider = extractProviderKeyFromOrderKey(input.providerKey);
+  if (fromProvider) return fromProvider;
+  const fromKey = String(input.supplierKey ?? "")
+    .trim()
+    .toUpperCase()
+    .slice(0, 3);
+  if (/^[A-Z]{3}$/.test(fromKey)) return fromKey;
+  return resolveSupplierCode(input.supplierVariantId);
+}
+
+/** True when stock CSV must emit QuantityOnStock=0 (delist without dropping the ProviderKey). */
+export function isGalaxusStockFeedInactiveSupplier(input: {
+  providerKey?: string | null;
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+}): boolean {
+  const code = resolveGalaxusFeedSupplierCode(input);
+  return !galaxusStockFeedActiveSupplierCodes().has(code);
+}
+
+export function buildGalaxusForceZeroStockRow(input: {
+  providerKey: string;
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+  manualNote?: string | null;
+}): Record<string, string> {
+  return {
+    ProviderKey: input.providerKey,
+    QuantityOnStock: "0",
+    RestockTime: "",
+    RestockDate: "",
+    ...formatGalaxusStockMoqFields(
+      resolveGalaxusStockMoq({
+        supplierKey: input.supplierKey ?? null,
+        supplierVariantId: String(input.supplierVariantId ?? ""),
+        providerKey: input.providerKey,
+        manualNote: input.manualNote ?? null,
+      })
+    ),
+    TradeUnit: "",
+    LogisticUnit: "",
+    WarehouseCountry: "Poland",
+    DirectDeliverySupported: "0",
+  };
 }
