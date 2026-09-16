@@ -3,6 +3,7 @@ import {
   buildSwissPostRecipient,
   buildSwissPostRecipientFromGalaxusOrder,
   buildSwissPostRecipientNameFields,
+  sanitizeStreetForSwissPost,
 } from "@/lib/swissPostRecipient";
 
 describe("buildSwissPostRecipientNameFields", () => {
@@ -123,6 +124,36 @@ describe("buildSwissPostRecipientFromGalaxusOrder", () => {
     expect(recipient.personallyAddressed).toBe(true);
     expect(recipient.firstName).toBe("Anna");
     expect(recipient.name1).toBe("Keller");
+  });
+
+  it("private_customer + Digitec recipientName + FR street with comma (order 201475265)", () => {
+    const recipient = buildSwissPostRecipientFromGalaxusOrder({
+      recipientName: "Digitec Galaxus AG",
+      recipientAddress1: "11, rue des Eaux-Vives",
+      recipientPostalCode: "1207",
+      recipientCity: "Genève",
+      recipientCountryCode: "CH",
+      customerName: "Digitec Galaxus AG",
+      referencePerson: "Kees Engelbarts",
+      customerType: "private_customer",
+    });
+    expect(recipient.personallyAddressed).toBe(true);
+    expect(recipient.firstName).toBe("Kees");
+    expect(recipient.name1).toBe("Engelbarts");
+    expect(recipient.street).toBe("11 rue des Eaux-Vives");
+    expect(recipient.zip).toBe("1207");
+    expect(recipient.city).toBe("Genève");
+  });
+});
+
+describe("sanitizeStreetForSwissPost", () => {
+  it("keeps French number-comma-street addresses intact", () => {
+    expect(sanitizeStreetForSwissPost("11, rue des Eaux-Vives")).toBe("11 rue des Eaux-Vives");
+    expect(sanitizeStreetForSwissPost("3b, avenue de la Gare")).toBe("3b avenue de la Gare");
+  });
+
+  it("still strips trailing marketplace notes after a real street", () => {
+    expect(sanitizeStreetForSwissPost("Bahnhofstrasse 1, Dock A19")).toBe("Bahnhofstrasse 1");
   });
 });
 

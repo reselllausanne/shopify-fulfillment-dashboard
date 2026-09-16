@@ -220,9 +220,20 @@ export function sanitizeStreetForSwissPost(baseStreet: unknown, extraStreet?: un
     street = extra;
   }
 
-  // Some marketplaces append department/notes after a comma. Swiss Post street pattern rejects this.
+  // French house-number prefix: "11, rue des Eaux-Vives" → "11 rue des Eaux-Vives".
+  // Old logic split on comma and kept only the left token ("11"), dropping the street.
   if (street.includes(",")) {
-    street = street.split(",")[0]?.trim() ?? street;
+    const [left, ...rest] = street.split(",");
+    const leftTrim = (left ?? "").trim();
+    const rightTrim = rest.join(",").trim();
+    // Pure house number (11 / 3b / 12A) — not a street name. Rejoin with the right side.
+    const leftIsHouseNumberOnly = /^\d+[a-zA-Z]?$/u.test(leftTrim);
+    if (leftIsHouseNumberOnly && rightTrim) {
+      street = `${leftTrim} ${rightTrim}`.trim();
+    } else {
+      // Marketplace notes after a real street ("Bahnhofstrasse 1, Dock A19") → keep street.
+      street = leftTrim || street;
+    }
   }
 
   if (!/\d/.test(street) && extra && /\d/.test(extra)) {
@@ -366,9 +377,17 @@ export function buildSwissPostRecipientFromGalaxusOrder(order: {
       ? customerName
       : null);
 
+  // Galaxus DD often sets recipientName=Digitec Galaxus AG + referencePerson=end customer
+  // while customerType=private_customer. Prefer the reference person so the label shows Kees,
+  // not Digitec, when the marketplace name is the only "recipient".
+  const privatePerson =
+    contact && (!primaryName || looksLikeSwissPostBusinessName(primaryName) || sameName(primaryName, customerName))
+      ? contact
+      : primaryName || contact || customerName;
+
   return buildSwissPostRecipient({
     company: isBusiness ? primaryName || null : null,
-    personName: isBusiness ? businessPerson : primaryName || contact || customerName,
+    personName: isBusiness ? businessPerson : privatePerson,
     customerType,
     department: null,
     address1: hasRecipient ? order.recipientAddress1 : order.customerAddress1,
