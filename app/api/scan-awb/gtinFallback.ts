@@ -47,6 +47,7 @@ export type GtinOrderRow = {
   galaxusOrderId?: string;
   deliveryType?: string | null;
   isDirectDelivery?: boolean;
+  physicalDeliveryNoteRequired?: boolean;
   ordrSentAt?: string | null;
   shipments?: Array<{
     id: string;
@@ -141,6 +142,7 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
           deliveryType: true,
           ordrSentAt: true,
           cancelledAt: true,
+          physicalDeliveryNoteRequired: true,
           recipientName: true,
           recipientCity: true,
           recipientPostalCode: true,
@@ -246,6 +248,7 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
       orderDate: order.orderDate.toISOString(),
       deliveryType: order.deliveryType,
       isDirectDelivery: deliveryType === "direct_delivery",
+      physicalDeliveryNoteRequired: Boolean(order.physicalDeliveryNoteRequired),
       ordrSentAt: order.ordrSentAt ? order.ordrSentAt.toISOString() : null,
       cancelledAt: order.cancelledAt ? order.cancelledAt.toISOString() : null,
       recipient: {

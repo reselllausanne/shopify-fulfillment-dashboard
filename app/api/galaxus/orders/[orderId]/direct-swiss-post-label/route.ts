@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
 import { printDirectDeliveryDocumentsLocally } from "@/galaxus/directDelivery/printDirectDocuments";
+import { resolveDirectDeliveryNoteMeta } from "@/galaxus/directDelivery/resolveDeliveryNoteUrl";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
+import { prisma } from "@/app/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,11 +70,24 @@ export async function POST(
       browserPrintConfig: result.browserPrintConfig,
     });
 
+    const orderRow = await prisma.galaxusOrder.findFirst({
+      where: { OR: [{ id: orderId }, { galaxusOrderId: orderId }] },
+      select: { id: true },
+    });
+    const deliveryNote = orderRow
+      ? await resolveDirectDeliveryNoteMeta({
+          orderDbId: orderRow.id,
+          shipmentId: result.shipmentId,
+        })
+      : { physicalDeliveryNoteRequired: false, deliveryNoteUrl: null };
+
     return NextResponse.json({
       ...result,
       browserPrintConfig: printed.browserPrintConfig ?? result.browserPrintConfig,
       printJobResult: printed.printJobResult,
       deliveryNotePrintResult: printed.deliveryNotePrintResult,
+      physicalDeliveryNoteRequired: deliveryNote.physicalDeliveryNoteRequired,
+      deliveryNoteUrl: deliveryNote.deliveryNoteUrl,
     });
   } catch (error: any) {
     console.error("[GALAXUS][DIRECT-SWISS-POST-LABEL] Failed:", error);

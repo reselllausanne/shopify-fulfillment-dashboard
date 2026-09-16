@@ -525,12 +525,25 @@ export default function GalaxusDirectDeliveryPage() {
       if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
       const serverPrinted = data.browserPrintConfig?.enabled === false;
       const labelUrl = String(data?.url ?? "").trim();
+      const slipUrl = String(data?.deliveryNoteUrl ?? "").trim() || null;
       if (serverPrinted) {
-        // Server printed everything locally (Brother + HP). No browser popup.
-        closeUnused();
+        // Server printed everything locally (Brother + HP). Still open DN in browser when required.
+        try { labelWin?.close(); } catch {}
         const labelFail = data.printJobResult && !data.printJobResult.ok && !data.printJobResult.skipped;
         if (labelFail) {
           setError(`Label print: ${data.printJobResult.error || data.printJobResult.message || "failed"}`);
+        }
+        if (requiresPackingSlip && slipUrl && packingSlipWin) {
+          packingSlipWin.location.href = String(slipUrl);
+        } else {
+          try { packingSlipWin?.close(); } catch {}
+          if (requiresPackingSlip && !slipUrl) {
+            setError((prev) =>
+              prev
+                ? `${prev} · Packing slip not ready yet — reprint docs to fetch.`
+                : "Packing slip not ready yet — reprint docs to fetch."
+            );
+          }
         }
       } else {
         if (labelUrl && labelWin) {
@@ -538,20 +551,20 @@ export default function GalaxusDirectDeliveryPage() {
         } else {
           try { labelWin?.close(); } catch {}
         }
-        // Packing slip: physical delivery note required → open the PDF now
-        // (fresh selectedOrder shipments carry deliveryNotePdfUrl after reload).
-        const slipUrl = (() => {
+        // Prefer fresh URL from label API (shipment DN just created); fall back to detail reload.
+        const slipFromDetail = (() => {
+          if (slipUrl) return slipUrl;
           const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
           const withSlip = shipments.find(
             (shipment: any) => String(shipment?.deliveryNotePdfUrl ?? "").trim().length > 0
           );
           return withSlip?.deliveryNotePdfUrl ?? null;
         })();
-        if (requiresPackingSlip && slipUrl && packingSlipWin) {
-          packingSlipWin.location.href = String(slipUrl);
+        if (requiresPackingSlip && slipFromDetail && packingSlipWin) {
+          packingSlipWin.location.href = String(slipFromDetail);
         } else {
           try { packingSlipWin?.close(); } catch {}
-          if (requiresPackingSlip && !slipUrl) {
+          if (requiresPackingSlip && !slipFromDetail) {
             setError((prev) =>
               prev
                 ? `${prev} · Packing slip not ready yet — reprint docs to fetch.`

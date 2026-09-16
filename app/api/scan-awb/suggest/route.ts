@@ -125,6 +125,7 @@ async function searchGalaxus(
       supplierPid: true,
       buyerPid: true,
       gtin: true,
+      providerKey: true,
       productName: true,
       description: true,
       size: true,
@@ -158,11 +159,17 @@ async function searchGalaxus(
     const alreadyFulfilled = (line.order.shipments ?? []).some(
       (s) => Boolean(s.delrSentAt) || String(s.delrStatus ?? "").toUpperCase() === "UPLOADED"
     );
+    const gtin = line.gtin ?? null;
+    const providerKey = String(line.providerKey ?? line.supplierPid ?? "").trim();
+    const matchedViaCatalog =
+      Boolean(catalog?.gtins.length) &&
+      ((gtin != null && catalog!.gtins.includes(gtin)) ||
+        (providerKey && catalog!.providerKeys.includes(providerKey)));
     // Line-level pending signal for warehouse: not yet warehouse-shipped.
     if (!isDirect && line.warehouseMarkedShippedAt) continue;
-    // Direct-delivery lines do not carry warehouseMarkedShippedAt; use shipment/DELR state.
-    if (isDirect && alreadyFulfilled) continue;
-    const gtin = line.gtin ?? null;
+    // Direct-delivery: hide fulfilled unless the hit came from a catalog style SKU
+    // search (GOOBAY 232 / MW 3A03) — operators still need to find that order.
+    if (isDirect && alreadyFulfilled && !matchedViaCatalog) continue;
     const styleSku = gtin ? catalog?.skuByGtin.get(gtin) ?? null : null;
     items.push({
       id: `galaxus:${line.id}`,

@@ -6,6 +6,10 @@ import { getInvoiceLineProgressByOrderIds } from "@/galaxus/edi/invoiceCoverage"
 import { buildLinkedCountByOrderId } from "@/galaxus/orders/lineProcurement";
 import { getOpenWarehouseLineCountByOrderId } from "@/galaxus/warehouse/shipmentLineCoverage";
 import { dedupeById } from "@/galaxus/_lib/dedupeById";
+import {
+  catalogSkuHitIndexes,
+  resolveCatalogSkuHits,
+} from "@/app/api/scan-awb/catalogSkuLookup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,6 +68,28 @@ export async function GET(request: Request) {
       };
     }
 
+    // Catalog style SKU (GOOBAY 23235, MW 3A03GS) lives on SupplierVariant, not
+    // GalaxusOrderLine.supplierSku (that stays REI_/STX_…). Resolve → GTIN/providerKey.
+    const catalog =
+      q.length >= 2 && /[a-z]/i.test(q)
+        ? catalogSkuHitIndexes(await resolveCatalogSkuHits(q, 40))
+        : { gtins: [] as string[], providerKeys: [] as string[], skuByGtin: new Map<string, string>() };
+
+    const lineOr: Prisma.GalaxusOrderLineWhereInput[] = [
+      { gtin: { contains: q, mode: "insensitive" } },
+      { supplierSku: { contains: q, mode: "insensitive" } },
+      { productName: { contains: q, mode: "insensitive" } },
+      { description: { contains: q, mode: "insensitive" } },
+      { supplierPid: { contains: q, mode: "insensitive" } },
+      { providerKey: { contains: q, mode: "insensitive" } },
+      { buyerPid: { contains: q, mode: "insensitive" } },
+    ];
+    if (catalog.gtins.length) lineOr.push({ gtin: { in: catalog.gtins } });
+    if (catalog.providerKeys.length) {
+      lineOr.push({ providerKey: { in: catalog.providerKeys } });
+      lineOr.push({ supplierPid: { in: catalog.providerKeys } });
+    }
+
     const where: Prisma.GalaxusOrderWhereInput =
       q.length > 0
         ? {
@@ -73,16 +99,12 @@ export async function GET(request: Request) {
                 OR: [
                   { galaxusOrderId: { contains: q, mode: "insensitive" } },
                   { orderNumber: { contains: q, mode: "insensitive" } },
+                  { recipientName: { contains: q, mode: "insensitive" } },
+                  { referencePerson: { contains: q, mode: "insensitive" } },
                   {
                     lines: {
                       some: {
-                        OR: [
-                          { gtin: { contains: q, mode: "insensitive" } },
-                          { supplierSku: { contains: q, mode: "insensitive" } },
-                          { productName: { contains: q, mode: "insensitive" } },
-                          { description: { contains: q, mode: "insensitive" } },
-                          { supplierPid: { contains: q, mode: "insensitive" } },
-                        ],
+                        OR: lineOr,
                       },
                     },
                   },

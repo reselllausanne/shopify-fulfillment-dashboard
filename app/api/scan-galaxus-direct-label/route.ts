@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
 import { printDirectDeliveryDocumentsLocally } from "@/galaxus/directDelivery/printDirectDocuments";
+import { resolveDirectDeliveryNoteMeta } from "@/galaxus/directDelivery/resolveDeliveryNoteUrl";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
@@ -153,11 +154,18 @@ export async function POST(req: NextRequest) {
       browserPrintConfig: result.browserPrintConfig,
     });
 
+    const deliveryNote = await resolveDirectDeliveryNoteMeta({
+      orderDbId: order.id,
+      shipmentId: result.shipmentId,
+    });
+
     return NextResponse.json({
       ...result,
       browserPrintConfig: printed.browserPrintConfig ?? result.browserPrintConfig,
       printJobResult: printed.printJobResult,
       deliveryNotePrintResult: printed.deliveryNotePrintResult,
+      physicalDeliveryNoteRequired: deliveryNote.physicalDeliveryNoteRequired,
+      deliveryNoteUrl: deliveryNote.deliveryNoteUrl,
       orderNumber: order.orderNumber,
       galaxusOrderId: order.galaxusOrderId,
     });
