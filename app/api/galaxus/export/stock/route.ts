@@ -33,6 +33,7 @@ import {
   isGalaxusCatalogReady,
   isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
+  shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
@@ -299,10 +300,19 @@ export async function GET(request: Request) {
     const variant = candidate.variant as any;
     const providerKey = candidate.providerKey ?? "";
     if (!providerKey) return;
-    // XNT Pollin / Berrybase: actively delist by pushing stock=0. Bypass the
-    // catalog-ready gate and MOQ gate so previously published ProviderKeys
-    // still receive the zero-quantity row and Galaxus removes the listing.
-    if (isXntFeedBlockedBrand(variant)) {
+    const mappingSupplierKey = (candidate as any)?.mapping?.supplierKey ?? null;
+    const supplierVariantIdEarly = String(variant?.supplierVariantId ?? "");
+    // Force stock=0 delist rows (XNT brand block OR stock-positive allowlist).
+    // Bypass catalog-ready / MOQ so previously published ProviderKeys still
+    // receive QuantityOnStock=0 and Galaxus removes the live offer.
+    if (
+      isXntFeedBlockedBrand(variant) ||
+      shouldForceGalaxusStockZero({
+        supplierKey: mappingSupplierKey,
+        supplierVariantId: supplierVariantIdEarly,
+        providerKey,
+      })
+    ) {
       rows.push({
         ProviderKey: providerKey,
         QuantityOnStock: "0",
@@ -310,8 +320,8 @@ export async function GET(request: Request) {
         RestockDate: "",
         ...formatGalaxusStockMoqFields(
           resolveGalaxusStockMoq({
-            supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
-            supplierVariantId: String(variant?.supplierVariantId ?? ""),
+            supplierKey: mappingSupplierKey,
+            supplierVariantId: supplierVariantIdEarly,
             providerKey,
             manualNote: variant?.manualNote ?? null,
           })

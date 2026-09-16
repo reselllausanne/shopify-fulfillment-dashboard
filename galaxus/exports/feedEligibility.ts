@@ -18,23 +18,6 @@ type CatalogVariant = {
 } | null | undefined;
 
 /**
- * Brands that must never be pushed via the XNT / Manufactum partner feed.
- * These are electronics resellers (Pollin, Berrybase) that Manufactum surfaces
- * but which we do not want in the Galaxus master/offer/stock CSVs — they
- * inherit XNT delivery/logistics but not the retail terms we want.
- */
-const XNT_BLOCKED_BRANDS: readonly string[] = ["pollin", "berrybase", "berry base"];
-
-function normalizeBrandToken(value?: string | null): string {
-  return String(value ?? "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-/**
  * True when the variant is a XNT partner row we must exclude from all Galaxus
  * feeds. Applied on top of `isGalaxusCatalogReady` (master) + downstream stock
  * / offer eligibility to keep every CSV in sync.
@@ -43,14 +26,60 @@ export function isXntFeedBlockedBrand(variant: CatalogVariant): boolean {
   if (!variant) return false;
   const supplierKey = String(variant.supplierKey ?? "").toLowerCase();
   const supplierVariantId = String(variant.supplierVariantId ?? "").toLowerCase();
-  const isXnt =
+  return (
     supplierKey === "xnt" ||
     supplierVariantId.startsWith("xnt_") ||
-    supplierVariantId.startsWith("xnt:");
-  if (!isXnt) return false;
-  const brand = normalizeBrandToken(variant.supplierBrand);
-  if (!brand) return false;
-  return XNT_BLOCKED_BRANDS.some((needle) => brand.includes(needle));
+    supplierVariantId.startsWith("xnt:")
+  );
+}
+
+function stockPositiveAllowlistKeys(): Set<string> {
+  // Read env at call time so VPS/env patches apply without module-cache tricks.
+  const raw = String(process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST ?? "").trim();
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function resolveSupplierKeyPrefix(input: {
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+  providerKey?: string | null;
+}): string {
+  const fromKey = String(input.supplierKey ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (fromKey) return fromKey.slice(0, 3);
+  const fromSv = String(input.supplierVariantId ?? "")
+    .trim()
+    .toLowerCase();
+  if (fromSv.includes("_")) return fromSv.split("_")[0]!.slice(0, 3);
+  if (fromSv.includes(":")) return fromSv.split(":")[0]!.slice(0, 3);
+  const fromPk = String(input.providerKey ?? "")
+    .trim()
+    .toLowerCase();
+  if (fromPk.includes("_")) return fromPk.split("_")[0]!.slice(0, 3);
+  return fromPk.slice(0, 3);
+}
+
+/**
+ * When `GALAXUS_STOCK_POSITIVE_ALLOWLIST` is set, force stock=0 for every
+ * supplier not on the list. Empty env = disabled (no force-zero).
+ */
+export function shouldForceGalaxusStockZero(input: {
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+  providerKey?: string | null;
+}): boolean {
+  const allow = stockPositiveAllowlistKeys();
+  if (allow.size === 0) return false;
+  const prefix = resolveSupplierKeyPrefix(input);
+  if (!prefix) return true;
+  return !(allow.has(prefix) || allow.has(String(input.supplierKey ?? "").trim().toLowerCase()));
 }
 
 /**
@@ -59,7 +88,7 @@ export function isXntFeedBlockedBrand(variant: CatalogVariant): boolean {
  * Galaxus treats stock-only keys as "Add" and fails with "GTIN is missing"
  * when catalog rows never arrived (common for incomplete NER).
  *
- * Note: XNT-brand block (Pollin / Berrybase) is NOT applied here anymore.
+ * Note: XNT block is NOT applied here anymore.
  * The stock feed must still be able to emit stock=0 for those rows so Galaxus
  * delists what was previously pushed. Master + offer routes call
  * `isXntFeedBlockedBrand` explicitly to skip catalog/offer updates.
