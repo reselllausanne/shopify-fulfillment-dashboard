@@ -262,6 +262,24 @@ export default function LogisticsDirectDeliveryPage() {
     setError(null);
     setOpsLog(null);
     setLabelBusy(true);
+    const requiresPackingSlip = Boolean(selectedOrder?.physicalDeliveryNoteRequired);
+    const labelWin = typeof window !== "undefined" ? window.open("", "_blank", "noopener,noreferrer") : null;
+    const packingSlipWin =
+      requiresPackingSlip && typeof window !== "undefined"
+        ? window.open("", "_blank", "noopener,noreferrer")
+        : null;
+    const closeUnused = () => {
+      try {
+        labelWin?.close();
+      } catch {
+        // ignore
+      }
+      try {
+        packingSlipWin?.close();
+      } catch {
+        // ignore
+      }
+    };
     try {
       const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
@@ -273,6 +291,7 @@ export default function LogisticsDirectDeliveryPage() {
       if (!reprint && data.status === "ALREADY_FULFILLED") {
         setError("Already fulfilled — use Reprint docs.");
         setOpsLog(JSON.stringify(data, null, 2));
+        closeUnused();
         return;
       }
       setOpsLog(JSON.stringify(data, null, 2));
@@ -282,6 +301,10 @@ export default function LogisticsDirectDeliveryPage() {
       await loadOrders({ force: true });
       if (selectedOrderId) await loadOrderDetail(selectedOrderId, { force: true });
       const serverPrinted = data.browserPrintConfig?.enabled === false;
+      const slipUrl =
+        String(data?.deliveryNoteUrl ?? "").trim() ||
+        packingSlipUrl ||
+        null;
       if (serverPrinted) {
         const bits: string[] = [];
         if (data.printJobResult?.ok) bits.push("Label → Brother");
@@ -290,13 +313,46 @@ export default function LogisticsDirectDeliveryPage() {
         if (data.printJobResult && !data.printJobResult.ok && !data.printJobResult.skipped) {
           setError(`Label print: ${data.printJobResult.error || data.printJobResult.message}`);
         }
-      } else if (data?.url) {
-        window.open(String(data.url), "_blank", "noopener,noreferrer");
-        if (reprint && packingSlipUrl) {
-          window.open(packingSlipUrl, "_blank", "noopener,noreferrer");
+        try {
+          labelWin?.close();
+        } catch {
+          // ignore
+        }
+        if (requiresPackingSlip && slipUrl && packingSlipWin) {
+          packingSlipWin.location.href = String(slipUrl);
+        } else {
+          try {
+            packingSlipWin?.close();
+          } catch {
+            // ignore
+          }
+        }
+      } else {
+        const labelUrl = String(data?.url ?? "").trim();
+        if (labelUrl && labelWin) {
+          labelWin.location.href = labelUrl;
+        } else {
+          try {
+            labelWin?.close();
+          } catch {
+            // ignore
+          }
+        }
+        if (requiresPackingSlip && slipUrl && packingSlipWin) {
+          packingSlipWin.location.href = String(slipUrl);
+        } else {
+          try {
+            packingSlipWin?.close();
+          } catch {
+            // ignore
+          }
+          if (requiresPackingSlip && !slipUrl) {
+            setError("Delivery note required — PDF not ready yet. Try Reprint docs.");
+          }
         }
       }
     } catch (err: any) {
+      closeUnused();
       setError(err.message);
     } finally {
       setLabelBusy(false);

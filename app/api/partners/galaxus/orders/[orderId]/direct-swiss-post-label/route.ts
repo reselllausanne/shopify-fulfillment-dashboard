@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
+import { resolveDirectDeliveryNoteMeta } from "@/galaxus/directDelivery/resolveDeliveryNoteUrl";
 import { requirePartnerSelfFulfillAccess } from "@/app/api/partners/galaxus/_auth";
 import {
   collectGtinsFromLines,
@@ -71,7 +72,15 @@ export async function POST(
                   : 500;
       return NextResponse.json(result, { status });
     }
-    return NextResponse.json(result);
+    const deliveryNote = await resolveDirectDeliveryNoteMeta({
+      orderDbId: order.id,
+      shipmentId: result.shipmentId,
+    });
+    return NextResponse.json({
+      ...result,
+      physicalDeliveryNoteRequired: deliveryNote.physicalDeliveryNoteRequired,
+      deliveryNoteUrl: deliveryNote.deliveryNoteUrl,
+    });
   } catch (error: any) {
     return NextResponse.json({ ok: false, error: error?.message ?? "Failed" }, { status: 500 });
   }
