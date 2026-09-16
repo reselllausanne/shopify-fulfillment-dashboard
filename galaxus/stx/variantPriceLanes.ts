@@ -57,6 +57,33 @@ export type StxDualPriceFields = {
   standardSuggestedRetailPriceInclVat: number | null;
 };
 
+/**
+ * Max express/standard buy ratio before we abandon express as the active Galaxus
+ * lane. Default 2 = express ≥ 100% more expensive than standard → use standard.
+ * Env: STX_EXPRESS_OVER_STANDARD_MAX_RATIO (e.g. "2", "1.5").
+ */
+export function readStxExpressOverStandardMaxRatio(): number {
+  const raw = process.env.STX_EXPRESS_OVER_STANDARD_MAX_RATIO ?? "2";
+  const n = Number.parseFloat(String(raw));
+  if (!Number.isFinite(n) || n < 1) return 2;
+  return n;
+}
+
+/**
+ * Thin/outlier express asks (often 1 ask at absurd CHF) must not drive the
+ * marketplace `price` / `deliveryType`. Keep both lane fields for Shopify.
+ */
+export function shouldPreferStandardOverExpress(
+  expressBuy: number | null | undefined,
+  standardBuy: number | null | undefined,
+  maxRatio: number = readStxExpressOverStandardMaxRatio()
+): boolean {
+  if (expressBuy == null || standardBuy == null) return false;
+  if (!(expressBuy > 0) || !(standardBuy > 0)) return false;
+  if (!(maxRatio >= 1)) return false;
+  return expressBuy >= standardBuy * maxRatio;
+}
+
 export function allowsStxStandardImport(payload: unknown, slug?: string | null): boolean {
   const handle = slug ?? pickString(
     (payload as { slug?: unknown })?.slug,
@@ -97,8 +124,9 @@ export function isStxMarketplacePublishableDeliveryType(
 }
 
 /**
- * DB mirror + Shopify STX pricing: store every size with a usable StockX ask
- * (express preferred, standard fallback). Marketplace export filters separately.
+ * DB mirror + Shopify STX pricing: store every size with a usable StockX ask.
+ * Express preferred when present *and* not absurdly above standard (≥100% by
+ * default). Otherwise standard. Marketplace export filters separately.
  */
 export function buildStxDualPriceFields(
   variant: { prices?: unknown },
@@ -108,15 +136,19 @@ export function buildStxDualPriceFields(
 ): StxDualPriceFields | null {
   const express = selectStxActiveOffer(variant?.prices);
   const standard = selectStxStandardOffer(variant?.prices);
-  const active = express ?? standard;
-  if (!active) return null;
+  if (!express && !standard) return null;
 
   const expressBuy = express ? buyFromOffer(express, payload) : null;
   const standardBuy = standard ? buyFromOffer(standard, payload) : null;
+
+  const preferStandard =
+    Boolean(standard) && shouldPreferStandardOverExpress(expressBuy, standardBuy);
+  const active = preferStandard ? standard! : (express ?? standard!);
+
   const activeBuy =
-    express && expressBuy != null
-      ? expressBuy
-      : standardBuy ?? buyFromOffer(active, payload);
+    preferStandard || !express
+      ? standardBuy ?? buyFromOffer(active, payload)
+      : expressBuy ?? buyFromOffer(active, payload);
 
   return {
     price: activeBuy,

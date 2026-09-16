@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { selectStxActiveOffer, selectStxStandardOffer } from "@/galaxus/stx/offerSelection";
-import { buildStxDualPriceFields, isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
+import {
+  buildStxDualPriceFields,
+  isStxMarketplacePublishableDeliveryType,
+  shouldPreferStandardOverExpress,
+} from "@/galaxus/stx/variantPriceLanes";
 
 describe("selectStxStandardOffer", () => {
   it("picks cheapest standard lane", () => {
@@ -21,6 +25,20 @@ describe("selectStxActiveOffer", () => {
       { type: "express_expedited", price: 77, asks: 1 },
     ]);
     expect(selected).toEqual({ deliveryType: "express_standard", price: 70, asks: 116 });
+  });
+});
+
+describe("shouldPreferStandardOverExpress", () => {
+  it("flags express at exactly 2× standard (100% premium)", () => {
+    expect(shouldPreferStandardOverExpress(424, 212, 2)).toBe(true);
+  });
+
+  it("keeps express when premium is under the ratio", () => {
+    expect(shouldPreferStandardOverExpress(250, 212, 2)).toBe(false);
+  });
+
+  it("matches Hoka Clifton complaint (~5× express)", () => {
+    expect(shouldPreferStandardOverExpress(1051.26, 212.53, 2)).toBe(true);
   });
 });
 
@@ -52,6 +70,40 @@ describe("buildStxDualPriceFields", () => {
     expect(lanes).not.toBeNull();
     expect(lanes!.deliveryType).toBe("standard");
     expect(lanes!.stock).toBe(6);
+  });
+
+  it("falls back to standard when express ask is ≥2× standard (Hoka complaint)", () => {
+    const lanes = buildStxDualPriceFields(
+      {
+        prices: [
+          { type: "express_standard", price: 932, asks: 1 },
+          { type: "standard", price: 175, asks: 12 },
+        ],
+      },
+      { slug: "hoka-one-one-clifton-9-triple-black", title: "Hoka Clifton 9" },
+      "Hoka One One Clifton 9 Triple Black"
+    );
+    expect(lanes).not.toBeNull();
+    expect(lanes!.deliveryType).toBe("standard");
+    expect(lanes!.price).toBe(lanes!.standardBuyPrice);
+    expect(lanes!.expressBuyPrice).toBeGreaterThan(lanes!.standardBuyPrice! * 2);
+    expect(lanes!.stock).toBe(12);
+  });
+
+  it("keeps express when premium is modest", () => {
+    const lanes = buildStxDualPriceFields(
+      {
+        prices: [
+          { type: "express_standard", price: 200, asks: 4 },
+          { type: "standard", price: 175, asks: 12 },
+        ],
+      },
+      { slug: "nike-dunk-low-panda", title: "Nike Dunk Low" },
+      "Nike Dunk Low"
+    );
+    expect(lanes).not.toBeNull();
+    expect(lanes!.deliveryType).toBe("express_standard");
+    expect(lanes!.price).toBe(lanes!.expressBuyPrice);
   });
 });
 
