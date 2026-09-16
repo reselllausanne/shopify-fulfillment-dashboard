@@ -1,7 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/app/lib/prisma";
-import { requestSwissPostLabel } from "@/lib/swissPost";
+import { normalizeSwissPostRecipientPhone, requestSwissPostLabel } from "@/lib/swissPost";
 import { buildSwissPostRecipientFromGalaxusOrder } from "@/lib/swissPostRecipient";
 import { getStorageAdapter } from "@/galaxus/storage/storage";
 import { DocumentType } from "@prisma/client";
@@ -61,6 +61,15 @@ export function extractSwissPostTracking(response: any): string | null {
 
 function buildRecipient(order: any) {
   const recipient = buildSwissPostRecipientFromGalaxusOrder(order);
+  const rawPhone = String(recipient.phone ?? "").replace(/[^\d+]/g, "");
+  let phone = normalizeSwissPostRecipientPhone(recipient.phone, recipient.country);
+  // Galaxus often stores CH mobiles as 4179… (no +). Swiss Post E2042 requires +41… / 0…
+  if (!phone && /^41\d{8,12}$/.test(rawPhone)) phone = `+${rawPhone}`;
+  if (!phone && rawPhone) {
+    phone = normalizeSwissPostRecipientPhone(`+${rawPhone.replace(/^\+/, "")}`, recipient.country);
+  }
+  const emailRaw = String(recipient.email ?? "").trim();
+  const email = emailRaw && !/noreply/i.test(emailRaw) ? emailRaw : null;
   return {
     personallyAddressed: recipient.personallyAddressed,
     name1: recipient.name1,
@@ -71,8 +80,8 @@ function buildRecipient(order: any) {
     zip: recipient.zip,
     city: recipient.city,
     country: recipient.country,
-    phone: recipient.phone,
-    email: recipient.email,
+    phone,
+    email,
   };
 }
 
