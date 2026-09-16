@@ -402,6 +402,7 @@ type SuggestItem = {
   lineId: string;
   supplierPid: string;
   buyerPid?: string | null;
+  styleSku?: string | null;
   gtin: string | null;
   productName: string;
   sizeEU?: string | null;
@@ -2160,7 +2161,7 @@ export default function ScanPage() {
                         <div className="text-[11px] text-gray-600 mt-0.5 flex flex-wrap gap-x-2">
                           <span>Size {item.sizeEU || "—"}</span>
                           <span className="font-mono">
-                            SKU {item.supplierPid || "—"}
+                            SKU {item.styleSku || item.supplierPid || "—"}
                           </span>
                           <span className="font-mono">
                             GTIN {item.gtin || "—"}
