@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   isGalaxusCatalogReady,
   isGalaxusSellableStock,
   isXntFeedBlockedBrand,
   resolveGalaxusDirectDeliverySupported,
+  shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
 
 describe("isGalaxusCatalogReady", () => {
@@ -38,9 +39,9 @@ describe("isGalaxusCatalogReady", () => {
     ).toBe(true);
   });
 
-  // XNT Pollin/Berrybase block is now enforced at the master + offer route
-  // level (not inside isGalaxusCatalogReady) so the stock route can still push
-  // stock=0 rows to delist. See isXntFeedBlockedBrand tests below.
+  // XNT block is enforced at the master + offer route level (not inside
+  // isGalaxusCatalogReady) so the stock route can still push stock=0 rows to
+  // delist. See isXntFeedBlockedBrand tests below.
 });
 
 describe("isXntFeedBlockedBrand", () => {
@@ -48,7 +49,7 @@ describe("isXntFeedBlockedBrand", () => {
     expect(
       isXntFeedBlockedBrand({
         supplierVariantId: "xnt_123",
-        supplierBrand: "Pollin",
+        supplierBrand: "Whatever",
       })
     ).toBe(true);
   });
@@ -57,38 +58,57 @@ describe("isXntFeedBlockedBrand", () => {
     expect(
       isXntFeedBlockedBrand({
         supplierKey: "xnt",
-        supplierBrand: "Berry Base",
+        supplierBrand: "Le Creuset",
       })
     ).toBe(true);
   });
 
-  it("case + accent insensitive", () => {
+  it("matches xnt id variant separator", () => {
     expect(
       isXntFeedBlockedBrand({
-        supplierKey: "xnt",
-        supplierBrand: "POLLIN GmbH",
+        supplierVariantId: "xnt:abc",
       })
     ).toBe(true);
   });
 
-  it("passes through allowed brands", () => {
+  it("passes through non-xnt rows", () => {
     expect(
       isXntFeedBlockedBrand({
-        supplierKey: "xnt",
+        supplierKey: "ner",
         supplierBrand: "Le Creuset",
       })
     ).toBe(false);
   });
 });
 
+describe("shouldForceGalaxusStockZero", () => {
+  const prev = process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST;
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST;
+    else process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST = prev;
+  });
+
+  it("disabled when allowlist empty", () => {
+    process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST = "";
+    expect(shouldForceGalaxusStockZero({ supplierVariantId: "tus_1" })).toBe(false);
+  });
+
+  it("forces zero for scrapers outside stx,ner,rei", () => {
+    process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST = "stx,ner,rei";
+    expect(shouldForceGalaxusStockZero({ supplierVariantId: "tus_1" })).toBe(true);
+    expect(shouldForceGalaxusStockZero({ supplierKey: "wel" })).toBe(true);
+    expect(shouldForceGalaxusStockZero({ providerKey: "XNT_123" })).toBe(true);
+    expect(shouldForceGalaxusStockZero({ supplierVariantId: "stx_1" })).toBe(false);
+    expect(shouldForceGalaxusStockZero({ supplierKey: "ner" })).toBe(false);
+    expect(shouldForceGalaxusStockZero({ providerKey: "REI_999" })).toBe(false);
+  });
+});
+
 describe("isGalaxusSellableStock", () => {
   it("enforces GLD MOQ 3", () => {
-    expect(
-      isGalaxusSellableStock(1, { providerKey: "GLD_194274091274" })
-    ).toBe(false);
-    expect(
-      isGalaxusSellableStock(3, { providerKey: "GLD_194274091274" })
-    ).toBe(true);
+    expect(isGalaxusSellableStock(1, { providerKey: "GLD_194274091274" })).toBe(false);
+    expect(isGalaxusSellableStock(3, { providerKey: "GLD_194274091274" })).toBe(true);
   });
 
   it("allows stock 1 for NER/STX default MOQ", () => {
