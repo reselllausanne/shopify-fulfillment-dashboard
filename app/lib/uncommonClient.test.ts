@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isUncommonGiftCard,
+  isUncommonPdpSoldOut,
   isUncommonPreorderSignal,
   parseUncommonChfPrice,
   parseUncommonStockQty,
@@ -158,6 +159,29 @@ describe("resolveUncommonSellable WEL traps", () => {
 describe("isUncommonGiftCard", () => {
   it("detects pw-gift-card", () => {
     expect(isUncommonGiftCard(base({ type: "pw-gift-card" }))).toBe(true);
+  });
+});
+
+describe("isUncommonPdpSoldOut", () => {
+  it("detects Woodmart waitlist OOS without visible qty", () => {
+    const html = `
+      <h4>Dieses Produkt ist derzeit ausverkauft.</h4>
+      <p>Geben Sie Ihre E-Mail-Adresse ein</p>
+    `;
+    expect(isUncommonPdpSoldOut(html)).toBe(true);
+  });
+
+  it("allows in-stock PDP with Verfügbar qty", () => {
+    const html = `<div>Verfügbar: 43</div>`;
+    expect(isUncommonPdpSoldOut(html)).toBe(false);
+  });
+
+  it("allows OOS template copy when qty is visible", () => {
+    const html = `
+      <div>Dieses Produkt ist derzeit ausverkauft.</div>
+      <div>207 vorrätig</div>
+    `;
+    expect(isUncommonPdpSoldOut(html)).toBe(false);
   });
 });
 
