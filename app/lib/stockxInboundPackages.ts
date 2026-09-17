@@ -69,6 +69,40 @@ export function inboundRetentionRankAt(row: {
   );
 }
 
+/**
+ * Logistics timestamp for inbound retention ranking.
+ * Prefer real parcel movement dates — NEVER purchaseDate / creationDate
+ * (buy time ≠ when the package is inbound).
+ *
+ * Priority:
+ * 1. deliveredDate
+ * 2. estimatedDeliveryDateRange (latest, then min)
+ * 3. sellerShipByDateRange (actual, then end, then start)
+ */
+export function resolveStockxInboundLogisticsAt(params: {
+  deliveredDate?: Date | string | null;
+  estimatedDeliveryDate?: Date | string | null;
+  latestEstimatedDeliveryDate?: Date | string | null;
+  sellerShipByActual?: Date | string | null;
+  sellerShipByEnd?: Date | string | null;
+  sellerShipByStart?: Date | string | null;
+  /** Explicitly ignored — must not drive retention. */
+  purchaseDate?: Date | string | null;
+  creationDate?: Date | string | null;
+}): Date | null {
+  void params.purchaseDate;
+  void params.creationDate;
+  return (
+    asDate(params.deliveredDate) ??
+    asDate(params.latestEstimatedDeliveryDate) ??
+    asDate(params.estimatedDeliveryDate) ??
+    asDate(params.sellerShipByActual) ??
+    asDate(params.sellerShipByEnd) ??
+    asDate(params.sellerShipByStart) ??
+    null
+  );
+}
+
 export async function upsertStockxInboundPackage(
   input: UpsertStockxInboundPackageInput
 ): Promise<UpsertStockxInboundPackageResult | null> {
@@ -82,9 +116,9 @@ export async function upsertStockxInboundPackage(
 
   const now = new Date();
   const purchaseDate = asDate(input.purchaseDate);
-  const stockxEventAt =
-    asDate(input.stockxEventAt) ?? purchaseDate ?? asDate(input.arrivedAt);
-  // arrivedAt: set once on create from stockx event; do NOT bump on every cron.
+  // stockxEventAt = logistics only. Never fall back to purchaseDate.
+  const stockxEventAt = asDate(input.stockxEventAt);
+  // arrivedAt: set once on create from logistics event; do NOT bump on every cron.
   const arrivedAtCreate = stockxEventAt ?? now;
 
   const existing = await prismaAny.stockxInboundPackage.findUnique({

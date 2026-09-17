@@ -6,7 +6,7 @@
  * on purpose — those AWBs belong to warehouse inbound flows, not Shopify AWB
  * fallback.
  *
- * Retention uses stockxEventAt (else firstSeenAt), never cron wall-clock.
+ * Retention uses logistics stockxEventAt (delivered/ETA/ship-by; else firstSeenAt), never purchaseDate or cron wall-clock.
  * Never uses OrderMatch as an inbound source.
  */
 
@@ -24,6 +24,7 @@ import {
 import {
   STOCKX_INBOUND_PACKAGE_RETENTION,
   pruneStockxInboundPackagesForAccount,
+  resolveStockxInboundLogisticsAt,
   upsertStockxInboundPackage,
 } from "@/app/lib/stockxInboundPackages";
 
@@ -118,7 +119,7 @@ export type SyncStockxInboundResult = {
 /**
  * Pull PENDING + HISTORICAL buying orders per Shopify-side StockX account,
  * resolve AWBs, and upsert `StockxInboundPackage`. Keeps only the last N rows
- * per account by stockxEventAt / firstSeenAt (default 100).
+ * per account by logistics stockxEventAt / firstSeenAt (default 100) — never purchaseDate.
  */
 export async function syncStockxInboundPackagesFromStockxApi(
   options: SyncStockxInboundOptions = {}
@@ -184,12 +185,18 @@ export async function syncStockxInboundPackagesFromStockxApi(
           if (!chainId || !orderId) return;
 
           let awb: string | null = null;
+          let detailOrder: any = null;
+          let detailEtaMin: Date | null = null;
+          let detailEtaMax: Date | null = null;
           try {
             const details = await fetchStockxBuyOrderDetailsFull(token.token, {
               chainId,
               orderId,
             });
             awb = details.awb;
+            detailOrder = details.order;
+            detailEtaMin = details.etaMin;
+            detailEtaMax = details.etaMax;
           } catch (err: any) {
             console.warn(
               "[STOCKX-INBOUND-SYNC] detail fetch failed",
@@ -207,7 +214,24 @@ export async function syncStockxInboundPackagesFromStockxApi(
             (node.state?.statusKey as string | null | undefined) ??
             (node.state?.statusTitle as string | null | undefined) ??
             null;
-          const stockxEventAt = node.purchaseDate ?? node.creationDate ?? null;
+          const purchaseDate = node.purchaseDate ?? node.creationDate ?? null;
+          // Retention must use logistics dates (delivered / ETA / ship-by), never buy time.
+          const listEta = node.estimatedDeliveryDateRange;
+          const shipBy = detailOrder?.sellerShipByDateRange ?? null;
+          const stockxEventAt = resolveStockxInboundLogisticsAt({
+            deliveredDate: detailOrder?.deliveredDate ?? null,
+            latestEstimatedDeliveryDate:
+              detailEtaMax ??
+              listEta?.latestEstimatedDeliveryDate ??
+              null,
+            estimatedDeliveryDate:
+              detailEtaMin ?? listEta?.estimatedDeliveryDate ?? null,
+            sellerShipByActual: shipBy?.actual ?? null,
+            sellerShipByEnd: shipBy?.end ?? null,
+            sellerShipByStart: shipBy?.start ?? null,
+            purchaseDate,
+            creationDate: node.creationDate ?? null,
+          });
 
           try {
             const row = await upsertStockxInboundPackage({
@@ -218,7 +242,7 @@ export async function syncStockxInboundPackagesFromStockxApi(
               sku,
               sizeEU,
               productName,
-              purchaseDate: stockxEventAt,
+              purchaseDate,
               stockxEventAt,
               status,
               channelHint: "shopify",
