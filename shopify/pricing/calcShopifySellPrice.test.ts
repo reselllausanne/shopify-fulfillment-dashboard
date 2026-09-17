@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   calcShopifySellPrice,
   calcPhysicalLiquidationSellPrice,
+  explainShopifySellPrice,
+  isAdidasLifestyleFullCpa,
+  resolveShopifyPricingRule,
+  SHOPIFY_CPA_CAP_HALF,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 describe("calcShopifySellPrice", () => {
@@ -32,6 +36,36 @@ describe("calcShopifySellPrice", () => {
     expect(adidas! % 10).toBe(9);
   });
 
+  it("applies HALF (CPA 24) even on former FULL adidas lifestyle families", () => {
+    expect(
+      isAdidasLifestyleFullCpa({
+        productHandle: "adidas-samba-og",
+        brand: "adidas",
+        productName: "Samba OG",
+      })
+    ).toBe(false);
+
+    const samba = explainShopifySellPrice({
+      stockxRaw: 170,
+      productCategory: "sneakers",
+      brand: "adidas",
+      productHandle: "adidas-samba-og-white",
+      productName: "adidas Samba OG",
+    });
+    const dunk = explainShopifySellPrice({
+      stockxRaw: 170,
+      productCategory: "sneakers",
+      brand: "nike",
+      productHandle: "nike-dunk-low",
+    });
+
+    expect(samba.rule).toBe("half");
+    expect(dunk.rule).toBe("half");
+    expect(samba.cpaCap).toBe(SHOPIFY_CPA_CAP_HALF);
+    expect(samba.calculatedSell).toBe(dunk.calculatedSell);
+    expect(resolveShopifyPricingRule({ productHandle: "adidas-gazelle" })).toBe("half");
+  });
+
   it("returns psych-rounded lego price", () => {
     const price = calcShopifySellPrice({
       stockxRaw: 80,
@@ -40,6 +74,7 @@ describe("calcShopifySellPrice", () => {
     });
     expect(price).not.toBeNull();
     expect([9, 19, 29, 39, 49, 59, 69, 79, 89, 99].includes(price! % 100)).toBe(true);
+    expect(resolveShopifyPricingRule({ productCategory: "lego" })).toBe("lego");
   });
 });
 

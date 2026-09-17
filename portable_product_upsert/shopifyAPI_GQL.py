@@ -408,10 +408,8 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
 
 
 def is_adidas_lifestyle_full_cpa(product_handle="", brand="", product_category=""):
-    """FULL CPA bake (CAC~31) for thin adidas lifestyle: Samba/Gazelle/Spezial/Campus."""
-    blob = f"{product_handle} {brand} {product_category}".lower().replace("_", "-")
-    families = ("samba", "gazelle", "spezial", "campus")
-    return any(f in blob for f in families)
+    """DEPRECATED: FULL CPA (31) retired. Always False — HALF (24) for all families."""
+    return False
 
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
@@ -438,28 +436,26 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     6. Psychological rounding (no global +3%, no second ship bump)
     
     LEGO: C_plus_ship * 1.33 (33% brut) only, then psych rounding. Manual inbound ship via get_lego_shipping_cost(handle).
+
+    Active rule: HALF only (CPA_CAP=24). FULL (31 / adidas lifestyle) is never applied.
     
     Args:
         stockx_raw: StockX tile price BEFORE their fees (CHF)
         product_category: Product category (sneakers, lego, etc.)
         is_express: Express delivery — higher ship in base + 5% upsell before rounding
         product_handle: Product URL slug for LEGO-specific shipping
+        brand: unused (kept for call-site compat; FULL branch removed)
     """
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
     
     # ---- Tunables (update monthly if needed) ----
-    # Blended CAC ~31 (MER≈7). Default HALF bake CPA_CAP=24; FULL=31 on adidas lifestyle.
+    # HALF only (CPA_CAP=24). FULL (31) retired — adidas Samba/Gazelle/Spezial/Campus use HALF.
     PSP = 0.032         # payment fee %
     VAT = 0.023         # VAT %
     ADS_PCT = 0.14      # ads as % of CA on low-AOV branch (blended MER≈7 → ~14%; was 19%)
-    CPA_CAP = 24.0      # CHF/order high-AOV (HALF default)
+    CPA_CAP = 24.0      # CHF/order high-AOV (HALF — sole production rule)
     CM2_TARGET = 0.21   # ~21% after ads → ~12% after ops
-    if is_adidas_lifestyle_full_cpa(product_handle, brand, product_category):
-        CPA_CAP = 31.0  # FULL bake — thinnest leftover segment
-        print(
-            f"[PRICE DEBUG] FULL CPA bake (adidas lifestyle Samba/Gazelle/Spezial/Campus): "
-            f"CPA_CAP={CPA_CAP}"
-        )
+    print(f"[PRICE DEBUG] HALF CPA bake: CPA_CAP={CPA_CAP}")
     SHIP_F_STANDARD = 14.5  # STX dropship outbound (was 7 warehouse)
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price

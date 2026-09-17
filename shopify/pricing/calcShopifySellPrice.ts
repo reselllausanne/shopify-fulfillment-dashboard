@@ -15,27 +15,33 @@ export type CalcShopifySellPriceInput = {
   isExpress?: boolean;
 };
 
-/** FULL CPA bake for thin adidas lifestyle: Samba / Gazelle / Spezial / Campus. */
-export function isAdidasLifestyleFullCpa(input: {
+/**
+ * Pricing rule label for audits / dry-runs.
+ * HALF = CPA_CAP 24 (sole production rule since 2026-09).
+ * FULL (CPA 31 / adidas lifestyle) is retired — kept only as a historical label.
+ */
+export type ShopifyPricingRule = "half" | "lego" | "manual_override";
+
+export const SHOPIFY_CPA_CAP_HALF = 24.0;
+
+/**
+ * @deprecated FULL CPA bake removed. Always returns false — adidas Samba/Gazelle/
+ * Spezial/Campus use HALF like every other STX product.
+ */
+export function isAdidasLifestyleFullCpa(_input: {
   productHandle?: string | null;
   productName?: string | null;
   brand?: string | null;
   productCategory?: string | null;
 }): boolean {
-  const blob = [
-    input.productHandle,
-    input.productName,
-    input.brand,
-    input.productCategory,
-  ]
-    .map((v) => String(v ?? "").toLowerCase().replace(/_/g, "-"))
-    .join(" ");
-  return ["samba", "gazelle", "spezial", "campus"].some((f) => blob.includes(f));
+  return false;
 }
 
 /**
  * TypeScript port of Python `calc_sell_price` (shopifyAPI_GQL.py) — same hybrid
  * ads-cost model used on the Shopify storefront.
+ *
+ * Active rule: HALF only (CPA_CAP=24). FULL (31) is never applied on new calcs.
  */
 export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number | null {
   const stockxRaw = Number(input.stockxRaw);
@@ -43,7 +49,6 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
 
   const productHandle = String(input.productHandle ?? "");
   const productName = String(input.productName ?? "");
-  const brand = String(input.brand ?? "");
   const category =
     typeof input.productCategory === "string" &&
     (input.productCategory === "sneakers" ||
@@ -59,15 +64,8 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const PSP = 0.032;
   const VAT = 0.023;
   const ADS_PCT = 0.14; // blended MER≈7
-  // HALF default; FULL (~31) on adidas lifestyle thin segment
-  const CPA_CAP = isAdidasLifestyleFullCpa({
-    productHandle,
-    productName,
-    brand,
-    productCategory: category,
-  })
-    ? 31.0
-    : 24.0;
+  // HALF only — FULL (CPA 31) retired for all brands/families
+  const CPA_CAP = SHOPIFY_CPA_CAP_HALF;
   const CM2_TARGET = 0.21;
   /** Outbound customer ship in hybrid base — STX dropship ≈ 14.5 CHF (was 7 warehouse). */
   const SHIP_F = isExpress ? 15.0 : 14.5;
@@ -113,6 +111,75 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   if (isExpress) finalPriceRaw *= 1 + EXPRESS_UPSELL_PCT;
 
   return psychRoundUp(finalPriceRaw);
+}
+
+/** Which production rule `calcShopifySellPrice` would apply (never `full`). */
+export function resolveShopifyPricingRule(
+  input: Pick<
+    CalcShopifySellPriceInput,
+    "productCategory" | "productHandle" | "productName"
+  >
+): Exclude<ShopifyPricingRule, "manual_override"> {
+  const productHandle = String(input.productHandle ?? "");
+  const productName = String(input.productName ?? "");
+  const category =
+    typeof input.productCategory === "string" &&
+    (input.productCategory === "sneakers" ||
+      input.productCategory === "clothing" ||
+      input.productCategory === "lego")
+      ? input.productCategory
+      : classifySuggestedSellCategory({ productHandle, productName });
+  return category === "lego" ? "lego" : "half";
+}
+
+export type ShopifySellPriceBreakdown = {
+  stockxRaw: number;
+  costChf: number;
+  costPlusShip: number;
+  rule: Exclude<ShopifyPricingRule, "manual_override">;
+  cpaCap: number | null;
+  calculatedSell: number | null;
+  isExpress: boolean;
+};
+
+/** Dry-run friendly breakdown for audits (no Shopify writes). */
+export function explainShopifySellPrice(
+  input: CalcShopifySellPriceInput
+): ShopifySellPriceBreakdown {
+  const stockxRaw = Number(input.stockxRaw);
+  const isExpress = Boolean(input.isExpress);
+  const rule = resolveShopifyPricingRule(input);
+  const shipF = isExpress ? 15.0 : 14.5;
+
+  if (!Number.isFinite(stockxRaw) || stockxRaw <= 0) {
+    return {
+      stockxRaw,
+      costChf: NaN,
+      costPlusShip: NaN,
+      rule,
+      cpaCap: rule === "half" ? SHOPIFY_CPA_CAP_HALF : null,
+      calculatedSell: null,
+      isExpress,
+    };
+  }
+
+  const productHandle = String(input.productHandle ?? "");
+  let costChf: number;
+  if (rule === "lego") {
+    costChf = stockxRaw * 1.1 + getLegoInboundShippingChf(productHandle);
+  } else {
+    costChf = stockxRaw * 1.08 + 20.0;
+  }
+
+  return {
+    stockxRaw,
+    costChf: Math.round(costChf * 100) / 100,
+    costPlusShip: Math.round((costChf + shipF) * 100) / 100,
+    rule,
+    cpaCap: rule === "half" ? SHOPIFY_CPA_CAP_HALF : null,
+    calculatedSell: calcShopifySellPrice(input),
+    isExpress,
+  };
 }
 
 /**
