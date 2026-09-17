@@ -32,6 +32,10 @@ import {
   isGoogleReadyImage,
   type ProductMediaImage,
 } from "@/scripts/lib/shopifyImageHeroRepair";
+import {
+  evaluatePostWriteVerification,
+  urlMatchLoose,
+} from "@/scripts/lib/kicksdbShopifyPostWrite";
 
 const APPLY_CONFIRM = "REPLACE_KICKDB_HERO";
 const DEFAULT_LIMIT = 100;
@@ -124,24 +128,6 @@ function looksLikeStockxThumbUrl(url: string | null | undefined): boolean {
     return isKickdbThumbnailUrl(url);
   }
   return isKickdbThumbnailUrl(url) || /[?&]w=1\d{2}\b/.test(lower) || /[?&]h=1\d{2}\b/.test(lower);
-}
-
-function urlMatchLoose(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false;
-  if (a === b) return true;
-  try {
-    const pa = new URL(a);
-    const pb = new URL(b);
-    const ta = pa.pathname.split("/").pop()?.split("?")[0]?.toLowerCase() ?? "";
-    const tb = pb.pathname.split("/").pop()?.split("?")[0]?.toLowerCase() ?? "";
-    if (ta && tb && ta === tb) return true;
-    // Shopify CDN often rewrites basename; compare stem without extension.
-    const sa = ta.replace(/\.[a-z0-9]+$/, "");
-    const sb = tb.replace(/\.[a-z0-9]+$/, "");
-    return Boolean(sa && sb && (sa.includes(sb) || sb.includes(sa)));
-  } catch {
-    return false;
-  }
 }
 
 async function loadCompletedProductIds(progressPath: string): Promise<Set<string>> {
@@ -295,33 +281,75 @@ async function verifyPostWrite(params: {
   productId: string;
   expectedMediaId: string;
   expectedSourceUrl: string | null;
-}): Promise<{ ok: true; view: ShopifyProductView } | { ok: false; reason: string; view: ShopifyProductView | null }> {
+  mode: "upload_reorder" | "reorder";
+}): Promise<
+  | { ok: true; view: ShopifyProductView }
+  | {
+      ok: false;
+      reason: string;
+      view: ShopifyProductView | null;
+      expectedSourceUrl: string | null;
+      actualFeaturedUrl: string | null;
+      expectedMediaId: string;
+      actualFeaturedMediaId: string | null;
+      width: number | null;
+      height: number | null;
+    }
+> {
   // Shopify media processing can lag briefly after create/reorder.
   let view: ShopifyProductView | null = null;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     await new Promise((r) => setTimeout(r, attempt === 0 ? 500 : 1000));
     view = await fetchProductView(params.productId);
-    if (!view) return { ok: false, reason: "product_missing_after_write", view: null };
+    if (!view) {
+      return {
+        ok: false,
+        reason: "product_missing_after_write",
+        view: null,
+        expectedSourceUrl: params.expectedSourceUrl,
+        actualFeaturedUrl: null,
+        expectedMediaId: params.expectedMediaId,
+        actualFeaturedMediaId: null,
+        width: null,
+        height: null,
+      };
+    }
     if (view.featuredMediaId === params.expectedMediaId) break;
   }
-  if (!view) return { ok: false, reason: "product_missing_after_write", view: null };
-  if (view.featuredMediaId !== params.expectedMediaId) {
-    return { ok: false, reason: "featured_media_not_promoted", view };
+  if (!view) {
+    return {
+      ok: false,
+      reason: "product_missing_after_write",
+      view: null,
+      expectedSourceUrl: params.expectedSourceUrl,
+      actualFeaturedUrl: null,
+      expectedMediaId: params.expectedMediaId,
+      actualFeaturedMediaId: null,
+      width: null,
+      height: null,
+    };
   }
-  const featured = view.media.find((m) => m.id === params.expectedMediaId);
-  if (!featured?.image?.url) {
-    return { ok: false, reason: "featured_media_missing_image", view };
-  }
-  if (!isGoogleReadyImage(featured, GOOGLE_IMAGE_MIN_PX)) {
-    return { ok: false, reason: "featured_below_500_after_write", view };
-  }
-  if (
-    params.expectedSourceUrl &&
-    !urlMatchLoose(featured.image.url, params.expectedSourceUrl) &&
-    // Reorder of existing gallery: source may already be Shopify CDN.
-    !view.media.some((m) => m.id === params.expectedMediaId)
-  ) {
-    return { ok: false, reason: "featured_url_mismatch", view };
+
+  const evaluated = evaluatePostWriteVerification(view, {
+    expectedMediaId: params.expectedMediaId,
+    expectedSourceUrl: params.expectedSourceUrl,
+    mode: params.mode,
+  });
+  if (!evaluated.ok) {
+    console.error(
+      JSON.stringify({
+        event: "post_write.failed",
+        reason: evaluated.reason,
+        expectedSourceUrl: evaluated.expectedSourceUrl,
+        actualFeaturedUrl: evaluated.actualFeaturedUrl,
+        expectedMediaId: evaluated.expectedMediaId,
+        actualFeaturedMediaId: evaluated.actualFeaturedMediaId,
+        width: evaluated.width,
+        height: evaluated.height,
+        urlMatch: urlMatchLoose(evaluated.actualFeaturedUrl, evaluated.expectedSourceUrl),
+      })
+    );
+    return { ok: false, view, ...evaluated };
   }
   return { ok: true, view };
 }
@@ -438,7 +466,11 @@ async function main() {
       maxProbes: 3,
     });
 
-    const reorderDecision = chooseHeroRepair(view.media, GOOGLE_IMAGE_MIN_PX);
+    const reorderDecision = chooseHeroRepair(
+      view.media,
+      view.featuredMediaId,
+      GOOGLE_IMAGE_MIN_PX
+    );
     let action: ProgressRecord["action"] = "skip";
     let mediaIdToPromote: string | null = null;
     let candidateUrl: string | null = null;
@@ -590,6 +622,7 @@ async function main() {
         productId,
         expectedMediaId: promoteId,
         expectedSourceUrl: candidateUrl,
+        mode: action === "upload_reorder" ? "upload_reorder" : "reorder",
       });
       if (!verified.ok) {
         counters.failedPostWrite += 1;
@@ -598,10 +631,17 @@ async function main() {
           jobId,
           status: "FAILED_POST_WRITE_VERIFICATION",
           reason: verified.reason,
-          newHeroUrl: verified.view?.featuredUrl ?? null,
-          newHeroWidth: verified.view?.featuredWidth ?? null,
-          newHeroHeight: verified.view?.featuredHeight ?? null,
-          error: verified.reason,
+          newHeroUrl: verified.actualFeaturedUrl ?? verified.view?.featuredUrl ?? null,
+          newHeroWidth: verified.width ?? verified.view?.featuredWidth ?? null,
+          newHeroHeight: verified.height ?? verified.view?.featuredHeight ?? null,
+          error: [
+            verified.reason,
+            `expectedMediaId=${verified.expectedMediaId}`,
+            `actualFeaturedMediaId=${verified.actualFeaturedMediaId ?? "null"}`,
+            `expectedSourceUrl=${verified.expectedSourceUrl ?? "null"}`,
+            `actualFeaturedUrl=${verified.actualFeaturedUrl ?? "null"}`,
+            `dims=${verified.width ?? "?"}x${verified.height ?? "?"}`,
+          ].join(" | "),
         };
         await appendFile(progressPath, `${JSON.stringify(record)}\n`);
         if (examples.length < 40) examples.push(record);

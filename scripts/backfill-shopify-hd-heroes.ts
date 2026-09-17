@@ -21,6 +21,7 @@ type ProductNode = {
   title: string;
   handle: string;
   vendor: string;
+  featuredMedia: { id: string } | null;
   media: { nodes: ProductMediaImage[] };
 };
 
@@ -201,6 +202,7 @@ async function main(): Promise<void> {
             pageInfo { hasNextPage endCursor }
             nodes {
               id title handle vendor
+              featuredMedia { id }
               media(first: ${MEDIA_LIMIT}) {
                 nodes {
                   ... on MediaImage {
@@ -224,7 +226,11 @@ async function main(): Promise<void> {
         skipped.resumed += 1;
         continue;
       }
-      const decision = chooseHeroRepair(product.media.nodes, GOOGLE_IMAGE_MIN_PX);
+      const decision = chooseHeroRepair(
+        product.media.nodes,
+        product.featuredMedia?.id ?? null,
+        GOOGLE_IMAGE_MIN_PX
+      );
       if (decision.action === "skip") {
         skipped[decision.reason] += 1;
         continue;

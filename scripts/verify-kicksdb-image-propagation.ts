@@ -1,21 +1,24 @@
 #!/usr/bin/env npx tsx
 /**
- * Read-only verification: Shopify featured media ↔ Google Merchant imageLink.
+ * Read-only verification: Shopify featured media ↔ Google Merchant imageLink
+ * for **all active Merchant offers** of each Shopify product.
  *
- * Simprosys pushes Shopify featuredMedia → Merchant Center image_link.
- * Offer IDs observed live: shopify_ch_<productId>_<variantId>
+ * Simprosys pushes Shopify featuredMedia → Merchant Center image_link on every
+ * variant offer (`shopify_ch_<productId>_<variantId>`). Checking a single offer
+ * is NOT product validation — this script verifies every current offer row.
  *
  * Usage:
  *   npx tsx scripts/verify-kicksdb-image-propagation.ts --limit=20
  *   npx tsx scripts/verify-kicksdb-image-propagation.ts --from-progress=tmp/kicksdb-image-backfill-progress.jsonl --limit=20
  *   npx tsx scripts/verify-kicksdb-image-propagation.ts --handle=air-jordan-1-retro-high
  *
- * Statuses:
- *   SHOPIFY_CORRECT_GOOGLE_CORRECT
- *   SHOPIFY_CORRECT_GOOGLE_PENDING
- *   SHOPIFY_CORRECT_GOOGLE_MISMATCH
+ * Product statuses:
+ *   SHOPIFY_CORRECT_GOOGLE_CORRECT  — every verifiable active offer matches
+ *   SHOPIFY_CORRECT_GOOGLE_PARTIAL  — some offers correct, others pending/mismatch/failed
+ *   SHOPIFY_CORRECT_GOOGLE_PENDING  — all looked-up offers pending (no imageLink yet / 404)
+ *   SHOPIFY_CORRECT_GOOGLE_MISMATCH — all looked-up offers mismatch (none correct)
  *   SHOPIFY_INVALID
- *   GOOGLE_LOOKUP_FAILED
+ *   GOOGLE_LOOKUP_FAILED            — zero offers found in ads_shopping_product_current
  */
 import "dotenv/config";
 
@@ -35,25 +38,36 @@ import {
   isGoogleReadyImage,
   type ProductMediaImage,
 } from "@/scripts/lib/shopifyImageHeroRepair";
+import {
+  aggregateOfferStatuses,
+  type OfferCheckStatus,
+  type ProductPropagationStatus,
+} from "@/scripts/lib/kicksdbImagePropagation";
 
-type PropagationStatus =
-  | "SHOPIFY_CORRECT_GOOGLE_CORRECT"
-  | "SHOPIFY_CORRECT_GOOGLE_PENDING"
-  | "SHOPIFY_CORRECT_GOOGLE_MISMATCH"
-  | "SHOPIFY_INVALID"
-  | "GOOGLE_LOOKUP_FAILED";
+type OfferRow = {
+  offerId: string;
+  contentLanguage: string;
+  feedLabel: string;
+  merchantId: string;
+  googleImageLink: string | null;
+  status: OfferCheckStatus;
+  note?: string;
+};
 
-type Row = {
+type ProductRow = {
   shopifyProductId: string;
   handle: string | null;
   shopifyFeaturedUrl: string | null;
   shopifyWidth: number | null;
   shopifyHeight: number | null;
-  offerId: string | null;
-  contentLanguage: string | null;
-  feedLabel: string | null;
-  googleImageLink: string | null;
-  status: PropagationStatus;
+  status: ProductPropagationStatus;
+  offerCount: number;
+  correctCount: number;
+  pendingCount: number;
+  mismatchCount: number;
+  lookupFailedCount: number;
+  problemOfferIds: string[];
+  offers: OfferRow[];
   note?: string;
 };
 
@@ -182,12 +196,15 @@ async function loadTargets(limit: number, handle: string | null, fromProgress: s
   `;
 }
 
-async function lookupOffer(shopifyProductNumeric: string): Promise<{
-  offerId: string;
-  contentLanguage: string;
-  feedLabel: string;
-  merchantId: string;
-} | null> {
+/** All current Merchant offers for one Shopify product (every variant). */
+async function lookupOffers(shopifyProductNumeric: string): Promise<
+  Array<{
+    offerId: string;
+    contentLanguage: string;
+    feedLabel: string;
+    merchantId: string;
+  }>
+> {
   const rows = await prisma.$queryRaw<
     Array<{
       offer_id: string;
@@ -196,7 +213,7 @@ async function lookupOffer(shopifyProductNumeric: string): Promise<{
       merchant_id: string;
     }>
   >`
-    SELECT
+    SELECT DISTINCT ON ("offer_id", "language_code", "feed_label")
       "offer_id",
       "language_code",
       "feed_label",
@@ -204,17 +221,63 @@ async function lookupOffer(shopifyProductNumeric: string): Promise<{
     FROM "public"."ads_shopping_product_current"
     WHERE "is_current" = true
       AND "shopify_product_id" = ${shopifyProductNumeric}::bigint
-    ORDER BY "updated_at" DESC
-    LIMIT 1
+    ORDER BY "offer_id" ASC, "language_code" ASC, "feed_label" ASC, "updated_at" DESC
   `;
-  const row = rows[0];
-  if (!row) return null;
-  return {
+  return rows.map((row) => ({
     offerId: row.offer_id,
     contentLanguage: row.language_code || "de",
     feedLabel: row.feed_label || "CH",
     merchantId: row.merchant_id || EXPLORER_DEFAULT_MERCHANT_ID,
+  }));
+}
+
+async function checkOneOffer(params: {
+  merchantId: string;
+  offer: { offerId: string; contentLanguage: string; feedLabel: string };
+  shopifyFeaturedUrl: string;
+}): Promise<OfferRow> {
+  const ref: MerchantProductRef = {
+    offerId: params.offer.offerId,
+    contentLanguage: params.offer.contentLanguage,
+    feedLabel: params.offer.feedLabel,
   };
+  try {
+    const processed = await getProcessedProduct(params.merchantId, ref);
+    const imageLink = extractImageLink(processed);
+    if (!imageLink) {
+      return {
+        offerId: params.offer.offerId,
+        contentLanguage: params.offer.contentLanguage,
+        feedLabel: params.offer.feedLabel,
+        merchantId: params.merchantId,
+        googleImageLink: null,
+        status: "pending",
+        note: "processed_product_has_no_imageLink_yet",
+      };
+    }
+    const match = imagesLikelyMatch(params.shopifyFeaturedUrl, imageLink);
+    return {
+      offerId: params.offer.offerId,
+      contentLanguage: params.offer.contentLanguage,
+      feedLabel: params.offer.feedLabel,
+      merchantId: params.merchantId,
+      googleImageLink: imageLink,
+      status: match ? "correct" : "mismatch",
+      note: match ? undefined : "cdn_or_asset_mismatch",
+    };
+  } catch (error) {
+    const pending =
+      error instanceof MerchantApiError && (error.status === 404 || error.status === 409);
+    return {
+      offerId: params.offer.offerId,
+      contentLanguage: params.offer.contentLanguage,
+      feedLabel: params.offer.feedLabel,
+      merchantId: params.merchantId,
+      googleImageLink: null,
+      status: pending ? "pending" : "lookup_failed",
+      note: error instanceof Error ? error.message.slice(0, 300) : String(error),
+    };
+  }
 }
 
 async function main() {
@@ -226,7 +289,7 @@ async function main() {
   await mkdir(path.dirname(outPath), { recursive: true });
 
   const targets = await loadTargets(limit, handle, fromProgress);
-  const rows: Row[] = [];
+  const rows: ProductRow[] = [];
   const manualCheckSample: Array<Record<string, unknown>> = [];
 
   for (const target of targets) {
@@ -242,11 +305,14 @@ async function main() {
         shopifyFeaturedUrl: null,
         shopifyWidth: null,
         shopifyHeight: null,
-        offerId: null,
-        contentLanguage: null,
-        feedLabel: null,
-        googleImageLink: null,
         status: "SHOPIFY_INVALID",
+        offerCount: 0,
+        correctCount: 0,
+        pendingCount: 0,
+        mismatchCount: 0,
+        lookupFailedCount: 0,
+        problemOfferIds: [],
+        offers: [],
         note: String(error),
       });
       continue;
@@ -259,11 +325,14 @@ async function main() {
         shopifyFeaturedUrl: null,
         shopifyWidth: null,
         shopifyHeight: null,
-        offerId: null,
-        contentLanguage: null,
-        feedLabel: null,
-        googleImageLink: null,
         status: "SHOPIFY_INVALID",
+        offerCount: 0,
+        correctCount: 0,
+        pendingCount: 0,
+        mismatchCount: 0,
+        lookupFailedCount: 0,
+        problemOfferIds: [],
+        offers: [],
         note: "missing_featured_media",
       });
       continue;
@@ -277,25 +346,27 @@ async function main() {
         shopifyFeaturedUrl: shopify.media.image.url,
         shopifyWidth: shopify.media.image.width,
         shopifyHeight: shopify.media.image.height,
-        offerId: null,
-        contentLanguage: null,
-        feedLabel: null,
-        googleImageLink: null,
         status: "SHOPIFY_INVALID",
+        offerCount: 0,
+        correctCount: 0,
+        pendingCount: 0,
+        mismatchCount: 0,
+        lookupFailedCount: 0,
+        problemOfferIds: [],
+        offers: [],
         note: "featured_below_500",
       });
       continue;
     }
 
-    const offer = await lookupOffer(numeric);
-    if (!offer) {
-      const guessedOfferId = `shopify_ch_${numeric}_<variantId>`;
+    const offers = await lookupOffers(numeric);
+    if (offers.length === 0) {
       manualCheckSample.push({
         shopifyProductId: numeric,
         handle: shopify.handle,
         shopifyFeaturedUrl: shopify.media.image.url,
-        missing: "offerId in ads_shopping_product_current",
-        suggestedSimprosysLookup: guessedOfferId,
+        missing: "all offerIds in ads_shopping_product_current",
+        suggestedSimprosysLookup: `shopify_ch_${numeric}_<variantId>`,
         merchantId: merchantOverride ?? EXPLORER_DEFAULT_MERCHANT_ID,
       });
       rows.push({
@@ -304,84 +375,66 @@ async function main() {
         shopifyFeaturedUrl: shopify.media.image.url,
         shopifyWidth: shopify.media.image.width,
         shopifyHeight: shopify.media.image.height,
-        offerId: null,
-        contentLanguage: null,
-        feedLabel: null,
-        googleImageLink: null,
         status: "GOOGLE_LOOKUP_FAILED",
-        note: "missing_offer_id_in_ads_shopping_product_current",
+        offerCount: 0,
+        correctCount: 0,
+        pendingCount: 0,
+        mismatchCount: 0,
+        lookupFailedCount: 0,
+        problemOfferIds: [],
+        offers: [],
+        note: "no_active_offers_in_ads_shopping_product_current",
       });
       continue;
     }
 
-    const merchantId = merchantOverride ?? offer.merchantId;
-    const ref: MerchantProductRef = {
-      offerId: offer.offerId,
-      contentLanguage: offer.contentLanguage,
-      feedLabel: offer.feedLabel,
-    };
+    const offerRows: OfferRow[] = [];
+    for (const offer of offers) {
+      const merchantId = merchantOverride ?? offer.merchantId;
+      const checked = await checkOneOffer({
+        merchantId,
+        offer,
+        shopifyFeaturedUrl: shopify.media.image.url,
+      });
+      offerRows.push(checked);
+    }
 
-    try {
-      const processed = await getProcessedProduct(merchantId, ref);
-      const imageLink = extractImageLink(processed);
-      if (!imageLink) {
-        rows.push({
-          shopifyProductId: gid,
-          handle: shopify.handle,
-          shopifyFeaturedUrl: shopify.media.image.url,
-          shopifyWidth: shopify.media.image.width,
-          shopifyHeight: shopify.media.image.height,
-          offerId: offer.offerId,
-          contentLanguage: offer.contentLanguage,
-          feedLabel: offer.feedLabel,
-          googleImageLink: null,
-          status: "SHOPIFY_CORRECT_GOOGLE_PENDING",
-          note: "processed_product_has_no_imageLink_yet",
-        });
-        continue;
-      }
-      const match = imagesLikelyMatch(shopify.media.image.url, imageLink);
-      rows.push({
-        shopifyProductId: gid,
+    const aggregated = aggregateOfferStatuses(offerRows.map((o) => o.status));
+    const problemOfferIds = offerRows
+      .filter((o) => o.status !== "correct")
+      .map((o) => o.offerId)
+      .slice(0, 25);
+
+    rows.push({
+      shopifyProductId: gid,
+      handle: shopify.handle,
+      shopifyFeaturedUrl: shopify.media.image.url,
+      shopifyWidth: shopify.media.image.width,
+      shopifyHeight: shopify.media.image.height,
+      status: aggregated.status,
+      offerCount: aggregated.offerCount,
+      correctCount: aggregated.correctCount,
+      pendingCount: aggregated.pendingCount,
+      mismatchCount: aggregated.mismatchCount,
+      lookupFailedCount: aggregated.lookupFailedCount,
+      problemOfferIds,
+      offers: offerRows,
+      note: `verified_all_active_offers=${aggregated.offerCount}`,
+    });
+
+    if (aggregated.status !== "SHOPIFY_CORRECT_GOOGLE_CORRECT") {
+      manualCheckSample.push({
+        shopifyProductId: numeric,
         handle: shopify.handle,
+        status: aggregated.status,
+        offerCount: aggregated.offerCount,
+        correctCount: aggregated.correctCount,
+        pendingCount: aggregated.pendingCount,
+        mismatchCount: aggregated.mismatchCount,
+        lookupFailedCount: aggregated.lookupFailedCount,
+        problemOfferIds: problemOfferIds.slice(0, 10),
         shopifyFeaturedUrl: shopify.media.image.url,
-        shopifyWidth: shopify.media.image.width,
-        shopifyHeight: shopify.media.image.height,
-        offerId: offer.offerId,
-        contentLanguage: offer.contentLanguage,
-        feedLabel: offer.feedLabel,
-        googleImageLink: imageLink,
-        status: match ? "SHOPIFY_CORRECT_GOOGLE_CORRECT" : "SHOPIFY_CORRECT_GOOGLE_MISMATCH",
-        note: match ? undefined : "cdn_or_asset_mismatch",
       });
-    } catch (error) {
-      const pending =
-        error instanceof MerchantApiError && (error.status === 404 || error.status === 409);
-      rows.push({
-        shopifyProductId: gid,
-        handle: shopify.handle,
-        shopifyFeaturedUrl: shopify.media.image.url,
-        shopifyWidth: shopify.media.image.width,
-        shopifyHeight: shopify.media.image.height,
-        offerId: offer.offerId,
-        contentLanguage: offer.contentLanguage,
-        feedLabel: offer.feedLabel,
-        googleImageLink: null,
-        status: pending ? "SHOPIFY_CORRECT_GOOGLE_PENDING" : "GOOGLE_LOOKUP_FAILED",
-        note: error instanceof Error ? error.message.slice(0, 300) : String(error),
-      });
-      if (!pending) {
-        manualCheckSample.push({
-          shopifyProductId: numeric,
-          handle: shopify.handle,
-          offerId: offer.offerId,
-          contentLanguage: offer.contentLanguage,
-          feedLabel: offer.feedLabel,
-          merchantId,
-          shopifyFeaturedUrl: shopify.media.image.url,
-          error: error instanceof Error ? error.message.slice(0, 300) : String(error),
-        });
-      }
     }
   }
 
@@ -392,8 +445,11 @@ async function main() {
     handle,
     fromProgress,
     outPath,
+    scope: "all_active_merchant_offers_per_shopify_product",
     counts: {
       SHOPIFY_CORRECT_GOOGLE_CORRECT: rows.filter((r) => r.status === "SHOPIFY_CORRECT_GOOGLE_CORRECT")
+        .length,
+      SHOPIFY_CORRECT_GOOGLE_PARTIAL: rows.filter((r) => r.status === "SHOPIFY_CORRECT_GOOGLE_PARTIAL")
         .length,
       SHOPIFY_CORRECT_GOOGLE_PENDING: rows.filter((r) => r.status === "SHOPIFY_CORRECT_GOOGLE_PENDING")
         .length,
@@ -402,9 +458,26 @@ async function main() {
       SHOPIFY_INVALID: rows.filter((r) => r.status === "SHOPIFY_INVALID").length,
       GOOGLE_LOOKUP_FAILED: rows.filter((r) => r.status === "GOOGLE_LOOKUP_FAILED").length,
     },
+    multiOfferExamples: rows
+      .filter((r) => r.offerCount > 1)
+      .slice(0, 5)
+      .map((r) => ({
+        handle: r.handle,
+        status: r.status,
+        offerCount: r.offerCount,
+        correctCount: r.correctCount,
+        pendingCount: r.pendingCount,
+        mismatchCount: r.mismatchCount,
+        lookupFailedCount: r.lookupFailedCount,
+        problemOfferIds: r.problemOfferIds.slice(0, 8),
+        sampleOfferIds: r.offers.slice(0, 5).map((o) => ({
+          offerId: o.offerId,
+          status: o.status,
+        })),
+      })),
     manualCheckSample,
     note:
-      "If offerId cannot be resolved from ads_shopping_product_current, use manualCheckSample in Simprosys/Google UI. Read-only — no writes.",
+      "Product CORRECT only when every active Merchant offer matches Shopify featured. Partial ≠ full validation. Read-only.",
   };
   const reportPath = path.resolve("tmp/kicksdb-image-propagation-report.json");
   await writeFile(reportPath, JSON.stringify(summary, null, 2));
@@ -414,8 +487,12 @@ async function main() {
       [
         row.status,
         row.handle ?? "",
-        row.offerId ?? "(no-offer)",
-        `${row.shopifyWidth ?? "?"}x${row.shopifyHeight ?? "?"}`,
+        `offers=${row.offerCount}`,
+        `ok=${row.correctCount}`,
+        `pending=${row.pendingCount}`,
+        `mismatch=${row.mismatchCount}`,
+        `fail=${row.lookupFailedCount}`,
+        row.problemOfferIds.slice(0, 3).join(",") || "-",
       ].join("\t")
     );
   }
