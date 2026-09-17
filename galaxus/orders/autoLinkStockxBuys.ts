@@ -7,10 +7,15 @@ import {
 import { applyStockxDetailsToDecathlonMatchFields } from "@/decathlon/stx/manualStockxEnrich";
 import {
   extractStockxVariantId,
-  fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
   synthesizeBuyOrderDetailsFromListNode,
+  type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
+import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
+import {
+  computeCausalTimeDiffHours,
+  isValidGalaxusStockxCausalBuy,
+} from "@/app/lib/stockxCausal";
 import {
   getStxLinkStatusForOrder,
   linkOldestPendingStxUnit,
@@ -27,34 +32,18 @@ import {
   listStockxAccountTokens,
   resolveStockxBearerToken,
 } from "@/lib/stockxToken";
+import { shouldSkipGalaxusOrderForMatching } from "@/galaxus/orders/openGalaxusOrderFilter";
 
-function parseDateMs(value: unknown): number | null {
-  if (!value) return null;
-  const time = new Date(String(value)).getTime();
-  return Number.isNaN(time) ? null : time;
-}
+const computeTimeDiffHours = computeCausalTimeDiffHours;
 
-function signedHoursAfterSale(orderDate: unknown, purchaseDate: unknown): number | null {
-  const orderMs = parseDateMs(orderDate);
-  const purchaseMs = parseDateMs(purchaseDate);
-  if (orderMs == null || purchaseMs == null) return null;
-  return (purchaseMs - orderMs) / (1000 * 60 * 60);
-}
-
-function isValidGalaxusStockxCausalBuy(
-  orderDate: unknown,
-  purchaseDate: unknown,
-  skewMinutes = 5
-): boolean {
-  const signed = signedHoursAfterSale(orderDate, purchaseDate);
-  if (signed == null) return false;
-  return signed >= -(skewMinutes / 60);
-}
-
-function computeTimeDiffHours(orderDate: unknown, purchaseDate: unknown): number | null {
-  const signed = signedHoursAfterSale(orderDate, purchaseDate);
-  return signed == null ? null : Math.abs(signed);
-}
+const AUTO_LINK_PENDING_PAGES = Math.max(
+  1,
+  Math.min(8, Number(process.env.STOCKX_AUTO_LINK_PENDING_PAGES ?? "4"))
+);
+const AUTO_LINK_HISTORICAL_PAGES = Math.max(
+  0,
+  Math.min(4, Number(process.env.STOCKX_AUTO_LINK_HISTORICAL_PAGES ?? "2"))
+);
 
 export type AutoLinkGalaxusStockxBuysOptions = {
   /** Caller already ran reserve (e.g. procurement reconcile). */
@@ -65,7 +54,7 @@ export type AutoLinkGalaxusStockxBuysOptions = {
    * hammering StockX once per Galaxus order.
    */
   prefetchedBuys?: Array<{
-    node: Awaited<ReturnType<typeof fetchRecentStockxBuyingOrders>>[number];
+    node: StockxBuyingNode;
     token: string;
   }>;
 };
@@ -112,6 +101,16 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
   const order = await resolveGalaxusOrderByIdOrRef(orderIdOrRef);
   if (!order) return { linked: 0, reason: "not_found" as const };
 
+  if (
+    shouldSkipGalaxusOrderForMatching({
+      cancelledAt: (order as any).cancelledAt,
+      archivedAt: (order as any).archivedAt,
+      lines: order.lines ?? [],
+    })
+  ) {
+    return { linked: 0, reason: "nothing_to_link" as const };
+  }
+
   const prismaAny = prisma as any;
   const existingMatches = await prismaAny.galaxusStockxMatch.findMany({
     where: { galaxusOrderId: order.id },
@@ -142,10 +141,9 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
   }
 
   // StockX `state: null` returns 0 rows. Active buys live in PENDING.
-  // Pull PENDING + HISTORICAL from every known StockX account (Galaxus + dashboard),
-  // unless the caller already prefetched (bulk job).
+  // Cached PENDING (+ short HISTORICAL) per account — no full history re-pagination.
   type BuyCandidate = {
-    node: Awaited<ReturnType<typeof fetchRecentStockxBuyingOrders>>[number];
+    node: StockxBuyingNode;
     token: string;
   };
   const buyingOrders: BuyCandidate[] = [];
@@ -161,29 +159,43 @@ export async function autoLinkUnclaimedStockxBuysForGalaxusOrder(
     for (const row of options.prefetchedBuys) pushBuy(row.node, row.token);
   } else {
     for (const account of tokens) {
-      const pending = await fetchRecentStockxBuyingOrders(account.token, {
+      const pendingRes = await getCachedStockxBuyingOrders(account.token, {
         first: 100,
-        maxPages: 8,
+        maxPages: AUTO_LINK_PENDING_PAGES,
         state: "PENDING",
       }).catch((err: any) => {
         console.warn("[GALAXUS][STX][AUTO_LINK] PENDING list failed", {
           source: account.source,
           error: err?.message ?? err,
         });
-        return [] as Awaited<ReturnType<typeof fetchRecentStockxBuyingOrders>>;
+        return { nodes: [] as StockxBuyingNode[], fromCache: false, durationMs: 0 };
       });
-      const historical = await fetchRecentStockxBuyingOrders(account.token, {
-        first: 100,
-        maxPages: 4,
-        state: "HISTORICAL",
-      }).catch((err: any) => {
-        console.warn("[GALAXUS][STX][AUTO_LINK] HISTORICAL list failed", {
-          source: account.source,
-          error: err?.message ?? err,
-        });
-        return [] as Awaited<ReturnType<typeof fetchRecentStockxBuyingOrders>>;
+      const historicalRes =
+        AUTO_LINK_HISTORICAL_PAGES > 0
+          ? await getCachedStockxBuyingOrders(account.token, {
+              first: 100,
+              maxPages: AUTO_LINK_HISTORICAL_PAGES,
+              state: "HISTORICAL",
+            }).catch((err: any) => {
+              console.warn("[GALAXUS][STX][AUTO_LINK] HISTORICAL list failed", {
+                source: account.source,
+                error: err?.message ?? err,
+              });
+              return { nodes: [] as StockxBuyingNode[], fromCache: false, durationMs: 0 };
+            })
+          : { nodes: [] as StockxBuyingNode[], fromCache: true, durationMs: 0 };
+      console.log("[GALAXUS][STX][AUTO_LINK] buying lists", {
+        source: account.source,
+        pending: pendingRes.nodes.length,
+        historical: historicalRes.nodes.length,
+        pendingFromCache: pendingRes.fromCache,
+        historicalFromCache: historicalRes.fromCache,
+        pendingMs: pendingRes.durationMs,
+        historicalMs: historicalRes.durationMs,
       });
-      for (const node of [...pending, ...historical]) pushBuy(node, account.token);
+      for (const node of [...pendingRes.nodes, ...historicalRes.nodes]) {
+        pushBuy(node, account.token);
+      }
     }
   }
 

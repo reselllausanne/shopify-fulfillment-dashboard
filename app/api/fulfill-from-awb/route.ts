@@ -28,6 +28,13 @@ import { findBlockedDirectDeliveryRoute } from "@/app/api/fulfill-from-awb/direc
 import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses";
 import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
 import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
+import {
+  getFulfillIdempotentResult,
+  setFulfillIdempotentResult,
+} from "@/lib/fulfillIdempotency";
+import { fulfillScanIdempotencyKey } from "@/lib/shopifyFulfillUnitSelection";
+import { listAllOpenUnits } from "@/lib/shopifyOrderOpenSiblings";
+import { decideFulfillUnitSelection } from "@/lib/shopifyFulfillUnitSelection";
 
 const LABEL_OUTPUT_DIR =
   process.env.SWISS_POST_LABEL_OUTPUT_DIR ||
@@ -370,7 +377,8 @@ type FulfillStatus =
   | "NOT_FOUND"
   | "INVALID"
   | "SHOPIFY_ERROR"
-  | "BLOCKED_WAREHOUSE_DIRECT_DELIVERY";
+  | "BLOCKED_WAREHOUSE_DIRECT_DELIVERY"
+  | "NEEDS_UNIT_SELECTION";
 
 const normalizeAwb = (code?: string | null) => normalizeInboundHomeAwb(code);
 
@@ -407,6 +415,16 @@ export async function POST(req: NextRequest) {
     // GTIN-only fulfill: operator scanned product barcode, not inbound StockX AWB.
     // Resolve by shopifyLineItemId and do NOT write the GTIN into stockxAwb.
     const gtinFulfill = Boolean(body?.gtinFulfill);
+    const selectedUnits = Array.isArray(body?.selectedUnits)
+      ? (body.selectedUnits as Array<{ lineItemId?: string; quantity?: number }>)
+          .map((u) => ({
+            lineItemId: String(u?.lineItemId ?? "").trim(),
+            quantity: Math.floor(Number(u?.quantity ?? 0)),
+          }))
+          .filter((u) => u.lineItemId && u.quantity > 0)
+      : [];
+    const requireUnitSelectionAck = Boolean(body?.unitSelectionConfirmed);
+    const idempotencyKey = String(body?.idempotencyKey ?? "").trim() || null;
     const trackingCompany = body?.trackingCompany ? String(body.trackingCompany).trim() : null;
     const trackingUrlFromBody = body?.trackingUrl ? String(body.trackingUrl).trim() : null;
     // Default ON: Shopify shipping confirmation must include Swiss Post tracking.
@@ -442,6 +460,13 @@ export async function POST(req: NextRequest) {
         { ok: false, status: "INVALID" as FulfillStatus, error: "Missing AWB" },
         { status: 400 }
       );
+    }
+
+    if (idempotencyKey) {
+      const cached = getFulfillIdempotentResult(idempotencyKey);
+      if (cached) {
+        return NextResponse.json(cached);
+      }
     }
 
     const matchSelect = {
@@ -523,6 +548,42 @@ export async function POST(req: NextRequest) {
         },
         { status: 409 }
       );
+    }
+
+    // Multi-product / qty>1: refuse whole-order ship without explicit unit selection.
+    if (selectedMatches.length === 1 && selectedMatches[0]?.shopifyOrderId) {
+      try {
+        const map = await fetchOrderFulfillmentMap(selectedMatches[0].shopifyOrderId);
+        const info = await fetchOrderShippingInfo(selectedMatches[0].shopifyOrderId);
+        if (map.order && info?.lineItems?.nodes) {
+          const openUnits = listAllOpenUnits({
+            orderLineItems: info.lineItems.nodes,
+            fulfillmentOrders: map.order.fulfillmentOrders.nodes,
+          });
+          const decision = decideFulfillUnitSelection(
+            openUnits.map((u) => ({
+              ...u,
+              isScannedLine: u.lineItemId === selectedMatches[0].shopifyLineItemId,
+            }))
+          );
+          if (decision.requiresPopup && !requireUnitSelectionAck && selectedUnits.length === 0) {
+            return NextResponse.json(
+              {
+                ok: false,
+                status: "NEEDS_UNIT_SELECTION" as FulfillStatus,
+                awb,
+                error:
+                  "Order has multiple open units — select exact pairs in the popup before fulfill",
+                openUnits,
+                unitSelection: decision,
+              },
+              { status: 409 }
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn("[FULFILL-FROM-AWB] open-units check failed:", err?.message || err);
+      }
     }
 
     const uniqueOrderIds = Array.from(
@@ -1040,34 +1101,43 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(
-      {
-        ok: true,
-        status: "FULFILLED" as FulfillStatus,
+    const successPayload = {
+      ok: true,
+      status: "FULFILLED" as FulfillStatus,
+      awb,
+      shopifyOrderId,
+      shopifyOrderName: map.order.name,
+      trackingNumber: trackingNumberForFulfillment,
+      trackingCompany: trackingCompanyForFulfillment,
+      swissPostLabelId,
+      swissPostBarcode,
+      swissPostStatus,
+      swissPostResponse: swissPostResult?.data || null,
+      labelFilePath,
+      printJobResult,
+      labelData,
+      browserPrintConfig,
+      warnings,
+      swissPost: shouldCallSwissPost ? "attempted" : "skipped",
+      timing: {
+        scanToLabelSeconds: record.scanToLabelSeconds,
+        scanToFulfillmentSeconds: record.scanToFulfillmentSeconds,
+        stockxDeliveredToFulfillmentMinutes: record.stockxDeliveredToFulfillmentMinutes,
+        requestDurationMs: record.requestDurationMs,
+      },
+    };
+
+    const cacheKey =
+      idempotencyKey ||
+      fulfillScanIdempotencyKey({
         awb,
         shopifyOrderId,
-        shopifyOrderName: map.order.name,
-        trackingNumber: trackingNumberForFulfillment,
-        trackingCompany: trackingCompanyForFulfillment,
-        swissPostLabelId,
-        swissPostBarcode,
-        swissPostStatus,
-        swissPostResponse: swissPostResult?.data || null,
-        labelFilePath,
-        printJobResult,
-        labelData,
-        browserPrintConfig,
-        warnings,
-        swissPost: shouldCallSwissPost ? "attempted" : "skipped",
-        timing: {
-          scanToLabelSeconds: record.scanToLabelSeconds,
-          scanToFulfillmentSeconds: record.scanToFulfillmentSeconds,
-          stockxDeliveredToFulfillmentMinutes: record.stockxDeliveredToFulfillmentMinutes,
-          requestDurationMs: record.requestDurationMs,
-        },
-      },
-      { status: 200 }
-    );
+        lineItemId: String(selectedMatches[0]?.shopifyLineItemId ?? ""),
+        quantity: 1,
+      });
+    setFulfillIdempotentResult(cacheKey, successPayload);
+
+    return NextResponse.json(successPayload, { status: 200 });
   } catch (error: any) {
     console.error("[FULFILL-FROM-AWB] Error:", error?.message || error);
     if (error?.stack) {

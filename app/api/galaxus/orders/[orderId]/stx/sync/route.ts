@@ -14,7 +14,6 @@ import { leanBuyOrder } from "@/galaxus/stx/leanBuyOrder";
 import { refreshLinkedStxUnitsByStoredRefs } from "@/galaxus/stx/linkedUnitRefresh";
 import {
   extractStockxVariantId,
-  fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
@@ -27,6 +26,8 @@ import {
 } from "@/lib/stockxGalaxusAuth";
 import { extractAwbFromTrackingUrl } from "@/app/lib/stockxTracking";
 import { galaxusLineWarehouseStockHint } from "@/galaxus/warehouse/lineInventorySource";
+import { isValidGalaxusStockxCausalBuy } from "@/app/lib/stockxCausal";
+import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,22 +45,6 @@ function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseDateMs(value: unknown): number | null {
-  if (!value) return null;
-  const ms = new Date(String(value)).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function isValidGalaxusStockxCausalBuy(
-  orderDate: unknown,
-  purchaseDate: unknown,
-  skewMinutes = 5
-): boolean {
-  const orderMs = parseDateMs(orderDate);
-  const buyMs = parseDateMs(purchaseDate);
-  if (orderMs == null || buyMs == null) return false;
-  return buyMs >= orderMs - skewMinutes * 60_000;
-}
 
 function isUnknownCancelledAtArg(error: any): boolean {
   return String(error?.message ?? "").includes("Unknown argument `cancelledAt`");
@@ -274,7 +259,8 @@ export async function POST(
     let orders: StockxBuyingNode[] = [];
     let stockxListFetchError: string | null = null;
     try {
-      orders = await fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: 8, state: "PENDING" });
+      const cachedBuys = await getCachedStockxBuyingOrders(token, { first: 100, maxPages: 4, state: "PENDING" });
+      orders = cachedBuys.nodes;
     } catch (err: any) {
       stockxListFetchError = err?.message ?? String(err);
       console.error("[GALAXUS][STX][SYNC] fetchRecentStockxBuyingOrders failed:", err);

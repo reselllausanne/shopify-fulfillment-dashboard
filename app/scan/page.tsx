@@ -2007,13 +2007,63 @@ export default function ScanPage() {
       scanStartedAt?: string;
       scanCompletedAt?: string;
       gtinFulfill?: boolean;
+      unitSelectionConfirmed?: boolean;
+      selectedUnits?: Array<{ lineItemId: string; quantity: number }>;
     }
   ) => {
     if (!scan?.awb || !scan?.match || scan.galaxus || scan.inboundHome || scan.stxInboundBuy) return;
     const allowAlreadyFulfilled = Boolean(options?.allowAlreadyFulfilled);
     const gtinFulfill = Boolean(options?.gtinFulfill);
+    const unitSelection = (scan.match as any)?.unitSelection as
+      | { requiresPopup?: boolean; reason?: string; totalOpenUnits?: number }
+      | undefined;
+    const openUnits = ((scan.match as any)?.openUnits as Array<{
+      lineItemId: string;
+      title: string;
+      remainingQuantity: number;
+      isScannedLine?: boolean;
+    }>) || [];
+
+    // Multi-line / qty>1: force operator to confirm exact units before fulfill.
+    if (
+      unitSelection?.requiresPopup &&
+      !options?.unitSelectionConfirmed &&
+      !(options?.selectedUnits && options.selectedUnits.length > 0)
+    ) {
+      const scanned =
+        openUnits.find((u) => u.isScannedLine) ||
+        openUnits.find((u) => u.lineItemId === scan.match?.shopifyLineItemId) ||
+        openUnits[0];
+      const summary = openUnits
+        .map((u) => `• ${u.title} ×${u.remainingQuantity}`)
+        .join("\n");
+      const ok = window.confirm(
+        `Multi-product / qty>1 order — select units for THIS parcel only.\n\n` +
+          `${summary || "(open units)"}\n\n` +
+          `OK = ship 1× scanned line only` +
+          (scanned ? ` (${scanned.title})` : "") +
+          `\nCancel = abort (no whole-order fulfill).`
+      );
+      if (!ok) return;
+      options = {
+        ...options,
+        unitSelectionConfirmed: true,
+        selectedUnits: scanned
+          ? [{ lineItemId: scanned.lineItemId, quantity: 1 }]
+          : scan.match?.shopifyLineItemId
+            ? [{ lineItemId: scan.match.shopifyLineItemId, quantity: 1 }]
+            : [],
+      };
+    }
+
     setFulfillLoading(true);
     setFulfillResult(null);
+    const idempotencyKey = [
+      "scan",
+      String(scan.awb).toUpperCase(),
+      String(scan.match?.shopifyLineItemId ?? ""),
+      String(options?.selectedUnits?.[0]?.quantity ?? 1),
+    ].join(":");
     try {
       const res = await fetch("/api/fulfill-from-awb", {
         method: "POST",
@@ -2021,7 +2071,13 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
-          shopifyLineItemId: scan.match?.shopifyLineItemId || null,
+          shopifyLineItemId:
+            options?.selectedUnits?.[0]?.lineItemId ||
+            scan.match?.shopifyLineItemId ||
+            null,
+          selectedUnits: options?.selectedUnits ?? [],
+          unitSelectionConfirmed: Boolean(options?.unitSelectionConfirmed),
+          idempotencyKey,
           includeLabelData: true,
           allowAlreadyFulfilled,
           gtinFulfill,
@@ -2034,6 +2090,13 @@ export default function ScanPage() {
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
+      if (data.status === "NEEDS_UNIT_SELECTION") {
+        window.alert(
+          data.error ||
+            "Select exact units in the confirmation dialog — whole-order fulfill blocked."
+        );
+        return;
+      }
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
           labelData: data.labelData,

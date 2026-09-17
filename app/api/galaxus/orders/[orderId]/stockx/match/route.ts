@@ -6,9 +6,14 @@ import {
   type ShopifyLineItem,
 } from "@/app/utils/matching";
 import {
-  fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
 } from "@/galaxus/stx/stockxClient";
+import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
+import {
+  computeCausalTimeDiffHours,
+  isValidGalaxusStockxCausalBuy,
+} from "@/app/lib/stockxCausal";
+import { shouldSkipGalaxusOrderForMatching } from "@/galaxus/orders/openGalaxusOrderFilter";
 import {
   galaxusLineWarehouseStockHint,
   isCrocsLightningMcQueenLine,
@@ -81,33 +86,7 @@ function buildLineItem(order: any, line: any): ShopifyLineItem {
   };
 }
 
-function parseDateMs(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const time = new Date(value).getTime();
-  return Number.isNaN(time) ? null : time;
-}
-
-function signedHoursAfterSale(orderDate: string, purchaseDate: string): number | null {
-  const orderMs = parseDateMs(orderDate);
-  const purchaseMs = parseDateMs(purchaseDate);
-  if (orderMs == null || purchaseMs == null) return null;
-  return (purchaseMs - orderMs) / (1000 * 60 * 60);
-}
-
-function isValidGalaxusStockxCausalBuy(
-  orderDate: string,
-  purchaseDate: string,
-  skewMinutes = 5
-): boolean {
-  const signed = signedHoursAfterSale(orderDate, purchaseDate);
-  if (signed == null) return false;
-  return signed >= -(skewMinutes / 60);
-}
-
-function computeTimeDiffHours(orderDate: string, purchaseDate: string): number | null {
-  const signed = signedHoursAfterSale(orderDate, purchaseDate);
-  return signed == null ? null : Math.abs(signed);
-}
+const computeTimeDiffHours = computeCausalTimeDiffHours;
 
 async function fetchTrackingDetails(token: string, chainId: string, orderId: string) {
   try {
@@ -157,12 +136,32 @@ export async function POST(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
-    const stockxOrdersRaw = await fetchRecentStockxBuyingOrders(token, {
+    if (
+      shouldSkipGalaxusOrderForMatching({
+        cancelledAt: (order as any).cancelledAt,
+        archivedAt: (order as any).archivedAt,
+        lines: order.lines ?? [],
+      })
+    ) {
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: "order_fully_fulfilled_or_closed",
+        results: [],
+      });
+    }
+
+    const buyingCached = await getCachedStockxBuyingOrders(token, {
       first: 100,
-      maxPages: 6,
+      maxPages: Math.max(1, Math.min(8, Number(process.env.STOCKX_MATCH_PENDING_PAGES ?? "4"))),
       state: "PENDING",
     });
-    const normalizedOrders = stockxOrdersRaw.map(normalizeStockxOrder);
+    console.log("[GALAXUS][STX][MATCH] buying list", {
+      count: buyingCached.nodes.length,
+      fromCache: buyingCached.fromCache,
+      durationMs: buyingCached.durationMs,
+    });
+    const normalizedOrders = buyingCached.nodes.map(normalizeStockxOrder);
 
     const stockxClaimIndex = await buildStockxOrderClaimIndex({
       stockxOrderIds: normalizedOrders.map((o) => o.orderId),

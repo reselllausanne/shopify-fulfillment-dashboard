@@ -181,6 +181,33 @@ model OrderMatch {
   @@schema("public")
 }
 
+/// Recent StockX parcels arrived for AWB fallback (Shopify today; multi-account ready).
+model StockxInboundPackage {
+  id                 String    @id @default(uuid())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  awb                String    @unique
+  stockxOrderNumber  String?
+  stockxOrderId      String?
+  /// Account key for multi-StockX later (e.g. shopify / galaxus / account-uuid).
+  stockxAccountKey   String    @default("default")
+  sku                String?
+  sizeEU             String?
+  productName        String?
+  purchaseDate       DateTime?
+  status             String?
+  arrivedAt          DateTime  @default(now())
+  channelHint        String?
+  linkedShopifyLineItemId String?
+  linkedGalaxusOrderId    String?
+
+  @@index([arrivedAt])
+  @@index([sku, sizeEU])
+  @@index([stockxAccountKey, arrivedAt])
+  @@index([purchaseDate])
+  @@schema("public")
+}
+
 model GalaxusStockxMatch {
   id String @id @default(uuid())
 

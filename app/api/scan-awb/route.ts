@@ -7,7 +7,11 @@ import {
   normalizeInboundHomeAwb,
 } from "@/app/lib/stockxInboundHomeRoutes";
 import { fetchOrderFulfillmentMap, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
-import { listOpenSiblingLines } from "@/lib/shopifyOrderOpenSiblings";
+import { listOpenSiblingLines, listAllOpenUnits } from "@/lib/shopifyOrderOpenSiblings";
+import {
+  decideFulfillUnitSelection,
+  type FulfillOpenUnit,
+} from "@/lib/shopifyFulfillUnitSelection";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { buildScanDemoScanPayload, resolveScanDemoChannel } from "@/lib/scanFulfillmentDemo";
 import {
@@ -23,6 +27,16 @@ import {
   isShopifyOrderMatchFresh,
   shopifyMatchMinCreatedAt,
 } from "@/app/lib/shopifyMatchEligibility";
+import {
+  findStockxInboundPackageByAwb,
+  loadShopifyOpenMatchCandidatesForSku,
+  upsertStockxInboundPackage,
+} from "@/app/lib/stockxInboundPackages";
+import {
+  resolveShopifyAwbFallbackMatch,
+  type OpenShopifyLineCandidate,
+} from "@/app/lib/shopifyAwbFallback";
+import { isValidStockxBuyAfterCustomerOrder } from "@/app/lib/stockxCausal";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,9 +93,22 @@ async function enrichOrderMatchFromShopify(match: {
         })
       : [];
 
+    const openUnits: FulfillOpenUnit[] = fulfillmentMap.order
+      ? listAllOpenUnits({
+          orderLineItems: lineNodes,
+          fulfillmentOrders: fulfillmentMap.order.fulfillmentOrders.nodes,
+        }).map((u) => ({
+          ...u,
+          isScannedLine: Boolean(targetId && u.lineItemId === targetId),
+        }))
+      : [];
+    const unitSelection = decideFulfillUnitSelection(openUnits);
+
     return {
       openSiblingLines,
       hasOtherOpenProducts: openSiblingLines.length > 0,
+      openUnits,
+      unitSelection,
       customer: {
         name: composedName,
         email: orderInfo.email ?? null,
@@ -547,14 +574,117 @@ export async function POST(req: NextRequest) {
     }
     const effectiveMatch = shouldSuppressShopifyMatch ? null : match;
 
+    // AWB without pre-link: match last inbound packages → open Shopify lines
+    // (exact SKU + size + causal). Ambiguous → operator confirms.
+    let shopifyAwbFallback: {
+      status: "exact" | "ambiguous" | "none";
+      reason?: string;
+      candidates?: OpenShopifyLineCandidate[];
+      package?: {
+        awb: string;
+        sku: string | null;
+        sizeEU: string | null;
+        productName: string | null;
+        purchaseDate: string | null;
+        stockxAccountKey: string | null;
+      };
+    } | null = null;
+    let fallbackMatchRow: typeof match = null;
+
+    if (!effectiveMatch && !stxInboundBuy && awbCandidates.length > 0) {
+      const pkg =
+        (await findStockxInboundPackageByAwb(awbCandidates[0])) ||
+        (await findStockxInboundPackageByAwb(awb));
+      if (pkg?.sku) {
+        const openRows = await loadShopifyOpenMatchCandidatesForSku({
+          sku: String(pkg.sku),
+          sizeEU: pkg.sizeEU ?? null,
+          minCreatedAt: shopifyMatchMinCreatedAt(),
+        });
+        const openLines: OpenShopifyLineCandidate[] = openRows
+          .filter((r) => r.shopifyLineItemId && r.shopifyCreatedAt)
+          .filter((r) =>
+            isValidStockxBuyAfterCustomerOrder(r.shopifyCreatedAt, pkg.purchaseDate)
+          )
+          .map((r) => ({
+            shopifyOrderId: r.shopifyOrderId,
+            shopifyOrderName: r.shopifyOrderName,
+            shopifyLineItemId: r.shopifyLineItemId!,
+            shopifySku: r.shopifySku,
+            shopifySizeEU: r.shopifySizeEU,
+            shopifyProductTitle: r.shopifyProductTitle,
+            shopifyCreatedAt: r.shopifyCreatedAt!,
+            remainingQuantity: 1,
+          }));
+        const resolved = resolveShopifyAwbFallbackMatch(
+          {
+            awb: String(pkg.awb),
+            sku: pkg.sku,
+            sizeEU: pkg.sizeEU,
+            productName: pkg.productName,
+            purchaseDate: pkg.purchaseDate,
+            stockxAccountKey: pkg.stockxAccountKey,
+          },
+          openLines
+        );
+        shopifyAwbFallback = {
+          status: resolved.status,
+          reason: resolved.status === "none" ? undefined : resolved.reason,
+          candidates:
+            resolved.status === "ambiguous"
+              ? resolved.candidates
+              : resolved.status === "exact"
+                ? [resolved.candidate]
+                : [],
+          package: {
+            awb: String(pkg.awb),
+            sku: pkg.sku ?? null,
+            sizeEU: pkg.sizeEU ?? null,
+            productName: pkg.productName ?? null,
+            purchaseDate: pkg.purchaseDate ? new Date(pkg.purchaseDate).toISOString() : null,
+            stockxAccountKey: pkg.stockxAccountKey ?? null,
+          },
+        };
+        if (resolved.status === "exact") {
+          const c = resolved.candidate;
+          await prisma.orderMatch
+            .updateMany({
+              where: {
+                shopifyLineItemId: c.shopifyLineItemId,
+                OR: [{ stockxAwb: null }, { stockxAwb: "" }],
+              },
+              data: { stockxAwb: String(pkg.awb) },
+            })
+            .catch(() => null);
+          await upsertStockxInboundPackage({
+            awb: String(pkg.awb),
+            sku: pkg.sku,
+            sizeEU: pkg.sizeEU,
+            productName: pkg.productName,
+            purchaseDate: pkg.purchaseDate,
+            stockxAccountKey: pkg.stockxAccountKey,
+            channelHint: "shopify",
+          });
+          fallbackMatchRow = await prisma.orderMatch.findFirst({
+            where: { shopifyLineItemId: c.shopifyLineItemId },
+          });
+        }
+      } else {
+        shopifyAwbFallback = { status: "none" };
+      }
+    }
+
+    const resolvedShopifyMatch = effectiveMatch || fallbackMatchRow;
+
     const hasShipmentMatch = Boolean(
-      effectiveMatch ||
+      resolvedShopifyMatch ||
         decathlonMatch ||
         galaxusMatch ||
         inboundHomeRoute ||
         galaxusWarehouseShipment ||
         decathlonWarehouseShipment ||
-        stxInboundBuy
+        stxInboundBuy ||
+        (shopifyAwbFallback && shopifyAwbFallback.status !== "none")
     );
 
     // GTIN fallback: product barcode on the box (8–14 digit EAN/UPC/ITF14)
@@ -592,8 +722,8 @@ export async function POST(req: NextRequest) {
     const status: ScanStatus = hasAnyMatch ? "FOUND" : "NOT_FOUND";
 
     let shopifyMatchPayload: Record<string, unknown> | null = null;
-    if (effectiveMatch) {
-      const match = effectiveMatch;
+    if (resolvedShopifyMatch) {
+      const match = resolvedShopifyMatch;
       const base = {
         shopifyOrderId: match.shopifyOrderId,
         shopifyOrderName: match.shopifyOrderName,
@@ -634,6 +764,10 @@ export async function POST(req: NextRequest) {
           pickupLabel: enriched.pickupLabel,
           pickupLocation: enriched.pickupLocation,
           labelShippingAddress: enriched.labelShippingAddress,
+          openSiblingLines: enriched.openSiblingLines,
+          hasOtherOpenProducts: enriched.hasOtherOpenProducts,
+          openUnits: enriched.openUnits,
+          unitSelection: enriched.unitSelection,
         };
       } else {
         shopifyMatchPayload = base;
@@ -777,6 +911,7 @@ export async function POST(req: NextRequest) {
       gtin: gtinFallback,
       stxInboundBuy,
       shopifyMatchSuppressed: shouldSuppressShopifyMatch,
+      shopifyAwbFallback,
     };
 
     if (!hasAnyMatch) {
