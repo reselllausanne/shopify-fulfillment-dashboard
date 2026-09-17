@@ -941,6 +941,70 @@ export async function createCompositeWarehouseShipment(
   };
 }
 
+async function checkStxAvailabilityIssues(groups: ShipmentLineGroup[]) {
+  const issues: Array<{
+    providerKey: string;
+    gtin: string | null;
+    lineNumber: number | null;
+    requestedQty: number;
+    stock: number | null;
+    reason: "NO_VARIANT" | "OUT_OF_STOCK";
+  }> = [];
+  const stxGroups = groups.filter((g) => String(g.providerKey ?? "").trim().toUpperCase() === "STX");
+  if (stxGroups.length === 0) return issues;
+
+  for (const group of stxGroups) {
+    for (const line of group.lines) {
+      const gtin = line?.gtin ? String(line.gtin).trim() : "";
+      const qty = Math.max(1, Number(line?.quantity ?? 1));
+      if (!gtin) continue;
+
+      const supplierVariantId = String(line?.supplierVariantId ?? "").trim();
+      let stock: number | null = null;
+      if (supplierVariantId.startsWith("stx_")) {
+        const row = await prisma.supplierVariant.findUnique({
+          where: { supplierVariantId },
+          select: { stock: true },
+        });
+        stock = row?.stock == null ? null : Number(row.stock);
+      } else {
+        const mapping = await prisma.variantMapping.findFirst({
+          where: { gtin, supplierVariantId: { startsWith: "stx_" } },
+          include: { supplierVariant: true },
+          orderBy: { updatedAt: "desc" },
+        });
+        stock =
+          mapping?.supplierVariant?.stock == null
+            ? null
+            : Number(mapping.supplierVariant.stock);
+      }
+
+      if (stock == null || !Number.isFinite(stock)) {
+        issues.push({
+          providerKey: "STX",
+          gtin,
+          lineNumber: line?.lineNumber ?? null,
+          requestedQty: qty,
+          stock: null,
+          reason: "NO_VARIANT",
+        });
+        continue;
+      }
+      if (stock < qty) {
+        issues.push({
+          providerKey: "STX",
+          gtin,
+          lineNumber: line?.lineNumber ?? null,
+          requestedQty: qty,
+          stock,
+          reason: "OUT_OF_STOCK",
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 async function checkAvailabilityIssues(groups: ShipmentLineGroup[]) {
   const issues: Array<{
     providerKey: string;
@@ -950,6 +1014,8 @@ async function checkAvailabilityIssues(groups: ShipmentLineGroup[]) {
     stock: number | null;
     reason: "NO_VARIANT" | "OUT_OF_STOCK";
   }> = [];
+
+  issues.push(...(await checkStxAvailabilityIssues(groups)));
 
   const relevantGroups = groups.filter((g) => {
     const key = String(g.providerKey ?? "").trim().toUpperCase();

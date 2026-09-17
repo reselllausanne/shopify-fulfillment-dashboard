@@ -222,6 +222,33 @@ async function zeroStockForStxVariantsNotInEligibleBatch(
  * Zero stock for `stx_{variantId}` rows present in the SSE payload but no longer eligible
  * (no express offer, invalid GTIN, etc.). Works even when VariantMapping is missing.
  */
+/**
+ * Zero STX rows with no eligible offer in the current KickDB payload (including LEGO:
+ * variant still listed but `prices: []`). DB-orphan zero for LEGO/force-import stays
+ * optional so physical-only rows are not wiped when a size drops off StockX entirely.
+ */
+async function zeroStxStockForRefreshBatch(
+  payload: any,
+  kickdbProductId: string,
+  eligibleSupplierVariantIds: Set<string>,
+  now: Date,
+  slug?: string | null
+): Promise<number> {
+  const fromPayload = await zeroStockForPayloadStxVariantsNotInEligibleBatch(
+    payload,
+    eligibleSupplierVariantIds,
+    now
+  );
+  const skipDbOrphanZero = allowsStxStandardImport(payload, slug);
+  const fromDb =
+    kickdbProductId.length > 0
+      ? await zeroStockForStxVariantsNotInEligibleBatch(kickdbProductId, eligibleSupplierVariantIds, now, {
+          skip: skipDbOrphanZero,
+        })
+      : 0;
+  return fromPayload + fromDb;
+}
+
 async function zeroStockForPayloadStxVariantsNotInEligibleBatch(
   payload: any,
   eligibleSupplierVariantIds: Set<string>,
@@ -729,15 +756,12 @@ export async function runStxPriceStockRefresh(options: StxSyncOptions = {}): Pro
         const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const skipZeroStock = allowsStxStandardImport(
+        const stockZeroed = await zeroStxStockForRefreshBatch(
           payload,
-          pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
-        );
-        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
           dbProductId,
           eligibleIds,
           now,
-          { skip: skipZeroStock }
+          pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey)
         );
         return {
           processedProducts: 1,
@@ -861,16 +885,13 @@ export async function refreshStxProductByUrlKey(urlKey: string): Promise<StxSync
   const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
   const rows = remappedResult.rows;
   const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-  const skipZeroStock = allowsStxStandardImport(
+  const stockZeroed = await zeroStxStockForRefreshBatch(
     payload,
+    dbProductId,
+    eligibleIds,
+    now,
     pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey, slug)
   );
-  const stockZeroed =
-    dbProductId.length > 0
-      ? await zeroStockForStxVariantsNotInEligibleBatch(dbProductId, eligibleIds, now, {
-          skip: skipZeroStock,
-        })
-      : 0;
 
   let updated = 0;
   for (const batch of chunkArray(rows, 500)) {
@@ -967,15 +988,12 @@ export async function refreshStxProductsByKickdbProductIds(
         const remappedResult = await remapRowsToExistingProviderKeyGtin(extracted);
         const rows = remappedResult.rows;
         const eligibleIds = new Set(rows.map((r) => r.supplierVariantId));
-        const skipZeroStock = allowsStxStandardImport(
+        const stockZeroed = await zeroStxStockForRefreshBatch(
           payload,
-          pickString(payload?.slug, payload?.url_key, payload?.urlKey, kickRow?.urlKey)
-        );
-        const stockZeroed = await zeroStockForStxVariantsNotInEligibleBatch(
           cleanId,
           eligibleIds,
           now,
-          { skip: skipZeroStock }
+          pickString(payload?.slug, payload?.url_key, payload?.urlKey, kickRow?.urlKey)
         );
         return {
           processedProducts: 1,

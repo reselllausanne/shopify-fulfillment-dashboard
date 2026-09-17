@@ -407,11 +407,8 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
     return result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
-def is_adidas_lifestyle_full_cpa(product_handle="", brand="", product_category=""):
-    """FULL CPA bake (CAC~31) for thin adidas lifestyle: Samba/Gazelle/Spezial/Campus."""
-    blob = f"{product_handle} {brand} {product_category}".lower().replace("_", "-")
-    families = ("samba", "gazelle", "spezial", "campus")
-    return any(f in blob for f in families)
+def _is_adidas_sneaker(brand="", product_category=""):
+    return str(product_category or "").lower() == "sneakers" and "adidas" in str(brand or "").lower()
 
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
@@ -448,18 +445,13 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
     
     # ---- Tunables (update monthly if needed) ----
-    # Blended CAC ~31 (MER≈7). Default HALF bake CPA_CAP=24; FULL=31 on adidas lifestyle.
+    # Blended CAC ~31 (MER≈7). HALF bake CPA_CAP=24 for all brands (adidas FULL=31 removed).
     PSP = 0.032         # payment fee %
     VAT = 0.023         # VAT %
     ADS_PCT = 0.14      # ads as % of CA on low-AOV branch (blended MER≈7 → ~14%; was 19%)
     CPA_CAP = 24.0      # CHF/order high-AOV (HALF default)
     CM2_TARGET = 0.21   # ~21% after ads → ~12% after ops
-    if is_adidas_lifestyle_full_cpa(product_handle, brand, product_category):
-        CPA_CAP = 31.0  # FULL bake — thinnest leftover segment
-        print(
-            f"[PRICE DEBUG] FULL CPA bake (adidas lifestyle Samba/Gazelle/Spezial/Campus): "
-            f"CPA_CAP={CPA_CAP}"
-        )
+    ADIDAS_SNEAKER_MARGIN_DISCOUNT = 0.05  # mid rollback — adidas sneakers only
     SHIP_F_STANDARD = 14.5  # STX dropship outbound (was 7 warehouse)
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price
@@ -538,8 +530,13 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
         print(f"[PRICE DEBUG] Switching to CPA-CAP MODE (% price > 190 CHF)")
         print(f"[PRICE DEBUG] CPA mode: ({C_plus_ship:.2f} + {CPA_CAP}) / {denom:.3f} = {price_cpa:.2f} CHF")
     
-    # Step 4.5: no brand/category margin discounts (removed Q4)
-    _ = brand  # API parity; unused for pricing
+    # Step 4.5: adidas sneakers −5% (mid rollback; other brands stay full hybrid CM2)
+    if _is_adidas_sneaker(brand, product_category):
+        before_adidas = final_price_raw
+        final_price_raw *= 1.0 - ADIDAS_SNEAKER_MARGIN_DISCOUNT
+        print(
+            f"[PRICE DEBUG] Adidas sneaker −5%: {before_adidas:.2f} → {final_price_raw:.2f} CHF"
+        )
 
     # Step 4.6: Low-AOV floor — fixed margin + fulfil when all-in cost ≤ 100 CHF
     if C <= LOW_AOV_COST_THRESHOLD:

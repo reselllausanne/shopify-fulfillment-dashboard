@@ -480,8 +480,16 @@ export async function bulkUpdateSupplierVariants(
         "supplierGender" = COALESCE(vals."supplierGender", t."supplierGender"),
         "supplierColorway" = COALESCE(vals."supplierColorway", t."supplierColorway"),
         "suggestedRetailPriceInclVat" = COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat"),
-        "standardBuyPrice" = COALESCE(vals."standardBuyPrice", t."standardBuyPrice"),
-        "expressBuyPrice" = COALESCE(vals."expressBuyPrice", t."expressBuyPrice"),
+        "standardBuyPrice" = CASE
+          WHEN vals."expressBuyPrice" IS NOT NULL OR vals."standardBuyPrice" IS NOT NULL
+            THEN vals."standardBuyPrice"
+          ELSE COALESCE(vals."standardBuyPrice", t."standardBuyPrice")
+        END,
+        "expressBuyPrice" = CASE
+          WHEN vals."expressBuyPrice" IS NOT NULL OR vals."standardBuyPrice" IS NOT NULL
+            THEN vals."expressBuyPrice"
+          ELSE COALESCE(vals."expressBuyPrice", t."expressBuyPrice")
+        END,
         "standardSuggestedRetailPriceInclVat" = COALESCE(
           vals."standardSuggestedRetailPriceInclVat",
           t."standardSuggestedRetailPriceInclVat"
@@ -501,8 +509,20 @@ export async function bulkUpdateSupplierVariants(
             t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
             t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
             t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
-            t."standardBuyPrice" IS DISTINCT FROM COALESCE(vals."standardBuyPrice", t."standardBuyPrice") OR
-            t."expressBuyPrice" IS DISTINCT FROM COALESCE(vals."expressBuyPrice", t."expressBuyPrice") OR
+            t."standardBuyPrice" IS DISTINCT FROM (
+              CASE
+                WHEN vals."expressBuyPrice" IS NOT NULL OR vals."standardBuyPrice" IS NOT NULL
+                  THEN vals."standardBuyPrice"
+                ELSE COALESCE(vals."standardBuyPrice", t."standardBuyPrice")
+              END
+            ) OR
+            t."expressBuyPrice" IS DISTINCT FROM (
+              CASE
+                WHEN vals."expressBuyPrice" IS NOT NULL OR vals."standardBuyPrice" IS NOT NULL
+                  THEN vals."expressBuyPrice"
+                ELSE COALESCE(vals."expressBuyPrice", t."expressBuyPrice")
+              END
+            ) OR
             t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(
               vals."standardSuggestedRetailPriceInclVat",
               t."standardSuggestedRetailPriceInclVat"
@@ -531,8 +551,20 @@ export async function bulkUpdateSupplierVariants(
           t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
           t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
           t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
-          t."standardBuyPrice" IS DISTINCT FROM COALESCE(vals."standardBuyPrice", t."standardBuyPrice") OR
-          t."expressBuyPrice" IS DISTINCT FROM COALESCE(vals."expressBuyPrice", t."expressBuyPrice") OR
+          t."standardBuyPrice" IS DISTINCT FROM (
+            CASE
+              WHEN vals."expressBuyPrice" IS NOT NULL OR vals."standardBuyPrice" IS NOT NULL
+                THEN vals."standardBuyPrice"
+              ELSE COALESCE(vals."standardBuyPrice", t."standardBuyPrice")
+            END
+          ) OR
+          t."expressBuyPrice" IS DISTINCT FROM (
+            CASE
+              WHEN vals."expressBuyPrice" IS NOT NULL OR vals."standardBuyPrice" IS NOT NULL
+                THEN vals."expressBuyPrice"
+              ELSE COALESCE(vals."expressBuyPrice", t."expressBuyPrice")
+            END
+          ) OR
           t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(
             vals."standardSuggestedRetailPriceInclVat",
             t."standardSuggestedRetailPriceInclVat"

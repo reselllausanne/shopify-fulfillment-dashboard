@@ -15,22 +15,8 @@ export type CalcShopifySellPriceInput = {
   isExpress?: boolean;
 };
 
-/** FULL CPA bake for thin adidas lifestyle: Samba / Gazelle / Spezial / Campus. */
-export function isAdidasLifestyleFullCpa(input: {
-  productHandle?: string | null;
-  productName?: string | null;
-  brand?: string | null;
-  productCategory?: string | null;
-}): boolean {
-  const blob = [
-    input.productHandle,
-    input.productName,
-    input.brand,
-    input.productCategory,
-  ]
-    .map((v) => String(v ?? "").toLowerCase().replace(/_/g, "-"))
-    .join(" ");
-  return ["samba", "gazelle", "spezial", "campus"].some((f) => blob.includes(f));
+function isAdidasSneaker(brand: string, category: string): boolean {
+  return category === "sneakers" && brand.toLowerCase().includes("adidas");
 }
 
 /**
@@ -59,16 +45,10 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const PSP = 0.032;
   const VAT = 0.023;
   const ADS_PCT = 0.14; // blended MER≈7
-  // HALF default; FULL (~31) on adidas lifestyle thin segment
-  const CPA_CAP = isAdidasLifestyleFullCpa({
-    productHandle,
-    productName,
-    brand,
-    productCategory: category,
-  })
-    ? 31.0
-    : 24.0;
+  const CPA_CAP = 24.0; // HALF bake — adidas FULL=31 removed (was ~1% under benchmark, 0 sales)
   const CM2_TARGET = 0.21;
+  /** Adidas sneakers only — mid rollback between Q4 full CM2 and pre-Aug −5% cut. */
+  const ADIDAS_SNEAKER_MARGIN_DISCOUNT = 0.05;
   /** Outbound customer ship in hybrid base — STX dropship ≈ 14.5 CHF (was 7 warehouse). */
   const SHIP_F = isExpress ? 15.0 : 14.5;
   const EXPRESS_UPSELL_PCT = 0.05;
@@ -103,6 +83,10 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   } else {
     const denom = 1.0 - (PSP + VAT + CM2_TARGET);
     finalPriceRaw = (C_plus_ship + CPA_CAP) / denom;
+  }
+
+  if (isAdidasSneaker(brand, category)) {
+    finalPriceRaw *= 1.0 - ADIDAS_SNEAKER_MARGIN_DISCOUNT;
   }
 
   if (C <= LOW_AOV_COST_THRESHOLD) {

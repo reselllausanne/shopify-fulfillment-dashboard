@@ -5,7 +5,7 @@ import {
 } from "@/shopify/pricing/calcShopifySellPrice";
 
 describe("calcShopifySellPrice", () => {
-  it("prices brands the same after removing margin discounts", () => {
+  it("adidas sneakers get −5% vs other brands (mid rollback from FULL CPA)", () => {
     const adidas = calcShopifySellPrice({
       stockxRaw: 100,
       productCategory: "sneakers",
@@ -27,8 +27,9 @@ describe("calcShopifySellPrice", () => {
     expect(adidas).not.toBeNull();
     expect(nike).not.toBeNull();
     expect(saucony).not.toBeNull();
-    expect(adidas).toBe(nike);
-    expect(adidas).toBe(saucony);
+    expect(adidas).toBe(219);
+    expect(nike).toBe(229);
+    expect(saucony).toBe(229);
     expect(adidas! % 10).toBe(9);
   });
 

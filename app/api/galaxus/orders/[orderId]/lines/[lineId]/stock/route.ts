@@ -3,6 +3,10 @@ import { prisma } from "@/app/lib/prisma";
 import { resolveSupplierVariant } from "@/galaxus/supplier/orders";
 import { createGoldenSupplierClient } from "@/galaxus/supplier/client";
 import { createTrmSupplierClient } from "@/galaxus/supplier/trmClient";
+import {
+  fetchLiveStxAvailabilityForGtin,
+  stxAvailabilityFromSupplierVariant,
+} from "@/galaxus/stx/stockAvailability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -245,11 +249,12 @@ async function fetchTrmStockBySkuSize(params: {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ orderId: string; lineId: string }> }
 ) {
   try {
     const { orderId, lineId } = await params;
+    const live = new URL(request.url).searchParams.get("live") === "1";
 
     const order =
       (await prisma.galaxusOrder.findUnique({
@@ -315,7 +320,7 @@ export async function GET(
 
     if (supplierKey === "trm") {
       const skuRaw = supplierVariant.supplierSku ?? line.supplierSku ?? "";
-      const live = await fetchTrmStockBySkuSize({
+      const liveResult = await fetchTrmStockBySkuSize({
         sku: skuRaw,
         sizeRaw: sizeHint,
       });
@@ -323,19 +328,52 @@ export async function GET(
         ok: true,
         lineId: line.id,
         supplierVariantId: supplierVariant.supplierVariantId,
-        supplierSku: live.supplierSku ?? supplierVariant.supplierSku ?? null,
+        supplierSku: liveResult.supplierSku ?? supplierVariant.supplierSku ?? null,
         requestedQty: toPositiveInt(line.quantity, 1),
-        stock: live.stock,
-        available: live.available,
-        status: live.status,
-        source: live.source,
-        debugVariants: live.debugVariants ?? [],
-        requestedSizeRaw: live.requestedSizeRaw ?? sizeHint,
-        requestedSizeNormalized: live.requestedSizeNormalized ?? normalizeSize(sizeHint),
-        noResponseReason: live.noResponseReason ?? null,
-        triedSkus: live.triedSkus ?? [],
+        stock: liveResult.stock,
+        available: liveResult.available,
+        status: liveResult.status,
+        source: liveResult.source,
+        debugVariants: liveResult.debugVariants ?? [],
+        requestedSizeRaw: liveResult.requestedSizeRaw ?? sizeHint,
+        requestedSizeNormalized: liveResult.requestedSizeNormalized ?? normalizeSize(sizeHint),
+        noResponseReason: liveResult.noResponseReason ?? null,
+        triedSkus: liveResult.triedSkus ?? [],
       });
     }
+
+    if (supplierKey === "stx" || String(supplierVariant.supplierVariantId ?? "").toLowerCase().startsWith("stx_")) {
+      const requestedQty = toPositiveInt(line.quantity, 1);
+      const gtin = String(line.gtin ?? supplierVariant.gtin ?? "").trim();
+      const stx = live && gtin
+        ? await fetchLiveStxAvailabilityForGtin(gtin, requestedQty)
+        : stxAvailabilityFromSupplierVariant(supplierVariant, requestedQty);
+      if (!stx) {
+        return NextResponse.json({
+          ok: true,
+          lineId: line.id,
+          requestedQty,
+          status: "NO_VARIANT",
+          stock: null,
+          available: null,
+          source: "db",
+        });
+      }
+      return NextResponse.json({
+        ok: true,
+        lineId: line.id,
+        supplierVariantId: stx.supplierVariantId ?? supplierVariant.supplierVariantId,
+        supplierSku: supplierVariant.supplierSku ?? null,
+        requestedQty,
+        stock: stx.stock,
+        available: stx.status === "OK",
+        status: stx.status,
+        source: stx.source,
+        deliveryType: stx.deliveryType,
+        stxUpdatedAt: stx.updatedAt,
+      });
+    }
+
     return NextResponse.json(
       {
         ok: false,
