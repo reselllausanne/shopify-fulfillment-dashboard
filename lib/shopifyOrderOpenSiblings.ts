@@ -44,11 +44,10 @@ function lineVariantKey(line: {
   return null;
 }
 
-/** Open order lines (other products) still awaiting fulfillment. */
-export function listOpenSiblingLines(params: {
+/** All open units on the order, including the scanned line. */
+export function listAllOpenUnits(params: {
   orderLineItems: OrderLineItemLike[];
   fulfillmentOrders: FulfillmentOrderLike[];
-  scannedLineItemId: string | null;
 }): OpenSiblingLine[] {
   const remainingByKey = new Map<string, number>();
   for (const fo of params.fulfillmentOrders) {
@@ -62,13 +61,12 @@ export function listOpenSiblingLines(params: {
     }
   }
 
-  const siblings: OpenSiblingLine[] = [];
+  const open: OpenSiblingLine[] = [];
   for (const orderLine of params.orderLineItems) {
-    if (params.scannedLineItemId && orderLine.id === params.scannedLineItemId) continue;
     const key = lineVariantKey(orderLine);
     const remainingQuantity = key ? remainingByKey.get(key) ?? 0 : 0;
     if (remainingQuantity <= 0) continue;
-    siblings.push({
+    open.push({
       lineItemId: orderLine.id,
       title: orderLine.title,
       variantTitle: orderLine.variantTitle ?? null,
@@ -76,8 +74,18 @@ export function listOpenSiblingLines(params: {
       remainingQuantity,
     });
   }
+  return open;
+}
 
-  return siblings;
+/** Open order lines (other products) still awaiting fulfillment. */
+export function listOpenSiblingLines(params: {
+  orderLineItems: OrderLineItemLike[];
+  fulfillmentOrders: FulfillmentOrderLike[];
+  scannedLineItemId: string | null;
+}): OpenSiblingLine[] {
+  return listAllOpenUnits(params).filter(
+    (line) => !params.scannedLineItemId || line.lineItemId !== params.scannedLineItemId
+  );
 }
 
 export async function fetchOpenSiblingLines(

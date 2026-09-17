@@ -10,9 +10,44 @@ import {
   catalogSkuHitIndexes,
   resolveCatalogSkuHits,
 } from "@/app/api/scan-awb/catalogSkuLookup";
+import { searchTokens, compactSearchKey } from "@/lib/searchNormalize";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function buildSearchOrClauses(q: string): Prisma.GalaxusOrderWhereInput[] {
+  const tokens = searchTokens(q);
+  const compact = compactSearchKey(q);
+  const variants = Array.from(
+    new Set([q, ...tokens, compact].map((v) => String(v ?? "").trim()).filter((v) => v.length >= 2))
+  );
+  const clauses: Prisma.GalaxusOrderWhereInput[] = [];
+  for (const variant of variants.slice(0, 8)) {
+    clauses.push(
+      { galaxusOrderId: { contains: variant, mode: "insensitive" } },
+      { orderNumber: { contains: variant, mode: "insensitive" } },
+      { recipientName: { contains: variant, mode: "insensitive" } },
+      { referencePerson: { contains: variant, mode: "insensitive" } },
+      {
+        lines: {
+          some: {
+            OR: [
+              { gtin: { contains: variant, mode: "insensitive" } },
+              { supplierSku: { contains: variant, mode: "insensitive" } },
+              { productName: { contains: variant, mode: "insensitive" } },
+              { description: { contains: variant, mode: "insensitive" } },
+              { supplierPid: { contains: variant, mode: "insensitive" } },
+              { providerKey: { contains: variant, mode: "insensitive" } },
+              { buyerPid: { contains: variant, mode: "insensitive" } },
+              { size: { contains: variant, mode: "insensitive" } },
+            ],
+          },
+        },
+      }
+    );
+  }
+  return clauses;
+}
 
 export async function GET(request: Request) {
   try {
@@ -75,21 +110,6 @@ export async function GET(request: Request) {
         ? catalogSkuHitIndexes(await resolveCatalogSkuHits(q, 40))
         : { gtins: [] as string[], providerKeys: [] as string[], skuByGtin: new Map<string, string>() };
 
-    const lineOr: Prisma.GalaxusOrderLineWhereInput[] = [
-      { gtin: { contains: q, mode: "insensitive" } },
-      { supplierSku: { contains: q, mode: "insensitive" } },
-      { productName: { contains: q, mode: "insensitive" } },
-      { description: { contains: q, mode: "insensitive" } },
-      { supplierPid: { contains: q, mode: "insensitive" } },
-      { providerKey: { contains: q, mode: "insensitive" } },
-      { buyerPid: { contains: q, mode: "insensitive" } },
-    ];
-    if (catalog.gtins.length) lineOr.push({ gtin: { in: catalog.gtins } });
-    if (catalog.providerKeys.length) {
-      lineOr.push({ providerKey: { in: catalog.providerKeys } });
-      lineOr.push({ supplierPid: { in: catalog.providerKeys } });
-    }
-
     const where: Prisma.GalaxusOrderWhereInput =
       q.length > 0
         ? {
@@ -97,17 +117,24 @@ export async function GET(request: Request) {
               baseWhere as Prisma.GalaxusOrderWhereInput,
               {
                 OR: [
-                  { galaxusOrderId: { contains: q, mode: "insensitive" } },
-                  { orderNumber: { contains: q, mode: "insensitive" } },
-                  { recipientName: { contains: q, mode: "insensitive" } },
-                  { referencePerson: { contains: q, mode: "insensitive" } },
-                  {
-                    lines: {
-                      some: {
-                        OR: lineOr,
-                      },
-                    },
-                  },
+                  ...buildSearchOrClauses(q),
+                  ...(catalog.gtins.length
+                    ? [{ lines: { some: { gtin: { in: catalog.gtins } } } }]
+                    : []),
+                  ...(catalog.providerKeys.length
+                    ? [
+                        {
+                          lines: {
+                            some: {
+                              OR: [
+                                { providerKey: { in: catalog.providerKeys } },
+                                { supplierPid: { in: catalog.providerKeys } },
+                              ],
+                            },
+                          },
+                        },
+                      ]
+                    : []),
                 ],
               },
             ],

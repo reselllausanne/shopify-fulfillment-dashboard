@@ -4,6 +4,17 @@ import {
   isInStockFixedPriceProduct,
 } from "@/shopify/inventory/inStockFixedPrice";
 import type { AvailableLocalStockLot } from "@/shopify/localStock/availableLocalStock";
+import {
+  isValidStockxBuyAfterCustomerOrder,
+  parseDateMs as parseCausalDateMs,
+  STOCKX_CAUSAL_SKEW_MINUTES,
+} from "@/app/lib/stockxCausal";
+
+export {
+  isValidStockxBuyAfterCustomerOrder,
+  isValidGalaxusStockxCausalBuy,
+  STOCKX_CAUSAL_SKEW_MINUTES,
+} from "@/app/lib/stockxCausal";
 
 export interface NormalizedSupplierOrder {
   chainId: string; // StockX long chainId (e.g. "14826275139352606543")
@@ -780,48 +791,40 @@ function scoreTimeProximity(hours: number): number {
 }
 
 /**
- * 🔐 CAUSAL HARD FILTER: Supplier order MUST be created AFTER Shopify order
- * 
- * Logic: In dropshipping model:
- * 1. Customer places Shopify order (sale)
- * 2. You buy from Supplier to fulfill it (purchase)
- * 
- * Therefore: supplierCreated MUST be >= shopifyCreated (with small tolerance for clock skew)
- * 
- * @param shopifyDate - Shopify order creation date (ISO)
- * @param supplierDate - Supplier order creation date (ISO)
- * @param toleranceMinutes - Allow small clock skew (default 5 minutes)
- * @returns true if causal order is valid (Supplier after Shopify)
+ * 🔐 CAUSAL HARD FILTER: Supplier order MUST be created AFTER Shopify order.
+ * Shared implementation: `isValidStockxBuyAfterCustomerOrder` (StockX buy never
+ * links to a customer order created after that buy).
  */
 function isValidCausalOrder(
-  shopifyDate: string, 
+  shopifyDate: string,
   supplierDate: string,
-  toleranceMinutes: number = 5
+  toleranceMinutes: number = STOCKX_CAUSAL_SKEW_MINUTES
 ): boolean {
-  const shopifyTime = parseDateMs(shopifyDate);
-  const supplierTime = parseDateMs(supplierDate);
-  const toleranceMs = toleranceMinutes * 60 * 1000;
-  
+  const shopifyTime = parseCausalDateMs(shopifyDate) ?? parseDateMs(shopifyDate);
+  const supplierTime = parseCausalDateMs(supplierDate) ?? parseDateMs(supplierDate);
+
   if (shopifyTime == null || supplierTime == null) {
     console.log(
       `[CAUSAL] ❌ REJECTED: Invalid date(s) ` +
-      `(shopify: "${shopifyDate}", supplier: "${supplierDate}")`
+        `(shopify: "${shopifyDate}", supplier: "${supplierDate}")`
     );
     return false;
   }
 
-  // Supplier must be created AFTER Shopify (with tolerance for clock skew)
-  // If Supplier is more than 5 minutes BEFORE Shopify → INVALID
-  const isValid = supplierTime >= (shopifyTime - toleranceMs);
-  
+  const isValid = isValidStockxBuyAfterCustomerOrder(
+    shopifyDate,
+    supplierDate,
+    toleranceMinutes
+  );
+
   if (!isValid) {
     const diffMinutes = (shopifyTime - supplierTime) / (1000 * 60);
     console.log(
       `[CAUSAL] ❌ REJECTED: Supplier order created ${diffMinutes.toFixed(1)} minutes ` +
-      `BEFORE Shopify order (violates dropship causality)`
+        `BEFORE Shopify order (violates dropship causality)`
     );
   }
-  
+
   return isValid;
 }
 

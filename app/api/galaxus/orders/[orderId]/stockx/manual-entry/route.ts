@@ -20,6 +20,7 @@ import {
   resolveSupplierVariantIdForGalaxusLine,
 } from "@/galaxus/stx/purchaseUnits";
 import { galaxusLineWarehouseStockHint } from "@/galaxus/warehouse/lineInventorySource";
+import { isValidGalaxusStockxCausalBuy } from "@/app/lib/stockxCausal";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,22 +41,6 @@ function trimStr(v: unknown): string {
   return String(v ?? "").trim();
 }
 
-function parseDateMs(value: unknown): number | null {
-  if (!value) return null;
-  const ms = new Date(String(value)).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function isValidGalaxusStockxCausalBuy(
-  orderDate: unknown,
-  purchaseDate: unknown,
-  skewMinutes = 5
-): boolean {
-  const orderMs = parseDateMs(orderDate);
-  const buyMs = parseDateMs(purchaseDate);
-  if (orderMs == null || buyMs == null) return false;
-  return buyMs >= orderMs - skewMinutes * 60_000;
-}
 
 function normalizeBearer(raw: unknown): string | null {
   const cleaned = String(raw ?? "")
