@@ -29,14 +29,10 @@ import {
 } from "@/app/lib/shopifyMatchEligibility";
 import {
   findStockxInboundPackageByAwb,
-  loadShopifyOpenMatchCandidatesForSku,
   upsertStockxInboundPackage,
 } from "@/app/lib/stockxInboundPackages";
-import {
-  resolveShopifyAwbFallbackMatch,
-  type OpenShopifyLineCandidate,
-} from "@/app/lib/shopifyAwbFallback";
-import { isValidStockxBuyAfterCustomerOrder } from "@/app/lib/stockxCausal";
+import { resolveVerifiedShopifyAwbFallback } from "@/app/lib/shopifyOpenLineCandidates";
+import type { OpenShopifyLineCandidate } from "@/app/lib/shopifyAwbFallback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -596,37 +592,14 @@ export async function POST(req: NextRequest) {
         (await findStockxInboundPackageByAwb(awbCandidates[0])) ||
         (await findStockxInboundPackageByAwb(awb));
       if (pkg?.sku) {
-        const openRows = await loadShopifyOpenMatchCandidatesForSku({
-          sku: String(pkg.sku),
-          sizeEU: pkg.sizeEU ?? null,
-          minCreatedAt: shopifyMatchMinCreatedAt(),
+        const resolved = await resolveVerifiedShopifyAwbFallback({
+          awb: String(pkg.awb),
+          sku: pkg.sku,
+          sizeEU: pkg.sizeEU,
+          productName: pkg.productName,
+          purchaseDate: pkg.purchaseDate,
+          stockxAccountKey: pkg.stockxAccountKey,
         });
-        const openLines: OpenShopifyLineCandidate[] = openRows
-          .filter((r) => r.shopifyLineItemId && r.shopifyCreatedAt)
-          .filter((r) =>
-            isValidStockxBuyAfterCustomerOrder(r.shopifyCreatedAt, pkg.purchaseDate)
-          )
-          .map((r) => ({
-            shopifyOrderId: r.shopifyOrderId,
-            shopifyOrderName: r.shopifyOrderName,
-            shopifyLineItemId: r.shopifyLineItemId!,
-            shopifySku: r.shopifySku,
-            shopifySizeEU: r.shopifySizeEU,
-            shopifyProductTitle: r.shopifyProductTitle,
-            shopifyCreatedAt: r.shopifyCreatedAt!,
-            remainingQuantity: 1,
-          }));
-        const resolved = resolveShopifyAwbFallbackMatch(
-          {
-            awb: String(pkg.awb),
-            sku: pkg.sku,
-            sizeEU: pkg.sizeEU,
-            productName: pkg.productName,
-            purchaseDate: pkg.purchaseDate,
-            stockxAccountKey: pkg.stockxAccountKey,
-          },
-          openLines
-        );
         shopifyAwbFallback = {
           status: resolved.status,
           reason: resolved.status === "none" ? undefined : resolved.reason,

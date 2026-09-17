@@ -29,8 +29,9 @@ import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses"
 import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
 import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
 import {
-  getFulfillIdempotentResult,
-  setFulfillIdempotentResult,
+  beginFulfillAttempt,
+  completeFulfillAttempt,
+  failFulfillAttempt,
 } from "@/lib/fulfillIdempotency";
 import { fulfillScanIdempotencyKey } from "@/lib/shopifyFulfillUnitSelection";
 import { listAllOpenUnits } from "@/lib/shopifyOrderOpenSiblings";
@@ -378,12 +379,15 @@ type FulfillStatus =
   | "INVALID"
   | "SHOPIFY_ERROR"
   | "BLOCKED_WAREHOUSE_DIRECT_DELIVERY"
-  | "NEEDS_UNIT_SELECTION";
+  | "NEEDS_UNIT_SELECTION"
+  | "ALREADY_PROCESSING";
 
 const normalizeAwb = (code?: string | null) => normalizeInboundHomeAwb(code);
 
 export async function POST(req: NextRequest) {
   const requestStartedAt = new Date();
+  let outerIdempotencyKey: string | null = null;
+  let lockResolved = false;
   try {
     const withContext = async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
       try {
@@ -462,12 +466,79 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (idempotencyKey) {
-      const cached = getFulfillIdempotentResult(idempotencyKey);
-      if (cached) {
-        return NextResponse.json(cached);
-      }
+    // Compute a stable lock key so retries / double-clicks share the same
+    // FulfillAttemptLock row across processes and restarts.
+    const selectionInputHash = [
+      requestedShopifyLineItemId ?? "",
+      selectedUnits
+        .map((u) => `${u.lineItemId}x${u.quantity}`)
+        .sort()
+        .join("|"),
+      gtinFulfill ? "gtin" : "awb",
+      allowAlreadyFulfilled ? "force" : "std",
+    ].join("::");
+    const effectiveIdempotencyKey =
+      idempotencyKey ||
+      [
+        "fulfill",
+        awb,
+        requestedShopifyLineItemId ?? "",
+        selectionInputHash,
+      ].join(":");
+
+    const lockOutcome = await beginFulfillAttempt({
+      idempotencyKey: effectiveIdempotencyKey,
+      awb,
+      shopifyOrderId: "",
+      selectionHash: selectionInputHash,
+    });
+    if (lockOutcome.status === "ALREADY_COMPLETED") {
+      return NextResponse.json(lockOutcome.result ?? { ok: true, replayed: true });
     }
+    if (lockOutcome.status === "ALREADY_PROCESSING") {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "ALREADY_PROCESSING" as FulfillStatus,
+          awb,
+          error: "Another fulfill attempt for this AWB/line is already in progress.",
+        },
+        { status: 409 }
+      );
+    }
+    let activeIdempotencyKey = effectiveIdempotencyKey;
+    outerIdempotencyKey = activeIdempotencyKey;
+    if (lockOutcome.status === "PREVIOUSLY_FAILED") {
+      // Prior attempt errored — allow retry by recycling under a fresh key
+      // so we don't clobber the failure record.
+      const retryKey = `${effectiveIdempotencyKey}:retry-${Date.now()}`;
+      const retryOutcome = await beginFulfillAttempt({
+        idempotencyKey: retryKey,
+        awb,
+        shopifyOrderId: "",
+        selectionHash: selectionInputHash,
+      });
+      if (retryOutcome.status !== "STARTED") {
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "SHOPIFY_ERROR" as FulfillStatus,
+            awb,
+            error: "Could not acquire idempotency lock for retry.",
+          },
+          { status: 500 }
+        );
+      }
+      activeIdempotencyKey = retryKey;
+      outerIdempotencyKey = activeIdempotencyKey;
+    }
+
+    const finishOnError = async (message: string) => {
+      await failFulfillAttempt({
+        idempotencyKey: activeIdempotencyKey,
+        error: message,
+      }).catch(() => null);
+    };
 
     const matchSelect = {
       id: true,
@@ -903,29 +974,32 @@ export async function POST(req: NextRequest) {
     }
 
     if (skipShopifyFulfillment) {
-      return NextResponse.json(
-        {
-          ok: true,
-          status: "ALREADY_FULFILLED" as FulfillStatus,
-          awb,
-          fulfillmentId: null,
-          shopifyOrderId,
-          shopifyOrderName: map.order.name,
-          trackingNumber: trackingNumberForFulfillment,
-          trackingCompany: trackingCompanyForFulfillment,
-          swissPostLabelId,
-          swissPostBarcode,
-          swissPostStatus,
-          swissPostResponse: swissPostResult?.data || null,
-          labelFilePath,
-          printJobResult,
-          labelData,
-          browserPrintConfig,
-          warnings,
-          swissPost: shouldCallSwissPost ? "attempted" : "skipped",
-        },
-        { status: 200 }
-      );
+      const payload = {
+        ok: true,
+        status: "ALREADY_FULFILLED" as FulfillStatus,
+        awb,
+        fulfillmentId: null,
+        shopifyOrderId,
+        shopifyOrderName: map.order.name,
+        trackingNumber: trackingNumberForFulfillment,
+        trackingCompany: trackingCompanyForFulfillment,
+        swissPostLabelId,
+        swissPostBarcode,
+        swissPostStatus,
+        swissPostResponse: swissPostResult?.data || null,
+        labelFilePath,
+        printJobResult,
+        labelData,
+        browserPrintConfig,
+        warnings,
+        swissPost: shouldCallSwissPost ? "attempted" : "skipped",
+      };
+      await completeFulfillAttempt({
+        idempotencyKey: activeIdempotencyKey,
+        result: payload,
+      }).catch(() => null);
+      lockResolved = true;
+      return NextResponse.json(payload, { status: 200 });
     }
 
     const fulfillmentInput = {
@@ -947,27 +1021,30 @@ export async function POST(req: NextRequest) {
         warnings.push(
           `Shopify fulfillment skipped: ${userErrors.map((e) => e.message).join("; ")}`
         );
-        return NextResponse.json(
-          {
-            ok: true,
-            status: "ALREADY_FULFILLED" as FulfillStatus,
-            awb,
-            shopifyOrderId,
-            shopifyOrderName: map.order.name,
-            trackingNumber: trackingNumberForFulfillment,
-            trackingCompany: trackingCompanyForFulfillment,
-            swissPostLabelId,
-            swissPostBarcode,
-            swissPostStatus,
-            labelFilePath,
-            printJobResult,
-            labelData,
-            browserPrintConfig,
-            warnings,
-            userErrors,
-          },
-          { status: 200 }
-        );
+        const payload = {
+          ok: true,
+          status: "ALREADY_FULFILLED" as FulfillStatus,
+          awb,
+          shopifyOrderId,
+          shopifyOrderName: map.order.name,
+          trackingNumber: trackingNumberForFulfillment,
+          trackingCompany: trackingCompanyForFulfillment,
+          swissPostLabelId,
+          swissPostBarcode,
+          swissPostStatus,
+          labelFilePath,
+          printJobResult,
+          labelData,
+          browserPrintConfig,
+          warnings,
+          userErrors,
+        };
+        await completeFulfillAttempt({
+          idempotencyKey: activeIdempotencyKey,
+          result: payload,
+        }).catch(() => null);
+        lockResolved = true;
+        return NextResponse.json(payload, { status: 200 });
       }
       return NextResponse.json(
         {
@@ -983,25 +1060,28 @@ export async function POST(req: NextRequest) {
     const fulfillment = result.fulfillmentCreate.fulfillment;
     if (!fulfillment) {
       if (allowAlreadyFulfilled && (labelData || labelFilePath)) {
-        return NextResponse.json(
-          {
-            ok: true,
-            status: "ALREADY_FULFILLED" as FulfillStatus,
-            awb,
-            shopifyOrderId,
-            shopifyOrderName: map.order.name,
-            trackingNumber: trackingNumberForFulfillment,
-            trackingCompany: trackingCompanyForFulfillment,
-            swissPostLabelId,
-            swissPostBarcode,
-            labelFilePath,
-            printJobResult,
-            labelData,
-            browserPrintConfig,
-            warnings,
-          },
-          { status: 200 }
-        );
+        const payload = {
+          ok: true,
+          status: "ALREADY_FULFILLED" as FulfillStatus,
+          awb,
+          shopifyOrderId,
+          shopifyOrderName: map.order.name,
+          trackingNumber: trackingNumberForFulfillment,
+          trackingCompany: trackingCompanyForFulfillment,
+          swissPostLabelId,
+          swissPostBarcode,
+          labelFilePath,
+          printJobResult,
+          labelData,
+          browserPrintConfig,
+          warnings,
+        };
+        await completeFulfillAttempt({
+          idempotencyKey: activeIdempotencyKey,
+          result: payload,
+        }).catch(() => null);
+        lockResolved = true;
+        return NextResponse.json(payload, { status: 200 });
       }
       return NextResponse.json(
         { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, awb, error: "Missing fulfillment" },
@@ -1127,15 +1207,19 @@ export async function POST(req: NextRequest) {
       },
     };
 
-    const cacheKey =
-      idempotencyKey ||
-      fulfillScanIdempotencyKey({
-        awb,
-        shopifyOrderId,
-        lineItemId: String(selectedMatches[0]?.shopifyLineItemId ?? ""),
-        quantity: 1,
-      });
-    setFulfillIdempotentResult(cacheKey, successPayload);
+    await completeFulfillAttempt({
+      idempotencyKey: activeIdempotencyKey,
+      result: successPayload,
+    }).catch((err: any) => {
+      console.error(
+        "[FULFILL-FROM-AWB] completeFulfillAttempt failed",
+        err?.message || err
+      );
+    });
+    lockResolved = true;
+    // Reference kept so `fulfillScanIdempotencyKey` import stays legitimate
+    // for consumers reading the cache key format from server logs.
+    void fulfillScanIdempotencyKey;
 
     return NextResponse.json(successPayload, { status: 200 });
   } catch (error: any) {
@@ -1143,10 +1227,26 @@ export async function POST(req: NextRequest) {
     if (error?.stack) {
       console.error("[FULFILL-FROM-AWB] Stack:", error.stack);
     }
+    // Best-effort mark the attempt as failed so an operator retry recycles
+    // the lock under a fresh key instead of returning cached IN_PROGRESS.
+    if (outerIdempotencyKey) {
+      await failFulfillAttempt({
+        idempotencyKey: outerIdempotencyKey,
+        error: String(error?.message || error),
+      }).catch(() => null);
+      lockResolved = true;
+    }
     return NextResponse.json(
       { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, error: error.message || "Error" },
       { status: 500 }
     );
+  } finally {
+    if (!lockResolved && outerIdempotencyKey) {
+      await failFulfillAttempt({
+        idempotencyKey: outerIdempotencyKey,
+        error: "Early exit without success (see prior response payload for details).",
+      }).catch(() => null);
+    }
   }
 }
 

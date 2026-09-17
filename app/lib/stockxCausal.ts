@@ -1,10 +1,11 @@
 /**
- * Dropship causality: StockX buy must be created AFTER (or within skew of)
- * the customer order. A StockX purchase must never link to a customer order
- * created after that purchase.
+ * Dropship causality: StockX buy MUST be created on or after the customer
+ * order. No clock-skew allowance — buyMs >= customerMs is the only valid
+ * predicate. A StockX purchase must never link to a customer order created
+ * after that purchase.
  */
 
-export const STOCKX_CAUSAL_SKEW_MINUTES = 5;
+export const STOCKX_CAUSAL_SKEW_MINUTES = 0;
 
 export function parseDateMs(value: unknown): number | null {
   if (value == null || value === "") return null;
@@ -14,28 +15,28 @@ export function parseDateMs(value: unknown): number | null {
 }
 
 /**
- * @returns true when supplier/buy time is on or after customer order time
- *          (minus skewMinutes for clock drift).
+ * @returns true iff supplier/buy time is on or after customer order time.
+ *          The optional `_skewMinutes` argument is IGNORED (kept only for
+ *          call-site compatibility during migration).
  */
 export function isValidStockxBuyAfterCustomerOrder(
   customerOrderDate: unknown,
   stockxPurchaseDate: unknown,
-  skewMinutes: number = STOCKX_CAUSAL_SKEW_MINUTES
+  _skewMinutes: number = STOCKX_CAUSAL_SKEW_MINUTES
 ): boolean {
   const customerMs = parseDateMs(customerOrderDate);
   const buyMs = parseDateMs(stockxPurchaseDate);
   if (customerMs == null || buyMs == null) return false;
-  const toleranceMs = Math.max(0, skewMinutes) * 60 * 1000;
-  return buyMs >= customerMs - toleranceMs;
+  return buyMs >= customerMs;
 }
 
 /** Alias used by Galaxus auto-link / match routes. */
 export function isValidGalaxusStockxCausalBuy(
   orderDate: unknown,
   purchaseDate: unknown,
-  skewMinutes: number = STOCKX_CAUSAL_SKEW_MINUTES
+  _skewMinutes: number = STOCKX_CAUSAL_SKEW_MINUTES
 ): boolean {
-  return isValidStockxBuyAfterCustomerOrder(orderDate, purchaseDate, skewMinutes);
+  return isValidStockxBuyAfterCustomerOrder(orderDate, purchaseDate);
 }
 
 /** Hours buy is after sale (negative = buy before sale). */

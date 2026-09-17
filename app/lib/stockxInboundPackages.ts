@@ -1,6 +1,13 @@
 /**
  * Persist / refresh the last N StockX packages arrived for AWB fallback.
  * Multi-account ready via stockxAccountKey (Shopify today; Galaxus later).
+ *
+ * NOTE: the legacy `syncStockxInboundPackagesFromDb` rebuilt this table from
+ * OrderMatch + StxPurchaseUnit rows — that is the exact fake-signal pathway
+ * we're eliminating. The real inbound sync lives in
+ * `app/lib/stockxInboundSyncFromApi.ts` and calls the StockX buying API
+ * directly. The DB-side helper is kept only as a deprecated no-op so
+ * existing imports don't break at build time.
  */
 
 import { prisma } from "@/app/lib/prisma";
@@ -78,102 +85,6 @@ export async function upsertStockxInboundPackage(
   });
 }
 
-/**
- * Rebuild recent inbound packages from OrderMatch + StxPurchaseUnit AWB rows.
- * Keeps at most STOCKX_INBOUND_PACKAGE_RETENTION rows (deletes older).
- */
-export async function syncStockxInboundPackagesFromDb(options?: {
-  limit?: number;
-}): Promise<{ upserted: number; pruned: number }> {
-  const limit = Math.max(1, Math.min(500, options?.limit ?? STOCKX_INBOUND_PACKAGE_RETENTION));
-  const prismaAny = prisma as any;
-  if (!prismaAny.stockxInboundPackage) {
-    return { upserted: 0, pruned: 0 };
-  }
-
-  let upserted = 0;
-
-  const matches = await prisma.orderMatch.findMany({
-    where: { stockxAwb: { not: null } },
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-    select: {
-      stockxAwb: true,
-      stockxOrderNumber: true,
-      stockxOrderId: true,
-      shopifySku: true,
-      shopifySizeEU: true,
-      shopifyProductTitle: true,
-      stockxPurchaseDate: true,
-      stockxStatus: true,
-      updatedAt: true,
-    },
-  });
-
-  for (const m of matches) {
-    const awb = normalizeAwb(m.stockxAwb);
-    if (!awb) continue;
-    await upsertStockxInboundPackage({
-      awb,
-      stockxOrderNumber: m.stockxOrderNumber,
-      stockxOrderId: m.stockxOrderId,
-      stockxAccountKey: "shopify",
-      sku: m.shopifySku,
-      sizeEU: m.shopifySizeEU,
-      productName: m.shopifyProductTitle,
-      purchaseDate: m.stockxPurchaseDate,
-      status: m.stockxStatus,
-      arrivedAt: m.updatedAt,
-      channelHint: "shopify",
-    });
-    upserted += 1;
-  }
-
-  const units = await prismaAny.stxPurchaseUnit.findMany({
-    where: { awb: { not: null }, cancelledAt: null },
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-    select: {
-      awb: true,
-      stockxOrderNumber: true,
-      stockxOrderId: true,
-      gtin: true,
-      supplierVariantId: true,
-      updatedAt: true,
-    },
-  });
-
-  for (const u of units) {
-    const awb = normalizeAwb(u.awb);
-    if (!awb) continue;
-    await upsertStockxInboundPackage({
-      awb,
-      stockxOrderNumber: u.stockxOrderNumber,
-      stockxOrderId: u.stockxOrderId,
-      stockxAccountKey: "galaxus",
-      sku: u.supplierVariantId,
-      productName: null,
-      purchaseDate: null,
-      status: null,
-      arrivedAt: u.updatedAt,
-      channelHint: "galaxus",
-    });
-    upserted += 1;
-  }
-
-  const keep = await prismaAny.stockxInboundPackage.findMany({
-    orderBy: { arrivedAt: "desc" },
-    take: limit,
-    select: { id: true },
-  });
-  const keepIds = new Set(keep.map((r: { id: string }) => r.id));
-  const prunedResult = await prismaAny.stockxInboundPackage.deleteMany({
-    where: { id: { notIn: Array.from(keepIds) } },
-  });
-
-  return { upserted, pruned: Number(prunedResult?.count ?? 0) };
-}
-
 export async function findStockxInboundPackageByAwb(awbRaw: string) {
   const awb = normalizeAwb(awbRaw);
   if (!awb) return null;
@@ -183,8 +94,31 @@ export async function findStockxInboundPackageByAwb(awbRaw: string) {
 }
 
 /**
+ * @deprecated Rebuilding StockxInboundPackage from OrderMatch / StxPurchaseUnit
+ * copied whatever AWB we happened to have already saved and marketed it as an
+ * "arrived StockX parcel", which is exactly the wrong signal for the AWB
+ * fallback. Real inbound sync now lives in
+ * {@link ./stockxInboundSyncFromApi.ts#syncStockxInboundPackagesFromStockxApi}
+ * and hits the StockX buying API. This function is kept as a no-op so old
+ * imports keep compiling; callers should migrate.
+ */
+export async function syncStockxInboundPackagesFromDb(_options?: {
+  limit?: number;
+}): Promise<{ upserted: number; pruned: number; deprecated: true }> {
+  console.warn(
+    "[STOCKX-INBOUND-PACKAGES] syncStockxInboundPackagesFromDb is deprecated no-op; " +
+      "use syncStockxInboundPackagesFromStockxApi instead."
+  );
+  return { upserted: 0, pruned: 0, deprecated: true };
+}
+
+/**
  * Candidates for Shopify AWB fallback: OrderMatch rows still missing AWB
  * (or matching SKU) within freshness window — open-ish matches.
+ *
+ * NOTE: these rows are only *discovery hints*. Callers MUST re-verify against
+ * live Shopify fulfillment orders before treating them as open lines. Cf.
+ * `app/lib/shopifyOpenLineCandidates.ts` for the verified loader.
  */
 export async function loadShopifyOpenMatchCandidatesForSku(params: {
   sku: string;

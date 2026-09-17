@@ -7,12 +7,17 @@
  * vs another thermal).
  *
  * Fallback chain (certain match only):
- *   1. QZ Tray (client) if configured + reachable
+ *   1. QZ Tray (client) if configured + validated silent print
  *   2. Server CUPS (`LOCAL_STATION` + lp) when request hits a packing Mac
  *   3. Browser print popup (existing SCAN_BROWSER_PRINT_*)
  *
  * PrintNode remains an optional cloud alternative for multi-site later;
  * interface is provider-agnostic so we can swap without changing callers.
+ *
+ * HONESTY CONTRACT — this module never claims silent print works unless the
+ * station operator has explicitly ticked `silentPrintValidated` for THIS
+ * install. Default config disables auto-print until QZ has been proven end
+ * to end on the specific printer.
  */
 
 export type PrintStationProvider = "qz_tray" | "printnode" | "cups" | "browser";
@@ -25,7 +30,17 @@ export type PrintStationConfig = {
   /** Label media hint — same physical format for all stations. */
   labelWidthMm: number;
   labelHeightMm: number;
+  /**
+   * Auto-print on certain matches. DEFAULT FALSE — operator must opt in per
+   * station after silent print has been validated on the printer.
+   */
   autoPrintOnCertainMatch: boolean;
+  /**
+   * Operator has verified silent print works end-to-end on this station
+   * (QZ Tray installed, cert signed / signature accepted, physical label
+   * printed on Brother QL-W810 or equivalent). Required for silent print.
+   */
+  silentPrintValidated: boolean;
 };
 
 export const DEFAULT_LABEL_WIDTH_MM = 62;
@@ -42,7 +57,10 @@ export function defaultPrintStationConfig(
     printerName: partial?.printerName || "",
     labelWidthMm: partial?.labelWidthMm ?? DEFAULT_LABEL_WIDTH_MM,
     labelHeightMm: partial?.labelHeightMm ?? DEFAULT_LABEL_HEIGHT_MM,
-    autoPrintOnCertainMatch: partial?.autoPrintOnCertainMatch ?? true,
+    // Honest defaults: never auto-print until the operator opts in AND
+    // silent print has been validated on this station.
+    autoPrintOnCertainMatch: partial?.autoPrintOnCertainMatch ?? false,
+    silentPrintValidated: partial?.silentPrintValidated ?? false,
   };
 }
 
@@ -53,16 +71,27 @@ export type AutoPrintDecision = {
     | "ambiguous_match"
     | "disabled"
     | "no_printer"
+    | "silent_not_validated"
     | "uncertain";
 };
 
-/** Auto-print only on certain (non-ambiguous) matches when station allows it. */
+/**
+ * Auto-print only when ALL of these hold:
+ *   1. Station toggles auto-print on.
+ *   2. `silentPrintValidated` is true (operator has verified QZ silent print
+ *      on this printer). We refuse to claim silent print without proof.
+ *   3. A printer name is configured (unless provider is `browser`).
+ *   4. Match certainty is `certain`.
+ */
 export function decideStationAutoPrint(params: {
   matchCertainty: "certain" | "ambiguous" | "none";
   config: PrintStationConfig;
 }): AutoPrintDecision {
   if (!params.config.autoPrintOnCertainMatch) {
     return { shouldAutoPrint: false, reason: "disabled" };
+  }
+  if (!params.config.silentPrintValidated) {
+    return { shouldAutoPrint: false, reason: "silent_not_validated" };
   }
   if (!String(params.config.printerName || "").trim() && params.config.provider !== "browser") {
     return { shouldAutoPrint: false, reason: "no_printer" };
