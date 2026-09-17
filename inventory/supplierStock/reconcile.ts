@@ -85,7 +85,7 @@ export function reconcileObservation(obs: VariantObservation): ReconcileResult {
     availabilityStatus: obs.availabilityStatus,
     supplierStockQty: obs.supplierStockQty,
     quantityUnknown: obs.quantityUnknown,
-    hasFreshSourceEvidence: obs.hasFreshSourceEvidence !== false,
+    hasFreshSourceEvidence: obs.hasFreshSourceEvidence === true,
     usedDefaultStock: obs.usedDefaultStock,
     packCount: obs.packCount,
     packInflation: obs.packInflation,
