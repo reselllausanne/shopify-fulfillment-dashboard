@@ -407,17 +407,14 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
     return result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
-def is_adidas_lifestyle_full_cpa(product_handle="", brand="", product_category=""):
-    """DEPRECATED: FULL CPA (31) retired. Always False — HALF (24) for all families."""
-    return False
-
-
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
     HYBRID ADS-COST PRICING MODEL: ~12% EBITDA @ 35-37k CHF monthly revenue (calibration band)
 
     Goal: Output a Shopify sell price that includes shipping and yields ~12% EBITDA
     using a hybrid ads-cost model (percent for low AOV, flat CPA for high AOV).
+
+    HALF only (CPA_CAP=24). No adidas lifestyle / FULL (31) branch exists.
 
     Higher CA (e.g. ~55k) does not auto-retune constants — if ops/ads % change materially,
     adjust ADS_PCT / CM2_TARGET / CPA_CAP manually.
@@ -436,26 +433,23 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     6. Psychological rounding (no global +3%, no second ship bump)
     
     LEGO: C_plus_ship * 1.33 (33% brut) only, then psych rounding. Manual inbound ship via get_lego_shipping_cost(handle).
-
-    Active rule: HALF only (CPA_CAP=24). FULL (31 / adidas lifestyle) is never applied.
     
     Args:
         stockx_raw: StockX tile price BEFORE their fees (CHF)
         product_category: Product category (sneakers, lego, etc.)
         is_express: Express delivery — higher ship in base + 5% upsell before rounding
         product_handle: Product URL slug for LEGO-specific shipping
-        brand: unused (kept for call-site compat; FULL branch removed)
+        brand: unused (kept for call-site compat)
     """
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
     
     # ---- Tunables (update monthly if needed) ----
-    # HALF only (CPA_CAP=24). FULL (31) retired — adidas Samba/Gazelle/Spezial/Campus use HALF.
+    # HALF only (CPA_CAP=24) — sole automatic formula for all brands/families.
     PSP = 0.032         # payment fee %
     VAT = 0.023         # VAT %
     ADS_PCT = 0.14      # ads as % of CA on low-AOV branch (blended MER≈7 → ~14%; was 19%)
-    CPA_CAP = 24.0      # CHF/order high-AOV (HALF — sole production rule)
+    CPA_CAP = 24.0      # CHF/order high-AOV (HALF — sole automatic formula)
     CM2_TARGET = 0.21   # ~21% after ads → ~12% after ops
-    print(f"[PRICE DEBUG] HALF CPA bake: CPA_CAP={CPA_CAP}")
     SHIP_F_STANDARD = 14.5  # STX dropship outbound (was 7 warehouse)
     SHIP_F_EXPRESS = 15.0
     EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price

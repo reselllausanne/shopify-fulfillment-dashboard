@@ -17,31 +17,17 @@ export type CalcShopifySellPriceInput = {
 
 /**
  * Pricing rule label for audits / dry-runs.
- * HALF = CPA_CAP 24 (sole production rule since 2026-09).
- * FULL (CPA 31 / adidas lifestyle) is retired — kept only as a historical label.
+ * HALF = CPA_CAP 24 — sole automatic formula for all brands/families.
  */
 export type ShopifyPricingRule = "half" | "lego" | "manual_override";
 
 export const SHOPIFY_CPA_CAP_HALF = 24.0;
 
 /**
- * @deprecated FULL CPA bake removed. Always returns false — adidas Samba/Gazelle/
- * Spezial/Campus use HALF like every other STX product.
- */
-export function isAdidasLifestyleFullCpa(_input: {
-  productHandle?: string | null;
-  productName?: string | null;
-  brand?: string | null;
-  productCategory?: string | null;
-}): boolean {
-  return false;
-}
-
-/**
  * TypeScript port of Python `calc_sell_price` (shopifyAPI_GQL.py) — same hybrid
  * ads-cost model used on the Shopify storefront.
  *
- * Active rule: HALF only (CPA_CAP=24). FULL (31) is never applied on new calcs.
+ * HALF only (CPA_CAP=24). No adidas lifestyle / FULL branch exists.
  */
 export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number | null {
   const stockxRaw = Number(input.stockxRaw);
@@ -64,8 +50,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
   const PSP = 0.032;
   const VAT = 0.023;
   const ADS_PCT = 0.14; // blended MER≈7
-  // HALF only — FULL (CPA 31) retired for all brands/families
-  const CPA_CAP = SHOPIFY_CPA_CAP_HALF;
+  const CPA_CAP = SHOPIFY_CPA_CAP_HALF; // HALF — sole automatic formula
   const CM2_TARGET = 0.21;
   /** Outbound customer ship in hybrid base — STX dropship ≈ 14.5 CHF (was 7 warehouse). */
   const SHIP_F = isExpress ? 15.0 : 14.5;
