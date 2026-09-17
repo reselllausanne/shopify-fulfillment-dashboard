@@ -208,6 +208,25 @@ model StockxInboundPackage {
   @@schema("public")
 }
 
+/// Persistent idempotency + in-progress lock for fulfill-from-awb.
+/// Prevents double label / double fulfill across processes and restarts.
+model FulfillAttemptLock {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  idempotencyKey String   @unique
+  status         String
+  awb            String
+  shopifyOrderId String
+  selectionHash  String
+  resultJson     Json?
+  error          String?
+
+  @@index([awb, shopifyOrderId])
+  @@index([status, updatedAt])
+  @@schema("public")
+}
+
 model GalaxusStockxMatch {
   id String @id @default(uuid())
 

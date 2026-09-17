@@ -989,7 +989,7 @@ export function matchShopifyToSupplier(
     const isValidCausal = isValidCausalOrder(
       shopifyItem.createdAt,
       supplierOrder.purchaseDate,
-      5 // 5 minutes tolerance for clock skew
+      STOCKX_CAUSAL_SKEW_MINUTES
     );
     
     if (!isValidCausal) {
