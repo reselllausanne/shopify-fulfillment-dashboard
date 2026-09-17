@@ -196,20 +196,33 @@ model StockxInboundPackage {
   productName        String?
   purchaseDate       DateTime?
   status             String?
+  /// Legacy display field — set once from stockxEventAt on create; not bumped on cron.
   arrivedAt          DateTime  @default(now())
+  /// First time this AWB was observed from StockX API. Immutable on update.
+  firstSeenAt        DateTime  @default(now())
+  /// Last successful inbound sync refresh for this AWB.
+  lastSeenAt         DateTime  @default(now())
+  /// Best StockX event time (purchase/creation). Drives retention ranking.
+  stockxEventAt      DateTime?
   channelHint        String?
   linkedShopifyLineItemId String?
   linkedGalaxusOrderId    String?
 
   @@index([arrivedAt])
+  @@index([firstSeenAt])
+  @@index([lastSeenAt])
+  @@index([stockxEventAt])
   @@index([sku, sizeEU])
   @@index([stockxAccountKey, arrivedAt])
+  @@index([stockxAccountKey, stockxEventAt])
+  @@index([stockxAccountKey, firstSeenAt])
   @@index([purchaseDate])
   @@schema("public")
 }
 
 /// Persistent idempotency + in-progress lock for fulfill-from-awb.
-/// Prevents double label / double fulfill across processes and restarts.
+/// Statuses: IN_PROGRESS | COMPLETED | FAILED_BEFORE_EXTERNAL_SIDE_EFFECT |
+/// EXTERNAL_SIDE_EFFECT_UNKNOWN | EXTERNAL_SIDE_EFFECT_CONFIRMED
 model FulfillAttemptLock {
   id             String   @id @default(uuid())
   createdAt      DateTime @default(now())

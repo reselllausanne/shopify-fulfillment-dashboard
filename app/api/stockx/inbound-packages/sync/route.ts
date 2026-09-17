@@ -8,9 +8,22 @@ export const dynamic = "force-dynamic";
  * Refresh the last-N StockX inbound packages used by Shopify AWB fallback.
  * Pulls directly from the StockX buying API (PENDING + HISTORICAL) for every
  * Shopify-side StockX account. The legacy DB-copy path is gone.
+ *
+ * Auth: when INTERNAL_API_KEY is set, require matching `x-internal-key`.
  */
 export async function POST(request: Request) {
   try {
+    const requiredKey = process.env.INTERNAL_API_KEY;
+    if (requiredKey) {
+      const provided = request.headers.get("x-internal-key");
+      if (!provided || provided !== requiredKey) {
+        return NextResponse.json(
+          { ok: false, error: "Unauthorized" },
+          { status: 401 }
+        );
+      }
+    }
+
     const body = await request.json().catch(() => ({}));
     const limitPerAccount = Math.max(
       1,

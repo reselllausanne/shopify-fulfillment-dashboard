@@ -1,22 +1,15 @@
 /**
- * Persistent, cross-process fulfill idempotency.
+ * Persistent fulfill idempotency with external side-effect awareness.
  *
- * Uses `FulfillAttemptLock` (Prisma) with a UNIQUE constraint on
- * `idempotencyKey` as an atomic in-progress lock:
+ * Statuses:
+ * - IN_PROGRESS
+ * - COMPLETED
+ * - FAILED_BEFORE_EXTERNAL_SIDE_EFFECT  → same-key atomic retry OK
+ * - EXTERNAL_SIDE_EFFECT_UNKNOWN        → no auto retry, reconcile required
+ * - EXTERNAL_SIDE_EFFECT_CONFIRMED      → no auto retry; return / reconcile
  *
- *   1. `beginFulfillAttempt(...)` inserts a row with status `IN_PROGRESS`.
- *      - success → caller owns the attempt.
- *      - unique-key conflict → look up the existing row:
- *          * `COMPLETED` → return cached result (`ALREADY_COMPLETED`).
- *          * `FAILED`    → return recorded error (`PREVIOUSLY_FAILED`).
- *          * `IN_PROGRESS` → another worker owns it (`ALREADY_PROCESSING`).
- *   2. `completeFulfillAttempt(...)` flips status to `COMPLETED` and stores
- *      the result payload for later replays.
- *   3. `failFulfillAttempt(...)` flips status to `FAILED` with an error and
- *      lets the operator retry (a follow-up begin recycles the same key).
- *
- * This replaces the previous in-memory Map, which was per-process and lost
- * on restart — allowing the same scan to double-fulfill.
+ * Missing FulfillAttemptLock table → hard fail (never "run without lock").
+ * Never invent `:retry-${Date.now()}` keys after an uncertain Swiss Post call.
  */
 
 import { prisma } from "@/app/lib/prisma";
@@ -24,16 +17,41 @@ import { prisma } from "@/app/lib/prisma";
 export type FulfillLockStatus =
   | "IN_PROGRESS"
   | "COMPLETED"
+  | "FAILED_BEFORE_EXTERNAL_SIDE_EFFECT"
+  | "EXTERNAL_SIDE_EFFECT_UNKNOWN"
+  | "EXTERNAL_SIDE_EFFECT_CONFIRMED"
+  /** @deprecated Legacy rows from earlier builds — treat as UNKNOWN. */
   | "FAILED";
 
 export type BeginFulfillAttemptOutcome =
   | { status: "STARTED"; id: string }
   | { status: "ALREADY_PROCESSING"; id: string; startedAt: Date }
   | { status: "ALREADY_COMPLETED"; id: string; result: unknown }
-  | { status: "PREVIOUSLY_FAILED"; id: string; error: string | null };
+  | {
+      status: "RECONCILIATION_REQUIRED";
+      id: string;
+      lockStatus: FulfillLockStatus;
+      error: string | null;
+      result: unknown;
+    };
+
+export class FulfillLockTableMissingError extends Error {
+  constructor() {
+    super(
+      "FulfillAttemptLock table missing — apply migration 20260917160000_fulfill_attempt_lock before fulfilling."
+    );
+    this.name = "FulfillLockTableMissingError";
+  }
+}
 
 function prismaAny() {
   return prisma as unknown as any;
+}
+
+function requireTable() {
+  const table = prismaAny().fulfillAttemptLock;
+  if (!table) throw new FulfillLockTableMissingError();
+  return table;
 }
 
 function isUniqueViolation(error: any): boolean {
@@ -43,9 +61,17 @@ function isUniqueViolation(error: any): boolean {
   return msg.includes("unique") && msg.includes("constraint");
 }
 
+function isSideEffectBlocking(status: string): boolean {
+  return (
+    status === "EXTERNAL_SIDE_EFFECT_UNKNOWN" ||
+    status === "EXTERNAL_SIDE_EFFECT_CONFIRMED" ||
+    status === "FAILED" // legacy — unknown whether Swiss Post ran
+  );
+}
+
 /**
- * Try to acquire the idempotency lock. Returns what the caller should do:
- * proceed, return cached result, return prior error, or 409.
+ * Acquire lock. Same-key retry only when prior status is
+ * FAILED_BEFORE_EXTERNAL_SIDE_EFFECT (atomic flip back to IN_PROGRESS).
  */
 export async function beginFulfillAttempt(params: {
   idempotencyKey: string;
@@ -55,16 +81,7 @@ export async function beginFulfillAttempt(params: {
 }): Promise<BeginFulfillAttemptOutcome> {
   const key = String(params.idempotencyKey ?? "").trim();
   if (!key) throw new Error("beginFulfillAttempt: idempotencyKey required");
-
-  const table = prismaAny().fulfillAttemptLock;
-  if (!table) {
-    // Migration not applied yet — degrade to a permissive start rather than
-    // block fulfill. Log so ops notices.
-    console.warn(
-      "[FULFILL-IDEMPOTENCY] FulfillAttemptLock table missing; running without lock."
-    );
-    return { status: "STARTED", id: `no-lock:${key}` };
-  }
+  const table = requireTable();
 
   try {
     const row = await table.create({
@@ -80,7 +97,6 @@ export async function beginFulfillAttempt(params: {
     return { status: "STARTED", id: row.id };
   } catch (error: any) {
     if (!isUniqueViolation(error)) throw error;
-    // Race: some other request already inserted this key.
     const existing = await table.findUnique({
       where: { idempotencyKey: key },
       select: {
@@ -92,6 +108,7 @@ export async function beginFulfillAttempt(params: {
       },
     });
     if (!existing) throw error;
+
     if (existing.status === "COMPLETED") {
       return {
         status: "ALREADY_COMPLETED",
@@ -99,17 +116,54 @@ export async function beginFulfillAttempt(params: {
         result: existing.resultJson ?? null,
       };
     }
-    if (existing.status === "FAILED") {
+
+    if (existing.status === "IN_PROGRESS") {
       return {
-        status: "PREVIOUSLY_FAILED",
+        status: "ALREADY_PROCESSING",
         id: existing.id,
-        error: existing.error ?? null,
+        startedAt: existing.updatedAt,
       };
     }
+
+    if (existing.status === "FAILED_BEFORE_EXTERNAL_SIDE_EFFECT") {
+      // Atomic same-key retry: only reclaim if still in that failed-before state.
+      const updated = await table.updateMany({
+        where: {
+          idempotencyKey: key,
+          status: "FAILED_BEFORE_EXTERNAL_SIDE_EFFECT",
+        },
+        data: {
+          status: "IN_PROGRESS",
+          error: null,
+          resultJson: null,
+        },
+      });
+      if (Number(updated?.count ?? 0) === 1) {
+        return { status: "STARTED", id: existing.id };
+      }
+      return {
+        status: "ALREADY_PROCESSING",
+        id: existing.id,
+        startedAt: existing.updatedAt,
+      };
+    }
+
+    if (isSideEffectBlocking(existing.status)) {
+      return {
+        status: "RECONCILIATION_REQUIRED",
+        id: existing.id,
+        lockStatus: existing.status as FulfillLockStatus,
+        error: existing.error ?? null,
+        result: existing.resultJson ?? null,
+      };
+    }
+
     return {
-      status: "ALREADY_PROCESSING",
+      status: "RECONCILIATION_REQUIRED",
       id: existing.id,
-      startedAt: existing.updatedAt,
+      lockStatus: existing.status as FulfillLockStatus,
+      error: existing.error ?? "Unknown lock status",
+      result: existing.resultJson ?? null,
     };
   }
 }
@@ -120,8 +174,7 @@ export async function completeFulfillAttempt(params: {
 }): Promise<void> {
   const key = String(params.idempotencyKey ?? "").trim();
   if (!key) return;
-  const table = prismaAny().fulfillAttemptLock;
-  if (!table) return;
+  const table = requireTable();
   await table.update({
     where: { idempotencyKey: key },
     data: {
@@ -132,19 +185,19 @@ export async function completeFulfillAttempt(params: {
   });
 }
 
-export async function failFulfillAttempt(params: {
+/** Failure before any Swiss Post / external label request was sent. */
+export async function failFulfillAttemptBeforeExternal(params: {
   idempotencyKey: string;
   error: string;
 }): Promise<void> {
   const key = String(params.idempotencyKey ?? "").trim();
   if (!key) return;
-  const table = prismaAny().fulfillAttemptLock;
-  if (!table) return;
+  const table = requireTable();
   await table
     .update({
       where: { idempotencyKey: key },
       data: {
-        status: "FAILED" as FulfillLockStatus,
+        status: "FAILED_BEFORE_EXTERNAL_SIDE_EFFECT" as FulfillLockStatus,
         error: String(params.error ?? "").slice(0, 4000),
       },
     })
@@ -152,17 +205,136 @@ export async function failFulfillAttempt(params: {
 }
 
 /**
- * @deprecated Use `beginFulfillAttempt` + `completeFulfillAttempt` instead.
- * Kept as a shim only so old imports compile — always returns `null` because
- * per-process caching is unsafe across restarts / multiple pods.
+ * Mark that an external request is about to be / was sent (Swiss Post).
+ * After this, automatic retry is forbidden.
  */
+export async function markExternalSideEffectUnknown(params: {
+  idempotencyKey: string;
+  error?: string | null;
+  partialResult?: unknown;
+}): Promise<void> {
+  const key = String(params.idempotencyKey ?? "").trim();
+  if (!key) return;
+  const table = requireTable();
+  await table
+    .update({
+      where: { idempotencyKey: key },
+      data: {
+        status: "EXTERNAL_SIDE_EFFECT_UNKNOWN" as FulfillLockStatus,
+        error: params.error ? String(params.error).slice(0, 4000) : undefined,
+        resultJson:
+          params.partialResult !== undefined
+            ? (params.partialResult as any)
+            : undefined,
+      },
+    })
+    .catch(() => null);
+}
+
+/** Swiss Post (or other external) label creation confirmed. */
+export async function markExternalSideEffectConfirmed(params: {
+  idempotencyKey: string;
+  partialResult: unknown;
+}): Promise<void> {
+  const key = String(params.idempotencyKey ?? "").trim();
+  if (!key) return;
+  const table = requireTable();
+  await table
+    .update({
+      where: { idempotencyKey: key },
+      data: {
+        status: "EXTERNAL_SIDE_EFFECT_CONFIRMED" as FulfillLockStatus,
+        resultJson: params.partialResult as any,
+        error: null,
+      },
+    })
+    .catch(() => null);
+}
+
+/**
+ * @deprecated Use failFulfillAttemptBeforeExternal or markExternalSideEffectUnknown.
+ * Maps to UNKNOWN (safe — never allow blind retry).
+ */
+export async function failFulfillAttempt(params: {
+  idempotencyKey: string;
+  error: string;
+}): Promise<void> {
+  await markExternalSideEffectUnknown({
+    idempotencyKey: params.idempotencyKey,
+    error: params.error,
+  });
+}
+
+/** Read-only reconciliation hints for operators / UI. */
+export async function reconcileFulfillAttempt(params: {
+  idempotencyKey: string;
+  awb: string;
+  shopifyOrderId?: string | null;
+}): Promise<{
+  lock: {
+    status: string;
+    error: string | null;
+    result: unknown;
+  } | null;
+  shopifyFulfillmentRecord: {
+    shopifyOrderId: string;
+    trackingNumber: string | null;
+    swissPostLabelId: string | null;
+    swissPostBarcode: string | null;
+  } | null;
+}> {
+  const table = requireTable();
+  const key = String(params.idempotencyKey ?? "").trim();
+  const lock = key
+    ? await table.findUnique({
+        where: { idempotencyKey: key },
+        select: { status: true, error: true, resultJson: true },
+      })
+    : null;
+
+  const awb = String(params.awb ?? "").trim();
+  let record: any = null;
+  if (awb) {
+    record = await prisma.shopifyFulfillmentRecord
+      .findFirst({
+        where: {
+          OR: [
+            { trackingNumber: awb },
+            { sourceAwb: awb },
+            ...(params.shopifyOrderId
+              ? [{ shopifyOrderId: String(params.shopifyOrderId) }]
+              : []),
+          ],
+        },
+        orderBy: { createdAt: "desc" },
+        select: {
+          shopifyOrderId: true,
+          trackingNumber: true,
+          swissPostLabelId: true,
+          swissPostBarcode: true,
+        },
+      })
+      .catch(() => null);
+  }
+
+  return {
+    lock: lock
+      ? {
+          status: String(lock.status),
+          error: lock.error ?? null,
+          result: lock.resultJson ?? null,
+        }
+      : null,
+    shopifyFulfillmentRecord: record,
+  };
+}
+
+/** @deprecated */
 export function getFulfillIdempotentResult(_key: string): unknown | null {
   return null;
 }
 
-/**
- * @deprecated Use `completeFulfillAttempt` instead. This shim is a no-op.
- */
+/** @deprecated */
 export function setFulfillIdempotentResult(
   _key: string,
   _result: unknown,

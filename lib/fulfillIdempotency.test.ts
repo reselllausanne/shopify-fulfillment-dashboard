@@ -57,18 +57,45 @@ const { fakeTable, store } = vi.hoisted(() => {
         return { id: updated.id };
       }
     ),
+    updateMany: vi.fn(
+      async ({
+        where,
+        data,
+      }: {
+        where: { idempotencyKey: string; status?: string };
+        data: Partial<LockRow>;
+      }) => {
+        const row = store.get(where.idempotencyKey);
+        if (!row) return { count: 0 };
+        if (where.status && row.status !== where.status) return { count: 0 };
+        store.set(where.idempotencyKey, {
+          ...row,
+          ...data,
+          updatedAt: new Date(),
+        } as LockRow);
+        return { count: 1 };
+      }
+    ),
   };
   return { fakeTable, store };
 });
 
 vi.mock("@/app/lib/prisma", () => ({
-  prisma: { fulfillAttemptLock: fakeTable },
+  prisma: {
+    fulfillAttemptLock: fakeTable,
+    shopifyFulfillmentRecord: {
+      findFirst: vi.fn(async () => null),
+    },
+  },
 }));
 
 import {
   beginFulfillAttempt,
   completeFulfillAttempt,
-  failFulfillAttempt,
+  failFulfillAttemptBeforeExternal,
+  markExternalSideEffectUnknown,
+  markExternalSideEffectConfirmed,
+  FulfillLockTableMissingError,
 } from "@/lib/fulfillIdempotency";
 
 const baseArgs = {
@@ -78,12 +105,13 @@ const baseArgs = {
   selectionHash: "hash-1",
 };
 
-describe("fulfillIdempotency (persistent)", () => {
+describe("fulfillIdempotency (side-effect aware)", () => {
   beforeEach(() => {
     store.clear();
     fakeTable.create.mockClear();
     fakeTable.findUnique.mockClear();
     fakeTable.update.mockClear();
+    fakeTable.updateMany.mockClear();
   });
 
   it("first attempt STARTED, concurrent second is ALREADY_PROCESSING", async () => {
@@ -106,17 +134,84 @@ describe("fulfillIdempotency (persistent)", () => {
     }
   });
 
-  it("after fail, replay returns PREVIOUSLY_FAILED with recorded error", async () => {
+  it("FAILED_BEFORE_EXTERNAL_SIDE_EFFECT allows same-key atomic retry (no timestamp key)", async () => {
     await beginFulfillAttempt(baseArgs);
-    await failFulfillAttempt({
+    await failFulfillAttemptBeforeExternal({
       idempotencyKey: baseArgs.idempotencyKey,
-      error: "Swiss Post 502",
+      error: "validation failed",
     });
     const replay = await beginFulfillAttempt(baseArgs);
-    expect(replay.status).toBe("PREVIOUSLY_FAILED");
-    if (replay.status === "PREVIOUSLY_FAILED") {
-      expect(replay.error).toBe("Swiss Post 502");
+    expect(replay.status).toBe("STARTED");
+    expect(store.size).toBe(1);
+    expect([...store.keys()][0]).toBe(baseArgs.idempotencyKey);
+    expect([...store.keys()][0]).not.toMatch(/retry-/);
+  });
+
+  it("EXTERNAL_SIDE_EFFECT_UNKNOWN blocks retry with RECONCILIATION_REQUIRED", async () => {
+    await beginFulfillAttempt(baseArgs);
+    await markExternalSideEffectUnknown({
+      idempotencyKey: baseArgs.idempotencyKey,
+      error: "Swiss Post in flight",
+    });
+    const replay = await beginFulfillAttempt(baseArgs);
+    expect(replay.status).toBe("RECONCILIATION_REQUIRED");
+    if (replay.status === "RECONCILIATION_REQUIRED") {
+      expect(replay.lockStatus).toBe("EXTERNAL_SIDE_EFFECT_UNKNOWN");
     }
+    expect(store.size).toBe(1);
+  });
+
+  it("Swiss Post confirmed then Shopify failure then retry: zero second label key", async () => {
+    let swissPostCreations = 0;
+    const createLabel = async () => {
+      swissPostCreations += 1;
+      return { identCode: "SP-LABEL-1" };
+    };
+
+    // Attempt 1: start → Swiss Post OK → confirm → Shopify fails (leave CONFIRMED)
+    await beginFulfillAttempt(baseArgs);
+    await markExternalSideEffectUnknown({
+      idempotencyKey: baseArgs.idempotencyKey,
+      error: "in flight",
+    });
+    const label = await createLabel();
+    await markExternalSideEffectConfirmed({
+      idempotencyKey: baseArgs.idempotencyKey,
+      partialResult: { swissPostLabelId: label.identCode, shopifyFailed: true },
+    });
+
+    // Attempt 2 (operator retry): must NOT start and must NOT create another label
+    const replay = await beginFulfillAttempt(baseArgs);
+    expect(replay.status).toBe("RECONCILIATION_REQUIRED");
+    if (replay.status === "RECONCILIATION_REQUIRED") {
+      expect(replay.lockStatus).toBe("EXTERNAL_SIDE_EFFECT_CONFIRMED");
+    }
+    // No second creation
+    expect(swissPostCreations).toBe(1);
+    expect(store.size).toBe(1);
+    expect([...store.keys()].some((k) => k.includes("retry-"))).toBe(false);
+  });
+
+  it("concurrent begin: only one STARTED", async () => {
+    const results = await Promise.all([
+      beginFulfillAttempt(baseArgs),
+      beginFulfillAttempt(baseArgs),
+      beginFulfillAttempt(baseArgs),
+    ]);
+    const started = results.filter((r) => r.status === "STARTED");
+    const processing = results.filter((r) => r.status === "ALREADY_PROCESSING");
+    expect(started.length).toBe(1);
+    expect(processing.length).toBe(2);
+  });
+
+  it("missing lock table throws FulfillLockTableMissingError (never run without lock)", async () => {
+    const { prisma } = await import("@/app/lib/prisma");
+    const original = (prisma as any).fulfillAttemptLock;
+    (prisma as any).fulfillAttemptLock = undefined;
+    await expect(beginFulfillAttempt(baseArgs)).rejects.toBeInstanceOf(
+      FulfillLockTableMissingError
+    );
+    (prisma as any).fulfillAttemptLock = original;
   });
 
   it("distinct idempotency keys do not collide", async () => {

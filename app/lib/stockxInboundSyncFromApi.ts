@@ -6,10 +6,8 @@
  * on purpose — those AWBs belong to warehouse inbound flows, not Shopify AWB
  * fallback.
  *
- * This replaces the old `syncStockxInboundPackagesFromDb` path, which just
- * copied AWBs already stored on OrderMatch / StxPurchaseUnit into
- * StockxInboundPackage and then handed them right back to the fallback — a
- * closed loop of fake signal.
+ * Retention uses stockxEventAt (else firstSeenAt), never cron wall-clock.
+ * Never uses OrderMatch as an inbound source.
  */
 
 import { prisma } from "@/app/lib/prisma";
@@ -25,6 +23,7 @@ import {
 } from "@/lib/stockxToken";
 import {
   STOCKX_INBOUND_PACKAGE_RETENTION,
+  pruneStockxInboundPackagesForAccount,
   upsertStockxInboundPackage,
 } from "@/app/lib/stockxInboundPackages";
 
@@ -38,8 +37,6 @@ export type ShopifyStockxAccountResolution = {
  * / DB rows). We deliberately SKIP `source === "galaxus"` — the Galaxus
  * StockX account funds warehouse pairs, not Shopify direct-ship, and its AWBs
  * must not appear in the Shopify AWB fallback pool.
- *
- * Returns an ordered list so we can sync each real Shopify-side account.
  */
 export async function resolveShopifyStockxAccountToken(): Promise<
   ShopifyStockxAccountResolution[]
@@ -95,25 +92,33 @@ export type SyncStockxInboundOptions = {
 export type SyncStockxInboundResult = {
   ok: true;
   accounts: number;
-  upserted: number;
+  fetched: number;
   awbResolved: number;
   awbMissing: number;
+  kept: number;
   pruned: number;
+  firstSeen: number;
+  refreshed: number;
+  /** @deprecated alias of firstSeen + refreshed */
+  upserted: number;
   perAccount: Array<{
     accountKey: string;
     source: StockxAccountToken["source"];
-    nodes: number;
-    upserted: number;
+    fetched: number;
     awbResolved: number;
     awbMissing: number;
+    firstSeen: number;
+    refreshed: number;
+    upserted: number;
     pruned: number;
+    kept: number;
   }>;
 };
 
 /**
  * Pull PENDING + HISTORICAL buying orders per Shopify-side StockX account,
  * resolve AWBs, and upsert `StockxInboundPackage`. Keeps only the last N rows
- * per account (default 100).
+ * per account by stockxEventAt / firstSeenAt (default 100).
  */
 export async function syncStockxInboundPackagesFromStockxApi(
   options: SyncStockxInboundOptions = {}
@@ -129,10 +134,13 @@ export async function syncStockxInboundPackagesFromStockxApi(
   const accounts = await resolveShopifyStockxAccountToken();
 
   const perAccount: SyncStockxInboundResult["perAccount"] = [];
-  let totalUpserted = 0;
+  let totalFetched = 0;
   let totalAwbResolved = 0;
   let totalAwbMissing = 0;
   let totalPruned = 0;
+  let totalFirstSeen = 0;
+  let totalRefreshed = 0;
+  let totalKept = 0;
 
   for (const { token, accountKey } of accounts) {
     const nodes: StockxBuyingNode[] = [];
@@ -160,11 +168,13 @@ export async function syncStockxInboundPackagesFromStockxApi(
       if (!dedup.has(k)) dedup.set(k, n);
     }
     const uniqueNodes = Array.from(dedup.values());
+    totalFetched += uniqueNodes.length;
 
     const limiter = createLimiter(concurrency);
-    let acctUpserted = 0;
     let acctAwbResolved = 0;
     let acctAwbMissing = 0;
+    let acctFirstSeen = 0;
+    let acctRefreshed = 0;
 
     await Promise.all(
       uniqueNodes.map((node) =>
@@ -197,9 +207,10 @@ export async function syncStockxInboundPackagesFromStockxApi(
             (node.state?.statusKey as string | null | undefined) ??
             (node.state?.statusTitle as string | null | undefined) ??
             null;
+          const stockxEventAt = node.purchaseDate ?? node.creationDate ?? null;
 
           try {
-            await upsertStockxInboundPackage({
+            const row = await upsertStockxInboundPackage({
               awb,
               stockxOrderNumber: node.orderNumber ?? null,
               stockxOrderId: orderId,
@@ -207,13 +218,14 @@ export async function syncStockxInboundPackagesFromStockxApi(
               sku,
               sizeEU,
               productName,
-              purchaseDate: node.purchaseDate ?? node.creationDate ?? null,
+              purchaseDate: stockxEventAt,
+              stockxEventAt,
               status,
-              arrivedAt: new Date(),
               channelHint: "shopify",
             });
-            acctUpserted += 1;
             acctAwbResolved += 1;
+            if (row?.created) acctFirstSeen += 1;
+            else if (row) acctRefreshed += 1;
           } catch (err: any) {
             console.error(
               "[STOCKX-INBOUND-SYNC] upsert failed",
@@ -224,47 +236,49 @@ export async function syncStockxInboundPackagesFromStockxApi(
       )
     );
 
-    // Prune per accountKey to `limitPerAccount` most recent rows.
-    let acctPruned = 0;
+    const acctPruned = await pruneStockxInboundPackagesForAccount({
+      accountKey,
+      limit: limitPerAccount,
+    });
+
+    let acctKept = 0;
     if (prismaAny.stockxInboundPackage) {
-      const keep = await prismaAny.stockxInboundPackage.findMany({
+      acctKept = await prismaAny.stockxInboundPackage.count({
         where: { stockxAccountKey: accountKey },
-        orderBy: { arrivedAt: "desc" },
-        take: limitPerAccount,
-        select: { id: true },
       });
-      const keepIds = new Set(keep.map((r: { id: string }) => r.id));
-      const prunedResult = await prismaAny.stockxInboundPackage.deleteMany({
-        where: {
-          stockxAccountKey: accountKey,
-          id: { notIn: Array.from(keepIds) },
-        },
-      });
-      acctPruned = Number(prunedResult?.count ?? 0);
     }
 
     perAccount.push({
       accountKey,
       source: token.source,
-      nodes: uniqueNodes.length,
-      upserted: acctUpserted,
+      fetched: uniqueNodes.length,
       awbResolved: acctAwbResolved,
       awbMissing: acctAwbMissing,
+      firstSeen: acctFirstSeen,
+      refreshed: acctRefreshed,
+      upserted: acctFirstSeen + acctRefreshed,
       pruned: acctPruned,
+      kept: acctKept,
     });
-    totalUpserted += acctUpserted;
     totalAwbResolved += acctAwbResolved;
     totalAwbMissing += acctAwbMissing;
     totalPruned += acctPruned;
+    totalFirstSeen += acctFirstSeen;
+    totalRefreshed += acctRefreshed;
+    totalKept += acctKept;
   }
 
   return {
     ok: true,
     accounts: accounts.length,
-    upserted: totalUpserted,
+    fetched: totalFetched,
     awbResolved: totalAwbResolved,
     awbMissing: totalAwbMissing,
+    kept: totalKept,
     pruned: totalPruned,
+    firstSeen: totalFirstSeen,
+    refreshed: totalRefreshed,
+    upserted: totalFirstSeen + totalRefreshed,
     perAccount,
   };
 }
