@@ -8,5 +8,13 @@ export * from "./publishGate";
 export * from "./reconcile";
 export * from "./invalidRunPolicy";
 export * from "./notify";
-export * from "./applyRun";
-export * from "./hookScrape";
+export * from "./observation";
+export {
+  ensureSupplierStockPolicies,
+  maySeedSupplierStockPolicies,
+  getSupplierStockPolicy,
+  loadPolicyStatusMap,
+  loadEvidencePublishedQtyMap,
+  finalizeSupplierStockRun,
+} from "./applyRun";
+export { finalizeSupplierStockFromScrapeRun } from "./hookScrape";

@@ -1,35 +1,22 @@
 /**
- * Run full Bächli catalog scrape (CLI, no Next server required).
- *
- * Usage:
- *   npx tsx scripts/run-baechli-scrape.ts
- *   npx tsx scripts/run-baechli-scrape.ts --max=500
+ * CLI scrape for bae — routes through central runner (finalize once).
+ * Prefer: npx tsx scripts/run-supplier-scrape.ts --shop=bae
  */
 import "dotenv/config";
-import { findScraperShop } from "@/app/lib/scraperShops";
-import { hasRunningRun, recoverStaleRuns, scrapeBaechliShop, startRun } from "@/app/lib/baechliScrape";
+import { runScraperJob } from "@/app/lib/scraperRunner";
 import { prisma } from "@/app/lib/prisma";
 
 const maxArg = process.argv.find((a) => a.startsWith("--max="));
 const maxProducts = maxArg ? Math.max(1, Number(maxArg.split("=")[1] || 0)) : undefined;
 
 async function main() {
-  await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 90));
-  const shop = findScraperShop("bae");
-  if (!shop) throw new Error("BAE not configured in SCRAPER_SHOPS");
-
-  if (await hasRunningRun(shop.key)) {
-    console.log(JSON.stringify({ ok: false, error: "bae scrape already running" }));
-    return;
-  }
-
-  const runId = await startRun(shop);
-  console.log(JSON.stringify({ ok: true, shop: shop.key, runId, maxProducts: maxProducts ?? null }));
-  await scrapeBaechliShop(shop, runId, maxProducts);
-  const count = await prisma.supplierVariant.count({
-    where: { supplierVariantId: { startsWith: "bae_" } },
+  const result = await runScraperJob({
+    shopKey: "bae",
+    maxProducts,
+    background: false,
   });
-  console.log(JSON.stringify({ ok: true, runId, baeRows: count }));
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.ok) process.exitCode = 1;
 }
 
 main()
@@ -38,5 +25,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await prisma.$disconnect().catch(() => undefined);
   });

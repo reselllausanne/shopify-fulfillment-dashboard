@@ -1,9 +1,11 @@
 import { prisma } from "@/app/lib/prisma";
 import {
   applySupplierStockPublishGate,
+  defaultPolicyStatusForSupplier,
   loadEvidencePublishedQtyMap,
   loadPolicyStatusMap,
   resolveSupplierKeyFromIds,
+  SCRAPER_SUPPLIER_KEYS,
   type SupplierStockPolicyStatus,
 } from "@/inventory/supplierStock";
 
@@ -119,11 +121,12 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
     const delta = deltas.get(supplierVariantId) ?? 0;
     let stock = resolveInventoryAvailableStock(variant, delta);
 
-    if (!variant?.manualLock && policyMap.size > 0) {
+    if (!variant?.manualLock) {
       const supplierKey = resolveSupplierKeyFromIds(supplierVariantId);
-      const policyStatus = supplierKey ? policyMap.get(supplierKey) ?? null : null;
-      // Only gate scraper suppliers that have a policy row; STX/partners untouched.
-      if (policyStatus) {
+      if (supplierKey && SCRAPER_SUPPLIER_KEYS.has(supplierKey)) {
+        const policyStatus =
+          (policyMap.get(supplierKey) as SupplierStockPolicyStatus | undefined) ??
+          defaultPolicyStatusForSupplier(supplierKey);
         const evidence = evidenceMap.get(supplierVariantId);
         stock = applySupplierStockPublishGate({
           baseStock: stock,

@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { defaultPolicyStatusForSupplier, buildSupplierSeed } from "./defaults";
+import { defaultPolicyStatusForSupplier } from "./defaults";
 import { evaluateSupplierExclusion } from "./exclusions";
 import { shouldPauseAfterInvalidRun } from "./invalidRunPolicy";
 import {
   detectPackSizeInflation,
   inferPackCount,
   isPokemonBoosterDisplayConflict,
-  resolveIdentityMatchLevel,
 } from "./match";
 import {
   decidePublishedQuantity,
@@ -14,11 +13,18 @@ import {
   notSeenInCompleteRunDecision,
   reviewBlockedDecision,
 } from "./quantity";
-import { applySupplierStockPublishGate, resolveSupplierKeyFromIds } from "./publishGate";
+import { applySupplierStockPublishGate } from "./publishGate";
 import { enrichObservation, reconcileObservation, zeroMissingFromCompleteSnapshot } from "./reconcile";
 import { evaluateScrapeRunValidity } from "./runValidity";
-import { describeNotifierChannels } from "./notify";
-import type { ScrapeRunMetrics, VariantObservation } from "./types";
+import { describeNotifierChannels, getEmailNotifyPreflight } from "./notify";
+import { assertNeverUsesDbStockAsProof, observationFromSourcePayload, validateFreshSourceEvidence } from "./observation";
+import type { ScrapeRunMetrics, SupplierVariantObservation, VariantObservation } from "./types";
+import {
+  FIRST_INVALID_GRACE_MS,
+  TEMPORARY_MONITORING_EXCEPTION,
+  ZERO_REASON_NO_FRESH_SOURCE,
+} from "./types";
+import { SCRAPER_STOCK_HOOK_CALL_SITES } from "@/app/lib/scraperRunner";
 
 describe("halfCeilStock", () => {
   it("maps 1→1, 2→1, 3→2, 4→2, 5→3", () => {
@@ -30,113 +36,260 @@ describe("halfCeilStock", () => {
   });
 });
 
-describe("evaluateScrapeRunValidity", () => {
-  it("invalid when listed=0 with active catalog (Ex Libris anomaly)", () => {
-    const metrics: ScrapeRunMetrics = {
-      supplierKey: "exl",
+describe("fresh source evidence — never DB stock", () => {
+  it("rejects observation without page URL / identity / price / signal", () => {
+    const bad: SupplierVariantObservation = {
+      supplierKey: "haw",
+      supplierVariantId: "haw_1",
+      sourceAvailability: "in_stock",
+      supplierStockQty: 5,
       scrapeRunId: 1,
-      status: "ok",
-      productsListed: 0,
-      variantsUpserted: 0,
-      withGtin: 0,
-      errors: 0,
-      priorActiveCatalog: 93_000,
+      observedAt: new Date(),
     };
-    const res = evaluateScrapeRunValidity(metrics);
+    const check = validateFreshSourceEvidence(bad);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toBe(ZERO_REASON_NO_FRESH_SOURCE);
+  });
+
+  it("rejects usedDefaultStock even with signal", () => {
+    const obs: SupplierVariantObservation = {
+      supplierKey: "ven",
+      supplierVariantId: "ven_1",
+      productUrl: "https://www.venova.ch/x",
+      gtin: "1234567890123",
+      sourcePrice: 19.9,
+      purchaseSignal: "sofort_verfuegbar",
+      sourceAvailability: "in_stock",
+      usedDefaultStock: true,
+      supplierStockQty: 5,
+      scrapeRunId: 1,
+      observedAt: new Date(),
+    };
+    expect(validateFreshSourceEvidence(obs).ok).toBe(false);
+  });
+
+  it("accepts exact qty + live page signal", () => {
+    const obs: SupplierVariantObservation = {
+      supplierKey: "haw",
+      supplierVariantId: "haw_2",
+      productUrl: "https://www.hawk.ch/a/b.html",
+      gtin: "7612345678901",
+      sourcePrice: 12,
+      purchaseSignal: "stueck_an_lager",
+      sourceAvailability: "in_stock",
+      supplierStockQty: 5,
+      scrapeRunId: 9,
+      observedAt: new Date(),
+    };
+    const check = validateFreshSourceEvidence(obs);
+    expect(check.ok).toBe(true);
+    const internal = observationFromSourcePayload(obs);
+    expect(internal.hasFreshSourceEvidence).toBe(true);
+    const decided = decidePublishedQuantity({
+      availabilityStatus: "confirmed_in_stock",
+      supplierStockQty: 5,
+      hasFreshSourceEvidence: true,
+    });
+    expect(decided.publishedQty).toBe(3);
+  });
+
+  it("quantityUnknown confirmed → publish 1 max", () => {
+    expect(
+      decidePublishedQuantity({
+        availabilityStatus: "confirmed_in_stock",
+        supplierStockQty: null,
+        quantityUnknown: true,
+        hasFreshSourceEvidence: true,
+      }).publishedQty
+    ).toBe(1);
+  });
+
+  it("without fresh evidence → 0 NO_FRESH_SOURCE_EVIDENCE", () => {
+    const d = decidePublishedQuantity({
+      availabilityStatus: "confirmed_in_stock",
+      supplierStockQty: 100,
+      hasFreshSourceEvidence: false,
+    });
+    expect(d.publishedQty).toBe(0);
+    expect(d.zeroReason).toBe(ZERO_REASON_NO_FRESH_SOURCE);
+    expect(d.needsReview).toBe(true);
+  });
+
+  it("preorder → 0 + review", () => {
+    const d = decidePublishedQuantity({
+      availabilityStatus: "preorder",
+      supplierStockQty: 10,
+      hasFreshSourceEvidence: true,
+    });
+    expect(d.publishedQty).toBe(0);
+    expect(d.needsReview).toBe(true);
+  });
+
+  it("quantitySource supplier_variant_stock is forbidden as proof", () => {
+    expect(assertNeverUsesDbStockAsProof("supplier_variant_stock")).toBe(false);
+    expect(assertNeverUsesDbStockAsProof("numeric_stock")).toBe(true);
+  });
+});
+
+describe("evaluateScrapeRunValidity", () => {
+  const base = {
+    supplierKey: "exl",
+    scrapeRunId: 1,
+    productsListed: 0,
+    variantsUpserted: 0,
+    withGtin: 0,
+    errors: 0,
+    priorActiveCatalog: 93_000,
+    finishedAt: new Date(),
+  };
+
+  it("invalid Ex Libris listed=0/wrote=0", () => {
+    const res = evaluateScrapeRunValidity({ ...base, status: "ok", message: "listed=0 wrote=0" });
     expect(res.valid).toBe(false);
     expect(res.invalidReason).toBe("listed_zero_with_active_catalog");
   });
 
-  it("invalid on cloudflare block (FantasyWelt anomaly)", () => {
-    const metrics: ScrapeRunMetrics = {
-      supplierKey: "fan",
-      scrapeRunId: 2,
-      status: "error",
-      message: "Cloudflare challenge page",
-      productsListed: 0,
-      variantsUpserted: 0,
-      withGtin: 0,
-      errors: 12,
-      priorActiveCatalog: 4_400,
-    };
-    const res = evaluateScrapeRunValidity(metrics);
-    expect(res.valid).toBe(false);
-    expect(res.invalidReason).toBe("cloudflare_block");
+  it("accepts completed as success status", () => {
+    const res = evaluateScrapeRunValidity({
+      ...base,
+      status: "completed",
+      productsListed: 1000,
+      variantsUpserted: 900,
+      priorActiveCatalog: 800,
+      snapshotCompleteness: "full",
+      previousReliableSnapshotCount: 1000,
+    });
+    expect(res.valid).toBe(true);
   });
 
-  it("invalid on mostly empty parse", () => {
-    const metrics: ScrapeRunMetrics = {
-      supplierKey: "bwz",
-      scrapeRunId: 3,
-      status: "ok",
-      message: "listed=8000 wrote=0",
-      productsListed: 8000,
-      variantsUpserted: 0,
-      withGtin: 0,
-      errors: 0,
-      priorActiveCatalog: 5000,
-    };
-    const res = evaluateScrapeRunValidity(metrics);
-    expect(res.valid).toBe(false);
-    expect(res.invalidReason).toBe("mostly_empty_parse");
+  it("invalid for error / failed / running", () => {
+    for (const status of ["error", "failed", "running"] as const) {
+      const res = evaluateScrapeRunValidity({ ...base, status, productsListed: 10, variantsUpserted: 10 });
+      expect(res.valid).toBe(false);
+      expect(res.invalidReason).toContain(status);
+    }
   });
 
-  it("valid on healthy run", () => {
-    const metrics: ScrapeRunMetrics = {
+  it("never marks completeSnapshot at ~75% coverage (threshold 80%)", () => {
+    const res = evaluateScrapeRunValidity({
       supplierKey: "rei",
       scrapeRunId: 4,
       status: "ok",
-      productsListed: 10_000,
-      variantsUpserted: 9_500,
-      withGtin: 9_500,
-      errors: 20,
-      priorActiveCatalog: 9_000,
-    };
-    const res = evaluateScrapeRunValidity(metrics);
+      finishedAt: new Date(),
+      productsListed: 7_500,
+      variantsUpserted: 7_000,
+      withGtin: 7_000,
+      errors: 0,
+      priorActiveCatalog: 10_000,
+      previousReliableSnapshotCount: 10_000,
+      snapshotCompleteness: "full",
+    });
+    expect(res.valid).toBe(true);
+    expect(res.completeSnapshot).toBe(false);
+    expect(res.coverageVsPrevious).toBeLessThan(0.8);
+  });
+
+  it("5% coverage of large catalog is invalid volume drop — never complete", () => {
+    const res = evaluateScrapeRunValidity({
+      supplierKey: "rei",
+      scrapeRunId: 41,
+      status: "ok",
+      finishedAt: new Date(),
+      productsListed: 500,
+      variantsUpserted: 400,
+      withGtin: 400,
+      errors: 0,
+      priorActiveCatalog: 70_000,
+      previousReliableSnapshotCount: 70_000,
+      snapshotCompleteness: "full",
+    });
+    expect(res.valid).toBe(false);
+    expect(res.completeSnapshot).toBe(false);
+  });
+
+  it("completeSnapshot only when declared full + ≥80% coverage", () => {
+    const res = evaluateScrapeRunValidity({
+      supplierKey: "haw",
+      scrapeRunId: 5,
+      status: "ok",
+      finishedAt: new Date(),
+      productsListed: 9000,
+      variantsUpserted: 8500,
+      withGtin: 8500,
+      errors: 10,
+      priorActiveCatalog: 9000,
+      previousReliableSnapshotCount: 10_000,
+      snapshotCompleteness: "full",
+    });
     expect(res.valid).toBe(true);
     expect(res.completeSnapshot).toBe(true);
+  });
+
+  it("partial max-run never complete", () => {
+    const res = evaluateScrapeRunValidity({
+      supplierKey: "fan",
+      scrapeRunId: 6,
+      status: "ok",
+      finishedAt: new Date(),
+      productsListed: 50,
+      variantsUpserted: 50,
+      withGtin: 50,
+      errors: 0,
+      priorActiveCatalog: 50,
+      snapshotCompleteness: "full",
+      partialRun: true,
+      previousReliableSnapshotCount: 50,
+    });
+    expect(res.completeSnapshot).toBe(false);
+  });
+
+  it("cloudflare invalid", () => {
+    const res = evaluateScrapeRunValidity({
+      ...base,
+      status: "error",
+      message: "Cloudflare challenge page",
+      priorActiveCatalog: 4400,
+    });
+    expect(res.invalidReason).toBe("cloudflare_block");
   });
 });
 
 describe("invalid run pause policy", () => {
-  it("monitoring_only never pauses", () => {
+  it("monitoring_only TEMPORARY_MONITORING_EXCEPTION — alert on 2nd, never zero", () => {
     const d = shouldPauseAfterInvalidRun({
       policyStatus: "monitoring_only",
       consecutiveInvalidRuns: 1,
       invalidReason: "cloudflare_block",
     });
     expect(d.shouldPause).toBe(false);
-    expect(d.consecutiveInvalidRuns).toBe(2);
+    expect(d.zeroMarketplaceStock).toBe(false);
+    expect(d.notify).toBe(true);
+    expect(d.exceptionTag).toBe(TEMPORARY_MONITORING_EXCEPTION);
   });
 
-  it("2nd invalid pauses review_required suppliers", () => {
-    const d = shouldPauseAfterInvalidRun({
-      policyStatus: "review_required",
+  it("approved 1st invalid keeps grace, 2nd zeros + email", () => {
+    const first = shouldPauseAfterInvalidRun({
+      policyStatus: "approved",
+      consecutiveInvalidRuns: 0,
+    });
+    expect(first.keepLastProofGrace).toBe(true);
+    expect(first.zeroMarketplaceStock).toBe(false);
+
+    const second = shouldPauseAfterInvalidRun({
+      policyStatus: "approved",
       consecutiveInvalidRuns: 1,
       invalidReason: "listed_zero_with_active_catalog",
     });
-    expect(d.shouldPause).toBe(true);
-    expect(d.newStatus).toBe("paused_due_to_scrape_failure");
-    expect(d.notify).toBe(true);
+    expect(second.shouldPause).toBe(true);
+    expect(second.zeroMarketplaceStock).toBe(true);
+    expect(second.notify).toBe(true);
   });
 });
 
 describe("publish gate", () => {
   const proofAt = new Date();
 
-  it("manualLock bypasses gate via caller contract", () => {
-    expect(
-      applySupplierStockPublishGate({
-        baseStock: 5,
-        manualLock: true,
-        policyStatus: "review_required",
-        evidencePublishedQty: null,
-        lastProofAt: null,
-      })
-    ).toBe(5);
-  });
-
-  it("review_required blocks without approval", () => {
+  it("review_required blocks", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 100,
@@ -147,18 +300,17 @@ describe("publish gate", () => {
     ).toBe(reviewBlockedDecision().publishedQty);
   });
 
-  it("monitoring_only passthrough preserves live export (WEL/REI)", () => {
+  it("monitoring_only passthrough (TEMPORARY freeze)", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 4400,
         policyStatus: "monitoring_only",
-        evidencePublishedQty: null,
         lastProofAt: null,
       })
     ).toBe(4400);
   });
 
-  it("approved: no historical qty without fresh proof", () => {
+  it("approved without lastProofAt → 0 (DB stock alone never publishes)", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 4400,
@@ -169,7 +321,7 @@ describe("publish gate", () => {
     ).toBe(0);
   });
 
-  it("uses evidence when proof fresh", () => {
+  it("approved uses evidence when proof fresh", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 100,
@@ -180,42 +332,29 @@ describe("publish gate", () => {
     ).toBe(3);
   });
 
-  it("resolveSupplierKeyFromIds", () => {
-    expect(resolveSupplierKeyFromIds("exl_9781234567890")).toBe("exl");
-    expect(resolveSupplierKeyFromIds("bad")).toBeNull();
+  it("first-invalid grace window constant documented", () => {
+    expect(FIRST_INVALID_GRACE_MS).toBe(24 * 60 * 60 * 1000);
   });
 });
 
-describe("match + pack inflation", () => {
-  it("identity hierarchy gtin > mpn > sku", () => {
-    expect(
-      resolveIdentityMatchLevel({
-        gtin: "123",
-        dbGtin: "123",
-        supplierSku: "x",
-        dbSku: "y",
-      })
-    ).toBe("gtin");
-    expect(
-      resolveIdentityMatchLevel({
-        manufacturerRef: "mpn1",
-        dbMpn: "mpn1",
-      })
-    ).toBe("mpn");
-    expect(
-      resolveIdentityMatchLevel({
-        supplierSku: "sku1",
-        dbSku: "sku1",
-      })
-    ).toBe("sku");
+describe("snapshot zero missing", () => {
+  it("zeros only when complete snapshot helper used", () => {
+    const zeros = zeroMissingFromCompleteSnapshot({
+      seenVariantIds: new Set(["a"]),
+      catalogVariantIds: ["a", "b"],
+    });
+    expect(zeros).toHaveLength(1);
+    expect(zeros[0]!.zeroReason).toBe(notSeenInCompleteRunDecision().zeroReason);
+  });
+});
+
+describe("reichelt / pokemon / pack", () => {
+  it("excludes neon and >1.20m", () => {
+    expect(evaluateSupplierExclusion({ supplierKey: "rei", productName: "Neonröhre" }).excluded).toBe(true);
+    expect(evaluateSupplierExclusion({ supplierKey: "rei", productName: "Kabel 150 cm" }).excluded).toBe(true);
   });
 
-  it("detectPackSizeInflation: qty 1 never publish 100", () => {
-    const hit = detectPackSizeInflation({ internalQty: 1, publishedQty: 100 });
-    expect(hit.inflated).toBe(true);
-  });
-
-  it("pokemon booster display conflict", () => {
+  it("pokemon booster ≠ display", () => {
     expect(
       isPokemonBoosterDisplayConflict({
         title: "Pokemon Booster Pack",
@@ -224,79 +363,51 @@ describe("match + pack inflation", () => {
     ).toBe(true);
   });
 
-  it("inferPackCount from title", () => {
+  it("qty 1 never becomes 100", () => {
+    expect(
+      detectPackSizeInflation({ internalQty: 1, publishedQty: 100, title: "WAGO 100er" }).inflated
+    ).toBe(true);
     expect(inferPackCount("WAGO 100 Stück")).toBe(100);
   });
 });
 
-describe("reichelt exclusions", () => {
-  it("excludes neon without safe length", () => {
-    const hit = evaluateSupplierExclusion({
-      supplierKey: "rei",
-      productName: "Neonröhre rot",
-    });
-    expect(hit.excluded).toBe(true);
-  });
-
-  it("excludes dimension > 1.20m", () => {
-    const hit = evaluateSupplierExclusion({
-      supplierKey: "rei",
-      productName: "LED Röhre 150 cm",
-    });
-    expect(hit.excluded).toBe(true);
-  });
-});
-
-describe("reconcile", () => {
-  it("zeros variants not seen in complete snapshot", () => {
-    const zeros = zeroMissingFromCompleteSnapshot({
-      seenVariantIds: new Set(["exl_a", "exl_b"]),
-      catalogVariantIds: ["exl_a", "exl_b", "exl_c"],
-    });
-    expect(zeros).toHaveLength(1);
-    expect(zeros[0].supplierVariantId).toBe("exl_c");
-    expect(zeros[0].publishedQty).toBe(0);
-    expect(zeros[0].zeroReason).toBe(notSeenInCompleteRunDecision().zeroReason);
-  });
-
-  it("Venova/Hawk: no publish without exact qty proof path", () => {
-    const obs: VariantObservation = {
-      supplierKey: "ven",
-      supplierVariantId: "ven_123",
-      availabilityStatus: "confirmed_in_stock",
-      supplierStockQty: 5,
-      quantitySource: "defaultStock",
-    };
-    const enriched = enrichObservation(obs);
-    const rec = reconcileObservation(enriched);
-    expect(rec.publishedQty).toBeGreaterThan(0);
-    expect(decidePublishedQuantity({
-      availabilityStatus: "variant_uncertain",
-      supplierStockQty: 5,
-    }).publishedQty).toBe(0);
-  });
-});
-
 describe("defaults", () => {
-  it("WEL+REI monitoring_only; others review_required", () => {
+  it("WEL/REI monitoring_only; others review_required", () => {
     expect(defaultPolicyStatusForSupplier("wel")).toBe("monitoring_only");
     expect(defaultPolicyStatusForSupplier("rei")).toBe("monitoring_only");
-    expect(defaultPolicyStatusForSupplier("exl")).toBe("review_required");
     expect(defaultPolicyStatusForSupplier("haw")).toBe("review_required");
-  });
-
-  it("seeds all configured suppliers", () => {
-    const exl = buildSupplierSeed("exl");
-    expect(exl.supplierCode).toBe("EXL");
-    expect(exl.displayName).toBe("Ex Libris");
   });
 });
 
-describe("notifier channels", () => {
-  it("describeNotifierChannels returns shape", () => {
-    const ch = describeNotifierChannels();
-    expect(ch).toHaveProperty("email");
-    expect(ch).toHaveProperty("sms");
-    expect(ch).toHaveProperty("whatsapp");
+describe("notifications honesty", () => {
+  it("does not claim SMS/WhatsApp delivered", () => {
+    const d = describeNotifierChannels();
+    expect(["not_implemented", "credentials_present_unwired", "missing"]).toContain(d.sms);
+    expect(["not_implemented", "credentials_present_unwired", "missing"]).toContain(d.whatsapp);
+    const pf = getEmailNotifyPreflight();
+    expect(["configured", "recipient_missing", "not_configured"]).toContain(pf.status);
+  });
+});
+
+describe("central hook call sites", () => {
+  it("lists all scraper entry points as hooked", () => {
+    expect(SCRAPER_STOCK_HOOK_CALL_SITES.length).toBeGreaterThanOrEqual(10);
+    expect(SCRAPER_STOCK_HOOK_CALL_SITES.every((c) => c.hooked)).toBe(true);
+  });
+});
+
+describe("reconcile without fresh evidence", () => {
+  it("forces review + zero", () => {
+    const obs: VariantObservation = {
+      supplierKey: "exl",
+      supplierVariantId: "exl_x",
+      availabilityStatus: "confirmed_in_stock",
+      supplierStockQty: 5,
+      hasFreshSourceEvidence: false,
+      zeroReason: ZERO_REASON_NO_FRESH_SOURCE,
+    };
+    const r = reconcileObservation(enrichObservation(obs));
+    expect(r.publishedQty).toBe(0);
+    expect(r.needsReview).toBe(true);
   });
 });

@@ -10,6 +10,7 @@ import {
   notSeenInCompleteRunDecision,
 } from "./quantity";
 import type { ReconcileResult, VariantObservation } from "./types";
+import { ZERO_REASON_NO_FRESH_SOURCE } from "./types";
 
 export function enrichObservation(
   obs: VariantObservation,
@@ -70,9 +71,22 @@ export function enrichObservation(
 }
 
 export function reconcileObservation(obs: VariantObservation): ReconcileResult {
+  if (obs.hasFreshSourceEvidence === false) {
+    return {
+      publishedQty: 0,
+      zeroReason: obs.zeroReason ?? ZERO_REASON_NO_FRESH_SOURCE,
+      needsReview: true,
+      reviewReason: obs.zeroReason ?? ZERO_REASON_NO_FRESH_SOURCE,
+      availabilityStatus: obs.availabilityStatus || "manual_review_required",
+    };
+  }
+
   const qtyDecision = decidePublishedQuantity({
     availabilityStatus: obs.availabilityStatus,
     supplierStockQty: obs.supplierStockQty,
+    quantityUnknown: obs.quantityUnknown,
+    hasFreshSourceEvidence: obs.hasFreshSourceEvidence !== false,
+    usedDefaultStock: obs.usedDefaultStock,
     packCount: obs.packCount,
     packInflation: obs.packInflation,
     excluded: obs.excluded,

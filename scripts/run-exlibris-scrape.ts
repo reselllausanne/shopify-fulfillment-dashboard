@@ -1,36 +1,22 @@
 /**
- * Run Ex Libris listing scrape (CLI) — upserts SupplierVariant like REI.
+ * CLI scrape for exl — routes through central runner (finalize once).
+ * Prefer: npx tsx scripts/run-supplier-scrape.ts --shop=exl
  */
 import "dotenv/config";
-import { findScraperShop } from "@/app/lib/scraperShops";
-import {
-  hasRunningRun,
-  recoverStaleRuns,
-  scrapeExlibrisShop,
-  startRun,
-} from "@/app/lib/exlibrisScrape";
+import { runScraperJob } from "@/app/lib/scraperRunner";
 import { prisma } from "@/app/lib/prisma";
 
 const maxArg = process.argv.find((a) => a.startsWith("--max="));
 const maxProducts = maxArg ? Math.max(1, Number(maxArg.split("=")[1] || 0)) : undefined;
 
 async function main() {
-  await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 1440));
-  const shop = findScraperShop("exl");
-  if (!shop) throw new Error("EXL not configured in SCRAPER_SHOPS");
-
-  if (await hasRunningRun(shop.key)) {
-    console.log(JSON.stringify({ ok: false, error: "exl scrape already running" }));
-    return;
-  }
-
-  const runId = await startRun(shop);
-  console.log(JSON.stringify({ ok: true, shop: shop.key, runId, maxProducts: maxProducts ?? null }));
-  await scrapeExlibrisShop(shop, runId, maxProducts);
-  const count = await prisma.supplierVariant.count({
-    where: { supplierVariantId: { startsWith: "exl_" } },
+  const result = await runScraperJob({
+    shopKey: "exl",
+    maxProducts,
+    background: false,
   });
-  console.log(JSON.stringify({ ok: true, runId, exlRows: count }));
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.ok) process.exitCode = 1;
 }
 
 main()
@@ -39,5 +25,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await prisma.$disconnect().catch(() => undefined);
   });

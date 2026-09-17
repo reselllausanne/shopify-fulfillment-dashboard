@@ -1,40 +1,22 @@
 /**
- * Run Snowleader GraphQL scrape (CLI). Prefer local Mac when VPS IP is CF-blocked.
- *
- * Usage:
- *   npx tsx scripts/run-snl-scrape.ts
- *   npx tsx scripts/run-snl-scrape.ts --max=50
+ * CLI scrape for snl — routes through central runner (finalize once).
+ * Prefer: npx tsx scripts/run-supplier-scrape.ts --shop=snl
  */
 import "dotenv/config";
-import { findScraperShop } from "@/app/lib/scraperShops";
-import {
-  hasRunningRun,
-  recoverStaleRuns,
-  scrapeSnowleaderShop,
-  startRun,
-} from "@/app/lib/snowleaderScrape";
+import { runScraperJob } from "@/app/lib/scraperRunner";
 import { prisma } from "@/app/lib/prisma";
 
 const maxArg = process.argv.find((a) => a.startsWith("--max="));
 const maxProducts = maxArg ? Math.max(1, Number(maxArg.split("=")[1] || 0)) : undefined;
 
 async function main() {
-  await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 90));
-  const shop = findScraperShop("snl");
-  if (!shop) throw new Error("SNL not configured in SCRAPER_SHOPS");
-
-  if (await hasRunningRun(shop.key)) {
-    console.log(JSON.stringify({ ok: false, error: "snl scrape already running" }));
-    return;
-  }
-
-  const runId = await startRun(shop);
-  console.log(JSON.stringify({ ok: true, shop: shop.key, runId, maxProducts: maxProducts ?? null }));
-  await scrapeSnowleaderShop(shop, runId, maxProducts);
-  const count = await prisma.supplierVariant.count({
-    where: { supplierVariantId: { startsWith: "snl_" } },
+  const result = await runScraperJob({
+    shopKey: "snl",
+    maxProducts,
+    background: false,
   });
-  console.log(JSON.stringify({ ok: true, runId, snlRows: count }));
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.ok) process.exitCode = 1;
 }
 
 main()
@@ -43,5 +25,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await prisma.$disconnect().catch(() => undefined);
   });

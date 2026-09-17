@@ -1,117 +1,140 @@
 # Supplier stock reconciliation
 
-Proof-based supplier stock system. **Absolute rule: no historical qty without fresh proof.**
+**Absolute rule:** a quantity may be published only when the scraper proved, on the **current** supplier page, the variant identity, price, stock/buyability, and absence of preorder/backorder.  
+**`SupplierVariant.stock` is historical — never fresh proof.** It must not set `lastProofAt` or renew publishable qty.
 
-StockX inbound is out of scope.
+StockX is out of scope.
 
-## Architecture
+## Observation contract (`SupplierVariantObservation`)
 
+Scrapers must emit a structured payload per variant for the current run:
+
+| Field | Required for proof |
+|-------|-------------------|
+| supplierKey, supplierVariantId | yes |
+| productUrl and/or variantUrl | yes |
+| gtin **or** manufacturerRef **or** supplierSku | yes |
+| sourcePrice (live) | yes |
+| purchaseSignal (add to cart / InStock / Stück an Lager / …) | yes when in_stock |
+| sourceAvailability | yes (`in_stock` / `out_of_stock` / `preorder` / `backorder` / `unavailable` / `unknown`) |
+| supplierStockQty **or** quantityUnknown=true | yes when in_stock |
+| scrapeRunId + observedAt | yes |
+
+Without this payload: `publishedQty=0`, reason `NO_FRESH_SOURCE_EVIDENCE`, review queue.  
+`usedDefaultStock=true` can never become published qty.
+
+Until a supplier emits this contract and is manually validated, it stays **`review_required`** and cannot be approved.
+
+## Quantities
+
+| Source proof | Published |
+|--------------|-----------|
+| exact n | `ceil(n/2)` → 1→1, 2→1, 3→2, 4→2, 5→3 |
+| confirmed sellable, qty hidden | **1 max** |
+| preorder / backorder / unavailable / no proof | **0** + review |
+
+## Snapshot completeness
+
+Missing variants → qty 0 **only** when:
+
+1. scraper declares `snapshotCompleteness: "full"`
+2. run is not partial (`max`, pagination stop, incomplete categories, …)
+3. status is success (`ok` **or** `completed`)
+4. coverage vs last reliable full snapshot ≥ **80%** (per-supplier config; never 5%)
+
+`listed` / `wrote` alone do **not** prove exhaustiveness (products vs variants / GTIN-only writes).  
+If not full: do **not** zero absents; open coverage review if drop is abnormal.
+
+## Run statuses
+
+Success (may reset `consecutiveInvalidRuns`): `ok`, `completed`  
+Invalid (never reset counter): `error`, `failed`, `running`, `cancelled`, `interrupted`, missing `finished_at`
+
+## Two consecutive invalid runs
+
+| Policy | 1st invalid | 2nd invalid |
+|--------|-------------|-------------|
+| **approved** | keep last proof ≤ **24h** (`FIRST_INVALID_GRACE_MS`) | email + marketplace stock → 0 + `paused_due_to_scrape_failure` |
+| **review_required** | already marketplace 0 | email + pause |
+| **monitoring_only** (WEL/REI) | track | **alert only** — tag `TEMPORARY_MONITORING_EXCEPTION` — **no qty change** during 2–3 day freeze |
+
+## Central runner
+
+All scrapes must go through `app/lib/scraperRunner.ts` → finalize exactly once.
+
+| Call site | Path |
+|-----------|------|
+| API | `POST /api/scraper/scrape` → `runScraperJob` |
+| VPS cron | `scripts/scrape-cron.sh` → API |
+| CLI | `scripts/run-*-scrape.ts` → `runScraperJob` |
+| Detached | `run-*-detached.sh` → CLI |
+
+Verify: `npx tsx scripts/supplier-stock-dry-run.ts --call-sites`
+
+## Notifications
+
+- Email Postmark: preflight `configured` | `recipient_missing` | `not_configured` | `send_failed` | `sent`
+- SMS / WhatsApp: **not implemented** (may show `credentials_present_unwired` — never “delivered”)
+
+## Deploy policy
+
+- Migration = **tables only**
+- **No auto seed in production**
+- Staging/local seed only: `SUPPLIER_STOCK_ALLOW_SEED=1 npx tsx scripts/supplier-stock-dry-run.ts --seed-policies`
+- Activate suppliers one-by-one after manual review
+- WEL/REI: monitoring freeze — feed unchanged
+- Others: `review_required` → marketplace 0 until observation contract live + approved
+
+## Example quality reports
+
+### EXL (empty run)
+
+```json
+{
+  "valid": false,
+  "invalidReason": "listed_zero_with_active_catalog",
+  "snapshotCompleteness": "partial",
+  "observationContractPresent": false,
+  "note": "NO historical SupplierVariant.stock used as proof"
+}
 ```
-scrape run finishes
-  → finalizeSupplierStockFromScrapeRun (hookScrape)
-    → evaluateScrapeRunValidity
-    → if invalid: invalid-run policy (2nd consecutive → pause + email)
-    → if valid + complete snapshot: upsert evidence, zero missing variants
-  → attachAvailableStock applies publish gate (unless manualLock)
+
+### FAN (Cloudflare)
+
+```json
+{
+  "valid": false,
+  "invalidReason": "cloudflare_block",
+  "incompletenessReason": "cloudflare_or_challenge"
+}
 ```
 
-### Tables
+### HAW (healthy but no observation contract yet)
 
-| Table | Purpose |
-|-------|---------|
-| `supplier_stock_policies` | Per-supplier approval/monitoring/pause state |
-| `supplier_variant_evidence` | Last proven qty + availability per variant |
-| `supplier_stock_review_items` | Human review queue |
-| `supplier_scrape_quality_runs` | Run validity audit trail |
+```json
+{
+  "valid": true,
+  "completeSnapshot": false,
+  "observationContractPresent": false,
+  "incompletenessReason": "observation_contract_missing",
+  "marketplacePublishStatus": "review_required"
+}
+```
 
-### Policy statuses
+### VEN (defaultStock without exact qty)
 
-- `monitoring_only` — WEL, REI; reports + validity tracking; **does not alter live export qty**
-- `review_required` — default for new suppliers; blocks marketplace publish until `approved`
-- `approved` — publish allowed when fresh proof exists
-- `paused_due_to_scrape_failure` — 2 consecutive invalid runs (non-monitoring suppliers)
-- `manually_paused` — ops override
+```json
+{
+  "zeroReason": "default_stock_not_allowed_as_proof",
+  "needsReview": true,
+  "publishedQty": 0
+}
+```
 
-### Publish gate
-
-`attachAvailableStock` loads policy + evidence maps. Unless `manualLock`:
-
-1. Paused → 0
-2. `review_required` → 0
-3. `monitoring_only` → passthrough `baseStock` (WEL/REI safe window)
-4. `approved` without fresh `lastProofAt` (48h) → 0
-5. `approved` with fresh evidence → `evidence.publishedQty`
-
-Published qty uses half-ceiling: 1→1, 2→1, 3→2, 4→2, 5→3.
-
-## Run validity
-
-Invalid when any of:
-
-- `listed=0` + `wrote=0` while active catalog > 0
-- Cloudflare/challenge in run message
-- Volume drop vs prior listed
-- Error rate high with low coverage
-- Mostly empty parse (`listed` high, `wrote=0`)
-
-Invalid runs **do not** zero historical stock (no cascade on bad data).
-
-## Known anomaly root causes
-
-### Ex Libris (`exl`)
-
-Empty run `listed=0` / `wrote=0` left ~93k historical stock in DB. No invalid-run cascade existed — stale qty kept publishing. Fixed by `listed_zero_with_active_catalog` invalid reason + publish gate requiring fresh proof.
-
-### FantasyWelt (`fan`)
-
-Cloudflare error page left ~4400 variants showing in stock. Run marked invalid (`cloudflare_block`); gate zeros publish without proof.
-
-### Warenkontor (`wrk`)
-
-Shopify scraper uses `trustAvailableWhenQtyHidden` — delisted products never get stale-zeroed, so `listed < stock-in-db`. Complete-snapshot zeroing only runs on **valid** full runs; WRK needs careful monitoring of listed vs DB counts.
-
-### Baby-Walz (`bwz`)
-
-`listed=products` vs `wrote=variants` (multi-variant products). Metric confusion — high listed with moderate wrote is not necessarily inflation; validity uses both metrics.
-
-### Venova (`ven`)
-
-`defaultStock` when Sofort + schema.org without exact qty. System requires explicit qty proof path; defaultStock observations flagged for review.
-
-### Hawk (`haw`)
-
-`parseAvailability` treated empty/preorder/backorder as in stock; combined with `defaultStock=5` inflated catalog. Fixed: only `InStock` counts; empty → not in stock.
-
-## Reichelt exclusions
-
-Neon products and any unit dimension edge > 1.20 m excluded via `exclusions.ts` (shared with Galaxus feed integrity rules).
-
-## Ops
-
-### Dashboard
-
-`/supplier-stock` — review queue by supplier, policy actions, quality runs.
-
-### APIs
-
-- `GET/PATCH /api/supplier-stock/review`
-- `GET/PATCH /api/supplier-stock/policies`
-- `GET /api/supplier-stock/runs`
-
-### CLI
+## Dry-run
 
 ```bash
-# Validity dry-run (Ex Libris empty-run scenario)
 npx tsx scripts/supplier-stock-dry-run.ts --supplier=exl --listed=0 --wrote=0 --priorActive=90000
-
-# Seed policies
-npx tsx scripts/supplier-stock-dry-run.ts --seed-policies
+npx tsx scripts/supplier-stock-dry-run.ts --supplier=haw --status=completed --listed=9000 --wrote=8500 --priorActive=10000 --snapshot=full
+npx vitest run inventory/supplierStock/supplierStock.test.ts
 ```
-
-### Alerts
-
-Email via Postmark when supplier paused after 2 invalid runs. SMS/WhatsApp stubs if Twilio/Meta creds present (unwired).
-
-## Scrape hook
-
-`POST /api/scraper/scrape` calls `finalizeSupplierStockFromScrapeRun` in `.finally()` after each background scrape.

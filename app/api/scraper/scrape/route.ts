@@ -1,28 +1,14 @@
 import { NextResponse } from "next/server";
 import { parseScraperShops, findScraperShop } from "@/app/lib/scraperShops";
-import { startRun, scrapeShop, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
-import { scrapeHhvShop } from "@/app/lib/hhvScrape";
-import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
-import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
-import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
-import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
-import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
-import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
-import { scrapeHawkShop } from "@/app/lib/hawkScrape";
-import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
-import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
-import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
-import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
-import { finalizeSupplierStockFromScrapeRun } from "@/inventory/supplierStock/hookScrape";
+import { hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
+import { runScraperJob } from "@/app/lib/scraperRunner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * Kick off a scrape. Runs in the background (fire-and-forget) and returns
- * immediately with the started run ids; poll /api/scraper/overview for progress.
- *
+ * Kick off a scrape via the central runner (finalize stock reconciliation exactly once).
  * Params: shop=<key> (default: all configured shops), max=<n> (cap products, testing).
  */
 export async function POST(request: Request) {
@@ -39,7 +25,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // Recover any run left 'running' by a previous crash/restart so it can't block us.
   await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 90));
 
   const started: Array<{ shop: string; runId: number }> = [];
@@ -51,52 +36,16 @@ export async function POST(request: Request) {
       skipped.push(shop.key);
       continue;
     }
-    const runId = await startRun(shop);
-    started.push({ shop: shop.key, runId });
-    const runScrape =
-      shop.platform === "hhv"
-        ? scrapeHhvShop
-        : shop.platform === "snl"
-          ? scrapeSnowleaderShop
-          : shop.platform === "rei"
-            ? scrapeReicheltShop
-            : shop.platform === "nso"
-              ? scrapeNewsoleShop
-              : shop.platform === "bae"
-                ? scrapeBaechliShop
-                : shop.platform === "fan"
-                  ? scrapeFantasyweltShop
-                  : shop.platform === "exl"
-                    ? scrapeExlibrisShop
-                    : shop.platform === "haw"
-                      ? scrapeHawkShop
-                      : shop.platform === "bwz"
-                        ? scrapeBabyWalzShop
-                        : shop.platform === "tus"
-                          ? scrapeUncommonShop
-                          : shop.platform === "alt"
-                            ? scrapeAlternateShop
-                            : shop.platform === "ven"
-                              ? scrapeVenovaShop
-                              : scrapeShop;
-    // Fire-and-forget. Always finalize stock reconciliation after scrape (ok or error)
-    // so empty/failed runs cannot leave historical stock unchallenged.
-    void (async () => {
-      try {
-        await runScrape(shop, runId, maxProducts);
-      } catch (e: any) {
-        console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);
-      } finally {
-        try {
-          const result = await finalizeSupplierStockFromScrapeRun(shop.key, runId);
-          console.log(
-            `[supplier-stock] ${shop.key} run#${runId} finalize valid=${result.valid} reason=${result.invalidReason ?? "-"} paused=${result.paused}`
-          );
-        } catch (e: any) {
-          console.error(`[supplier-stock] ${shop.key} run#${runId} finalize failed:`, e?.message || e);
-        }
-      }
-    })();
+    const result = await runScraperJob({
+      shopKey: shop.key,
+      maxProducts,
+      background: true,
+    });
+    if (result.skipped || !result.runId) {
+      skipped.push(shop.key);
+      continue;
+    }
+    started.push({ shop: shop.key, runId: result.runId });
   }
 
   return NextResponse.json({

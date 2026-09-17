@@ -1,15 +1,27 @@
+/**
+ * Finalize supplier stock after a scrape.
+ * Absolute rule: SupplierVariant.stock is NEVER fresh proof.
+ * Only structured SupplierVariantObservation payloads from this run renew evidence.
+ */
+
 import { prisma } from "@/app/lib/prisma";
 import { scraperQuery } from "@/app/lib/scraperDb";
 import { allSupplierSeeds, buildSupplierSeed, seedScrapeIntervalHours } from "./defaults";
 import { shouldPauseAfterInvalidRun } from "./invalidRunPolicy";
 import { createSupplierStockNotifier } from "./notify";
+import { observationFromSourcePayload } from "./observation";
 import { enrichObservation, reconcileObservation, zeroMissingFromCompleteSnapshot } from "./reconcile";
 import { evaluateScrapeRunValidity } from "./runValidity";
 import type {
-  AvailabilityStatus,
   ScrapeRunMetrics,
+  SnapshotCompleteness,
   SupplierStockPolicyStatus,
-  VariantObservation,
+  SupplierVariantObservation,
+} from "./types";
+import {
+  TEMPORARY_MONITORING_EXCEPTION,
+  ZERO_REASON_NO_FRESH_SOURCE,
+  isScrapeSuccessStatus,
 } from "./types";
 
 type ScrapeRunRow = {
@@ -25,24 +37,17 @@ type ScrapeRunRow = {
   message: string | null;
 };
 
-type DbVariantRow = {
-  supplierVariantId: string;
-  supplierSku: string;
-  gtin: string | null;
-  price: unknown;
-  stock: number;
-  supplierProductName: string | null;
-  supplierProductType: string | null;
-  leadTimeDays: number | null;
-  manualNote: string | null;
-  updatedAt: Date;
-};
-
 export type FinalizeRunInput = {
   supplierKey: string;
   scrapeRunId: number;
   dryRun?: boolean;
   priorActiveCatalog?: number;
+  /** Structured page proofs from THIS run — required for lastProofAt / publishedQty > 0. */
+  observations?: SupplierVariantObservation[];
+  snapshotCompleteness?: SnapshotCompleteness;
+  incompletenessReason?: string | null;
+  partialRun?: boolean;
+  previousReliableSnapshotCount?: number | null;
 };
 
 export type FinalizeRunResult = {
@@ -53,56 +58,32 @@ export type FinalizeRunResult = {
   valid: boolean;
   invalidReason?: string;
   completeSnapshot: boolean;
+  snapshotCompleteness: SnapshotCompleteness;
   variantsProcessed: number;
   qtyZeroed: number;
   reviewItemsCreated: number;
   policyStatus: SupplierStockPolicyStatus;
   paused: boolean;
+  observationContractPresent: boolean;
+  exceptionTag?: string | null;
 };
 
 function prismaAny() {
   return prisma as any;
 }
 
-function parseProductUrl(manualNote: string | null): string | null {
-  if (!manualNote) return null;
-  try {
-    const parsed = JSON.parse(manualNote) as { productUrl?: string; url?: string };
-    return parsed.productUrl ?? parsed.url ?? null;
-  } catch {
-    const m = manualNote.match(/https?:\/\/[^\s"']+/);
-    return m?.[0] ?? null;
-  }
-}
-
-function variantToObservation(
-  row: DbVariantRow,
-  supplierKey: string,
-  scrapeRunId: number
-): VariantObservation {
-  const stock = Math.max(0, Math.floor(Number(row.stock) || 0));
-  let availabilityStatus: AvailabilityStatus = stock > 0 ? "confirmed_in_stock" : "confirmed_out_of_stock";
-
-  return {
-    supplierKey,
-    supplierVariantId: row.supplierVariantId,
-    gtin: row.gtin,
-    supplierSku: row.supplierSku,
-    productName: row.supplierProductName,
-    productUrl: parseProductUrl(row.manualNote),
-    sourcePrice: row.price != null ? Number(row.price) : null,
-    currency: "CHF",
-    sourceLeadTimeDays: row.leadTimeDays,
-    supplierStockQty: stock,
-    availabilityStatus,
-    quantitySource: "supplier_variant_stock",
-    sourceScrapeRunId: scrapeRunId,
-    observedAt: row.updatedAt,
-    rawParseJson: row.manualNote ? { manualNote: row.manualNote } : null,
-  };
+/** Staging/local only — never auto-seed policies in production finalize. */
+export function maySeedSupplierStockPolicies(): boolean {
+  return String(process.env.SUPPLIER_STOCK_ALLOW_SEED ?? "").trim() === "1";
 }
 
 export async function ensureSupplierStockPolicies(supplierKeys?: string[]): Promise<number> {
+  if (!maySeedSupplierStockPolicies()) {
+    console.warn(
+      "[supplier-stock] seed skipped — set SUPPLIER_STOCK_ALLOW_SEED=1 for staging/local explicit seed only"
+    );
+    return 0;
+  }
   const seeds = supplierKeys?.length
     ? supplierKeys.map((k) => buildSupplierSeed(k))
     : allSupplierSeeds();
@@ -118,6 +99,10 @@ export async function ensureSupplierStockPolicies(supplierKeys?: string[]): Prom
         status: seed.status,
         scrapeIntervalHours: seedScrapeIntervalHours(seed),
         heavySource: seed.heavySource ?? false,
+        notes:
+          seed.status === "monitoring_only"
+            ? TEMPORARY_MONITORING_EXCEPTION
+            : "review_required until observation contract validated",
       },
       update: {
         displayName: seed.displayName,
@@ -198,14 +183,52 @@ async function loadScrapeRun(scrapeRunId: number): Promise<ScrapeRunRow | null> 
   return rows[0] ?? null;
 }
 
+async function loadPreviousReliableSnapshotCount(supplierKey: string): Promise<number | null> {
+  try {
+    const prev = await prismaAny().supplierScrapeQualityRun.findFirst({
+      where: { supplierKey, valid: true, completeSnapshot: true },
+      orderBy: { startedAt: "desc" },
+      select: { productsDiscovered: true, variantsProcessed: true, summaryJson: true },
+    });
+    if (!prev) return null;
+    const fromSummary = Number((prev.summaryJson as any)?.reliableCatalogCount);
+    if (Number.isFinite(fromSummary) && fromSummary > 0) return fromSummary;
+    return Math.max(Number(prev.productsDiscovered) || 0, Number(prev.variantsProcessed) || 0) || null;
+  } catch {
+    return null;
+  }
+}
+
+function parseSnapshotHintsFromMessage(message: string | null | undefined): {
+  snapshotCompleteness: SnapshotCompleteness;
+  incompletenessReason: string | null;
+  partialRun: boolean;
+} {
+  const msg = String(message ?? "");
+  if (/snapshotCompleteness[=:]full\b/i.test(msg) || /snapshot[=:]full\b/i.test(msg)) {
+    return { snapshotCompleteness: "full", incompletenessReason: null, partialRun: false };
+  }
+  if (/max=\d+|partial|pagination.?stop|categories.?incomplete|resume/i.test(msg)) {
+    return {
+      snapshotCompleteness: "partial",
+      incompletenessReason: "message_indicates_partial",
+      partialRun: true,
+    };
+  }
+  return { snapshotCompleteness: "unknown", incompletenessReason: "snapshot_not_declared_full", partialRun: false };
+}
+
 export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise<FinalizeRunResult> {
   const supplierKey = String(input.supplierKey).trim().toLowerCase();
   const dryRun = Boolean(input.dryRun);
   const p = prismaAny();
+  const observations = input.observations ?? [];
+  const observationContractPresent = observations.length > 0;
 
-  await ensureSupplierStockPolicies([supplierKey]);
-  const policy = await getSupplierStockPolicy(supplierKey);
-  const policyStatus = (policy?.status ?? "review_required") as SupplierStockPolicyStatus;
+  // Do NOT auto-seed policies here — production activation is manual per supplier.
+  const policy = await getSupplierStockPolicy(supplierKey).catch(() => null);
+  const policyStatus = (policy?.status ??
+    (supplierKey === "wel" || supplierKey === "rei" ? "monitoring_only" : "review_required")) as SupplierStockPolicyStatus;
 
   const run = await loadScrapeRun(input.scrapeRunId);
   if (!run) {
@@ -217,15 +240,21 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
       valid: false,
       invalidReason: "scrape_run_not_found",
       completeSnapshot: false,
+      snapshotCompleteness: "unknown",
       variantsProcessed: 0,
       qtyZeroed: 0,
       reviewItemsCreated: 0,
       policyStatus,
       paused: false,
+      observationContractPresent,
     };
   }
 
+  const msgHints = parseSnapshotHintsFromMessage(run.message);
   const priorActive = input.priorActiveCatalog ?? (await countActiveCatalog(supplierKey));
+  const previousReliable =
+    input.previousReliableSnapshotCount ?? (await loadPreviousReliableSnapshotCount(supplierKey));
+
   const metrics: ScrapeRunMetrics = {
     supplierKey,
     scrapeRunId: input.scrapeRunId,
@@ -238,12 +267,18 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     priorActiveCatalog: priorActive,
     startedAt: run.started_at ? new Date(run.started_at) : null,
     finishedAt: run.finished_at ? new Date(run.finished_at) : null,
+    snapshotCompleteness: input.snapshotCompleteness ?? msgHints.snapshotCompleteness,
+    incompletenessReason: input.incompletenessReason ?? msgHints.incompletenessReason,
+    partialRun: input.partialRun ?? msgHints.partialRun,
+    previousReliableSnapshotCount: previousReliable,
   };
 
   const validity = evaluateScrapeRunValidity(metrics);
   let consecutiveInvalid = Number(policy?.consecutiveInvalidRuns) || 0;
   let paused = false;
   let newPolicyStatus = policyStatus;
+  let exceptionTag: string | null = null;
+  let qtyZeroed = 0;
 
   if (!validity.valid) {
     const pauseDecision = shouldPauseAfterInvalidRun({
@@ -253,9 +288,10 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     });
     consecutiveInvalid = pauseDecision.consecutiveInvalidRuns;
     paused = pauseDecision.shouldPause;
+    exceptionTag = pauseDecision.exceptionTag ?? null;
     if (pauseDecision.newStatus) newPolicyStatus = pauseDecision.newStatus;
 
-    if (!dryRun) {
+    if (!dryRun && policy) {
       await p.supplierStockPolicy.update({
         where: { supplierKey },
         data: {
@@ -272,13 +308,34 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         },
       });
 
+      if (pauseDecision.zeroMarketplaceStock && policyStatus !== "monitoring_only") {
+        const updated = await p.supplierVariant.updateMany({
+          where: {
+            supplierVariantId: { startsWith: `${supplierKey}_` },
+            stock: { gt: 0 },
+            manualLock: false,
+          },
+          data: { stock: 0 },
+        });
+        qtyZeroed = Number(updated?.count ?? 0);
+      }
+
       if (pauseDecision.notify) {
         const notifier = createSupplierStockNotifier();
         await notifier.notifyInvalidRunPause({
           supplierKey,
           displayName: policy?.displayName,
-          subject: `[Supplier stock] ${supplierKey} paused after invalid scrape`,
-          bodyText: `Supplier ${supplierKey} scrape run #${input.scrapeRunId} invalid: ${validity.invalidReason}\nConsecutive invalid: ${consecutiveInvalid}`,
+          subject: `[Supplier stock] ${supplierKey} ${paused ? "paused" : "alert"} after invalid scrape`,
+          bodyText: [
+            `Supplier ${supplierKey}`,
+            `Run #${input.scrapeRunId} invalid: ${validity.invalidReason}`,
+            `Consecutive invalid: ${consecutiveInvalid}`,
+            pauseDecision.exceptionTag ? `Exception: ${pauseDecision.exceptionTag}` : null,
+            `Offers zeroed: ${qtyZeroed}`,
+            `Last success: ${policy?.lastValidRunAt ? new Date(policy.lastValidRunAt).toISOString() : "unknown"}`,
+          ]
+            .filter(Boolean)
+            .join("\n"),
         });
       }
     }
@@ -294,19 +351,38 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
           completeSnapshot: false,
           productsDiscovered: metrics.productsListed,
           variantsProcessed: 0,
+          qtyZeroed,
           errorRate: validity.errorRate,
           coverageVsPrevious: validity.coverageVsPrevious,
           marketplacePublishStatus: newPolicyStatus,
           startedAt: metrics.startedAt,
           finishedAt: metrics.finishedAt,
-          summaryJson: { metrics, validity, flags: validity.flags },
+          summaryJson: {
+            metrics,
+            validity,
+            flags: validity.flags,
+            snapshotCompleteness: validity.snapshotCompleteness,
+            incompletenessReason: validity.incompletenessReason,
+            observationContractPresent,
+            exceptionTag,
+            note: "NO historical SupplierVariant.stock used as proof",
+          },
         },
         update: {
           valid: false,
           invalidReason: validity.invalidReason,
+          qtyZeroed,
           errorRate: validity.errorRate,
           coverageVsPrevious: validity.coverageVsPrevious,
-          summaryJson: { metrics, validity, flags: validity.flags },
+          summaryJson: {
+            metrics,
+            validity,
+            flags: validity.flags,
+            snapshotCompleteness: validity.snapshotCompleteness,
+            incompletenessReason: validity.incompletenessReason,
+            observationContractPresent,
+            exceptionTag,
+          },
         },
       });
     }
@@ -319,34 +395,18 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
       valid: false,
       invalidReason: validity.invalidReason,
       completeSnapshot: false,
+      snapshotCompleteness: validity.snapshotCompleteness,
       variantsProcessed: 0,
-      qtyZeroed: 0,
+      qtyZeroed,
       reviewItemsCreated: 0,
       policyStatus: newPolicyStatus,
       paused,
+      observationContractPresent,
+      exceptionTag,
     };
   }
 
-  const startedAt = metrics.startedAt ?? new Date(0);
-  const seenVariants = (await p.supplierVariant.findMany({
-    where: {
-      supplierVariantId: { startsWith: `${supplierKey}_` },
-      updatedAt: { gte: startedAt },
-    },
-    select: {
-      supplierVariantId: true,
-      supplierSku: true,
-      gtin: true,
-      price: true,
-      stock: true,
-      supplierProductName: true,
-      supplierProductType: true,
-      leadTimeDays: true,
-      manualNote: true,
-      updatedAt: true,
-    },
-  })) as DbVariantRow[];
-
+  // Valid run — only structured observations renew proof. Never scan SupplierVariant.stock.
   let confirmedInStock = 0;
   let confirmedOutOfStock = 0;
   let preorders = 0;
@@ -357,14 +417,82 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
   const seenIds = new Set<string>();
   const now = new Date();
 
-  for (const row of seenVariants) {
-    seenIds.add(row.supplierVariantId);
-    const baseObs = variantToObservation(row, supplierKey, input.scrapeRunId);
+  if (!observationContractPresent) {
+    // Valid scrape mechanics but no page-level proof contract → cannot publish / cannot approve.
+    if (!dryRun) {
+      await p.supplierScrapeQualityRun.upsert({
+        where: { scrapeRunId: input.scrapeRunId },
+        create: {
+          supplierKey,
+          scrapeRunId: input.scrapeRunId,
+          valid: true,
+          completeSnapshot: false,
+          productsDiscovered: metrics.productsListed,
+          variantsProcessed: 0,
+          marketplacePublishStatus: policyStatus,
+          startedAt: metrics.startedAt,
+          finishedAt: metrics.finishedAt,
+          summaryJson: {
+            observationContractPresent: false,
+            incompletenessReason: "observation_contract_missing",
+            note: ZERO_REASON_NO_FRESH_SOURCE,
+            snapshotCompleteness: metrics.snapshotCompleteness,
+          },
+        },
+        update: {
+          valid: true,
+          completeSnapshot: false,
+          summaryJson: {
+            observationContractPresent: false,
+            incompletenessReason: "observation_contract_missing",
+            note: ZERO_REASON_NO_FRESH_SOURCE,
+          },
+        },
+      });
+      // Reset consecutive invalid only on true success status (already validated).
+      if (policy && isScrapeSuccessStatus(run.status)) {
+        await p.supplierStockPolicy.update({
+          where: { supplierKey },
+          data: {
+            consecutiveInvalidRuns: 0,
+            lastValidRunAt: new Date(),
+            lastScrapeRunId: input.scrapeRunId,
+          },
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      dryRun,
+      supplierKey,
+      scrapeRunId: input.scrapeRunId,
+      valid: true,
+      completeSnapshot: false,
+      snapshotCompleteness: "unknown",
+      variantsProcessed: 0,
+      qtyZeroed: 0,
+      reviewItemsCreated: 0,
+      policyStatus,
+      paused: false,
+      observationContractPresent: false,
+      exceptionTag: policyStatus === "monitoring_only" ? TEMPORARY_MONITORING_EXCEPTION : null,
+    };
+  }
+
+  for (const raw of observations) {
+    const baseObs = observationFromSourcePayload({
+      ...raw,
+      supplierKey,
+      scrapeRunId: input.scrapeRunId,
+    });
+    seenIds.add(baseObs.supplierVariantId);
     const obs = enrichObservation(baseObs, {
-      gtin: row.gtin,
-      supplierSku: row.supplierSku,
-      productName: row.supplierProductName,
-      productType: row.supplierProductType,
+      gtin: raw.gtin,
+      supplierSku: raw.supplierSku,
+      manufacturerRef: raw.manufacturerRef,
+      productName: raw.productName,
+      productUrl: raw.productUrl ?? raw.variantUrl,
     });
     const reconciled = reconcileObservation(obs);
 
@@ -376,46 +504,54 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     if (obs.excluded) excludedByDimension++;
     if (obs.availabilityStatus === "price_missing") priceMissing++;
 
+    const writeProofAt = Boolean(obs.hasFreshSourceEvidence);
+
     if (!dryRun) {
       await p.supplierVariantEvidence.upsert({
-        where: { supplierVariantId: row.supplierVariantId },
+        where: { supplierVariantId: obs.supplierVariantId },
         create: {
           supplierKey,
-          supplierVariantId: row.supplierVariantId,
-          gtin: row.gtin,
-          supplierSku: row.supplierSku,
-          productName: row.supplierProductName,
-          productUrl: obs.productUrl,
-          sourcePrice: row.price,
-          sourceLeadTimeDays: row.leadTimeDays,
-          supplierStockQty: row.stock,
+          supplierVariantId: obs.supplierVariantId,
+          gtin: obs.gtin,
+          supplierSku: obs.supplierSku,
+          manufacturerRef: obs.manufacturerRef,
+          productName: obs.productName,
+          productUrl: obs.productUrl ?? obs.variantUrl,
+          variantUrl: obs.variantUrl,
+          sourcePrice: obs.sourcePrice,
+          sourceLeadTimeDays: obs.sourceLeadTimeDays,
+          supplierStockQty: obs.supplierStockQty,
           availabilityStatus: reconciled.availabilityStatus,
-          availabilitySignal: obs.availabilitySignal,
+          availabilitySignal: obs.purchaseSignal ?? obs.availabilitySignal,
           quantitySource: obs.quantitySource,
           publishedQty: reconciled.publishedQty,
           zeroReason: reconciled.zeroReason,
           confidenceStatus: obs.identityMatchLevel,
           confidenceScore: obs.confidenceScore,
-          lastProofAt: now,
+          lastProofAt: writeProofAt ? now : null,
           lastObservedAt: now,
           sourceScrapeRunId: input.scrapeRunId,
           rawParseJson: obs.rawParseJson ?? undefined,
           needsReview: reconciled.needsReview,
         },
         update: {
-          gtin: row.gtin,
-          supplierSku: row.supplierSku,
-          productName: row.supplierProductName,
-          productUrl: obs.productUrl,
-          sourcePrice: row.price,
-          sourceLeadTimeDays: row.leadTimeDays,
-          supplierStockQty: row.stock,
+          gtin: obs.gtin,
+          supplierSku: obs.supplierSku,
+          manufacturerRef: obs.manufacturerRef,
+          productName: obs.productName,
+          productUrl: obs.productUrl ?? obs.variantUrl,
+          variantUrl: obs.variantUrl,
+          sourcePrice: obs.sourcePrice,
+          sourceLeadTimeDays: obs.sourceLeadTimeDays,
+          supplierStockQty: obs.supplierStockQty,
           availabilityStatus: reconciled.availabilityStatus,
+          availabilitySignal: obs.purchaseSignal ?? obs.availabilitySignal,
+          quantitySource: obs.quantitySource,
           publishedQty: reconciled.publishedQty,
           zeroReason: reconciled.zeroReason,
           confidenceStatus: obs.identityMatchLevel,
           confidenceScore: obs.confidenceScore,
-          lastProofAt: now,
+          ...(writeProofAt ? { lastProofAt: now } : {}),
           lastObservedAt: now,
           sourceScrapeRunId: input.scrapeRunId,
           rawParseJson: obs.rawParseJson ?? undefined,
@@ -423,22 +559,30 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         },
       });
 
+      // Apply published qty to DB stock only when approved (not monitoring_only / review_required).
+      if (policyStatus === "approved" && writeProofAt) {
+        await p.supplierVariant.updateMany({
+          where: { supplierVariantId: obs.supplierVariantId, manualLock: false },
+          data: { stock: reconciled.publishedQty, lastSyncAt: now },
+        });
+      }
+
       if (reconciled.needsReview) {
         await p.supplierStockReviewItem.create({
           data: {
             supplierKey,
-            supplierVariantId: row.supplierVariantId,
-            gtin: row.gtin,
-            supplierSku: row.supplierSku,
-            productName: row.supplierProductName,
-            productUrl: obs.productUrl,
-            dbPrice: row.price,
-            dbQty: row.stock,
+            supplierVariantId: obs.supplierVariantId,
+            gtin: obs.gtin,
+            supplierSku: obs.supplierSku,
+            manufacturerRef: obs.manufacturerRef,
+            productName: obs.productName,
+            productUrl: obs.productUrl ?? obs.variantUrl,
+            foundPrice: obs.sourcePrice,
             proposedQty: reconciled.publishedQty,
-            foundLeadTimeDays: row.leadTimeDays,
+            foundLeadTimeDays: obs.sourceLeadTimeDays,
             proposedStatus: reconciled.availabilityStatus,
-            reason: reconciled.reviewReason ?? reconciled.zeroReason ?? "needs_review",
-            lastProofAt: now,
+            reason: reconciled.reviewReason ?? reconciled.zeroReason ?? ZERO_REASON_NO_FRESH_SOURCE,
+            lastProofAt: writeProofAt ? now : null,
             sourceScrapeRunId: input.scrapeRunId,
             rawParseJson: obs.rawParseJson ?? undefined,
             status: "open",
@@ -449,8 +593,7 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     }
   }
 
-  let qtyZeroed = 0;
-  if (validity.completeSnapshot) {
+  if (validity.completeSnapshot && policyStatus === "approved") {
     const catalogIds = (
       await p.supplierVariant.findMany({
         where: { supplierVariantId: { startsWith: `${supplierKey}_` } },
@@ -488,22 +631,41 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
       });
 
       await p.supplierVariant.updateMany({
-        where: { supplierVariantId: z.supplierVariantId },
+        where: { supplierVariantId: z.supplierVariantId, manualLock: false },
         data: { stock: 0 },
+      });
+    }
+  } else if (!validity.completeSnapshot && validity.flags.includes("coverage_below_threshold_review")) {
+    // Alert-only — do not zero absents.
+    if (!dryRun) {
+      reviewItemsCreated++;
+      await p.supplierStockReviewItem.create({
+        data: {
+          supplierKey,
+          supplierVariantId: `${supplierKey}_coverage_alert`,
+          productName: "Coverage below threshold",
+          proposedQty: 0,
+          proposedStatus: "manual_review_required",
+          reason: validity.incompletenessReason ?? "coverage_below_threshold",
+          sourceScrapeRunId: input.scrapeRunId,
+          status: "open",
+        },
       });
     }
   }
 
   if (!dryRun) {
-    await p.supplierStockPolicy.update({
-      where: { supplierKey },
-      data: {
-        consecutiveInvalidRuns: 0,
-        lastValidRunAt: new Date(),
-        lastScrapeRunId: input.scrapeRunId,
-        status: policyStatus === "paused_due_to_scrape_failure" ? "review_required" : policyStatus,
-      },
-    });
+    if (policy && isScrapeSuccessStatus(run.status)) {
+      await p.supplierStockPolicy.update({
+        where: { supplierKey },
+        data: {
+          consecutiveInvalidRuns: 0,
+          lastValidRunAt: new Date(),
+          lastScrapeRunId: input.scrapeRunId,
+          status: policyStatus === "paused_due_to_scrape_failure" ? "review_required" : policyStatus,
+        },
+      });
+    }
 
     await p.supplierScrapeQualityRun.upsert({
       where: { scrapeRunId: input.scrapeRunId },
@@ -513,7 +675,7 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         valid: true,
         completeSnapshot: validity.completeSnapshot,
         productsDiscovered: metrics.productsListed,
-        variantsProcessed: seenVariants.length,
+        variantsProcessed: observations.length,
         confirmedInStock,
         confirmedOutOfStock,
         preorders,
@@ -526,12 +688,20 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         marketplacePublishStatus: policyStatus,
         startedAt: metrics.startedAt,
         finishedAt: metrics.finishedAt,
-        summaryJson: { metrics, validity, seen: seenVariants.length, qtyZeroed },
+        summaryJson: {
+          metrics,
+          validity,
+          observationContractPresent: true,
+          snapshotCompleteness: validity.snapshotCompleteness,
+          incompletenessReason: validity.incompletenessReason,
+          reliableCatalogCount: listedOrWrote(metrics),
+          note: "Evidence from SupplierVariantObservation only — never SupplierVariant.stock",
+        },
       },
       update: {
         valid: true,
         completeSnapshot: validity.completeSnapshot,
-        variantsProcessed: seenVariants.length,
+        variantsProcessed: observations.length,
         confirmedInStock,
         confirmedOutOfStock,
         preorders,
@@ -541,7 +711,13 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         excludedByDimension,
         errorRate: validity.errorRate,
         coverageVsPrevious: validity.coverageVsPrevious,
-        summaryJson: { metrics, validity, seen: seenVariants.length, qtyZeroed },
+        summaryJson: {
+          metrics,
+          validity,
+          observationContractPresent: true,
+          snapshotCompleteness: validity.snapshotCompleteness,
+          incompletenessReason: validity.incompletenessReason,
+        },
       },
     });
   }
@@ -553,10 +729,17 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     scrapeRunId: input.scrapeRunId,
     valid: true,
     completeSnapshot: validity.completeSnapshot,
-    variantsProcessed: seenVariants.length,
+    snapshotCompleteness: validity.snapshotCompleteness,
+    variantsProcessed: observations.length,
     qtyZeroed,
     reviewItemsCreated,
     policyStatus,
     paused: false,
+    observationContractPresent: true,
+    exceptionTag: policyStatus === "monitoring_only" ? TEMPORARY_MONITORING_EXCEPTION : null,
   };
+}
+
+function listedOrWrote(metrics: ScrapeRunMetrics): number {
+  return Math.max(metrics.productsListed, metrics.variantsUpserted);
 }
