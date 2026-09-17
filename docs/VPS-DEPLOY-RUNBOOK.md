@@ -21,6 +21,8 @@ Compose renames the old container to `{oldId}_resell-web-1` during recreate; a l
 
 Automatic: merge/push to `main` → workflow `Deploy VPS`.
 
+Target SHA must be a full 40-char hex **and** an ancestor of `origin/main` (current tip or prior main for rollback). Feature-branch-only commits are rejected.
+
 Manual (same mechanism):
 
 ```bash
@@ -57,13 +59,22 @@ Prefer script from `origin/main` when rolling back an old SHA that predates the 
 
 ## Migrations
 
-**Not** run by default. Explicit only:
+**Not** run by default. Explicit only. Order is always:
+
+1. `docker compose build web`
+2. `docker compose run --rm --no-deps web npx prisma migrate deploy` (new image, app not replaced yet)
+3. `docker compose up -d --no-deps web`
+4. post-deploy verify (running + compose labels + image match when available)
 
 ```bash
 # workflow_dispatch migrate=true
 # or:
 ssh resell-vps '… bash /tmp/vps-deploy-from-github.sh --sha=$WANT --migrate'
 ```
+
+## Stale container cleanup
+
+Only containers with Compose labels `com.docker.compose.project=<project>` + `service=web`, name matching `^[0-9a-f]+_<project>-web-[0-9]+$`, and state `created|exited|dead` are removed. Live `resell-web-1` is never removed. If a matching rename leftover is **running** → deploy aborts with `STALE_RENAMED_CONTAINER_RUNNING` (nothing removed).
 
 ## Dry-run / CI validation
 
