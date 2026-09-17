@@ -5,6 +5,27 @@
 
 StockX is out of scope.
 
+## Enforcement switch (mandatory safety)
+
+| Env | Mode | Marketplace qty |
+|-----|------|-----------------|
+| `SUPPLIER_STOCK_PUBLISH_ENFORCED` absent / ≠`1` | **OBSERVATION_ONLY_NOT_ENFORCED** | **unchanged** — dashboard, reports, review, alerts only |
+| `SUPPLIER_STOCK_PUBLISH_ENFORCED=1` | enforced | policies apply: WEL/REI `TEMPORARY_MONITORING_EXCEPTION`; unapproved → 0; approved only with fresh `SupplierVariantObservation` |
+
+Dashboard shows a prominent `OBSERVATION_ONLY_NOT_ENFORCED` banner until the flag is set.
+
+### Activation runbook
+
+1. Deploy code (migration tables only — no seed). Confirm banner = observation-only.
+2. Qualify **one** supplier via [SUPPLIER-OBSERVATION-QUALIFICATION.md](./SUPPLIER-OBSERVATION-QUALIFICATION.md).
+3. Wire that scraper to `observationAdapter` + set `observationContractImplemented=true` in `contractRegistry.ts`.
+4. Run scrapes; verify `observationsReceivedThisRun` / `sourceProofCoverage` on `/supplier-stock`.
+5. Manually approve that supplier (`observationContractValidated=true`) — blocked if contract not implemented.
+6. Only when ready to cut marketplace qty: set `SUPPLIER_STOCK_PUBLISH_ENFORCED=1` on the server and restart.
+7. WEL/REI stay `monitoring_only` during freeze — alerts only, no qty change.
+
+**Never** enable the flag before at least one supplier is validated, unless you intentionally want all non-approved scrapers to publish 0.
+
 ## Observation contract (`SupplierVariantObservation`)
 
 Scrapers must emit a structured payload per variant for the current run:
@@ -23,7 +44,16 @@ Scrapers must emit a structured payload per variant for the current run:
 Without this payload: `publishedQty=0`, reason `NO_FRESH_SOURCE_EVIDENCE`, review queue.  
 `usedDefaultStock=true` can never become published qty.
 
-Until a supplier emits this contract and is manually validated, it stays **`review_required`** and cannot be approved.
+**Honesty:** runner call sites finalize runs — they do **not** prove pages. Until a scraper implements the contract:
+
+| Field | Meaning |
+|-------|---------|
+| `observationContractImplemented` | code registry — false for all today |
+| `observationsReceivedThisRun` | count of observation payloads this finalize |
+| `sourceProofCoverage` | share with fresh proof |
+| `eligibleForApproval` | false if contract not implemented |
+
+A source **cannot** be marked `approved` if `observationContractImplemented=false`.
 
 ## Quantities
 
@@ -35,7 +65,7 @@ Until a supplier emits this contract and is manually validated, it stays **`revi
 
 ## Snapshot completeness
 
-Missing variants → qty 0 **only** when:
+Missing variants → qty 0 **only when enforced** and:
 
 1. scraper declares `snapshotCompleteness: "full"`
 2. run is not partial (`max`, pagination stop, incomplete categories, …)
@@ -54,8 +84,8 @@ Invalid (never reset counter): `error`, `failed`, `running`, `cancelled`, `inter
 
 | Policy | 1st invalid | 2nd invalid |
 |--------|-------------|-------------|
-| **approved** | keep last proof ≤ **24h** (`FIRST_INVALID_GRACE_MS`) | email + marketplace stock → 0 + `paused_due_to_scrape_failure` |
-| **review_required** | already marketplace 0 | email + pause |
+| **approved** | keep last proof ≤ **24h** (`FIRST_INVALID_GRACE_MS`) | email + marketplace stock → 0 + `paused_due_to_scrape_failure` (**only if enforced**) |
+| **review_required** | already marketplace 0 when enforced | email + pause |
 | **monitoring_only** (WEL/REI) | track | **alert only** — tag `TEMPORARY_MONITORING_EXCEPTION` — **no qty change** during 2–3 day freeze |
 
 ## Central runner
@@ -71,6 +101,8 @@ All scrapes must go through `app/lib/scraperRunner.ts` → finalize exactly once
 
 Verify: `npx tsx scripts/supplier-stock-dry-run.ts --call-sites`
 
+Adapter interface: `inventory/supplierStock/observationAdapter.ts` — register one supplier at a time. Do not claim call sites = page proof.
+
 ## Notifications
 
 - Email Postmark: preflight `configured` | `recipient_missing` | `not_configured` | `send_failed` | `sent`
@@ -83,7 +115,7 @@ Verify: `npx tsx scripts/supplier-stock-dry-run.ts --call-sites`
 - Staging/local seed only: `SUPPLIER_STOCK_ALLOW_SEED=1 npx tsx scripts/supplier-stock-dry-run.ts --seed-policies`
 - Activate suppliers one-by-one after manual review
 - WEL/REI: monitoring freeze — feed unchanged
-- Others: `review_required` → marketplace 0 until observation contract live + approved
+- Others: `review_required` → marketplace 0 **only after** `SUPPLIER_STOCK_PUBLISH_ENFORCED=1`
 
 ## Example quality reports
 
@@ -95,6 +127,11 @@ Verify: `npx tsx scripts/supplier-stock-dry-run.ts --call-sites`
   "invalidReason": "listed_zero_with_active_catalog",
   "snapshotCompleteness": "partial",
   "observationContractPresent": false,
+  "observationContractImplemented": false,
+  "observationsReceivedThisRun": 0,
+  "eligibleForApproval": false,
+  "enforceMode": "observation_only",
+  "banner": "OBSERVATION_ONLY_NOT_ENFORCED",
   "note": "NO historical SupplierVariant.stock used as proof"
 }
 ```
@@ -116,6 +153,7 @@ Verify: `npx tsx scripts/supplier-stock-dry-run.ts --call-sites`
   "valid": true,
   "completeSnapshot": false,
   "observationContractPresent": false,
+  "observationContractImplemented": false,
   "incompletenessReason": "observation_contract_missing",
   "marketplacePublishStatus": "review_required"
 }

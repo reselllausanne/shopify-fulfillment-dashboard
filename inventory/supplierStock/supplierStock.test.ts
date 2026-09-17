@@ -14,6 +14,17 @@ import {
   reviewBlockedDecision,
 } from "./quantity";
 import { applySupplierStockPublishGate } from "./publishGate";
+import {
+  buildRunContractReport,
+  isEligibleForApproval,
+  listSupplierContractStatuses,
+} from "./contractRegistry";
+import {
+  getSupplierStockEnforceMode,
+  isSupplierStockPublishEnforced,
+  mayMutateMarketplaceStock,
+  OBSERVATION_ONLY_NOT_ENFORCED,
+} from "./enforceMode";
 import { enrichObservation, reconcileObservation, zeroMissingFromCompleteSnapshot } from "./reconcile";
 import { evaluateScrapeRunValidity } from "./runValidity";
 import { describeNotifierChannels, getEmailNotifyPreflight } from "./notify";
@@ -289,51 +300,109 @@ describe("invalid run pause policy", () => {
 describe("publish gate", () => {
   const proofAt = new Date();
 
-  it("review_required blocks", () => {
+  it("observation-only (default): never cuts qty regardless of policy", () => {
+    expect(
+      applySupplierStockPublishGate({
+        baseStock: 4400,
+        policyStatus: "review_required",
+        lastProofAt: null,
+        enforced: false,
+      })
+    ).toBe(4400);
+    expect(
+      applySupplierStockPublishGate({
+        baseStock: 12,
+        policyStatus: "paused_due_to_scrape_failure",
+        enforced: false,
+      })
+    ).toBe(12);
+  });
+
+  it("review_required blocks when enforced", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 100,
         policyStatus: "review_required",
         evidencePublishedQty: 10,
         lastProofAt: proofAt,
+        enforced: true,
       })
     ).toBe(reviewBlockedDecision().publishedQty);
   });
 
-  it("monitoring_only passthrough (TEMPORARY freeze)", () => {
+  it("monitoring_only passthrough (TEMPORARY freeze) when enforced", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 4400,
         policyStatus: "monitoring_only",
         lastProofAt: null,
+        enforced: true,
       })
     ).toBe(4400);
   });
 
-  it("approved without lastProofAt → 0 (DB stock alone never publishes)", () => {
+  it("approved without lastProofAt → 0 when enforced (DB stock alone never publishes)", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 4400,
         policyStatus: "approved",
         evidencePublishedQty: 4400,
         lastProofAt: null,
+        enforced: true,
       })
     ).toBe(0);
   });
 
-  it("approved uses evidence when proof fresh", () => {
+  it("approved uses evidence when proof fresh and enforced", () => {
     expect(
       applySupplierStockPublishGate({
         baseStock: 100,
         policyStatus: "approved",
         evidencePublishedQty: 3,
         lastProofAt: proofAt,
+        enforced: true,
       })
     ).toBe(3);
   });
 
   it("first-invalid grace window constant documented", () => {
     expect(FIRST_INVALID_GRACE_MS).toBe(24 * 60 * 60 * 1000);
+  });
+});
+
+describe("enforce mode + contract registry", () => {
+  it("absent flag → observation only", () => {
+    expect(isSupplierStockPublishEnforced({})).toBe(false);
+    expect(isSupplierStockPublishEnforced({ SUPPLIER_STOCK_PUBLISH_ENFORCED: "0" })).toBe(false);
+    expect(getSupplierStockEnforceMode({}).banner).toBe(OBSERVATION_ONLY_NOT_ENFORCED);
+    expect(mayMutateMarketplaceStock({})).toBe(false);
+  });
+
+  it("flag=1 → enforced", () => {
+    expect(isSupplierStockPublishEnforced({ SUPPLIER_STOCK_PUBLISH_ENFORCED: "1" })).toBe(true);
+    expect(getSupplierStockEnforceMode({ SUPPLIER_STOCK_PUBLISH_ENFORCED: "1" }).banner).toBeNull();
+    expect(mayMutateMarketplaceStock({ SUPPLIER_STOCK_PUBLISH_ENFORCED: "1" })).toBe(true);
+  });
+
+  it("all scrapers pending contract — not eligible for approval", () => {
+    const statuses = listSupplierContractStatuses();
+    expect(statuses.length).toBeGreaterThanOrEqual(14);
+    expect(statuses.every((s) => s.observationContractImplemented === false)).toBe(true);
+    expect(isEligibleForApproval({ supplierKey: "haw" }).eligibleForApproval).toBe(false);
+    expect(isEligibleForApproval({ supplierKey: "haw" }).reason).toBe(
+      "observation_contract_not_implemented"
+    );
+  });
+
+  it("run contract report honest when 0 observations", () => {
+    const report = buildRunContractReport({
+      supplierKey: "exl",
+      observationsReceivedThisRun: 0,
+      variantsProcessed: 0,
+    });
+    expect(report.observationContractImplemented).toBe(false);
+    expect(report.observationsReceivedThisRun).toBe(0);
+    expect(report.eligibleForApproval).toBe(false);
   });
 });
 

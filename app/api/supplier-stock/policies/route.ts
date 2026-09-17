@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
-import { defaultPolicyStatusForSupplier, TEMPORARY_MONITORING_EXCEPTION } from "@/inventory/supplierStock";
+import {
+  defaultPolicyStatusForSupplier,
+  getSupplierStockEnforceMode,
+  isObservationContractImplemented,
+  listSupplierContractStatuses,
+  TEMPORARY_MONITORING_EXCEPTION,
+} from "@/inventory/supplierStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,9 +17,14 @@ export async function GET() {
     const policies = await p.supplierStockPolicy.findMany({
       orderBy: { supplierKey: "asc" },
     });
+    const enforce = getSupplierStockEnforceMode();
+    const contracts = listSupplierContractStatuses();
     return NextResponse.json({
       ok: true,
       policies,
+      contracts,
+      enforce,
+      banner: enforce.banner,
       note: "Policies are not auto-seeded. Staging seed: SUPPLIER_STOCK_ALLOW_SEED=1 npx tsx scripts/supplier-stock-dry-run.ts --seed-policies",
       temporaryMonitoringException: TEMPORARY_MONITORING_EXCEPTION,
     });
@@ -44,6 +55,18 @@ export async function PATCH(request: Request) {
     let data: Record<string, unknown> = {};
 
     if (action === "approve") {
+      if (!isObservationContractImplemented(supplierKey)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Cannot approve: observationContractImplemented=false for this supplier. Wire scraper to observation adapter first (call sites alone are not page proof).",
+            observationContractImplemented: false,
+            eligibleForApproval: false,
+          },
+          { status: 400 }
+        );
+      }
       if (!body.observationContractValidated) {
         return NextResponse.json(
           {
@@ -54,19 +77,24 @@ export async function PATCH(request: Request) {
           { status: 400 }
         );
       }
-      // Require at least one quality run that recorded observationContractPresent.
+      // Require at least one quality run that recorded observationsReceivedThisRun > 0.
       const quality = await p.supplierScrapeQualityRun.findFirst({
         where: { supplierKey, valid: true },
         orderBy: { createdAt: "desc" },
         select: { summaryJson: true },
       });
-      const contractOk = Boolean((quality?.summaryJson as any)?.observationContractPresent);
+      const summary = (quality?.summaryJson ?? {}) as Record<string, unknown>;
+      const received = Number(summary.observationsReceivedThisRun ?? 0);
+      const contractOk =
+        Boolean(summary.observationContractPresent) ||
+        (Number.isFinite(received) && received > 0);
       if (!contractOk) {
         return NextResponse.json(
           {
             ok: false,
             error:
-              "No successful quality run with observationContractPresent=true. Implement scraper observation payload first.",
+              "No successful quality run with observationsReceivedThisRun>0. Implement scraper observation payload first.",
+            observationsReceivedThisRun: received,
           },
           { status: 400 }
         );

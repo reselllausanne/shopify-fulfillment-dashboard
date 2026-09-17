@@ -6,7 +6,9 @@
 
 import { prisma } from "@/app/lib/prisma";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { buildRunContractReport } from "./contractRegistry";
 import { allSupplierSeeds, buildSupplierSeed, seedScrapeIntervalHours } from "./defaults";
+import { mayMutateMarketplaceStock, OBSERVATION_ONLY_NOT_ENFORCED } from "./enforceMode";
 import { shouldPauseAfterInvalidRun } from "./invalidRunPolicy";
 import { createSupplierStockNotifier } from "./notify";
 import { observationFromSourcePayload } from "./observation";
@@ -224,6 +226,13 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
   const p = prismaAny();
   const observations = input.observations ?? [];
   const observationContractPresent = observations.length > 0;
+  const mutateStock = mayMutateMarketplaceStock();
+  const contractReport = buildRunContractReport({
+    supplierKey,
+    observationsReceivedThisRun: observations.length,
+    variantsWithFreshProof: 0,
+    variantsProcessed: observations.length,
+  });
 
   // Do NOT auto-seed policies here — production activation is manual per supplier.
   const policy = await getSupplierStockPolicy(supplierKey).catch(() => null);
@@ -308,7 +317,7 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         },
       });
 
-      if (pauseDecision.zeroMarketplaceStock && policyStatus !== "monitoring_only") {
+      if (pauseDecision.zeroMarketplaceStock && policyStatus !== "monitoring_only" && mutateStock) {
         const updated = await p.supplierVariant.updateMany({
           where: {
             supplierVariantId: { startsWith: `${supplierKey}_` },
@@ -318,6 +327,8 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
           data: { stock: 0 },
         });
         qtyZeroed = Number(updated?.count ?? 0);
+      } else if (pauseDecision.zeroMarketplaceStock && !mutateStock) {
+        qtyZeroed = 0; // OBSERVATION_ONLY_NOT_ENFORCED — report only
       }
 
       if (pauseDecision.notify) {
@@ -364,6 +375,9 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
             snapshotCompleteness: validity.snapshotCompleteness,
             incompletenessReason: validity.incompletenessReason,
             observationContractPresent,
+            ...contractReport,
+            enforceMode: mutateStock ? "enforced" : "observation_only",
+            banner: mutateStock ? null : OBSERVATION_ONLY_NOT_ENFORCED,
             exceptionTag,
             note: "NO historical SupplierVariant.stock used as proof",
           },
@@ -381,6 +395,9 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
             snapshotCompleteness: validity.snapshotCompleteness,
             incompletenessReason: validity.incompletenessReason,
             observationContractPresent,
+            ...contractReport,
+            enforceMode: mutateStock ? "enforced" : "observation_only",
+            banner: mutateStock ? null : OBSERVATION_ONLY_NOT_ENFORCED,
             exceptionTag,
           },
         },
@@ -414,6 +431,7 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
   let priceMissing = 0;
   let excludedByDimension = 0;
   let reviewItemsCreated = 0;
+  let variantsWithFreshProof = 0;
   const seenIds = new Set<string>();
   const now = new Date();
 
@@ -437,6 +455,9 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
             incompletenessReason: "observation_contract_missing",
             note: ZERO_REASON_NO_FRESH_SOURCE,
             snapshotCompleteness: metrics.snapshotCompleteness,
+            ...contractReport,
+            enforceMode: mutateStock ? "enforced" : "observation_only",
+            banner: mutateStock ? null : OBSERVATION_ONLY_NOT_ENFORCED,
           },
         },
         update: {
@@ -446,6 +467,9 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
             observationContractPresent: false,
             incompletenessReason: "observation_contract_missing",
             note: ZERO_REASON_NO_FRESH_SOURCE,
+            ...contractReport,
+            enforceMode: mutateStock ? "enforced" : "observation_only",
+            banner: mutateStock ? null : OBSERVATION_ONLY_NOT_ENFORCED,
           },
         },
       });
@@ -505,6 +529,7 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     if (obs.availabilityStatus === "price_missing") priceMissing++;
 
     const writeProofAt = Boolean(obs.hasFreshSourceEvidence);
+    if (writeProofAt) variantsWithFreshProof++;
 
     if (!dryRun) {
       await p.supplierVariantEvidence.upsert({
@@ -559,8 +584,8 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         },
       });
 
-      // Apply published qty to DB stock only when approved (not monitoring_only / review_required).
-      if (policyStatus === "approved" && writeProofAt) {
+      // Apply published qty to DB stock only when enforced + approved.
+      if (mutateStock && policyStatus === "approved" && writeProofAt) {
         await p.supplierVariant.updateMany({
           where: { supplierVariantId: obs.supplierVariantId, manualLock: false },
           data: { stock: reconciled.publishedQty, lastSyncAt: now },
@@ -593,7 +618,7 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
     }
   }
 
-  if (validity.completeSnapshot && policyStatus === "approved") {
+  if (validity.completeSnapshot && policyStatus === "approved" && mutateStock) {
     const catalogIds = (
       await p.supplierVariant.findMany({
         where: { supplierVariantId: { startsWith: `${supplierKey}_` } },
@@ -635,6 +660,20 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
         data: { stock: 0 },
       });
     }
+  } else if (validity.completeSnapshot && policyStatus === "approved" && !mutateStock) {
+    // OBSERVATION_ONLY_NOT_ENFORCED — would-zero count for report only
+    if (!dryRun) {
+      const catalogIds = (
+        await p.supplierVariant.findMany({
+          where: { supplierVariantId: { startsWith: `${supplierKey}_` } },
+          select: { supplierVariantId: true },
+        })
+      ).map((r: { supplierVariantId: string }) => r.supplierVariantId);
+      qtyZeroed = zeroMissingFromCompleteSnapshot({
+        seenVariantIds: seenIds,
+        catalogVariantIds: catalogIds,
+      }).length;
+    }
   } else if (!validity.completeSnapshot && validity.flags.includes("coverage_below_threshold_review")) {
     // Alert-only — do not zero absents.
     if (!dryRun) {
@@ -667,6 +706,13 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
       });
     }
 
+    const finalContractReport = buildRunContractReport({
+      supplierKey,
+      observationsReceivedThisRun: observations.length,
+      variantsWithFreshProof,
+      variantsProcessed: observations.length,
+    });
+
     await p.supplierScrapeQualityRun.upsert({
       where: { scrapeRunId: input.scrapeRunId },
       create: {
@@ -695,6 +741,9 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
           snapshotCompleteness: validity.snapshotCompleteness,
           incompletenessReason: validity.incompletenessReason,
           reliableCatalogCount: listedOrWrote(metrics),
+          ...finalContractReport,
+          enforceMode: mutateStock ? "enforced" : "observation_only",
+          banner: mutateStock ? null : OBSERVATION_ONLY_NOT_ENFORCED,
           note: "Evidence from SupplierVariantObservation only — never SupplierVariant.stock",
         },
       },
@@ -717,6 +766,9 @@ export async function finalizeSupplierStockRun(input: FinalizeRunInput): Promise
           observationContractPresent: true,
           snapshotCompleteness: validity.snapshotCompleteness,
           incompletenessReason: validity.incompletenessReason,
+          ...finalContractReport,
+          enforceMode: mutateStock ? "enforced" : "observation_only",
+          banner: mutateStock ? null : OBSERVATION_ONLY_NOT_ENFORCED,
         },
       },
     });

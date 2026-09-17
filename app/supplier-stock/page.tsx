@@ -24,6 +24,14 @@ type Policy = {
   lastInvalidRunAt: string | null;
 };
 
+type Contract = {
+  supplierKey: string;
+  displayName: string;
+  observationContractImplemented: boolean;
+  observationContractValidated: boolean;
+  notes: string;
+};
+
 type QualityRun = {
   id: string;
   supplierKey: string;
@@ -33,6 +41,16 @@ type QualityRun = {
   variantsProcessed: number;
   qtyZeroed: number;
   createdAt: string;
+  observationContractImplemented?: boolean;
+  observationsReceivedThisRun?: number;
+  sourceProofCoverage?: number | null;
+  eligibleForApproval?: boolean;
+};
+
+type EnforceInfo = {
+  enforced: boolean;
+  mode: string;
+  banner: string | null;
 };
 
 const nf = new Intl.NumberFormat("en-US");
@@ -40,7 +58,9 @@ const nf = new Intl.NumberFormat("en-US");
 export default function SupplierStockPage() {
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
   const [runs, setRuns] = useState<QualityRun[]>([]);
+  const [enforce, setEnforce] = useState<EnforceInfo | null>(null);
   const [supplier, setSupplier] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +82,8 @@ export default function SupplierStockPage() {
       if (!review.ok) throw new Error(review.error || "review load failed");
       setItems(review.items ?? []);
       setPolicies(policy.policies ?? []);
+      setContracts(policy.contracts ?? []);
+      setEnforce(policy.enforce ?? runJson.enforce ?? null);
       setRuns(runJson.runs ?? []);
     } catch (e: unknown) {
       setError(String((e as Error)?.message ?? e));
@@ -98,7 +120,11 @@ export default function SupplierStockPage() {
       const res = await fetch("/api/supplier-stock/policies", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ supplierKey, action }),
+        body: JSON.stringify({
+          supplierKey,
+          action,
+          ...(action === "approve" ? { observationContractValidated: true } : {}),
+        }),
       });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || "policy update failed");
@@ -115,13 +141,35 @@ export default function SupplierStockPage() {
     return acc;
   }, {});
 
+  const contractByKey = Object.fromEntries(contracts.map((c) => [c.supplierKey, c]));
+
   return (
     <main className="mx-auto max-w-[1600px] space-y-6 p-4 md:p-6">
+      {enforce && !enforce.enforced ? (
+        <div
+          className="rounded-lg border-2 border-amber-500 bg-amber-100 px-4 py-4 text-center dark:border-amber-400 dark:bg-amber-950"
+          role="status"
+        >
+          <p className="font-mono text-lg font-bold tracking-wide text-amber-950 dark:text-amber-100">
+            {enforce.banner ?? "OBSERVATION_ONLY_NOT_ENFORCED"}
+          </p>
+          <p className="mt-1 text-sm text-amber-900 dark:text-amber-200">
+            Marketplace quantities unchanged. Set{" "}
+            <code className="rounded bg-amber-200 px-1 dark:bg-amber-900">SUPPLIER_STOCK_PUBLISH_ENFORCED=1</code>{" "}
+            only after voluntary activation.
+          </p>
+        </div>
+      ) : enforce?.enforced ? (
+        <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-700 dark:bg-red-950 dark:text-red-100">
+          Publish enforcement ON — policies apply to marketplace qty (WEL/REI still TEMPORARY_MONITORING_EXCEPTION).
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Supplier stock review</h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Proof-based reconciliation queue — no historical qty without fresh scrape proof.
+            Proof-based reconciliation — runner finalizes runs; scrapers must emit observations for page proof.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -155,6 +203,43 @@ export default function SupplierStockPage() {
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">Observation contract (honest)</h2>
+          <p className="text-xs text-slate-500">implemented=false until scraper emits SupplierVariantObservation — call sites ≠ proof</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
+              <tr>
+                <th className="px-4 py-2">Supplier</th>
+                <th className="px-4 py-2">Contract</th>
+                <th className="px-4 py-2">Eligible approve</th>
+                <th className="px-4 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contracts.map((c) => (
+                <tr key={c.supplierKey} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-4 py-2 font-medium">
+                    {c.displayName} <span className="font-mono text-xs uppercase text-slate-500">{c.supplierKey}</span>
+                  </td>
+                  <td className="px-4 py-2">
+                    {c.observationContractImplemented ? (
+                      <span className="text-emerald-700">implemented</span>
+                    ) : (
+                      <span className="font-semibold text-amber-700">pending</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2">{c.observationContractImplemented ? "maybe" : "no"}</td>
+                  <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{c.notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-700">
           <h2 className="font-semibold text-slate-900 dark:text-slate-100">Policies</h2>
         </div>
         <div className="overflow-x-auto">
@@ -163,48 +248,60 @@ export default function SupplierStockPage() {
               <tr>
                 <th className="px-4 py-2">Supplier</th>
                 <th className="px-4 py-2">Status</th>
+                <th className="px-4 py-2">Contract</th>
                 <th className="px-4 py-2">Invalid runs</th>
                 <th className="px-4 py-2">Last valid</th>
                 <th className="px-4 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {policies.map((p) => (
-                <tr key={p.supplierKey} className="border-t border-slate-100 dark:border-slate-800">
-                  <td className="px-4 py-2 font-medium">{p.displayName}</td>
-                  <td className="px-4 py-2">{p.status}</td>
-                  <td className="px-4 py-2">{p.consecutiveInvalidRuns}</td>
-                  <td className="px-4 py-2">{p.lastValidRunAt ? new Date(p.lastValidRunAt).toLocaleString() : "—"}</td>
-                  <td className="px-4 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      <button
-                        type="button"
-                        disabled={busy === p.supplierKey}
-                        onClick={() => void patchPolicy(p.supplierKey, "approve")}
-                        className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy === p.supplierKey}
-                        onClick={() => void patchPolicy(p.supplierKey, "monitoring")}
-                        className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
-                      >
-                        Monitoring
-                      </button>
-                      <button
-                        type="button"
-                        disabled={busy === p.supplierKey}
-                        onClick={() => void patchPolicy(p.supplierKey, "pause")}
-                        className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
-                      >
-                        Pause
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {policies.map((p) => {
+                const c = contractByKey[p.supplierKey];
+                return (
+                  <tr key={p.supplierKey} className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="px-4 py-2 font-medium">{p.displayName}</td>
+                    <td className="px-4 py-2">{p.status}</td>
+                    <td className="px-4 py-2">
+                      {c?.observationContractImplemented ? "implemented" : "pending"}
+                    </td>
+                    <td className="px-4 py-2">{p.consecutiveInvalidRuns}</td>
+                    <td className="px-4 py-2">{p.lastValidRunAt ? new Date(p.lastValidRunAt).toLocaleString() : "—"}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          disabled={busy === p.supplierKey || !c?.observationContractImplemented}
+                          title={
+                            c?.observationContractImplemented
+                              ? "Approve after live validation"
+                              : "Blocked: observationContractImplemented=false"
+                          }
+                          onClick={() => void patchPolicy(p.supplierKey, "approve")}
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:hover:bg-slate-800"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy === p.supplierKey}
+                          onClick={() => void patchPolicy(p.supplierKey, "monitoring")}
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
+                        >
+                          Monitoring
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy === p.supplierKey}
+                          onClick={() => void patchPolicy(p.supplierKey, "pause")}
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100 dark:border-slate-600 dark:hover:bg-slate-800"
+                        >
+                          Pause
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -281,8 +378,10 @@ export default function SupplierStockPage() {
                 <th className="px-4 py-2">Supplier</th>
                 <th className="px-4 py-2">Run</th>
                 <th className="px-4 py-2">Valid</th>
-                <th className="px-4 py-2">Processed</th>
-                <th className="px-4 py-2">Zeroed</th>
+                <th className="px-4 py-2">Obs received</th>
+                <th className="px-4 py-2">Proof cov.</th>
+                <th className="px-4 py-2">Contract</th>
+                <th className="px-4 py-2">Zeroed*</th>
                 <th className="px-4 py-2">Reason</th>
                 <th className="px-4 py-2">When</th>
               </tr>
@@ -293,7 +392,13 @@ export default function SupplierStockPage() {
                   <td className="px-4 py-2 uppercase">{r.supplierKey}</td>
                   <td className="px-4 py-2">#{r.scrapeRunId}</td>
                   <td className="px-4 py-2">{r.valid ? "yes" : "no"}</td>
-                  <td className="px-4 py-2">{nf.format(r.variantsProcessed)}</td>
+                  <td className="px-4 py-2">{nf.format(r.observationsReceivedThisRun ?? r.variantsProcessed)}</td>
+                  <td className="px-4 py-2">
+                    {r.sourceProofCoverage == null ? "—" : `${Math.round(r.sourceProofCoverage * 100)}%`}
+                  </td>
+                  <td className="px-4 py-2">
+                    {r.observationContractImplemented ? "yes" : "pending"}
+                  </td>
                   <td className="px-4 py-2">{nf.format(r.qtyZeroed)}</td>
                   <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{r.invalidReason ?? "—"}</td>
                   <td className="px-4 py-2">{new Date(r.createdAt).toLocaleString()}</td>
@@ -301,6 +406,9 @@ export default function SupplierStockPage() {
               ))}
             </tbody>
           </table>
+          <p className="px-4 py-2 text-xs text-slate-500">
+            *Zeroed = applied only when SUPPLIER_STOCK_PUBLISH_ENFORCED=1; otherwise report-only.
+          </p>
         </div>
       </section>
     </main>
