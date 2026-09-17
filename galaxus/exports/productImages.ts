@@ -81,7 +81,12 @@ function collectVariantImageUrls(variant: {
 /** Galaxus rejects low-resolution images; StockX/imgix defaults ship 140×100 thumbnails. */
 const GALAXUS_MIN_IMAGE_EDGE = 1200;
 
-const IMGIX_HOSTS = ["images.stockx.com", "image.goat.com", "images.goat.com"];
+const IMGIX_HOSTS = [
+  "images.stockx.com",
+  "stockx-assets.imgix.net",
+  "image.goat.com",
+  "images.goat.com",
+];
 
 /**
  * Raise imgix-style `w`/`h` params to at least `GALAXUS_MIN_IMAGE_EDGE`.

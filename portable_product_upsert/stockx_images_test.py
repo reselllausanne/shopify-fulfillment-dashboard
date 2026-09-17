@@ -57,6 +57,13 @@ class StockxImageSelectionTest(unittest.TestCase):
         self.assertNotIn("dpr=", upgraded)
         self.assertIn("w=1200", upgraded)
 
+    def test_unknown_size_without_declared_dims_is_rejected(self):
+        plain = "https://images.stockx.com/images/item.jpg?fm=jpg"
+        selected = select_stockx_product_images(
+            {"image": plain, "gallery": [], "gallery_360": []}
+        )
+        self.assertEqual(selected, [])
+
     def test_gallery_sync_never_appends_raw_thumbnail(self):
         thumb = "https://images.stockx.com/images/x.jpg?w=140&h=100"
         hd = "https://images.stockx.com/images/x.jpg?w=1400&h=1000"
@@ -65,6 +72,7 @@ class StockxImageSelectionTest(unittest.TestCase):
         self.assertTrue(to_add)
         for url in to_add:
             self.assertFalse(is_kickdb_thumbnail_url(url))
+            self.assertTrue(is_google_compliant_kickdb_url(url))
 
 
 if __name__ == "__main__":

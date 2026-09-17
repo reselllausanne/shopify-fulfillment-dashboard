@@ -20,7 +20,14 @@ DEFAULT_ORBIT_ANGLES = (0, 45, 90, 180, 270)
 MAX_STATIC_FALLBACK = 5
 GOOGLE_IMAGE_MIN_PX = 500
 TARGET_LONG_EDGE_PX = 1200
-IMGIX_HOSTS = frozenset({"images.stockx.com", "image.goat.com", "images.goat.com"})
+IMGIX_HOSTS = frozenset(
+    {
+        "images.stockx.com",
+        "stockx-assets.imgix.net",
+        "image.goat.com",
+        "images.goat.com",
+    }
+)
 
 
 def _norm_url(u: Any) -> str:
@@ -78,6 +85,12 @@ def is_kickdb_thumbnail_url(url: str, min_px: int = GOOGLE_IMAGE_MIN_PX) -> bool
     lower = url.lower()
     if "thumbnail" in lower or "/thumb/" in lower or "_thumb." in lower:
         return True
+    if (
+        "product-placeholder" in lower
+        or "placeholder-default" in lower
+        or "/placeholder." in lower
+    ):
+        return True
     edge = _declared_long_edge(url)
     if edge is None:
         return False
@@ -119,6 +132,7 @@ def upgrade_kickdb_image_url(url: str) -> str:
 
 
 def is_google_compliant_kickdb_url(url: str, min_px: int = GOOGLE_IMAGE_MIN_PX) -> bool:
+    """Declared long-edge >= min_px only. Unknown size is NOT compliant (no auto-accept)."""
     normalized = _norm_url(url)
     if not normalized:
         return False
@@ -126,7 +140,7 @@ def is_google_compliant_kickdb_url(url: str, min_px: int = GOOGLE_IMAGE_MIN_PX) 
         return False
     edge = _declared_long_edge(normalized)
     if edge is None:
-        return True
+        return False
     return edge >= min_px
 
 

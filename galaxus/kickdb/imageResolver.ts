@@ -8,14 +8,22 @@
  * - Prefer normal / high-res StockX-imgix URLs over API thumbnails.
  * - Explicitly reject declared thumbnails that cannot be upgraded.
  * - Upgrade imgix `w`/`h` so delivered pixels meet Google Merchant mins.
+ * - Unknown size is NOT valid until probed (async verify).
  * - Never invent an image — return null when nothing is compliant.
  * - Callers must NOT overwrite an existing good Shopify hero with null.
  */
 
 import { upgradeGalaxusImageResolution } from "@/galaxus/exports/productImages";
+import { probeImageDimensions } from "@/galaxus/kickdb/imageDimensionProbe";
 
 /** Google Shopping ads reject images under 250×250; we gate at 500×500. */
 export const KICKDB_GOOGLE_MIN_PX = 500;
+
+export type KickdbImageRejectReason =
+  | "ok"
+  | "no_candidates"
+  | "no_compliant_after_filter"
+  | "IMAGE_DIMENSIONS_UNVERIFIED";
 
 export type KickdbImageResolveResult = {
   url: string | null;
@@ -26,7 +34,11 @@ export type KickdbImageResolveResult = {
   /** True when at least one original URL looked like a thumbnail. */
   thumbnailDetected: boolean;
   /** Why url is null when no compliant image exists. */
-  reason: "ok" | "no_candidates" | "no_compliant_after_filter";
+  reason: KickdbImageRejectReason;
+  /** Declared long-edge for the chosen URL (null if unknown / rejected). */
+  declaredLongEdge: number | null;
+  /** Probed long-edge when async verify ran. */
+  verifiedLongEdge: number | null;
 };
 
 function isAbsoluteHttpUrl(value: string): boolean {
@@ -103,11 +115,18 @@ export function declaredPixelArea(url: string): number {
 
 /**
  * True when URL declares a size below Google min (classic StockX thumb w=140&h=100).
- * Unknown size → false (do not reject).
+ * Unknown size → false (unknown is handled separately as unverified).
  */
 export function isKickdbThumbnailUrl(url: string, minPx = KICKDB_GOOGLE_MIN_PX): boolean {
   const lower = url.toLowerCase();
   if (lower.includes("thumbnail") || lower.includes("/thumb/") || lower.includes("_thumb.")) {
+    return true;
+  }
+  if (
+    lower.includes("product-placeholder") ||
+    lower.includes("placeholder-default") ||
+    lower.includes("/placeholder.")
+  ) {
     return true;
   }
   const edge = declaredLongEdgePx(url);
@@ -121,15 +140,19 @@ export function upgradeKickdbImageUrl(url: string): string {
 }
 
 /**
- * After upgrade, URL must either declare long-edge ≥ minPx or have unknown size
- * (full-asset CDN URLs without w/h). Still-small after upgrade → reject.
+ * Sync compliance: declared long-edge ≥ minPx after upgrade.
+ * Unknown size → NOT compliant (must probe via verifyKickdbImageUrl).
  */
 export function isGoogleCompliantKickdbUrl(url: string, minPx = KICKDB_GOOGLE_MIN_PX): boolean {
   if (!normalizeUrl(url)) return false;
   if (isKickdbThumbnailUrl(url, minPx)) return false;
   const edge = declaredLongEdgePx(url);
-  if (edge === null) return true;
+  if (edge === null) return false;
   return edge >= minPx;
+}
+
+export function isKickdbImageSizeUnknown(url: string): boolean {
+  return normalizeUrl(url) != null && declaredLongEdgePx(url) === null && !isKickdbThumbnailUrl(url);
 }
 
 /** Collect absolute image URLs from a raw KicksDB / StockX product payload. */
@@ -162,20 +185,37 @@ export function collectKickdbImageCandidates(productRecord: unknown): string[] {
 }
 
 function scoreCandidate(url: string): number {
-  // Prefer originally-large / product shots; unknown size ranks mid.
   const area = declaredPixelArea(url);
   const edge = declaredLongEdgePx(url);
-  let score = area > 0 ? area : 500_000;
+  let score = area > 0 ? area : 0;
   if (edge !== null && edge >= KICKDB_GOOGLE_MIN_PX) score += 1_000_000;
+  else if (edge === null) score += 10_000; // unknown ranked below declared HD, above thumbs
   const path = url.toLowerCase();
   if (path.includes("product") || path.includes("-product.")) score += 50_000;
   if (isKickdbThumbnailUrl(url)) score -= 5_000_000;
   return score;
 }
 
+function emptyResult(
+  reason: KickdbImageRejectReason,
+  partial?: Partial<KickdbImageResolveResult>
+): KickdbImageResolveResult {
+  return {
+    url: null,
+    candidates: [],
+    upgraded: [],
+    thumbnailDetected: false,
+    reason,
+    declaredLongEdge: null,
+    verifiedLongEdge: null,
+    ...partial,
+  };
+}
+
 /**
- * Resolve the single canonical hero image for a KicksDB product payload.
- * Always upgrades imgix thumbnails when possible; never returns a sub-min URL.
+ * Sync resolve: only returns URLs with declared long-edge ≥ minPx after upgrade.
+ * Unknown-size URLs are refused (IMAGE_DIMENSIONS_UNVERIFIED) — use
+ * resolveCanonicalKickdbImageVerified for probe-backed selection.
  */
 export function resolveCanonicalKickdbImage(
   productRecord: unknown,
@@ -184,13 +224,7 @@ export function resolveCanonicalKickdbImage(
   const minPx = options?.minPx ?? KICKDB_GOOGLE_MIN_PX;
   const candidates = collectKickdbImageCandidates(productRecord);
   if (candidates.length === 0) {
-    const result: KickdbImageResolveResult = {
-      url: null,
-      candidates,
-      upgraded: [],
-      thumbnailDetected: false,
-      reason: "no_candidates",
-    };
+    const result = emptyResult("no_candidates", { candidates });
     logMissingCompliant(result, options?.logContext);
     return result;
   }
@@ -201,27 +235,108 @@ export function resolveCanonicalKickdbImage(
   const compliant = upgraded.filter((url) => isGoogleCompliantKickdbUrl(url, minPx));
 
   if (compliant.length === 0) {
-    const result: KickdbImageResolveResult = {
-      url: null,
+    const hasUnknown = upgraded.some((url) => isKickdbImageSizeUnknown(url));
+    const reason: KickdbImageRejectReason = hasUnknown
+      ? "IMAGE_DIMENSIONS_UNVERIFIED"
+      : "no_compliant_after_filter";
+    const result = emptyResult(reason, {
       candidates,
       upgraded,
       thumbnailDetected,
-      reason: "no_compliant_after_filter",
-    };
+    });
     logMissingCompliant(result, options?.logContext);
     return result;
   }
 
+  const url = compliant[0]!;
   return {
-    url: compliant[0]!,
+    url,
     candidates,
     upgraded,
     thumbnailDetected,
     reason: "ok",
+    declaredLongEdge: declaredLongEdgePx(url),
+    verifiedLongEdge: null,
   };
 }
 
-/** Ordered list of compliant image URLs (hero first), deduped after upgrade. */
+/**
+ * Async resolve with bounded probe for unknown-size URLs.
+ * Declared HD wins first; unknowns are probed one-by-one until a ≥minPx hit.
+ * Workers should prefer sync resolve; scripts/backfill use this before upload.
+ */
+export async function resolveCanonicalKickdbImageVerified(
+  productRecord: unknown,
+  options?: { minPx?: number; logContext?: Record<string, unknown>; maxProbes?: number }
+): Promise<KickdbImageResolveResult> {
+  const minPx = options?.minPx ?? KICKDB_GOOGLE_MIN_PX;
+  const maxProbes = options?.maxProbes ?? 3;
+  const sync = resolveCanonicalKickdbImage(productRecord, {
+    minPx,
+    logContext: options?.logContext,
+  });
+  if (sync.url) return sync;
+
+  const candidates = sync.candidates.length
+    ? sync.candidates
+    : collectKickdbImageCandidates(productRecord);
+  if (candidates.length === 0) return sync;
+
+  const thumbnailDetected =
+    sync.thumbnailDetected || candidates.some((url) => isKickdbThumbnailUrl(url, minPx));
+  const ranked = [...candidates].sort((a, b) => scoreCandidate(b) - scoreCandidate(a));
+  const upgraded = ranked.map(upgradeKickdbImageUrl);
+  let probes = 0;
+  let sawUnverified = false;
+
+  for (const url of upgraded) {
+    if (isGoogleCompliantKickdbUrl(url, minPx)) {
+      return {
+        url,
+        candidates,
+        upgraded,
+        thumbnailDetected,
+        reason: "ok",
+        declaredLongEdge: declaredLongEdgePx(url),
+        verifiedLongEdge: null,
+      };
+    }
+    if (!isKickdbImageSizeUnknown(url)) continue;
+    if (probes >= maxProbes) {
+      sawUnverified = true;
+      break;
+    }
+    probes += 1;
+    const probed = await probeImageDimensions(url, { minPx });
+    if (probed.ok && probed.longEdge != null) {
+      return {
+        url,
+        candidates,
+        upgraded,
+        thumbnailDetected,
+        reason: "ok",
+        declaredLongEdge: null,
+        verifiedLongEdge: probed.longEdge,
+      };
+    }
+    if (
+      probed.reason === "IMAGE_DIMENSIONS_UNVERIFIED" ||
+      probed.reason === "timeout" ||
+      probed.reason === "download_failed"
+    ) {
+      sawUnverified = true;
+    }
+  }
+
+  const reason: KickdbImageRejectReason = sawUnverified
+    ? "IMAGE_DIMENSIONS_UNVERIFIED"
+    : "no_compliant_after_filter";
+  const result = emptyResult(reason, { candidates, upgraded, thumbnailDetected });
+  logMissingCompliant(result, options?.logContext);
+  return result;
+}
+
+/** Ordered list of declared-compliant image URLs (hero first). Unknown sizes excluded. */
 export function resolveCanonicalKickdbImageList(
   productRecord: unknown,
   options?: { minPx?: number; max?: number; logContext?: Record<string, unknown> }
@@ -249,9 +364,8 @@ export function resolveCanonicalKickdbImageList(
 }
 
 /**
- * Pick best compliant URL from an already-stored images JSON / string list
- * (SupplierVariant.images). Used by image sync so stock/price paths never
- * rehost a thumbnail as sourceImageUrl.
+ * Pick best declared-compliant URL from SupplierVariant.images.
+ * Unknown sizes are skipped (not probed) — safe for image sync workers.
  */
 export function resolveCanonicalKickdbImageFromList(
   images: unknown,
@@ -288,6 +402,42 @@ export function resolveCanonicalKickdbImageFromList(
     if (isGoogleCompliantKickdbUrl(upgraded, minPx)) return upgraded;
   }
   return null;
+}
+
+/**
+ * Verify a single candidate URL is upload-safe (≥ minPx declared or probed).
+ */
+export async function verifyKickdbImageUrl(
+  url: string,
+  options?: { minPx?: number }
+): Promise<{
+  url: string;
+  ok: boolean;
+  longEdge: number | null;
+  source: "declared" | "probed" | "none";
+  reason: string;
+}> {
+  const minPx = options?.minPx ?? KICKDB_GOOGLE_MIN_PX;
+  const upgraded = upgradeKickdbImageUrl(url);
+  const declared = declaredLongEdgePx(upgraded);
+  if (declared != null) {
+    const ok = declared >= minPx && !isKickdbThumbnailUrl(upgraded, minPx);
+    return {
+      url: upgraded,
+      ok,
+      longEdge: declared,
+      source: "declared",
+      reason: ok ? "declared_ok" : "declared_too_small",
+    };
+  }
+  const probed = await probeImageDimensions(upgraded, { minPx });
+  return {
+    url: upgraded,
+    ok: probed.ok,
+    longEdge: probed.longEdge,
+    source: probed.source === "probed" ? "probed" : "none",
+    reason: probed.reason,
+  };
 }
 
 function logMissingCompliant(

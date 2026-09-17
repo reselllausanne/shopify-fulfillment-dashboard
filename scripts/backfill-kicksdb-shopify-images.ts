@@ -1,24 +1,17 @@
 #!/usr/bin/env npx tsx
 /**
- * Idempotent KicksDB → Shopify hero image backfill.
+ * Idempotent KicksDB → Shopify hero image backfill (targeted).
  *
  * Simprosys image_link = Shopify featuredMedia (media position 0).
- * For each synced KickDB product:
- *   1. If hero already ≥500×500 → skip
- *   2. Else if gallery already has HD → reorder only
- *   3. Else if canonical KickDB HD URL exists → productCreateMedia + reorder to 0
- *   4. Else → skip (never overwrite a good Shopify image with nothing)
  *
- * Does NOT change price, stock, GTIN, title, or product IDs.
- * Does NOT auto-scan the full catalog — require an explicit --limit.
+ * Default: --only-needs-repair (scan until --limit repair candidates found).
+ * Never uploads an unverified (<500px / unknown) candidate.
+ * --wait refetches Shopify and verifies featured media (not just job.done).
  *
- * Usage (dry-run default):
- *   npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=100
- *   npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=100 --apply --confirm=REPLACE_KICKDB_HERO
- *   npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=100 --apply --confirm=REPLACE_KICKDB_HERO --wait
- *
- * Resume: progress JSONL skips already-processed product IDs.
- *   --progress=tmp/kicksdb-image-backfill-progress.jsonl
+ * Usage:
+ *   npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=20
+ *   npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=20 --handle=air-jordan-1
+ *   npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=20 --apply --confirm=REPLACE_KICKDB_HERO --wait
  */
 import "dotenv/config";
 
@@ -26,7 +19,12 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { prisma } from "@/app/lib/prisma";
-import { resolveCanonicalKickdbImage } from "@/galaxus/kickdb/imageResolver";
+import {
+  isKickdbThumbnailUrl,
+  KICKDB_GOOGLE_MIN_PX,
+  resolveCanonicalKickdbImageVerified,
+  verifyKickdbImageUrl,
+} from "@/galaxus/kickdb/imageResolver";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import {
   chooseHeroRepair,
@@ -38,6 +36,18 @@ import {
 const APPLY_CONFIRM = "REPLACE_KICKDB_HERO";
 const DEFAULT_LIMIT = 100;
 const MEDIA_LIMIT = 20;
+/** Scan multiplier when hunting repair candidates (bounded). */
+const SCAN_CAP_MULTIPLIER = 40;
+const SCAN_CAP_MIN = 200;
+
+type ProgressStatus =
+  | "dry_run"
+  | "skipped_valid"
+  | "refused_unverified"
+  | "repaired_verified"
+  | "FAILED_POST_WRITE_VERIFICATION"
+  | "failed"
+  | "skipped";
 
 type ProgressRecord = {
   at: string;
@@ -45,12 +55,28 @@ type ProgressRecord = {
   productId: string;
   handle: string | null;
   kickdbProductId: string;
-  status: "submitted" | "complete" | "failed" | "dry_run" | "skipped";
+  status: ProgressStatus;
   reason?: string;
   oldHeroUrl?: string | null;
+  oldHeroWidth?: number | null;
+  oldHeroHeight?: number | null;
+  candidateUrl?: string | null;
+  candidateLongEdge?: number | null;
+  candidateSource?: string | null;
   newHeroUrl?: string | null;
+  newHeroWidth?: number | null;
+  newHeroHeight?: number | null;
   jobId?: string | null;
   error?: string;
+};
+
+type ShopifyProductView = {
+  handle: string;
+  featuredMediaId: string | null;
+  featuredUrl: string | null;
+  featuredWidth: number | null;
+  featuredHeight: number | null;
+  media: ProductMediaImage[];
 };
 
 function stringFlag(name: string): string | undefined {
@@ -70,10 +96,52 @@ function hasFlag(name: string): boolean {
   return process.argv.slice(2).includes(`--${name}`);
 }
 
+function boolFlag(name: string, defaultValue: boolean): boolean {
+  if (hasFlag(name)) return true;
+  if (hasFlag(`no-${name}`)) return false;
+  const raw = stringFlag(name);
+  if (raw == null) return defaultValue;
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0") return false;
+  throw new Error(`Invalid --${name}=${raw}`);
+}
+
 function toProductGid(id: string): string {
   const trimmed = id.trim();
   if (trimmed.startsWith("gid://")) return trimmed;
   return `gid://shopify/Product/${trimmed}`;
+}
+
+function legacyProductId(gid: string): string {
+  const m = gid.match(/Product\/(\d+)/);
+  return m?.[1] ?? gid;
+}
+
+function looksLikeStockxThumbUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const lower = url.toLowerCase();
+  if (!(lower.includes("stockx") || lower.includes("goat.com") || lower.includes("kick"))) {
+    return isKickdbThumbnailUrl(url);
+  }
+  return isKickdbThumbnailUrl(url) || /[?&]w=1\d{2}\b/.test(lower) || /[?&]h=1\d{2}\b/.test(lower);
+}
+
+function urlMatchLoose(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  try {
+    const pa = new URL(a);
+    const pb = new URL(b);
+    const ta = pa.pathname.split("/").pop()?.split("?")[0]?.toLowerCase() ?? "";
+    const tb = pb.pathname.split("/").pop()?.split("?")[0]?.toLowerCase() ?? "";
+    if (ta && tb && ta === tb) return true;
+    // Shopify CDN often rewrites basename; compare stem without extension.
+    const sa = ta.replace(/\.[a-z0-9]+$/, "");
+    const sb = tb.replace(/\.[a-z0-9]+$/, "");
+    return Boolean(sa && sb && (sa.includes(sb) || sb.includes(sa)));
+  } catch {
+    return false;
+  }
 }
 
 async function loadCompletedProductIds(progressPath: string): Promise<Set<string>> {
@@ -85,10 +153,8 @@ async function loadCompletedProductIds(progressPath: string): Promise<Set<string
       .flatMap((line) => {
         try {
           const row = JSON.parse(line) as ProgressRecord;
-          if (row.status === "failed" || row.status === "skipped" || row.status === "dry_run") {
-            return [];
-          }
-          return row.productId ? [row.productId] : [];
+          if (row.status === "repaired_verified") return row.productId ? [row.productId] : [];
+          return [];
         } catch {
           return [];
         }
@@ -99,16 +165,18 @@ async function loadCompletedProductIds(progressPath: string): Promise<Set<string
   }
 }
 
-async function fetchProductMedia(productGid: string): Promise<{
-  handle: string;
-  media: ProductMediaImage[];
-} | null> {
+async function fetchProductView(productGid: string): Promise<ShopifyProductView | null> {
   const result = await shopifyGraphQL<{
-    product: { handle: string; media: { nodes: ProductMediaImage[] } } | null;
+    product: {
+      handle: string;
+      featuredMedia: { id: string | null } | null;
+      media: { nodes: ProductMediaImage[] };
+    } | null;
   }>(
     `query KickdbBackfillMedia($id: ID!) {
       product(id: $id) {
         handle
+        featuredMedia { id }
         media(first: ${MEDIA_LIMIT}) {
           nodes {
             ... on MediaImage {
@@ -120,12 +188,43 @@ async function fetchProductMedia(productGid: string): Promise<{
       }
     }`,
     { id: productGid },
-    { estimatedQueryCost: 12 }
+    { estimatedQueryCost: 15 }
   );
   if (result.errors?.length) throw new Error(result.errors.map((e) => e.message).join("; "));
   const product = result.data?.product;
   if (!product) return null;
-  return { handle: product.handle, media: product.media.nodes };
+  const media = product.media.nodes.filter((m) => m?.image?.url);
+  const featuredId = product.featuredMedia?.id ?? media[0]?.id ?? null;
+  const featured = media.find((m) => m.id === featuredId) ?? media[0] ?? null;
+  return {
+    handle: product.handle,
+    featuredMediaId: featuredId,
+    featuredUrl: featured?.image?.url ?? null,
+    featuredWidth: featured?.image?.width ?? null,
+    featuredHeight: featured?.image?.height ?? null,
+    media,
+  };
+}
+
+function needsRepair(view: ShopifyProductView): { needs: boolean; reason: string } {
+  if (!view.featuredUrl || view.media.length === 0) {
+    return { needs: true, reason: "no_featured_media" };
+  }
+  const hero: ProductMediaImage = {
+    id: view.featuredMediaId ?? "hero",
+    image: {
+      url: view.featuredUrl,
+      width: view.featuredWidth,
+      height: view.featuredHeight,
+    },
+  };
+  if (!isGoogleReadyImage(hero, GOOGLE_IMAGE_MIN_PX)) {
+    return { needs: true, reason: "featured_below_500" };
+  }
+  if (looksLikeStockxThumbUrl(view.featuredUrl)) {
+    return { needs: true, reason: "featured_stockx_thumbnail" };
+  }
+  return { needs: false, reason: "hero_valid" };
 }
 
 async function reorderMedia(productId: string, mediaId: string): Promise<{ jobId: string | null }> {
@@ -192,9 +291,45 @@ async function waitForJob(jobId: string): Promise<"complete" | "failed"> {
   return "failed";
 }
 
+async function verifyPostWrite(params: {
+  productId: string;
+  expectedMediaId: string;
+  expectedSourceUrl: string | null;
+}): Promise<{ ok: true; view: ShopifyProductView } | { ok: false; reason: string; view: ShopifyProductView | null }> {
+  // Shopify media processing can lag briefly after create/reorder.
+  let view: ShopifyProductView | null = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((r) => setTimeout(r, attempt === 0 ? 500 : 1000));
+    view = await fetchProductView(params.productId);
+    if (!view) return { ok: false, reason: "product_missing_after_write", view: null };
+    if (view.featuredMediaId === params.expectedMediaId) break;
+  }
+  if (!view) return { ok: false, reason: "product_missing_after_write", view: null };
+  if (view.featuredMediaId !== params.expectedMediaId) {
+    return { ok: false, reason: "featured_media_not_promoted", view };
+  }
+  const featured = view.media.find((m) => m.id === params.expectedMediaId);
+  if (!featured?.image?.url) {
+    return { ok: false, reason: "featured_media_missing_image", view };
+  }
+  if (!isGoogleReadyImage(featured, GOOGLE_IMAGE_MIN_PX)) {
+    return { ok: false, reason: "featured_below_500_after_write", view };
+  }
+  if (
+    params.expectedSourceUrl &&
+    !urlMatchLoose(featured.image.url, params.expectedSourceUrl) &&
+    // Reorder of existing gallery: source may already be Shopify CDN.
+    !view.media.some((m) => m.id === params.expectedMediaId)
+  ) {
+    return { ok: false, reason: "featured_url_mismatch", view };
+  }
+  return { ok: true, view };
+}
+
 async function main() {
   const apply = hasFlag("apply");
   const wait = hasFlag("wait");
+  const onlyNeedsRepair = boolFlag("only-needs-repair", true);
   const limit = intFlag("limit", DEFAULT_LIMIT);
   const confirm = stringFlag("confirm");
   const handleFilter = stringFlag("handle")?.trim() || null;
@@ -208,12 +343,13 @@ async function main() {
     throw new Error(`Apply requires --confirm=${APPLY_CONFIRM}`);
   }
   if (!Number.isFinite(limit) || limit < 1) {
-    throw new Error("Refusing unbounded run — pass --limit=N (start with 100)");
+    throw new Error("Refusing unbounded run — pass --limit=N");
   }
 
   const completed = apply ? await loadCompletedProductIds(progressPath) : new Set<string>();
+  const scanCap = Math.max(limit * SCAN_CAP_MULTIPLIER, SCAN_CAP_MIN);
 
-  const candidates = await prisma.$queryRaw<
+  const pool = await prisma.$queryRaw<
     Array<{
       kickdbProductId: string;
       shopifyProductId: string;
@@ -238,35 +374,36 @@ async function main() {
       AND (${handleFilter}::text IS NULL OR s."shopifyHandle" = ${handleFilter})
       AND (${brandFilter}::text IS NULL OR p."brand" ILIKE ${brandFilter})
     ORDER BY s."shopifySyncedAt" DESC NULLS LAST, s."updatedAt" DESC
-    LIMIT ${limit}
+    LIMIT ${onlyNeedsRepair && !handleFilter ? scanCap : limit}
   `;
 
-  let scanned = 0;
-  let skippedValid = 0;
-  let skippedNoFix = 0;
-  let resumed = 0;
-  let candidatesFix = 0;
-  let submitted = 0;
-  let failed = 0;
+  const counters = {
+    scanned: 0,
+    resumed: 0,
+    skippedValid: 0,
+    refusedUnverified: 0,
+    repairedVerified: 0,
+    failedPostWrite: 0,
+    failed: 0,
+    dryRunRepairable: 0,
+  };
   const examples: ProgressRecord[] = [];
+  let repairSlots = 0;
 
-  for (const row of candidates) {
-    scanned += 1;
+  for (const row of pool) {
+    if (repairSlots >= limit && onlyNeedsRepair) break;
+    counters.scanned += 1;
     const productId = toProductGid(row.shopifyProductId);
     if (completed.has(productId)) {
-      resumed += 1;
+      counters.resumed += 1;
       continue;
     }
 
-    const expected = resolveCanonicalKickdbImage(row.rawJson ?? { image: row.imageUrl }, {
-      logContext: { kickdbProductId: row.kickdbProductId, mode: "backfill" },
-    });
-
-    let shopify: Awaited<ReturnType<typeof fetchProductMedia>>;
+    let view: ShopifyProductView | null;
     try {
-      shopify = await fetchProductMedia(productId);
+      view = await fetchProductView(productId);
     } catch (error) {
-      failed += 1;
+      counters.failed += 1;
       const record: ProgressRecord = {
         at: new Date().toISOString(),
         action: "skip",
@@ -276,84 +413,221 @@ async function main() {
         status: "failed",
         error: String(error),
       };
-      if (apply) await appendFile(progressPath, `${JSON.stringify(record)}\n`);
+      await appendFile(progressPath, `${JSON.stringify(record)}\n`);
       continue;
     }
-    if (!shopify) {
-      skippedNoFix += 1;
-      continue;
-    }
-
-    const hero = shopify.media.find((m) => m.image?.url);
-    if (hero && isGoogleReadyImage(hero, GOOGLE_IMAGE_MIN_PX)) {
-      skippedValid += 1;
+    if (!view) {
+      counters.failed += 1;
       continue;
     }
 
-    const reorderDecision = chooseHeroRepair(shopify.media, GOOGLE_IMAGE_MIN_PX);
+    const repair = needsRepair(view);
+    if (!repair.needs) {
+      counters.skippedValid += 1;
+      if (!onlyNeedsRepair) {
+        // still count toward limit when scanning all
+        repairSlots += 1;
+      }
+      continue;
+    }
+
+    repairSlots += 1;
+
+    const expected = await resolveCanonicalKickdbImageVerified(row.rawJson ?? { image: row.imageUrl }, {
+      logContext: { kickdbProductId: row.kickdbProductId, mode: "backfill" },
+      maxProbes: 3,
+    });
+
+    const reorderDecision = chooseHeroRepair(view.media, GOOGLE_IMAGE_MIN_PX);
     let action: ProgressRecord["action"] = "skip";
-    let newHeroUrl: string | null = expected.url;
     let mediaIdToPromote: string | null = null;
+    let candidateUrl: string | null = null;
+    let candidateLongEdge: number | null = null;
+    let candidateSource: string | null = null;
 
     if (reorderDecision.action === "reorder") {
       action = "reorder";
       mediaIdToPromote = reorderDecision.newHero.id;
-      newHeroUrl = reorderDecision.newHero.image?.url ?? null;
+      candidateUrl = reorderDecision.newHero.image?.url ?? null;
+      candidateLongEdge = Math.max(
+        Number(reorderDecision.newHero.image?.width ?? 0),
+        Number(reorderDecision.newHero.image?.height ?? 0)
+      );
+      candidateSource = "shopify_gallery";
     } else if (expected.url) {
+      const verified = await verifyKickdbImageUrl(expected.url, { minPx: KICKDB_GOOGLE_MIN_PX });
+      if (!verified.ok) {
+        counters.refusedUnverified += 1;
+        const record: ProgressRecord = {
+          at: new Date().toISOString(),
+          action: "skip",
+          productId,
+          handle: view.handle,
+          kickdbProductId: row.kickdbProductId,
+          status: "refused_unverified",
+          reason: verified.reason || "IMAGE_DIMENSIONS_UNVERIFIED",
+          oldHeroUrl: view.featuredUrl,
+          oldHeroWidth: view.featuredWidth,
+          oldHeroHeight: view.featuredHeight,
+          candidateUrl: verified.url,
+          candidateLongEdge: verified.longEdge,
+          candidateSource: verified.source,
+        };
+        await appendFile(progressPath, `${JSON.stringify(record)}\n`);
+        if (examples.length < 40) examples.push(record);
+        console.info(
+          JSON.stringify({
+            event: "decision",
+            handle: view.handle,
+            shopify: `${view.featuredWidth ?? "?"}x${view.featuredHeight ?? "?"}`,
+            candidate: verified.url,
+            candidateEdge: verified.longEdge,
+            decision: "refused_unverified",
+            reason: verified.reason,
+          })
+        );
+        continue;
+      }
       action = "upload_reorder";
-      newHeroUrl = expected.url;
+      candidateUrl = verified.url;
+      candidateLongEdge = verified.longEdge;
+      candidateSource = verified.source;
     } else {
-      skippedNoFix += 1;
+      counters.refusedUnverified += 1;
       const record: ProgressRecord = {
         at: new Date().toISOString(),
         action: "skip",
         productId,
-        handle: shopify.handle,
+        handle: view.handle,
         kickdbProductId: row.kickdbProductId,
-        status: "skipped",
-        reason: "no_valid_replacement",
-        oldHeroUrl: hero?.image?.url ?? null,
+        status: "refused_unverified",
+        reason: expected.reason || "IMAGE_DIMENSIONS_UNVERIFIED",
+        oldHeroUrl: view.featuredUrl,
+        oldHeroWidth: view.featuredWidth,
+        oldHeroHeight: view.featuredHeight,
+        candidateUrl: null,
       };
-      if (apply) await appendFile(progressPath, `${JSON.stringify(record)}\n`);
-      if (examples.length < 30) examples.push(record);
+      await appendFile(progressPath, `${JSON.stringify(record)}\n`);
+      if (examples.length < 40) examples.push(record);
+      console.info(
+        JSON.stringify({
+          event: "decision",
+          handle: view.handle,
+          shopify: `${view.featuredWidth ?? "?"}x${view.featuredHeight ?? "?"}`,
+          decision: "refused_unverified",
+          reason: expected.reason,
+        })
+      );
       continue;
     }
 
-    candidatesFix += 1;
     const base: ProgressRecord = {
       at: new Date().toISOString(),
       action,
       productId,
-      handle: shopify.handle,
+      handle: view.handle,
       kickdbProductId: row.kickdbProductId,
-      status: apply ? "submitted" : "dry_run",
-      oldHeroUrl: hero?.image?.url ?? null,
-      newHeroUrl,
+      status: apply ? "failed" : "dry_run",
+      reason: repair.reason,
+      oldHeroUrl: view.featuredUrl,
+      oldHeroWidth: view.featuredWidth,
+      oldHeroHeight: view.featuredHeight,
+      candidateUrl,
+      candidateLongEdge,
+      candidateSource,
+      newHeroUrl: candidateUrl,
     };
-    if (examples.length < 30) examples.push(base);
 
-    if (!apply) continue;
+    console.info(
+      JSON.stringify({
+        event: "decision",
+        handle: view.handle,
+        productId: legacyProductId(productId),
+        shopifyImage: view.featuredUrl,
+        shopifyDims: `${view.featuredWidth ?? "?"}x${view.featuredHeight ?? "?"}`,
+        kickdbCandidate: candidateUrl,
+        candidateLongEdge,
+        candidateSource,
+        action,
+        decision: apply ? "apply" : "dry_run",
+      })
+    );
+
+    if (!apply) {
+      counters.dryRunRepairable += 1;
+      base.status = "dry_run";
+      await appendFile(progressPath, `${JSON.stringify(base)}\n`);
+      if (examples.length < 40) examples.push(base);
+      continue;
+    }
 
     try {
       let promoteId = mediaIdToPromote;
       if (action === "upload_reorder") {
-        if (!expected.url) throw new Error("missing expected url");
-        promoteId = await createMediaFromUrl(productId, expected.url);
+        if (!candidateUrl) throw new Error("missing candidate url");
+        promoteId = await createMediaFromUrl(productId, candidateUrl);
       }
       if (!promoteId) throw new Error("missing media id to promote");
       const { jobId } = await reorderMedia(productId, promoteId);
-      const status = wait && jobId ? await waitForJob(jobId) : "submitted";
-      const record: ProgressRecord = { ...base, jobId, status };
+      if (wait && jobId) await waitForJob(jobId);
+
+      if (!wait) {
+        // Without --wait we refuse to claim repaired — only submitted pending verify.
+        const record: ProgressRecord = {
+          ...base,
+          jobId,
+          status: "FAILED_POST_WRITE_VERIFICATION",
+          reason: "wait_required_for_verification",
+          error: "Pass --wait to verify featuredMedia after mutation",
+        };
+        counters.failedPostWrite += 1;
+        await appendFile(progressPath, `${JSON.stringify(record)}\n`);
+        if (examples.length < 40) examples.push(record);
+        continue;
+      }
+
+      const verified = await verifyPostWrite({
+        productId,
+        expectedMediaId: promoteId,
+        expectedSourceUrl: candidateUrl,
+      });
+      if (!verified.ok) {
+        counters.failedPostWrite += 1;
+        const record: ProgressRecord = {
+          ...base,
+          jobId,
+          status: "FAILED_POST_WRITE_VERIFICATION",
+          reason: verified.reason,
+          newHeroUrl: verified.view?.featuredUrl ?? null,
+          newHeroWidth: verified.view?.featuredWidth ?? null,
+          newHeroHeight: verified.view?.featuredHeight ?? null,
+          error: verified.reason,
+        };
+        await appendFile(progressPath, `${JSON.stringify(record)}\n`);
+        if (examples.length < 40) examples.push(record);
+        continue;
+      }
+
+      counters.repairedVerified += 1;
+      const record: ProgressRecord = {
+        ...base,
+        jobId,
+        status: "repaired_verified",
+        newHeroUrl: verified.view.featuredUrl,
+        newHeroWidth: verified.view.featuredWidth,
+        newHeroHeight: verified.view.featuredHeight,
+      };
       await appendFile(progressPath, `${JSON.stringify(record)}\n`);
-      submitted += 1;
+      if (examples.length < 40) examples.push(record);
     } catch (error) {
-      failed += 1;
+      counters.failed += 1;
       const record: ProgressRecord = {
         ...base,
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
       };
       await appendFile(progressPath, `${JSON.stringify(record)}\n`);
+      if (examples.length < 40) examples.push(record);
     }
   }
 
@@ -361,30 +635,34 @@ async function main() {
     generatedAt: new Date().toISOString(),
     apply,
     wait,
+    onlyNeedsRepair,
     limit,
     handle: handleFilter,
     brand: brandFilter,
-    scanned,
-    resumed,
-    skippedValid,
-    skippedNoFix,
-    candidatesFix,
-    submitted,
-    failed,
+    minPx: KICKDB_GOOGLE_MIN_PX,
+    scanned: counters.scanned,
+    resumed: counters.resumed,
+    skippedValid: counters.skippedValid,
+    refusedUnverified: counters.refusedUnverified,
+    repairedVerified: counters.repairedVerified,
+    failedPostWrite: counters.failedPostWrite,
+    failed: counters.failed,
+    dryRunRepairable: counters.dryRunRepairable,
     progressPath,
     examples,
+    buckets: {
+      "skipped-valid": counters.skippedValid,
+      "repaired-verified": counters.repairedVerified,
+      "refused-unverified": counters.refusedUnverified,
+      failed: counters.failed + counters.failedPostWrite,
+      "dry-run-repairable": counters.dryRunRepairable,
+    },
     guarantees: [
       "No price/stock/GTIN/title/ID changes.",
       "Valid ≥500×500 heroes are left untouched.",
-      "No compliant KickDB image → skip (never wipe Shopify media).",
-      "Idempotent via progress JSONL; bounded by --limit (default 100).",
-    ],
-    launchPlan: [
-      "1) Dry-run 100: npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=100",
-      "2) Review tmp report / examples",
-      "3) Apply 100: npx tsx scripts/backfill-kicksdb-shopify-images.ts --limit=100 --apply --confirm=REPLACE_KICKDB_HERO --wait",
-      "4) Audit: npx tsx scripts/audit-kicksdb-shopify-images.ts --limit=100",
-      "5) Only then raise --limit in batches (never unbounded)",
+      "Unknown/unverified candidate → refused (never wipe Shopify media).",
+      "--wait refetches featuredMedia and requires ≥500px before counting repaired.",
+      "Default --only-needs-repair hunts broken heroes (not last-N synced).",
     ],
   };
   const reportPath = path.resolve("tmp/kicksdb-image-backfill-report.json");
