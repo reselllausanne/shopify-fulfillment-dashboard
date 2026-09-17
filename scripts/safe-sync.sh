@@ -22,10 +22,9 @@ ahead="${lr%%	*}"
 behind="${lr##*	}"
 echo "== vs $upstream: ahead=$ahead behind=$behind"
 
-dirty=0
-if [ -n "$(git status --porcelain)" ]; then
-  dirty=1
-  echo "== WORKING TREE DIRTY — will not pull"
+# Block only on tracked changes (staged/unstaged). Untracked (tmp/, logs) OK.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "== TRACKED FILES DIRTY — will not pull"
   git status -sb
   echo
   echo "Next:"
