@@ -1,5 +1,15 @@
 # Agent instructions
 
+## GitHub source of truth (mandatory)
+
+- **GitHub `main`** is the only shared source of truth for both Macs and the VPS.
+- Every change: feature branch → commit → push → PR/merge to `main` → deploy.
+- **Never** hotfix on the VPS (`/opt/resell` is deploy-only).
+- **Never** `git pull` over tracked dirty files; use `scripts/safe-sync.sh` / `scripts/safe-push.sh`.
+- **Never** force-push, `reset --hard`, or `clean` unless the user explicitly orders it.
+- Sync/deploy docs: [`docs/GITHUB-VPS-SYNC.md`](docs/GITHUB-VPS-SYNC.md).
+- VPS deploy on push to `main`: [`.github/workflows/deploy-vps.yml`](.github/workflows/deploy-vps.yml).
+
 ## Cursor Cloud specific instructions
 
 Cloud Agents run on a remote VM, not your Mac. They do **not** inherit Mac MCP OAuth or local `.env`.

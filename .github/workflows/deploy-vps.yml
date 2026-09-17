@@ -1,0 +1,51 @@
+name: Deploy VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check deploy secrets
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          missing=0
+          [ -n "$SSH_HOST" ] || { echo "missing secret SSH_HOST"; missing=1; }
+          [ -n "$SSH_USER" ] || { echo "missing secret SSH_USER"; missing=1; }
+          [ -n "$SSH_PRIVATE_KEY" ] || { echo "missing secret SSH_PRIVATE_KEY"; missing=1; }
+          if [ "$missing" -ne 0 ]; then
+            echo "Add GitHub Actions secrets, then re-run. See docs/GITHUB-VPS-SYNC.md"
+            exit 1
+          fi
+
+      - name: Deploy commit on VPS
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 40m
+          script: |
+            set -euo pipefail
+            cd /opt/resell
+            WANT="${{ github.sha }}"
+            git fetch origin --prune
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "FATAL: VPS tracked dirty — refusing deploy"
+              git status -sb
+              exit 10
+            fi
+            git checkout --detach "$WANT"
+            chmod +x scripts/vps-deploy-from-github.sh
+            EXPECTED_SHA="$WANT" bash scripts/vps-deploy-from-github.sh
