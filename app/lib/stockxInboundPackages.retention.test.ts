@@ -145,11 +145,25 @@ describe("resolveStockxInboundLogisticsAt (observed only)", () => {
     expect(logistics.stockxEventAt?.toISOString()).toBe(stateAt.toISOString());
   });
 
-  it("state timestamp without confirming status is ignored", () => {
+  it("state.changedAt / updatedAt used as priority-4 logistics date", () => {
+    // User rule: after delivered → shipped → tracking, use state.changedAt/updatedAt.
     const logistics = resolveStockxInboundLogisticsAt({
       stateConfirmedAt: "2026-09-08T11:00:00Z",
-      stateStatusKey: "PENDING",
+      stateStatusKey: "PENDING", // confirming path skipped
       stateChangedAt: "2026-09-08T11:00:00Z",
+      now: NOW,
+    });
+    expect(logistics.source).toBe("state");
+    expect(logistics.stockxEventAt?.toISOString()).toBe(
+      new Date("2026-09-08T11:00:00Z").toISOString()
+    );
+  });
+
+  it("never assigns stockxEventAt from purchaseDate ?? creationDate", () => {
+    const banned = "2026-09-01T10:00:00Z";
+    const logistics = resolveStockxInboundLogisticsAt({
+      purchaseDate: banned,
+      creationDate: banned,
       now: NOW,
     });
     expect(logistics.stockxEventAt).toBeNull();
