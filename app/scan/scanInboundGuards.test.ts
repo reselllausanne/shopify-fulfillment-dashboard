@@ -27,18 +27,26 @@ describe("isActiveStxInboundBuy", () => {
 });
 
 describe("shouldAutoGalaxusDirectLabelFor", () => {
-  it("prints for a linked direct-delivery Galaxus match", () => {
+  it("prints for a direct-delivery match with known scanned lineId", () => {
     expect(
       shouldAutoGalaxusDirectLabelFor({
-        galaxus: { isDirectDelivery: true, allLinked: true },
+        galaxus: { isDirectDelivery: true, allLinked: true, lineId: "line-1" },
       })
     ).toBe(true);
   });
 
-  it("does not print when direct-delivery order is not fully linked yet", () => {
+  it("prints even when siblings are not fully linked yet (partial ship)", () => {
     expect(
       shouldAutoGalaxusDirectLabelFor({
-        galaxus: { isDirectDelivery: true, allLinked: false },
+        galaxus: { isDirectDelivery: true, allLinked: false, lineId: "line-1" },
+      })
+    ).toBe(true);
+  });
+
+  it("does not print when direct-delivery but no lineId (would ship whole order)", () => {
+    expect(
+      shouldAutoGalaxusDirectLabelFor({
+        galaxus: { isDirectDelivery: true, allLinked: true },
       })
     ).toBe(false);
   });
@@ -46,8 +54,21 @@ describe("shouldAutoGalaxusDirectLabelFor", () => {
   it("still auto-prints Galaxus direct label when inbound StockX AWB is present", () => {
     expect(
       shouldAutoGalaxusDirectLabelFor({
-        galaxus: { isDirectDelivery: true, allLinked: true },
+        galaxus: { isDirectDelivery: true, allLinked: true, lineId: "line-1" },
         stxInboundBuy: { orderCancelledAt: null, isDirectDelivery: true },
+      })
+    ).toBe(true);
+  });
+
+  it("uses stxInboundBuy.lineId when galaxus payload omits it", () => {
+    expect(
+      shouldAutoGalaxusDirectLabelFor({
+        galaxus: { isDirectDelivery: true, allLinked: true },
+        stxInboundBuy: {
+          orderCancelledAt: null,
+          isDirectDelivery: true,
+          lineId: "line-from-unit",
+        },
       })
     ).toBe(true);
   });
@@ -55,7 +76,7 @@ describe("shouldAutoGalaxusDirectLabelFor", () => {
   it("still prints when the inbound buy's parent order is cancelled", () => {
     expect(
       shouldAutoGalaxusDirectLabelFor({
-        galaxus: { isDirectDelivery: true, allLinked: true },
+        galaxus: { isDirectDelivery: true, allLinked: true, lineId: "line-1" },
         stxInboundBuy: { orderCancelledAt: "2026-08-31T00:00:00.000Z" },
       })
     ).toBe(true);

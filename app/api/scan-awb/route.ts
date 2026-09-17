@@ -355,6 +355,8 @@ export async function POST(req: NextRequest) {
         select: {
           id: true,
           galaxusOrderId: true,
+          // Scanned AWB → this specific line. Scan must ship only this pair.
+          galaxusOrderLineId: true,
           order: {
             select: {
               id: true,
@@ -475,6 +477,8 @@ export async function POST(req: NextRequest) {
       galaxusOrderNumber: string | null;
       stockxOrderNumber: string | null;
       awb: string | null;
+      gtin: string | null;
+      lineId: string | null;
       deliveryType: string | null;
       isDirectDelivery: boolean;
       isWarehouse: boolean;
@@ -489,10 +493,18 @@ export async function POST(req: NextRequest) {
           orderNumber: true,
           deliveryType: true,
           cancelledAt: true,
+          lines: {
+            select: { id: true, gtin: true, providerKey: true },
+          },
         },
       });
       const deliveryTypeRaw = String(parent?.deliveryType ?? "").toLowerCase();
       const isDirect = deliveryTypeRaw === "direct_delivery";
+      const unitGtin = String(stxInboundBuyUnit.gtin ?? "").trim();
+      const matchedLine =
+        (parent?.lines ?? []).find((l) => String(l.gtin ?? "").trim() === unitGtin) ??
+        (parent?.lines ?? []).find((l) => String(l.providerKey ?? "").trim() === unitGtin) ??
+        null;
       stxInboundBuy = {
         unitId: stxInboundBuyUnit.id,
         galaxusOrderDbId: parent?.id ?? null,
@@ -500,6 +512,8 @@ export async function POST(req: NextRequest) {
         galaxusOrderNumber: parent?.orderNumber ?? null,
         stockxOrderNumber: stxInboundBuyUnit.stockxOrderNumber ?? null,
         awb: stxInboundBuyUnit.awb ?? null,
+        gtin: unitGtin || null,
+        lineId: matchedLine?.id ?? null,
         deliveryType: parent?.deliveryType ?? null,
         isDirectDelivery: isDirect,
         isWarehouse: !isDirect && Boolean(parent),
@@ -642,6 +656,8 @@ export async function POST(req: NextRequest) {
         orderId: galaxusOrder?.galaxusOrderId ?? null,
         orderDbId: galaxusOrder?.id ?? galaxusMatch.galaxusOrderId ?? null,
         orderNumber: galaxusOrder?.orderNumber ?? null,
+        // Pair the scanned AWB belongs to — required for partial Swiss Post label.
+        lineId: galaxusMatch.galaxusOrderLineId ?? null,
         deliveryType: galaxusOrder?.deliveryType ?? null,
         isDirectDelivery: deliveryType === "direct_delivery",
         physicalDeliveryNoteRequired: Boolean(galaxusOrder?.physicalDeliveryNoteRequired),

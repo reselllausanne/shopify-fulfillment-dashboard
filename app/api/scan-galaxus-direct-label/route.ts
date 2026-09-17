@@ -3,7 +3,6 @@ import { prisma } from "@/app/lib/prisma";
 import { runDirectSwissPostLabelForOrder } from "@/galaxus/directDelivery/runDirectSwissPostLabel";
 import { printDirectDeliveryDocumentsLocally } from "@/galaxus/directDelivery/printDirectDocuments";
 import { resolveDirectDeliveryNoteMeta } from "@/galaxus/directDelivery/resolveDeliveryNoteUrl";
-import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +17,24 @@ const normalizeCode = (code?: string | null) => {
   return cleaned;
 };
 
+type SelectionItem = { lineId: string; quantity: number };
+
+function parseSelection(body: unknown): SelectionItem[] {
+  const raw = (body as { selection?: unknown })?.selection;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item: { lineId?: string; quantity?: number }) => ({
+      lineId: String(item?.lineId ?? "").trim(),
+      quantity: Math.max(0, Math.floor(Number(item?.quantity ?? 0))),
+    }))
+    .filter((item) => item.lineId && item.quantity > 0);
+}
+
+/**
+ * Scan endpoint must never ship sibling pairs. If the client forgot selection,
+ * recover the scanned line from AWB → GalaxusStockxMatch. If we still cannot
+ * pin a single pair and more than one unit remains open, refuse.
+ */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -28,11 +45,14 @@ export async function POST(req: NextRequest) {
     // Scan auto-flow must not reprint. Explicit UI can pass allowReprint: true.
     const allowReprint = Boolean(body?.allowReprint ?? false);
 
+    const awbCandidates = Array.from(
+      new Set([awb, rawCode.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()].filter(Boolean))
+    );
+
     let resolvedOrderDbId = orderDbId;
-    if (!resolvedOrderDbId && awb) {
-      const awbCandidates = Array.from(
-        new Set([awb, rawCode.replace(/[^a-zA-Z0-9]/g, "").toUpperCase()].filter(Boolean))
-      );
+    let awbMatchLineId: string | null = null;
+
+    if (awbCandidates.length > 0) {
       const trackingUrlFilters = awbCandidates
         .filter((candidate) => candidate.length >= 6)
         .map((candidate) => ({ stockxTrackingUrl: { contains: candidate } }));
@@ -52,6 +72,7 @@ export async function POST(req: NextRequest) {
         },
         select: {
           galaxusOrderId: true,
+          galaxusOrderLineId: true,
           order: {
             select: {
               id: true,
@@ -62,7 +83,12 @@ export async function POST(req: NextRequest) {
           },
         },
       });
-      resolvedOrderDbId = match?.order?.id ?? match?.galaxusOrderId ?? "";
+      if (match) {
+        awbMatchLineId = String(match.galaxusOrderLineId ?? "").trim() || null;
+        if (!resolvedOrderDbId) {
+          resolvedOrderDbId = match.order?.id ?? match.galaxusOrderId ?? "";
+        }
+      }
     }
 
     if (!resolvedOrderDbId) {
@@ -79,6 +105,12 @@ export async function POST(req: NextRequest) {
         galaxusOrderId: true,
         orderNumber: true,
         deliveryType: true,
+        lines: {
+          select: {
+            id: true,
+            quantity: true,
+          },
+        },
       },
     });
     if (!order) {
@@ -91,37 +123,49 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const selection = Array.isArray(body?.selection)
-      ? body.selection
-          .map((item: { lineId?: string; quantity?: number }) => ({
-            lineId: String(item?.lineId ?? "").trim(),
-            quantity: Math.max(0, Math.floor(Number(item?.quantity ?? 0))),
-          }))
-          .filter((item: { lineId: string; quantity: number }) => item.lineId && item.quantity > 0)
-      : [];
-    const isPartial = selection.length > 0;
+    let selection = parseSelection(body);
 
-    // Whole-order path: every line must be linked. Partial path checks only the
-    // selected parcel inside runDirectSwissPostLabelForOrder.
-    if (!isPartial) {
-      const linkStatus = await getStxLinkStatusForOrder(order.id).catch(() => null);
-      if (linkStatus && !linkStatus.allLinked) {
+    // AWB scan without selection → pin the matched line (qty 1).
+    if (selection.length === 0 && awbMatchLineId) {
+      selection = [{ lineId: awbMatchLineId, quantity: 1 }];
+    }
+
+    const lines = order.lines ?? [];
+    const totalOrdered = lines.reduce(
+      (sum, line) => sum + Math.max(0, Math.floor(Number(line.quantity ?? 0))),
+      0
+    );
+
+    // Hard guard: scan API never ships multi-pair / multi-qty without an explicit
+    // line selection (would fulfill sibling pairs on the same Galaxus order).
+    if (selection.length === 0) {
+      if (totalOrdered > 1 || lines.length > 1) {
         return NextResponse.json(
           {
             ok: false,
-            error: "Order not fully linked yet",
+            error:
+              "Multi-pair order: scan must select a line (selection). Refusing whole-order ship.",
             orderNumber: order.orderNumber,
             galaxusOrderId: order.galaxusOrderId,
+            lineCount: lines.length,
+            totalOrdered,
           },
-          { status: 409 }
+          { status: 400 }
         );
       }
+      // Single remaining unit — whole-order == that one pair.
+      if (lines.length === 1) {
+        selection = [{ lineId: lines[0].id, quantity: 1 }];
+      }
     }
+
+    const isPartial = selection.length > 0;
 
     const result = await runDirectSwissPostLabelForOrder(order.id, {
       includeLabelData,
       allowReprint,
-      requireLinked: !isPartial,
+      // Partial path checks only the selected parcel inside runDirectSwissPostLabelForOrder.
+      requireLinked: true,
       selection: isPartial ? selection : undefined,
     });
 
@@ -168,6 +212,7 @@ export async function POST(req: NextRequest) {
       deliveryNoteUrl: deliveryNote.deliveryNoteUrl,
       orderNumber: order.orderNumber,
       galaxusOrderId: order.galaxusOrderId,
+      selection,
     });
   } catch (error: any) {
     console.error("[SCAN-GALAXUS-DIRECT-LABEL]", error);
