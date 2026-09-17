@@ -8,6 +8,8 @@
  * wrote them.
  */
 
+import { resolveCanonicalKickdbImage } from "@/galaxus/kickdb/imageResolver";
+
 export function pickString(...values: Array<unknown>) {
   for (const v of values) {
     if (typeof v === "string" && v.trim()) return v.trim();
@@ -34,14 +36,18 @@ export function extractBrand(productRecord: any): string | null {
   return null;
 }
 
+/**
+ * Canonical KicksDB hero URL (HD / upgraded imgix). Never returns a thumbnail.
+ * Null when no Google-compliant image exists — callers must not wipe existing
+ * Shopify / KickDBProduct images with null.
+ */
 export function extractImageUrl(productRecord: any): string | null {
-  return pickString(
-    productRecord?.image,
-    productRecord?.image_url,
-    productRecord?.imageUrl,
-    productRecord?.media?.image,
-    productRecord?.media?.imageUrl
-  );
+  return resolveCanonicalKickdbImage(productRecord, {
+    logContext: {
+      styleId: pickString(productRecord?.sku, productRecord?.style_id, productRecord?.styleId),
+      kickdbProductId: pickString(productRecord?.id),
+    },
+  }).url;
 }
 
 export function pickTraitValue(traits: unknown, keys: string[]): string | null {

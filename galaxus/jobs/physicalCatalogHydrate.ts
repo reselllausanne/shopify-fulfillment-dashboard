@@ -1,6 +1,7 @@
 import { prisma } from "@/app/lib/prisma";
 import { expandGtinLookupCandidates } from "@/shopify/restock/gtinAliasLookup";
 import { resolveKickdbSlugForGtin } from "@/shopify/restock/resolveKickdbSlugForGtin";
+import { resolveCanonicalKickdbImageList } from "@/galaxus/kickdb/imageResolver";
 
 /**
  * Catalog identity (brand / name / images) for a physically stocked GTIN.
@@ -27,41 +28,12 @@ function str(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function isAbsoluteUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-/** Gallery first (matches `pickImages` in the STX import path), then the single product image. */
+/** Canonical HD list from KickDB raw + stored imageUrl — never thumbnails. */
 function collectImages(raw: unknown, imageUrl: string | null): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (value: unknown) => {
-    const url = str(value);
-    if (!url || !isAbsoluteUrl(url) || seen.has(url)) return;
-    seen.add(url);
-    out.push(url);
-  };
-
-  const product = (raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}) as any;
-  const gallery = product?.gallery ?? product?.data?.gallery;
-  if (Array.isArray(gallery)) {
-    for (const entry of gallery) {
-      if (typeof entry === "string") push(entry);
-      else if (entry && typeof entry === "object") {
-        const o = entry as Record<string, unknown>;
-        push(o.url ?? o.src ?? o.image ?? o.imageUrl);
-      }
-    }
-  }
-  push(product?.image ?? product?.data?.image);
-  push(product?.image_url ?? product?.imageUrl);
-  push(imageUrl);
-  return out;
+  const fromPayload = resolveCanonicalKickdbImageList(raw ?? {});
+  if (fromPayload.length > 0) return fromPayload;
+  const fromStored = resolveCanonicalKickdbImageList({ image: imageUrl });
+  return fromStored;
 }
 
 async function fromLocalKickdb(gtin: string): Promise<PhysicalCatalogIdentity | null> {
