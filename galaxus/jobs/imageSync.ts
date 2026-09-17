@@ -2,6 +2,7 @@ import { prisma } from "@/app/lib/prisma";
 import { parseScraperShops } from "@/app/lib/scraperShops";
 import { createLimiter } from "@/galaxus/jobs/bulkSql";
 import { hostSupplierImage } from "@/galaxus/images/imageHosting";
+import { resolveCanonicalKickdbImageFromList } from "@/galaxus/kickdb/imageResolver";
 import { isTheSupplierEnabled } from "@/galaxus/supplier/theSupplierPolicy";
 
 type ImageSyncStatus = "PENDING" | "SYNCED" | "FAILED" | "NO_SOURCE";
@@ -190,10 +191,15 @@ function extractAbsoluteImages(images: unknown): string[] {
 }
 
 function resolveSourceImageUrl(row: any): string | null {
+  const existing = typeof row?.sourceImageUrl === "string" ? row.sourceImageUrl.trim() : "";
+  const fallback = existing && isAbsoluteUrl(existing) ? existing : null;
+  // Prefer best non-thumbnail from SupplierVariant.images (STX/KicksDB paths).
+  const fromList = resolveCanonicalKickdbImageFromList(row?.images, { fallbackUrl: fallback });
+  if (fromList) return fromList;
+  // Non-KicksDB suppliers: keep legacy first-absolute behavior.
   const images = extractAbsoluteImages(row?.images);
   if (images.length > 0) return images[0];
-  const existing = typeof row?.sourceImageUrl === "string" ? row.sourceImageUrl.trim() : "";
-  return existing && isAbsoluteUrl(existing) ? existing : null;
+  return fallback;
 }
 
 async function updateVariantImageState(

@@ -20,6 +20,7 @@ import {
   createLimiter,
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
+import { resolveCanonicalKickdbImageList } from "@/galaxus/kickdb/imageResolver";
 
 type StxSyncResult = {
   processedProducts: number;
@@ -98,17 +99,15 @@ function pickSizeRawEuFirst(variant: any): string | null {
   return pickString(variant?.size);
 }
 
+/** Canonical HD list only — never persist StockX API thumbnails into SupplierVariant.images. */
 function pickImages(product: any): string[] | null {
-  const images: string[] = [];
-  if (Array.isArray(product?.gallery)) {
-    for (const image of product.gallery) {
-      const value = pickString(image);
-      if (value) images.push(value);
-    }
-  }
-  const fallback = pickString(product?.image);
-  if (images.length === 0 && fallback) images.push(fallback);
-  return images.length > 0 ? Array.from(new Set(images)) : null;
+  const images = resolveCanonicalKickdbImageList(product, {
+    logContext: {
+      kickdbProductId: pickString(product?.id),
+      styleId: pickString(product?.sku, product?.style_id, product?.styleId),
+    },
+  });
+  return images.length > 0 ? images : null;
 }
 
 function stxVariantSyncPatch(row: ParsedStxRow) {

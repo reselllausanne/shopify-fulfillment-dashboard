@@ -927,7 +927,8 @@ export async function runKickdbEnrich(options: KickdbEnrichOptions = {}) {
         styleId,
         name: kickdbProductName,
         brand,
-        imageUrl,
+        // Never wipe a stored hero with null when KicksDB has no compliant image.
+        ...(imageUrl ? { imageUrl } : {}),
         traitsJson: traits,
         description,
         gender,

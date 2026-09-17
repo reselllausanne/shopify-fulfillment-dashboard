@@ -13,6 +13,7 @@ import {
   bulkUpsertVariantMappings,
   remapRowsToExistingProviderKeyGtin,
 } from "@/galaxus/jobs/bulkSql";
+import { resolveCanonicalKickdbImageList } from "@/galaxus/kickdb/imageResolver";
 import { assertMappingIntegrity, buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
@@ -108,16 +109,13 @@ function pickString(...values: unknown[]): string | null {
 }
 
 function pickImages(product: any): string[] | null {
-  const images: string[] = [];
-  if (Array.isArray(product?.gallery)) {
-    for (const image of product.gallery) {
-      const value = pickString(image);
-      if (value) images.push(value);
-    }
-  }
-  const fallback = pickString(product?.image, product?.image_url, product?.imageUrl);
-  if (images.length === 0 && fallback) images.push(fallback);
-  return images.length > 0 ? Array.from(new Set(images)) : null;
+  const images = resolveCanonicalKickdbImageList(product, {
+    logContext: {
+      kickdbProductId: pickString(product?.id),
+      styleId: pickString(product?.sku, product?.style_id, product?.styleId),
+    },
+  });
+  return images.length > 0 ? images : null;
 }
 
 function pickSizeRawEuFirst(variant: any): string | null {
