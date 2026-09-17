@@ -2,18 +2,18 @@
 
 GitHub `main` is the only source of truth. No VPS hotfixes. No silent overwrite of dirty laptop work.
 
-## One-time: `gh` CLI
+## One-time per Mac (run in Terminal.app)
 
-Already on Mac principal: `~/.local/bin/gh` (add to PATH).
+Cursor sandbox cannot write LaunchAgents — run this in **Terminal**:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
-# Interactive (required once — git HTTPS token may not work for API):
-gh auth login
-gh auth status
+cd /path/to/shopify-fulfillment-dashboard
+chmod +x scripts/RUN-ONCE-MAC-SETUP.sh
+./scripts/RUN-ONCE-MAC-SETUP.sh
+gh auth login    # if prompted
 ```
 
-Second Mac: same, or `brew install gh` then `gh auth login`.
+Mac principal already has `~/.local/bin/gh`. Git HTTPS token ≠ GitHub API token → `gh auth login` once.
 
 ## Macs — safe sync
 
@@ -48,7 +48,17 @@ Repo secrets (Settings → Secrets and variables → Actions):
 | `SSH_USER` | usually `root` |
 | `SSH_PRIVATE_KEY` | private key that can SSH (full PEM) |
 
+Helper (after `gh auth login`):
+
+```bash
+chmod +x scripts/setup-github-deploy-secrets.sh
+./scripts/setup-github-deploy-secrets.sh
+gh workflow run "Deploy VPS"
+```
+
 On every push to `main`, Actions SSHs to `/opt/resell` and runs `scripts/vps-deploy-from-github.sh` for that SHA.
+
+**VPS already aligned manually** to the merge SHA; add secrets so the next `main` push deploys automatically.
 
 Manual deploy (laptop):
 

@@ -6,45 +6,31 @@ Repo path on this machine (example):
 
 WIP already saved: `origin/wip/second-mac-20260917` @ `5f1838f` — do **not** merge blindly into `main`.
 
-## 1. Install `gh`
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-# or: brew install gh
-gh auth login
-gh auth status
-```
-
-## 2. Align to GitHub `main`
+## 1. Install `gh` + LaunchAgent (Terminal.app)
 
 ```bash
 cd "/Users/theomanzinali/Code scrapping price "   # real path
-
-git fetch origin --prune
-git status -sb
-
-# Tracked must be clean (WIP already pushed). Leftover ?? tmp/csv/xml OK.
+git fetch origin
 git switch -C main origin/main
-git pull --ff-only origin main
-
-git rev-parse --short HEAD
-# expect same SHA as GitHub main (see Mac principal / github.com)
+chmod +x scripts/RUN-ONCE-MAC-SETUP.sh
+./scripts/RUN-ONCE-MAC-SETUP.sh
+gh auth login   # if needed
 ```
 
-## 3. Install safe-sync LaunchAgent
+## 2. Confirm aligned to GitHub `main`
 
 ```bash
-chmod +x scripts/safe-sync.sh scripts/safe-push.sh scripts/safe-sync-launchd.sh scripts/install-macos-safe-sync-agent.sh
-./scripts/install-macos-safe-sync-agent.sh
+git pull --ff-only origin main
+git rev-parse --short HEAD
+# must match https://github.com/reselllausanne/shopify-fulfillment-dashboard (main)
 ```
 
-## 4. Daily
+## 3. Daily
 
-- Work on feature branches from updated `main`
-- End of session: commit + `./scripts/safe-push.sh`
-- Other Mac / VPS: GitHub `main` + Actions deploy
+- `resell-sync` / `resell-push` (after `source ~/.zshrc`)
+- Feature branches from `main`; merge via PR
 
-## 5. Optional leftovers (local only — never commit)
+## 4. Optional leftovers (local only — never commit)
 
 ```text
 galaxus/GDELR_*.xml
