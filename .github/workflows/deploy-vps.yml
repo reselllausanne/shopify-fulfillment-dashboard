@@ -4,16 +4,61 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full 40-char SHA to deploy (default: this workflow commit)"
+        required: false
+        type: string
+      migrate:
+        description: "Also run prisma migrate deploy (explicit)"
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: "VPS dry-run only (no build/up)"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-vps
   cancel-in-progress: false
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Dockerfile + compose config
+        run: |
+          set -euo pipefail
+          chmod +x scripts/vps-deploy-from-github.sh scripts/vps-deploy-from-github.test.sh
+          bash scripts/vps-deploy-from-github.sh --validate-config
+          bash scripts/vps-deploy-from-github.test.sh
+
   deploy:
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
+      - name: Resolve target SHA
+        id: target
+        run: |
+          set -euo pipefail
+          WANT="${{ github.event.inputs.sha }}"
+          if [ -z "$WANT" ]; then
+            WANT="${{ github.sha }}"
+          fi
+          if ! [[ "$WANT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "FATAL: deploy SHA must be full 40-char hex, got: $WANT"
+            exit 1
+          fi
+          echo "sha=$WANT" >> "$GITHUB_OUTPUT"
+          echo "REQUESTED_SHA=$WANT"
+
       - name: Check deploy secrets
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -25,11 +70,11 @@ jobs:
           [ -n "$SSH_USER" ] || { echo "missing secret SSH_USER"; missing=1; }
           [ -n "$SSH_PRIVATE_KEY" ] || { echo "missing secret SSH_PRIVATE_KEY"; missing=1; }
           if [ "$missing" -ne 0 ]; then
-            echo "Add GitHub Actions secrets, then re-run. See docs/GITHUB-VPS-SYNC.md"
+            echo "Add GitHub Actions secrets, then re-run. See docs/VPS-DEPLOY-RUNBOOK.md"
             exit 1
           fi
 
-      - name: Deploy commit on VPS
+      - name: Deploy exact SHA on VPS
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -39,13 +84,26 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/resell
-            WANT="${{ github.sha }}"
-            git fetch origin --prune
-            if ! git diff --quiet || ! git diff --cached --quiet; then
-              echo "FATAL: VPS tracked dirty — refusing deploy"
-              git status -sb
-              exit 10
+            WANT="${{ steps.target.outputs.sha }}"
+            DRY_FLAG=""
+            MIGRATE_FLAG=""
+            if [ "${{ github.event.inputs.dry_run || false }}" = "true" ]; then
+              DRY_FLAG="--dry-run"
             fi
-            git checkout --detach "$WANT"
-            chmod +x scripts/vps-deploy-from-github.sh
-            EXPECTED_SHA="$WANT" bash scripts/vps-deploy-from-github.sh
+            if [ "${{ github.event.inputs.migrate || false }}" = "true" ]; then
+              MIGRATE_FLAG="--migrate"
+            fi
+            echo "CI_REQUESTED_SHA=$WANT dry_run=${{ github.event.inputs.dry_run || false }} migrate=${{ github.event.inputs.migrate || false }}"
+            # Script owns fetch + detach checkout + flock + compose (no git pull).
+            # Prefer script from REQUESTED SHA after fetch so deploy logic matches that commit.
+            git fetch origin --prune
+            if ! git cat-file -e "${WANT}^{commit}" 2>/dev/null; then
+              echo "FATAL: SHA $WANT missing after fetch"
+              exit 11
+            fi
+            # Use deploy script content from the target SHA (deterministic), via git show,
+            # so a broken old script on a previous detach cannot block upgrade.
+            git show "${WANT}:scripts/vps-deploy-from-github.sh" > /tmp/vps-deploy-from-github.sh
+            chmod +x /tmp/vps-deploy-from-github.sh
+            EXPECTED_SHA="$WANT" bash /tmp/vps-deploy-from-github.sh --sha="$WANT" $DRY_FLAG $MIGRATE_FLAG
+            echo "CI_RUNNING_SHA=$(git -C /opt/resell rev-parse HEAD)"

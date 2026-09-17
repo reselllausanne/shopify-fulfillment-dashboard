@@ -38,7 +38,8 @@ alias resell-push='cd /path/to/shopify-fulfillment-dashboard && ./scripts/safe-p
 
 ## GitHub Actions → VPS
 
-Workflow: [`.github/workflows/deploy-vps.yml`](../.github/workflows/deploy-vps.yml)
+Workflow: [`.github/workflows/deploy-vps.yml`](../.github/workflows/deploy-vps.yml)  
+Runbook: [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md)
 
 Repo secrets (Settings → Secrets and variables → Actions):
 
@@ -56,17 +57,9 @@ chmod +x scripts/setup-github-deploy-secrets.sh
 gh workflow run "Deploy VPS"
 ```
 
-On every push to `main`, Actions SSHs to `/opt/resell` and runs `scripts/vps-deploy-from-github.sh` for that SHA.
+On every push to `main`: validate compose/Dockerfile → SSH → deploy **exact** `github.sha` via `scripts/vps-deploy-from-github.sh` (flock, detach checkout, cleanup stale compose rename leftovers, `compose up -d --no-deps web`). No `git pull`. Migrations only if explicitly requested.
 
-**VPS already aligned manually** to the merge SHA; add secrets so the next `main` push deploys automatically.
-
-Manual deploy (laptop):
-
-```bash
-ssh resell-vps 'cd /opt/resell && EXPECTED_SHA=$(git rev-parse origin/main) bash -s' < scripts/vps-deploy-from-github.sh
-# or after fetch on VPS:
-ssh resell-vps 'cd /opt/resell && git fetch origin && EXPECTED_SHA=$(git rev-parse origin/main) bash scripts/vps-deploy-from-github.sh'
-```
+Manual deploy / rollback: see [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md).
 
 ## Second Mac checklist
 
