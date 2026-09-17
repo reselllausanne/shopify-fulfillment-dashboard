@@ -402,6 +402,7 @@ export async function POST(req: NextRequest) {
   const requestStartedAt = new Date();
   let outerIdempotencyKey: string | null = null;
   let lockResolved = false;
+  let externalSideEffectStarted = false;
   try {
     const withContext = async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
       try {
@@ -464,7 +465,6 @@ export async function POST(req: NextRequest) {
         { status: forceGuard.statusCode }
       );
     }
-    const allowAlreadyFulfilled = false; // server-hard disabled for this release
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
     const scanSessionKey = String(body?.scanSessionKey ?? "").trim() || null;
     const scanStartedAt = parseOptionalDate(body?.scanStartedAt);
@@ -569,8 +569,6 @@ export async function POST(req: NextRequest) {
     }
     let activeIdempotencyKey = effectiveIdempotencyKey;
     outerIdempotencyKey = activeIdempotencyKey;
-    // Track whether Swiss Post request was attempted — drives fail-before vs unknown.
-    let externalSideEffectStarted = false;
 
     const finishOnError = async (message: string) => {
       if (externalSideEffectStarted) {
@@ -701,6 +699,7 @@ export async function POST(req: NextRequest) {
             const validated = validateFulfillUnitSelection(openUnits, selectedUnits);
             if (!validated.ok) {
               await finishOnError(validated.error);
+              lockResolved = true;
               return NextResponse.json(
                 {
                   ok: false,
@@ -710,7 +709,7 @@ export async function POST(req: NextRequest) {
                   openUnits,
                   unitSelection: decision,
                 },
-                { status: 400 }
+                { status: 422 }
               );
             }
             if (!requireUnitSelectionAck) {
@@ -837,14 +836,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
-      sku: m.shopifySku ?? null,
-      title: m.shopifyProductTitle ?? null,
-      sizeEU: m.shopifySizeEU ?? null,
-      quantity: 1,
-      sourceId: m.id,
-    }));
-
     const orderInfo = await withContext("fetchOrderShippingInfo", () =>
       fetchOrderShippingInfo(shopifyOrderId)
     );
@@ -862,24 +853,64 @@ export async function POST(req: NextRequest) {
     }
     const orderLineItems = orderInfo?.lineItems?.nodes || [];
 
+    // Build requested items from selectedUnits (order line IDs) or AWB match only.
+    // Never expand to all remaining FO lines.
+    let dbItems: Array<{
+      sku: string | null;
+      title: string | null;
+      sizeEU: string | null;
+      quantity: number;
+      sourceId: string | null;
+    }>;
+    if (selectedUnits.length > 0) {
+      const byId = new Map(
+        orderLineItems.map((li: any) => [String(li.id), li] as const)
+      );
+      dbItems = [];
+      for (const unit of selectedUnits) {
+        const li = byId.get(unit.lineItemId);
+        if (!li) {
+          await finishOnError(`Selected line not on order: ${unit.lineItemId}`);
+          lockResolved = true;
+          return NextResponse.json(
+            {
+              ok: false,
+              status: "INVALID" as FulfillStatus,
+              awb,
+              error: `Selected line not on order: ${unit.lineItemId}`,
+            },
+            { status: 422 }
+          );
+        }
+        dbItems.push({
+          sku: li.sku || li.variantSku || li.variant?.sku || null,
+          title: li.title ?? null,
+          sizeEU: null,
+          quantity: unit.quantity,
+          sourceId: unit.lineItemId,
+        });
+      }
+    } else {
+      dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
+        sku: m.shopifySku ?? null,
+        title: m.shopifyProductTitle ?? null,
+        sizeEU: m.shopifySizeEU ?? null,
+        quantity: 1,
+        sourceId: m.id,
+      }));
+    }
+
     const buildResult = buildLineItemsByFulfillmentOrder(
       map.order.fulfillmentOrders.nodes,
       dbItems,
       orderLineItems
     );
     let { lineItemsByFulfillmentOrder, unmatched, warnings, fulfillableFOs } = buildResult;
-    const allRemainingLineItems = fulfillableFOs.flatMap((fo) => {
-      const remaining = (fo.lineItems?.nodes || [])
-        .filter((li) => Number(li.remainingQuantity ?? 0) > 0)
-        .map((li) => ({ id: li.id, quantity: Number(li.remainingQuantity ?? 0) }));
-      if (remaining.length === 0) return [];
-      return [{ fulfillmentOrderId: fo.id, fulfillmentOrderLineItems: remaining }];
-    });
     // Hard server rule: never expand to all remaining lines (force fulfill disabled).
     const resolvedLines = resolveFulfillLineItems({
-      allowAlreadyFulfilled: Boolean(allowAlreadyFulfilledRaw),
+      allowAlreadyFulfilled: false,
       matchedLineItemsByFulfillmentOrder: lineItemsByFulfillmentOrder,
-      allRemainingLineItems,
+      allRemainingLineItems: [],
     });
     lineItemsByFulfillmentOrder = resolvedLines.lineItemsByFulfillmentOrder;
     if (resolvedLines.usedAllRemaining) {
@@ -892,23 +923,6 @@ export async function POST(req: NextRequest) {
         },
         { status: 403 }
       );
-    }
-
-    // Only ship explicitly selected units when operator provided a selection.
-    if (selectedUnits.length > 0) {
-      const want = new Map(selectedUnits.map((u) => [u.lineItemId, u.quantity]));
-      lineItemsByFulfillmentOrder = lineItemsByFulfillmentOrder
-        .map((fo) => ({
-          fulfillmentOrderId: fo.fulfillmentOrderId,
-          fulfillmentOrderLineItems: fo.fulfillmentOrderLineItems
-            .map((li) => {
-              const q = want.get(li.id);
-              if (q == null || q <= 0) return null;
-              return { id: li.id, quantity: Math.min(li.quantity, q) };
-            })
-            .filter((li): li is { id: string; quantity: number } => Boolean(li)),
-        }))
-        .filter((fo) => fo.fulfillmentOrderLineItems.length > 0);
     }
 
     let skipShopifyFulfillment = false;
@@ -1387,9 +1401,7 @@ export async function POST(req: NextRequest) {
       console.error("[FULFILL-FROM-AWB] Stack:", error.stack);
     }
     if (outerIdempotencyKey) {
-      // Prefer UNKNOWN if Swiss Post may have run; otherwise fail-before-external
-      // so same-key retry remains safe.
-      if (String(error?.message || "").toLowerCase().includes("swiss post")) {
+      if (externalSideEffectStarted) {
         await markExternalSideEffectUnknown({
           idempotencyKey: outerIdempotencyKey,
           error: String(error?.message || error),
@@ -1408,10 +1420,17 @@ export async function POST(req: NextRequest) {
     );
   } finally {
     if (!lockResolved && outerIdempotencyKey) {
-      await failFulfillAttemptBeforeExternal({
-        idempotencyKey: outerIdempotencyKey,
-        error: "Early exit without success (see prior response payload for details).",
-      }).catch(() => null);
+      if (externalSideEffectStarted) {
+        await markExternalSideEffectUnknown({
+          idempotencyKey: outerIdempotencyKey,
+          error: "Early exit after external side effect started — reconcile before retry.",
+        }).catch(() => null);
+      } else {
+        await failFulfillAttemptBeforeExternal({
+          idempotencyKey: outerIdempotencyKey,
+          error: "Early exit without success (see prior response payload for details).",
+        }).catch(() => null);
+      }
     }
   }
 }
