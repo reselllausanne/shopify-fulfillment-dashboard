@@ -93,6 +93,7 @@ import {
   completeFulfillAttempt,
   failFulfillAttemptBeforeExternal,
   markExternalSideEffectUnknown,
+  markExternalSideEffectUnknownBeforeRequest,
   markExternalSideEffectConfirmed,
   reconcileFulfillAttempt,
   FulfillLockTableMissingError,
@@ -162,6 +163,52 @@ describe("fulfillIdempotency (persistent)", () => {
     // Never invent timestamped retry keys — same key only, still blocked.
     expect(store.size).toBe(1);
     expect([...store.keys()][0]).toBe(baseArgs.idempotencyKey);
+  });
+
+  it("BeforeRequest persists UNKNOWN durably; refuses Swiss Post if lock write fails", async () => {
+    await beginFulfillAttempt(baseArgs);
+    let swissPostCreateCount = 0;
+    const createSwissPostLabel = () => {
+      swissPostCreateCount += 1;
+      return { ok: true };
+    };
+
+    await markExternalSideEffectUnknownBeforeRequest({
+      idempotencyKey: baseArgs.idempotencyKey,
+      error: "Swiss Post label request in flight",
+      partialResult: { phase: "swiss_post_request" },
+    });
+    expect(store.get(baseArgs.idempotencyKey)?.status).toBe(
+      "EXTERNAL_SIDE_EFFECT_UNKNOWN"
+    );
+    // Safe to call Swiss Post only after durable lock
+    createSwissPostLabel();
+    expect(swissPostCreateCount).toBe(1);
+
+    // Second BeforeRequest while already UNKNOWN must throw — no second label path
+    await expect(
+      markExternalSideEffectUnknownBeforeRequest({
+        idempotencyKey: baseArgs.idempotencyKey,
+      })
+    ).rejects.toThrow(/Failed to persist EXTERNAL_SIDE_EFFECT_UNKNOWN/);
+    expect(swissPostCreateCount).toBe(1);
+  });
+
+  it("BeforeRequest throws when updateMany fails — Swiss Post must not run", async () => {
+    await beginFulfillAttempt(baseArgs);
+    fakeTable.updateMany.mockResolvedValueOnce({ count: 0 });
+    let swissPostCreateCount = 0;
+    try {
+      await markExternalSideEffectUnknownBeforeRequest({
+        idempotencyKey: baseArgs.idempotencyKey,
+      });
+      swissPostCreateCount += 1; // must never reach
+    } catch (err: any) {
+      expect(String(err.message)).toMatch(/Failed to persist/);
+    }
+    expect(swissPostCreateCount).toBe(0);
+    // Still IN_PROGRESS (updateMany returned 0) — same-key retry still possible
+    expect(store.get(baseArgs.idempotencyKey)?.status).toBe("IN_PROGRESS");
   });
 
   it("Swiss Post ok then Shopify fail: CONFIRMED → retry never creates second label attempt", async () => {
