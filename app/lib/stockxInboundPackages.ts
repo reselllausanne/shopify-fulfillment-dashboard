@@ -29,7 +29,7 @@ export type UpsertStockxInboundPackageInput = {
   status?: string | null;
   /** @deprecated Prefer stockxEventAt; kept for callers that still pass it. */
   arrivedAt?: Date | string | null;
-  /** Best StockX event time (purchase/creation). Drives retention ranking. */
+  /** Observed logistics event (delivered/shipped/tracking/state). Never ETA/purchaseDate. */
   stockxEventAt?: Date | string | null;
   channelHint?: string | null;
 };
@@ -224,13 +224,10 @@ export function resolveStockxInboundLogisticsAt(params: {
     return { stockxEventAt: stateConfirmed, source: "state" };
   }
 
-  // Priority 4: bare state.changedAt / state.updatedAt (list or detail).
-  const stateChanged = firstObservedDate(
-    now,
-    params.stateChangedAt,
-    params.stateUpdatedAt
-  );
-  if (stateChanged) return { stockxEventAt: stateChanged, source: "state" };
+  // Bare state.changedAt / updatedAt without a confirming ship/delivery status
+  // are NOT logistics events (could be any status flip).
+  void params.stateChangedAt;
+  void params.stateUpdatedAt;
 
   return { stockxEventAt: null, source: "first_seen" };
 }

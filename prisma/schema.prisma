@@ -202,7 +202,7 @@ model StockxInboundPackage {
   firstSeenAt        DateTime  @default(now())
   /// Last successful inbound sync refresh for this AWB.
   lastSeenAt         DateTime  @default(now())
-  /// StockX logistics time (delivered / ETA / ship-by). Drives retention — never purchaseDate.
+  /// Observed StockX logistics time (delivered/shipped/tracking/state). Never ETA/sellerShipBy/purchaseDate.
   stockxEventAt      DateTime?
   channelHint        String?
   linkedShopifyLineItemId String?
