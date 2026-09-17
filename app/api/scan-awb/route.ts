@@ -6,7 +6,8 @@ import {
   findStockxInboundHomeRouteByShopifyOrderName,
   normalizeInboundHomeAwb,
 } from "@/app/lib/stockxInboundHomeRoutes";
-import { fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
+import { fetchOrderFulfillmentMap, fetchOrderShippingInfo } from "@/lib/shopifyFulfillment";
+import { listOpenSiblingLines } from "@/lib/shopifyOrderOpenSiblings";
 import { getStxLinkStatusForOrder } from "@/galaxus/stx/purchaseUnits";
 import { buildScanDemoScanPayload, resolveScanDemoChannel } from "@/lib/scanFulfillmentDemo";
 import {
@@ -36,7 +37,10 @@ async function enrichOrderMatchFromShopify(match: {
   shopifySku: string | null;
 }) {
   try {
-    const orderInfo = await fetchOrderShippingInfo(match.shopifyOrderId);
+    const [orderInfo, fulfillmentMap] = await Promise.all([
+      fetchOrderShippingInfo(match.shopifyOrderId),
+      fetchOrderFulfillmentMap(match.shopifyOrderId),
+    ]);
     if (!orderInfo) return null;
 
     const addr = orderInfo.shippingAddress;
@@ -67,7 +71,17 @@ async function enrichOrderMatchFromShopify(match: {
           }
         : null;
 
+    const openSiblingLines = fulfillmentMap.order
+      ? listOpenSiblingLines({
+          orderLineItems: lineNodes,
+          fulfillmentOrders: fulfillmentMap.order.fulfillmentOrders.nodes,
+          scannedLineItemId: targetId,
+        })
+      : [];
+
     return {
+      openSiblingLines,
+      hasOtherOpenProducts: openSiblingLines.length > 0,
       customer: {
         name: composedName,
         email: orderInfo.email ?? null,
