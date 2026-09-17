@@ -4,6 +4,8 @@ import {
   resolveStockxInboundLogisticsAt,
 } from "@/app/lib/stockxInboundPackages";
 
+const NOW = new Date("2026-09-17T15:00:00.000Z");
+
 describe("inboundRetentionRankAt", () => {
   it("prefers stockxEventAt over firstSeenAt and arrivedAt", () => {
     const event = new Date("2026-09-01T10:00:00Z");
@@ -43,48 +45,114 @@ describe("inboundRetentionRankAt", () => {
   });
 });
 
-describe("resolveStockxInboundLogisticsAt", () => {
-  it("prefers deliveredDate over ETA and ship-by", () => {
-    const delivered = new Date("2026-09-12T08:00:00Z");
-    expect(
-      resolveStockxInboundLogisticsAt({
-        deliveredDate: delivered,
-        latestEstimatedDeliveryDate: "2026-09-15T00:00:00Z",
-        estimatedDeliveryDate: "2026-09-14T00:00:00Z",
-        purchaseDate: "2026-09-01T00:00:00Z",
-      })?.toISOString()
-    ).toBe(delivered.toISOString());
-  });
-
-  it("uses ETA when deliveredDate missing — never purchaseDate", () => {
-    const eta = new Date("2026-09-14T00:00:00Z");
-    const purchase = "2026-09-01T10:00:00Z";
-    const result = resolveStockxInboundLogisticsAt({
-      deliveredDate: null,
-      latestEstimatedDeliveryDate: eta,
-      purchaseDate: purchase,
-      creationDate: purchase,
+describe("resolveStockxInboundLogisticsAt (observed only)", () => {
+  it("ETA future alone => stockxEventAt=null, source first_seen; rank firstSeenAt", () => {
+    const firstSeen = new Date("2026-09-10T08:00:00Z");
+    const futureEta = "2026-09-25T00:00:00Z";
+    const logistics = resolveStockxInboundLogisticsAt({
+      estimatedDeliveryDate: futureEta,
+      latestEstimatedDeliveryDate: futureEta,
+      now: NOW,
     });
-    expect(result?.toISOString()).toBe(eta.toISOString());
-    expect(result?.toISOString()).not.toBe(new Date(purchase).toISOString());
+    expect(logistics.stockxEventAt).toBeNull();
+    expect(logistics.source).toBe("first_seen");
+    expect(
+      inboundRetentionRankAt({
+        stockxEventAt: logistics.stockxEventAt,
+        firstSeenAt: firstSeen,
+      }).toISOString()
+    ).toBe(firstSeen.toISOString());
   });
 
-  it("returns null when only purchaseDate/creationDate exist", () => {
+  it("sellerShipBy future alone => stockxEventAt=null, rank firstSeenAt", () => {
+    const firstSeen = new Date("2026-09-11T09:00:00Z");
+    const logistics = resolveStockxInboundLogisticsAt({
+      sellerShipByActual: "2026-09-20T00:00:00Z",
+      sellerShipByEnd: "2026-09-22T00:00:00Z",
+      sellerShipByStart: "2026-09-18T00:00:00Z",
+      now: NOW,
+    });
+    expect(logistics.stockxEventAt).toBeNull();
+    expect(logistics.source).toBe("first_seen");
     expect(
-      resolveStockxInboundLogisticsAt({
-        purchaseDate: "2026-09-01T10:00:00Z",
-        creationDate: "2026-09-01T10:00:00Z",
-      })
-    ).toBeNull();
+      inboundRetentionRankAt({
+        stockxEventAt: logistics.stockxEventAt,
+        firstSeenAt: firstSeen,
+      }).toISOString()
+    ).toBe(firstSeen.toISOString());
   });
 
-  it("falls back to sellerShipBy when no delivered/ETA", () => {
-    const shipBy = new Date("2026-09-10T12:00:00Z");
+  it("delivered real beats shipped real", () => {
+    const delivered = new Date("2026-09-12T08:00:00Z");
+    const shipped = new Date("2026-09-10T08:00:00Z");
+    const logistics = resolveStockxInboundLogisticsAt({
+      deliveredDate: delivered,
+      shippedAt: shipped,
+      estimatedDeliveryDate: "2026-09-25T00:00:00Z",
+      purchaseDate: "2026-09-01T00:00:00Z",
+      now: NOW,
+    });
+    expect(logistics.source).toBe("delivered");
+    expect(logistics.stockxEventAt?.toISOString()).toBe(delivered.toISOString());
+  });
+
+  it("shipped real => rank shippedAt", () => {
+    const shipped = new Date("2026-09-10T12:00:00Z");
+    const firstSeen = new Date("2026-09-11T00:00:00Z");
+    const logistics = resolveStockxInboundLogisticsAt({
+      shippedAt: shipped,
+      now: NOW,
+    });
+    expect(logistics.source).toBe("shipped");
+    expect(logistics.stockxEventAt?.toISOString()).toBe(shipped.toISOString());
     expect(
-      resolveStockxInboundLogisticsAt({
-        sellerShipByActual: shipBy,
-        purchaseDate: "2026-09-01T00:00:00Z",
-      })?.toISOString()
-    ).toBe(shipBy.toISOString());
+      inboundRetentionRankAt({
+        stockxEventAt: logistics.stockxEventAt,
+        firstSeenAt: firstSeen,
+      }).toISOString()
+    ).toBe(shipped.toISOString());
+  });
+
+  it("purchaseDate alone => never stockxEventAt", () => {
+    const logistics = resolveStockxInboundLogisticsAt({
+      purchaseDate: "2026-09-01T10:00:00Z",
+      creationDate: "2026-09-01T10:00:00Z",
+      now: NOW,
+    });
+    expect(logistics.stockxEventAt).toBeNull();
+    expect(logistics.source).toBe("first_seen");
+  });
+
+  it("tracking event used when no delivered/shipped", () => {
+    const tracking = new Date("2026-09-09T15:00:00Z");
+    const logistics = resolveStockxInboundLogisticsAt({
+      trackingEventAt: tracking,
+      purchaseDate: "2026-09-01T00:00:00Z",
+      now: NOW,
+    });
+    expect(logistics.source).toBe("tracking");
+    expect(logistics.stockxEventAt?.toISOString()).toBe(tracking.toISOString());
+  });
+
+  it("confirming StockX state timestamp used as state source", () => {
+    const stateAt = new Date("2026-09-08T11:00:00Z");
+    const logistics = resolveStockxInboundLogisticsAt({
+      stateConfirmedAt: stateAt,
+      stateStatusKey: "SHIPPED",
+      now: NOW,
+    });
+    expect(logistics.source).toBe("state");
+    expect(logistics.stockxEventAt?.toISOString()).toBe(stateAt.toISOString());
+  });
+
+  it("state timestamp without confirming status is ignored", () => {
+    const logistics = resolveStockxInboundLogisticsAt({
+      stateConfirmedAt: "2026-09-08T11:00:00Z",
+      stateStatusKey: "PENDING",
+      stateChangedAt: "2026-09-08T11:00:00Z",
+      now: NOW,
+    });
+    expect(logistics.stockxEventAt).toBeNull();
+    expect(logistics.source).toBe("first_seen");
   });
 });

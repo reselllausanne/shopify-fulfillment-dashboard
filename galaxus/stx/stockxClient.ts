@@ -29,7 +29,12 @@ export type StockxBuyingNode = {
   creationDate?: string | null;
   amount?: number | null;
   currencyCode?: string | null;
-  state?: { statusKey?: string | null; statusTitle?: string | null } | null;
+  state?: {
+    statusKey?: string | null;
+    statusTitle?: string | null;
+    changedAt?: string | null;
+    updatedAt?: string | null;
+  } | null;
   localizedSizeTitle?: string | null;
   localizedSizeType?: string | null;
   productVariant?: any | null;

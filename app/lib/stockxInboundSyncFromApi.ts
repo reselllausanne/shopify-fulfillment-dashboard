@@ -6,7 +6,9 @@
  * on purpose — those AWBs belong to warehouse inbound flows, not Shopify AWB
  * fallback.
  *
- * Retention uses logistics stockxEventAt (delivered/ETA/ship-by; else firstSeenAt), never purchaseDate or cron wall-clock.
+ * Retention uses observed logistics stockxEventAt only:
+ * delivered → shipped → tracking event → confirming StockX state timestamp.
+ * Else firstSeenAt. Never ETA, sellerShipBy, purchaseDate, creationDate, or cron.
  * Never uses OrderMatch as an inbound source.
  */
 
@@ -23,9 +25,11 @@ import {
 } from "@/lib/stockxToken";
 import {
   STOCKX_INBOUND_PACKAGE_RETENTION,
+  emptyLogisticsDateSourceCounts,
+  extractStockxInboundLogisticsAt,
   pruneStockxInboundPackagesForAccount,
-  resolveStockxInboundLogisticsAt,
   upsertStockxInboundPackage,
+  type LogisticsDateSourceCounts,
 } from "@/app/lib/stockxInboundPackages";
 
 export type ShopifyStockxAccountResolution = {
@@ -100,6 +104,13 @@ export type SyncStockxInboundResult = {
   pruned: number;
   firstSeen: number;
   refreshed: number;
+  /** Rows upserted with a real observed logistics stockxEventAt. */
+  withLogisticsEventAt: number;
+  /** Rows ranked via firstSeenAt because no real logistics event exists. */
+  fallbackFirstSeenAt: number;
+  /** Alias of fallbackFirstSeenAt. */
+  missingLogisticsEventAt: number;
+  logisticsDateSources: LogisticsDateSourceCounts;
   /** @deprecated alias of firstSeen + refreshed */
   upserted: number;
   perAccount: Array<{
@@ -113,13 +124,17 @@ export type SyncStockxInboundResult = {
     upserted: number;
     pruned: number;
     kept: number;
+    withLogisticsEventAt: number;
+    fallbackFirstSeenAt: number;
+    missingLogisticsEventAt: number;
+    logisticsDateSources: LogisticsDateSourceCounts;
   }>;
 };
 
 /**
  * Pull PENDING + HISTORICAL buying orders per Shopify-side StockX account,
  * resolve AWBs, and upsert `StockxInboundPackage`. Keeps only the last N rows
- * per account by logistics stockxEventAt / firstSeenAt (default 100) — never purchaseDate.
+ * per account by observed logistics stockxEventAt / firstSeenAt (default 100).
  */
 export async function syncStockxInboundPackagesFromStockxApi(
   options: SyncStockxInboundOptions = {}
@@ -142,6 +157,9 @@ export async function syncStockxInboundPackagesFromStockxApi(
   let totalFirstSeen = 0;
   let totalRefreshed = 0;
   let totalKept = 0;
+  let totalWithLogistics = 0;
+  let totalFallbackFirstSeen = 0;
+  const totalLogisticsSources = emptyLogisticsDateSourceCounts();
 
   for (const { token, accountKey } of accounts) {
     const nodes: StockxBuyingNode[] = [];
@@ -176,6 +194,9 @@ export async function syncStockxInboundPackagesFromStockxApi(
     let acctAwbMissing = 0;
     let acctFirstSeen = 0;
     let acctRefreshed = 0;
+    let acctWithLogistics = 0;
+    let acctFallbackFirstSeen = 0;
+    const acctLogisticsSources = emptyLogisticsDateSourceCounts();
 
     await Promise.all(
       uniqueNodes.map((node) =>
@@ -186,8 +207,6 @@ export async function syncStockxInboundPackagesFromStockxApi(
 
           let awb: string | null = null;
           let detailOrder: any = null;
-          let detailEtaMin: Date | null = null;
-          let detailEtaMax: Date | null = null;
           try {
             const details = await fetchStockxBuyOrderDetailsFull(token.token, {
               chainId,
@@ -195,8 +214,6 @@ export async function syncStockxInboundPackagesFromStockxApi(
             });
             awb = details.awb;
             detailOrder = details.order;
-            detailEtaMin = details.etaMin;
-            detailEtaMax = details.etaMax;
           } catch (err: any) {
             console.warn(
               "[STOCKX-INBOUND-SYNC] detail fetch failed",
@@ -215,23 +232,12 @@ export async function syncStockxInboundPackagesFromStockxApi(
             (node.state?.statusTitle as string | null | undefined) ??
             null;
           const purchaseDate = node.purchaseDate ?? node.creationDate ?? null;
-          // Retention must use logistics dates (delivered / ETA / ship-by), never buy time.
-          const listEta = node.estimatedDeliveryDateRange;
-          const shipBy = detailOrder?.sellerShipByDateRange ?? null;
-          const stockxEventAt = resolveStockxInboundLogisticsAt({
-            deliveredDate: detailOrder?.deliveredDate ?? null,
-            latestEstimatedDeliveryDate:
-              detailEtaMax ??
-              listEta?.latestEstimatedDeliveryDate ??
-              null,
-            estimatedDeliveryDate:
-              detailEtaMin ?? listEta?.estimatedDeliveryDate ?? null,
-            sellerShipByActual: shipBy?.actual ?? null,
-            sellerShipByEnd: shipBy?.end ?? null,
-            sellerShipByStart: shipBy?.start ?? null,
-            purchaseDate,
-            creationDate: node.creationDate ?? null,
+          // Observed logistics only — ETA / sellerShipBy / purchaseDate never set stockxEventAt.
+          const logistics = extractStockxInboundLogisticsAt({
+            detailOrder,
+            listNode: node,
           });
+          const stockxEventAt = logistics.stockxEventAt;
 
           try {
             const row = await upsertStockxInboundPackage({
@@ -250,6 +256,9 @@ export async function syncStockxInboundPackagesFromStockxApi(
             acctAwbResolved += 1;
             if (row?.created) acctFirstSeen += 1;
             else if (row) acctRefreshed += 1;
+            acctLogisticsSources[logistics.source] += 1;
+            if (stockxEventAt) acctWithLogistics += 1;
+            else acctFallbackFirstSeen += 1;
           } catch (err: any) {
             console.error(
               "[STOCKX-INBOUND-SYNC] upsert failed",
@@ -283,6 +292,10 @@ export async function syncStockxInboundPackagesFromStockxApi(
       upserted: acctFirstSeen + acctRefreshed,
       pruned: acctPruned,
       kept: acctKept,
+      withLogisticsEventAt: acctWithLogistics,
+      fallbackFirstSeenAt: acctFallbackFirstSeen,
+      missingLogisticsEventAt: acctFallbackFirstSeen,
+      logisticsDateSources: { ...acctLogisticsSources },
     });
     totalAwbResolved += acctAwbResolved;
     totalAwbMissing += acctAwbMissing;
@@ -290,6 +303,13 @@ export async function syncStockxInboundPackagesFromStockxApi(
     totalFirstSeen += acctFirstSeen;
     totalRefreshed += acctRefreshed;
     totalKept += acctKept;
+    totalWithLogistics += acctWithLogistics;
+    totalFallbackFirstSeen += acctFallbackFirstSeen;
+    for (const k of Object.keys(
+      acctLogisticsSources
+    ) as Array<keyof LogisticsDateSourceCounts>) {
+      totalLogisticsSources[k] += acctLogisticsSources[k];
+    }
   }
 
   return {
@@ -302,6 +322,10 @@ export async function syncStockxInboundPackagesFromStockxApi(
     pruned: totalPruned,
     firstSeen: totalFirstSeen,
     refreshed: totalRefreshed,
+    withLogisticsEventAt: totalWithLogistics,
+    fallbackFirstSeenAt: totalFallbackFirstSeen,
+    missingLogisticsEventAt: totalFallbackFirstSeen,
+    logisticsDateSources: totalLogisticsSources,
     upserted: totalFirstSeen + totalRefreshed,
     perAccount,
   };

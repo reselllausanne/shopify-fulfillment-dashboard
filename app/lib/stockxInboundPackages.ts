@@ -70,37 +70,299 @@ export function inboundRetentionRankAt(row: {
 }
 
 /**
- * Logistics timestamp for inbound retention ranking.
- * Prefer real parcel movement dates — NEVER purchaseDate / creationDate
- * (buy time ≠ when the package is inbound).
+ * Observed logistics source used for stockxEventAt (or first_seen fallback).
+ */
+export type LogisticsDateSource =
+  | "delivered"
+  | "shipped"
+  | "tracking"
+  | "state"
+  | "first_seen";
+
+export type ResolveStockxInboundLogisticsResult = {
+  stockxEventAt: Date | null;
+  source: LogisticsDateSource;
+};
+
+export type LogisticsDateSourceCounts = Record<LogisticsDateSource, number>;
+
+export function emptyLogisticsDateSourceCounts(): LogisticsDateSourceCounts {
+  return {
+    delivered: 0,
+    shipped: 0,
+    tracking: 0,
+    state: 0,
+    first_seen: 0,
+  };
+}
+
+/** Reject missing / NaN / future timestamps (ETA & deadlines sneak in as future). */
+export function isObservedLogisticsDate(
+  value: Date | string | null | undefined,
+  now: Date = new Date()
+): Date | null {
+  const d = asDate(value);
+  if (!d) return null;
+  // 5 min clock skew only — anything further in the future is estimate/deadline.
+  if (d.getTime() > now.getTime() + 5 * 60 * 1000) return null;
+  return d;
+}
+
+const SHIP_OR_DELIVER_STATUS_RE =
+  /\b(delivered|delivery|shipped|ship|in[_\s-]?transit|out[_\s-]?for[_\s-]?delivery|authenticated|completed?)\b/i;
+
+function firstObservedDate(
+  now: Date,
+  ...candidates: unknown[]
+): Date | null {
+  for (const c of candidates) {
+    const d = isObservedLogisticsDate(c as any, now);
+    if (d) return d;
+  }
+  return null;
+}
+
+function latestObservedDateFromArray(items: unknown[], now: Date): Date | null {
+  let best: Date | null = null;
+  for (const item of items) {
+    if (!item || typeof item !== "object") {
+      const d = isObservedLogisticsDate(item as any, now);
+      if (d && (!best || d.getTime() > best.getTime())) best = d;
+      continue;
+    }
+    const row = item as Record<string, unknown>;
+    const d = firstObservedDate(
+      now,
+      row.occurredAt,
+      row.at,
+      row.date,
+      row.timestamp,
+      row.time,
+      row.changedAt,
+      row.updatedAt,
+      row.createdAt,
+      row.completedAt,
+      row.statusDate,
+      row.eventDate,
+      (row.meta as any)?.date,
+      (row.meta as any)?.timestamp,
+      (row.meta as any)?.occurredAt
+    );
+    if (d && (!best || d.getTime() > best.getTime())) best = d;
+  }
+  return best;
+}
+
+/**
+ * stockxEventAt = real observed transport event only.
  *
- * Priority:
- * 1. deliveredDate
- * 2. estimatedDeliveryDateRange (latest, then min)
- * 3. sellerShipByDateRange (actual, then end, then start)
+ * Allowed (priority):
+ * 1. deliveredAt / receivedAt / deliveredDate
+ * 2. shippedAt
+ * 3. last carrier tracking event timestamp
+ * 4. state.changedAt / state.updatedAt
+ *
+ * Forbidden: ETA, sellerShipBy, purchaseDate, creationDate, any future proxy.
+ * No real event → stockxEventAt=null, source=first_seen (rank by firstSeenAt).
  */
 export function resolveStockxInboundLogisticsAt(params: {
+  deliveredAt?: Date | string | null;
   deliveredDate?: Date | string | null;
+  receivedAt?: Date | string | null;
+  shippedAt?: Date | string | null;
+  trackingEventAt?: Date | string | null;
+  /** @deprecated alias of trackingEventAt */
+  lastTrackingStatusAt?: Date | string | null;
+  /** Timestamp tied to a StockX status that confirms ship/delivery. */
+  stateConfirmedAt?: Date | string | null;
+  /** Status key/title used only to validate stateConfirmedAt. */
+  stateStatusKey?: string | null;
+  /** @deprecated ignored unless paired via extract with confirming status */
+  stateChangedAt?: Date | string | null;
+  stateUpdatedAt?: Date | string | null;
+  now?: Date;
+  // Explicitly ignored — must never drive retention.
   estimatedDeliveryDate?: Date | string | null;
   latestEstimatedDeliveryDate?: Date | string | null;
   sellerShipByActual?: Date | string | null;
   sellerShipByEnd?: Date | string | null;
   sellerShipByStart?: Date | string | null;
-  /** Explicitly ignored — must not drive retention. */
   purchaseDate?: Date | string | null;
   creationDate?: Date | string | null;
-}): Date | null {
+}): ResolveStockxInboundLogisticsResult {
+  void params.estimatedDeliveryDate;
+  void params.latestEstimatedDeliveryDate;
+  void params.sellerShipByActual;
+  void params.sellerShipByEnd;
+  void params.sellerShipByStart;
   void params.purchaseDate;
   void params.creationDate;
-  return (
-    asDate(params.deliveredDate) ??
-    asDate(params.latestEstimatedDeliveryDate) ??
-    asDate(params.estimatedDeliveryDate) ??
-    asDate(params.sellerShipByActual) ??
-    asDate(params.sellerShipByEnd) ??
-    asDate(params.sellerShipByStart) ??
-    null
+
+  const now = params.now ?? new Date();
+
+  const delivered = firstObservedDate(
+    now,
+    params.deliveredAt,
+    params.deliveredDate,
+    params.receivedAt
   );
+  if (delivered) return { stockxEventAt: delivered, source: "delivered" };
+
+  const shipped = isObservedLogisticsDate(params.shippedAt, now);
+  if (shipped) return { stockxEventAt: shipped, source: "shipped" };
+
+  const tracking = firstObservedDate(
+    now,
+    params.trackingEventAt,
+    params.lastTrackingStatusAt
+  );
+  if (tracking) return { stockxEventAt: tracking, source: "tracking" };
+
+  const statusKey = String(params.stateStatusKey ?? "").trim();
+  const stateConfirmed = isObservedLogisticsDate(params.stateConfirmedAt, now);
+  if (stateConfirmed && statusKey && SHIP_OR_DELIVER_STATUS_RE.test(statusKey)) {
+    return { stockxEventAt: stateConfirmed, source: "state" };
+  }
+
+  // Priority 4: bare state.changedAt / state.updatedAt (list or detail).
+  const stateChanged = firstObservedDate(
+    now,
+    params.stateChangedAt,
+    params.stateUpdatedAt
+  );
+  if (stateChanged) return { stockxEventAt: stateChanged, source: "state" };
+
+  return { stockxEventAt: null, source: "first_seen" };
+}
+
+/**
+ * Pull real observed logistics fields from a StockX buy-order detail / list node.
+ * Never reads ETA or sellerShipBy into stockxEventAt candidates.
+ */
+export function extractStockxInboundLogisticsAt(params: {
+  detailOrder?: any | null;
+  listNode?: any | null;
+  now?: Date;
+}): ResolveStockxInboundLogisticsResult {
+  const order = params.detailOrder ?? null;
+  const node = params.listNode ?? null;
+  const now = params.now ?? new Date();
+  const shipment = order?.shipping?.shipment ?? null;
+  const returnInfo = order?.returnInfo ?? null;
+
+  const deliveredDate = firstObservedDate(
+    now,
+    order?.deliveredAt,
+    order?.receivedAt,
+    order?.deliveredDate,
+    shipment?.deliveredAt,
+    shipment?.receivedAt,
+    // shipment.deliveryDate is carrier-observed delivery when present (not ETA).
+    shipment?.deliveryDate,
+    returnInfo?.orderDeliveredDate,
+    returnInfo?.receivedAt
+  );
+
+  const shippedAt = firstObservedDate(
+    now,
+    order?.shippedAt,
+    order?.shippedDate,
+    shipment?.shippedAt,
+    shipment?.shippedDate,
+    shipment?.shipDate
+  );
+
+  const trackingBuckets: unknown[] = [];
+  for (const bucket of [
+    shipment?.trackingEvents,
+    shipment?.trackingHistory,
+    shipment?.events,
+    shipment?.statuses,
+    shipment?.trackingStatuses,
+    order?.trackingEvents,
+    order?.trackingHistory,
+    order?.tracking?.events,
+    order?.tracking?.history,
+  ]) {
+    if (Array.isArray(bucket)) trackingBuckets.push(...bucket);
+  }
+  const trackingEventAt = latestObservedDateFromArray(trackingBuckets, now);
+
+  const stateStatusKey =
+    (typeof order?.currentStatus?.key === "string" && order.currentStatus.key) ||
+    (typeof order?.status === "string" && order.status) ||
+    (typeof node?.state?.statusKey === "string" && node.state.statusKey) ||
+    (typeof node?.state?.statusTitle === "string" && node.state.statusTitle) ||
+    null;
+
+  // Timestamp only from a confirming ship/delivery state entry.
+  let stateConfirmedAt: Date | null = null;
+  const states = Array.isArray(order?.states) ? order.states : [];
+  for (const st of states) {
+    const key = String(st?.status ?? st?.title ?? st?.key ?? "").trim();
+    if (!SHIP_OR_DELIVER_STATUS_RE.test(key)) continue;
+    const d = firstObservedDate(
+      now,
+      st?.meta?.date,
+      st?.meta?.timestamp,
+      st?.meta?.occurredAt,
+      st?.date,
+      st?.timestamp,
+      st?.completedAt,
+      st?.changedAt,
+      st?.updatedAt
+    );
+    if (d) {
+      stateConfirmedAt = d;
+      break;
+    }
+  }
+  // Also accept list/detail status timestamp when the key itself confirms ship/delivery.
+  if (!stateConfirmedAt && stateStatusKey && SHIP_OR_DELIVER_STATUS_RE.test(stateStatusKey)) {
+    stateConfirmedAt = firstObservedDate(
+      now,
+      node?.state?.changedAt,
+      node?.state?.updatedAt,
+      order?.state?.changedAt,
+      order?.currentStatus?.changedAt,
+      order?.currentStatus?.updatedAt,
+      order?.statusChangedAt,
+      order?.statusUpdatedAt
+    );
+  }
+
+  return resolveStockxInboundLogisticsAt({
+    deliveredDate,
+    shippedAt,
+    trackingEventAt,
+    stateConfirmedAt,
+    stateStatusKey,
+    stateChangedAt: firstObservedDate(
+      now,
+      node?.state?.changedAt,
+      order?.state?.changedAt,
+      order?.currentStatus?.changedAt,
+      order?.statusChangedAt
+    ),
+    stateUpdatedAt: firstObservedDate(
+      now,
+      node?.state?.updatedAt,
+      order?.state?.updatedAt,
+      order?.currentStatus?.updatedAt,
+      order?.statusUpdatedAt
+    ),
+    now,
+    // Forbidden inputs — pass only to prove they are ignored.
+    purchaseDate: node?.purchaseDate ?? order?.created ?? null,
+    creationDate: node?.creationDate ?? null,
+    estimatedDeliveryDate:
+      node?.estimatedDeliveryDateRange?.estimatedDeliveryDate ?? null,
+    latestEstimatedDeliveryDate:
+      node?.estimatedDeliveryDateRange?.latestEstimatedDeliveryDate ?? null,
+    sellerShipByActual: order?.sellerShipByDateRange?.actual ?? null,
+    sellerShipByEnd: order?.sellerShipByDateRange?.end ?? null,
+    sellerShipByStart: order?.sellerShipByDateRange?.start ?? null,
+  });
 }
 
 export async function upsertStockxInboundPackage(
