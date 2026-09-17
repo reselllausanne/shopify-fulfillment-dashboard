@@ -8,12 +8,13 @@ ALTER TABLE "public"."StockxInboundPackage"
 ALTER TABLE "public"."StockxInboundPackage"
   ADD COLUMN IF NOT EXISTS "stockxEventAt" TIMESTAMP(3);
 
--- Backfill from existing columns when present.
+-- Backfill first/last seen only. Never copy purchaseDate/arrivedAt into stockxEventAt
+-- (purchaseDate is buy time, not an observed logistics event).
 UPDATE "public"."StockxInboundPackage"
 SET
   "firstSeenAt" = COALESCE("firstSeenAt", "arrivedAt", "createdAt", CURRENT_TIMESTAMP),
-  "lastSeenAt" = COALESCE("lastSeenAt", "updatedAt", "arrivedAt", CURRENT_TIMESTAMP),
-  "stockxEventAt" = COALESCE("stockxEventAt", "purchaseDate", "arrivedAt");
+  "lastSeenAt" = COALESCE("lastSeenAt", "updatedAt", "arrivedAt", CURRENT_TIMESTAMP)
+WHERE TRUE;
 
 CREATE INDEX IF NOT EXISTS "StockxInboundPackage_firstSeenAt_idx"
   ON "public"."StockxInboundPackage"("firstSeenAt");
