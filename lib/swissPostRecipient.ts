@@ -211,32 +211,59 @@ export function buildSwissPostRecipientNameFields(input: {
   };
 }
 
+/** House number alone: 8 / 3b / 12A (not a street name). */
+function isSwissPostHouseNumberOnly(value: string): boolean {
+  return /^\d+[a-zA-Z]?$/u.test(value.trim());
+}
+
+/**
+ * Access / delivery notes that must not become the street line.
+ * Galaxus often puts these in address2; Swiss Post street Pattern rejects them.
+ */
+function isSwissPostAccessNote(value: string): boolean {
+  const raw = value.trim();
+  if (!raw) return false;
+  return /\b(door\s*code|digicode|code\s*(porte|digicode|acces|accès)?|buzzer|klingel|étage|etage|floor|appartement|apartment|apt\.?|app\.?|interphone|c\/o)\b/iu.test(
+    raw
+  );
+}
+
 export function sanitizeStreetForSwissPost(baseStreet: unknown, extraStreet?: unknown): string {
   const base = normalizeSwissPostText(baseStreet);
   const extra = normalizeSwissPostText(extraStreet);
   let street = base;
 
-  if (!street && extra) {
+  if (!street && extra && !isSwissPostAccessNote(extra)) {
     street = extra;
   }
 
-  // French house-number prefix: "11, rue des Eaux-Vives" → "11 rue des Eaux-Vives".
-  // Old logic split on comma and kept only the left token ("11"), dropping the street.
+  // Comma in street:
+  // - French prefix: "11, rue des Eaux-Vives" → "11 rue des Eaux-Vives"
+  // - CH/FR suffix: "Rue des Maraîchers, 8" → "Rue des Maraîchers 8"
+  // - Marketplace note: "Bahnhofstrasse 1, Dock A19" → keep left only
   if (street.includes(",")) {
     const [left, ...rest] = street.split(",");
     const leftTrim = (left ?? "").trim();
     const rightTrim = rest.join(",").trim();
-    // Pure house number (11 / 3b / 12A) — not a street name. Rejoin with the right side.
-    const leftIsHouseNumberOnly = /^\d+[a-zA-Z]?$/u.test(leftTrim);
+    const leftIsHouseNumberOnly = isSwissPostHouseNumberOnly(leftTrim);
+    const rightIsHouseNumberOnly = isSwissPostHouseNumberOnly(rightTrim);
     if (leftIsHouseNumberOnly && rightTrim) {
       street = `${leftTrim} ${rightTrim}`.trim();
+    } else if (rightIsHouseNumberOnly && leftTrim) {
+      street = `${leftTrim} ${rightTrim}`.trim();
     } else {
-      // Marketplace notes after a real street ("Bahnhofstrasse 1, Dock A19") → keep street.
       street = leftTrim || street;
     }
   }
 
-  if (!/\d/.test(street) && extra && /\d/.test(extra)) {
+  // Only append address2 when street still lacks a number and address2 is a real
+  // house number / street fragment — never door-code / floor notes.
+  if (
+    !/\d/.test(street) &&
+    extra &&
+    /\d/.test(extra) &&
+    !isSwissPostAccessNote(extra)
+  ) {
     street = `${street} ${extra}`.trim();
   }
 

@@ -152,8 +152,37 @@ describe("sanitizeStreetForSwissPost", () => {
     expect(sanitizeStreetForSwissPost("3b, avenue de la Gare")).toBe("3b avenue de la Gare");
   });
 
+  it("keeps street-comma-number (Rue des Maraîchers, 8)", () => {
+    expect(sanitizeStreetForSwissPost("Rue des Maraîchers, 8")).toBe("Rue des Maraîchers 8");
+  });
+
+  it("does not glue door-code address2 onto street missing number", () => {
+    expect(
+      sanitizeStreetForSwissPost("Rue des Maraîchers, 8", "Door code 4523 , floor 4")
+    ).toBe("Rue des Maraîchers 8");
+  });
+
   it("still strips trailing marketplace notes after a real street", () => {
     expect(sanitizeStreetForSwissPost("Bahnhofstrasse 1, Dock A19")).toBe("Bahnhofstrasse 1");
+  });
+});
+
+describe("buildSwissPostRecipient Ilia Rassanov / Galaxus 202397506", () => {
+  it("street = Rue des Maraîchers 8; door code stays out of street", () => {
+    const recipient = buildSwissPostRecipientFromGalaxusOrder({
+      recipientName: "Ilia Rassanov",
+      recipientAddress1: "Rue des Maraîchers, 8",
+      recipientAddress2: "Door code 4523 , floor 4",
+      recipientPostalCode: "1205",
+      recipientCity: "Genève",
+      recipientCountryCode: "CH",
+      customerType: "private_customer",
+      referencePerson: "Ilia Rassanov",
+    });
+    expect(recipient.street).toBe("Rue des Maraîchers 8");
+    expect(recipient.street).not.toMatch(/door|floor|4523/i);
+    expect(recipient.zip).toBe("1205");
+    expect(recipient.city).toBe("Genève");
   });
 });
 
