@@ -160,9 +160,10 @@ function latestObservedDateFromArray(items: unknown[], now: Date): Date | null {
  * 1. deliveredAt / receivedAt / deliveredDate
  * 2. shippedAt
  * 3. last carrier tracking event timestamp
- * 4. state.changedAt / state.updatedAt
+ * 4. timestamp of a StockX status that confirms ship/delivery
  *
- * Forbidden: ETA, sellerShipBy, purchaseDate, creationDate, any future proxy.
+ * Forbidden: ETA, sellerShipBy, purchaseDate, creationDate, bare
+ * state.changedAt without confirming status, any future proxy.
  * No real event → stockxEventAt=null, source=first_seen (rank by firstSeenAt).
  */
 export function resolveStockxInboundLogisticsAt(params: {
