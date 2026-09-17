@@ -61,13 +61,39 @@ const POKEMON_BOOSTER_RE =
 const POKEMON_DISPLAY_RE =
   /\b(booster\s*display|display\s*box|booster\s*box|36\s*booster|18\s*booster|etb|elite\s*trainer)\b/i;
 
+/** Structured "Dimensions : A x B x C mm|cm|m" → longest edge in metres. */
+export function extractStructuredDimensionMetres(text: string): number | null {
+  const t = String(text ?? "");
+  let maxM: number | null = null;
+  const consider = (metres: number) => {
+    if (!(metres > 0) || !Number.isFinite(metres)) return;
+    if (maxM == null || metres > maxM) maxM = metres;
+  };
+
+  const re =
+    /dimensions?\s*:\s*([\d.,]+)\s*[x×\*]\s*([\d.,]+)\s*[x×\*]\s*([\d.,]+)\s*(mm|cm|m)\b/gi;
+  for (const m of t.matchAll(re)) {
+    const unit = String(m[4] ?? "").toLowerCase();
+    const nums = [m[1], m[2], m[3]].map((s) => Number(String(s).replace(",", ".")));
+    for (const n of nums) {
+      if (!(n > 0) || !Number.isFinite(n)) continue;
+      if (unit === "mm") consider(n / 1000);
+      else if (unit === "cm") consider(n / 100);
+      else if (unit === "m") consider(n);
+    }
+  }
+  return maxM;
+}
+
 /**
- * Parse longest edge from titles like "1200 mm", "1,5 m", "150 cm".
+ * Parse longest edge from titles like "1200 mm", "1,5 m", "150 cm",
+ * plus structured "Dimensions : A x B x C mm".
  * Returns metres, or null when no dimension found.
  */
 export function extractLongestDimensionMetres(text: string): number | null {
   const t = String(text ?? "");
-  let maxM: number | null = null;
+  let maxM = extractStructuredDimensionMetres(t);
+
   const consider = (metres: number) => {
     if (!(metres > 0) || !Number.isFinite(metres)) return;
     if (maxM == null || metres > maxM) maxM = metres;
@@ -93,26 +119,70 @@ export function extractLongestDimensionMetres(text: string): number | null {
   return maxM;
 }
 
+function parseReicheltDescriptionText(manualNote: unknown): string | null {
+  if (!manualNote || typeof manualNote !== "string") return null;
+  try {
+    const parsed = JSON.parse(manualNote);
+    const text = String(parsed?.descriptionText ?? "").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prefer structured dimensions from Reichelt manualNote.descriptionText,
+ * then free-text parse of description, then title/brand/extraText fallback.
+ */
+export function resolveReicheltLongestDimensionMetres(input: {
+  title?: string | null;
+  brand?: string | null;
+  extraText?: string | null;
+  manualNote?: string | null;
+}): number | null {
+  const descriptionText = parseReicheltDescriptionText(input.manualNote);
+  if (descriptionText) {
+    const structured = extractStructuredDimensionMetres(descriptionText);
+    if (structured != null) return structured;
+    const fromDesc = extractLongestDimensionMetres(descriptionText);
+    if (fromDesc != null) return fromDesc;
+  }
+
+  const fallback = [input.title, input.brand, input.extraText].filter(Boolean).join(" ").trim();
+  if (!fallback) return null;
+  const structured = extractStructuredDimensionMetres(fallback);
+  if (structured != null) return structured;
+  return extractLongestDimensionMetres(fallback);
+}
+
 export function shouldOmitReicheltByIntegrity(input: {
   supplierKey?: string | null;
   title?: string | null;
   brand?: string | null;
   extraText?: string | null;
+  manualNote?: string | null;
 }): FeedIntegrityHit {
   const supplier = String(input.supplierKey ?? "").trim().toLowerCase();
   if (supplier !== "rei" && supplier !== "reichelt") return { omit: false };
 
-  const text = [input.title, input.brand, input.extraText].filter(Boolean).join(" ").trim();
+  const descriptionText = parseReicheltDescriptionText(input.manualNote);
+  const text = [input.title, input.brand, input.extraText, descriptionText]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
   if (!text) return { omit: false };
 
+  const metres = resolveReicheltLongestDimensionMetres(input);
+
+  // Neon: exclude when length unknown OR proven > 1.20 m.
   if (NEON_TITLE_RE.test(text)) {
-    const metres = extractLongestDimensionMetres(text);
     if (metres == null || metres > REICHELT_MAX_UNIT_DIMENSION_M) {
       return {
         omit: true,
-        reason: metres != null && metres > REICHELT_MAX_UNIT_DIMENSION_M
-          ? "REI_DIMENSION_OVER_120CM"
-          : "REI_NEON_PRODUCT",
+        reason:
+          metres != null && metres > REICHELT_MAX_UNIT_DIMENSION_M
+            ? "REI_DIMENSION_OVER_120CM"
+            : "REI_NEON_PRODUCT",
         detail:
           metres != null
             ? `neon length≈${metres.toFixed(2)}m`
@@ -121,15 +191,13 @@ export function shouldOmitReicheltByIntegrity(input: {
     }
   }
 
-  for (const rule of REICHELT_DIMENSION_EXCLUSION_RULES) {
-    const metres = rule.test(text);
-    if (metres != null && metres > REICHELT_MAX_UNIT_DIMENSION_M) {
-      return {
-        omit: true,
-        reason: rule.reason,
-        detail: `${rule.id}: longestEdge=${metres.toFixed(2)}m > ${REICHELT_MAX_UNIT_DIMENSION_M}m`,
-      };
-    }
+  // Non-neon: never exclude when dimension unknown — only when proven > 1.20 m.
+  if (metres != null && metres > REICHELT_MAX_UNIT_DIMENSION_M) {
+    return {
+      omit: true,
+      reason: "REI_DIMENSION_OVER_120CM",
+      detail: `longestEdge=${metres.toFixed(2)}m > ${REICHELT_MAX_UNIT_DIMENSION_M}m`,
+    };
   }
 
   return { omit: false };
@@ -220,6 +288,7 @@ export function evaluateFeedIntegrityOmit(input: {
   mappedTitle?: string | null;
   productType?: string | null;
   extraText?: string | null;
+  manualNote?: string | null;
 }): FeedIntegrityHit {
   const rei = shouldOmitReicheltByIntegrity(input);
   if (rei.omit) return rei;

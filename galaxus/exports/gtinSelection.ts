@@ -173,6 +173,7 @@ export function accumulateBestCandidates(
         supplierSku: variant?.supplierSku,
         mappedTitle: mapping?.kickdbVariant?.product?.name ?? null,
         productType: variant?.supplierProductType ?? null,
+        manualNote: variant?.manualNote ?? null,
         extraText: [
           mapping?.kickdbVariant?.product?.name,
           mapping?.kickdbVariant?.product?.brand,

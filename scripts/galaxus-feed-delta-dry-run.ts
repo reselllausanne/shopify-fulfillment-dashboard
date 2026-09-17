@@ -5,6 +5,7 @@
  *
  *   npx tsx scripts/galaxus-feed-delta-dry-run.ts
  *   npx tsx scripts/galaxus-feed-delta-dry-run.ts --ratio 2
+ *   npx tsx scripts/galaxus-feed-delta-dry-run.ts --rei-page 500
  */
 import { prisma } from "@/app/lib/prisma";
 import {
@@ -15,8 +16,7 @@ import {
 import { readStxExpressOverStandardMaxRatio } from "@/galaxus/stx/variantPriceLanes";
 import {
   REICHELT_DIMENSION_EXCLUSION_RULES,
-  REICHELT_MAX_UNIT_DIMENSION_M,
-  extractLongestDimensionMetres,
+  shouldOmitReicheltByIntegrity,
 } from "@/galaxus/exports/feedIntegrityRules";
 
 function readArg(name: string): string | null {
@@ -25,8 +25,90 @@ function readArg(name: string): string | null {
   return process.argv[idx + 1] ?? null;
 }
 
+type ReiRow = {
+  supplierVariantId: string;
+  providerKey: string | null;
+  title: string | null;
+  brand: string | null;
+  manualNote: string | null;
+};
+
+async function scanAllReicheltInStock(pageSize: number): Promise<{
+  scanned: number;
+  exclusions: Array<{
+    providerKey: string;
+    supplier: string;
+    reason: string;
+    detail?: string;
+  }>;
+  byReason: Record<string, number>;
+  samples: Record<string, string[]>;
+}> {
+  const exclusions: Array<{
+    providerKey: string;
+    supplier: string;
+    reason: string;
+    detail?: string;
+  }> = [];
+  const byReason: Record<string, number> = {};
+  const samples: Record<string, string[]> = {};
+  let scanned = 0;
+  let afterId = "";
+
+  while (true) {
+    const page = await prisma.$queryRawUnsafe<ReiRow[]>(
+      `
+      SELECT
+        "supplierVariantId",
+        "providerKey",
+        "supplierProductName" AS title,
+        "supplierBrand" AS brand,
+        "manualNote"
+      FROM "SupplierVariant"
+      WHERE "supplierVariantId" LIKE 'rei\\_%'
+        AND stock > 0
+        AND "supplierVariantId" > $1
+      ORDER BY "supplierVariantId" ASC
+      LIMIT $2
+      `,
+      afterId,
+      pageSize
+    );
+    if (page.length === 0) break;
+
+    for (const row of page) {
+      scanned += 1;
+      afterId = row.supplierVariantId;
+      const hit = shouldOmitReicheltByIntegrity({
+        supplierKey: "rei",
+        title: row.title,
+        brand: row.brand,
+        manualNote: row.manualNote,
+      });
+      if (!hit.omit || !hit.reason) continue;
+      const providerKey = String(row.providerKey ?? row.supplierVariantId);
+      exclusions.push({
+        providerKey,
+        supplier: "rei",
+        reason: hit.reason,
+        detail: hit.detail,
+      });
+      byReason[hit.reason] = (byReason[hit.reason] ?? 0) + 1;
+      const sampleList = samples[hit.reason] ?? (samples[hit.reason] = []);
+      if (sampleList.length < 10) {
+        sampleList.push(`${providerKey} ${hit.detail ?? ""}`.trim());
+      }
+    }
+
+    if (page.length < pageSize) break;
+  }
+
+  return { scanned, exclusions, byReason, samples };
+}
+
 async function main() {
   const ratio = Number.parseFloat(readArg("--ratio") ?? "") || readStxExpressOverStandardMaxRatio();
+  const reiPage = Math.max(100, Number.parseInt(readArg("--rei-page") ?? "1000", 10) || 1000);
   const guard = readFeedDeltaGuardConfig();
 
   const flipped = await prisma.$queryRawUnsafe<
@@ -90,56 +172,11 @@ async function main() {
   const prevStock = typeof prev.stock === "number" ? prev.stock : null;
   const prevOffer = typeof prev.offer === "number" ? prev.offer : null;
   const prevPositive =
-    typeof prev.positiveStock === "number"
-      ? prev.positiveStock
-      : prevStock;
+    typeof prev.positiveStock === "number" ? prev.positiveStock : prevStock;
 
-  // REI dimension sample (title scan, capped)
-  const reiRows = await prisma.$queryRawUnsafe<
-    Array<{ providerKey: string | null; title: string | null }>
-  >(
-    `
-    SELECT "providerKey", "supplierProductName" AS title
-    FROM "SupplierVariant"
-    WHERE "supplierVariantId" LIKE 'rei\\_%'
-      AND stock > 0
-    ORDER BY "updatedAt" DESC
-    LIMIT 5000
-    `
-  );
-  const reiExclusions: Array<{
-    providerKey: string;
-    supplier: string;
-    reason: string;
-    detail?: string;
-  }> = [];
-  for (const row of reiRows) {
-    const title = String(row.title ?? "");
-    const metres = extractLongestDimensionMetres(title);
-    const neon = /\b(neon|néon|neonröhre)\b/i.test(title);
-    if (neon && (metres == null || metres > REICHELT_MAX_UNIT_DIMENSION_M)) {
-      reiExclusions.push({
-        providerKey: String(row.providerKey ?? ""),
-        supplier: "rei",
-        reason: metres != null && metres > REICHELT_MAX_UNIT_DIMENSION_M
-          ? "REI_DIMENSION_OVER_120CM"
-          : "REI_NEON_PRODUCT",
-        detail: metres != null ? `${metres.toFixed(2)}m` : "neon",
-      });
-      continue;
-    }
-    if (metres != null && metres > REICHELT_MAX_UNIT_DIMENSION_M) {
-      reiExclusions.push({
-        providerKey: String(row.providerKey ?? ""),
-        supplier: "rei",
-        reason: "REI_DIMENSION_OVER_120CM",
-        detail: `${metres.toFixed(2)}m`,
-      });
-    }
-  }
+  const rei = await scanAllReicheltInStock(reiPage);
 
   const f = flipped[0]!;
-  // Simulate: flipped products with stock stay published (lane change only).
   const nextPositive = prevPositive != null ? prevPositive : f.with_stock;
   const report = buildFeedDeltaReport({
     dryRun: true,
@@ -148,19 +185,17 @@ async function main() {
     previousPositiveStockRows: prevPositive,
     nextStockRows: prevStock ?? f.with_stock,
     nextOfferRows: prevOffer ?? f.with_stock,
-    // If we wrongly zeroed flipped rows, drop would be ~zero_stock + still bad.
-    // Correct path: positive stock ≈ unchanged (lane only).
     nextPositiveStockRows: nextPositive,
     expressToStandard: f.total,
     exclusions: [
-      ...reiExclusions,
+      ...rei.exclusions,
       ...(f.zero_stock > 0
         ? [
             {
               providerKey: "(aggregate)",
               supplier: "stx",
-              reason: "STOCK_ZERO_NOT_LANE_CHANGE",
-              detail: `${f.zero_stock} flipped rows currently stock=0 (true OOS / asks) — not a delivery demotion`,
+              reason: "STOCK_ZERO_REQUIRES_SOURCE_RECHECK",
+              detail: `${f.zero_stock} flipped rows currently stock=0 — recheck KickDB asks before calling true OOS`,
             },
           ]
         : []),
@@ -185,7 +220,7 @@ async function main() {
         expressToStandard: {
           total: f.total,
           withStock: f.with_stock,
-          zeroStock: f.zero_stock,
+          zeroStockRequiresSourceRecheck: f.zero_stock,
           stillExpressOverCap: f.still_express_bad,
         },
         reiDimensionRules: REICHELT_DIMENSION_EXCLUSION_RULES.map((r) => ({
@@ -193,8 +228,12 @@ async function main() {
           reason: r.reason,
           description: r.description,
         })),
-        reiExclusionsSampled: reiExclusions.length,
-        reiScanLimit: reiRows.length,
+        reiInStockScan: {
+          scanned: rei.scanned,
+          totalExclusions: rei.exclusions.length,
+          byReason: rei.byReason,
+          samples: rei.samples,
+        },
         lastFeedRunAt: lastRun[0]?.startedAt ?? null,
         guard,
       },

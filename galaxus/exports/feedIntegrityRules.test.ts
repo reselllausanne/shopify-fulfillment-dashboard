@@ -3,6 +3,8 @@ import {
   detectPokemonBoosterDisplayMismatch,
   evaluateFeedIntegrityOmit,
   extractLongestDimensionMetres,
+  extractStructuredDimensionMetres,
+  resolveReicheltLongestDimensionMetres,
   sanitizePublishedQuantity,
   shouldOmitReicheltByIntegrity,
   shouldOmitWagoPackNotUnit,
@@ -20,6 +22,59 @@ describe("feedIntegrityRules", () => {
     // Short mm (<100) ignored by mm token (3–5 digits); must not become metres via "m" of "mm"
     expect(extractLongestDimensionMetres("cable 20 mm")).toBeNull();
     expect(extractLongestDimensionMetres("patch cable 20 m")).toBe(20);
+  });
+
+  it("parses structured Dimensions : A x B x C mm", () => {
+    expect(
+      extractStructuredDimensionMetres("Dimensions : 1500 x 50 x 50 mm")
+    ).toBe(1.5);
+    expect(
+      extractStructuredDimensionMetres("Dimensions: 120 x 80 x 40 cm")
+    ).toBe(1.2);
+  });
+
+  it("structured >1.20m → exclude", () => {
+    const hit = shouldOmitReicheltByIntegrity({
+      supplierKey: "rei",
+      title: "Profil aluminium",
+      manualNote: JSON.stringify({
+        type: "reichelt_landed_cost",
+        descriptionText: "Dimensions : 1500 x 50 x 50 mm anodisé",
+      }),
+    });
+    expect(hit.omit).toBe(true);
+    expect(hit.reason).toBe("REI_DIMENSION_OVER_120CM");
+  });
+
+  it("structured <=1.20m → keep", () => {
+    const hit = shouldOmitReicheltByIntegrity({
+      supplierKey: "rei",
+      title: "Profil aluminium",
+      manualNote: JSON.stringify({
+        type: "reichelt_landed_cost",
+        descriptionText: "Dimensions : 1200 x 50 x 50 mm",
+      }),
+    });
+    expect(hit.omit).toBe(false);
+  });
+
+  it("unknown non-neon → keep", () => {
+    const hit = shouldOmitReicheltByIntegrity({
+      supplierKey: "rei",
+      title: "Connecteur RJ45 Cat6",
+    });
+    expect(hit.omit).toBe(false);
+    expect(resolveReicheltLongestDimensionMetres({ title: "Connecteur RJ45 Cat6" })).toBeNull();
+  });
+
+  it("prefers manualNote descriptionText over title", () => {
+    const metres = resolveReicheltLongestDimensionMetres({
+      title: "Tube 600 mm",
+      manualNote: JSON.stringify({
+        descriptionText: "Dimensions : 1800 x 26 x 26 mm",
+      }),
+    });
+    expect(metres).toBe(1.8);
   });
 
   it("excludes Reichelt neon / >1.20 m with explicit reason", () => {
