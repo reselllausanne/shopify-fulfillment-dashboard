@@ -1,10 +1,18 @@
 import { prisma } from "@/app/lib/prisma";
+import {
+  applySupplierStockPublishGate,
+  loadEvidencePublishedQtyMap,
+  loadPolicyStatusMap,
+  resolveSupplierKeyFromIds,
+  type SupplierStockPolicyStatus,
+} from "@/inventory/supplierStock";
 
 type SupplierVariantLike = {
   supplierVariantId?: string | null;
   stock?: number | string | null;
   manualLock?: boolean | null;
   manualStock?: number | string | null;
+  providerKey?: string | null;
 };
 
 function toInt(value: unknown): number | null {
@@ -89,14 +97,45 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
   const deltas = await loadInventoryDeltasBySupplierVariantId(ids);
   const stockBySupplierVariantId = new Map<string, number>();
 
+  let policyMap = new Map<string, SupplierStockPolicyStatus>();
+  let evidenceMap = new Map<string, { publishedQty: number; lastProofAt: Date | null }>();
+  try {
+    if (typeof loadPolicyStatusMap === "function") {
+      policyMap = await loadPolicyStatusMap();
+    }
+    if (typeof loadEvidencePublishedQtyMap === "function") {
+      evidenceMap = await loadEvidencePublishedQtyMap(ids);
+    }
+  } catch (err: any) {
+    console.warn(
+      "[inventory][availableStock] supplier-stock gate skipped",
+      String(err?.message ?? err).slice(0, 200)
+    );
+  }
+
   for (const variant of variants) {
     const supplierVariantId = String(variant?.supplierVariantId ?? "").trim();
     if (!supplierVariantId) continue;
     const delta = deltas.get(supplierVariantId) ?? 0;
-    stockBySupplierVariantId.set(
-      supplierVariantId,
-      resolveInventoryAvailableStock(variant, delta)
-    );
+    let stock = resolveInventoryAvailableStock(variant, delta);
+
+    if (!variant?.manualLock && policyMap.size > 0) {
+      const supplierKey = resolveSupplierKeyFromIds(supplierVariantId);
+      const policyStatus = supplierKey ? policyMap.get(supplierKey) ?? null : null;
+      // Only gate scraper suppliers that have a policy row; STX/partners untouched.
+      if (policyStatus) {
+        const evidence = evidenceMap.get(supplierVariantId);
+        stock = applySupplierStockPublishGate({
+          baseStock: stock,
+          policyStatus,
+          evidencePublishedQty: evidence?.publishedQty ?? null,
+          lastProofAt: evidence?.lastProofAt ?? null,
+          manualLock: false,
+        });
+      }
+    }
+
+    stockBySupplierVariantId.set(supplierVariantId, stock);
   }
 
   return stockBySupplierVariantId;

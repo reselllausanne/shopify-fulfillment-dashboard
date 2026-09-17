@@ -13,6 +13,7 @@ import { scrapeBabyWalzShop } from "@/app/lib/babyWalzScrape";
 import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
 import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
 import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
+import { finalizeSupplierStockFromScrapeRun } from "@/inventory/supplierStock/hookScrape";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,10 +79,24 @@ export async function POST(request: Request) {
                             : shop.platform === "ven"
                               ? scrapeVenovaShop
                               : scrapeShop;
-    // Fire-and-forget: keep processing after the response returns.
-    void runScrape(shop, runId, maxProducts).catch((e) => {
-      console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);
-    });
+    // Fire-and-forget. Always finalize stock reconciliation after scrape (ok or error)
+    // so empty/failed runs cannot leave historical stock unchallenged.
+    void (async () => {
+      try {
+        await runScrape(shop, runId, maxProducts);
+      } catch (e: any) {
+        console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);
+      } finally {
+        try {
+          const result = await finalizeSupplierStockFromScrapeRun(shop.key, runId);
+          console.log(
+            `[supplier-stock] ${shop.key} run#${runId} finalize valid=${result.valid} reason=${result.invalidReason ?? "-"} paused=${result.paused}`
+          );
+        } catch (e: any) {
+          console.error(`[supplier-stock] ${shop.key} run#${runId} finalize failed:`, e?.message || e);
+        }
+      }
+    })();
   }
 
   return NextResponse.json({
