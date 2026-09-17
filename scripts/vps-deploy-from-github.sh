@@ -189,7 +189,9 @@ cleanup_stale_web_rename_containers() {
         ;;
     esac
   done < <(
-    docker ps -aq \
+    # -a required: stopped recreate leftovers (exited/created/dead) are the target.
+    # Without -a, only running containers appear and stopped renames are never cleaned.
+    docker ps -aq --all \
       --filter "label=com.docker.compose.project=${project}" \
       --filter "label=com.docker.compose.service=${service}" \
       2>/dev/null || true
