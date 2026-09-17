@@ -2,6 +2,9 @@
  * Persist / refresh the last N StockX packages arrived for AWB fallback.
  * Multi-account ready via stockxAccountKey (Shopify today; Galaxus later).
  *
+ * Retention ranking uses stockxEventAt, else firstSeenAt — never last cron tick.
+ * firstSeenAt is immutable after create; lastSeenAt refreshes on every sync hit.
+ *
  * NOTE: the legacy `syncStockxInboundPackagesFromDb` rebuilt this table from
  * OrderMatch + StxPurchaseUnit rows — that is the exact fake-signal pathway
  * we're eliminating. The real inbound sync lives in
@@ -24,8 +27,19 @@ export type UpsertStockxInboundPackageInput = {
   productName?: string | null;
   purchaseDate?: Date | string | null;
   status?: string | null;
+  /** @deprecated Prefer stockxEventAt; kept for callers that still pass it. */
   arrivedAt?: Date | string | null;
+  /** Best StockX event time (purchase/creation). Drives retention ranking. */
+  stockxEventAt?: Date | string | null;
   channelHint?: string | null;
+};
+
+export type UpsertStockxInboundPackageResult = {
+  awb: string;
+  created: boolean;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  stockxEventAt: Date | null;
 };
 
 function normalizeAwb(value: unknown): string {
@@ -41,9 +55,23 @@ function asDate(value: Date | string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Retention rank: stockxEventAt preferred, else firstSeenAt. Never lastSeenAt. */
+export function inboundRetentionRankAt(row: {
+  stockxEventAt?: Date | string | null;
+  firstSeenAt?: Date | string | null;
+  arrivedAt?: Date | string | null;
+}): Date {
+  return (
+    asDate(row.stockxEventAt) ??
+    asDate(row.firstSeenAt) ??
+    asDate(row.arrivedAt) ??
+    new Date(0)
+  );
+}
+
 export async function upsertStockxInboundPackage(
   input: UpsertStockxInboundPackageInput
-) {
+): Promise<UpsertStockxInboundPackageResult | null> {
   const awb = normalizeAwb(input.awb);
   if (!awb) return null;
   const prismaAny = prisma as any;
@@ -52,25 +80,55 @@ export async function upsertStockxInboundPackage(
     return null;
   }
 
+  const now = new Date();
   const purchaseDate = asDate(input.purchaseDate);
-  const arrivedAt = asDate(input.arrivedAt) ?? new Date();
+  const stockxEventAt =
+    asDate(input.stockxEventAt) ?? purchaseDate ?? asDate(input.arrivedAt);
+  // arrivedAt: set once on create from stockx event; do NOT bump on every cron.
+  const arrivedAtCreate = stockxEventAt ?? now;
 
-  return prismaAny.stockxInboundPackage.upsert({
+  const existing = await prismaAny.stockxInboundPackage.findUnique({
     where: { awb },
-    create: {
-      awb,
-      stockxOrderNumber: input.stockxOrderNumber ?? null,
-      stockxOrderId: input.stockxOrderId ?? null,
-      stockxAccountKey: input.stockxAccountKey ?? "default",
-      sku: input.sku ?? null,
-      sizeEU: input.sizeEU ?? null,
-      productName: input.productName ?? null,
-      purchaseDate,
-      status: input.status ?? null,
-      arrivedAt,
-      channelHint: input.channelHint ?? "shopify",
-    },
-    update: {
+    select: { id: true, firstSeenAt: true },
+  });
+
+  if (!existing) {
+    const created = await prismaAny.stockxInboundPackage.create({
+      data: {
+        awb,
+        stockxOrderNumber: input.stockxOrderNumber ?? null,
+        stockxOrderId: input.stockxOrderId ?? null,
+        stockxAccountKey: input.stockxAccountKey ?? "default",
+        sku: input.sku ?? null,
+        sizeEU: input.sizeEU ?? null,
+        productName: input.productName ?? null,
+        purchaseDate,
+        status: input.status ?? null,
+        arrivedAt: arrivedAtCreate,
+        firstSeenAt: now,
+        lastSeenAt: now,
+        stockxEventAt,
+        channelHint: input.channelHint ?? "shopify",
+      },
+      select: {
+        awb: true,
+        firstSeenAt: true,
+        lastSeenAt: true,
+        stockxEventAt: true,
+      },
+    });
+    return {
+      awb: created.awb,
+      created: true,
+      firstSeenAt: created.firstSeenAt,
+      lastSeenAt: created.lastSeenAt,
+      stockxEventAt: created.stockxEventAt ?? null,
+    };
+  }
+
+  const updated = await prismaAny.stockxInboundPackage.update({
+    where: { awb },
+    data: {
       stockxOrderNumber: input.stockxOrderNumber ?? undefined,
       stockxOrderId: input.stockxOrderId ?? undefined,
       stockxAccountKey: input.stockxAccountKey ?? undefined,
@@ -79,10 +137,28 @@ export async function upsertStockxInboundPackage(
       productName: input.productName ?? undefined,
       purchaseDate: purchaseDate ?? undefined,
       status: input.status ?? undefined,
-      arrivedAt,
+      // firstSeenAt: never touch
+      lastSeenAt: now,
+      // Prefer newer StockX event when available; do not clear.
+      stockxEventAt: stockxEventAt ?? undefined,
       channelHint: input.channelHint ?? undefined,
+      // arrivedAt: do not bump on resync
+    },
+    select: {
+      awb: true,
+      firstSeenAt: true,
+      lastSeenAt: true,
+      stockxEventAt: true,
     },
   });
+
+  return {
+    awb: updated.awb,
+    created: false,
+    firstSeenAt: updated.firstSeenAt,
+    lastSeenAt: updated.lastSeenAt,
+    stockxEventAt: updated.stockxEventAt ?? null,
+  };
 }
 
 export async function findStockxInboundPackageByAwb(awbRaw: string) {
@@ -91,6 +167,45 @@ export async function findStockxInboundPackageByAwb(awbRaw: string) {
   const prismaAny = prisma as any;
   if (!prismaAny.stockxInboundPackage) return null;
   return prismaAny.stockxInboundPackage.findUnique({ where: { awb } });
+}
+
+/**
+ * Keep the top `limit` rows for an account by retention rank
+ * (stockxEventAt desc, else firstSeenAt). Returns pruned count.
+ */
+export async function pruneStockxInboundPackagesForAccount(params: {
+  accountKey: string;
+  limit: number;
+}): Promise<number> {
+  const prismaAny = prisma as any;
+  if (!prismaAny.stockxInboundPackage) return 0;
+  const accountKey = String(params.accountKey ?? "").trim() || "default";
+  const limit = Math.max(1, Math.min(500, params.limit));
+
+  const rows = await prismaAny.stockxInboundPackage.findMany({
+    where: { stockxAccountKey: accountKey },
+    select: {
+      id: true,
+      stockxEventAt: true,
+      firstSeenAt: true,
+      arrivedAt: true,
+    },
+  });
+
+  if (rows.length <= limit) return 0;
+
+  const ranked = [...rows].sort(
+    (a, b) =>
+      inboundRetentionRankAt(b).getTime() - inboundRetentionRankAt(a).getTime()
+  );
+  const keepIds = new Set(ranked.slice(0, limit).map((r: { id: string }) => r.id));
+  const prunedResult = await prismaAny.stockxInboundPackage.deleteMany({
+    where: {
+      stockxAccountKey: accountKey,
+      id: { notIn: Array.from(keepIds) },
+    },
+  });
+  return Number(prunedResult?.count ?? 0);
 }
 
 /**

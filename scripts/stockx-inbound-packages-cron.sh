@@ -15,6 +15,14 @@ URL="${STOCKX_INBOUND_SYNC_URL:-http://localhost:3000/api/stockx/inbound-package
 LIMIT="${STOCKX_INBOUND_LIMIT:-100}"
 MAX_PAGES="${STOCKX_INBOUND_MAX_PAGES:-4}"
 CONCURRENCY="${STOCKX_INBOUND_CONCURRENCY:-2}"
+LOCK_FILE="${STOCKX_INBOUND_LOCK_FILE:-/tmp/stockx-inbound-packages-sync.lock}"
+
+# Non-blocking lock: if another sync is running, exit cleanly.
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  echo "SKIPPED_ALREADY_RUNNING lock=${LOCK_FILE}"
+  exit 0
+fi
 
 BODY=$(printf '{"limit":%s,"maxPages":%s,"concurrency":%s}' \
   "${LIMIT}" "${MAX_PAGES}" "${CONCURRENCY}")
