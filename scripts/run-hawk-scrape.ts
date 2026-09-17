@@ -1,35 +1,22 @@
 /**
- * Run HAWK Magento catalog scrape (CLI, no Next server required).
- *
- * Usage:
- *   npx tsx scripts/run-hawk-scrape.ts
- *   npx tsx scripts/run-hawk-scrape.ts --max=50
+ * CLI scrape for haw — routes through central runner (finalize once).
+ * Prefer: npx tsx scripts/run-supplier-scrape.ts --shop=haw
  */
 import "dotenv/config";
-import { findScraperShop } from "@/app/lib/scraperShops";
-import { hasRunningRun, recoverStaleRuns, scrapeHawkShop, startRun } from "@/app/lib/hawkScrape";
+import { runScraperJob } from "@/app/lib/scraperRunner";
 import { prisma } from "@/app/lib/prisma";
 
 const maxArg = process.argv.find((a) => a.startsWith("--max="));
 const maxProducts = maxArg ? Math.max(1, Number(maxArg.split("=")[1] || 0)) : undefined;
 
 async function main() {
-  await recoverStaleRuns(Number(process.env.SCRAPER_STALE_RUN_MINUTES || 90));
-  const shop = findScraperShop("haw");
-  if (!shop) throw new Error("HAW not configured in SCRAPER_SHOPS");
-
-  if (await hasRunningRun(shop.key)) {
-    console.log(JSON.stringify({ ok: false, error: "haw scrape already running" }));
-    return;
-  }
-
-  const runId = await startRun(shop);
-  console.log(JSON.stringify({ ok: true, shop: shop.key, runId, maxProducts: maxProducts ?? null }));
-  await scrapeHawkShop(shop, runId, maxProducts);
-  const count = await prisma.supplierVariant.count({
-    where: { supplierVariantId: { startsWith: "haw_" } },
+  const result = await runScraperJob({
+    shopKey: "haw",
+    maxProducts,
+    background: false,
   });
-  console.log(JSON.stringify({ ok: true, runId, hawRows: count }));
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.ok) process.exitCode = 1;
 }
 
 main()
@@ -38,5 +25,5 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await prisma.$disconnect().catch(() => undefined);
   });

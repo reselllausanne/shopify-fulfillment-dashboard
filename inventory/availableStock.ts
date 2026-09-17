@@ -1,10 +1,21 @@
 import { prisma } from "@/app/lib/prisma";
+import {
+  applySupplierStockPublishGate,
+  defaultPolicyStatusForSupplier,
+  isSupplierStockPublishEnforced,
+  loadEvidencePublishedQtyMap,
+  loadPolicyStatusMap,
+  resolveSupplierKeyFromIds,
+  SCRAPER_SUPPLIER_KEYS,
+  type SupplierStockPolicyStatus,
+} from "@/inventory/supplierStock";
 
 type SupplierVariantLike = {
   supplierVariantId?: string | null;
   stock?: number | string | null;
   manualLock?: boolean | null;
   manualStock?: number | string | null;
+  providerKey?: string | null;
 };
 
 function toInt(value: unknown): number | null {
@@ -89,14 +100,51 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
   const deltas = await loadInventoryDeltasBySupplierVariantId(ids);
   const stockBySupplierVariantId = new Map<string, number>();
 
+  const publishEnforced = isSupplierStockPublishEnforced();
+  let policyMap = new Map<string, SupplierStockPolicyStatus>();
+  let evidenceMap = new Map<string, { publishedQty: number; lastProofAt: Date | null }>();
+  if (publishEnforced) {
+    try {
+      if (typeof loadPolicyStatusMap === "function") {
+        policyMap = await loadPolicyStatusMap();
+      }
+      if (typeof loadEvidencePublishedQtyMap === "function") {
+        evidenceMap = await loadEvidencePublishedQtyMap(ids);
+      }
+    } catch (err: any) {
+      console.warn(
+        "[inventory][availableStock] supplier-stock gate skipped",
+        String(err?.message ?? err).slice(0, 200)
+      );
+    }
+  }
+
   for (const variant of variants) {
     const supplierVariantId = String(variant?.supplierVariantId ?? "").trim();
     if (!supplierVariantId) continue;
     const delta = deltas.get(supplierVariantId) ?? 0;
-    stockBySupplierVariantId.set(
-      supplierVariantId,
-      resolveInventoryAvailableStock(variant, delta)
-    );
+    let stock = resolveInventoryAvailableStock(variant, delta);
+
+    // OBSERVATION_ONLY_NOT_ENFORCED: never alter marketplace qty until flag=1.
+    if (publishEnforced && !variant?.manualLock) {
+      const supplierKey = resolveSupplierKeyFromIds(supplierVariantId);
+      if (supplierKey && SCRAPER_SUPPLIER_KEYS.has(supplierKey)) {
+        const policyStatus =
+          (policyMap.get(supplierKey) as SupplierStockPolicyStatus | undefined) ??
+          defaultPolicyStatusForSupplier(supplierKey);
+        const evidence = evidenceMap.get(supplierVariantId);
+        stock = applySupplierStockPublishGate({
+          baseStock: stock,
+          policyStatus,
+          evidencePublishedQty: evidence?.publishedQty ?? null,
+          lastProofAt: evidence?.lastProofAt ?? null,
+          manualLock: false,
+          enforced: true,
+        });
+      }
+    }
+
+    stockBySupplierVariantId.set(supplierVariantId, stock);
   }
 
   return stockBySupplierVariantId;

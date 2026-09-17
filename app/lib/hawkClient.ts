@@ -107,9 +107,10 @@ export function normalizeHawkGtin(raw: string | null | undefined): { gtin: strin
 
 function parseAvailability(value: string | null | undefined): boolean {
   const raw = String(value ?? "").toLowerCase();
-  if (!raw) return true;
+  if (!raw) return false;
   if (raw.includes("outofstock") || raw.includes("discontinued") || raw.includes("soldout")) return false;
-  return raw.includes("instock") || raw.includes("preorder") || raw.includes("backorder");
+  if (raw.includes("preorder") || raw.includes("backorder")) return false;
+  return raw.includes("instock");
 }
 
 function parseJsonLdProduct(html: string): Record<string, unknown> | null {
