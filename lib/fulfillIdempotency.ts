@@ -207,6 +207,8 @@ export async function failFulfillAttemptBeforeExternal(params: {
 /**
  * Mark that an external request is about to be / was sent (Swiss Post).
  * After this, automatic retry is forbidden.
+ *
+ * Throws on DB failure — callers that must gate Swiss Post must NOT swallow.
  */
 export async function markExternalSideEffectUnknown(params: {
   idempotencyKey: string;
@@ -214,21 +216,56 @@ export async function markExternalSideEffectUnknown(params: {
   partialResult?: unknown;
 }): Promise<void> {
   const key = String(params.idempotencyKey ?? "").trim();
-  if (!key) return;
+  if (!key) throw new Error("markExternalSideEffectUnknown: idempotencyKey required");
   const table = requireTable();
-  await table
-    .update({
-      where: { idempotencyKey: key },
-      data: {
-        status: "EXTERNAL_SIDE_EFFECT_UNKNOWN" as FulfillLockStatus,
-        error: params.error ? String(params.error).slice(0, 4000) : undefined,
-        resultJson:
-          params.partialResult !== undefined
-            ? (params.partialResult as any)
-            : undefined,
-      },
-    })
-    .catch(() => null);
+  await table.update({
+    where: { idempotencyKey: key },
+    data: {
+      status: "EXTERNAL_SIDE_EFFECT_UNKNOWN" as FulfillLockStatus,
+      error: params.error ? String(params.error).slice(0, 4000) : undefined,
+      resultJson:
+        params.partialResult !== undefined
+          ? (params.partialResult as any)
+          : undefined,
+    },
+  });
+}
+
+/**
+ * Durable pre-flight before Swiss Post: flip IN_PROGRESS → UNKNOWN atomically.
+ * Must succeed before any external HTTP call. Throws if row not updated.
+ */
+export async function markExternalSideEffectUnknownBeforeRequest(params: {
+  idempotencyKey: string;
+  error?: string | null;
+  partialResult?: unknown;
+}): Promise<void> {
+  const key = String(params.idempotencyKey ?? "").trim();
+  if (!key) {
+    throw new Error("markExternalSideEffectUnknownBeforeRequest: idempotencyKey required");
+  }
+  const table = requireTable();
+  const updated = await table.updateMany({
+    where: {
+      idempotencyKey: key,
+      status: "IN_PROGRESS",
+    },
+    data: {
+      status: "EXTERNAL_SIDE_EFFECT_UNKNOWN" as FulfillLockStatus,
+      error: params.error
+        ? String(params.error).slice(0, 4000)
+        : "External request about to be sent",
+      resultJson:
+        params.partialResult !== undefined
+          ? (params.partialResult as any)
+          : undefined,
+    },
+  });
+  if (Number(updated?.count ?? 0) !== 1) {
+    throw new Error(
+      "Failed to persist EXTERNAL_SIDE_EFFECT_UNKNOWN before Swiss Post — refusing external call"
+    );
+  }
 }
 
 /** Swiss Post (or other external) label creation confirmed. */

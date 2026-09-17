@@ -34,6 +34,7 @@ import {
   failFulfillAttemptBeforeExternal,
   markExternalSideEffectConfirmed,
   markExternalSideEffectUnknown,
+  markExternalSideEffectUnknownBeforeRequest,
   reconcileFulfillAttempt,
   FulfillLockTableMissingError,
 } from "@/lib/fulfillIdempotency";
@@ -994,14 +995,30 @@ export async function POST(req: NextRequest) {
             ? swissPostPayload
             : buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense, preferredLineItemIds);
         console.log("[SWISS POST] payload", payload);
-        // From this point a Swiss Post request may create a real label — never
-        // auto-retry with a new key if anything fails afterward.
+        // Durable lock BEFORE any Swiss Post HTTP — never swallow DB failure then call.
+        try {
+          await markExternalSideEffectUnknownBeforeRequest({
+            idempotencyKey: activeIdempotencyKey,
+            error: "Swiss Post label request in flight",
+            partialResult: { phase: "swiss_post_request" },
+          });
+        } catch (lockErr: any) {
+          // Refuse Swiss Post. Do not downgrade an existing UNKNOWN/CONFIRMED lock.
+          lockResolved = true;
+          return NextResponse.json(
+            {
+              ok: false,
+              status: "LOCK_TABLE_MISSING" as FulfillStatus,
+              awb,
+              error:
+                lockErr?.message ||
+                "Could not persist EXTERNAL_SIDE_EFFECT_UNKNOWN before Swiss Post — refusing label create.",
+            },
+            { status: 503 }
+          );
+        }
+        // Lock is durable UNKNOWN — even if Swiss Post never runs, retry is blocked.
         externalSideEffectStarted = true;
-        await markExternalSideEffectUnknown({
-          idempotencyKey: activeIdempotencyKey,
-          error: "Swiss Post label request in flight",
-          partialResult: { phase: "swiss_post_request" },
-        }).catch(() => null);
         let swissRes;
         try {
           swissRes = await withContext("requestSwissPostLabel", () =>
