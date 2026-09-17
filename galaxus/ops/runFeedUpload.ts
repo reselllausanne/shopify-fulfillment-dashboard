@@ -37,6 +37,12 @@ import {
   rebuildFeedSnapshotFromExports,
   tryExportCsvFromSnapshot,
 } from "@/galaxus/exports/feedSnapshot";
+import {
+  buildFeedDeltaReport,
+  countPositiveStockCsvRows,
+  formatFeedDeltaReportText,
+  readFeedDeltaGuardConfig,
+} from "@/galaxus/exports/feedDeltaGuard";
 import type { FeedTriggerSource } from "@/galaxus/ops/types";
 
 export type FeedUploadInput = {
@@ -46,6 +52,8 @@ export type FeedUploadInput = {
   supplier?: string | null;
   providerKeysRaw?: string;
   force?: boolean;
+  /** When true, build feeds + delta report but skip SFTP publish. */
+  dryRun?: boolean;
   limit?: number | null;
   provider?: string | null;
   assortment?: string | null;
@@ -73,6 +81,7 @@ export function parseFeedUploadRequest(request: Request): FeedUploadInput {
     supplier: sp.get("supplier"),
     providerKeysRaw: sp.get("providerKeys")?.trim() ?? "",
     force: ["1", "true", "yes"].includes((sp.get("force") ?? "").toLowerCase()),
+    dryRun: ["1", "true", "yes"].includes((sp.get("dryRun") ?? sp.get("dry-run") ?? "").toLowerCase()),
     limit: limitRaw ? Math.max(1, Math.min(Number(limitRaw), 1000)) : null,
     provider: sp.get("provider")?.trim() || null,
     assortment: sp.get("assortment")?.trim() || null,
@@ -631,6 +640,85 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
       };
     }
 
+    // Delta report + mass positive-stock drop guard (Express→Standard must not
+    // look like a catalogue wipe). force=1 bypasses the block after review.
+    const dryRun = Boolean(input.dryRun);
+    let deltaReport: ReturnType<typeof buildFeedDeltaReport> | null = null;
+    if (needsStock && stockCsv) {
+      const prevRun = await (prisma as any).galaxusFeedRun.findFirst({
+        where: {
+          success: true,
+          OR: [{ scope: "stock" }, { scope: "stock-price" }, { scope: "all" }],
+          countsJson: { not: null },
+        },
+        orderBy: { startedAt: "desc" },
+        select: { countsJson: true, startedAt: true },
+      });
+      const prevCounts = (prevRun?.countsJson ?? {}) as Record<string, number | null>;
+      const nextPositive = countPositiveStockCsvRows(stockCsv);
+      const prevPositive =
+        typeof prevCounts.positiveStock === "number"
+          ? prevCounts.positiveStock
+          : typeof prevCounts.stock === "number"
+            ? prevCounts.stock
+            : null;
+      deltaReport = buildFeedDeltaReport({
+        dryRun,
+        previousStockRows: typeof prevCounts.stock === "number" ? prevCounts.stock : null,
+        previousOfferRows: typeof prevCounts.offer === "number" ? prevCounts.offer : null,
+        previousPositiveStockRows: prevPositive,
+        nextStockRows: stockCount ?? countCsvRows(stockCsv),
+        nextOfferRows: offerCount ?? (offerCsv ? countCsvRows(offerCsv) : 0),
+        nextPositiveStockRows: nextPositive,
+        config: readFeedDeltaGuardConfig(),
+      });
+      console.info("[GALAXUS][FEEDS][DELTA]\n" + formatFeedDeltaReportText(deltaReport));
+
+      if (deltaReport.guard.blocked && !force) {
+        const error =
+          deltaReport.guard.message ??
+          "Blocked publish: abnormal positive-stock drop (pass force=1 after review)";
+        if (auditId) {
+          await (prisma as any).galaxusJobRun.update({
+            where: { id: auditId },
+            data: {
+              finishedAt: new Date(),
+              success: false,
+              errorMessage: error,
+              resultJson: { deltaReport, counts: { master: masterCount, stock: stockCount, offer: offerCount, specs: specsCount } },
+            },
+          });
+        }
+        return {
+          ok: false,
+          status: 409,
+          runId,
+          error,
+          deltaReport,
+          counts: { master: masterCount, stock: stockCount, offer: offerCount, specs: specsCount },
+        };
+      }
+    }
+
+    if (dryRun) {
+      return {
+        ok: true,
+        status: 200,
+        runId,
+        dryRun: true,
+        error: undefined,
+        deltaReport,
+        counts: {
+          master: masterCount,
+          stock: stockCount,
+          offer: offerCount,
+          specs: specsCount,
+          positiveStock: stockCsv ? countPositiveStockCsvRows(stockCsv) : null,
+        },
+        uploaded: [],
+      };
+    }
+
     const masterName = buildFeedFilename("product", providerName, assortmentFile);
     const stockName = buildFeedFilename("stock", providerName, assortmentFile);
     const offerName = buildFeedFilename("price", providerName, assortmentFile);
@@ -805,7 +893,9 @@ export async function runFeedUpload(input: FeedUploadInput): Promise<FeedUploadR
         stock: stockCount,
         offer: offerCount,
         specs: specsCount,
+        positiveStock: stockCsv ? countPositiveStockCsvRows(stockCsv) : null,
       },
+      deltaReport,
       omittedByFeed,
       blockedProviderKeys: Array.from(blockedProviderKeys),
       parityDrops: {

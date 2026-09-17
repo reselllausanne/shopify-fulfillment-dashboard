@@ -88,6 +88,28 @@ describe("buildStxDualPriceFields", () => {
     expect(lanes!.price).toBe(lanes!.standardBuyPrice);
     expect(lanes!.expressBuyPrice).toBeGreaterThan(lanes!.standardBuyPrice! * 2);
     expect(lanes!.stock).toBe(12);
+    expect(lanes!.catalogueEligible).toBe(true);
+    expect(lanes!.expressEligible).toBe(true);
+    expect(lanes!.standardEligible).toBe(true);
+    expect(lanes!.laneReason).toBe("express_over_standard_cap");
+  });
+
+  it("keeps express (and catalogue) when standard has asks=0 despite price cap", () => {
+    const lanes = buildStxDualPriceFields(
+      {
+        prices: [
+          { type: "express_standard", price: 932, asks: 3 },
+          { type: "standard", price: 175, asks: 0 },
+        ],
+      },
+      { slug: "hoka-one-one-clifton-9-triple-black", title: "Hoka Clifton 9" },
+      "Hoka One One Clifton 9 Triple Black"
+    );
+    expect(lanes).not.toBeNull();
+    expect(lanes!.deliveryType).toBe("express_standard");
+    expect(lanes!.stock).toBe(3);
+    expect(lanes!.catalogueEligible).toBe(true);
+    expect(lanes!.standardEligible).toBe(false);
   });
 
   it("keeps express when premium is modest", () => {

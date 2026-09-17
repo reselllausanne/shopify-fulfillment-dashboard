@@ -2,9 +2,8 @@
  * express_standard / express_expedited / express_shipped — real express lanes
  * (published on marketplaces). KickDB switched many products to `express_shipped`;
  * keep mapping this to express_standard so downstream feed rules still treat it as express.
- * standard — non-express fallback (forceImport only). Marketplace feeds must NOT
- * publish this as a dropship row; physical (liquidation) stock still routes through
- * the mirror resolver.
+ * standard — slower StockX lane; publishable when GALAXUS_STX_ALLOW_STANDARD_SHIPPING
+ * is on (default) or LEGO/force-import. Lane demotion ≠ catalogue exclusion.
  */
 export type StxDeliveryType = "express_standard" | "express_expedited" | "standard";
 

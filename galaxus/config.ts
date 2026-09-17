@@ -75,6 +75,12 @@ export const GALAXUS_FEED_SUPPLIER_BLOCKLIST =
  */
 export const GALAXUS_STOCK_POSITIVE_ALLOWLIST =
   process.env.GALAXUS_STOCK_POSITIVE_ALLOWLIST ?? "";
+/**
+ * Mass positive-stock drop guard (see galaxus/exports/feedDeltaGuard.ts).
+ * - GALAXUS_FEED_MAX_POSITIVE_DROP_ABS (default 15000)
+ * - GALAXUS_FEED_MAX_POSITIVE_DROP_PCT (default 0.08 = 8%)
+ * Feed upload `dryRun=1` builds the delta report and skips SFTP.
+ */
 const uploadsDisabledRaw = process.env.GALAXUS_FEED_UPLOADS_DISABLED ?? "false";
 export const GALAXUS_FEED_UPLOADS_DISABLED = !["0", "false", "no"].includes(
   uploadsDisabledRaw.toLowerCase()

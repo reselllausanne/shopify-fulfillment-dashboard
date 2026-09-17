@@ -35,6 +35,7 @@ import {
   resolveGalaxusDirectDeliverySupported,
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
+import { sanitizePublishedQuantity } from "@/galaxus/exports/feedIntegrityRules";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
@@ -394,6 +395,15 @@ export async function GET(request: Request) {
         });
         stock = merged.finalStock;
       }
+    }
+
+    // Integrity: internal qty 1 must never publish as pack/MOQ inflation (e.g. 100).
+    if (lockedManualStock === null && Number.isFinite(rawStock) && rawStock >= 0) {
+      stock = sanitizePublishedQuantity({
+        internalQty: rawStock,
+        publishedQty: stock,
+        maxPublished: isStx ? 12 : Math.max(stock, rawStock),
+      }).qty;
     }
 
     if (!Number.isFinite(stock) || stock < 0) {

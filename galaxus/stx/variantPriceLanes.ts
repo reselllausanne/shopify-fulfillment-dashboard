@@ -3,6 +3,7 @@ import { estimatedStockxBuyChfFromList } from "@/galaxus/stx/chfStockxBuyPrice";
 import { isStxForceImportSlug } from "@/galaxus/stx/forceImportSlugs";
 import { isLegoStxProduct, isLegoStxSlug } from "@/galaxus/stx/legoProduct";
 import { resolveStxShippingCHF } from "@/galaxus/stx/legoShipping";
+import { resolveStxDeliveryEligibility } from "@/galaxus/stx/deliveryEligibility";
 import {
   selectStxActiveOffer,
   selectStxStandardOffer,
@@ -55,6 +56,11 @@ export type StxDualPriceFields = {
   standardBuyPrice: number | null;
   expressBuyPrice: number | null;
   standardSuggestedRetailPriceInclVat: number | null;
+  /** Lane eligibility — demotion must not clear catalogueEligible. */
+  expressEligible: boolean;
+  standardEligible: boolean;
+  catalogueEligible: boolean;
+  laneReason: string;
 };
 
 /**
@@ -126,7 +132,8 @@ export function isStxMarketplacePublishableDeliveryType(
 /**
  * DB mirror + Shopify STX pricing: store every size with a usable StockX ask.
  * Express preferred when present *and* not absurdly above standard (≥100% by
- * default). Otherwise standard. Marketplace export filters separately.
+ * default) *and* standard is sellable (asks ≥ 1). Otherwise keep express.
+ * Marketplace export filters separately — lane demotion ≠ catalogue exclusion.
  */
 export function buildStxDualPriceFields(
   variant: { prices?: unknown },
@@ -141,24 +148,34 @@ export function buildStxDualPriceFields(
   const expressBuy = express ? buyFromOffer(express, payload) : null;
   const standardBuy = standard ? buyFromOffer(standard, payload) : null;
 
-  const preferStandard =
-    Boolean(standard) && shouldPreferStandardOverExpress(expressBuy, standardBuy);
-  const active = preferStandard ? standard! : (express ?? standard!);
+  const eligibility = resolveStxDeliveryEligibility({
+    express,
+    standard,
+    preferStandardByPriceCap: shouldPreferStandardOverExpress(expressBuy, standardBuy),
+  });
+  if (!eligibility.catalogueEligible || !eligibility.activeDeliveryType) return null;
 
-  const activeBuy =
-    preferStandard || !express
-      ? standardBuy ?? buyFromOffer(active, payload)
-      : expressBuy ?? buyFromOffer(active, payload);
+  const useStandard = eligibility.activeDeliveryType === "standard";
+  const active = useStandard ? standard! : (express ?? standard!);
+  const activeBuy = useStandard
+    ? standardBuy ?? buyFromOffer(active, payload)
+    : expressBuy ?? buyFromOffer(active, payload);
 
   return {
     price: activeBuy,
+    // Always publish the *active lane* ask count — never zero stock solely
+    // because deliveryType flipped express → standard.
     stock: active.asks,
-    deliveryType: active.deliveryType,
+    deliveryType: eligibility.activeDeliveryType,
     suggestedRetailPriceInclVat: suggestedFromOffer(active, payload, productName),
     standardBuyPrice: standardBuy,
     expressBuyPrice: expressBuy,
     standardSuggestedRetailPriceInclVat: standard
       ? suggestedFromOffer(standard, payload, productName)
       : null,
+    expressEligible: eligibility.expressEligible,
+    standardEligible: eligibility.standardEligible,
+    catalogueEligible: eligibility.catalogueEligible,
+    laneReason: eligibility.laneReason,
   };
 }

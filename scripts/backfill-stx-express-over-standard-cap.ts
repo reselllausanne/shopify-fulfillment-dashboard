@@ -3,12 +3,12 @@
  * One-shot: flip STX SupplierVariant active lane from absurd express → standard
  * when expressBuy >= ratio × standardBuy (default 2 = +100%).
  *
+ * Only flips when standard is sellable (implicit: keep catalogue presence).
  * Does NOT touch expressBuyPrice / standardBuyPrice (Shopify dual lane).
- * Only rewrites marketplace-facing: price, deliveryType, suggestedRetail*.
+ * Rewrites marketplace-facing: price, deliveryType, suggestedRetail*.
  *
  *   npx tsx scripts/backfill-stx-express-over-standard-cap.ts --dry-run
  *   npx tsx scripts/backfill-stx-express-over-standard-cap.ts --apply
- *   npx tsx scripts/backfill-stx-express-over-standard-cap.ts --apply --gtin 0196565172679
  */
 import { prisma } from "@/app/lib/prisma";
 import { readStxExpressOverStandardMaxRatio } from "@/galaxus/stx/variantPriceLanes";
@@ -69,6 +69,7 @@ async function main() {
       AND "standardBuyPrice"::numeric > 0
       AND "expressBuyPrice"::numeric >= $1 * "standardBuyPrice"::numeric
       AND COALESCE("deliveryType", '') LIKE 'express%'
+      AND stock > 0
       ${whereSql}
     ORDER BY ratio DESC
     LIMIT 50000
@@ -113,6 +114,7 @@ async function main() {
       AND t."standardBuyPrice"::numeric > 0
       AND t."expressBuyPrice"::numeric >= $1 * t."standardBuyPrice"::numeric
       AND COALESCE(t."deliveryType", '') LIKE 'express%'
+      AND t.stock > 0
       ${whereSql}
     `,
     ...params

@@ -5,6 +5,7 @@ import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
 import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
 import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
+import { evaluateFeedIntegrityOmit } from "@/galaxus/exports/feedIntegrityRules";
 
 type VariantCandidate = {
   mapping: any;
@@ -59,6 +60,10 @@ type CandidateExcludeReason =
   | "INVALID_PRICE"
   | "INVALID_PROVIDER_KEY"
   | "SUPPLIER_BLOCKED"
+  | "REI_NEON_PRODUCT"
+  | "REI_DIMENSION_OVER_120CM"
+  | "WAGO_PACK_NOT_UNIT"
+  | "POKEMON_BOOSTER_DISPLAY_MISMATCH"
   ;
 
 type AccumulateOptions = {
@@ -153,6 +158,32 @@ export function accumulateBestCandidates(
         options?.onExclude?.({
           reason: "SUPPLIER_BLOCKED",
           supplierKey: supplierKey ?? "stx",
+          mapping,
+          variant,
+        });
+        continue;
+      }
+    }
+
+    {
+      const integrity = evaluateFeedIntegrityOmit({
+        supplierKey,
+        title: variant?.supplierProductName,
+        brand: variant?.supplierBrand,
+        supplierSku: variant?.supplierSku,
+        mappedTitle: mapping?.kickdbVariant?.product?.name ?? null,
+        productType: variant?.supplierProductType ?? null,
+        extraText: [
+          mapping?.kickdbVariant?.product?.name,
+          mapping?.kickdbVariant?.product?.brand,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
+      if (integrity.omit && integrity.reason) {
+        options?.onExclude?.({
+          reason: integrity.reason,
+          supplierKey,
           mapping,
           variant,
         });
