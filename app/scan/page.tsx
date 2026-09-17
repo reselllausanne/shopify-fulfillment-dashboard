@@ -114,6 +114,8 @@ type ScanResult = {
     orderId: string | null;
     orderDbId: string | null;
     orderNumber?: string | null;
+    /** Scanned AWB's Galaxus order line — required for partial ship. */
+    lineId?: string | null;
     deliveryType?: string | null;
     isDirectDelivery?: boolean;
     physicalDeliveryNoteRequired?: boolean;
@@ -234,6 +236,8 @@ type ScanResult = {
     galaxusOrderNumber: string | null;
     stockxOrderNumber: string | null;
     awb: string | null;
+    gtin?: string | null;
+    lineId?: string | null;
     deliveryType: string | null;
     isDirectDelivery: boolean;
     isWarehouse: boolean;
@@ -886,84 +890,26 @@ export default function ScanPage() {
     shouldAutoGalaxusDirectLabelFor(scan);
 
   const runGalaxusDirectLabelFromScan = async (scan: ScanResult) => {
-    if (!scan.galaxus?.orderDbId && !scan.awb) return;
-    setFulfillLoading(true);
-    setFulfillResult(null);
-    const requiresDeliveryNote = Boolean(scan.galaxus?.physicalDeliveryNoteRequired);
-    // Pre-open while still near the scan gesture so the DN tab is not blocked.
-    const deliveryNoteWin =
-      requiresDeliveryNote && typeof window !== "undefined"
-        ? window.open("", "_blank", "noopener,noreferrer")
-        : null;
-    try {
-      const res = await fetch("/api/scan-galaxus-direct-label", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          awb: scan.awb,
-          orderDbId: scan.galaxus?.orderDbId ?? null,
-          includeLabelData: true,
-          allowReprint: false,
-        }),
-      });
-      const data: FulfillResponse & {
-        orderNumber?: string | null;
-        galaxusOrderId?: string | null;
-        status?: string;
-        trackingNumber?: string | null;
-        error?: string;
-      } = await res.json();
-      const orderRef =
-        String(data.orderNumber || data.galaxusOrderId || scan.galaxus?.orderNumber || "").trim() ||
-        "—";
-      if (res.ok && data.ok && data.status === "ALREADY_FULFILLED") {
-        try {
-          deliveryNoteWin?.close();
-        } catch {
-          // ignore
-        }
-        setFulfillResult(data);
-        window.alert(
-          `Galaxus direct ${orderRef}: already fulfilled — no reprint.`
-        );
-        return;
-      }
-      const dn = presentDirectDeliveryNote({
-        required:
-          Boolean(data.physicalDeliveryNoteRequired) || requiresDeliveryNote,
-        url: data.deliveryNoteUrl,
-        preOpenedWin: deliveryNoteWin,
-        orderRef,
-      });
-      setFulfillResult({
-        ...data,
-        deliveryNoteNotice: dn.message,
-      });
-      if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
-          labelData: data.labelData,
-          browserPrintConfig: data.browserPrintConfig,
-          printJobResult: data.printJobResult,
-          deliveryNotePrintResult: data.deliveryNotePrintResult,
-          blockedMessage:
-            "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
-        });
-      } else if (!res.ok || !data.ok) {
-        window.alert(data.error || "Galaxus Swiss Post label failed");
-      } else if (dn.message && !dn.opened) {
-        window.alert(dn.message);
-      }
-    } catch (err: any) {
-      try {
-        deliveryNoteWin?.close();
-      } catch {
-        // ignore
-      }
-      setFulfillResult({ ok: false, error: err?.message || "Network error" });
-      window.alert(err?.message || "Galaxus label network error");
-    } finally {
-      setFulfillLoading(false);
+    const orderDbId = String(scan.galaxus?.orderDbId ?? "").trim();
+    if (!orderDbId) {
+      window.alert("Galaxus direct: no order id on scan.");
+      return;
     }
+    const lineId = String(
+      scan.galaxus?.lineId ?? scan.stxInboundBuy?.lineId ?? ""
+    ).trim();
+    // Never call the whole-order path from AWB scan — that ships sibling pairs.
+    if (!lineId) {
+      window.alert(
+        "Galaxus direct: scanned AWB has no line id — open Direct Delivery and ship selected pair."
+      );
+      return;
+    }
+    await runDirectLabelForOrder(
+      orderDbId,
+      { lineId, quantity: 1 },
+      { requiresDeliveryNote: Boolean(scan.galaxus?.physicalDeliveryNoteRequired) }
+    );
   };
 
   const closeDirectQtyPrompt = (qty: number | null) => {
@@ -1478,8 +1424,18 @@ export default function ScanPage() {
       !scan.stxInboundBuy.orderCancelledAt
     ) {
       // AWB hit StxPurchaseUnit for a direct-delivery order but galaxusMatch
-      // payload was missing — still auto-print Swiss Post label via orderDbId.
-      await runDirectLabelForOrder(scan.stxInboundBuy.galaxusOrderDbId);
+      // payload was missing — still auto-print Swiss Post label for THAT pair only.
+      const lineId = String(scan.stxInboundBuy.lineId ?? "").trim();
+      if (lineId) {
+        await runDirectLabelForOrder(scan.stxInboundBuy.galaxusOrderDbId, {
+          lineId,
+          quantity: 1,
+        });
+      } else {
+        window.alert(
+          "Galaxus direct: inbound AWB matched order but no line id — use Direct Delivery Ship selected."
+        );
+      }
     }
     if (scan.decathlon) {
       const isDecWarehouseFallback = scan.decathlon.source === "decathlon_warehouse_shipment";

@@ -8,8 +8,8 @@
  * whose parent Galaxus order is not cancelled. Physical parcel is inbound to us.
  *
  * - Shopify auto-fulfill: always suppressed (stale OrderMatch sharing the AWB).
- * - Galaxus direct Swiss Post label: ALLOWED — that's the re-label flow when the
- *   StockX parcel arrives and we ship to the Galaxus customer.
+ * - Galaxus direct Swiss Post label: ALLOWED only for the scanned line (partial).
+ *   Never auto-ship the whole multi-pair order from a single AWB scan.
  * - Packing session: ADD when warehouse inbound; skip for direct-delivery inbound.
  */
 
@@ -17,6 +17,7 @@ export type StxInboundBuyLike = {
   orderCancelledAt?: string | null;
   isWarehouse?: boolean;
   isDirectDelivery?: boolean;
+  lineId?: string | null;
 } | null | undefined;
 
 export type ScanLike = {
@@ -24,6 +25,7 @@ export type ScanLike = {
   galaxus?: {
     isDirectDelivery?: boolean;
     allLinked?: boolean | null;
+    lineId?: string | null;
     source?: string | null;
   } | null;
 } | null | undefined;
@@ -34,13 +36,18 @@ export function isActiveStxInboundBuy(scan: ScanLike): boolean {
   return !inbound.orderCancelledAt;
 }
 
-/** True when scan should auto-print the Galaxus direct-delivery Swiss Post label. */
+/**
+ * True when scan should auto-print the Galaxus direct-delivery Swiss Post label.
+ * Requires a known lineId so we never ship sibling pairs on the same order.
+ */
 export function shouldAutoGalaxusDirectLabelFor(scan: ScanLike): boolean {
   const g = scan?.galaxus;
   if (!g?.isDirectDelivery) return false;
-  if (g.allLinked === false) return false;
+  const lineId = String(g.lineId ?? scan?.stxInboundBuy?.lineId ?? "").trim();
+  if (!lineId) return false;
   // stxInboundBuy must NOT suppress this — inbound StockX AWB for a
-  // direct-delivery Galaxus order is exactly when we print the Swiss Post label.
+  // direct-delivery Galaxus order is exactly when we print the Swiss Post label
+  // for THAT scanned pair only.
   return true;
 }
 
