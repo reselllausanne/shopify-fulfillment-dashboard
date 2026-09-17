@@ -224,10 +224,13 @@ export function resolveStockxInboundLogisticsAt(params: {
     return { stockxEventAt: stateConfirmed, source: "state" };
   }
 
-  // Bare state.changedAt / updatedAt without a confirming ship/delivery status
-  // are NOT logistics events (could be any status flip).
-  void params.stateChangedAt;
-  void params.stateUpdatedAt;
+  // Priority 4 (user rule): state.changedAt / state.updatedAt.
+  const stateChanged = firstObservedDate(
+    now,
+    params.stateChangedAt,
+    params.stateUpdatedAt
+  );
+  if (stateChanged) return { stockxEventAt: stateChanged, source: "state" };
 
   return { stockxEventAt: null, source: "first_seen" };
 }
