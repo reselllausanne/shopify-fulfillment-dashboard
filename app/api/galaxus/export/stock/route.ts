@@ -169,8 +169,9 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
-      // Stock feed should not depend on hosted images.
-      requireImage: false,
+      // Must match master/catalog-ready: otherwise a cheaper no-image rival
+      // (often NER) wins the GTIN, then isGalaxusCatalogReady drops it → GTIN empty.
+      requireImage: true,
       preferInStock: true,
       galaxusPartnerKeysLower,
       onExclude: (payload) => {
