@@ -181,6 +181,65 @@ model OrderMatch {
   @@schema("public")
 }
 
+/// Recent StockX parcels arrived for AWB fallback (Shopify today; multi-account ready).
+model StockxInboundPackage {
+  id                 String    @id @default(uuid())
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  awb                String    @unique
+  stockxOrderNumber  String?
+  stockxOrderId      String?
+  /// Account key for multi-StockX later (e.g. shopify / galaxus / account-uuid).
+  stockxAccountKey   String    @default("default")
+  sku                String?
+  sizeEU             String?
+  productName        String?
+  purchaseDate       DateTime?
+  status             String?
+  /// Legacy display field — set once from stockxEventAt on create; not bumped on cron.
+  arrivedAt          DateTime  @default(now())
+  /// First time this AWB was observed from StockX API. Immutable on update.
+  firstSeenAt        DateTime  @default(now())
+  /// Last successful inbound sync refresh for this AWB.
+  lastSeenAt         DateTime  @default(now())
+  /// Observed StockX logistics time (delivered/shipped/tracking/state). Never ETA/sellerShipBy/purchaseDate.
+  stockxEventAt      DateTime?
+  channelHint        String?
+  linkedShopifyLineItemId String?
+  linkedGalaxusOrderId    String?
+
+  @@index([arrivedAt])
+  @@index([firstSeenAt])
+  @@index([lastSeenAt])
+  @@index([stockxEventAt])
+  @@index([sku, sizeEU])
+  @@index([stockxAccountKey, arrivedAt])
+  @@index([stockxAccountKey, stockxEventAt])
+  @@index([stockxAccountKey, firstSeenAt])
+  @@index([purchaseDate])
+  @@schema("public")
+}
+
+/// Persistent idempotency + in-progress lock for fulfill-from-awb.
+/// Statuses: IN_PROGRESS | COMPLETED | FAILED_BEFORE_EXTERNAL_SIDE_EFFECT |
+/// EXTERNAL_SIDE_EFFECT_UNKNOWN | EXTERNAL_SIDE_EFFECT_CONFIRMED
+model FulfillAttemptLock {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  idempotencyKey String   @unique
+  status         String
+  awb            String
+  shopifyOrderId String
+  selectionHash  String
+  resultJson     Json?
+  error          String?
+
+  @@index([awb, shopifyOrderId])
+  @@index([status, updatedAt])
+  @@schema("public")
+}
+
 model GalaxusStockxMatch {
   id String @id @default(uuid())
 
