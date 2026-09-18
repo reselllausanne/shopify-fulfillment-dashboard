@@ -233,7 +233,19 @@ validate_deploy_config() {
     exit 20
   }
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    docker compose --project-directory "$root" -f "$root/docker-compose.yml" config >/dev/null
+    # compose.yml references env_file: .env — CI checkouts have no secrets file.
+    # Touch an empty placeholder for `compose config` only; never write real secrets.
+    local created_env=0
+    if [ ! -f "$root/.env" ]; then
+      : >"$root/.env"
+      created_env=1
+    fi
+    if ! docker compose --project-directory "$root" -f "$root/docker-compose.yml" config >/dev/null; then
+      [ "$created_env" = "1" ] && rm -f "$root/.env"
+      echo "FATAL: docker compose config failed"
+      exit 21
+    fi
+    [ "$created_env" = "1" ] && rm -f "$root/.env"
     echo "VALIDATE_CONFIG_OK (docker compose config)"
     return 0
   fi

@@ -36,8 +36,15 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/vps-deploy-from-github.sh scripts/vps-deploy-from-github.test.sh
+          # compose env_file:.env is required for `docker compose config` but must not
+          # contain production secrets in CI — empty placeholder only.
+          if [ ! -f .env ]; then
+            : >.env
+            trap 'rm -f .env' EXIT
+          fi
           bash scripts/vps-deploy-from-github.sh --validate-config
           bash scripts/vps-deploy-from-github.test.sh
+          git fetch --no-tags origin main:refs/remotes/origin/main 2>/dev/null || true
 
   deploy:
     needs: validate
