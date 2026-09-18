@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Validate Dockerfile + compose config
         run: |
@@ -44,7 +46,6 @@ jobs:
           fi
           bash scripts/vps-deploy-from-github.sh --validate-config
           bash scripts/vps-deploy-from-github.test.sh
-          git fetch --no-tags origin main:refs/remotes/origin/main 2>/dev/null || true
 
   deploy:
     needs: validate

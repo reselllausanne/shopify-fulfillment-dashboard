@@ -76,7 +76,11 @@ if git -C "$ROOT" rev-parse --verify origin/main >/dev/null 2>&1; then
   else
     bad "current origin/main ancestor check"
   fi
-  parent="$(git -C "$ROOT" rev-parse origin/main^ 2>/dev/null || true)"
+  parent=""
+  if git -C "$ROOT" rev-parse --verify "origin/main^" >/dev/null 2>&1 \
+    && git -C "$ROOT" cat-file -e "origin/main^^{commit}" 2>/dev/null; then
+    parent="$(git -C "$ROOT" rev-parse "origin/main^")"
+  fi
   if [ -n "$parent" ]; then
     if (cd "$ROOT" && is_sha_ancestor_of_ref "$parent" "origin/main"); then
       pass "prior main parent is ancestor (rollback OK)"
@@ -84,7 +88,7 @@ if git -C "$ROOT" rev-parse --verify origin/main >/dev/null 2>&1; then
       bad "prior main parent ancestor"
     fi
   else
-    echo "skip - no main^"
+    echo "skip - no main^ (shallow clone)"
   fi
   # Feature-only: temp repo outside workspace (avoids sandbox .git/config denials)
   tmp="${TMPDIR:-/tmp}/deploy-sha-ancestor-test-$$"
