@@ -38,11 +38,12 @@ act="$(classify_stale_rename_candidate "319268555fcc_resell-web-1" "created" "re
 if [ "$act" = "remove" ]; then pass "c) created labelled rename → remove"; else bad "c) created → $act"; fi
 act="$(classify_stale_rename_candidate "deaddeaddead_resell-web-1" "dead" "resell" "web" "resell" "web")"
 if [ "$act" = "remove" ]; then pass "c) dead labelled rename → remove"; else bad "c) dead → $act"; fi
-# Listing must include stopped containers (docker ps --all); document the flag in help text path.
-if grep -q 'docker ps -aq --all' "$ROOT/scripts/vps-deploy-from-github.sh"; then
-  pass "c) cleanup lists with docker ps --all (stopped included)"
+# Listing uses docker ps -aq (all+quiet); no redundant --all.
+if grep -qE 'docker ps -aq \\$' "$ROOT/scripts/vps-deploy-from-github.sh" \
+  && ! grep -qE 'docker ps -aq --all' "$ROOT/scripts/vps-deploy-from-github.sh"; then
+  pass "c) cleanup lists with docker ps -aq (all+quiet)"
 else
-  bad "c) cleanup must use docker ps -aq --all"
+  bad "c) cleanup must use docker ps -aq (no redundant --all)"
 fi
 
 # --- classify: d) running labelled renamed leftover → abort ---

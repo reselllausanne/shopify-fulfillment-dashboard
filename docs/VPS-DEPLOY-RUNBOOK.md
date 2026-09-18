@@ -74,7 +74,7 @@ ssh resell-vps '… bash /tmp/vps-deploy-from-github.sh --sha=$WANT --migrate'
 
 ## Stale container cleanup
 
-Only containers with Compose labels `com.docker.compose.project=<project>` + `service=web` (listed via `docker ps -aq --all` + label filters — never global `docker ps -a` / `docker rm -f`), name matching `^[0-9a-f]+_<project>-web-[0-9]+$`, and state `created|exited|dead` are removed. Live `resell-web-1` is never removed. If a matching rename leftover is **running** → deploy aborts with `STALE_RENAMED_CONTAINER_RUNNING` (nothing removed).
+Only containers with Compose labels `com.docker.compose.project=<project>` + `service=web` (listed via `docker ps -aq` + label filters — never unconditional `docker rm -f`), name matching `^[0-9a-f]+_<project>-web-[0-9]+$`, and state `created|exited|dead` are removed. Live `resell-web-1` is never removed. If a matching rename leftover is **running** → deploy aborts with `STALE_RENAMED_CONTAINER_RUNNING` (nothing removed).
 
 ## Dry-run / CI validation
 

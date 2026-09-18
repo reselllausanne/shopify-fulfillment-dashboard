@@ -189,9 +189,8 @@ cleanup_stale_web_rename_containers() {
         ;;
     esac
   done < <(
-    # -a required: stopped recreate leftovers (exited/created/dead) are the target.
-    # Without -a, only running containers appear and stopped renames are never cleaned.
-    docker ps -aq --all \
+    # -aq = all + quiet (includes stopped). Label filters scope to this Compose service.
+    docker ps -aq \
       --filter "label=com.docker.compose.project=${project}" \
       --filter "label=com.docker.compose.service=${service}" \
       2>/dev/null || true
