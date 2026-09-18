@@ -170,8 +170,8 @@ export async function GET(request: Request) {
     accumulateBestCandidates(mappings, bestByGtin, {
       keyBy: "gtin",
       requireProductName: false,
-      // Price feed should not depend on hosted images.
-      requireImage: false,
+      // Same gate as stock/master: no-image winners get dropped later → empty GTIN.
+      requireImage: true,
       preferInStock: true,
       galaxusPartnerKeysLower,
       onExclude: (payload) => {
