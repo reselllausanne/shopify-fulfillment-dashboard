@@ -50,15 +50,24 @@ export async function loadShopifyOrderHintsForSku(params: {
   const sku = String(params.sku ?? "").trim();
   if (!sku) return [];
   const minCreatedAt = params.minCreatedAt ?? shopifyMatchMinCreatedAt();
+  // Discovery only — size filtered later (StockX US vs Shopify EU / SKU suffix).
+  void params.sizeEU;
 
   const rows = await prisma.orderMatch.findMany({
     where: {
-      shopifySku: { equals: sku, mode: "insensitive" },
       shopifyCreatedAt: { gte: minCreatedAt },
-      OR: [{ stockxAwb: null }, { stockxAwb: "" }],
-      ...(params.sizeEU
-        ? { shopifySizeEU: { equals: String(params.sizeEU), mode: "insensitive" } }
-        : {}),
+      AND: [
+        {
+          OR: [{ stockxAwb: null }, { stockxAwb: "" }],
+        },
+        {
+          // Shopify SKUs often embed size: BASE-42 / BASE-XL
+          OR: [
+            { shopifySku: { equals: sku, mode: "insensitive" } },
+            { shopifySku: { startsWith: `${sku}-`, mode: "insensitive" } },
+          ],
+        },
+      ],
     },
     orderBy: { shopifyCreatedAt: "asc" },
     take: 60,

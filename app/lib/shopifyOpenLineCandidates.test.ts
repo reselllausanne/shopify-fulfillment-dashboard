@@ -96,3 +96,15 @@ describe("resolveShopifyAwbFallbackMatch integration with verified pool", () => 
     expect(out.status).toBe("none");
   });
 });
+
+describe("sku/size helpers for Shopify size-suffixed SKUs", () => {
+  it("matches base inbound SKU to Shopify STYLE-size", async () => {
+    const { skuEquals, sizesCompatible, shopifySkuBase } = await import(
+      "@/app/lib/shopifyAwbFallback"
+    );
+    expect(shopifySkuBase("STYLE-1-42")).toBe("STYLE-1");
+    expect(skuEquals("STYLE-1", "STYLE-1-42")).toBe(true);
+    expect(sizesCompatible("8", "8", "STYLE-8")).toBe(true);
+    expect(sizesCompatible("XL", null, "CU4489-063 / CU4495-063-XL")).toBe(true);
+  });
+});
