@@ -33,6 +33,8 @@ export const DEFAULT_QUERY = `query Buying(
           state {
             statusKey
             statusTitle
+            changedAt
+            updatedAt
           }
           localizedSizeTitle
           localizedSizeType

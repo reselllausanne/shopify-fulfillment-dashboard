@@ -8,6 +8,10 @@ import {
   shouldAutoAddToPackingSession,
   shouldAutoGalaxusDirectLabelFor,
 } from "./scanInboundGuards";
+import {
+  probePrintStationStatus,
+  type PrintStationProbeStatus,
+} from "@/app/lib/printStationClient";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
@@ -330,6 +334,11 @@ const ENABLE_AUTO_GALAXUS_WAREHOUSE_LABEL = resolveClientFlag(
 const ENABLE_BROWSER_PRINT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
   true
+);
+// Force fulfill is destructive — never surface unless explicitly enabled per station.
+const ENABLE_FORCE_FULFILL = resolveClientFlag(
+  process.env.NEXT_PUBLIC_SCAN_FORCE_FULFILL,
+  false
 );
 const SCAN_SESSION_STORAGE_KEY = "scan.fulfillment.session.key.v1";
 const PACKING_SESSION_STORAGE_KEY = "scan.packingSession.entries.v1";
@@ -671,6 +680,21 @@ export default function ScanPage() {
   const directQtyPromptResolver = useRef<((qty: number | null) => void) | null>(null);
   const pendingDirectDeliveryNoteWinRef = useRef<Window | null>(null);
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
+  const [printStationStatus, setPrintStationStatus] =
+    useState<PrintStationProbeStatus | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    probePrintStationStatus()
+      .then((status) => {
+        if (!cancelled) setPrintStationStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setPrintStationStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
@@ -2007,13 +2031,63 @@ export default function ScanPage() {
       scanStartedAt?: string;
       scanCompletedAt?: string;
       gtinFulfill?: boolean;
+      unitSelectionConfirmed?: boolean;
+      selectedUnits?: Array<{ lineItemId: string; quantity: number }>;
     }
   ) => {
     if (!scan?.awb || !scan?.match || scan.galaxus || scan.inboundHome || scan.stxInboundBuy) return;
     const allowAlreadyFulfilled = Boolean(options?.allowAlreadyFulfilled);
     const gtinFulfill = Boolean(options?.gtinFulfill);
+    const unitSelection = (scan.match as any)?.unitSelection as
+      | { requiresPopup?: boolean; reason?: string; totalOpenUnits?: number }
+      | undefined;
+    const openUnits = ((scan.match as any)?.openUnits as Array<{
+      lineItemId: string;
+      title: string;
+      remainingQuantity: number;
+      isScannedLine?: boolean;
+    }>) || [];
+
+    // Multi-line / qty>1: force operator to confirm exact units before fulfill.
+    if (
+      unitSelection?.requiresPopup &&
+      !options?.unitSelectionConfirmed &&
+      !(options?.selectedUnits && options.selectedUnits.length > 0)
+    ) {
+      const scanned =
+        openUnits.find((u) => u.isScannedLine) ||
+        openUnits.find((u) => u.lineItemId === scan.match?.shopifyLineItemId) ||
+        openUnits[0];
+      const summary = openUnits
+        .map((u) => `• ${u.title} ×${u.remainingQuantity}`)
+        .join("\n");
+      const ok = window.confirm(
+        `Multi-product / qty>1 order — select units for THIS parcel only.\n\n` +
+          `${summary || "(open units)"}\n\n` +
+          `OK = ship 1× scanned line only` +
+          (scanned ? ` (${scanned.title})` : "") +
+          `\nCancel = abort (no whole-order fulfill).`
+      );
+      if (!ok) return;
+      options = {
+        ...options,
+        unitSelectionConfirmed: true,
+        selectedUnits: scanned
+          ? [{ lineItemId: scanned.lineItemId, quantity: 1 }]
+          : scan.match?.shopifyLineItemId
+            ? [{ lineItemId: scan.match.shopifyLineItemId, quantity: 1 }]
+            : [],
+      };
+    }
+
     setFulfillLoading(true);
     setFulfillResult(null);
+    const idempotencyKey = [
+      "scan",
+      String(scan.awb).toUpperCase(),
+      String(scan.match?.shopifyLineItemId ?? ""),
+      String(options?.selectedUnits?.[0]?.quantity ?? 1),
+    ].join(":");
     try {
       const res = await fetch("/api/fulfill-from-awb", {
         method: "POST",
@@ -2021,7 +2095,13 @@ export default function ScanPage() {
         body: JSON.stringify({
           awb: scan.awb,
           trackingUrl: scan.match?.trackingUrl || null,
-          shopifyLineItemId: scan.match?.shopifyLineItemId || null,
+          shopifyLineItemId:
+            options?.selectedUnits?.[0]?.lineItemId ||
+            scan.match?.shopifyLineItemId ||
+            null,
+          selectedUnits: options?.selectedUnits ?? [],
+          unitSelectionConfirmed: Boolean(options?.unitSelectionConfirmed),
+          idempotencyKey,
           includeLabelData: true,
           allowAlreadyFulfilled,
           gtinFulfill,
@@ -2034,6 +2114,13 @@ export default function ScanPage() {
       });
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
+      if (data.status === "NEEDS_UNIT_SELECTION") {
+        window.alert(
+          data.error ||
+            "Select exact units in the confirmation dialog — whole-order fulfill blocked."
+        );
+        return;
+      }
       if (res.ok && data.ok && data.labelData?.base64) {
         presentScanLabel({
           labelData: data.labelData,
@@ -2052,8 +2139,8 @@ export default function ScanPage() {
       } else if (!data.labelData?.base64) {
         window.alert(
           data.status === "ALREADY_FULFILLED"
-            ? "Order already fulfilled — no new Swiss Post label. Use Force fulfill to print label only."
-            : "Match OK but Swiss Post label missing from response. Try Force fulfill."
+            ? "Order already fulfilled — no new Swiss Post label was generated."
+            : "Match OK but Swiss Post label missing from response — retry or open the order manually."
         );
       }
     } catch (err: any) {
@@ -2072,7 +2159,26 @@ export default function ScanPage() {
   };
 
   const handleForceFulfill = async () => {
+    if (!ENABLE_FORCE_FULFILL) return;
     if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
+    const openUnits =
+      ((result.match as any)?.openUnits as Array<{
+        lineItemId: string;
+        title: string;
+        remainingQuantity: number;
+      }>) || [];
+    const openSummary = openUnits.length
+      ? openUnits
+          .map((u) => `• ${u.title} ×${u.remainingQuantity}`)
+          .join("\n")
+      : "(no open units detected — order appears fully fulfilled)";
+    const ok = window.confirm(
+      `Force Fulfill will mark EVERY remaining open unit on this order as ` +
+        `fulfilled AND print a Swiss Post label even if Shopify already has ` +
+        `tracking.\n\nOpen units on this order:\n${openSummary}\n\n` +
+        `Continue?`
+    );
+    if (!ok) return;
     await runFulfillFromScan(result, {
       allowAlreadyFulfilled: true,
       gtinFulfill: Boolean(result.manualShopifySuggest),
@@ -2097,6 +2203,21 @@ export default function ScanPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2">
+          {printStationStatus ? (
+            <span
+              title={`QZ Tray: ${printStationStatus.reason} · validated=${printStationStatus.silentPrintValidated} · autoPrint=${printStationStatus.autoPrintOn}`}
+              className={
+                "px-2 py-0.5 text-xs rounded border " +
+                (printStationStatus.readyForSilentPrint
+                  ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                  : "bg-amber-50 border-amber-300 text-amber-800")
+              }
+            >
+              QZ: {printStationStatus.readyForSilentPrint
+                ? "ready"
+                : printStationStatus.reason}
+            </span>
+          ) : null}
           <a
             href="/scan/stats"
             className="px-3 py-1 text-sm bg-emerald-100 text-emerald-900 rounded hover:bg-emerald-200 transition-colors"
@@ -3056,22 +3177,24 @@ export default function ScanPage() {
                   >
                     {fulfillLoading ? "Processing..." : "Fulfill + Print Label"}
                   </button>
-                  <button
-                    disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy) || Boolean(result?.inboundHome)}
-                    onClick={handleForceFulfill}
-                    className="px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-gray-400"
-                    title={
-                      result?.inboundHome
-                        ? "StockX direct-delivery route: use return-to-home flow, never Shopify warehouse fulfill"
-                        : result?.stxInboundBuy
-                          ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
-                          : result?.galaxus
-                            ? "Galaxus orders: no Shopify label on this page"
-                            : undefined
-                    }
-                  >
-                    {fulfillLoading ? "Processing..." : "Force Fulfill"}
-                  </button>
+                  {ENABLE_FORCE_FULFILL ? (
+                    <button
+                      disabled={fulfillLoading || Boolean(result?.galaxus) || Boolean(result?.stxInboundBuy) || Boolean(result?.inboundHome)}
+                      onClick={handleForceFulfill}
+                      className="px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 disabled:bg-gray-400"
+                      title={
+                        result?.inboundHome
+                          ? "StockX direct-delivery route: use return-to-home flow, never Shopify warehouse fulfill"
+                          : result?.stxInboundBuy
+                            ? "AWB is inbound StockX parcel for a Galaxus buy — do not print customer label"
+                            : result?.galaxus
+                              ? "Galaxus orders: no Shopify label on this page"
+                              : "Force Fulfill: confirm every open unit before proceeding"
+                      }
+                    >
+                      {fulfillLoading ? "Processing..." : "Force Fulfill"}
+                    </button>
+                  ) : null}
                 </div>
                 {result?.inboundHome ? (
                   <p className="text-xs text-gray-600 mt-1">
@@ -3087,10 +3210,13 @@ export default function ScanPage() {
                 ) : result?.galaxus ? (
                   <p className="text-xs text-gray-600 mt-1">Disabled: scan matched GalaxusStockxMatch (marketplace).</p>
                 ) : null}
-                <p className="text-xs text-gray-600 mt-1">
-                  Force fulfill fulfills every remaining line on the order, then prints a label even if Shopify already
-                  has tracking.
-                </p>
+                {ENABLE_FORCE_FULFILL ? (
+                  <p className="text-xs text-gray-600 mt-1">
+                    Force Fulfill is destructive — a confirmation dialog lists every
+                    open unit on this order before the request is sent. Never runs
+                    automatically.
+                  </p>
+                ) : null}
                 {fulfillResult && (
                   <div className="mt-3 text-sm">
                     {fulfillResult.ok ? (

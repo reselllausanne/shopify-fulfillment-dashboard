@@ -8,11 +8,11 @@ import {
 import { reconcileGalaxusOrderProcurement } from "@/galaxus/orders/galaxusProcurementReconcile";
 import {
   extractStockxVariantId,
-  fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
   synthesizeBuyOrderDetailsFromListNode,
   type StockxBuyingNode,
 } from "@/galaxus/stx/stockxClient";
+import { getCachedStockxBuyingOrders } from "@/galaxus/stx/buyingOrdersCache";
 import { refreshLinkedStxUnitsByStoredRefs } from "@/galaxus/stx/linkedUnitRefresh";
 import {
   getStxLinkStatusForOrder,
@@ -37,8 +37,8 @@ const DETAIL_CONCURRENCY = Math.max(
 const RESERVE_CONCURRENCY = 6;
 const REFRESH_CONCURRENCY = 3;
 const MAX_ORDER_IDS = 200;
-const PENDING_MAX_PAGES = Math.max(8, Number(process.env.STOCKX_GALAXUS_BULK_PENDING_PAGES ?? "20"));
-const ALL_STATE_MAX_PAGES = Math.max(4, Number(process.env.STOCKX_GALAXUS_BULK_ALL_STATE_PAGES ?? "12"));
+const PENDING_MAX_PAGES = Math.max(2, Math.min(12, Number(process.env.STOCKX_GALAXUS_BULK_PENDING_PAGES ?? "6")));
+const ALL_STATE_MAX_PAGES = Math.max(0, Math.min(6, Number(process.env.STOCKX_GALAXUS_BULK_ALL_STATE_PAGES ?? "3")));
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -302,18 +302,37 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
   let pendingList: StockxBuyingNode[] = [];
   let allStateList: StockxBuyingNode[] = [];
   try {
-    [pendingList, allStateList] = await Promise.all([
-      fetchRecentStockxBuyingOrders(token, {
+    const [pendingRes, allStateRes] = await Promise.all([
+      getCachedStockxBuyingOrders(token, {
         first: 100,
         maxPages: PENDING_MAX_PAGES,
         state: "PENDING",
       }),
-      fetchRecentStockxBuyingOrders(token, {
-        first: 100,
-        maxPages: ALL_STATE_MAX_PAGES,
-        state: null,
-      }),
+      ALL_STATE_MAX_PAGES > 0
+        ? getCachedStockxBuyingOrders(token, {
+            first: 100,
+            maxPages: ALL_STATE_MAX_PAGES,
+            state: null,
+          })
+        : Promise.resolve({
+            nodes: [] as StockxBuyingNode[],
+            fromCache: true,
+            durationMs: 0,
+            fetchedAt: Date.now(),
+            pageCount: 0,
+            cacheKey: "skipped",
+          }),
     ]);
+    pendingList = pendingRes.nodes;
+    allStateList = allStateRes.nodes;
+    console.log("[GALAXUS][STX][BULK] buying lists", {
+      pending: pendingList.length,
+      allState: allStateList.length,
+      pendingFromCache: pendingRes.fromCache,
+      allStateFromCache: allStateRes.fromCache,
+      pendingMs: pendingRes.durationMs,
+      allStateMs: allStateRes.durationMs,
+    });
   } catch (err: any) {
     return {
       ...base,

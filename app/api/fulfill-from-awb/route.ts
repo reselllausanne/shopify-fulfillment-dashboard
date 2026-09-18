@@ -28,6 +28,26 @@ import { findBlockedDirectDeliveryRoute } from "@/app/api/fulfill-from-awb/direc
 import { upsertShopifyFulfillmentExpenses } from "@/shopify/fulfillmentExpenses";
 import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopifyShippedEmail";
 import { isLocalStation, maybePrintLabelLocally } from "@/lib/printEnv";
+import {
+  beginFulfillAttempt,
+  completeFulfillAttempt,
+  failFulfillAttemptBeforeExternal,
+  markExternalSideEffectConfirmed,
+  markExternalSideEffectUnknown,
+  markExternalSideEffectUnknownBeforeRequest,
+  reconcileFulfillAttempt,
+  FulfillLockTableMissingError,
+} from "@/lib/fulfillIdempotency";
+import {
+  assertForceFulfillDisabled,
+  resolveFulfillLineItems,
+} from "@/lib/forceFulfillGuard";
+import {
+  decideFulfillUnitSelection,
+  fulfillScanIdempotencyKey,
+  validateFulfillUnitSelection,
+} from "@/lib/shopifyFulfillUnitSelection";
+import { listAllOpenUnits } from "@/lib/shopifyOrderOpenSiblings";
 
 const LABEL_OUTPUT_DIR =
   process.env.SWISS_POST_LABEL_OUTPUT_DIR ||
@@ -370,12 +390,20 @@ type FulfillStatus =
   | "NOT_FOUND"
   | "INVALID"
   | "SHOPIFY_ERROR"
-  | "BLOCKED_WAREHOUSE_DIRECT_DELIVERY";
+  | "BLOCKED_WAREHOUSE_DIRECT_DELIVERY"
+  | "NEEDS_UNIT_SELECTION"
+  | "ALREADY_PROCESSING"
+  | "FORCE_FULFILL_DISABLED"
+  | "RECONCILIATION_REQUIRED"
+  | "LOCK_TABLE_MISSING";
 
 const normalizeAwb = (code?: string | null) => normalizeInboundHomeAwb(code);
 
 export async function POST(req: NextRequest) {
   const requestStartedAt = new Date();
+  let outerIdempotencyKey: string | null = null;
+  let lockResolved = false;
+  let externalSideEffectStarted = false;
   try {
     const withContext = async <T>(label: string, fn: () => Promise<T>): Promise<T> => {
       try {
@@ -407,6 +435,16 @@ export async function POST(req: NextRequest) {
     // GTIN-only fulfill: operator scanned product barcode, not inbound StockX AWB.
     // Resolve by shopifyLineItemId and do NOT write the GTIN into stockxAwb.
     const gtinFulfill = Boolean(body?.gtinFulfill);
+    const selectedUnits = Array.isArray(body?.selectedUnits)
+      ? (body.selectedUnits as Array<{ lineItemId?: string; quantity?: number }>)
+          .map((u) => ({
+            lineItemId: String(u?.lineItemId ?? "").trim(),
+            quantity: Math.floor(Number(u?.quantity ?? 0)),
+          }))
+          .filter((u) => u.lineItemId && u.quantity > 0)
+      : [];
+    const requireUnitSelectionAck = Boolean(body?.unitSelectionConfirmed);
+    const idempotencyKey = String(body?.idempotencyKey ?? "").trim() || null;
     const trackingCompany = body?.trackingCompany ? String(body.trackingCompany).trim() : null;
     const trackingUrlFromBody = body?.trackingUrl ? String(body.trackingUrl).trim() : null;
     // Default ON: Shopify shipping confirmation must include Swiss Post tracking.
@@ -416,13 +454,24 @@ export async function POST(req: NextRequest) {
         : Boolean(body.notifyCustomer);
     const swissPostEnabled = Boolean(body?.swissPostEnabled ?? false);
     const swissPostPayload = body?.swissPostPayload ?? null;
-    const allowAlreadyFulfilled = Boolean(body?.allowAlreadyFulfilled ?? false);
+    const allowAlreadyFulfilledRaw = body?.allowAlreadyFulfilled ?? false;
+    const forceGuard = assertForceFulfillDisabled(allowAlreadyFulfilledRaw);
+    if (!forceGuard.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: forceGuard.status,
+          error: forceGuard.error,
+        },
+        { status: forceGuard.statusCode }
+      );
+    }
     const includeLabelData = Boolean(body?.includeLabelData ?? false);
     const scanSessionKey = String(body?.scanSessionKey ?? "").trim() || null;
     const scanStartedAt = parseOptionalDate(body?.scanStartedAt);
     const scanCompletedAt = parseOptionalDate(body?.scanCompletedAt);
     const roleAllowsBrowserPrint =
-      isBrowserPrintAllowedForRole(staffRole) || allowAlreadyFulfilled;
+      isBrowserPrintAllowedForRole(staffRole);
     const browserPrintConfigBase = resolveBrowserPrintConfig();
     const localStation = isLocalStation();
     const browserPrintConfig: BrowserPrintConfig = {
@@ -443,6 +492,98 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Compute a stable lock key so retries / double-clicks share the same
+    // FulfillAttemptLock row across processes and restarts.
+    const selectionInputHash = [
+      requestedShopifyLineItemId ?? "",
+      selectedUnits
+        .map((u) => `${u.lineItemId}x${u.quantity}`)
+        .sort()
+        .join("|"),
+      gtinFulfill ? "gtin" : "awb",
+    ].join("::");
+    const effectiveIdempotencyKey =
+      idempotencyKey ||
+      [
+        "fulfill",
+        awb,
+        requestedShopifyLineItemId ?? "",
+        selectionInputHash,
+      ].join(":");
+
+    let lockOutcome;
+    try {
+      lockOutcome = await beginFulfillAttempt({
+        idempotencyKey: effectiveIdempotencyKey,
+        awb,
+        shopifyOrderId: "",
+        selectionHash: selectionInputHash,
+      });
+    } catch (err: any) {
+      if (err instanceof FulfillLockTableMissingError || err?.name === "FulfillLockTableMissingError") {
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "LOCK_TABLE_MISSING" as FulfillStatus,
+            awb,
+            error: err.message,
+          },
+          { status: 503 }
+        );
+      }
+      throw err;
+    }
+    if (lockOutcome.status === "ALREADY_COMPLETED") {
+      return NextResponse.json(lockOutcome.result ?? { ok: true, replayed: true });
+    }
+    if (lockOutcome.status === "ALREADY_PROCESSING") {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "ALREADY_PROCESSING" as FulfillStatus,
+          awb,
+          error: "Another fulfill attempt for this AWB/line is already in progress.",
+        },
+        { status: 409 }
+      );
+    }
+    if (lockOutcome.status === "RECONCILIATION_REQUIRED") {
+      const recon = await reconcileFulfillAttempt({
+        idempotencyKey: effectiveIdempotencyKey,
+        awb,
+      }).catch(() => null);
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "RECONCILIATION_REQUIRED" as FulfillStatus,
+          awb,
+          error:
+            "Prior fulfill attempt has an uncertain or confirmed external side effect (Swiss Post). Do not retry automatically — reconcile first.",
+          lockStatus: lockOutcome.lockStatus,
+          priorError: lockOutcome.error,
+          priorResult: lockOutcome.result,
+          reconciliation: recon,
+        },
+        { status: 409 }
+      );
+    }
+    let activeIdempotencyKey = effectiveIdempotencyKey;
+    outerIdempotencyKey = activeIdempotencyKey;
+
+    const finishOnError = async (message: string) => {
+      if (externalSideEffectStarted) {
+        await markExternalSideEffectUnknown({
+          idempotencyKey: activeIdempotencyKey,
+          error: message,
+        }).catch(() => null);
+      } else {
+        await failFulfillAttemptBeforeExternal({
+          idempotencyKey: activeIdempotencyKey,
+          error: message,
+        }).catch(() => null);
+      }
+    };
 
     const matchSelect = {
       id: true,
@@ -523,6 +664,73 @@ export async function POST(req: NextRequest) {
         },
         { status: 409 }
       );
+    }
+
+    // Multi-product / qty>1: refuse whole-order ship without explicit unit selection.
+    if (selectedMatches.length === 1 && selectedMatches[0]?.shopifyOrderId) {
+      try {
+        const map = await fetchOrderFulfillmentMap(selectedMatches[0].shopifyOrderId);
+        const info = await fetchOrderShippingInfo(selectedMatches[0].shopifyOrderId);
+        if (map.order && info?.lineItems?.nodes) {
+          const openUnits = listAllOpenUnits({
+            orderLineItems: info.lineItems.nodes,
+            fulfillmentOrders: map.order.fulfillmentOrders.nodes,
+          });
+          const decision = decideFulfillUnitSelection(
+            openUnits.map((u) => ({
+              ...u,
+              isScannedLine: u.lineItemId === selectedMatches[0].shopifyLineItemId,
+            }))
+          );
+          if (decision.requiresPopup) {
+            if (selectedUnits.length === 0) {
+              return NextResponse.json(
+                {
+                  ok: false,
+                  status: "NEEDS_UNIT_SELECTION" as FulfillStatus,
+                  awb,
+                  error:
+                    "Order has multiple open units — select exact pairs in the popup before fulfill",
+                  openUnits,
+                  unitSelection: decision,
+                },
+                { status: 409 }
+              );
+            }
+            const validated = validateFulfillUnitSelection(openUnits, selectedUnits);
+            if (!validated.ok) {
+              await finishOnError(validated.error);
+              lockResolved = true;
+              return NextResponse.json(
+                {
+                  ok: false,
+                  status: "INVALID" as FulfillStatus,
+                  awb,
+                  error: validated.error,
+                  openUnits,
+                  unitSelection: decision,
+                },
+                { status: 422 }
+              );
+            }
+            if (!requireUnitSelectionAck) {
+              return NextResponse.json(
+                {
+                  ok: false,
+                  status: "NEEDS_UNIT_SELECTION" as FulfillStatus,
+                  awb,
+                  error: "unitSelectionConfirmed required for multi-unit fulfill",
+                  openUnits,
+                  unitSelection: decision,
+                },
+                { status: 409 }
+              );
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn("[FULFILL-FROM-AWB] open-units check failed:", err?.message || err);
+      }
     }
 
     const uniqueOrderIds = Array.from(
@@ -629,14 +837,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
-      sku: m.shopifySku ?? null,
-      title: m.shopifyProductTitle ?? null,
-      sizeEU: m.shopifySizeEU ?? null,
-      quantity: 1,
-      sourceId: m.id,
-    }));
-
     const orderInfo = await withContext("fetchOrderShippingInfo", () =>
       fetchOrderShippingInfo(shopifyOrderId)
     );
@@ -654,23 +854,76 @@ export async function POST(req: NextRequest) {
     }
     const orderLineItems = orderInfo?.lineItems?.nodes || [];
 
+    // Build requested items from selectedUnits (order line IDs) or AWB match only.
+    // Never expand to all remaining FO lines.
+    let dbItems: Array<{
+      sku: string | null;
+      title: string | null;
+      sizeEU: string | null;
+      quantity: number;
+      sourceId: string | null;
+    }>;
+    if (selectedUnits.length > 0) {
+      const byId = new Map(
+        orderLineItems.map((li: any) => [String(li.id), li] as const)
+      );
+      dbItems = [];
+      for (const unit of selectedUnits) {
+        const li = byId.get(unit.lineItemId);
+        if (!li) {
+          await finishOnError(`Selected line not on order: ${unit.lineItemId}`);
+          lockResolved = true;
+          return NextResponse.json(
+            {
+              ok: false,
+              status: "INVALID" as FulfillStatus,
+              awb,
+              error: `Selected line not on order: ${unit.lineItemId}`,
+            },
+            { status: 422 }
+          );
+        }
+        dbItems.push({
+          sku: li.sku || li.variantSku || li.variant?.sku || null,
+          title: li.title ?? null,
+          sizeEU: null,
+          quantity: unit.quantity,
+          sourceId: unit.lineItemId,
+        });
+      }
+    } else {
+      dbItems = selectedMatches.map((m: OrderMatchSelection) => ({
+        sku: m.shopifySku ?? null,
+        title: m.shopifyProductTitle ?? null,
+        sizeEU: m.shopifySizeEU ?? null,
+        quantity: 1,
+        sourceId: m.id,
+      }));
+    }
+
     const buildResult = buildLineItemsByFulfillmentOrder(
       map.order.fulfillmentOrders.nodes,
       dbItems,
       orderLineItems
     );
     let { lineItemsByFulfillmentOrder, unmatched, warnings, fulfillableFOs } = buildResult;
-    const allRemainingLineItems = fulfillableFOs.flatMap((fo) => {
-      const remaining = (fo.lineItems?.nodes || [])
-        .filter((li) => Number(li.remainingQuantity ?? 0) > 0)
-        .map((li) => ({ id: li.id, quantity: Number(li.remainingQuantity ?? 0) }));
-      if (remaining.length === 0) return [];
-      return [{ fulfillmentOrderId: fo.id, fulfillmentOrderLineItems: remaining }];
+    // Hard server rule: never expand to all remaining lines (force fulfill disabled).
+    const resolvedLines = resolveFulfillLineItems({
+      allowAlreadyFulfilled: false,
+      matchedLineItemsByFulfillmentOrder: lineItemsByFulfillmentOrder,
+      allRemainingLineItems: [],
     });
-
-    if (allowAlreadyFulfilled && allRemainingLineItems.length > 0) {
-      lineItemsByFulfillmentOrder = allRemainingLineItems;
-      warnings.push("Force fulfill: fulfilling all remaining line items for this order.");
+    lineItemsByFulfillmentOrder = resolvedLines.lineItemsByFulfillmentOrder;
+    if (resolvedLines.usedAllRemaining) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "FORCE_FULFILL_DISABLED" as FulfillStatus,
+          awb,
+          error: "Force fulfill path blocked server-side.",
+        },
+        { status: 403 }
+      );
     }
 
     let skipShopifyFulfillment = false;
@@ -684,33 +937,31 @@ export async function POST(req: NextRequest) {
           // already has this AWB as tracking (common for UPS inbound numbers).
           skipShopifyFulfillment = true;
           warnings.push(
-            allowAlreadyFulfilled
-              ? "Force fulfill: order already fulfilled; generating label only."
-              : "Order already has this tracking; generating Swiss Post label only."
+            "Order already has this tracking; generating Swiss Post label only."
           );
         }
       }
 
       if (!skipShopifyFulfillment) {
-        if (allowAlreadyFulfilled) {
-          skipShopifyFulfillment = true;
-          warnings.push("Force fulfill: no fulfillable lines left; generating label only.");
-        } else {
-          return NextResponse.json(
-            {
-              ok: false,
-              status: "INVALID" as FulfillStatus,
-              awb,
-              error:
-                fulfillableFOs.length === 0
-                  ? "No fulfillable quantities remaining for this order"
-                  : "No fulfillable line items matched requested SKUs/titles",
-              unmatched,
-              warnings,
-            },
-            { status: 422 }
-          );
-        }
+        await finishOnError(
+          fulfillableFOs.length === 0
+            ? "No fulfillable quantities remaining for this order"
+            : "No fulfillable line items matched requested SKUs/titles"
+        );
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "INVALID" as FulfillStatus,
+            awb,
+            error:
+              fulfillableFOs.length === 0
+                ? "No fulfillable quantities remaining for this order"
+                : "No fulfillable line items matched requested SKUs/titles",
+            unmatched,
+            warnings,
+          },
+          { status: 422 }
+        );
       }
     }
 
@@ -744,25 +995,82 @@ export async function POST(req: NextRequest) {
             ? swissPostPayload
             : buildSwissPostPayload(orderInfo, awb, selectedFrankingLicense, preferredLineItemIds);
         console.log("[SWISS POST] payload", payload);
-        const swissRes = await withContext("requestSwissPostLabel", () =>
-          requestSwissPostLabel(payload)
-        );
-        console.log("[SWISS POST] response", swissRes);
-        swissPostStatus = swissRes.ok ? "OK" : `HTTP_${swissRes.status}`;
-        if (!swissRes.ok) {
+        // Durable lock BEFORE any Swiss Post HTTP — never swallow DB failure then call.
+        try {
+          await markExternalSideEffectUnknownBeforeRequest({
+            idempotencyKey: activeIdempotencyKey,
+            error: "Swiss Post label request in flight",
+            partialResult: { phase: "swiss_post_request" },
+          });
+        } catch (lockErr: any) {
+          // Refuse Swiss Post. Do not downgrade an existing UNKNOWN/CONFIRMED lock.
+          lockResolved = true;
           return NextResponse.json(
             {
               ok: false,
-              status: "SHOPIFY_ERROR" as FulfillStatus,
+              status: "LOCK_TABLE_MISSING" as FulfillStatus,
               awb,
-              error: "Swiss Post label generation failed",
+              error:
+                lockErr?.message ||
+                "Could not persist EXTERNAL_SIDE_EFFECT_UNKNOWN before Swiss Post — refusing label create.",
+            },
+            { status: 503 }
+          );
+        }
+        // Lock is durable UNKNOWN — even if Swiss Post never runs, retry is blocked.
+        externalSideEffectStarted = true;
+        let swissRes;
+        try {
+          swissRes = await withContext("requestSwissPostLabel", () =>
+            requestSwissPostLabel(payload)
+          );
+        } catch (swissErr: any) {
+          await markExternalSideEffectUnknown({
+            idempotencyKey: activeIdempotencyKey,
+            error: `Swiss Post request uncertain: ${swissErr?.message || swissErr}`,
+            partialResult: { phase: "swiss_post_exception" },
+          }).catch(() => null);
+          lockResolved = true;
+          return NextResponse.json(
+            {
+              ok: false,
+              status: "RECONCILIATION_REQUIRED" as FulfillStatus,
+              awb,
+              error:
+                "Swiss Post request failed or timed out after possible side effect. Reconcile before retry — do not create a second label.",
+            },
+            { status: 409 }
+          );
+        }
+        console.log("[SWISS POST] response", swissRes);
+        swissPostStatus = swissRes.ok ? "OK" : `HTTP_${swissRes.status}`;
+        if (!swissRes.ok) {
+          await markExternalSideEffectUnknown({
+            idempotencyKey: activeIdempotencyKey,
+            error: `Swiss Post label generation failed HTTP_${swissRes.status}`,
+            partialResult: { phase: "swiss_post_http_error", swissPostResponse: swissRes.data },
+          }).catch(() => null);
+          lockResolved = true;
+          return NextResponse.json(
+            {
+              ok: false,
+              status: "RECONCILIATION_REQUIRED" as FulfillStatus,
+              awb,
+              error: "Swiss Post label generation failed after request was sent. Reconcile before retry.",
               swissPostStatus,
               swissPostResponse: swissRes.data,
             },
-            { status: 502 }
+            { status: 409 }
           );
         }
         swissPostResult = swissRes;
+        await markExternalSideEffectConfirmed({
+          idempotencyKey: activeIdempotencyKey,
+          partialResult: {
+            phase: "swiss_post_ok",
+            swissPostResponse: swissRes.data,
+          },
+        }).catch(() => null);
         labelGeneratedAt = new Date();
         const itemData = Array.isArray(swissRes.data?.item)
           ? swissRes.data.item[0]
@@ -770,16 +1078,23 @@ export async function POST(req: NextRequest) {
         swissPostBarcode = itemData?.barcodes?.[0] || null;
         swissPostLabelId = itemData?.identCode || null;
         if (!swissPostLabelId) {
+          await markExternalSideEffectUnknown({
+            idempotencyKey: activeIdempotencyKey,
+            error: "Swiss Post identCode missing from label response",
+            partialResult: { phase: "swiss_post_no_ident", swissPostResponse: swissRes.data },
+          }).catch(() => null);
+          lockResolved = true;
           return NextResponse.json(
             {
               ok: false,
-              status: "SHOPIFY_ERROR" as FulfillStatus,
+              status: "RECONCILIATION_REQUIRED" as FulfillStatus,
               awb,
-              error: "Swiss Post identCode missing from label response",
+              error:
+                "Swiss Post response ambiguous (no identCode). Reconcile before retry.",
               swissPostStatus,
               swissPostResponse: swissRes.data,
             },
-            { status: 502 }
+            { status: 409 }
           );
         }
         trackingNumberForFulfillment = swissPostLabelId;
@@ -842,29 +1157,32 @@ export async function POST(req: NextRequest) {
     }
 
     if (skipShopifyFulfillment) {
-      return NextResponse.json(
-        {
-          ok: true,
-          status: "ALREADY_FULFILLED" as FulfillStatus,
-          awb,
-          fulfillmentId: null,
-          shopifyOrderId,
-          shopifyOrderName: map.order.name,
-          trackingNumber: trackingNumberForFulfillment,
-          trackingCompany: trackingCompanyForFulfillment,
-          swissPostLabelId,
-          swissPostBarcode,
-          swissPostStatus,
-          swissPostResponse: swissPostResult?.data || null,
-          labelFilePath,
-          printJobResult,
-          labelData,
-          browserPrintConfig,
-          warnings,
-          swissPost: shouldCallSwissPost ? "attempted" : "skipped",
-        },
-        { status: 200 }
-      );
+      const payload = {
+        ok: true,
+        status: "ALREADY_FULFILLED" as FulfillStatus,
+        awb,
+        fulfillmentId: null,
+        shopifyOrderId,
+        shopifyOrderName: map.order.name,
+        trackingNumber: trackingNumberForFulfillment,
+        trackingCompany: trackingCompanyForFulfillment,
+        swissPostLabelId,
+        swissPostBarcode,
+        swissPostStatus,
+        swissPostResponse: swissPostResult?.data || null,
+        labelFilePath,
+        printJobResult,
+        labelData,
+        browserPrintConfig,
+        warnings,
+        swissPost: shouldCallSwissPost ? "attempted" : "skipped",
+      };
+      await completeFulfillAttempt({
+        idempotencyKey: activeIdempotencyKey,
+        result: payload,
+      }).catch(() => null);
+      lockResolved = true;
+      return NextResponse.json(payload, { status: 200 });
     }
 
     const fulfillmentInput = {
@@ -882,32 +1200,37 @@ export async function POST(req: NextRequest) {
     );
     const userErrors = result.fulfillmentCreate.userErrors || [];
     if (userErrors.length > 0) {
-      if (allowAlreadyFulfilled && (labelData || labelFilePath)) {
-        warnings.push(
-          `Shopify fulfillment skipped: ${userErrors.map((e) => e.message).join("; ")}`
-        );
-        return NextResponse.json(
-          {
-            ok: true,
-            status: "ALREADY_FULFILLED" as FulfillStatus,
-            awb,
-            shopifyOrderId,
-            shopifyOrderName: map.order.name,
-            trackingNumber: trackingNumberForFulfillment,
-            trackingCompany: trackingCompanyForFulfillment,
+      if (swissPostLabelId || labelData || labelFilePath || externalSideEffectStarted) {
+        await markExternalSideEffectConfirmed({
+          idempotencyKey: activeIdempotencyKey,
+          partialResult: {
+            phase: "shopify_user_errors_after_swiss_post",
             swissPostLabelId,
             swissPostBarcode,
-            swissPostStatus,
-            labelFilePath,
-            printJobResult,
-            labelData,
-            browserPrintConfig,
-            warnings,
-            userErrors,
+            trackingNumber: trackingNumberForFulfillment,
+            shopifyUserErrors: userErrors,
           },
-          { status: 200 }
+        }).catch(() => null);
+        lockResolved = true;
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "RECONCILIATION_REQUIRED" as FulfillStatus,
+            awb,
+            shopifyOrderId,
+            swissPostLabelId,
+            swissPostBarcode,
+            trackingNumber: trackingNumberForFulfillment,
+            labelFilePath,
+            labelData,
+            userErrors,
+            error:
+              "Swiss Post label created but Shopify fulfill failed. Reconcile — do not retry automatically.",
+          },
+          { status: 409 }
         );
       }
+      await finishOnError(userErrors.map((e) => e.message).join("; "));
       return NextResponse.json(
         {
           ok: false,
@@ -921,27 +1244,35 @@ export async function POST(req: NextRequest) {
 
     const fulfillment = result.fulfillmentCreate.fulfillment;
     if (!fulfillment) {
-      if (allowAlreadyFulfilled && (labelData || labelFilePath)) {
-        return NextResponse.json(
-          {
-            ok: true,
-            status: "ALREADY_FULFILLED" as FulfillStatus,
-            awb,
-            shopifyOrderId,
-            shopifyOrderName: map.order.name,
-            trackingNumber: trackingNumberForFulfillment,
-            trackingCompany: trackingCompanyForFulfillment,
+      if (swissPostLabelId || labelData || labelFilePath || externalSideEffectStarted) {
+        await markExternalSideEffectConfirmed({
+          idempotencyKey: activeIdempotencyKey,
+          partialResult: {
+            phase: "shopify_missing_fulfillment_after_swiss_post",
             swissPostLabelId,
             swissPostBarcode,
-            labelFilePath,
-            printJobResult,
-            labelData,
-            browserPrintConfig,
-            warnings,
+            trackingNumber: trackingNumberForFulfillment,
           },
-          { status: 200 }
+        }).catch(() => null);
+        lockResolved = true;
+        return NextResponse.json(
+          {
+            ok: false,
+            status: "RECONCILIATION_REQUIRED" as FulfillStatus,
+            awb,
+            shopifyOrderId,
+            swissPostLabelId,
+            swissPostBarcode,
+            trackingNumber: trackingNumberForFulfillment,
+            labelFilePath,
+            labelData,
+            error:
+              "Swiss Post label created but Shopify fulfillment missing. Reconcile — do not retry automatically.",
+          },
+          { status: 409 }
         );
       }
+      await finishOnError("Missing fulfillment");
       return NextResponse.json(
         { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, awb, error: "Missing fulfillment" },
         { status: 500 }
@@ -1040,43 +1371,84 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(
-      {
-        ok: true,
-        status: "FULFILLED" as FulfillStatus,
-        awb,
-        shopifyOrderId,
-        shopifyOrderName: map.order.name,
-        trackingNumber: trackingNumberForFulfillment,
-        trackingCompany: trackingCompanyForFulfillment,
-        swissPostLabelId,
-        swissPostBarcode,
-        swissPostStatus,
-        swissPostResponse: swissPostResult?.data || null,
-        labelFilePath,
-        printJobResult,
-        labelData,
-        browserPrintConfig,
-        warnings,
-        swissPost: shouldCallSwissPost ? "attempted" : "skipped",
-        timing: {
-          scanToLabelSeconds: record.scanToLabelSeconds,
-          scanToFulfillmentSeconds: record.scanToFulfillmentSeconds,
-          stockxDeliveredToFulfillmentMinutes: record.stockxDeliveredToFulfillmentMinutes,
-          requestDurationMs: record.requestDurationMs,
-        },
+    const successPayload = {
+      ok: true,
+      status: "FULFILLED" as FulfillStatus,
+      awb,
+      shopifyOrderId,
+      shopifyOrderName: map.order.name,
+      trackingNumber: trackingNumberForFulfillment,
+      trackingCompany: trackingCompanyForFulfillment,
+      swissPostLabelId,
+      swissPostBarcode,
+      swissPostStatus,
+      swissPostResponse: swissPostResult?.data || null,
+      labelFilePath,
+      printJobResult,
+      labelData,
+      browserPrintConfig,
+      warnings,
+      swissPost: shouldCallSwissPost ? "attempted" : "skipped",
+      timing: {
+        scanToLabelSeconds: record.scanToLabelSeconds,
+        scanToFulfillmentSeconds: record.scanToFulfillmentSeconds,
+        stockxDeliveredToFulfillmentMinutes: record.stockxDeliveredToFulfillmentMinutes,
+        requestDurationMs: record.requestDurationMs,
       },
-      { status: 200 }
-    );
+    };
+
+    await completeFulfillAttempt({
+      idempotencyKey: activeIdempotencyKey,
+      result: successPayload,
+    }).catch((err: any) => {
+      console.error(
+        "[FULFILL-FROM-AWB] completeFulfillAttempt failed",
+        err?.message || err
+      );
+    });
+    lockResolved = true;
+    // Reference kept so `fulfillScanIdempotencyKey` import stays legitimate
+    // for consumers reading the cache key format from server logs.
+    void fulfillScanIdempotencyKey;
+
+    return NextResponse.json(successPayload, { status: 200 });
   } catch (error: any) {
     console.error("[FULFILL-FROM-AWB] Error:", error?.message || error);
     if (error?.stack) {
       console.error("[FULFILL-FROM-AWB] Stack:", error.stack);
     }
+    if (outerIdempotencyKey) {
+      if (externalSideEffectStarted) {
+        await markExternalSideEffectUnknown({
+          idempotencyKey: outerIdempotencyKey,
+          error: String(error?.message || error),
+        }).catch(() => null);
+      } else {
+        await failFulfillAttemptBeforeExternal({
+          idempotencyKey: outerIdempotencyKey,
+          error: String(error?.message || error),
+        }).catch(() => null);
+      }
+      lockResolved = true;
+    }
     return NextResponse.json(
       { ok: false, status: "SHOPIFY_ERROR" as FulfillStatus, error: error.message || "Error" },
       { status: 500 }
     );
+  } finally {
+    if (!lockResolved && outerIdempotencyKey) {
+      if (externalSideEffectStarted) {
+        await markExternalSideEffectUnknown({
+          idempotencyKey: outerIdempotencyKey,
+          error: "Early exit after external side effect started — reconcile before retry.",
+        }).catch(() => null);
+      } else {
+        await failFulfillAttemptBeforeExternal({
+          idempotencyKey: outerIdempotencyKey,
+          error: "Early exit without success (see prior response payload for details).",
+        }).catch(() => null);
+      }
+    }
   }
 }
 

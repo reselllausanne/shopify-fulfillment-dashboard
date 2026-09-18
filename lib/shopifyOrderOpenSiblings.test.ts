@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listOpenSiblingLines } from "./shopifyOrderOpenSiblings";
+import { listOpenSiblingLines, listAllOpenUnits } from "./shopifyOrderOpenSiblings";
 
 describe("listOpenSiblingLines", () => {
   const fulfillmentOrders = [
@@ -81,5 +81,14 @@ describe("listOpenSiblingLines", () => {
         scannedLineItemId: "gid://shopify/LineItem/1",
       })
     ).toEqual([]);
+  });
+
+  it("listAllOpenUnits includes scanned line for partial then second ship", () => {
+    const open = listAllOpenUnits({ orderLineItems, fulfillmentOrders });
+    expect(open).toHaveLength(2);
+    expect(open.map((l) => l.lineItemId).sort()).toEqual([
+      "gid://shopify/LineItem/1",
+      "gid://shopify/LineItem/2",
+    ]);
   });
 });

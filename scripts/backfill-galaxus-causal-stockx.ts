@@ -22,11 +22,12 @@ function parseDateMs(value: unknown): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-function isCausal(orderDate: unknown, purchaseDate: unknown, skewMinutes = 5): boolean {
+function isCausal(orderDate: unknown, purchaseDate: unknown): boolean {
   const orderMs = parseDateMs(orderDate);
   const buyMs = parseDateMs(purchaseDate);
   if (orderMs == null || buyMs == null) return false;
-  return buyMs >= orderMs - skewMinutes * 60_000;
+  // Strict: buy must be on or after the customer order. Zero skew.
+  return buyMs >= orderMs;
 }
 
 function looksLikeStockxRef(value: unknown): boolean {
@@ -62,7 +63,7 @@ async function main() {
   });
 
   const invalid = rows.filter(
-    (r: any) => !isCausal(r.galaxusOrderDate, r.stockxPurchaseDate, 5)
+    (r: any) => !isCausal(r.galaxusOrderDate, r.stockxPurchaseDate)
   );
 
   const impactedRefs = new Set<string>();

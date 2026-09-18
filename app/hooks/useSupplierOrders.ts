@@ -837,7 +837,12 @@ export function useSupplierOrders() {
         `${String(order.chainId ?? "").trim()}::${String(order.orderId ?? "").trim()}::${String(order.orderNumber ?? "").trim()}`;
 
       if (token.trim()) {
-        const MAX_STOCKX_PAGES = 60;
+        // Matching only needs recent PENDING buys — full 60-page history made
+        // StockX↔Galaxus matching extremely slow. Cap via env; default 8 (~800 buys).
+        const MAX_STOCKX_PAGES = Math.max(
+          2,
+          Math.min(20, Number(process.env.NEXT_PUBLIC_STOCKX_MATCH_MAX_PAGES ?? "8"))
+        );
         let stockxPageIndex = 1;
         const seenOrderKeys = new Set<string>();
         let noNewPageCount = 0;
