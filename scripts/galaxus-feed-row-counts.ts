@@ -71,14 +71,22 @@ async function main() {
   );
 
   if (stockOfferOnly) {
-    const [stockRes, offerRes] = await Promise.all([
-      getStock(new Request(`${base}/api/galaxus/export/stock?all=1`)),
-      getOffer(new Request(`${base}/api/galaxus/export/offer?all=1`)),
-    ]);
+    // Sequential to keep peak memory down (full all=1 CSVs are huge).
+    const stockRes = await getStock(new Request(`${base}/api/galaxus/export/stock?all=1`));
     const stock = await textOrJson(stockRes);
-    const offer = await textOrJson(offerRes);
     const stockKeys = providerKeysFromCsv(stock.csv);
+    const stockRows = stock.csv != null ? countCsvRows(stock.csv) : null;
+    const stockStatus = stock.status;
+    // Drop CSV body before building offer (GC).
+    (stock as { csv: string | null }).csv = null;
+
+    const offerRes = await getOffer(new Request(`${base}/api/galaxus/export/offer?all=1`));
+    const offer = await textOrJson(offerRes);
     const offerKeys = providerKeysFromCsv(offer.csv);
+    const offerRows = offer.csv != null ? countCsvRows(offer.csv) : null;
+    const offerStatus = offer.status;
+    (offer as { csv: string | null }).csv = null;
+
     const stockSet = new Set(stockKeys);
     const offerSet = new Set(offerKeys);
     const onlyStock = stockKeys.filter((k) => !offerSet.has(k));
@@ -86,13 +94,13 @@ async function main() {
     const report = {
       note: "Dry-run only — GET handlers generate CSV in-process; no Galaxus upload.",
       stock: {
-        status: stock.status,
-        dataRows: stock.csv != null ? countCsvRows(stock.csv) : null,
+        status: stockStatus,
+        dataRows: stockRows,
         providerKeyCount: stockKeys.length,
       },
       offer: {
-        status: offer.status,
-        dataRows: offer.csv != null ? countCsvRows(offer.csv) : null,
+        status: offerStatus,
+        dataRows: offerRows,
         providerKeyCount: offerKeys.length,
       },
       stockVsOfferExactKeys: onlyStock.length === 0 && onlyOffer.length === 0,
@@ -108,7 +116,7 @@ async function main() {
       );
       console.error(`wrote ${outPath}`);
     }
-    if (stock.status >= 400 || offer.status >= 400) process.exitCode = 1;
+    if (stockStatus >= 400 || offerStatus >= 400) process.exitCode = 1;
     return;
   }
 
