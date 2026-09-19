@@ -1,35 +1,21 @@
 # Kill BAE (Bächli)
 
-BAE is removed from scraping and from **future** Galaxus master/offer feeds.
+BAE is **deleted**: no scraper, no master/offer, stock feed forces `QuantityOnStock=0`.
 
-## What merge/deploy does NOT do
+## Merge does
 
-- Does **not** zero the ~9k live Galaxus BAE offers
-- Does **not** upload a stock feed
-- Does **not** set `SUPPLIER_STOCK_PUBLISH_ENFORCED`
+1. Scraper code removed (`baechli*` files gone)
+2. Master/offer skip BAE
+3. **Stock feed emits 0** for every BAE ProviderKey still in candidates (delist on next stock upload)
 
-## Dry-run (read-only)
+## After merge — ops
 
-Lists every Galaxus `ChannelListingState` row for BAE that is still `ACTIVE` or has `lastPushedStock > 0`:
-
-```bash
-npx tsx scripts/kill-bae-galaxus-delist.ts
-npx tsx scripts/kill-bae-galaxus-delist.ts --out=tmp/bae-active.json
-```
-
-Output includes `total`, `byStatus`, and a sample of `providerKey` + `gtin`.
-
-## Apply (explicit, after human validation)
+1. Upload Galaxus **stock** feed (BAE rows → 0)
+2. Delete DB rows:
 
 ```bash
-npx tsx scripts/kill-bae-galaxus-delist.ts --apply --confirm=BAE_DELIST_GALAXUS
+npx tsx scripts/kill-bae-delete.ts                 # counts
+npx tsx scripts/kill-bae-delete.ts --confirm=BAE_DELETE
 ```
 
-Apply:
-
-1. Writes `tmp/bae-galaxus-delist-stock-<ts>.csv` (`ProviderKey,QuantityOnStock=0`)
-2. Sets local `SupplierVariant.stock = 0` for listed `bae_*` rows
-3. Marks matching Galaxus `ChannelListingState` as `SOLD_OUT` / `lastPushedStock=0`
-4. **Does not upload** — upload the CSV via the normal Galaxus stock feed path after review
-
-Wrong/missing `--confirm` → exit 2, no writes.
+Remove `BAE|...|bae` from VPS `SCRAPER_SHOPS` if still present (parser ignores it anyway).

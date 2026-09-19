@@ -89,7 +89,7 @@ export async function runScraperJob(input: RunScraperJobInput): Promise<RunScrap
       ok: false,
       shop: "bae",
       runId: null,
-      error: "BAE_SCRAPER_KILLED — Bächli removed; use scripts/kill-bae-galaxus-delist.ts for Galaxus delist",
+      error: "BAE_SCRAPER_KILLED — Bächli removed from codebase",
     };
   }
 

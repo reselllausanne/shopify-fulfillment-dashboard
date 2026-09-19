@@ -1,15 +1,14 @@
 /**
- * Bächli (BAE) kill — permanently exclude from Galaxus catalog feeds.
- *
- * Merge/deploy of this code does NOT zero live Galaxus offers.
- * Delist of existing ACTIVE listings is an explicit CLI apply only:
- *   npx tsx scripts/kill-bae-galaxus-delist.ts
- *   npx tsx scripts/kill-bae-galaxus-delist.ts --apply --confirm=BAE_DELIST_GALAXUS
+ * Bächli (BAE) permanently removed.
+ * - Master/offer: blocked
+ * - Stock feed: force QuantityOnStock=0 (delist prior pushes), same pattern as XNT
+ * - Scraper code deleted
+ * - DB purge: scripts/kill-bae-delete.ts --confirm=BAE_DELETE
  */
 
 export const BAE_SUPPLIER_KEY = "bae";
 export const BAE_PROVIDER_PREFIX = "BAE_";
-export const BAE_DELIST_CONFIRM_TOKEN = "BAE_DELIST_GALAXUS";
+export const BAE_DELETE_CONFIRM_TOKEN = "BAE_DELETE";
 
 export function isBaeSupplierKey(input: {
   supplierKey?: string | null;
@@ -32,11 +31,20 @@ export function isBaeSupplierKey(input: {
   return pk.startsWith(BAE_PROVIDER_PREFIX);
 }
 
-/**
- * Block BAE from master / offer / candidate selection.
- * Does NOT force stock=0 — that would delist on the next stock upload after merge.
- */
+/** Block BAE from master / offer / candidate selection. */
 export function isBaeFeedBlocked(input: {
+  supplierKey?: string | null;
+  supplierVariantId?: string | null;
+  providerKey?: string | null;
+}): boolean {
+  return isBaeSupplierKey(input);
+}
+
+/**
+ * Force stock=0 in Galaxus stock CSV so previously pushed offers delist.
+ * Unlike master/offer skip, stock feed must still emit zeros.
+ */
+export function shouldForceBaeStockZero(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
   providerKey?: string | null;
@@ -66,18 +74,4 @@ export function summarizeBaeActiveListings(rows: BaeActiveListingRow[]): {
     if (row.providerKey) providerKeys.push(row.providerKey);
   }
   return { total: rows.length, byStatus, providerKeys };
-}
-
-/** Galaxus stock CSV header used by our stock export. */
-export function formatBaeDelistStockCsvRow(providerKey: string): string {
-  return `${providerKey},0`;
-}
-
-export function buildBaeDelistStockCsv(providerKeys: string[]): string {
-  const header = "ProviderKey,QuantityOnStock";
-  const body = providerKeys
-    .filter(Boolean)
-    .map((pk) => formatBaeDelistStockCsvRow(pk))
-    .join("\n");
-  return body ? `${header}\n${body}\n` : `${header}\n`;
 }

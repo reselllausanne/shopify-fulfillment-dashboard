@@ -5,7 +5,6 @@ import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
 import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
 import { hasGalaxusPrimaryImage } from "@/galaxus/exports/variantImagePresence";
-import { isBaeFeedBlocked } from "@/galaxus/exports/baeKill";
 
 type VariantCandidate = {
   mapping: any;
@@ -101,19 +100,8 @@ export function accumulateBestCandidates(
       continue;
     }
 
-    // BAE killed — exclude from future master/offer/candidate selection.
-    // Live Galaxus stock zeros are NOT automatic; use scripts/kill-bae-galaxus-delist.ts.
-    if (
-      isBaeFeedBlocked({
-        supplierKey,
-        supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
-        providerKey: variant?.providerKey ?? mapping?.providerKey,
-      })
-    ) {
-      options?.onExclude?.({ reason: "SUPPLIER_BLOCKED", supplierKey: supplierKey ?? "bae", mapping, variant });
-      continue;
-    }
-
+    // BAE stays in candidates so stock feed can emit QuantityOnStock=0 (delist).
+    // Master/offer routes call isBaeFeedBlocked separately.
     if (
       shouldOmitWelPokemonFromGalaxusFeed({
         supplierKey,

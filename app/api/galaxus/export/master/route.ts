@@ -386,7 +386,7 @@ export async function GET(request: Request) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
-    // BAE killed from future catalog — live stock zeros only via kill-bae-galaxus-delist apply.
+    // BAE killed from catalog — stock feed force-zeros via shouldForceBaeStockZero.
     if (
       isBaeFeedBlocked({
         supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,

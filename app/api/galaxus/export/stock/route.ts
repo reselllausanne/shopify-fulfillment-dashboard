@@ -35,6 +35,7 @@ import {
   resolveGalaxusDirectDeliverySupported,
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
+import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
 import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
@@ -290,11 +291,16 @@ export async function GET(request: Request) {
     if (!providerKey) return;
     const mappingSupplierKey = (candidate as any)?.mapping?.supplierKey ?? null;
     const supplierVariantIdEarly = String(variant?.supplierVariantId ?? "");
-    // Force stock=0 delist rows (XNT brand block OR stock-positive allowlist).
+    // Force stock=0 delist rows (XNT / BAE kill / stock-positive allowlist).
     // Bypass catalog-ready / MOQ so previously published ProviderKeys still
     // receive QuantityOnStock=0 and Galaxus removes the live offer.
     if (
       isXntFeedBlockedBrand(variant) ||
+      shouldForceBaeStockZero({
+        supplierKey: mappingSupplierKey,
+        supplierVariantId: supplierVariantIdEarly,
+        providerKey,
+      }) ||
       shouldForceGalaxusStockZero({
         supplierKey: mappingSupplierKey,
         supplierVariantId: supplierVariantIdEarly,
