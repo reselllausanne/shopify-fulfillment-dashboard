@@ -29,6 +29,7 @@ import {
   isGalaxusSellableStock,
   isXntFeedBlockedBrand,
 } from "@/galaxus/exports/feedEligibility";
+import { isBaeFeedBlocked } from "@/galaxus/exports/baeKill";
 import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
@@ -219,6 +220,15 @@ export async function GET(request: Request) {
     // XNT Pollin / Berrybase: no offer/price updates (block cascades from
     // master feed skip). Stock feed emits 0 to actively delist prior pushes.
     if (isXntFeedBlockedBrand(variant)) continue;
+    if (
+      isBaeFeedBlocked({
+        supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+        supplierVariantId: variant?.supplierVariantId,
+        providerKey,
+      })
+    ) {
+      continue;
+    }
     const sellPrice = Number(candidate.sellPriceExVat);
     const vatRate = vatRateDefault;
     const manualLock = Boolean(variant?.manualLock);

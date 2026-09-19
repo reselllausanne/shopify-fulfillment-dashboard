@@ -20,6 +20,7 @@ import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import { isGalaxusSellableStock, isXntFeedBlockedBrand } from "@/galaxus/exports/feedEligibility";
+import { isBaeFeedBlocked } from "@/galaxus/exports/baeKill";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -382,6 +383,17 @@ export async function GET(request: Request) {
     // XNT Pollin / Berrybase: fully removed from master feed (no product refresh,
     // no new imports). Stock feed still emits stock=0 to delist prior pushes.
     if (isXntFeedBlockedBrand(supplierVariant)) {
+      if (providerKey) skippedProviderKeys.push(providerKey);
+      continue;
+    }
+    // BAE killed from catalog — stock feed force-zeros via shouldForceBaeStockZero.
+    if (
+      isBaeFeedBlocked({
+        supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
+        supplierVariantId: supplierVariant?.supplierVariantId,
+        providerKey,
+      })
+    ) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }

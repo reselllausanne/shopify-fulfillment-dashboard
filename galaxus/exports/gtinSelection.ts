@@ -100,6 +100,8 @@ export function accumulateBestCandidates(
       continue;
     }
 
+    // BAE stays in candidates so stock feed can emit QuantityOnStock=0 (delist).
+    // Master/offer routes call isBaeFeedBlocked separately.
     if (
       shouldOmitWelPokemonFromGalaxusFeed({
         supplierKey,

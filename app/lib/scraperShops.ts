@@ -8,7 +8,8 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
  *   Name = display name
  *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
  *   CURRENCY = optional ISO code (default CHF)
- *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | bae | fan | exl | haw | bwz | tus | alt | ven
+ *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | fan | exl | haw | bwz | tus | alt | ven
+ *   (BAE / Bächli is permanently killed — entries with platform=bae or key=BAE are ignored.)
  *
  * Example:
  *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
@@ -28,7 +29,6 @@ export type ScraperPlatform =
   | "snl"
   | "rei"
   | "nso"
-  | "bae"
   | "fan"
   | "exl"
   | "haw"
@@ -77,12 +77,17 @@ export function parseScraperShops(): ScraperShop[] {
     const code = key.slice(0, 3).toUpperCase();
     if (code.length !== 3) continue;
     if (seen.has(key)) continue;
-    seen.add(key);
 
     const currencyCandidate = String(currencyOrPlatform || "").toUpperCase();
     const currency =
       currencyCandidate.length === 3 && /^[A-Z]{3}$/.test(currencyCandidate) ? currencyCandidate : "CHF";
     const platformCandidate = String(platformRaw || currencyOrPlatform || "shopify").toLowerCase();
+
+    // BAE permanently killed — ignore env leftovers so cron/UI cannot re-scrape.
+    if (key === "bae" || code === "BAE" || platformCandidate === "bae") {
+      continue;
+    }
+    seen.add(key);
     const platform: ScraperPlatform =
       platformCandidate === "hhv"
         ? "hhv"
@@ -92,9 +97,7 @@ export function parseScraperShops(): ScraperShop[] {
             ? "rei"
             : platformCandidate === "nso"
               ? "nso"
-              : platformCandidate === "bae"
-                ? "bae"
-                : platformCandidate === "fan"
+              : platformCandidate === "fan"
                   ? "fan"
                   : platformCandidate === "exl"
                     ? "exl"
