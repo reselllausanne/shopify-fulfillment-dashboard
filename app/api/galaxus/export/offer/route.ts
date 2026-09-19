@@ -30,6 +30,10 @@ import {
   isXntFeedBlockedBrand,
 } from "@/galaxus/exports/feedEligibility";
 import {
+  attachHasImageSignalToMappings,
+  FEED_VARIANT_SELECT_GATE_NO_IMAGES,
+} from "@/galaxus/exports/variantImagePresence";
+import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
   mergePhysicalWithDropship,
@@ -126,24 +130,7 @@ export async function GET(request: Request) {
         updatedAt: true,
         supplierVariantId: true,
         supplierVariant: {
-          select: {
-            supplierVariantId: true,
-            price: true,
-            stock: true,
-            manualPrice: true,
-            manualStock: true,
-            manualLock: true,
-            deliveryType: true,
-            suggestedRetailPriceInclVat: true,
-            supplierProductName: true,
-            // Catalog-ready gate (must match master eligibility).
-            supplierBrand: true,
-            supplierSku: true,
-            images: true,
-            hostedImageUrl: true,
-            sourceImageUrl: true,
-            imageSyncStatus: true,
-          },
+          select: FEED_VARIANT_SELECT_GATE_NO_IMAGES,
         },
         kickdbVariant: {
           select: {
@@ -162,6 +149,7 @@ export async function GET(request: Request) {
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
+    await attachHasImageSignalToMappings(mappings);
     lastBatch = mappings.length;
     if (mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];

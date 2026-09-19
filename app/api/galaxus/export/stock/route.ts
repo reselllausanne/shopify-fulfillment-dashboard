@@ -35,6 +35,10 @@ import {
   resolveGalaxusDirectDeliverySupported,
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
+import {
+  attachHasImageSignalToMappings,
+  FEED_VARIANT_SELECT_GATE_NO_IMAGES,
+} from "@/galaxus/exports/variantImagePresence";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
@@ -136,31 +140,14 @@ export async function GET(request: Request) {
         updatedAt: true,
         supplierVariantId: true,
         supplierVariant: {
-          select: {
-            supplierVariantId: true,
-            price: true,
-            stock: true,
-            manualPrice: true,
-            manualStock: true,
-            manualLock: true,
-            manualNote: true,
-            leadTimeDays: true,
-            deliveryType: true,
-            // Catalog-ready gate (must match master eligibility).
-            supplierProductName: true,
-            supplierBrand: true,
-            supplierSku: true,
-            images: true,
-            hostedImageUrl: true,
-            sourceImageUrl: true,
-            imageSyncStatus: true,
-          },
+          select: FEED_VARIANT_SELECT_GATE_NO_IMAGES,
         },
       },
       orderBy: [{ id: "desc" }],
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
+    await attachHasImageSignalToMappings(mappings);
     lastBatch = mappings.length;
     if (mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
