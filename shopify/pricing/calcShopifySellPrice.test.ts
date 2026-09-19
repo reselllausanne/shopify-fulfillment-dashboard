@@ -8,6 +8,7 @@ import {
   resolveShopifyPricingRule,
   resolveStxWebsiteSellPrices,
   ceilToCentime,
+  ceilToWholeFranc,
   SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF,
   SHOPIFY_BLENDED_PAYMENT_COST_RATE,
   SHOPIFY_VAT_FLAT_RATE,
@@ -16,11 +17,11 @@ import {
   shopifyLockedDenom,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
-/** Locked floor: raw 100 → C=128 → (128+14.5)/0.6795 → ceil centime. */
-const EXPECTED_SELL_RAW_100 = 209.72;
-const EXPECTED_SELL_RAW_108_45 = 223.15;
-const EXPECTED_SELL_RAW_126 = 251.04;
-const EXPECTED_SELL_RAW_170 = 320.98;
+/** Locked floor: raw 100 → C=128 → (128+14.5)/0.6795 → ceil whole CHF. */
+const EXPECTED_SELL_RAW_100 = 210;
+const EXPECTED_SELL_RAW_108_45 = 224;
+const EXPECTED_SELL_RAW_126 = 252;
+const EXPECTED_SELL_RAW_170 = 321;
 const BUY_CHF_140 = 140;
 const EXPECTED_RAW_FROM_BUY_140 = 108.45;
 
@@ -62,8 +63,14 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(ceilToCentime(286.36)).toBe(286.36);
   });
 
-  it("sourceCost 180.08 → 286.36", () => {
-    expect(calcShopifySellFromSourceCost(180.08)).toBe(286.36);
+  it("ceilToWholeFranc never rounds down under floor", () => {
+    expect(ceilToWholeFranc(286.01)).toBe(287);
+    expect(ceilToWholeFranc(286.0)).toBe(286);
+    expect(ceilToWholeFranc(286.36)).toBe(287);
+  });
+
+  it("sourceCost 180.08 → 287 (whole CHF)", () => {
+    expect(calcShopifySellFromSourceCost(180.08)).toBe(287);
   });
 
   it("prices brands the same", () => {
@@ -151,14 +158,14 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(std).toBe(exp);
   });
 
-  it("returns ceil-centime lego price", () => {
+  it("returns whole-franc lego price", () => {
     const price = calcShopifySellPrice({
       stockxRaw: 80,
       productCategory: "lego",
       productHandle: "lego-random-set",
     });
     expect(price).not.toBeNull();
-    expect(Number.isInteger(Math.round(price! * 100))).toBe(true);
+    expect(Number.isInteger(price)).toBe(true);
     expect(resolveShopifyPricingRule({ productCategory: "lego" })).toBe("lego");
   });
 });
@@ -177,11 +184,11 @@ describe("resolveStxWebsiteSellPrices", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: 100,
       expressBuyPrice: null,
-      calcFromBuy: () => 199.72,
+      calcFromBuy: () => 210,
     });
     expect(r.mode).toBe("single_plus20");
-    expect(r.normalSell).toBe(199.72);
-    expect(r.expressSell).toBe(219.72);
+    expect(r.normalSell).toBe(210);
+    expect(r.expressSell).toBe(230);
   });
 
   it("express-only → standard=calc(express), express=standard+20", () => {
@@ -189,11 +196,11 @@ describe("resolveStxWebsiteSellPrices", () => {
       standardBuyPrice: null,
       expressBuyPrice: 150,
       deliveryType: "express_standard",
-      calcFromBuy: () => 259.15,
+      calcFromBuy: () => 260,
     });
     expect(r.mode).toBe("single_plus20");
-    expect(r.normalSell).toBe(259.15);
-    expect(r.expressSell).toBe(279.15);
+    expect(r.normalSell).toBe(260);
+    expect(r.expressSell).toBe(280);
   });
 
   it("distinct dual lanes → each locked calc, no +20", () => {
@@ -211,9 +218,9 @@ describe("resolveStxWebsiteSellPrices", () => {
     const r = resolveStxWebsiteSellPrices({
       standardBuyPrice: 100,
       expressBuyPrice: 100,
-      calcFromBuy: () => 199.72,
+      calcFromBuy: () => 210,
     });
     expect(r.mode).toBe("single_plus20");
-    expect(r.expressSell).toBe(219.72);
+    expect(r.expressSell).toBe(230);
   });
 });

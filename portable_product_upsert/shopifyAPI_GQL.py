@@ -409,18 +409,18 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    LOCKED Shopify sell formula (v2026-09-19) — manual constants only.
+    LOCKED Shopify sell formula (v2026-09-19-franc) — manual constants only.
 
     shopifySellPrice =
       (sourceCostChf + fixedFulfillmentAndShippingChf)
       / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
-    then ceil to next centime.
+    then ceil to whole CHF (WeTheNew-style; never below floor).
 
     Do not silently update from Shopify plan data or payment-method mix.
-    No markup. No fixed costs after the denominator. No +0.30 fee.
+    No …9/…5 psych. No +0.30 fee.
 
     sourceCost (sneakers): stockx_raw * 1.08 + 20
-    LEGO: (C + ship) * 1.33, ceil centime
+    LEGO: (C + ship) * 1.33, ceil whole CHF
 
     is_express / brand unused for the locked base (express premium via apply_stx_express_floor).
     """
@@ -442,26 +442,33 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
         lego_shipping = get_lego_shipping_cost(product_handle)
         C = stockx_raw * 1.10 + lego_shipping
         final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) * 1.33
-        final_price = _ceil_to_centime(final_price_raw)
+        final_price = _ceil_to_whole_franc(final_price_raw)
         print(
-            f"[PRICE DEBUG] LEGO: C={C:.2f} → {final_price_raw:.4f} → ceil {final_price:.2f}"
+            f"[PRICE DEBUG] LEGO: C={C:.2f} → {final_price_raw:.4f} → ceil franc {final_price}"
         )
         print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
         return final_price
 
     C = stockx_raw * 1.08 + 20.0
     final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) / DENOM
-    final_price = _ceil_to_centime(final_price_raw)
+    final_price = _ceil_to_whole_franc(final_price_raw)
     print(
         f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF}) / {DENOM:.4f} "
-        f"= {final_price_raw:.4f} → ceil {final_price:.2f}"
+        f"= {final_price_raw:.4f} → ceil franc {final_price}"
     )
     print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
     return final_price
 
 
+def _ceil_to_whole_franc(price: float) -> int:
+    """Shopify publish: ceil to whole CHF — never below locked floor."""
+    from math import ceil
+
+    return int(ceil(float(price) - 1e-12))
+
+
 def _ceil_to_centime(price: float) -> float:
-    """Absolute margin floor: never publish below — ceil to next centime."""
+    """Legacy centime ceil (Galaxus / audits). Prefer _ceil_to_whole_franc for Shopify."""
     from math import ceil
 
     return ceil(float(price) * 100.0 - 1e-12) / 100.0
@@ -510,7 +517,7 @@ def apply_stx_express_floor(standard_sell, express_calc=None):
     if std <= 0:
         return express_calc
 
-    floor = _ceil_to_centime(std + read_stx_express_surcharge_chf())
+    floor = _ceil_to_whole_franc(std + read_stx_express_surcharge_chf())
     if express_calc is None:
         return floor
     try:
