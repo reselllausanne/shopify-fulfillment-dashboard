@@ -9,6 +9,9 @@ import {
 } from "@/app/lib/hawkPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { recordHawObservation } from "@/inventory/supplierStock/batch1Observations";
+import { decideHawPublishedQtyFromPage } from "@/inventory/supplierStock/hawQty";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -140,6 +143,25 @@ export async function scrapeHawkShop(
     const queueImage = !deferHawkImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const manualNote = formatHawkNote(product, cost);
+    const decision = decideHawPublishedQtyFromPage({
+      htmlOrText: product.stock > 0 ? `Lagerbestand ${product.stock}` : "",
+      availability: product.inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+    });
+    const proposedQty = decision.proposedQty;
+    const stockWrite = mayMutateMarketplaceStock() ? proposedQty : undefined;
+    recordHawObservation(
+      {
+        productUrl: product.productUrl,
+        gtin: product.gtin,
+        sku: product.sku,
+        mpn: product.mpn,
+        productName: product.name,
+        priceChf: product.priceChf,
+        htmlOrText: product.stock > 0 ? `Lagerbestand ${product.stock}` : "",
+        availability: product.inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      },
+      { scrapeRunId: runId, observedAt: now }
+    );
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -149,7 +171,7 @@ export async function scrapeHawkShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock: product.stock,
+        stock: stockWrite ?? 0,
         sizeRaw: null,
         sizeNormalized: null,
         supplierBrand: product.brand,
@@ -166,7 +188,7 @@ export async function scrapeHawkShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock: product.stock,
+        ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
         supplierBrand: product.brand,
         supplierProductName: product.name,
         supplierProductType: product.productType,

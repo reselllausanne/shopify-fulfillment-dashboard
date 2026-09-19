@@ -220,7 +220,8 @@ export function parseHawkProductHtml(
     typeof offer?.availability === "string" ? offer.availability : null
   );
   const qty = parseStockQty(html);
-  const stock = !inStock ? 0 : qty != null ? qty : defaultStock;
+  // Never invent default 5 — missing qty → 0 for catalog; observation uses decideHawPublishedQty.
+  const stock = !inStock ? 0 : qty != null ? qty : 0;
 
   const mpn =
     (typeof product.mpn === "string" ? product.mpn.trim() : null) ||

@@ -1,11 +1,10 @@
 /**
  * FantasyWelt (FAN) stock proof — page qty only, never default 5.
  *
- * Formulas (Theo 2026-09-19):
+ * Formulas (validated 2026-09-19):
  * - normal: halfCeil(N) = ceil(N / 2), with N=1 → 1
  * - SALE:   max(0, ceil((N - 2) / 2))
- * - "10+": page never exposes exact qty — store sourceQty=10, publish 10−2=8
- *   (safety buffer only; NOT halfCeil/SALE on the capped 10)
+ * - "10+" treated as 10 BEFORE the formula (halfCeil→5, SALE→4)
  * - VORBESTELLBAR / 0 Stk / Cloudflare / unavailable → no positive proof (proposed 0)
  */
 
@@ -184,20 +183,6 @@ export function decideFanPublishedQty(parse: FanStockParse): FanPublishDecision 
     };
   }
 
-  // 10+ is a cap label, not exact N — only −2 safety, never halfCeil/SALE on 10.
-  if (parse.isTenPlus) {
-    const proposed = Math.max(0, parse.sourceQty - 2);
-    return {
-      sourceQty: parse.sourceQty,
-      proposedQty: proposed,
-      reason: `ten_plus_minus_2:${parse.sourceQty}`,
-      hasPositiveProof: proposed > 0,
-      isSale: parse.isSale,
-      isTenPlus: true,
-      stockLabel: parse.stockLabel,
-    };
-  }
-
   const proposed = parse.isSale
     ? fanSalePublishQty(parse.sourceQty)
     : fanHalfCeil(parse.sourceQty);
@@ -205,9 +190,13 @@ export function decideFanPublishedQty(parse: FanStockParse): FanPublishDecision 
   return {
     sourceQty: parse.sourceQty,
     proposedQty: proposed,
-    reason: parse.isSale
-      ? `sale_max0_ceil_n_minus_2_over_2:${parse.sourceQty}`
-      : `halfCeil:${parse.sourceQty}`,
+    reason: parse.isTenPlus
+      ? parse.isSale
+        ? `ten_plus_sale:${parse.sourceQty}`
+        : `ten_plus_halfCeil:${parse.sourceQty}`
+      : parse.isSale
+        ? `sale_max0_ceil_n_minus_2_over_2:${parse.sourceQty}`
+        : `halfCeil:${parse.sourceQty}`,
     hasPositiveProof: proposed > 0,
     isSale: parse.isSale,
     isTenPlus: parse.isTenPlus,

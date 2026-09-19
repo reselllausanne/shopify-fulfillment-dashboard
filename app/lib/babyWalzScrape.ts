@@ -4,6 +4,8 @@ import type { ScraperShop } from "@/app/lib/scraperShops";
 import { BabyWalzClient, babyWalzConfig, type BabyWalzProduct } from "@/app/lib/babyWalzClient";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { decideBwzPublishedQty, parseBwzStock } from "@/inventory/supplierStock/bwzQty";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -138,6 +140,17 @@ export async function scrapeBabyWalzShop(
     const existing = existingById.get(supplierVariantId);
     const queueImage = !deferBabyWalzImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
+    const decision = decideBwzPublishedQty(
+      parseBwzStock({
+        quantity: product.stock,
+        isSoldOut: product.stock <= 0,
+        isBuyable: product.stock > 0,
+        productName: product.name,
+        productType: product.productType,
+        slug: product.productUrl,
+      })
+    );
+    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -147,7 +160,7 @@ export async function scrapeBabyWalzShop(
         providerKey,
         gtin: product.gtin,
         price: product.priceChf,
-        stock: product.stock,
+        stock: stockWrite ?? 0,
         sizeRaw: product.sizeRaw,
         sizeNormalized: product.sizeRaw,
         supplierBrand: product.brand,
@@ -164,7 +177,7 @@ export async function scrapeBabyWalzShop(
         providerKey,
         gtin: product.gtin,
         price: product.priceChf,
-        stock: product.stock,
+        ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
         sizeRaw: product.sizeRaw,
         sizeNormalized: product.sizeRaw,
         supplierBrand: product.brand,

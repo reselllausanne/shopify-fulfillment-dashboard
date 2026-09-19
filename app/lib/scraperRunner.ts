@@ -14,7 +14,9 @@ import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
 import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
 import { finalizeSupplierStockFromScrapeRun } from "@/inventory/supplierStock/hookScrape";
 import { drainFanObservations } from "@/inventory/supplierStock/fanObservation";
+import { drainObservations } from "@/inventory/supplierStock/supplierObservationBuffer";
 import "@/inventory/supplierStock/fanObservation";
+import "@/inventory/supplierStock/batch1Observations";
 import type { FinalizeRunResult } from "@/inventory/supplierStock/applyRun";
 import type { SnapshotCompleteness, SupplierVariantObservation } from "@/inventory/supplierStock/types";
 
@@ -120,13 +122,18 @@ export async function runScraperJob(input: RunScraperJobInput): Promise<RunScrap
     } catch (e: any) {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);
     }
-    const fanObs = shop.key === "fan" ? drainFanObservations(runId) : [];
+    const batchKeys = ["fan", "haw", "bwz", "tus", "exl", "ven", "wrk"] as const;
+    const drained: SupplierVariantObservation[] = [];
+    if (shop.key === "fan") drained.push(...drainFanObservations(runId));
+    else if ((batchKeys as readonly string[]).includes(shop.key)) {
+      drained.push(...drainObservations(shop.key, runId));
+    }
     const observations: SupplierVariantObservation[] | undefined =
       input.observations ??
       (input.observationSink?.length
         ? input.observationSink
-        : fanObs.length
-          ? fanObs
+        : drained.length
+          ? drained
           : undefined);
     return finalizeSupplierStockFromScrapeRun(shop.key, runId, {
       observations,

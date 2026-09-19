@@ -5,6 +5,8 @@ import { VenovaClient, venovaConfig, type VenovaProduct } from "@/app/lib/venova
 import { computeVenovaSellPrice, isPlausibleVenovaSellPrice } from "@/app/lib/venovaPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { decideVenPublishedQty, parseVenStock } from "@/inventory/supplierStock/venQty";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -155,6 +157,18 @@ export async function scrapeVenovaShop(
     const queueImage = !deferVenovaImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const note = formatVenovaNote(product, cost);
+    const exactQty =
+      product.stockSource === "stock_quantity_number" || product.stockSource === "nur_noch"
+        ? product.stock
+        : null;
+    const decision = decideVenPublishedQty(
+      parseVenStock({
+        schemaInStock: product.inStock,
+        sofortVerfuegbar: product.inStock,
+        stockQuantityNumber: exactQty,
+      })
+    );
+    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -164,7 +178,7 @@ export async function scrapeVenovaShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock: product.stock,
+        stock: stockWrite ?? 0,
         sizeRaw: null,
         sizeNormalized: null,
         supplierBrand: product.brand,
@@ -181,7 +195,7 @@ export async function scrapeVenovaShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock: product.stock,
+        ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
         supplierBrand: product.brand,
         supplierProductName: product.name,
         supplierProductType: product.productType,
