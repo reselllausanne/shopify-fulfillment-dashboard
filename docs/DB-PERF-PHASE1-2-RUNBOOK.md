@@ -16,21 +16,35 @@ Checkout: from this repo at that branch (or the PR commit once pushed).
 | VariantMapping REINDEX | **Hold** until pgstatindex/pgstattuple proof (`ops/sql/20260919_variantmapping_reindex_HOLD.sql`) |
 | VACUUM FULL (SV + ads) | **Rejected** |
 
-## App deploy
+## App deploy / pre-merge gates
 
-1. Merge/deploy branch (normal VPS path).
-2. Before/after compare (read-only):
+Do **not** merge until all three pass. Do **not** run ops SQL until merge+CI green (or explicitly after CI on this branch).
+
+1. Exact image-gate ID sets (not totals):
 
 ```bash
-npx tsx scripts/compare-galaxus-feed-image-gate.ts --limit=50000
+npx tsx scripts/compare-galaxus-feed-image-gate.ts --limit=50000 --out=tmp/gate-compare.json
 # full catalog when ready:
-# npx tsx scripts/compare-galaxus-feed-image-gate.ts
+# npx tsx scripts/compare-galaxus-feed-image-gate.ts --out=tmp/gate-compare-full.json
 ```
 
-Expect `pass: exact_match` or `within_0_1pct`. Investigate any larger `catalogReady` delta before trusting stock/offer pushes.
+Expect exit 0 with `"pass": "exact_id_match"`. Eligible `providerKey` / `gtin` / `supplierVariantId` sets **and** `MISSING_IMAGE` reject `supplierVariantId` set must match exactly.
 
-3. Smoke: stock + offer dry-run export row counts vs previous snapshot (same query params).
+2. Stock + offer dry-run (CSV in-process, no Galaxus push):
 
+```bash
+npx tsx scripts/galaxus-feed-row-counts.ts --stock-offer-only --out=tmp/stock-offer-keys.json
+```
+
+Same row counts + exact ProviderKey sets vs pre-change snapshot. No product disappears.
+
+3. Build/CI green on the PR.
+
+4. **Only after** 1–3: run `ops/sql/20260919_db_perf_phase2_concurrent.sql` (non-transactional).
+
+## App deploy (after merge)
+
+Normal VPS path from `main` after PR merge — not automatic from this push.
 ## DB ops (separate from `prisma migrate`)
 
 Run **outside** any transaction (Supabase SQL editor / `psql`):
