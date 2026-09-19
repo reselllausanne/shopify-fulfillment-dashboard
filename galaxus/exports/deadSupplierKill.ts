@@ -1,14 +1,17 @@
 /**
  * Permanently killed scrapers (code deleted).
- * - Master/offer: blocked
- * - Stock feed: force QuantityOnStock=0 (delist prior pushes)
- * - DB purge: scripts/kill-dead-suppliers-delete.ts --confirm=DEAD_DELETE
  *
- * Keys: bae (Bächli), hhv (HHV), snl (Snowleader — no GTIN), nso (Newsole)
+ * HHV / SNL / NSO: stock feed auto force-zeros (delist leftovers).
+ * BAE: scraper gone + master/offer blocked, but Galaxus stock zero is
+ * gated behind explicit dry-run → confirm apply (see scripts/kill-bae-galaxus-delist.ts).
+ * Do NOT auto-delist BAE on merge/deploy.
  */
 
 export const DEAD_SUPPLIER_KEYS = ["bae", "hhv", "snl", "nso"] as const;
 export type DeadSupplierKey = (typeof DEAD_SUPPLIER_KEYS)[number];
+
+/** Auto stock-zero on every Galaxus stock export (not BAE). */
+export const AUTO_STOCK_ZERO_KEYS = ["hhv", "snl", "nso"] as const;
 
 export const DEAD_DELETE_CONFIRM_TOKEN = "DEAD_DELETE";
 
@@ -57,7 +60,7 @@ export function isDeadSupplier(input: {
   return resolveDeadSupplierKey(input) != null;
 }
 
-/** Block from master / offer / candidate selection. */
+/** Block from master / offer / candidate selection (includes BAE). */
 export function isDeadFeedBlocked(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
@@ -66,11 +69,16 @@ export function isDeadFeedBlocked(input: {
   return isDeadSupplier(input);
 }
 
-/** Force stock=0 in Galaxus stock CSV so previously pushed offers delist. */
+/**
+ * Auto force QuantityOnStock=0 — HHV/SNL/NSO only.
+ * BAE uses shouldForceBaeStockZero after confirmed apply.
+ */
 export function shouldForceDeadStockZero(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
   providerKey?: string | null;
 }): boolean {
-  return isDeadSupplier(input);
+  const key = resolveDeadSupplierKey(input);
+  if (!key) return false;
+  return (AUTO_STOCK_ZERO_KEYS as readonly string[]).includes(key);
 }
