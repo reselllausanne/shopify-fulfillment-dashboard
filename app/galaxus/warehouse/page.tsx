@@ -101,16 +101,25 @@ export default function WarehouseBulkPage() {
     [orders, selectedOrderId]
   );
 
-  const matchesByLine = useMemo(() => {
+  const matchesByLineUnit = useMemo(() => {
     const map = new Map<string, any>();
     (detail?.stockxMatches || []).forEach((m: any) => {
-      if (m?.galaxusOrderLineId) map.set(m.galaxusOrderLineId, m);
+      const lineId = String(m?.galaxusOrderLineId ?? "").trim();
+      if (!lineId) return;
+      const unitIndex = Number(m?.unitIndex ?? 0);
+      map.set(`${lineId}:${unitIndex}`, m);
     });
     return map;
   }, [detail]);
 
   const buildLineTitle = (line: any) =>
     line.productName || line.description || line.supplierPid || "—";
+
+  const firstUnlinkedUnitIndex = (line: any): number => {
+    const units: any[] = line?.procurement?.units ?? [];
+    const next = units.find((u) => !u?.linked);
+    return next != null && Number.isFinite(Number(next.unitIndex)) ? Number(next.unitIndex) : 0;
+  };
 
   const loadOrders = async (opts?: { force?: boolean }) => {
     const force = Boolean(opts?.force);
@@ -273,39 +282,50 @@ export default function WarehouseBulkPage() {
       setError("Order detail is still loading (please retry)");
       return;
     }
-    const match = matchesByLine.get(line.id) ?? null;
+    const match = matchesByLineUnit.get(`${line.id}:${unitIndex}`) ?? null;
     const priceRaw = line.priceLineAmount ?? line.lineNetAmount ?? null;
     const priceNumber = typeof priceRaw === "number" ? priceRaw : Number(priceRaw);
+    const qty = Math.max(1, Math.round(Number(line.quantity ?? 1)));
+    // Prefill unit cost from match; for create on qty>1 use unit net (not full line).
     const savedCost = match?.stockxAmount != null ? Number(match.stockxAmount) : null;
+    const unitNet =
+      line.unitNetPrice != null && Number.isFinite(Number(line.unitNetPrice))
+        ? Number(line.unitNetPrice)
+        : Number.isFinite(priceNumber) && qty > 0
+          ? priceNumber / qty
+          : null;
     const resolvedCost = Number.isFinite(savedCost as number) ? (savedCost as number) : null;
+    const marginBase = Number.isFinite(unitNet as number) ? (unitNet as number) : priceNumber;
     const marginAmount =
-      Number.isFinite(priceNumber) && resolvedCost != null ? priceNumber - resolvedCost : null;
+      Number.isFinite(marginBase) && resolvedCost != null ? marginBase - resolvedCost : null;
     const marginPercent =
-      Number.isFinite(priceNumber) && priceNumber > 0 && resolvedCost != null
-        ? ((priceNumber - resolvedCost) / priceNumber) * 100
+      Number.isFinite(marginBase) && marginBase > 0 && resolvedCost != null
+        ? ((marginBase - resolvedCost) / marginBase) * 100
         : null;
     const title = buildLineTitle(line);
     const skuPrefill = String(line.supplierSku ?? "N/A");
     const sizePrefill = String(line.size ?? "");
     const orderLabel = `${detail?.galaxusOrderId ?? ""}${detail?.recipientName ? ` · ${detail.recipientName}` : ""}`;
+    const unitLabel = qty > 1 ? ` (unit ${unitIndex + 1}/${qty})` : "";
     const initialData = {
       shopifyOrderId: detail?.id ?? "",
       shopifyOrderName: orderLabel,
       shopifyCreatedAt: detail?.orderDate ?? null,
       shopifyLineItemId: line.id,
-      shopifyProductTitle: title,
+      shopifyProductTitle: `${title}${unitLabel}`,
       shopifySku: skuPrefill,
       shopifySizeEU: sizePrefill || "N/A",
-      shopifyTotalPrice: Number.isFinite(priceNumber) ? priceNumber : null,
+      shopifyTotalPrice: Number.isFinite(marginBase) ? marginBase : null,
       shopifyCurrencyCode: detail?.currencyCode ?? "CHF",
+      // Only prefill StockX fields for THIS unit — never copy unit 0 onto unit 1+.
       stockxOrderNumber: match?.stockxOrderNumber ?? "",
-      stockxChainId: String(line.supplierPid ?? "").trim(),
+      stockxChainId: match?.stockxChainId ?? String(line.supplierPid ?? "").trim(),
       stockxOrderId: match?.stockxOrderId ?? "",
       stockxProductName: match?.stockxProductName ?? "",
       stockxSizeEU: match?.stockxSizeEU ?? "",
       stockxSkuKey: match?.stockxSkuKey ?? "",
       stockxPurchaseDate: match?.stockxPurchaseDate ?? null,
-      stockxStatus: match?.stockxStatus ?? "MANUAL",
+      stockxStatus: match?.stockxStatus ?? (match ? "MANUAL" : ""),
       stockxAwb: match?.stockxAwb ?? "",
       stockxTrackingUrl: match?.stockxTrackingUrl ?? "",
       stockxEstimatedDelivery: match?.stockxEstimatedDelivery ?? null,
@@ -673,8 +693,19 @@ export default function WarehouseBulkPage() {
                     {(detail?.lines ?? []).map((line: any) => {
                       const proc = line.procurement;
                       const unitsList: any[] = proc?.units ?? [];
-                      const allUnitsLinked = unitsList.length > 0 && unitsList.every((u: any) => u.linked);
-                      const linked = allUnitsLinked || Boolean(proc?.ok);
+                      const linkedUnitCount = unitsList.filter((u: any) => u.linked).length;
+                      const neededUnitCount = Math.max(
+                        unitsList.length,
+                        Math.round(Number(line.quantity ?? 1)) || 1
+                      );
+                      const allUnitsLinked =
+                        unitsList.length > 0
+                          ? unitsList.every((u: any) => u.linked)
+                          : Boolean(proc?.ok);
+                      // Trust per-unit status; do not inflate from a single saved match.
+                      const linked = allUnitsLinked;
+                      const partiallyLinked =
+                        !linked && linkedUnitCount > 0 && neededUnitCount > 1;
                       const shippedAt = line.warehouseMarkedShippedAt;
                       const isShipped = Boolean(shippedAt);
                       const physicalOnHand =
@@ -727,7 +758,9 @@ export default function WarehouseBulkPage() {
                         !physicalOnHand &&
                         stxAvailability?.status === "OUT_OF_STOCK";
                       const sourceLabel =
-                        proc?.source === "galaxus_match"
+                        partiallyLinked
+                          ? `Partial ${linkedUnitCount}/${neededUnitCount}`
+                          : proc?.source === "galaxus_match"
                           ? "Saved match"
                           : proc?.source === "stx_sync"
                             ? "StockX sync"
@@ -748,6 +781,8 @@ export default function WarehouseBulkPage() {
                                 ? "border-amber-400 bg-amber-50/40"
                                 : linked
                                   ? "border-blue-200 bg-blue-50/30"
+                                  : partiallyLinked
+                                    ? "border-amber-300 bg-amber-50/30"
                                   : "border-gray-200"
                           }`}
                         >
@@ -757,6 +792,13 @@ export default function WarehouseBulkPage() {
                                 {linked ? (
                                   <span className="text-green-600 shrink-0" title="Linked">
                                     ✓
+                                  </span>
+                                ) : partiallyLinked ? (
+                                  <span
+                                    className="text-amber-600 shrink-0"
+                                    title={`${linkedUnitCount}/${neededUnitCount} units linked`}
+                                  >
+                                    ◐
                                   </span>
                                 ) : (
                                   <span className="text-gray-300 shrink-0">○</span>
@@ -904,6 +946,17 @@ export default function WarehouseBulkPage() {
                                     </div>
                                   ) : null}
                                 </div>
+                              ) : partiallyLinked && proc ? (
+                                <div className="text-amber-900 text-[11px] space-y-0.5">
+                                  <div>
+                                    {sourceLabel} · link remaining unit(s) before mark shipped
+                                  </div>
+                                  {costChf != null && revenueChf != null ? (
+                                    <div className="text-gray-800">
+                                      Partial StockX cost {costCur || "CHF"} {costChf.toFixed(2)} (linked units only)
+                                    </div>
+                                  ) : null}
+                                </div>
                               ) : null}
                               {proc?.units && proc.units.length > 1 ? (
                                 <div className="mt-1 space-y-1">
@@ -1000,13 +1053,15 @@ export default function WarehouseBulkPage() {
                               ) : null}
                               <button
                                 type="button"
-                                onClick={() => openManualEntry(line)}
+                                onClick={() => openManualEntry(line, firstUnlinkedUnitIndex(line))}
                                 disabled={busy !== null || !detail || isExternalBuyLine(line)}
                                 className="px-2 py-1 rounded bg-blue-600 text-white text-[10px] disabled:opacity-50"
                                 title={
                                   isExternalBuyLine(line)
                                     ? "Use REI/WEL link panel below (not StockX)"
-                                    : undefined
+                                    : neededUnitCount > 1
+                                      ? `Opens next unlinked unit (${firstUnlinkedUnitIndex(line) + 1}/${neededUnitCount})`
+                                      : undefined
                                 }
                               >
                                 Manual supplier
