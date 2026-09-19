@@ -1,22 +1,18 @@
 /**
- * WRK (Warenkontor — Shopify) publish qty proof.
- * WRK uses the Shopify path (scrapeShop). Public .js hides qty; UI shows
- * low-stock text + inventory_policy:continue. Only trust:
- *   - Tracked inventory qty > 0 → halfCeil(N)
- *   - Untracked (inventory_management null) + available:true → 1 (quantityUnknown)
- *   - Preorder / unavailable / late delivery / missing page → 0
- * Never invent hidden qty.
+ * WRK (Warenkontor via Shopify) publish qty proof.
+ * - page present + available + inventoryTracked + trackedQty>0 → halfCeil(N)
+ * - available + inventory not tracked / hidden qty → 0 (qty_hidden_not_invented)
+ * - !available / preorder / page missing / late delivery → 0
  */
 import { halfCeil } from "./halfCeil";
 
-export type WrkStockParse = {
-  sourceQty: number | null;
-  tracked: boolean;
-  available: boolean;
-  isPreorder: boolean;
-  hasPositiveProof: boolean;
-  quantityUnknown: boolean;
-  reason: string;
+export type WrkPublishInput = {
+  pagePresent?: boolean;
+  available?: boolean;
+  trackedQty?: number | null;
+  inventoryTracked?: boolean;
+  isPreorder?: boolean;
+  lateDelivery?: boolean;
 };
 
 export type WrkPublishDecision = {
@@ -24,126 +20,51 @@ export type WrkPublishDecision = {
   proposedQty: number;
   reason: string;
   hasPositiveProof: boolean;
-  quantityUnknown: boolean;
 };
 
-export function parseWrkStock(input: {
-  available?: boolean;
-  trackedQty?: number | null;
-  inventoryManagement?: string | null; // "shopify" | "" | null
-  isPreorder?: boolean;
-  lateDelivery?: boolean;
-  pageMissing?: boolean;
-}): WrkStockParse {
-  if (input.pageMissing) {
+export function decideWrkPublishedQty(input: WrkPublishInput): WrkPublishDecision {
+  if (input.pagePresent === false) {
     return {
       sourceQty: null,
-      tracked: false,
-      available: false,
-      isPreorder: false,
-      hasPositiveProof: false,
-      quantityUnknown: false,
+      proposedQty: 0,
       reason: "page_missing",
+      hasPositiveProof: false,
     };
   }
   if (input.isPreorder) {
-    return {
-      sourceQty: null,
-      tracked: false,
-      available: false,
-      isPreorder: true,
-      hasPositiveProof: false,
-      quantityUnknown: false,
-      reason: "preorder",
-    };
+    return { sourceQty: null, proposedQty: 0, reason: "preorder", hasPositiveProof: false };
   }
   if (input.lateDelivery) {
-    return {
-      sourceQty: null,
-      tracked: false,
-      available: false,
-      isPreorder: false,
-      hasPositiveProof: false,
-      quantityUnknown: false,
-      reason: "late_delivery",
-    };
+    return { sourceQty: null, proposedQty: 0, reason: "late_delivery", hasPositiveProof: false };
   }
   if (!input.available) {
-    return {
-      sourceQty: 0,
-      tracked: false,
-      available: false,
-      isPreorder: false,
-      hasPositiveProof: false,
-      quantityUnknown: false,
-      reason: "not_available",
-    };
+    return { sourceQty: 0, proposedQty: 0, reason: "not_available", hasPositiveProof: false };
   }
-
-  const mgmt = String(input.inventoryManagement ?? "").trim();
-  const tracked = Boolean(mgmt);
-  const qty = input.trackedQty == null ? null : Math.max(0, Math.floor(input.trackedQty));
-
-  if (tracked) {
-    if (qty == null || qty <= 0) {
-      return {
-        sourceQty: qty,
-        tracked: true,
-        available: true,
-        isPreorder: false,
-        hasPositiveProof: false,
-        quantityUnknown: false,
-        reason: "tracked_zero_or_missing",
-      };
-    }
+  if (!input.inventoryTracked) {
     return {
-      sourceQty: qty,
-      tracked: true,
-      available: true,
-      isPreorder: false,
-      hasPositiveProof: true,
-      quantityUnknown: false,
-      reason: "shopify_tracked_qty",
-    };
-  }
-
-  // Untracked but available:true → sellable at qty unknown → publish 1 (min).
-  return {
-    sourceQty: null,
-    tracked: false,
-    available: true,
-    isPreorder: false,
-    hasPositiveProof: true,
-    quantityUnknown: true,
-    reason: "untracked_available",
-  };
-}
-
-export function decideWrkPublishedQty(parse: WrkStockParse): WrkPublishDecision {
-  if (!parse.hasPositiveProof) {
-    return {
-      sourceQty: parse.sourceQty,
+      sourceQty: null,
       proposedQty: 0,
-      reason: parse.reason,
+      reason: "qty_hidden_not_invented",
       hasPositiveProof: false,
-      quantityUnknown: parse.quantityUnknown,
     };
   }
-  if (parse.quantityUnknown || parse.sourceQty == null) {
+  const q =
+    input.trackedQty == null || !Number.isFinite(Number(input.trackedQty))
+      ? null
+      : Math.max(0, Math.floor(Number(input.trackedQty)));
+  if (q == null || q <= 0) {
     return {
-      sourceQty: parse.sourceQty,
-      proposedQty: 1,
-      reason: parse.reason,
-      hasPositiveProof: true,
-      quantityUnknown: true,
+      sourceQty: q,
+      proposedQty: 0,
+      reason: "tracked_zero_or_missing",
+      hasPositiveProof: false,
     };
   }
-  const proposed = halfCeil(parse.sourceQty);
+  const proposed = halfCeil(q);
   return {
-    sourceQty: parse.sourceQty,
+    sourceQty: q,
     proposedQty: proposed,
-    reason: `halfCeil:${parse.sourceQty}`,
+    reason: `halfCeil:${q}`,
     hasPositiveProof: proposed > 0,
-    quantityUnknown: false,
   };
 }

@@ -1,67 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { decideHawPublishedQtyFromPage, parseHawStkAnLager } from "./hawQty";
+import { decideHawPublishedQty } from "./hawQty";
 
-describe("parseHawStkAnLager", () => {
-  it("reads Lagerbestand and Stück an Lager", () => {
-    expect(parseHawStkAnLager("Lagerbestand: 3")).toEqual({ qty: 3, label: "Lagerbestand: 3" });
-    expect(parseHawStkAnLager("Stück an Lager: 12").qty).toBe(12);
-    expect(parseHawStkAnLager("Nichts").qty).toBeNull();
-  });
-});
-
-describe("decideHawPublishedQtyFromPage", () => {
-  it("in stock N=3 → halfCeil(3)=2", () => {
-    const d = decideHawPublishedQtyFromPage({
-      htmlOrText: "Lagerbestand: 3",
-      availability: "https://schema.org/InStock",
-    });
+describe("hawQty", () => {
+  it("Lagerbestand 3 → halfCeil→2", () => {
+    const d = decideHawPublishedQty({ htmlOrText: "Lagerbestand: 3", inStockSchema: true });
     expect(d.sourceQty).toBe(3);
     expect(d.proposedQty).toBe(2);
     expect(d.hasPositiveProof).toBe(true);
   });
-
-  it("N=1 → 1", () => {
-    const d = decideHawPublishedQtyFromPage({
-      htmlOrText: "Stück an Lager: 1",
-      availability: "https://schema.org/InStock",
-    });
+  it("Stück an Lager 1 → 1", () => {
+    const d = decideHawPublishedQty({ htmlOrText: "Stück an Lager: 1", inStockSchema: true });
     expect(d.proposedQty).toBe(1);
   });
-
-  it("OutOfStock → 0", () => {
-    const d = decideHawPublishedQtyFromPage({
-      htmlOrText: "Lagerbestand: 5",
-      availability: "https://schema.org/OutOfStock",
-    });
+  it("OutOfStock schema → 0", () => {
+    const d = decideHawPublishedQty({ htmlOrText: "Lagerbestand: 5", inStockSchema: false });
     expect(d.proposedQty).toBe(0);
     expect(d.reason).toBe("schema_out_of_stock");
   });
-
-  it("external stock label → 0, no default 5", () => {
-    const d = decideHawPublishedQtyFromPage({
-      htmlOrText: "Nicht am Lager. Beim Lieferanten verfügbar.",
-      availability: "https://schema.org/InStock",
-    });
+  it("external stock label → 0 (never default 5)", () => {
+    const d = decideHawPublishedQty({ htmlOrText: "Beim Lieferanten verfügbar", inStockSchema: true });
     expect(d.proposedQty).toBe(0);
     expect(d.reason).toBe("external_stock_no_local_proof");
   });
-
-  it("no qty on page → 0, never default 5", () => {
-    const d = decideHawPublishedQtyFromPage({
-      htmlOrText: "IN DEN WARENKORB",
-      availability: "https://schema.org/InStock",
-    });
+  it("missing qty → 0 never default 5", () => {
+    const d = decideHawPublishedQty({ htmlOrText: "InStock", inStockSchema: true });
     expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("no_qty_on_page");
-    expect(d.sourceQty).toBeNull();
+    expect(d.reason).toBe("no_lagerbestand_qty");
   });
-
   it("zero qty → 0", () => {
-    const d = decideHawPublishedQtyFromPage({
-      htmlOrText: "Lagerbestand: 0",
-      availability: "https://schema.org/InStock",
-    });
+    const d = decideHawPublishedQty({ htmlOrText: "Lagerbestand: 0", inStockSchema: true });
     expect(d.proposedQty).toBe(0);
     expect(d.reason).toBe("zero_qty");
+  });
+  it("scrape blocked (empty text) → 0", () => {
+    const d = decideHawPublishedQty({ htmlOrText: "", inStockSchema: true });
+    expect(d.proposedQty).toBe(0);
+    expect(d.reason).toBe("no_lagerbestand_qty");
   });
 });

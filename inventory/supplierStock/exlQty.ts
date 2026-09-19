@@ -1,112 +1,91 @@
 /**
  * EXL (Ex Libris) publish qty proof.
  * EXL listings expose no exact stock number — proof is delivery text.
- * - "2-3 Werktage" / "2-4 Werktage" / "sofort lieferbar" → proposed 1 (quantityUnknown)
- * - "Derzeit vergriffen" / "nicht lieferbar" / preorder → 0
- * - Empty scrape / no page proof → 0 (never default 5)
+ * - "2-3 Werktage" / "2-4 Werktage" / "sofort lieferbar" / green in_stock label → 1 quantityUnknown
+ * - "Derzeit vergriffen" / preorder / unavailable → 0
+ * - scrapeValid=false / no page proof → 0 (never default 5)
  */
 
-export type ExlAvailability =
-  | "in_stock_short_lead"
-  | "in_stock_immediate"
-  | "preorder"
-  | "unavailable"
-  | "unknown";
-
-export type ExlStockParse = {
-  availability: ExlAvailability;
-  deliveryLabel: string | null;
-  hasPositiveProof: boolean;
-  reason: string;
+export type ExlPublishInput = {
+  stockLabel?: string | null;
+  availabilityText?: string | null;
+  /** Scrape emitted 0 tiles / empty catalog — not a valid stock signal. */
+  scrapeValid?: boolean;
 };
 
 export type ExlPublishDecision = {
+  sourceQty: number | null;
   proposedQty: number;
-  quantityUnknown: boolean;
   reason: string;
   hasPositiveProof: boolean;
-  availability: ExlAvailability;
+  quantityUnknown: boolean;
 };
 
-export function parseExlAvailability(input: {
-  stockLabel?: string | null; // "in_stock", "out_of_stock", "preorder", "in_stock_unquantified"
-  availabilityText?: string | null;
-}): ExlStockParse {
+function textReason(input: ExlPublishInput): {
+  proof: boolean;
+  reason: string;
+} {
   const text = String(input.availabilityText ?? "").toLowerCase();
   const label = String(input.stockLabel ?? "").toLowerCase();
-
   if (
     label === "out_of_stock" ||
     /vergriffen|nicht\s+lieferbar|ausverkauft|nicht\s+verfügbar/.test(text)
   ) {
-    return {
-      availability: "unavailable",
-      deliveryLabel: input.availabilityText ?? null,
-      hasPositiveProof: false,
-      reason: "unavailable",
-    };
+    return { proof: false, reason: "unavailable" };
   }
   if (label === "preorder" || /vorbestell|pre-?order/.test(text)) {
-    return {
-      availability: "preorder",
-      deliveryLabel: input.availabilityText ?? null,
-      hasPositiveProof: false,
-      reason: "preorder",
-    };
+    return { proof: false, reason: "preorder" };
   }
-
-  const shortLead = /2[-–]\s*[34]\s*Werktage/i.test(text) || /1[-–]\s*3\s*Werktage/i.test(text);
-  const immediate = /sofort\s+lieferbar/i.test(text);
-
-  if (shortLead) {
-    return {
-      availability: "in_stock_short_lead",
-      deliveryLabel: input.availabilityText ?? null,
-      hasPositiveProof: true,
-      reason: "delivery_2_3_werktage",
-    };
+  if (/2[-–]\s*[34]\s*Werktage|1[-–]\s*3\s*Werktage/i.test(text)) {
+    return { proof: true, reason: "delivery_2_3_werktage" };
   }
-  if (immediate) {
-    return {
-      availability: "in_stock_immediate",
-      deliveryLabel: input.availabilityText ?? null,
-      hasPositiveProof: true,
-      reason: "sofort_lieferbar",
-    };
+  if (/sofort\s+lieferbar/i.test(text)) {
+    return { proof: true, reason: "sofort_lieferbar" };
   }
   if (label === "in_stock" || label === "in_stock_unquantified") {
-    // Green tile without exact delivery text — treat as short-lead proof.
-    return {
-      availability: "in_stock_short_lead",
-      deliveryLabel: input.availabilityText ?? null,
-      hasPositiveProof: true,
-      reason: "green_in_stock_unquantified",
-    };
+    return { proof: true, reason: "green_in_stock_unquantified" };
   }
+  return { proof: false, reason: "no_page_proof" };
+}
 
+/** Normalize tile fields into decideExlPublishedQty input. */
+export function parseExlAvailability(input: {
+  stockLabel?: string | null;
+  availabilityText?: string | null;
+  scrapeValid?: boolean;
+}): ExlPublishInput {
   return {
-    availability: "unknown",
-    deliveryLabel: input.availabilityText ?? null,
-    hasPositiveProof: false,
-    reason: "no_page_proof",
+    stockLabel: input.stockLabel,
+    availabilityText: input.availabilityText,
+    scrapeValid: input.scrapeValid,
   };
 }
 
-export function decideExlPublishedQty(parse: ExlStockParse): ExlPublishDecision {
-  if (!parse.hasPositiveProof) {
+export function decideExlPublishedQty(input: ExlPublishInput): ExlPublishDecision {
+  if (input.scrapeValid === false) {
     return {
+      sourceQty: null,
       proposedQty: 0,
-      quantityUnknown: false,
-      reason: parse.reason,
+      reason: "scrape_invalid_no_proof",
       hasPositiveProof: false,
-      availability: parse.availability,
+      quantityUnknown: false,
+    };
+  }
+  const t = textReason(input);
+  if (!t.proof) {
+    return {
+      sourceQty: null,
+      proposedQty: 0,
+      reason: t.reason,
+      hasPositiveProof: false,
+      quantityUnknown: false,
     };
   }
   return {
+    sourceQty: null,
     proposedQty: 1,
-    quantityUnknown: true,
-    reason: parse.reason,
+    reason: t.reason,
     hasPositiveProof: true,
-    availability: parse.availability,
+    quantityUnknown: true,
   };
 }

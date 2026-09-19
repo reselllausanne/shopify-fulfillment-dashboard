@@ -5,7 +5,11 @@ import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { ScraperShop } from "@/app/lib/scraperShops";
 import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
-import { decideWrkPublishedQty, parseWrkStock } from "@/inventory/supplierStock/wrkQty";
+import { decideWrkPublishedQty } from "@/inventory/supplierStock/wrkQty";
+import {
+  beginWrkObservationRun,
+  recordWrkObservation,
+} from "@/inventory/supplierStock/batch1Observations";
 import {
   computeWarenkontorLandedCost,
   formatWarenkontorNote,
@@ -426,6 +430,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
   };
 
   try {
+    if (isWarenkontorShop(shop)) beginWrkObservationRun(runId);
     const listed = await listProducts(shop.baseUrl, maxProducts, async (page, count) => {
       await updateRun(runId, {
         products_listed: count,
@@ -477,14 +482,27 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
             : DEFAULT_STOCK
           : 0;
         if (isWarenkontorShop(shop)) {
-          const d = decideWrkPublishedQty(
-            parseWrkStock({
+          const d = decideWrkPublishedQty({
+            pagePresent: true,
+            available: r.available,
+            trackedQty: r.trackedQty,
+            inventoryTracked: r.trackedQty !== null,
+          });
+          stock = d.proposedQty;
+          recordWrkObservation(
+            {
+              productUrl: `${shop.baseUrl.replace(/\/$/, "")}/products/${product.handle}`,
+              gtin: r.gtin,
+              sku: r.supplierSku,
+              productName: r.supplierProductName,
+              priceChf: r.price,
               available: r.available,
               trackedQty: r.trackedQty,
-              inventoryManagement: r.trackedQty !== null ? "shopify" : null,
-            })
+              inventoryTracked: r.trackedQty !== null,
+              pagePresent: true,
+            },
+            { scrapeRunId: runId, observedAt: now }
           );
-          stock = d.proposedQty;
         }
         const stockWrite = mayMutateMarketplaceStock() ? stock : undefined;
         const stockCreate = stockWrite ?? 0;

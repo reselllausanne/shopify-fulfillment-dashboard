@@ -1,19 +1,18 @@
 /**
  * BWZ (baby-walz Scayle/Nuxt) publish qty proof.
- * - NUXT variant.stock.quantity N → halfCeil(N)
- * - Gutscheine / gift cards → 0 (reason gutschein)
- * - isSoldOut / !isProductBuyable / qty 0 → 0
- * - No numeric qty resolved → 0 (never invent)
+ * - nuxtQty > 0 + inStock → halfCeil(N)
+ * - Gutschein / gift card → 0, excluded=true
+ * - !inStock / missing → 0
  */
 import { halfCeil } from "./halfCeil";
 
-export type BwzStockParse = {
-  sourceQty: number | null;
-  isSoldOut: boolean;
-  isBuyable: boolean;
-  isGiftCard: boolean;
-  hasPositiveProof: boolean;
-  reason: string;
+export type BwzPublishInput = {
+  nuxtQty: number | null | undefined;
+  inStock: boolean;
+  name?: string | null;
+  productType?: string | null;
+  url?: string | null;
+  sku?: string | null;
 };
 
 export type BwzPublishDecision = {
@@ -21,101 +20,66 @@ export type BwzPublishDecision = {
   proposedQty: number;
   reason: string;
   hasPositiveProof: boolean;
+  excluded: boolean;
 };
 
 export function isBwzGiftCard(input: {
-  productName?: string | null;
+  name?: string | null;
   productType?: string | null;
-  slug?: string | null;
+  url?: string | null;
+  sku?: string | null;
 }): boolean {
-  const blob = `${input.productName ?? ""} ${input.productType ?? ""} ${input.slug ?? ""}`.toLowerCase();
+  const blob = `${input.name ?? ""} ${input.productType ?? ""} ${input.url ?? ""} ${input.sku ?? ""}`.toLowerCase();
   return /gutschein|geschenkgutschein|giftcard|gift\s*card/.test(blob);
 }
 
-export function parseBwzStock(input: {
-  quantity: number | null | undefined;
-  isSoldOut?: boolean;
-  isBuyable?: boolean;
-  productName?: string | null;
-  productType?: string | null;
-  slug?: string | null;
-}): BwzStockParse {
-  const giftCard = isBwzGiftCard(input);
-  if (giftCard) {
+export function decideBwzPublishedQty(input: BwzPublishInput): BwzPublishDecision {
+  if (isBwzGiftCard(input)) {
     return {
-      sourceQty: null,
-      isSoldOut: false,
-      isBuyable: false,
-      isGiftCard: true,
-      hasPositiveProof: false,
+      sourceQty: input.nuxtQty ?? null,
+      proposedQty: 0,
       reason: "gutschein",
+      hasPositiveProof: false,
+      excluded: true,
     };
   }
-  if (input.isSoldOut === true) {
+  if (!input.inStock) {
     return {
       sourceQty: 0,
-      isSoldOut: true,
-      isBuyable: false,
-      isGiftCard: false,
+      proposedQty: 0,
+      reason: "not_in_stock",
       hasPositiveProof: false,
-      reason: "isSoldOut",
+      excluded: false,
     };
   }
-  if (input.isBuyable === false) {
-    return {
-      sourceQty: input.quantity ?? null,
-      isSoldOut: false,
-      isBuyable: false,
-      isGiftCard: false,
-      hasPositiveProof: false,
-      reason: "not_buyable",
-    };
-  }
-  const q = input.quantity == null ? null : Math.max(0, Math.floor(Number(input.quantity)));
+  const q =
+    input.nuxtQty == null || !Number.isFinite(Number(input.nuxtQty))
+      ? null
+      : Math.max(0, Math.floor(Number(input.nuxtQty)));
   if (q == null) {
     return {
       sourceQty: null,
-      isSoldOut: false,
-      isBuyable: true,
-      isGiftCard: false,
-      hasPositiveProof: false,
+      proposedQty: 0,
       reason: "no_nuxt_qty",
+      hasPositiveProof: false,
+      excluded: false,
     };
   }
   if (q <= 0) {
     return {
       sourceQty: 0,
-      isSoldOut: false,
-      isBuyable: true,
-      isGiftCard: false,
-      hasPositiveProof: false,
+      proposedQty: 0,
       reason: "zero_qty",
+      hasPositiveProof: false,
+      excluded: false,
     };
   }
+  const proposed = halfCeil(q);
   return {
     sourceQty: q,
-    isSoldOut: false,
-    isBuyable: true,
-    isGiftCard: false,
-    hasPositiveProof: true,
-    reason: "nuxt_variant_stock_quantity",
-  };
-}
-
-export function decideBwzPublishedQty(parse: BwzStockParse): BwzPublishDecision {
-  if (!parse.hasPositiveProof || parse.sourceQty == null || parse.sourceQty <= 0) {
-    return {
-      sourceQty: parse.sourceQty,
-      proposedQty: 0,
-      reason: parse.reason,
-      hasPositiveProof: false,
-    };
-  }
-  const proposed = halfCeil(parse.sourceQty);
-  return {
-    sourceQty: parse.sourceQty,
     proposedQty: proposed,
-    reason: `halfCeil:${parse.sourceQty}`,
+    reason: `halfCeil:${q}`,
     hasPositiveProof: proposed > 0,
+    excluded: false,
   };
 }

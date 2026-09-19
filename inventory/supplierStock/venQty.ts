@@ -1,20 +1,24 @@
 /**
  * VEN (Venova / Shopware 5) publish qty proof.
- * - "stock--quantity-number N" / "Nur noch N Stück" → halfCeil(N)
- * - Sofort verfügbar + no exact qty → 0 (do NOT publish, review)
- * - Schema OutOfStock / not Sofort / Liefertermin unbekannt → 0
- * - sQuantity select max is NOT a stock proof (Shopware caps at inventory-independent limit).
- *   Only use if requireExactSelectMax is explicitly on.
- * - Never invent 100 / never mass-write 1 without page proof.
+ * - buyableSofort + pageObservedThisRun + trusted stockSource → 1 quantityUnknown
+ * - stockSource "sQuantity_max" is NOT trusted (Shopware caps inflate qty)
+ * - !buyableSofort / no page obs / unknown → 0 (never invent 100 or mass-write 1)
  */
-import { halfCeil } from "./halfCeil";
 
-export type VenStockParse = {
-  sourceQty: number | null;
-  sofortVerfuegbar: boolean;
-  schemaInStock: boolean;
-  hasPositiveProof: boolean;
-  reason: string;
+export type VenStockSource =
+  | "stock_quantity_number"
+  | "sQuantity_max"
+  | "default_stock"
+  | "schema_not_instock"
+  | "not_sofort_verfuegbar"
+  | "sofort_but_no_exact_qty"
+  | string;
+
+export type VenPublishInput = {
+  buyableSofort?: boolean;
+  pageObservedThisRun?: boolean;
+  stockSource?: VenStockSource | null;
+  rawQty?: number | null;
 };
 
 export type VenPublishDecision = {
@@ -24,82 +28,63 @@ export type VenPublishDecision = {
   hasPositiveProof: boolean;
 };
 
-export function parseVenStock(input: {
-  schemaInStock?: boolean;
-  sofortVerfuegbar?: boolean;
-  stockQuantityNumber?: number | null;
-  liefertermUnbekannt?: boolean;
-}): VenStockParse {
-  if (input.liefertermUnbekannt) {
-    return {
-      sourceQty: null,
-      sofortVerfuegbar: false,
-      schemaInStock: false,
-      hasPositiveProof: false,
-      reason: "liefertermin_unbekannt",
-    };
-  }
-  if (input.schemaInStock === false) {
-    return {
-      sourceQty: 0,
-      sofortVerfuegbar: false,
-      schemaInStock: false,
-      hasPositiveProof: false,
-      reason: "schema_not_instock",
-    };
-  }
-  if (input.sofortVerfuegbar === false) {
-    return {
-      sourceQty: null,
-      sofortVerfuegbar: false,
-      schemaInStock: true,
-      hasPositiveProof: false,
-      reason: "not_sofort_verfuegbar",
-    };
-  }
+const TRUSTED_SOURCES = new Set(["stock_quantity_number", "nur_noch_n_stueck"]);
 
-  const qty = input.stockQuantityNumber == null ? null : Math.max(0, Math.floor(input.stockQuantityNumber));
-  if (qty == null) {
+export function decideVenPublishedQty(input: VenPublishInput): VenPublishDecision {
+  if (!input.pageObservedThisRun) {
     return {
       sourceQty: null,
-      sofortVerfuegbar: true,
-      schemaInStock: true,
-      hasPositiveProof: false,
-      reason: "sofort_but_no_exact_qty",
-    };
-  }
-  if (qty <= 0) {
-    return {
-      sourceQty: 0,
-      sofortVerfuegbar: true,
-      schemaInStock: true,
-      hasPositiveProof: false,
-      reason: "zero_qty",
-    };
-  }
-  return {
-    sourceQty: qty,
-    sofortVerfuegbar: true,
-    schemaInStock: true,
-    hasPositiveProof: true,
-    reason: "stock_quantity_number",
-  };
-}
-
-export function decideVenPublishedQty(parse: VenStockParse): VenPublishDecision {
-  if (!parse.hasPositiveProof || parse.sourceQty == null || parse.sourceQty <= 0) {
-    return {
-      sourceQty: parse.sourceQty,
       proposedQty: 0,
-      reason: parse.reason,
+      reason: "no_page_obs_this_run",
       hasPositiveProof: false,
     };
   }
-  const proposed = halfCeil(parse.sourceQty);
+  if (!input.buyableSofort) {
+    return {
+      sourceQty: null,
+      proposedQty: 0,
+      reason: "not_sofort_verfuegbar",
+      hasPositiveProof: false,
+    };
+  }
+  const source = String(input.stockSource ?? "").trim();
+  if (!source) {
+    return {
+      sourceQty: null,
+      proposedQty: 0,
+      reason: "no_stock_source",
+      hasPositiveProof: false,
+    };
+  }
+  if (source === "sQuantity_max") {
+    return {
+      sourceQty: input.rawQty ?? null,
+      proposedQty: 0,
+      reason: "sQuantity_max_untrusted",
+      hasPositiveProof: false,
+    };
+  }
+  if (source === "default_stock") {
+    return {
+      sourceQty: null,
+      proposedQty: 0,
+      reason: "default_stock_no_proof",
+      hasPositiveProof: false,
+    };
+  }
+  if (!TRUSTED_SOURCES.has(source)) {
+    return {
+      sourceQty: input.rawQty ?? null,
+      proposedQty: 0,
+      reason: `untrusted_source:${source}`,
+      hasPositiveProof: false,
+    };
+  }
+  // Trusted page proof — publish at most 1 (quantityUnknown; VEN pages rarely expose exact >1).
   return {
-    sourceQty: parse.sourceQty,
-    proposedQty: proposed,
-    reason: `halfCeil:${parse.sourceQty}`,
-    hasPositiveProof: proposed > 0,
+    sourceQty: input.rawQty ?? null,
+    proposedQty: 1,
+    reason: `page_proof:${source}`,
+    hasPositiveProof: true,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTusObservationId, decideTusPublishedQty, parseTusStock } from "./tusQty";
+import { buildTusObservationId, decideTusPublishedQty } from "./tusQty";
 
 describe("buildTusObservationId", () => {
   it("distinguishes parent vs variant", () => {
@@ -13,57 +13,49 @@ describe("buildTusObservationId", () => {
 });
 
 describe("tusQty", () => {
-  it("Verfügbar: 3 → halfCeil→2", () => {
-    const d = decideTusPublishedQty(
-      parseTusStock({ stockText: "Verfügbar: 3", isPurchasable: true, isInStock: true })
-    );
-    expect(d.sourceQty).toBe(3);
-    expect(d.proposedQty).toBe(2);
+  it("Verfügbar 5 → halfCeil→3", () => {
+    const d = decideTusPublishedQty({ verfuegbarQty: 5, purchasable: true, inStock: true });
+    expect(d.sourceQty).toBe(5);
+    expect(d.proposedQty).toBe(3);
   });
-
-  it("N=1 vorrätig → 1", () => {
-    const d = decideTusPublishedQty(
-      parseTusStock({ stockText: "1 vorrätig", isPurchasable: true, isInStock: true })
-    );
-    expect(d.proposedQty).toBe(1);
+  it("N=1 → 1", () => {
+    expect(
+      decideTusPublishedQty({ verfuegbarQty: 1, purchasable: true, inStock: true }).proposedQty
+    ).toBe(1);
   });
-
-  it("Nicht vorrätig → 0", () => {
-    const d = decideTusPublishedQty(
-      parseTusStock({ stockText: "Nicht vorrätig", isPurchasable: false, isInStock: false })
-    );
+  it("Nicht vorrätig copy → 0", () => {
+    const d = decideTusPublishedQty({
+      verfuegbarQty: 5,
+      purchasable: true,
+      inStock: true,
+      htmlOrText: "Nicht vorrätig",
+    });
     expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("not_purchasable");
+    expect(d.reason).toBe("pdp_oos_text");
   });
-
+  it("!purchasable → 0", () => {
+    expect(
+      decideTusPublishedQty({ verfuegbarQty: 5, purchasable: false, inStock: false }).proposedQty
+    ).toBe(0);
+  });
   it("preorder → 0", () => {
-    const d = decideTusPublishedQty(
-      parseTusStock({ stockText: "Verfügbar: 5", isPreorder: true, isPurchasable: true })
-    );
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("preorder");
+    expect(
+      decideTusPublishedQty({ verfuegbarQty: 5, isPreorder: true, purchasable: true }).proposedQty
+    ).toBe(0);
   });
-
-  it("missing qty → 0, never invent", () => {
-    const d = decideTusPublishedQty(parseTusStock({ isPurchasable: true, isInStock: true }));
+  it("no qty → 0 never invent", () => {
+    const d = decideTusPublishedQty({ purchasable: true, inStock: true });
     expect(d.proposedQty).toBe(0);
     expect(d.reason).toBe("no_qty");
-    expect(d.sourceQty).toBeNull();
   });
-
   it("cartMax 9999 rejected", () => {
-    const d = decideTusPublishedQty(
-      parseTusStock({ cartMax: 9999, isPurchasable: true, isInStock: true })
-    );
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("no_qty");
+    expect(
+      decideTusPublishedQty({ cartMax: 9999, purchasable: true, inStock: true }).proposedQty
+    ).toBe(0);
   });
-
-  it("cartMax 4 accepted → halfCeil→2", () => {
-    const d = decideTusPublishedQty(
-      parseTusStock({ cartMax: 4, isPurchasable: true, isInStock: true })
-    );
-    expect(d.sourceQty).toBe(4);
-    expect(d.proposedQty).toBe(2);
+  it("cartMax 4 accepted → 2", () => {
+    expect(
+      decideTusPublishedQty({ cartMax: 4, purchasable: true, inStock: true }).proposedQty
+    ).toBe(2);
   });
 });

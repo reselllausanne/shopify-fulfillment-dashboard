@@ -10,8 +10,11 @@ import {
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
 import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
-import { recordHawObservation } from "@/inventory/supplierStock/batch1Observations";
-import { decideHawPublishedQtyFromPage } from "@/inventory/supplierStock/hawQty";
+import {
+  beginHawObservationRun,
+  recordHawObservation,
+} from "@/inventory/supplierStock/batch1Observations";
+import { decideHawPublishedQty } from "@/inventory/supplierStock/hawQty";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -143,9 +146,9 @@ export async function scrapeHawkShop(
     const queueImage = !deferHawkImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const manualNote = formatHawkNote(product, cost);
-    const decision = decideHawPublishedQtyFromPage({
+    const decision = decideHawPublishedQty({
       htmlOrText: product.stock > 0 ? `Lagerbestand ${product.stock}` : "",
-      availability: product.inStock ? "https://schema.org/InStock" : "https://schema.org/OutOfStock",
+      inStockSchema: product.inStock,
     });
     const proposedQty = decision.proposedQty;
     const stockWrite = mayMutateMarketplaceStock() ? proposedQty : undefined;
@@ -233,6 +236,7 @@ export async function scrapeHawkShop(
   };
 
   try {
+    beginHawObservationRun(runId);
     const productUrls = await client.listProductUrls(maxProducts);
     listed = productUrls.length;
 

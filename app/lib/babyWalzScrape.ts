@@ -5,7 +5,11 @@ import { BabyWalzClient, babyWalzConfig, type BabyWalzProduct } from "@/app/lib/
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
 import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
-import { decideBwzPublishedQty, parseBwzStock } from "@/inventory/supplierStock/bwzQty";
+import { decideBwzPublishedQty } from "@/inventory/supplierStock/bwzQty";
+import {
+  beginBwzObservationRun,
+  recordBwzObservation,
+} from "@/inventory/supplierStock/batch1Observations";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -140,17 +144,28 @@ export async function scrapeBabyWalzShop(
     const existing = existingById.get(supplierVariantId);
     const queueImage = !deferBabyWalzImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
-    const decision = decideBwzPublishedQty(
-      parseBwzStock({
-        quantity: product.stock,
-        isSoldOut: product.stock <= 0,
-        isBuyable: product.stock > 0,
+    const decision = decideBwzPublishedQty({
+      nuxtQty: product.stock,
+      inStock: product.stock > 0,
+      name: product.name,
+      productType: product.productType,
+      url: product.productUrl,
+      sku: product.sku,
+    });
+    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
+    recordBwzObservation(
+      {
+        productUrl: product.productUrl,
+        gtin: product.gtin,
+        sku: product.sku,
         productName: product.name,
         productType: product.productType,
-        slug: product.productUrl,
-      })
+        priceChf: product.priceChf,
+        nuxtQty: product.stock,
+        inStock: product.stock > 0,
+      },
+      { scrapeRunId: runId, observedAt: now }
     );
-    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -224,6 +239,7 @@ export async function scrapeBabyWalzShop(
   };
 
   try {
+    beginBwzObservationRun(runId);
     const productUrls = await client.listProductUrls(maxProducts);
     listed = productUrls.length;
 

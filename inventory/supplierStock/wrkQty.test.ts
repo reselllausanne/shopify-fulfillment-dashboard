@@ -1,57 +1,69 @@
 import { describe, expect, it } from "vitest";
-import { decideWrkPublishedQty, parseWrkStock } from "./wrkQty";
+import { decideWrkPublishedQty } from "./wrkQty";
 
 describe("wrkQty", () => {
   it("tracked N=4 → halfCeil→2", () => {
-    const d = decideWrkPublishedQty(
-      parseWrkStock({ available: true, trackedQty: 4, inventoryManagement: "shopify" })
-    );
+    const d = decideWrkPublishedQty({
+      pagePresent: true,
+      available: true,
+      trackedQty: 4,
+      inventoryTracked: true,
+    });
     expect(d.sourceQty).toBe(4);
     expect(d.proposedQty).toBe(2);
   });
-
-  it("tracked N=1 → 1", () => {
-    const d = decideWrkPublishedQty(
-      parseWrkStock({ available: true, trackedQty: 1, inventoryManagement: "shopify" })
-    );
-    expect(d.proposedQty).toBe(1);
+  it("N=1 → 1", () => {
+    expect(
+      decideWrkPublishedQty({
+        pagePresent: true,
+        available: true,
+        trackedQty: 1,
+        inventoryTracked: true,
+      }).proposedQty
+    ).toBe(1);
   });
-
-  it("tracked zero → 0", () => {
-    const d = decideWrkPublishedQty(
-      parseWrkStock({ available: true, trackedQty: 0, inventoryManagement: "shopify" })
-    );
+  it("hidden untracked → 0 qty_hidden_not_invented", () => {
+    const d = decideWrkPublishedQty({
+      pagePresent: true,
+      available: true,
+      trackedQty: null,
+      inventoryTracked: false,
+    });
     expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("tracked_zero_or_missing");
+    expect(d.reason).toBe("qty_hidden_not_invented");
   });
-
-  it("untracked available → 1 quantityUnknown", () => {
-    const d = decideWrkPublishedQty(
-      parseWrkStock({ available: true, trackedQty: null, inventoryManagement: null })
-    );
-    expect(d.proposedQty).toBe(1);
-    expect(d.quantityUnknown).toBe(true);
+  it("!available → 0", () => {
+    expect(decideWrkPublishedQty({ pagePresent: true, available: false }).proposedQty).toBe(0);
   });
-
-  it("not available → 0", () => {
-    const d = decideWrkPublishedQty(parseWrkStock({ available: false }));
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("not_available");
+  it("page missing → 0", () => {
+    expect(decideWrkPublishedQty({ pagePresent: false }).proposedQty).toBe(0);
   });
-
   it("preorder → 0", () => {
-    const d = decideWrkPublishedQty(parseWrkStock({ available: true, isPreorder: true }));
-    expect(d.proposedQty).toBe(0);
+    expect(
+      decideWrkPublishedQty({
+        pagePresent: true,
+        available: true,
+        isPreorder: true,
+      }).proposedQty
+    ).toBe(0);
   });
-
-  it("page missing → 0 never invent hidden qty", () => {
-    const d = decideWrkPublishedQty(parseWrkStock({ pageMissing: true }));
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("page_missing");
-  });
-
   it("late delivery → 0", () => {
-    const d = decideWrkPublishedQty(parseWrkStock({ available: true, lateDelivery: true }));
-    expect(d.proposedQty).toBe(0);
+    expect(
+      decideWrkPublishedQty({
+        pagePresent: true,
+        available: true,
+        lateDelivery: true,
+      }).proposedQty
+    ).toBe(0);
+  });
+  it("tracked zero → 0", () => {
+    expect(
+      decideWrkPublishedQty({
+        pagePresent: true,
+        available: true,
+        trackedQty: 0,
+        inventoryTracked: true,
+      }).proposedQty
+    ).toBe(0);
   });
 });

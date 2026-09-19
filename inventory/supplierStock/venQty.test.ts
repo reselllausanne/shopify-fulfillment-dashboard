@@ -1,49 +1,57 @@
 import { describe, expect, it } from "vitest";
-import { decideVenPublishedQty, parseVenStock } from "./venQty";
+import { decideVenPublishedQty } from "./venQty";
 
 describe("venQty", () => {
-  it("Sofort + N=4 → halfCeil→2", () => {
-    const d = decideVenPublishedQty(
-      parseVenStock({ schemaInStock: true, sofortVerfuegbar: true, stockQuantityNumber: 4 })
-    );
-    expect(d.sourceQty).toBe(4);
-    expect(d.proposedQty).toBe(2);
-  });
-
-  it("Sofort + N=1 → 1", () => {
-    const d = decideVenPublishedQty(
-      parseVenStock({ schemaInStock: true, sofortVerfuegbar: true, stockQuantityNumber: 1 })
-    );
+  it("buyable + trusted page obs → 1", () => {
+    const d = decideVenPublishedQty({
+      buyableSofort: true,
+      pageObservedThisRun: true,
+      stockSource: "stock_quantity_number",
+      rawQty: 4,
+    });
     expect(d.proposedQty).toBe(1);
+    expect(d.hasPositiveProof).toBe(true);
   });
-
-  it("Sofort but no exact qty → 0, never invent 100 or 1", () => {
-    const d = decideVenPublishedQty(
-      parseVenStock({ schemaInStock: true, sofortVerfuegbar: true, stockQuantityNumber: null })
-    );
+  it("sQuantity_max untrusted → 0", () => {
+    const d = decideVenPublishedQty({
+      buyableSofort: true,
+      pageObservedThisRun: true,
+      stockSource: "sQuantity_max",
+      rawQty: 100,
+    });
     expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("sofort_but_no_exact_qty");
+    expect(d.reason).toBe("sQuantity_max_untrusted");
   });
-
-  it("Schema OutOfStock → 0", () => {
-    const d = decideVenPublishedQty(
-      parseVenStock({ schemaInStock: false, sofortVerfuegbar: false })
-    );
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("schema_not_instock");
+  it("default_stock rejected", () => {
+    expect(
+      decideVenPublishedQty({
+        buyableSofort: true,
+        pageObservedThisRun: true,
+        stockSource: "default_stock",
+      }).proposedQty
+    ).toBe(0);
   });
-
-  it("Liefertermin unbekannt → 0", () => {
-    const d = decideVenPublishedQty(parseVenStock({ liefertermUnbekannt: true }));
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("liefertermin_unbekannt");
+  it("!sofort → 0", () => {
+    expect(
+      decideVenPublishedQty({
+        buyableSofort: false,
+        pageObservedThisRun: true,
+        stockSource: "stock_quantity_number",
+      }).proposedQty
+    ).toBe(0);
   });
-
-  it("Not Sofort → 0", () => {
-    const d = decideVenPublishedQty(
-      parseVenStock({ schemaInStock: true, sofortVerfuegbar: false })
-    );
-    expect(d.proposedQty).toBe(0);
-    expect(d.reason).toBe("not_sofort_verfuegbar");
+  it("no page obs → 0 (never mass-write 1)", () => {
+    expect(
+      decideVenPublishedQty({
+        buyableSofort: true,
+        pageObservedThisRun: false,
+        stockSource: "stock_quantity_number",
+      }).proposedQty
+    ).toBe(0);
+  });
+  it("no stock source → 0", () => {
+    expect(
+      decideVenPublishedQty({ buyableSofort: true, pageObservedThisRun: true }).proposedQty
+    ).toBe(0);
   });
 });
