@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   computeGalaxusSellPriceExVat,
   resolveGalaxusSellExVatForChannel,
+  resolveBwzTargetNetMarginForBuyPrice,
   resolveGalaxusTargetNetMarginForSupplier,
   resolveGldLandedCostChf,
   resolveGldLandedExtrasPerPairChf,
@@ -208,18 +209,31 @@ describe("Galaxus STX margin", () => {
     expect(welSell).toBe(14.65);
   });
 
-  it("defaults BWZ to at least 15% net (default ship CHF 2)", () => {
-    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);
-    const bwzSell = resolveGalaxusSellExVatForChannel(45.95, "bwz", new Set());
-    // (45.95 + 2) / 0.85 ≈ 56.411 → 56.45
-    expect(bwzSell).toBe(56.45);
+  it("BWZ tier margins by buy price", () => {
+    expect(resolveBwzTargetNetMarginForBuyPrice(21)).toBeCloseTo(0.3, 5);
+    expect(resolveBwzTargetNetMarginForBuyPrice(79.99)).toBeCloseTo(0.3, 5);
+    expect(resolveBwzTargetNetMarginForBuyPrice(80)).toBeCloseTo(0.2, 5);
+    expect(resolveBwzTargetNetMarginForBuyPrice(300)).toBeCloseTo(0.2, 5);
+    expect(resolveBwzTargetNetMarginForBuyPrice(300.01)).toBeCloseTo(0.15, 5);
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz", undefined, 21)).toBeCloseTo(0.3, 5);
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.2, 5);
   });
 
-  it("allows higher BWZ margin via env; floors below 15%", () => {
-    process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.12";
-    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);
+  it("BWZ sell uses tier net margin (default ship CHF 2)", () => {
+    const small = resolveGalaxusSellExVatForChannel(21.05, "bwz", new Set());
+    // (21.05 + 2) / 0.70 ≈ 32.928 → 32.95
+    expect(small).toBe(32.95);
+    const mid = resolveGalaxusSellExVatForChannel(100, "bwz", new Set());
+    // (100 + 2) / 0.80 = 127.5 → round up 0.05 → 127.55
+    expect(mid).toBe(127.55);
+    const large = resolveGalaxusSellExVatForChannel(350, "bwz", new Set());
+    // (350 + 2) / 0.85 ≈ 414.117 → 414.15
+    expect(large).toBe(414.15);
+  });
+
+  it("allows flat BWZ margin override via env (replaces tiers)", () => {
     process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.18";
-    expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.18, 5);
+    expect(resolveGalaxusTargetNetMarginForSupplier("bwz", undefined, 21)).toBeCloseTo(0.18, 5);
     const bwzSell = resolveGalaxusSellExVatForChannel(45.95, "bwz", new Set());
     // (45.95 + 2) / 0.82 ≈ 58.475 → 58.50
     expect(bwzSell).toBe(58.5);
