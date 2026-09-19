@@ -10,11 +10,11 @@ Shopify (overselling risk on the long tail). The sweeper closes that gap:
   can't break this). The refreshed rawJson bumps rawFetchedAt, which puts the
   product back in the /api/kickdb/fresh queue for the consumer's next run.
 
-Sized for cron: --limit caps KicksDB calls per run. 20k catalog / 7-day cycle
-needs ~3k/day.
+Sized for cron: --limit caps KicksDB calls per run. 20k catalog / 3-day cycle
+needs ~7k/day.
 
 Usage (daily cron):
-    python3 sweeper_refresh_stale.py --db-api http://127.0.0.1:3000 --max-age-days 7 --limit 3000
+    python3 sweeper_refresh_stale.py --db-api http://127.0.0.1:3000 --max-age-days 3 --limit 7000
 """
 
 import argparse
@@ -53,8 +53,8 @@ def fetch_stale(db_api, max_age_days, limit):
 def main():
     parser = argparse.ArgumentParser(description="Refresh stale catalog products from KicksDB")
     parser.add_argument("--db-api", default=DB_API_DEFAULT)
-    parser.add_argument("--max-age-days", type=int, default=7)
-    parser.add_argument("--limit", type=int, default=3000)
+    parser.add_argument("--max-age-days", type=int, default=3)
+    parser.add_argument("--limit", type=int, default=7000)
     parser.add_argument("--delay", type=float, default=0.35)
     args = parser.parse_args()
 
