@@ -46,10 +46,7 @@ function fmtDate(iso: string | null | undefined) {
 }
 
 function platformLabel(platform: string) {
-  if (platform === "hhv") return "HHV / Playwright";
-  if (platform === "snl") return "Snowleader / GraphQL";
   if (platform === "rei") return "Reichelt / HTML";
-  if (platform === "nso") return "Newsole / WooCommerce";
   if (platform === "fan") return "FantasyWelt / Playwright";
   if (platform === "exl") return "Ex Libris / Next.js";
   if (platform === "haw") return "Hawk / Magento";
@@ -138,7 +135,7 @@ export default function ScraperPage() {
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Scraped Websites</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              One line per shop in <code className="text-xs">SCRAPER_SHOPS</code>. Snowleader/HHV sync into the DB
+              One line per shop in <code className="text-xs">SCRAPER_SHOPS</code>. Scrapers sync into the DB
               automatically; Galaxus export stays off until you add the shop key to{" "}
               <code className="text-xs">GALAXUS_FEED_SUPPLIER_ALLOWLIST</code>.
             </p>
@@ -177,9 +174,8 @@ export default function ScraperPage() {
             <p className="mt-2 max-w-2xl">{ov?.message}</p>
             <pre className="mt-3 overflow-auto rounded-lg bg-amber-100/60 p-3 text-xs">
 {`SCRAPER_SHOPS="WEL|WellPlayed|https://www.wellplayed.ch
-HHV|HHV|https://www.hhv.de|EUR|hhv
-SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
 REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
+FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
 HAW|Hawk|https://www.hawk.ch|CHF|haw
 ALT|Alternate|https://www.alternate.ch|CHF|alt
 VEN|Venova|https://www.venova.ch/de|CHF|ven"`}

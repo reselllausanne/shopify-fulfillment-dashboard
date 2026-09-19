@@ -38,8 +38,8 @@ All scrapers: **pending** (`observationContractImplemented=false`).
 | tus | The Uncommon Shop | pending |
 | alt | Alternate | pending |
 | ven | Venova | pending |
-| hhv | HHV | pending |
-| snl | Snowleader | pending |
-| nso | Newsole | pending |
+| hhv | HHV | **killed / deleted** |
+| snl | Snowleader | **killed / deleted** (no GTIN) |
+| nso | Newsole | **killed / deleted** |
 
 Finalize hooks / call sites ≠ page proof. Register adapter + set registry flag only after live qualification.

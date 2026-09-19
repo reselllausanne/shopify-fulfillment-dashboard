@@ -8,11 +8,11 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
  *   Name = display name
  *   baseUrl = storefront root (e.g. https://www.wellplayed.ch)
  *   CURRENCY = optional ISO code (default CHF)
- *   platform = optional adapter: shopify (default) | hhv | snl | rei | nso | fan | exl | haw | bwz | tus | alt | ven
- *   (BAE / Bächli is permanently killed — entries with platform=bae or key=BAE are ignored.)
+ *   platform = optional adapter: shopify (default) | rei | fan | exl | haw | bwz | tus | alt | ven
+ *   (BAE / HHV / SNL / NSO permanently killed — env leftovers ignored.)
  *
  * Example:
- *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch,HHV|HHV|https://www.hhv.de|EUR|hhv
+ *   SCRAPER_SHOPS=WEL|WellPlayed|https://www.wellplayed.ch
  *   FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan
  *   HAW|Hawk|https://www.hawk.ch|CHF|haw
  *   BWZ|Baby-Walz|https://www.baby-walz.ch/de|CHF|bwz
@@ -25,10 +25,7 @@ import { GALAXUS_FEED_SUPPLIER_ALLOWLIST } from "@/galaxus/config";
 
 export type ScraperPlatform =
   | "shopify"
-  | "hhv"
-  | "snl"
   | "rei"
-  | "nso"
   | "fan"
   | "exl"
   | "haw"
@@ -83,35 +80,42 @@ export function parseScraperShops(): ScraperShop[] {
       currencyCandidate.length === 3 && /^[A-Z]{3}$/.test(currencyCandidate) ? currencyCandidate : "CHF";
     const platformCandidate = String(platformRaw || currencyOrPlatform || "shopify").toLowerCase();
 
-    // BAE permanently killed — ignore env leftovers so cron/UI cannot re-scrape.
-    if (key === "bae" || code === "BAE" || platformCandidate === "bae") {
+    // Dead scrapers — ignore env leftovers so cron/UI cannot re-scrape.
+    if (
+      key === "bae" ||
+      code === "BAE" ||
+      platformCandidate === "bae" ||
+      key === "hhv" ||
+      code === "HHV" ||
+      platformCandidate === "hhv" ||
+      key === "snl" ||
+      code === "SNL" ||
+      platformCandidate === "snl" ||
+      key === "nso" ||
+      code === "NSO" ||
+      platformCandidate === "nso"
+    ) {
       continue;
     }
     seen.add(key);
     const platform: ScraperPlatform =
-      platformCandidate === "hhv"
-        ? "hhv"
-        : platformCandidate === "snl"
-          ? "snl"
-          : platformCandidate === "rei"
-            ? "rei"
-            : platformCandidate === "nso"
-              ? "nso"
-              : platformCandidate === "fan"
-                  ? "fan"
-                  : platformCandidate === "exl"
-                    ? "exl"
-                    : platformCandidate === "haw"
-                      ? "haw"
-                      : platformCandidate === "bwz"
-                        ? "bwz"
-                        : platformCandidate === "tus"
-                          ? "tus"
-                          : platformCandidate === "alt"
-                            ? "alt"
-                            : platformCandidate === "ven"
-                              ? "ven"
-                              : "shopify";
+      platformCandidate === "rei"
+        ? "rei"
+        : platformCandidate === "fan"
+          ? "fan"
+          : platformCandidate === "exl"
+            ? "exl"
+            : platformCandidate === "haw"
+              ? "haw"
+              : platformCandidate === "bwz"
+                ? "bwz"
+                : platformCandidate === "tus"
+                  ? "tus"
+                  : platformCandidate === "alt"
+                    ? "alt"
+                    : platformCandidate === "ven"
+                      ? "ven"
+                      : "shopify";
 
     out.push({
       key,

@@ -1,10 +1,7 @@
 import { findScraperShop, parseScraperShops } from "@/app/lib/scraperShops";
 import { scraperQuery } from "@/app/lib/scraperDb";
 import { hasRunningRun, startRun, scrapeShop } from "@/app/lib/shopifyScrape";
-import { scrapeHhvShop } from "@/app/lib/hhvScrape";
-import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
-import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
@@ -16,29 +13,23 @@ import type { ScraperShop } from "@/app/lib/scraperShops";
 
 function runScrapeForShop(shop: ScraperShop, runId: number) {
   const runScrape =
-    shop.platform === "hhv"
-      ? scrapeHhvShop
-      : shop.platform === "snl"
-        ? scrapeSnowleaderShop
-        : shop.platform === "rei"
-          ? scrapeReicheltShop
-          : shop.platform === "nso"
-            ? scrapeNewsoleShop
-            : shop.platform === "fan"
-              ? scrapeFantasyweltShop
-              : shop.platform === "exl"
-                ? scrapeExlibrisShop
-                : shop.platform === "haw"
-                  ? scrapeHawkShop
-                  : shop.platform === "bwz"
-                    ? scrapeBabyWalzShop
-                    : shop.platform === "tus"
-                      ? scrapeUncommonShop
-                      : shop.platform === "alt"
-                        ? scrapeAlternateShop
-                        : shop.platform === "ven"
-                          ? scrapeVenovaShop
-                          : scrapeShop;
+    shop.platform === "rei"
+      ? scrapeReicheltShop
+      : shop.platform === "fan"
+        ? scrapeFantasyweltShop
+        : shop.platform === "exl"
+          ? scrapeExlibrisShop
+          : shop.platform === "haw"
+            ? scrapeHawkShop
+            : shop.platform === "bwz"
+              ? scrapeBabyWalzShop
+              : shop.platform === "tus"
+                ? scrapeUncommonShop
+                : shop.platform === "alt"
+                  ? scrapeAlternateShop
+                  : shop.platform === "ven"
+                    ? scrapeVenovaShop
+                    : scrapeShop;
   return runScrape(shop, runId);
 }
 
@@ -56,6 +47,7 @@ export async function resumeInterruptedScrapes(): Promise<string[]> {
 
   const started: string[] = [];
   for (const { shop_id } of rows) {
+    if (shop_id === "bae" || shop_id === "hhv" || shop_id === "snl" || shop_id === "nso") continue;
     const shop = findScraperShop(shop_id) ?? parseScraperShops().find((s) => s.key === shop_id);
     if (!shop) continue;
     if (await hasRunningRun(shop.key)) continue;

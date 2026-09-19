@@ -18,8 +18,6 @@ export const DEFAULT_DECATHLON_JOBS: Array<{
   { jobKey: "decathlon-physical-offer-sync", intervalMs: 24 * HOUR_MS, enabled: false },
   /** Daily active Decathlon return sync for receipt/refund workflow. */
   { jobKey: "decathlon-return-sync", intervalMs: 24 * HOUR_MS, enabled: true },
-  /** Keep Snowleader prices fresh for Galaxus sourcing and margin safety. */
-  { jobKey: "scraper-snl-sync", intervalMs: 3 * HOUR_MS, enabled: true },
 ];
 
 export async function ensureDecathlonJobDefinitions() {
