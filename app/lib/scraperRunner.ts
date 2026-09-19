@@ -4,10 +4,7 @@
 import type { ScraperShop } from "@/app/lib/scraperShops";
 import { findScraperShop, parseScraperShops } from "@/app/lib/scraperShops";
 import { startRun, scrapeShop, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
-import { scrapeHhvShop } from "@/app/lib/hhvScrape";
-import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
-import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
@@ -27,16 +24,17 @@ export type ScrapeFn = (
   maxProducts?: number
 ) => Promise<void>;
 
+const KILLED_SCRAPERS: Record<string, string> = {
+  bae: "BAE_SCRAPER_KILLED — Bächli removed from codebase",
+  hhv: "HHV_SCRAPER_KILLED — HHV removed from codebase",
+  snl: "SNL_SCRAPER_KILLED — Snowleader removed (no GTIN)",
+  nso: "NSO_SCRAPER_KILLED — Newsole removed from codebase",
+};
+
 export function resolveScrapeFn(shop: ScraperShop): ScrapeFn {
   switch (shop.platform) {
-    case "hhv":
-      return scrapeHhvShop;
-    case "snl":
-      return scrapeSnowleaderShop;
     case "rei":
       return scrapeReicheltShop;
-    case "nso":
-      return scrapeNewsoleShop;
     case "fan":
       return scrapeFantasyweltShop;
     case "exl":
@@ -86,12 +84,13 @@ export async function runScraperJob(input: RunScraperJobInput): Promise<RunScrap
   const shopKey = String(input.shopKey ?? "")
     .trim()
     .toLowerCase();
-  if (shopKey === "bae") {
+  const killed = KILLED_SCRAPERS[shopKey];
+  if (killed) {
     return {
       ok: false,
-      shop: "bae",
+      shop: shopKey,
       runId: null,
-      error: "BAE_SCRAPER_KILLED — Bächli removed from codebase",
+      error: killed,
     };
   }
 
@@ -169,5 +168,4 @@ export const SCRAPER_STOCK_HOOK_CALL_SITES = [
   { path: "scripts/run-uncommon-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-alternate-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-venova-scrape.ts", via: "runScraperJob", hooked: true },
-  { path: "scripts/run-snl-scrape.ts", via: "runScraperJob", hooked: true },
 ] as const;

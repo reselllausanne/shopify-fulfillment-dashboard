@@ -35,7 +35,7 @@ import {
   resolveGalaxusDirectDeliverySupported,
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
-import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
+import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
 import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
@@ -296,7 +296,7 @@ export async function GET(request: Request) {
     // receive QuantityOnStock=0 and Galaxus removes the live offer.
     if (
       isXntFeedBlockedBrand(variant) ||
-      shouldForceBaeStockZero({
+      shouldForceDeadStockZero({
         supplierKey: mappingSupplierKey,
         supplierVariantId: supplierVariantIdEarly,
         providerKey,

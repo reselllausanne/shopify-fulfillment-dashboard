@@ -26,7 +26,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   nso: "Newsole",
 };
 
-const SEED_KEYS = ["wel", "rei", "bae", "fan", "exl", "haw", "wrk", "bwz", "tus", "alt", "ven", "hhv", "snl", "nso"] as const;
+const SEED_KEYS = ["wel", "rei", "fan", "exl", "haw", "wrk", "bwz", "tus", "alt", "ven"] as const;
 
 export function defaultPolicyStatusForSupplier(supplierKey: string): SupplierStockPolicyStatus {
   const key = String(supplierKey ?? "").trim().toLowerCase();

@@ -28,9 +28,9 @@ const DISPLAY: Record<string, string> = {
   tus: "The Uncommon Shop",
   alt: "Alternate",
   ven: "Venova",
-  hhv: "HHV",
-  snl: "Snowleader",
-  nso: "Newsole",
+  hhv: "HHV (killed)",
+  snl: "Snowleader (killed)",
+  nso: "Newsole (killed)",
 };
 
 /** All scrapers currently pending — none emit the contract yet. */

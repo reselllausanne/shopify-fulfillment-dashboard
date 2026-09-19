@@ -1,10 +1,13 @@
 /**
  * Bächli (BAE) permanently removed.
- * - Master/offer: blocked
- * - Stock feed: force QuantityOnStock=0 (delist prior pushes), same pattern as XNT
- * - Scraper code deleted
- * - DB purge: scripts/kill-bae-delete.ts --confirm=BAE_DELETE
+ * Shared dead-supplier helpers (BAE+HHV+SNL+NSO): galaxus/exports/deadSupplierKill.ts
  */
+import {
+  isDeadFeedBlocked,
+  isDeadSupplier,
+  resolveDeadSupplierKey,
+  shouldForceDeadStockZero,
+} from "@/galaxus/exports/deadSupplierKill";
 
 export const BAE_SUPPLIER_KEY = "bae";
 export const BAE_PROVIDER_PREFIX = "BAE_";
@@ -15,23 +18,9 @@ export function isBaeSupplierKey(input: {
   supplierVariantId?: string | null;
   providerKey?: string | null;
 }): boolean {
-  const key = String(input.supplierKey ?? "")
-    .trim()
-    .toLowerCase();
-  if (key === BAE_SUPPLIER_KEY || key === "bächli" || key === "baechli") return true;
-
-  const sv = String(input.supplierVariantId ?? "")
-    .trim()
-    .toLowerCase();
-  if (sv.startsWith("bae_") || sv.startsWith("bae:")) return true;
-
-  const pk = String(input.providerKey ?? "")
-    .trim()
-    .toUpperCase();
-  return pk.startsWith(BAE_PROVIDER_PREFIX);
+  return resolveDeadSupplierKey(input) === "bae";
 }
 
-/** Block BAE from master / offer / candidate selection. */
 export function isBaeFeedBlocked(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
@@ -40,10 +29,6 @@ export function isBaeFeedBlocked(input: {
   return isBaeSupplierKey(input);
 }
 
-/**
- * Force stock=0 in Galaxus stock CSV so previously pushed offers delist.
- * Unlike master/offer skip, stock feed must still emit zeros.
- */
 export function shouldForceBaeStockZero(input: {
   supplierKey?: string | null;
   supplierVariantId?: string | null;
@@ -51,6 +36,9 @@ export function shouldForceBaeStockZero(input: {
 }): boolean {
   return isBaeSupplierKey(input);
 }
+
+/** Prefer these for multi-supplier kill (BAE+HHV+SNL+NSO). */
+export { isDeadFeedBlocked, isDeadSupplier, shouldForceDeadStockZero };
 
 export type BaeActiveListingRow = {
   providerKey: string;

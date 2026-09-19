@@ -20,7 +20,7 @@ import { attachAvailableStock } from "@/inventory/availableStock";
 import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import { isGalaxusSellableStock, isXntFeedBlockedBrand } from "@/galaxus/exports/feedEligibility";
-import { isBaeFeedBlocked } from "@/galaxus/exports/baeKill";
+import { isDeadFeedBlocked } from "@/galaxus/exports/deadSupplierKill";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -386,9 +386,9 @@ export async function GET(request: Request) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
-    // BAE killed from catalog — stock feed force-zeros via shouldForceBaeStockZero.
+    // Dead scrapers (BAE/HHV/SNL/NSO) — stock feed force-zeros via shouldForceDeadStockZero.
     if (
-      isBaeFeedBlocked({
+      isDeadFeedBlocked({
         supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
         supplierVariantId: supplierVariant?.supplierVariantId,
         providerKey,

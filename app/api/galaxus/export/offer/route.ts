@@ -29,7 +29,7 @@ import {
   isGalaxusSellableStock,
   isXntFeedBlockedBrand,
 } from "@/galaxus/exports/feedEligibility";
-import { isBaeFeedBlocked } from "@/galaxus/exports/baeKill";
+import { isDeadFeedBlocked } from "@/galaxus/exports/deadSupplierKill";
 import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
@@ -221,7 +221,7 @@ export async function GET(request: Request) {
     // master feed skip). Stock feed emits 0 to actively delist prior pushes.
     if (isXntFeedBlockedBrand(variant)) continue;
     if (
-      isBaeFeedBlocked({
+      isDeadFeedBlocked({
         supplierKey: (candidate as any)?.mapping?.supplierKey ?? null,
         supplierVariantId: variant?.supplierVariantId,
         providerKey,
