@@ -8,10 +8,13 @@ import {
   shouldAutoAddToPackingSession,
   shouldAutoGalaxusDirectLabelFor,
 } from "./scanInboundGuards";
+import PrintStationWizard from "./PrintStationWizard";
 import {
+  presentExistingLabel,
   probePrintStationStatus,
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
+import type { ExistingLabelRef, PrintFlowEvent } from "@/lib/printStation";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
@@ -577,6 +580,8 @@ const openLabelPreview = (payload: LabelDataPayload) => {
  * (printJobResult.ok). VPS never succeeds CUPS → always opens popup.
  * Ignores browserPrintConfig.enabled=false from stale server paths that
  * attempted CUPS and then suppressed the popup for nothing.
+ *
+ * Prefer `presentLabelAfterFulfill` for the QZ → browser fallback chain.
  */
 const presentScanLabel = (options: {
   labelData?: LabelDataPayload | null;
@@ -599,6 +604,17 @@ const presentScanLabel = (options: {
   }
   return opened;
 };
+
+const toExistingLabelRef = (
+  labelData: LabelDataPayload,
+  awb?: string | null
+): ExistingLabelRef => ({
+  base64: String(labelData.base64 || ""),
+  mimeType: String(labelData.mimeType || "application/pdf"),
+  extension: labelData.extension === "png" ? "png" : "pdf",
+  awb: awb ?? null,
+  createdAt: new Date().toISOString(),
+});
 
 /** Open Galaxus physical delivery note alongside Swiss Post label (popup-safe). */
 const presentDirectDeliveryNote = (options: {
@@ -682,6 +698,24 @@ export default function ScanPage() {
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [printStationStatus, setPrintStationStatus] =
     useState<PrintStationProbeStatus | null>(null);
+  const [printStationWizardOpen, setPrintStationWizardOpen] = useState(false);
+  const [lastCreatedLabel, setLastCreatedLabel] = useState<ExistingLabelRef | null>(null);
+  const [printBusy, setPrintBusy] = useState(false);
+  const [printNotice, setPrintNotice] = useState<{
+    tone: "ok" | "warn" | "error";
+    text: string;
+  } | null>(null);
+  const [lastPrintEvents, setLastPrintEvents] = useState<PrintFlowEvent[]>([]);
+
+  const refreshPrintStationStatus = async () => {
+    try {
+      const status = await probePrintStationStatus();
+      setPrintStationStatus(status);
+    } catch {
+      setPrintStationStatus(null);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     probePrintStationStatus()
@@ -691,10 +725,92 @@ export default function ScanPage() {
       .catch(() => {
         if (!cancelled) setPrintStationStatus(null);
       });
+    const interval = window.setInterval(() => {
+      void refreshPrintStationStatus();
+    }, 15000);
     return () => {
       cancelled = true;
+      window.clearInterval(interval);
     };
   }, []);
+
+  const openExistingLabelBrowser = (
+    label: ExistingLabelRef,
+    browserPrintConfig?: BrowserPrintConfig | null
+  ) => {
+    const payload: LabelDataPayload = {
+      base64: label.base64,
+      mimeType: label.mimeType,
+      extension: label.extension,
+    };
+    if (ENABLE_BROWSER_PRINT) {
+      return openLabelPrintDialog(payload, browserPrintConfig ?? undefined);
+    }
+    return openLabelPreview(payload);
+  };
+
+  /**
+   * Print an already-created backend label. Never calls fulfill/Swiss Post/DELR.
+   */
+  const presentLabelAfterFulfill = async (options: {
+    labelData: LabelDataPayload;
+    browserPrintConfig?: BrowserPrintConfig | null;
+    printJobResult?: PrintJobClientResult | null;
+    awb?: string | null;
+    isReprint?: boolean;
+  }) => {
+    if (printBusy) return;
+    const base64 = String(options.labelData.base64 || "").trim();
+    if (!base64) return;
+
+    const label = toExistingLabelRef(options.labelData, options.awb);
+    if (!options.isReprint) {
+      setLastCreatedLabel(label);
+    }
+    setPrintBusy(true);
+    setPrintNotice(null);
+    try {
+      const result = await presentExistingLabel({
+        label: options.isReprint && lastCreatedLabel ? lastCreatedLabel : label,
+        cupsPrintedOk: options.printJobResult?.ok === true,
+        isReprint: Boolean(options.isReprint),
+        openBrowserPrint: (ref) =>
+          openExistingLabelBrowser(ref, options.browserPrintConfig),
+      });
+      setLastPrintEvents(result.events);
+      if (result.usedSilent) {
+        setPrintNotice({ tone: "ok", text: "Label imprimé (auto-print)." });
+      } else if (result.usedBrowserFallback) {
+        setPrintNotice({
+          tone: "warn",
+          text: options.isReprint
+            ? "Réimpression — dialogue PDF navigateur ouvert."
+            : "Label créé — auto-print indisponible, PDF navigateur ouvert.",
+        });
+      } else if (!result.printConfirmed) {
+        setPrintNotice({
+          tone: "error",
+          text: "Label créé — impression non confirmée",
+        });
+      }
+      void refreshPrintStationStatus();
+    } finally {
+      setPrintBusy(false);
+    }
+  };
+
+  const reprintExistingLabel = async () => {
+    if (!lastCreatedLabel || printBusy) return;
+    await presentLabelAfterFulfill({
+      labelData: {
+        base64: lastCreatedLabel.base64,
+        mimeType: lastCreatedLabel.mimeType,
+        extension: lastCreatedLabel.extension,
+      },
+      awb: lastCreatedLabel.awb,
+      isReprint: true,
+    });
+  };
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
@@ -1128,14 +1244,13 @@ export default function ScanPage() {
         deliveryNoteNotice: dn.message,
       });
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentLabelAfterFulfill({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
-          deliveryNotePrintResult: data.deliveryNotePrintResult,
-          blockedMessage:
-            "Swiss Post label generated but popup blocked. Allow popups, then scan again.",
+          awb: data.trackingNumber || data.orderNumber || null,
         });
+        alertOnServerPrintFailure(data.deliveryNotePrintResult, "Delivery note print");
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Galaxus Swiss Post label failed");
       } else if (dn.message && !dn.opened) {
@@ -1171,12 +1286,11 @@ export default function ScanPage() {
       } = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentLabelAfterFulfill({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
-          blockedMessage:
-            "Warehouse label loaded but popup blocked. Allow popups, then scan again.",
+          awb: null,
         });
       } else if (res.status === 404) {
         window.alert(
@@ -2006,12 +2120,11 @@ export default function ScanPage() {
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentLabelAfterFulfill({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
-          blockedMessage:
-            "Home label generated but popup blocked. Allow popups, then scan again.",
+          awb: null,
         });
       } else if (!res.ok || !data.ok) {
         window.alert(data.error || "Home label generation failed");
@@ -2122,12 +2235,11 @@ export default function ScanPage() {
         return;
       }
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentLabelAfterFulfill({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
-          blockedMessage:
-            "Label generated but popup blocked. Allow popups for this page, then scan again.",
+          awb: scan.awb,
         });
       } else if (!res.ok || !data.ok) {
         window.alert(
@@ -2202,10 +2314,19 @@ export default function ScanPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
-        <div className="absolute right-0 top-0 flex items-center gap-2">
+        <div className="absolute right-0 top-0 flex items-center gap-2 flex-wrap justify-end max-w-[70%]">
           {printStationStatus ? (
             <span
-              title={`QZ Tray: ${printStationStatus.reason} · validated=${printStationStatus.silentPrintValidated} · autoPrint=${printStationStatus.autoPrintOn}`}
+              title={[
+                `poste=${printStationStatus.stationName}`,
+                `imprimante=${printStationStatus.printerName || "—"}`,
+                `format=${printStationStatus.labelFormat}`,
+                `qz=${printStationStatus.qzConnected ? "ok" : "off"}`,
+                `found=${printStationStatus.printerFound}`,
+                `validated=${printStationStatus.silentPrintValidated}`,
+                `auto=${printStationStatus.autoPrintOn}`,
+                `reason=${printStationStatus.reason}`,
+              ].join(" · ")}
               className={
                 "px-2 py-0.5 text-xs rounded border " +
                 (printStationStatus.readyForSilentPrint
@@ -2213,11 +2334,25 @@ export default function ScanPage() {
                   : "bg-amber-50 border-amber-300 text-amber-800")
               }
             >
-              QZ: {printStationStatus.readyForSilentPrint
-                ? "ready"
-                : printStationStatus.reason}
+              {printStationStatus.stationName
+                ? `${printStationStatus.stationName}: `
+                : ""}
+              {printStationStatus.readyForSilentPrint
+                ? "auto-print prêt"
+                : printStationStatus.qzConnected
+                  ? printStationStatus.reason
+                  : printStationStatus.qzInstalled
+                    ? "QZ non connecté"
+                    : "QZ indisponible"}
             </span>
           ) : null}
+          <button
+            type="button"
+            onClick={() => setPrintStationWizardOpen(true)}
+            className="px-3 py-1 text-sm bg-violet-100 text-violet-900 rounded hover:bg-violet-200 transition-colors"
+          >
+            Configurer ce poste
+          </button>
           <a
             href="/scan/stats"
             className="px-3 py-1 text-sm bg-emerald-100 text-emerald-900 rounded hover:bg-emerald-200 transition-colors"
@@ -2242,6 +2377,87 @@ export default function ScanPage() {
         <h1 className="text-3xl font-bold text-gray-900 mb-4 text-center">📦 Scan AWB / Barcode</h1>
 
         <div className="bg-white rounded-lg shadow p-6 flex flex-col items-center gap-4">
+          {printNotice ? (
+            <div
+              className={
+                "w-full rounded-lg border px-4 py-3 text-sm " +
+                (printNotice.tone === "ok"
+                  ? "border-emerald-300 bg-emerald-50 text-emerald-950"
+                  : printNotice.tone === "warn"
+                    ? "border-amber-300 bg-amber-50 text-amber-950"
+                    : "border-red-300 bg-red-50 text-red-950")
+              }
+            >
+              <div className="font-semibold">{printNotice.text}</div>
+              {lastCreatedLabel && printNotice.tone !== "ok" ? (
+                <button
+                  type="button"
+                  disabled={printBusy}
+                  onClick={() => void reprintExistingLabel()}
+                  className="mt-2 rounded bg-gray-900 px-3 py-1.5 text-white disabled:opacity-40"
+                >
+                  Réimprimer le même label
+                </button>
+              ) : null}
+              {lastPrintEvents.length > 0 ? (
+                <div className="mt-1 text-[11px] opacity-70 font-mono">
+                  {lastPrintEvents.join(" → ")}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {printStationStatus ? (
+            <div className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700 grid gap-1 sm:grid-cols-2">
+              <div>
+                Poste:{" "}
+                <span className="font-medium">
+                  {printStationStatus.stationName || "non nommé"}
+                </span>
+              </div>
+              <div>
+                QZ:{" "}
+                <span className="font-medium">
+                  {printStationStatus.qzConnected
+                    ? "connecté"
+                    : printStationStatus.qzInstalled
+                      ? "installé, non connecté"
+                      : "indisponible"}
+                </span>
+              </div>
+              <div>
+                Imprimante:{" "}
+                <span className="font-medium">
+                  {printStationStatus.printerName
+                    ? printStationStatus.printerFound
+                      ? `${printStationStatus.printerName} (trouvée)`
+                      : `${printStationStatus.printerName} (introuvable)`
+                    : "non configurée"}
+                </span>
+              </div>
+              <div>
+                Format:{" "}
+                <span className="font-medium">{printStationStatus.labelFormat}</span>
+              </div>
+              <div>
+                Auto-print:{" "}
+                <span className="font-medium">
+                  {printStationStatus.readyForSilentPrint
+                    ? "activé et prêt"
+                    : printStationStatus.autoPrintOn
+                      ? `activé mais ${printStationStatus.reason}`
+                      : "désactivé"}
+                </span>
+              </div>
+              <div>
+                Validation:{" "}
+                <span className="font-medium">
+                  {printStationStatus.silentPrintValidated
+                    ? "test confirmé"
+                    : "nécessite un test"}
+                </span>
+              </div>
+            </div>
+          ) : null}
           {directRescanHint ? (
             <div className="w-full rounded-lg border-2 border-amber-400 bg-amber-50 px-4 py-3 text-amber-950">
               <div className="font-semibold">Rescan GTIN for the next unit</div>
@@ -3471,6 +3687,14 @@ export default function ScanPage() {
           </div>
         </div>
       </div>
+      <PrintStationWizard
+        open={printStationWizardOpen}
+        onClose={() => setPrintStationWizardOpen(false)}
+        onSaved={(_config, status) => {
+          setPrintStationStatus(status);
+          setPrintStationWizardOpen(false);
+        }}
+      />
     </div>
   );
 }

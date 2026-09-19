@@ -3,85 +3,35 @@
 ## Goal
 
 Each packing desk prints Swiss Post labels on **its own** thermal printer
-(Brother QL-W810, Zebra, …) with the **same 62×100 mm PDF format**.
-Auto-print only on **certain** matches (never ambiguous), and only after
-silent print has been physically validated on that station.
+(Brother QL-W810, Zebra, …) with a **shared label PDF** from the backend.
+Auto-print only after the operator confirms a physical test on that Mac.
 
-## Recommended stack: QZ Tray
+## Rule
 
-| Option | Pros | Cons |
-|--------|------|------|
-| **QZ Tray** (chosen) | Local websocket, silent signed print, works offline, per-station printer pick | Needs desktop install + cert for silent mode |
-| PrintNode | Central API, multi-site | Cloud hop, subscription |
-| CUPS `lp` (existing) | Already on packing Mac via `LOCAL_STATION` | Server-bound; not per-browser station |
-| Browser popup | Always available | Manual / popup blockers |
+1. Backend creates the label / fulfillment / DELR once.
+2. Browser prints that existing PDF (QZ silent or PDF popup).
+3. Print failures **never** call `/fulfill-from-awb`, Swiss Post, Shopify, or DELR again.
 
-**Decision:** wire **QZ Tray** as the primary client path; keep **CUPS** when the
-request hits a `LOCAL_STATION` packing Mac; fall back to **browser print** when
-both are unavailable.
+## Setup on each Mac (no Terminal)
 
-## Honesty contract (READ BEFORE ENABLING)
+1. Open `/scan` → **Configurer ce poste**.
+2. Name the station (e.g. `Theo - maison`).
+3. Install [QZ Tray](https://qz.io/download/) if needed → **Reconnecter / Vérifier QZ**.
+4. Pick the local printer.
+5. Choose label format (62×100 mm for Brother QL / Swiss Post).
+6. **Imprimer un label de test** (local only).
+7. Confirm **Le test est correct ?** → enables auto-print.
 
-The scan page will refuse to silent-print unless BOTH:
+Optional for silent mode without prompts: set server env `QZ_PUBLIC_CERT` + `QZ_PRIVATE_KEY`
+(private key never in the browser). Without them, QZ may prompt or fall back to PDF popup.
 
-1. `silentPrintValidated: true` is set on the station config
-   (`localStorage.resell.printStation.v1`).
-2. `window.qz` exists and its websocket is active on `localhost`.
+## Status on /scan
 
-Defaults ship with `autoPrintOnCertainMatch: false` and
-`silentPrintValidated: false`. This is on purpose: we would rather show a
-browser popup on every scan than silently drop labels because QZ died at
-02:00.
+Shows QZ, printer found/missing, station name, format, auto-print, validation.
+Never shows “prêt” unless QZ is connected **and** the configured printer is found.
 
-## Per-station config
+## After a successful scan
 
-Stored in `localStorage` key `resell.printStation.v1` (`lib/printStation.ts` /
-`app/lib/printStationClient.ts`):
-
-```json
-{
-  "stationId": "desk-1",
-  "provider": "qz_tray",
-  "printerName": "Brother_QL_W810W",
-  "labelWidthMm": 62,
-  "labelHeightMm": 100,
-  "autoPrintOnCertainMatch": true,
-  "silentPrintValidated": true
-}
-```
-
-Each operator picks their CUPS/QZ printer name once. Label bytes stay identical.
-
-## First-time silent-print validation checklist (Brother QL-W810)
-
-Run through every step on the physical station before flipping
-`silentPrintValidated` to `true`:
-
-- [ ] Install QZ Tray on the station (macOS or Windows).
-- [ ] Import the signed cert into QZ Tray so silent print is allowed
-      (Preferences → Site Manager → allow this origin without prompt).
-- [ ] Install Brother QL-W810 drivers + `62×100 mm` media label profile.
-- [ ] Print a self-test label directly from the printer.
-- [ ] Print a Swiss Post PDF via QZ from a terminal / QZ demo page — confirm
-      it comes out on the correct 62×100 label without a print dialog.
-- [ ] Open the scan page. The QZ status pill must read **ready** (green).
-- [ ] Scan a known certain match → confirm label prints silently and no
-      popup appears.
-- [ ] Only now, in the station settings, flip `silentPrintValidated` to
-      `true` and save.
-
-If ANY step fails, leave `silentPrintValidated: false`. The station will
-fall through to the browser popup instead of dropping labels.
-
-## Call chain
-
-1. Scan resolves a **certain** match (single SKU+size+causal, or pinned line).
-2. `decideStationAutoPrint({ matchCertainty: "certain", config })`.
-3. `tryStationAutoPrint` → QZ Tray if available AND validated.
-4. Else server `printLabelLocally` (CUPS) when `LOCAL_STATION=1`.
-5. Else existing `SCAN_BROWSER_PRINT_*` popup.
-
-## Multi-account StockX (later)
-
-`StockxInboundPackage.stockxAccountKey` is ready for Galaxus-side StockX
-accounts without changing Shopify AWB fallback today.
+- Station valid → silent print of the existing PDF.
+- Any local error → immediate browser PDF print dialog (same bytes).
+- If that also fails → `Label créé — impression non confirmée` + **Réimprimer le même label**.
