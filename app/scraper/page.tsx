@@ -50,7 +50,6 @@ function platformLabel(platform: string) {
   if (platform === "snl") return "Snowleader / GraphQL";
   if (platform === "rei") return "Reichelt / HTML";
   if (platform === "nso") return "Newsole / WooCommerce";
-  if (platform === "bae") return "Bächli / Rent-a-Shop";
   if (platform === "fan") return "FantasyWelt / Playwright";
   if (platform === "exl") return "Ex Libris / Next.js";
   if (platform === "haw") return "Hawk / Magento";
@@ -181,7 +180,6 @@ export default function ScraperPage() {
 HHV|HHV|https://www.hhv.de|EUR|hhv
 SNL|Snowleader|https://www.snowleader.ch/fr|CHF|snl
 REI|Reichelt|https://www.reichelt.com/ch/fr|CHF|rei
-BAE|Bächli Bergsport|https://www.baechli-bergsport.ch/de|CHF|bae
 HAW|Hawk|https://www.hawk.ch|CHF|haw
 ALT|Alternate|https://www.alternate.ch|CHF|alt
 VEN|Venova|https://www.venova.ch/de|CHF|ven"`}

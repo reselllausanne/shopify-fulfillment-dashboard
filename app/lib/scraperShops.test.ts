@@ -70,4 +70,11 @@ VEN|Venova|https://www.venova.ch/de|CHF|ven`;
     expect(shops[9].currency).toBe("CHF");
     expect(shops[9].code).toBe("VEN");
   });
+
+  it("ignores killed BAE entries in SCRAPER_SHOPS", () => {
+    process.env.SCRAPER_SHOPS =
+      "WEL|WellPlayed|https://www.wellplayed.ch,BAE|Bächli|https://www.baechli-bergsport.ch/de|CHF|bae,FAN|FantasyWelt|https://www.fantasywelt.de|EUR|fan";
+    const shops = parseScraperShops();
+    expect(shops.map((s) => s.key)).toEqual(["wel", "fan"]);
+  });
 });

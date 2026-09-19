@@ -29,7 +29,7 @@ All scrapers: **pending** (`observationContractImplemented=false`).
 |-----|------|----------|
 | wel | WellPlayed | pending |
 | rei | Reichelt | pending |
-| bae | Bächli | pending |
+| bae | Bächli | **killed** — scraper off; future Galaxus feeds blocked; live delist only via `scripts/kill-bae-galaxus-delist.ts` after dry-run |
 | fan | FantasyWelt | pending |
 | exl | Ex Libris | pending |
 | haw | Hawk | pending |

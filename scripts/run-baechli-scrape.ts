@@ -1,29 +1,10 @@
 /**
- * CLI scrape for bae — routes through central runner (finalize once).
- * Prefer: npx tsx scripts/run-supplier-scrape.ts --shop=bae
+ * BAE scraper permanently killed.
+ * Galaxus delist (after human dry-run validation):
+ *   npx tsx scripts/kill-bae-galaxus-delist.ts
+ *   npx tsx scripts/kill-bae-galaxus-delist.ts --apply --confirm=BAE_DELIST_GALAXUS
  */
-import "dotenv/config";
-import { runScraperJob } from "@/app/lib/scraperRunner";
-import { prisma } from "@/app/lib/prisma";
-
-const maxArg = process.argv.find((a) => a.startsWith("--max="));
-const maxProducts = maxArg ? Math.max(1, Number(maxArg.split("=")[1] || 0)) : undefined;
-
-async function main() {
-  const result = await runScraperJob({
-    shopKey: "bae",
-    maxProducts,
-    background: false,
-  });
-  console.log(JSON.stringify(result, null, 2));
-  if (!result.ok) process.exitCode = 1;
-}
-
-main()
-  .catch((err) => {
-    console.error(err);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect().catch(() => undefined);
-  });
+console.error(
+  "BAE_SCRAPER_KILLED — Bächli scrape removed. Use scripts/kill-bae-galaxus-delist.ts for Galaxus delist."
+);
+process.exit(1);

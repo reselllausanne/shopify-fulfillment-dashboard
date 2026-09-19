@@ -5,7 +5,6 @@ import { scrapeHhvShop } from "@/app/lib/hhvScrape";
 import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
 import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
-import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
@@ -25,23 +24,21 @@ function runScrapeForShop(shop: ScraperShop, runId: number) {
           ? scrapeReicheltShop
           : shop.platform === "nso"
             ? scrapeNewsoleShop
-            : shop.platform === "bae"
-              ? scrapeBaechliShop
-              : shop.platform === "fan"
-                ? scrapeFantasyweltShop
-                : shop.platform === "exl"
-                  ? scrapeExlibrisShop
-                  : shop.platform === "haw"
-                    ? scrapeHawkShop
-                    : shop.platform === "bwz"
-                      ? scrapeBabyWalzShop
-                      : shop.platform === "tus"
-                        ? scrapeUncommonShop
-                        : shop.platform === "alt"
-                          ? scrapeAlternateShop
-                          : shop.platform === "ven"
-                            ? scrapeVenovaShop
-                            : scrapeShop;
+            : shop.platform === "fan"
+              ? scrapeFantasyweltShop
+              : shop.platform === "exl"
+                ? scrapeExlibrisShop
+                : shop.platform === "haw"
+                  ? scrapeHawkShop
+                  : shop.platform === "bwz"
+                    ? scrapeBabyWalzShop
+                    : shop.platform === "tus"
+                      ? scrapeUncommonShop
+                      : shop.platform === "alt"
+                        ? scrapeAlternateShop
+                        : shop.platform === "ven"
+                          ? scrapeVenovaShop
+                          : scrapeShop;
   return runScrape(shop, runId);
 }
 

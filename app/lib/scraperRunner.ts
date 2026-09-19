@@ -8,7 +8,6 @@ import { scrapeHhvShop } from "@/app/lib/hhvScrape";
 import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
 import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
-import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
@@ -36,8 +35,6 @@ export function resolveScrapeFn(shop: ScraperShop): ScrapeFn {
       return scrapeReicheltShop;
     case "nso":
       return scrapeNewsoleShop;
-    case "bae":
-      return scrapeBaechliShop;
     case "fan":
       return scrapeFantasyweltShop;
     case "exl":
@@ -84,6 +81,18 @@ export type RunScraperJobResult = {
  * CLI scripts and the API route must use this (or call finalize in finally).
  */
 export async function runScraperJob(input: RunScraperJobInput): Promise<RunScraperJobResult> {
+  const shopKey = String(input.shopKey ?? "")
+    .trim()
+    .toLowerCase();
+  if (shopKey === "bae") {
+    return {
+      ok: false,
+      shop: "bae",
+      runId: null,
+      error: "BAE_SCRAPER_KILLED — Bächli removed; use scripts/kill-bae-galaxus-delist.ts for Galaxus delist",
+    };
+  }
+
   const shop = findScraperShop(input.shopKey) ?? parseScraperShops().find((s) => s.key === input.shopKey);
   if (!shop) {
     return { ok: false, shop: input.shopKey, runId: null, error: `Unknown shop '${input.shopKey}'` };
@@ -146,7 +155,6 @@ export const SCRAPER_STOCK_HOOK_CALL_SITES = [
   { path: "scripts/run-exlibris-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-exlibris-detached.sh", via: "run-exlibris-scrape.ts", hooked: true },
   { path: "scripts/run-hawk-scrape.ts", via: "runScraperJob", hooked: true },
-  { path: "scripts/run-baechli-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-baby-walz-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-uncommon-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-alternate-scrape.ts", via: "runScraperJob", hooked: true },
