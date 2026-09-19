@@ -147,6 +147,17 @@ describe("Galaxus STX locked margin", () => {
     expect(sell).toBeCloseTo((100 + 2) / 0.85, 1);
   });
 
+  it("BWZ parcel ship override replaces flat CHF 2", () => {
+    const bulky = resolveGalaxusSellExVatForChannel(99, "bwz", new Set(), {
+      shippingPerPairChf: 30,
+    });
+    expect(bulky).toBe(151.8);
+    const standard = resolveGalaxusSellExVatForChannel(49.85, "bwz", new Set(), {
+      shippingPerPairChf: 12,
+    });
+    expect(standard).toBe(72.8);
+  });
+
   it("BWZ floor 15% / allows higher", () => {
     process.env.GALAXUS_BWZ_TARGET_NET_MARGIN = "0.12";
     expect(resolveGalaxusTargetNetMarginForSupplier("bwz")).toBeCloseTo(0.15, 5);

@@ -367,6 +367,11 @@ function resolveBufferPerPairForSupplier(
 export type ResolveGalaxusSellOptions = {
   /** SupplierVariant.deliveryType — STX express → higher outbound ship (DD gap). */
   deliveryType?: string | null;
+  /**
+   * BWZ only: Swiss Post ship from parcel class (12 / 21 / 30).
+   * Null/omit → default ship CHF 2 (dims not scraped yet).
+   */
+  shippingPerPairChf?: number | null;
 };
 
 /**
@@ -377,7 +382,8 @@ export type ResolveGalaxusSellOptions = {
  * - other partners = +10% on buy ex VAT
  * - `golden` / `gld` = (buy + ship + CH import VAT + douane) × 1.15
  * - WEL: (buy + ship + ≥1 CHF buffer) / (1 − ≥15% net), default ship CHF 7
- * - BWZ: (buy + ship) / (1 − ≥15% net), default ship CHF 2 (env GALAXUS_BWZ_TARGET_NET_MARGIN)
+ * - BWZ: (buy + ship) / (1 − ≥15% net). Default ship CHF 2 until parcel class known;
+ *   then Swiss Post: standard 12 (or 21 if >10 kg), bulky 30. Unshippable rows are stock-zeroed at scrape.
  * - STX (locked v2026-09-19): (buy + 1.60) / (1 − 0 − 0.023 − 0 − 0.10), ceil centime
  *   Same for standard + express. No bump after denominator.
  */
@@ -416,11 +422,20 @@ export function resolveGalaxusSellExVatForChannel(
   }
 
   const targetNetMargin = resolveGalaxusTargetNetMarginForSupplier(supplierKey, defaults.targetMargin);
-  const shippingPerPair = resolveShippingPerPairForSupplier(
-    supplierKey,
-    defaults.shippingPerPair,
-    options?.deliveryType
-  );
+  const shippingOverride =
+    isBwzGalaxusSupplierKey(supplierKey) &&
+    options?.shippingPerPairChf != null &&
+    Number.isFinite(options.shippingPerPairChf) &&
+    options.shippingPerPairChf >= 0
+      ? options.shippingPerPairChf
+      : null;
+  const shippingPerPair =
+    shippingOverride ??
+    resolveShippingPerPairForSupplier(
+      supplierKey,
+      defaults.shippingPerPair,
+      options?.deliveryType
+    );
   const bufferPerPair = resolveBufferPerPairForSupplier(supplierKey, defaults.bufferPerPair);
 
   return computeGalaxusSellPriceExVat({

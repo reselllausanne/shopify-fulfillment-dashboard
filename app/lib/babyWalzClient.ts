@@ -1,4 +1,11 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import {
+  classifyBwzParcel,
+  parseBwzCm,
+  parseBwzKg,
+  unknownBwzParcel,
+  type BwzParcelAssessment,
+} from "@/app/lib/bwzParcel";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -36,6 +43,7 @@ export type BabyWalzProduct = {
   sizeRaw: string | null;
   masterKey: string | null;
   bulkyOrLoad: boolean;
+  parcel: BwzParcelAssessment;
 };
 
 export function babyWalzConfig() {
@@ -187,6 +195,29 @@ function nuxtList(payload: NuxtPayload, ref: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
 }
 
+function attrMap(payload: NuxtPayload, ...refs: unknown[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const ref of refs) {
+    const row = nuxtObj(payload, ref);
+    if (!row) continue;
+    for (const [key, valueRef] of Object.entries(row)) {
+      if (out[key]) continue;
+      const value = attrValue(payload, valueRef);
+      if (value) out[key] = value;
+    }
+  }
+  return out;
+}
+
+function parcelFromAttrs(attrs: Record<string, string>): BwzParcelAssessment {
+  return classifyBwzParcel({
+    lengthCm: parseBwzCm(attrs.laengeProdukt),
+    widthCm: parseBwzCm(attrs.breiteProdukt),
+    heightCm: parseBwzCm(attrs.hoeheProdukt),
+    weightKg: parseBwzKg(attrs.gewichtOhneVerpackung),
+  });
+}
+
 function attrValue(payload: NuxtPayload, attrRef: unknown): string | null {
   const attr = nuxtObj(payload, attrRef);
   if (!attr) return null;
@@ -279,6 +310,18 @@ function productFromNuxt(
       attrValue(payload, attrs.bulkyOrLoad) ||
       (detail ? attrValue(payload, nuxtObj(payload, detail.attributes)?.bulkyOrLoad) : null);
     const bulkyOrLoad = isTruthyBulky(bulkyRaw);
+    const productAttrs = nuxtObj(payload, product.attributes);
+    const productAdv = nuxtObj(payload, product.advancedAttributes);
+    const parcel = parcelFromAttrs(
+      attrMap(
+        payload,
+        attrs,
+        detail ? nuxtObj(payload, detail.attributes) : null,
+        adv,
+        productAttrs,
+        productAdv
+      )
+    );
 
     out.push({
       productUrl,
@@ -297,6 +340,7 @@ function productFromNuxt(
       sizeRaw,
       masterKey,
       bulkyOrLoad,
+      parcel,
     });
   }
 
@@ -439,6 +483,7 @@ export function parseBabyWalzProductHtml(
       sizeRaw: null,
       masterKey: null,
       bulkyOrLoad: false,
+      parcel: unknownBwzParcel(),
     });
   }
   return out;

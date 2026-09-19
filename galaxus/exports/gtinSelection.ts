@@ -2,6 +2,7 @@ import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { validateGtin } from "@/app/lib/normalize";
 import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
+import { bwzShipChfFromManualNote } from "@/app/lib/bwzParcel";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
 import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
 import { hasGalaxusPrimaryImage } from "@/galaxus/exports/variantImagePresence";
@@ -197,8 +198,13 @@ export function accumulateBestCandidates(
 
     let sellPriceExVat = buyPrice;
     if (!isMerchant) {
+      const bwzShip =
+        String(supplierKey ?? "").toLowerCase() === "bwz"
+          ? bwzShipChfFromManualNote(variant?.manualNote)
+          : null;
       sellPriceExVat = resolveGalaxusSellExVatForChannel(buyPrice, supplierKey, partnerKeysLower, {
         deliveryType: variant?.deliveryType ?? null,
+        shippingPerPairChf: bwzShip,
       });
     }
 
