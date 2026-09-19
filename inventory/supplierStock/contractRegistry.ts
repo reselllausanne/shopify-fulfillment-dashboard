@@ -38,7 +38,7 @@ const CONTRACT_IMPLEMENTED: Record<string, boolean> = {
   wel: false,
   rei: false,
   bae: false,
-  fan: false,
+  fan: true,
   exl: false,
   haw: false,
   wrk: false,

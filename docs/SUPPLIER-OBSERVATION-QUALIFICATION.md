@@ -30,7 +30,7 @@ All scrapers: **pending** (`observationContractImplemented=false`).
 | wel | WellPlayed | pending |
 | rei | Reichelt | pending |
 | bae | Bächli | **killed / deleted** — scraper removed; stock feed force-zeros; DB purge via `scripts/kill-bae-delete.ts` |
-| fan | FantasyWelt | pending |
+| fan | FantasyWelt | **implemented (observation-only)** — parse `N Stk. auf Lager`; SALE `max(0,ceil((N-2)/2))`; `10+`→8; never default 5; enforce unset |
 | exl | Ex Libris | pending |
 | haw | Hawk | pending |
 | wrk | Warenkontor | pending |

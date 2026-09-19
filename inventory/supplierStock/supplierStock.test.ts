@@ -384,13 +384,20 @@ describe("enforce mode + contract registry", () => {
     expect(mayMutateMarketplaceStock({ SUPPLIER_STOCK_PUBLISH_ENFORCED: "1" })).toBe(true);
   });
 
-  it("all scrapers pending contract — not eligible for approval", () => {
+  it("only FAN has observation contract implemented so far", () => {
     const statuses = listSupplierContractStatuses();
     expect(statuses.length).toBeGreaterThanOrEqual(14);
-    expect(statuses.every((s) => s.observationContractImplemented === false)).toBe(true);
+    const fan = statuses.find((s) => s.supplierKey === "fan");
+    expect(fan?.observationContractImplemented).toBe(true);
+    expect(statuses.filter((s) => s.supplierKey !== "fan").every((s) => !s.observationContractImplemented)).toBe(
+      true
+    );
     expect(isEligibleForApproval({ supplierKey: "haw" }).eligibleForApproval).toBe(false);
     expect(isEligibleForApproval({ supplierKey: "haw" }).reason).toBe(
       "observation_contract_not_implemented"
+    );
+    expect(isEligibleForApproval({ supplierKey: "fan", observationsReceivedThisRun: 1 }).eligibleForApproval).toBe(
+      true
     );
   });
 
