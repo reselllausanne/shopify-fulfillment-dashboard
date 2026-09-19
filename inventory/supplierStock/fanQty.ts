@@ -1,10 +1,11 @@
 /**
  * FantasyWelt (FAN) stock proof — page qty only, never default 5.
  *
- * Formulas (chef 2026-09-19):
+ * Formulas (Theo 2026-09-19):
  * - normal: halfCeil(N) = ceil(N / 2), with N=1 → 1
  * - SALE:   max(0, ceil((N - 2) / 2))
- * - "10+" treated as 10 before the formula
+ * - "10+": page never exposes exact qty — store sourceQty=10, publish 10−2=8
+ *   (safety buffer only; NOT halfCeil/SALE on the capped 10)
  * - VORBESTELLBAR / 0 Stk / Cloudflare / unavailable → no positive proof (proposed 0)
  */
 
@@ -179,6 +180,20 @@ export function decideFanPublishedQty(parse: FanStockParse): FanPublishDecision 
       hasPositiveProof: false,
       isSale: parse.isSale,
       isTenPlus: parse.isTenPlus,
+      stockLabel: parse.stockLabel,
+    };
+  }
+
+  // 10+ is a cap label, not exact N — only −2 safety, never halfCeil/SALE on 10.
+  if (parse.isTenPlus) {
+    const proposed = Math.max(0, parse.sourceQty - 2);
+    return {
+      sourceQty: parse.sourceQty,
+      proposedQty: proposed,
+      reason: `ten_plus_minus_2:${parse.sourceQty}`,
+      hasPositiveProof: proposed > 0,
+      isSale: parse.isSale,
+      isTenPlus: true,
       stockLabel: parse.stockLabel,
     };
   }
