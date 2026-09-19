@@ -430,20 +430,28 @@ export async function POST(
         const savedPurchaseDate = match.stockxPurchaseDate
           ? new Date(match.stockxPurchaseDate).toISOString()
           : String(details?.order?.created ?? "").trim() || null;
-        if (
-          galaxusOrderDateIso &&
-          savedPurchaseDate &&
-          !isValidGalaxusStockxCausalBuy(galaxusOrderDateIso, savedPurchaseDate)
-        ) {
-          console.warn("[GALAXUS][STX][SYNC][SAVED_MATCH_SKIP_CAUSAL]", {
-            galaxusOrderId: reservation.galaxusOrderId,
-            stockxOrderNumber: orderNumRaw || null,
-            stockxOrderId: buyOrderId,
-            galaxusOrderDate: galaxusOrderDateIso,
-            stockxPurchaseDate: savedPurchaseDate,
-          });
-          savedMatchSkipped += 1;
-          continue;
+        if (galaxusOrderDateIso) {
+          if (!savedPurchaseDate) {
+            console.warn("[GALAXUS][STX][SYNC][SAVED_MATCH_SKIP_MISSING_PURCHASE_DATE]", {
+              galaxusOrderId: reservation.galaxusOrderId,
+              stockxOrderNumber: orderNumRaw || null,
+              stockxOrderId: buyOrderId,
+              galaxusOrderDate: galaxusOrderDateIso,
+            });
+            savedMatchSkipped += 1;
+            continue;
+          }
+          if (!isValidGalaxusStockxCausalBuy(galaxusOrderDateIso, savedPurchaseDate)) {
+            console.warn("[GALAXUS][STX][SYNC][SAVED_MATCH_SKIP_CAUSAL]", {
+              galaxusOrderId: reservation.galaxusOrderId,
+              stockxOrderNumber: orderNumRaw || null,
+              stockxOrderId: buyOrderId,
+              galaxusOrderDate: galaxusOrderDateIso,
+              stockxPurchaseDate: savedPurchaseDate,
+            });
+            savedMatchSkipped += 1;
+            continue;
+          }
         }
 
         const variantFromBuy = extractStockxVariantId(null, details.order);
@@ -707,21 +715,30 @@ export async function POST(
             String((listNode as any)?.creationDate ?? "").trim() ||
             String(details?.order?.created ?? "").trim() ||
             null;
-          const violatesCausality =
-            isPendingResolved &&
-            Boolean(galaxusOrderDateIso) &&
-            Boolean(purchaseDateRaw) &&
-            !isValidGalaxusStockxCausalBuy(galaxusOrderDateIso as string, purchaseDateRaw);
-          if (violatesCausality) {
-            skippedNotPendingVariant += 1;
-            console.warn("[GALAXUS][STX][SYNC][SKIP_CAUSAL]", {
-              galaxusOrderId: reservation.galaxusOrderId,
-              stockxOrderId,
-              stockxOrderNumber: stockxOrderNumberFromList,
-              galaxusOrderDate: galaxusOrderDateIso,
-              stockxPurchaseDate: purchaseDateRaw,
-            });
-            return;
+          // Missing purchase date must NOT bypass causality (that hole linked
+          // pre-sale StockX buys onto later Galaxus orders, e.g. 03-94EUKAJXW4).
+          if (isPendingResolved && galaxusOrderDateIso) {
+            if (!purchaseDateRaw) {
+              skippedNotPendingVariant += 1;
+              console.warn("[GALAXUS][STX][SYNC][SKIP_MISSING_PURCHASE_DATE]", {
+                galaxusOrderId: reservation.galaxusOrderId,
+                stockxOrderId,
+                stockxOrderNumber: stockxOrderNumberFromList,
+                galaxusOrderDate: galaxusOrderDateIso,
+              });
+              return;
+            }
+            if (!isValidGalaxusStockxCausalBuy(galaxusOrderDateIso as string, purchaseDateRaw)) {
+              skippedNotPendingVariant += 1;
+              console.warn("[GALAXUS][STX][SYNC][SKIP_CAUSAL]", {
+                galaxusOrderId: reservation.galaxusOrderId,
+                stockxOrderId,
+                stockxOrderNumber: stockxOrderNumberFromList,
+                galaxusOrderDate: galaxusOrderDateIso,
+                stockxPurchaseDate: purchaseDateRaw,
+              });
+              return;
+            }
           }
 
           let linkResult:
