@@ -4,7 +4,7 @@
 
 Each packing desk prints Swiss Post labels on **its own** thermal printer
 (Brother QL-W810, Zebra, …) with a **shared label PDF** from the backend.
-Auto-print only after the operator confirms a physical test on that Mac.
+Auto-print only after the operator confirms a physical test on that machine.
 
 ## Rule
 
@@ -12,7 +12,24 @@ Auto-print only after the operator confirms a physical test on that Mac.
 2. Browser prints that existing PDF (QZ silent or PDF popup).
 3. Print failures **never** call `/fulfill-from-awb`, Swiss Post, Shopify, or DELR again.
 
-## Setup on each Mac (no Terminal)
+## Localhost — one shot (no VPS, no deploy)
+
+```bash
+# from this worktree
+ln -sfn ../../node_modules node_modules   # or: npm ci
+./scripts/setup-qz-local.sh               # writes .env.local (gitignored)
+npm run dev
+```
+
+1. Install [QZ Tray](https://qz.io/download/) on this Mac/PC + start it.
+2. Open `http://localhost:3000/scan` → **Configurer ce poste**.
+3. Name station → Reconnecter QZ → pick printer → format → test print → confirm.
+4. Scan a real AWB (or use existing fulfill path) — silent print if ready, else PDF popup.
+
+`setup-qz-local.sh` creates `QZ_PUBLIC_CERT` + `QZ_PRIVATE_KEY` in `.env.local`.
+Private key never goes in Git. First QZ prompt: click **Allow**.
+
+## Setup on each packing machine (after prod deploy — later)
 
 1. Open `/scan` → **Configurer ce poste**.
 2. Name the station (e.g. `Theo - maison`).
@@ -22,8 +39,8 @@ Auto-print only after the operator confirms a physical test on that Mac.
 6. **Imprimer un label de test** (local only).
 7. Confirm **Le test est correct ?** → enables auto-print.
 
-Optional for silent mode without prompts: set server env `QZ_PUBLIC_CERT` + `QZ_PRIVATE_KEY`
-(private key never in the browser). Without them, QZ may prompt or fall back to PDF popup.
+Prod silent print also needs server env `QZ_PUBLIC_CERT` + `QZ_PRIVATE_KEY`
+(same values as local, or a fresh prod pair). Not required for PDF fallback.
 
 ## Status on /scan
 
