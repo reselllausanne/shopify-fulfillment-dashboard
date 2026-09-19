@@ -4,6 +4,12 @@ import { validateGtin } from "@/app/lib/normalize";
 import { buildProviderKey } from "@/galaxus/supplier/providerKey";
 import { runImageSync } from "@/galaxus/jobs/imageSync";
 import type { ScraperShop } from "@/app/lib/scraperShops";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { decideWrkPublishedQty } from "@/inventory/supplierStock/wrkQty";
+import {
+  beginWrkObservationRun,
+  recordWrkObservation,
+} from "@/inventory/supplierStock/batch1Observations";
 import {
   computeWarenkontorLandedCost,
   formatWarenkontorNote,
@@ -424,6 +430,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
   };
 
   try {
+    if (isWarenkontorShop(shop)) beginWrkObservationRun(runId);
     const listed = await listProducts(shop.baseUrl, maxProducts, async (page, count) => {
       await updateRun(runId, {
         products_listed: count,
@@ -469,11 +476,36 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
         seenGtins.add(r.gtin);
         // Real Shopify qty when tracked (prevents overselling like WEL Padmé sleeves).
         // Untracked/continue-policy → fall back to conservative DEFAULT_STOCK.
-        const stock = r.available
+        let stock = r.available
           ? r.trackedQty !== null
             ? Math.max(0, r.trackedQty)
             : DEFAULT_STOCK
           : 0;
+        if (isWarenkontorShop(shop)) {
+          const d = decideWrkPublishedQty({
+            pagePresent: true,
+            available: r.available,
+            trackedQty: r.trackedQty,
+            inventoryTracked: r.trackedQty !== null,
+          });
+          stock = d.proposedQty;
+          recordWrkObservation(
+            {
+              productUrl: `${shop.baseUrl.replace(/\/$/, "")}/products/${product.handle}`,
+              gtin: r.gtin,
+              sku: r.supplierSku,
+              productName: r.supplierProductName,
+              priceChf: r.price,
+              available: r.available,
+              trackedQty: r.trackedQty,
+              inventoryTracked: r.trackedQty !== null,
+              pagePresent: true,
+            },
+            { scrapeRunId: runId, observedAt: now }
+          );
+        }
+        const stockWrite = mayMutateMarketplaceStock() ? stock : undefined;
+        const stockCreate = stockWrite ?? 0;
         const existing = existingById.get(r.supplierVariantId);
         const queueImage = needsImageHosting(existing, r.sourceImageUrl);
         try {
@@ -485,7 +517,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               providerKey: r.providerKey,
               gtin: r.gtin,
               price: r.price,
-              stock,
+              stock: stockCreate,
               supplierBrand: r.supplierBrand,
               supplierProductName: r.supplierProductName,
               supplierProductType: r.supplierProductType,
@@ -499,7 +531,7 @@ export async function scrapeShop(shop: ScraperShop, runId: number, maxProducts?:
               providerKey: r.providerKey,
               gtin: r.gtin,
               price: r.price,
-              stock,
+              ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
               supplierBrand: r.supplierBrand,
               supplierProductName: r.supplierProductName,
               supplierProductType: r.supplierProductType,

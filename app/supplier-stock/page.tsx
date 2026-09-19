@@ -25,9 +25,12 @@ type EvidenceItem = {
   productName: string | null;
   productUrl: string | null;
   variant: string | null;
+  dbStock: number | null;
   sourceQty: number | null;
   proposedQty: number;
+  delta: number | null;
   reason: string | null;
+  freshnessStatus?: string | null;
   rawProof: Record<string, unknown>;
   lastObservedAt: string | null;
 };
@@ -335,23 +338,25 @@ export default function SupplierStockPage() {
             Source evidence ({evidence.length})
           </h2>
           <p className="text-xs text-slate-500">
-            Raw page proof · URL · variant · source qty · proposed qty · reason — observation only
+            DB actuel · preuve live · proposée · delta · raison · URL — observation only
           </p>
         </div>
         {evidence.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-slate-500">No evidence rows yet. Run FAN scrape after deploy.</p>
+          <p className="px-4 py-6 text-sm text-slate-500">No evidence rows yet. Run batch1 scrapes after deploy.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
                 <tr>
                   <th className="px-4 py-2">Supplier</th>
-                  <th className="px-4 py-2">Product / variant</th>
+                  <th className="px-4 py-2">Variant</th>
+                  <th className="px-4 py-2">DB actuel</th>
+                  <th className="px-4 py-2">Preuve live</th>
+                  <th className="px-4 py-2">Proposée</th>
+                  <th className="px-4 py-2">Delta</th>
+                  <th className="px-4 py-2">Raison</th>
+                  <th className="px-4 py-2">Fresh</th>
                   <th className="px-4 py-2">URL</th>
-                  <th className="px-4 py-2">Source qty</th>
-                  <th className="px-4 py-2">Proposed</th>
-                  <th className="px-4 py-2">Reason</th>
-                  <th className="px-4 py-2">Raw proof</th>
                 </tr>
               </thead>
               <tbody>
@@ -362,6 +367,14 @@ export default function SupplierStockPage() {
                       <div className="truncate font-medium">{e.productName ?? e.supplierVariantId}</div>
                       <div className="font-mono text-xs text-slate-500">{e.variant ?? e.gtin ?? "—"}</div>
                     </td>
+                    <td className="px-4 py-2">{e.dbStock ?? "—"}</td>
+                    <td className="px-4 py-2">{e.sourceQty ?? "—"}</td>
+                    <td className="px-4 py-2">{e.proposedQty}</td>
+                    <td className="px-4 py-2">{e.delta ?? "—"}</td>
+                    <td className="max-w-[12rem] truncate px-4 py-2 text-slate-600 dark:text-slate-400">
+                      {e.reason ?? "—"}
+                    </td>
+                    <td className="px-4 py-2 text-xs">{e.freshnessStatus ?? "—"}</td>
                     <td className="max-w-[14rem] truncate px-4 py-2">
                       {e.productUrl ? (
                         <a
@@ -375,12 +388,6 @@ export default function SupplierStockPage() {
                       ) : (
                         "—"
                       )}
-                    </td>
-                    <td className="px-4 py-2">{e.sourceQty ?? "—"}</td>
-                    <td className="px-4 py-2">{e.proposedQty}</td>
-                    <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{e.reason ?? "—"}</td>
-                    <td className="max-w-xs truncate px-4 py-2 font-mono text-[11px] text-slate-500">
-                      {JSON.stringify(e.rawProof)}
                     </td>
                   </tr>
                 ))}

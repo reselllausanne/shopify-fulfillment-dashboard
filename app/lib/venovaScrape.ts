@@ -5,6 +5,12 @@ import { VenovaClient, venovaConfig, type VenovaProduct } from "@/app/lib/venova
 import { computeVenovaSellPrice, isPlausibleVenovaSellPrice } from "@/app/lib/venovaPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { decideVenPublishedQty } from "@/inventory/supplierStock/venQty";
+import {
+  beginVenObservationRun,
+  recordVenObservation,
+} from "@/inventory/supplierStock/batch1Observations";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -155,6 +161,30 @@ export async function scrapeVenovaShop(
     const queueImage = !deferVenovaImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const note = formatVenovaNote(product, cost);
+    const stockSource =
+      product.stockSource === "nur_noch" ? "nur_noch_n_stueck" : product.stockSource;
+    const decision = decideVenPublishedQty({
+      buyableSofort: product.inStock,
+      pageObservedThisRun: true,
+      stockSource,
+      rawQty: product.stock,
+    });
+    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
+    recordVenObservation(
+      {
+        productUrl: product.productUrl,
+        gtin: product.gtin,
+        sku: product.sku,
+        mpn: product.mpn,
+        productName: product.name,
+        priceChf: cost.sellPriceChf,
+        buyableSofort: product.inStock,
+        pageObservedThisRun: true,
+        stockSource,
+        rawQty: product.stock,
+      },
+      { scrapeRunId: runId, observedAt: now }
+    );
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -164,7 +194,7 @@ export async function scrapeVenovaShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock: product.stock,
+        stock: stockWrite ?? 0,
         sizeRaw: null,
         sizeNormalized: null,
         supplierBrand: product.brand,
@@ -181,7 +211,7 @@ export async function scrapeVenovaShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock: product.stock,
+        ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
         supplierBrand: product.brand,
         supplierProductName: product.name,
         supplierProductType: product.productType,
@@ -226,6 +256,7 @@ export async function scrapeVenovaShop(
   };
 
   try {
+    beginVenObservationRun(runId);
     const productUrls = await client.listProductUrls(maxProducts);
     listed = productUrls.length;
 

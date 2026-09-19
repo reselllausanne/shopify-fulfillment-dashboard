@@ -21,6 +21,7 @@ import {
   beginFanObservationRun,
   recordFanProductObservation,
 } from "@/inventory/supplierStock/fanObservation";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -349,6 +350,7 @@ export async function scrapeFantasyweltShop(
     const queueImage = !cfg.deferImageSync && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const manualNote = formatFantasyweltNote(product);
+    const stockWrite = mayMutateMarketplaceStock() ? stock : undefined;
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -358,7 +360,7 @@ export async function scrapeFantasyweltShop(
         providerKey,
         gtin,
         price: sellChf,
-        stock,
+        stock: stockWrite ?? 0,
         supplierBrand: product.brand,
         supplierProductName: product.name,
         supplierProductType: null,
@@ -373,7 +375,7 @@ export async function scrapeFantasyweltShop(
         providerKey,
         gtin,
         price: sellChf,
-        stock,
+        ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
         supplierBrand: product.brand,
         supplierProductName: product.name,
         sourceImageUrl: product.imageUrl,

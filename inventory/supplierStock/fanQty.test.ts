@@ -79,18 +79,18 @@ describe("decideFanPublishedQtyFromPage", () => {
     expect(d.proposedQty).toBe(2);
   });
 
-  it("10+ without SALE → source 10, publish 8 (−2 only)", () => {
+  it("10+ without SALE → treat as 10 then halfCeil → 5", () => {
     const d = decideFanPublishedQtyFromPage({
       htmlOrText: "SOFORT VERFÜGBAR 10+ Stk. auf Lager",
       productUrl: "https://www.fantasywelt.de/Some-Game-EN",
     });
     expect(d.sourceQty).toBe(10);
     expect(d.isTenPlus).toBe(true);
-    expect(d.proposedQty).toBe(8);
-    expect(d.reason).toBe("ten_plus_minus_2:10");
+    expect(d.proposedQty).toBe(5);
+    expect(d.reason).toBe("ten_plus_halfCeil:10");
   });
 
-  it("SALE 10+ → still 8 (cap label, not SALE formula on 10)", () => {
+  it("SALE 10+ → max(0, ceil((10-2)/2)) = 4", () => {
     const d = decideFanPublishedQtyFromPage({
       htmlOrText: "SOFORT VERFÜGBAR 10+ Stk. auf Lager",
       productUrl: "https://www.fantasywelt.de/SALE-Umbrella-Academy-The-Board-Game-Core-Game-EN",
@@ -98,7 +98,8 @@ describe("decideFanPublishedQtyFromPage", () => {
     expect(d.isSale).toBe(true);
     expect(d.sourceQty).toBe(10);
     expect(d.isTenPlus).toBe(true);
-    expect(d.proposedQty).toBe(8);
+    expect(d.proposedQty).toBe(4);
+    expect(d.reason).toBe("ten_plus_sale:10");
   });
 
   it("preorder → 0 no positive proof", () => {

@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 /**
  * Read-only evidence rows for dashboard proof view.
- * Shows raw parse, URL, source qty, proposed qty, reason — no marketplace writes.
+ * Columns: DB actuel | preuve live | proposée | delta | raison | URL
  */
 export async function GET(request: Request) {
   try {
@@ -22,6 +22,22 @@ export async function GET(request: Request) {
       take: limit,
     });
 
+    const ids = rows.map((r: { supplierVariantId: string }) => r.supplierVariantId);
+    const variants =
+      ids.length > 0
+        ? await p.supplierVariant.findMany({
+            where: { supplierVariantId: { in: ids } },
+            select: { supplierVariantId: true, stock: true },
+          })
+        : [];
+    const dbStockById = new Map<string, number>(
+      variants.map((v: { supplierVariantId: string; stock: number }) => [
+        v.supplierVariantId,
+        Number(v.stock) || 0,
+      ])
+    );
+
+    const now = Date.now();
     const items = rows.map(
       (r: {
         supplierKey: string;
@@ -44,6 +60,23 @@ export async function GET(request: Request) {
         needsReview: boolean;
       }) => {
         const raw = (r.rawParseJson ?? {}) as Record<string, unknown>;
+        const sourceQty =
+          r.supplierStockQty ?? (typeof raw.sourceStockQty === "number" ? raw.sourceStockQty : null);
+        const proposedQty = Number(r.publishedQty) || 0;
+        const dbStock = dbStockById.get(r.supplierVariantId) ?? null;
+        const delta = dbStock == null ? null : proposedQty - dbStock;
+        const observedMs = r.lastObservedAt
+          ? new Date(r.lastObservedAt).getTime()
+          : r.lastProofAt
+            ? new Date(r.lastProofAt).getTime()
+            : null;
+        const freshnessStatus =
+          observedMs == null
+            ? "stale_unknown"
+            : now - observedMs <= 48 * 3600_000
+              ? "fresh"
+              : "stale";
+
         return {
           supplierKey: r.supplierKey,
           supplierVariantId: r.supplierVariantId,
@@ -52,12 +85,15 @@ export async function GET(request: Request) {
           productName: r.productName,
           productUrl: r.productUrl ?? r.variantUrl,
           variant: r.supplierSku ?? r.gtin,
-          sourceQty: r.supplierStockQty ?? (typeof raw.sourceStockQty === "number" ? raw.sourceStockQty : null),
-          proposedQty: r.publishedQty,
+          dbStock,
+          sourceQty,
+          proposedQty,
+          delta,
           reason:
             r.zeroReason ??
             (typeof raw.qtyReason === "string" ? raw.qtyReason : null) ??
             r.availabilityStatus,
+          freshnessStatus,
           availabilityStatus: r.availabilityStatus,
           availabilitySignal: r.availabilitySignal,
           quantitySource: r.quantitySource,
