@@ -3,6 +3,7 @@ import {
   attachHasImageSignalToMappings,
   hasAbsoluteImageUrl,
   hasGalaxusPrimaryImage,
+  type WithImageSignal,
 } from "@/galaxus/exports/variantImagePresence";
 
 describe("hasAbsoluteImageUrl", () => {
@@ -42,7 +43,7 @@ describe("attachHasImageSignalToMappings", () => {
         images: ["https://cdn.example.com/x.jpg"],
         sourceImageUrl: null,
         hostedImageUrl: null,
-      },
+      } as WithImageSignal & { supplierVariantId: string },
     };
     const emptyish = {
       supplierVariant: {
@@ -50,7 +51,7 @@ describe("attachHasImageSignalToMappings", () => {
         images: [{ caption: "no-url" }],
         sourceImageUrl: null,
         hostedImageUrl: null,
-      },
+      } as WithImageSignal & { supplierVariantId: string },
     };
     await attachHasImageSignalToMappings([withHttp, emptyish]);
     expect(withHttp.supplierVariant.hasImageSignal).toBe(true);
@@ -64,7 +65,7 @@ describe("attachHasImageSignalToMappings", () => {
       supplierVariant: {
         supplierVariantId: "c",
         hostedImageUrl: "https://cdn.example.com/y.jpg",
-      },
+      } as WithImageSignal & { supplierVariantId: string },
     };
     await attachHasImageSignalToMappings([row]);
     expect(row.supplierVariant.hasImageSignal).toBe(true);
