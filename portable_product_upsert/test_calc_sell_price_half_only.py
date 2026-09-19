@@ -1,4 +1,4 @@
-"""Mirror TS shopify/pricing/calcShopifySellPrice.test.ts — locked CM2 floor."""
+"""Mirror TS shopify/pricing/calcShopifySellPrice.test.ts — locked CM2 floor, whole CHF."""
 from __future__ import annotations
 
 import unittest
@@ -6,11 +6,10 @@ import unittest
 from shopifyAPI_GQL import calc_sell_price
 
 
-# Locked: raw 100 → C=128 → (128+14.5)/0.6795 → ceil centime 209.72
-EXPECTED_SELL_RAW_100 = 209.72
-EXPECTED_SELL_RAW_108_45 = 223.15
-EXPECTED_SELL_RAW_126 = 251.04
-EXPECTED_SELL_RAW_170 = 320.98
+EXPECTED_SELL_RAW_100 = 210
+EXPECTED_SELL_RAW_108_45 = 224
+EXPECTED_SELL_RAW_126 = 252
+EXPECTED_SELL_RAW_170 = 321
 RAW_FROM_BUY_140 = 108.45
 
 ADIDAS_LIFESTYLE = [

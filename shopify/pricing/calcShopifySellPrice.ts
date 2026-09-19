@@ -30,9 +30,10 @@ export const SHOPIFY_CPA_CAP_HALF = 24.0;
 // shopifySellPrice =
 //   (sourceCostChf + fixedFulfillmentAndShippingChf)
 //   / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
-// then ceil to next centime. No markup. No fixed costs after the denominator.
+// then ceil to whole CHF (WeTheNew-style clean francs; never below floor).
+// No …9/…5 psych bump. No fixed costs after the denominator.
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-09-19";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-09-19-franc";
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
 /** Blended cards / invoice / TWINT / PayPal — already includes per-order fee mix. No +0.30. */
 export const SHOPIFY_BLENDED_PAYMENT_COST_RATE = 0.0275;
@@ -40,10 +41,19 @@ export const SHOPIFY_VAT_FLAT_RATE = 0.023;
 export const SHOPIFY_PAID_ADS_RATE = 0.15;
 export const SHOPIFY_TARGET_CM2_RATE = 0.12;
 
-/** Absolute margin floor: never publish below this (ceil to next centime). */
+/** Exact floor before storefront publish (centime). */
 export function ceilToCentime(value: number): number {
   if (!Number.isFinite(value)) return value;
   return Math.ceil(value * 100 - 1e-12) / 100;
+}
+
+/**
+ * Shopify publish round: ceil to whole CHF — competitive clean ticket, ≤1 CHF
+ * above locked floor. Never round down under the floor.
+ */
+export function ceilToWholeFranc(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  return Math.ceil(value - 1e-12);
 }
 
 export function shopifyLockedDenom(): number {
@@ -58,14 +68,14 @@ export function shopifyLockedDenom(): number {
 
 /**
  * Locked storefront sell from source cost (StockX after-fees buy).
- * Formula above — ceil to centime.
+ * Formula → ceil whole CHF.
  */
 export function calcShopifySellFromSourceCost(sourceCostChf: number): number | null {
   const C = Number(sourceCostChf);
   if (!Number.isFinite(C) || C <= 0) return null;
   const denom = shopifyLockedDenom();
   if (!(denom > 0)) return null;
-  return ceilToCentime((C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF) / denom);
+  return ceilToWholeFranc((C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF) / denom);
 }
 
 /**
@@ -95,7 +105,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
     const legoShipping = getLegoInboundShippingChf(productHandle);
     const C = stockxRaw * 1.1 + legoShipping;
     const finalPriceRaw = (C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF) * 1.33;
-    return ceilToCentime(finalPriceRaw);
+    return ceilToWholeFranc(finalPriceRaw);
   }
 
   const sourceCostChf = stockxRaw * 1.08 + 20.0;
@@ -198,7 +208,7 @@ export function applyStxExpressFloor(
   expressCalc: number | null
 ): number | null {
   if (!Number.isFinite(standardSell) || standardSell <= 0) return expressCalc;
-  const floor = ceilToCentime(standardSell + readStxExpressSurchargeChf());
+  const floor = ceilToWholeFranc(standardSell + readStxExpressSurchargeChf());
   if (expressCalc == null) return floor;
   // Legacy dual-lane callers: prefer calc when above standard; else surcharge floor.
   // New dual_lane path skips this helper entirely.
@@ -258,7 +268,7 @@ export function resolveStxWebsiteSellPrices(input: {
     if (normalSell == null) return { normalSell: null, expressSell: null, mode: "none" };
     return {
       normalSell,
-      expressSell: ceilToCentime(normalSell + readStxExpressSurchargeChf()),
+      expressSell: ceilToWholeFranc(normalSell + readStxExpressSurchargeChf()),
       mode: "single_plus20",
     };
   }
