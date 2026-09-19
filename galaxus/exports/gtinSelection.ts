@@ -2,9 +2,9 @@ import { buildProviderKey, isValidProviderKeyWithGtin } from "@/galaxus/supplier
 import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { validateGtin } from "@/app/lib/normalize";
 import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
-import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
 import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
+import { hasGalaxusPrimaryImage } from "@/galaxus/exports/variantImagePresence";
 
 type VariantCandidate = {
   mapping: any;
@@ -31,22 +31,8 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
-function isAbsoluteUrl(value: string) {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function hasPrimaryImage(variant?: {
-  images?: unknown;
-  sourceImageUrl?: string | null;
-  hostedImageUrl?: string | null;
-  imageSyncStatus?: string | null;
-} | null): boolean {
-  return pickGalaxusProductImageList(variant ?? {}).length > 0;
+function hasPrimaryImage(variant?: Parameters<typeof hasGalaxusPrimaryImage>[0]): boolean {
+  return hasGalaxusPrimaryImage(variant);
 }
 
 type CandidateExcludeReason =

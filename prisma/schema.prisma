@@ -2722,7 +2722,8 @@ model AdsShoppingProductCurrent {
   @@index([shopifyVariantId], map: "ads_shopping_product_current_shopify_variant_id_idx")
   @@index([isCurrent], map: "ads_shopping_product_current_is_current_idx")
   @@index([lastSeenRunId], map: "ads_shopping_product_current_last_seen_run_id_idx")
-  @@index([targetedCampaignIds], type: Gin, map: "ads_shopping_product_current_targeted_campaign_ids_gin_idx")
+  // GIN on targetedCampaignIds dropped via ops/sql/20260919_db_perf_phase2_concurrent.sql
+  // (DROP INDEX CONCURRENTLY). Do not re-add as @@index — Prisma migrations cannot run CONCURRENTLY.
   @@map("ads_shopping_product_current")
   @@schema("public")
 }
