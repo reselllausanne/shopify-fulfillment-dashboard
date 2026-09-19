@@ -28,7 +28,7 @@ export * from "./tusQty";
 export * from "./exlQty";
 export * from "./venQty";
 export * from "./wrkQty";
-export * from "./supplierObservationBuffer";
+export * from "./observationBuffer";
 export * from "./batch1Observations";
 export * from "./halfCeil";
 export {

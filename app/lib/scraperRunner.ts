@@ -14,7 +14,7 @@ import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
 import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
 import { finalizeSupplierStockFromScrapeRun } from "@/inventory/supplierStock/hookScrape";
 import { drainFanObservations } from "@/inventory/supplierStock/fanObservation";
-import { drainObservations } from "@/inventory/supplierStock/supplierObservationBuffer";
+import { drainSupplierObservations } from "@/inventory/supplierStock/observationBuffer";
 import "@/inventory/supplierStock/fanObservation";
 import "@/inventory/supplierStock/batch1Observations";
 import type { FinalizeRunResult } from "@/inventory/supplierStock/applyRun";
@@ -126,7 +126,7 @@ export async function runScraperJob(input: RunScraperJobInput): Promise<RunScrap
     const drained: SupplierVariantObservation[] = [];
     if (shop.key === "fan") drained.push(...drainFanObservations(runId));
     else if ((batchKeys as readonly string[]).includes(shop.key)) {
-      drained.push(...drainObservations(shop.key, runId));
+      drained.push(...drainSupplierObservations(shop.key, runId));
     }
     const observations: SupplierVariantObservation[] | undefined =
       input.observations ??
