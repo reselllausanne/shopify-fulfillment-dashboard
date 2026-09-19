@@ -8,11 +8,28 @@ type ReviewItem = {
   supplierVariantId: string;
   gtin: string | null;
   productName: string | null;
+  productUrl?: string | null;
   dbQty: number | null;
   proposedQty: number | null;
   reason: string;
   status: string;
   createdAt: string;
+  rawParseJson?: Record<string, unknown> | null;
+};
+
+type EvidenceItem = {
+  supplierKey: string;
+  supplierVariantId: string;
+  gtin: string | null;
+  supplierSku: string | null;
+  productName: string | null;
+  productUrl: string | null;
+  variant: string | null;
+  sourceQty: number | null;
+  proposedQty: number;
+  reason: string | null;
+  rawProof: Record<string, unknown>;
+  lastObservedAt: string | null;
 };
 
 type Policy = {
@@ -57,6 +74,7 @@ const nf = new Intl.NumberFormat("en-US");
 
 export default function SupplierStockPage() {
   const [items, setItems] = useState<ReviewItem[]>([]);
+  const [evidence, setEvidence] = useState<EvidenceItem[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [runs, setRuns] = useState<QualityRun[]>([]);
@@ -71,20 +89,24 @@ export default function SupplierStockPage() {
     setError(null);
     try {
       const q = supplier ? `?supplier=${encodeURIComponent(supplier)}` : "";
-      const [reviewRes, policyRes, runsRes] = await Promise.all([
+      const [reviewRes, policyRes, runsRes, evidenceRes] = await Promise.all([
         fetch(`/api/supplier-stock/review${q}`),
         fetch("/api/supplier-stock/policies"),
         fetch(`/api/supplier-stock/runs${q ? `${q}&limit=20` : "?limit=20"}`),
+        fetch(`/api/supplier-stock/evidence${q ? `${q}&limit=40` : "?limit=40"}`),
       ]);
       const review = await reviewRes.json();
       const policy = await policyRes.json();
-      const runJson = await runsRes.json();
+      const runsJson = await runsRes.json();
+      const evidenceJson = await evidenceRes.json();
       if (!review.ok) throw new Error(review.error || "review load failed");
+      if (!policy.ok) throw new Error(policy.error || "policy load failed");
       setItems(review.items ?? []);
       setPolicies(policy.policies ?? []);
       setContracts(policy.contracts ?? []);
-      setEnforce(policy.enforce ?? runJson.enforce ?? null);
-      setRuns(runJson.runs ?? []);
+      setEnforce(policy.enforce ?? null);
+      setRuns(runsJson.ok ? runsJson.runs ?? [] : []);
+      setEvidence(evidenceJson.ok ? evidenceJson.items ?? [] : []);
     } catch (e: unknown) {
       setError(String((e as Error)?.message ?? e));
     } finally {
@@ -305,6 +327,67 @@ export default function SupplierStockPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <div className="border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+          <h2 className="font-semibold text-slate-900 dark:text-slate-100">
+            Source evidence ({evidence.length})
+          </h2>
+          <p className="text-xs text-slate-500">
+            Raw page proof · URL · variant · source qty · proposed qty · reason — observation only
+          </p>
+        </div>
+        {evidence.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-slate-500">No evidence rows yet. Run FAN scrape after deploy.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800">
+                <tr>
+                  <th className="px-4 py-2">Supplier</th>
+                  <th className="px-4 py-2">Product / variant</th>
+                  <th className="px-4 py-2">URL</th>
+                  <th className="px-4 py-2">Source qty</th>
+                  <th className="px-4 py-2">Proposed</th>
+                  <th className="px-4 py-2">Reason</th>
+                  <th className="px-4 py-2">Raw proof</th>
+                </tr>
+              </thead>
+              <tbody>
+                {evidence.map((e) => (
+                  <tr key={e.supplierVariantId} className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="px-4 py-2 uppercase">{e.supplierKey}</td>
+                    <td className="max-w-xs px-4 py-2">
+                      <div className="truncate font-medium">{e.productName ?? e.supplierVariantId}</div>
+                      <div className="font-mono text-xs text-slate-500">{e.variant ?? e.gtin ?? "—"}</div>
+                    </td>
+                    <td className="max-w-[14rem] truncate px-4 py-2">
+                      {e.productUrl ? (
+                        <a
+                          href={e.productUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-700 underline dark:text-sky-400"
+                        >
+                          {e.productUrl.replace(/^https?:\/\//, "").slice(0, 40)}…
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-2">{e.sourceQty ?? "—"}</td>
+                    <td className="px-4 py-2">{e.proposedQty}</td>
+                    <td className="px-4 py-2 text-slate-600 dark:text-slate-400">{e.reason ?? "—"}</td>
+                    <td className="max-w-xs truncate px-4 py-2 font-mono text-[11px] text-slate-500">
+                      {JSON.stringify(e.rawProof)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">

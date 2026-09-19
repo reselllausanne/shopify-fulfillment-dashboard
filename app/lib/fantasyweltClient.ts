@@ -1,5 +1,9 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import { computeFantasyweltLandedCost } from "@/app/lib/fantasyweltPricing";
+import {
+  decideFanPublishedQtyFromPage,
+  type FanPublishDecision,
+} from "@/inventory/supplierStock/fanQty";
 
 const USER_AGENT =
   process.env.SCRAPER_USER_AGENT ||
@@ -38,9 +42,16 @@ export type FantasyweltProduct = {
   priceEur: number | null;
   availability: "InStock" | "PreOrder" | "OutOfStock" | "Unknown";
   stockLabel: string | null;
+  /** Exact page qty (10+ → 10). Never a default. */
+  sourceStockQty: number | null;
+  proposedPublishQty: number;
+  qtyReason: string;
+  isSale: boolean;
+  hasPositiveStockProof: boolean;
   leadTimeDays: string | null;
   imageUrl: string | null;
   jtlArticleId: string | null;
+  stockDecision: FanPublishDecision;
 };
 
 export function fantasyweltConfig() {
@@ -60,7 +71,7 @@ export function fantasyweltConfig() {
     gotoTimeoutMs: Math.max(15_000, Number(process.env.SCRAPER_FAN_GOTO_TIMEOUT_MS || 60_000)),
     cfWaitMs: Math.max(5_000, Number(process.env.SCRAPER_FAN_CF_WAIT_MS || 25_000)),
     maxCategoryPages: Math.max(1, Number(process.env.SCRAPER_FAN_MAX_CATEGORY_PAGES || 500)),
-    defaultStock: Math.max(1, Number(process.env.SCRAPER_DEFAULT_STOCK || 5)),
+    defaultStock: 0,
     categories,
     progressFile:
       process.env.SCRAPER_FAN_PROGRESS_FILE ||
@@ -219,8 +230,12 @@ export function parseFantasyweltProductHtml(html: string, url: string): Fantasyw
     null;
 
   const plain = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-  const stockLabel =
-    plain.match(/auf Lager|nicht auf Lager|lieferbar ab[^.]{0,40}\.?|Sofort lieferbar/i)?.[0] || null;
+  const stockDecision = decideFanPublishedQtyFromPage({
+    htmlOrText: plain,
+    productUrl: url,
+    cloudflare: false,
+  });
+  const stockLabel = stockDecision.stockLabel;
   const lead =
     plain.match(/Lieferzeit\s+(\d+)\s*[-–]\s*(\d+)\s*Werktage/i) ||
     plain.match(/lieferbar ab\s+(\d{1,2}\.\d{1,2}\.\d{2,4})/i);
@@ -239,6 +254,12 @@ export function parseFantasyweltProductHtml(html: string, url: string): Fantasyw
     html.match(/value=["'](\d+)["'][^>]*name=["']a["']/i)?.[1] ||
     null;
 
+  // Prefer page proof over schema alone: preorder / 0 stk win.
+  let availability = parseAvailability(availHref, plain);
+  if (stockDecision.reason === "preorder_vorbestellbar") availability = "PreOrder";
+  else if (stockDecision.sourceQty === 0) availability = "OutOfStock";
+  else if (stockDecision.hasPositiveProof) availability = "InStock";
+
   return {
     productUrl: url,
     name,
@@ -247,11 +268,17 @@ export function parseFantasyweltProductHtml(html: string, url: string): Fantasyw
     gtin: barcode?.gtin ?? null,
     gtinSource: barcode?.source ?? null,
     priceEur: Number.isFinite(priceEur) && (priceEur as number) > 0 ? (priceEur as number) : null,
-    availability: parseAvailability(availHref, plain),
+    availability,
     stockLabel,
+    sourceStockQty: stockDecision.sourceQty,
+    proposedPublishQty: stockDecision.proposedQty,
+    qtyReason: stockDecision.reason,
+    isSale: stockDecision.isSale,
+    hasPositiveStockProof: stockDecision.hasPositiveProof,
     leadTimeDays,
     imageUrl,
     jtlArticleId,
+    stockDecision,
   };
 }
 
@@ -269,6 +296,11 @@ export function formatFantasyweltNote(product: FantasyweltProduct): string {
     gtinSource: product.gtinSource,
     availability: product.availability,
     stockLabel: product.stockLabel,
+    sourceStockQty: product.sourceStockQty,
+    proposedPublishQty: product.proposedPublishQty,
+    qtyReason: product.qtyReason,
+    isSale: product.isSale,
+    hasPositiveStockProof: product.hasPositiveStockProof,
     leadTimeDays: product.leadTimeDays,
     currency: "EUR",
     ...cost,

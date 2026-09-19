@@ -17,6 +17,10 @@ import {
   type FantasyweltProduct,
 } from "@/app/lib/fantasyweltClient";
 import { computeFantasyweltLandedCost } from "@/app/lib/fantasyweltPricing";
+import {
+  beginFanObservationRun,
+  recordFanProductObservation,
+} from "@/inventory/supplierStock/fanObservation";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -310,6 +314,8 @@ export async function scrapeFantasyweltShop(
   let imageFailed = 0;
   const seenGtins = new Set<string>();
   const imageSyncQueue = new Set<string>();
+  beginFanObservationRun(runId);
+  const observedAt = new Date();
 
   const existingRows = (await prismaAny.supplierVariant.findMany({
     where: { supplierVariantId: { startsWith: `${shop.key}_` } },
@@ -443,8 +449,28 @@ export async function scrapeFantasyweltShop(
             skippedNoGtin++;
           } else if (!product.priceEur || product.priceEur <= 0) {
             skippedNoPrice++;
-          } else if (product.availability === "OutOfStock") {
+          } else if (product.availability === "OutOfStock" || product.sourceStockQty === 0) {
             skippedOos++;
+            recordFanProductObservation(product, {
+              scrapeRunId: runId,
+              observedAt,
+              supplierKey: shop.key,
+            });
+            const cost = computeFantasyweltLandedCost(product.priceEur);
+            if (cost) {
+              const ok = await upsertVariant(product, cost.sellPriceChf, 0);
+              if (ok) {
+                wrote++;
+                gtinMatched++;
+              }
+            }
+          } else if (product.availability === "PreOrder" || !product.hasPositiveStockProof) {
+            // Preorder / no exact Stk qty → observation with proposed 0; never default 5.
+            recordFanProductObservation(product, {
+              scrapeRunId: runId,
+              observedAt,
+              supplierKey: shop.key,
+            });
             const cost = computeFantasyweltLandedCost(product.priceEur);
             if (cost) {
               const ok = await upsertVariant(product, cost.sellPriceChf, 0);
@@ -458,10 +484,13 @@ export async function scrapeFantasyweltShop(
             if (!cost) {
               skippedNoPrice++;
             } else {
-              const stock =
-                product.availability === "InStock" || product.availability === "PreOrder"
-                  ? cfg.defaultStock
-                  : 0;
+              recordFanProductObservation(product, {
+                scrapeRunId: runId,
+                observedAt,
+                supplierKey: shop.key,
+              });
+              // Store proposed publish qty locally for ops visibility; marketplace still gated by enforce.
+              const stock = product.proposedPublishQty;
               const ok = await upsertVariant(product, cost.sellPriceChf, stock);
               if (ok) {
                 wrote++;
