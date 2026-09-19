@@ -36,6 +36,7 @@ import {
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
 import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
+import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
 import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
@@ -297,6 +298,11 @@ export async function GET(request: Request) {
     if (
       isXntFeedBlockedBrand(variant) ||
       shouldForceDeadStockZero({
+        supplierKey: mappingSupplierKey,
+        supplierVariantId: supplierVariantIdEarly,
+        providerKey,
+      }) ||
+      shouldForceBaeStockZero({
         supplierKey: mappingSupplierKey,
         supplierVariantId: supplierVariantIdEarly,
         providerKey,

@@ -15,9 +15,11 @@ describe("deadSupplierKill", () => {
     expect(isDeadSupplier({ supplierVariantId: "fan_1" })).toBe(false);
   });
 
-  it("blocks master/offer and forces stock zero", () => {
+  it("blocks master/offer for all dead; auto stock-zero excludes BAE", () => {
     expect(isDeadFeedBlocked({ providerKey: "SNL_1" })).toBe(true);
+    expect(isDeadFeedBlocked({ providerKey: "BAE_1" })).toBe(true);
     expect(shouldForceDeadStockZero({ supplierVariantId: "snl_1" })).toBe(true);
+    expect(shouldForceDeadStockZero({ providerKey: "BAE_1" })).toBe(false);
     expect(shouldForceDeadStockZero({ supplierKey: "wel" })).toBe(false);
   });
 });
