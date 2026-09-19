@@ -15,30 +15,61 @@ export type PricingOverrides = {
   vatRate?: number | null;
 };
 
-/** Outbound bulk ship per pair (STX Galaxus feed). StockX inbound ship is already in variant.price. */
+/** Outbound bulk ship per pair (non-STX default). StockX inbound ship is already in variant.price. */
 const DEFAULT_SHIPPING = 2;
-/**
- * STX express / direct-delivery lanes: Galaxus reimburses ~6 CHF ship/colis;
- * remaining pack+fulfill gap to bake into sell ≈ 9 CHF (vs DEFAULT_SHIPPING 2).
- */
-const STX_DIRECT_DELIVERY_SHIPPING = 9;
 const DEFAULT_TARGET_MARGIN = 0.12;
 const DEFAULT_BUFFER = 0;
 const DEFAULT_ROUND_TO = 0.05;
 const DEFAULT_VAT_RATE = 0.081;
+
+// ---------------------------------------------------------------------------
+// LOCKED Galaxus STX sell formula (v2026-09-19) — manual constants only.
+// galaxusSellPrice =
+//   (sourceCostChf + fixedBoxAndShippingChf)
+//   / (1 - marketplaceCommissionRate - VATFlatRate - paidAdsRate - targetCM2Rate)
+// ceil to centime. Absolute floor — never publish below. No costs after denom.
+// Total rate 12.3% → ~10% net after small fees.
+// ---------------------------------------------------------------------------
+export const GALAXUS_STX_PRICING_LOCK_VERSION = "2026-09-19";
+export const GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF = 1.6;
+export const GALAXUS_STX_MARKETPLACE_COMMISSION_RATE = 0;
+export const GALAXUS_STX_VAT_FLAT_RATE = 0.023;
+export const GALAXUS_STX_PAID_ADS_RATE = 0;
+export const GALAXUS_STX_TARGET_CM2_RATE = 0.1;
+
+/** Absolute margin floor: never publish below (ceil to next centime). */
+export function ceilToCentime(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  return Math.ceil(value * 100 - 1e-12) / 100;
+}
+
+export function galaxusStxLockedDenom(): number {
+  return (
+    1 -
+    GALAXUS_STX_MARKETPLACE_COMMISSION_RATE -
+    GALAXUS_STX_VAT_FLAT_RATE -
+    GALAXUS_STX_PAID_ADS_RATE -
+    GALAXUS_STX_TARGET_CM2_RATE
+  );
+}
+
+/**
+ * Locked STX Galaxus sell (ex-VAT listing floor) from source buy cost.
+ */
+export function calcGalaxusStxSellFromSourceCost(sourceCostChf: number): number | null {
+  const C = Number(sourceCostChf);
+  if (!Number.isFinite(C) || C <= 0) return null;
+  const denom = galaxusStxLockedDenom();
+  if (!(denom > 0)) return null;
+  return ceilToCentime((C + GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF) / denom);
+}
 const DEFAULT_TARGET_MARGIN_KEYS = [
   "GALAXUS_TARGET_MARGIN",
   "GALAXUS_TARGET_NET_MARGIN",
   "GALAXUS_PRICE_TARGET_MARGIN",
 ];
-const STX_TARGET_MARGIN_KEYS = ["GALAXUS_STX_TARGET_NET_MARGIN", "GALAXUS_STX_TARGET_MARGIN"];
-const STX_MARGIN_ADJUSTMENT_KEYS = ["GALAXUS_STX_MARGIN_ADJUSTMENT", "GALAXUS_STX_TARGET_MARGIN_ADJUSTMENT"];
 const DEFAULT_SHIPPING_KEYS = ["GALAXUS_PRICE_SHIPPING_CHF", "GALAXUS_SHIPPING_CHF"];
-const STX_DD_SHIPPING_KEYS = [
-  "GALAXUS_STX_DD_SHIPPING_CHF",
-  "GALAXUS_STX_DIRECT_DELIVERY_SHIPPING_CHF",
-];
-/** Flat ex-VAT surcharge on every STX Galaxus sell (next feed send). Set env to 0 to disable. */
+/** @deprecated Locked STX path ignores bump — kept for audits / env inspection. */
 const STX_PRICE_BUMP_KEYS = ["GALAXUS_STX_PRICE_BUMP_CHF", "GALAXUS_STX_PRICE_SURCHARGE_CHF"];
 const STX_DEFAULT_PRICE_BUMP = 0;
 const WEL_SHIPPING_KEYS = ["GALAXUS_WEL_SHIPPING_CHF", "GALAXUS_WEL_PRICE_SHIPPING_CHF"];
@@ -285,22 +316,14 @@ export function resolveGalaxusTargetNetMarginForSupplier(
 
   if (!isStxGalaxusSupplierKey(supplierKey)) return base;
 
-  const explicitRaw = readNumberEnv(STX_TARGET_MARGIN_KEYS, Number.NaN);
-  if (Number.isFinite(explicitRaw)) {
-    const explicit = normalizeMarginFraction(explicitRaw);
-    if (isValidTargetMargin(explicit)) return explicit;
-  }
-
-  const adjustment = readNumberEnv(STX_MARGIN_ADJUSTMENT_KEYS, 0);
-  const adjusted = base + adjustment;
-  if (!isValidTargetMargin(adjusted)) return base;
-  return adjusted;
+  // Locked STX CM2 — ignore env overrides (manual constant only).
+  return GALAXUS_STX_TARGET_CM2_RATE;
 }
 
 function resolveShippingPerPairForSupplier(
   supplierKey: string | null,
   defaultShippingPerPair: number,
-  deliveryType?: string | null
+  _deliveryType?: string | null
 ): number {
   const key = String(supplierKey ?? "")
     .trim()
@@ -310,10 +333,8 @@ function resolveShippingPerPairForSupplier(
     if (!Number.isFinite(shipping) || shipping < 0) return defaultShippingPerPair;
     return shipping;
   }
-  if (isStxGalaxusSupplierKey(supplierKey) && isStxDirectDeliveryLane(deliveryType)) {
-    const shipping = readNumberEnv(STX_DD_SHIPPING_KEYS, STX_DIRECT_DELIVERY_SHIPPING);
-    if (!Number.isFinite(shipping) || shipping < 0) return STX_DIRECT_DELIVERY_SHIPPING;
-    return shipping;
+  if (isStxGalaxusSupplierKey(supplierKey)) {
+    return GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF;
   }
   return defaultShippingPerPair;
 }
@@ -357,9 +378,8 @@ export type ResolveGalaxusSellOptions = {
  * - `golden` / `gld` = (buy + ship + CH import VAT + douane) × 1.15
  * - WEL: (buy + ship + ≥1 CHF buffer) / (1 − ≥15% net), default ship CHF 7
  * - BWZ: (buy + ship) / (1 − ≥15% net), default ship CHF 2 (env GALAXUS_BWZ_TARGET_NET_MARGIN)
- * - STX: (buy + outbound ship) / (1 − target net margin), default 12% + 2 CHF ship
- *   (express / direct-delivery lanes: +9 CHF ship — Galaxus ~6 ship reimbursement gap)
- *   + flat price bump on all STX (default +0 CHF ex VAT, env GALAXUS_STX_PRICE_BUMP_CHF)
+ * - STX (locked v2026-09-19): (buy + 1.60) / (1 − 0 − 0.023 − 0 − 0.10), ceil centime
+ *   Same for standard + express. No bump after denominator.
  */
 export function resolveGalaxusSellExVatForChannel(
   buyPriceExVatCHF: number,
@@ -386,6 +406,15 @@ export function resolveGalaxusSellExVatForChannel(
     return roundUpToIncrement(buyPriceExVatCHF * 1.10, roundTo);
   }
 
+  if (isStxGalaxusSupplierKey(supplierKey)) {
+    void options;
+    const locked = calcGalaxusStxSellFromSourceCost(buyPriceExVatCHF);
+    if (locked == null) {
+      throw new Error("buyPriceExVatCHF must be > 0");
+    }
+    return locked;
+  }
+
   const targetNetMargin = resolveGalaxusTargetNetMarginForSupplier(supplierKey, defaults.targetMargin);
   const shippingPerPair = resolveShippingPerPairForSupplier(
     supplierKey,
@@ -394,7 +423,7 @@ export function resolveGalaxusSellExVatForChannel(
   );
   const bufferPerPair = resolveBufferPerPairForSupplier(supplierKey, defaults.bufferPerPair);
 
-  let sellPriceExVat = computeGalaxusSellPriceExVat({
+  return computeGalaxusSellPriceExVat({
     buyPriceExVatCHF,
     shippingPerPairCHF: shippingPerPair,
     targetNetMargin,
@@ -402,15 +431,6 @@ export function resolveGalaxusSellExVatForChannel(
     roundTo: defaults.roundTo,
     vatRate: defaults.vatRate,
   }).sellPriceExVatCHF;
-
-  if (isStxGalaxusSupplierKey(supplierKey)) {
-    const bump = resolveStxGalaxusPriceBumpChf();
-    if (bump > 0) {
-      sellPriceExVat = Number((sellPriceExVat + bump).toFixed(2));
-    }
-  }
-
-  return sellPriceExVat;
 }
 
 /**

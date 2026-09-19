@@ -2,8 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import {
-  applyStxExpressFloor,
   calcShopifySellPrice,
+  resolveStxWebsiteSellPrices,
 } from "@/shopify/pricing/calcShopifySellPrice";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
@@ -196,50 +196,58 @@ function computeSellPrices(input: {
   };
   productHandle: string | null;
 }): { normalSell: number | null; expressSell: number | null } {
-  const standardBuy =
-    toNumber(input.stxRow.standardBuyPrice) ??
-    (String(input.stxRow.deliveryType ?? "") === "standard" ? toNumber(input.stxRow.price) : null);
-  const expressBuy =
-    toNumber(input.stxRow.expressBuyPrice) ??
-    (String(input.stxRow.deliveryType ?? "").startsWith("express_") ? toNumber(input.stxRow.price) : null);
+  const resolved = resolveStxWebsiteSellPrices({
+    standardBuyPrice: toNumber(input.stxRow.standardBuyPrice),
+    expressBuyPrice: toNumber(input.stxRow.expressBuyPrice),
+    fallbackBuyPrice: toNumber(input.stxRow.price),
+    deliveryType: input.stxRow.deliveryType,
+    calcFromBuy: (buyPrice, isExpress) =>
+      calcSellFromBuy(
+        buyPrice,
+        input.productHandle,
+        input.stxRow.supplierProductName,
+        input.stxRow.supplierBrand,
+        isExpress
+      ),
+  });
+  return { normalSell: resolved.normalSell, expressSell: resolved.expressSell };
+}
 
-  const normalSell =
-    (standardBuy != null
-      ? calcSellFromBuy(
-          standardBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          false
-        )
-      : null) ??
-    (expressBuy != null
-      ? calcSellFromBuy(
-          expressBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          false
-        )
-      : null);
-  const expressCalc =
-    expressBuy != null
-      ? calcSellFromBuy(
-          expressBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          true
-        )
-      : null;
-  // Express price comes from express ask calculation, with +20 floor only when
-  // it collides with/undercuts the standard sell.
-  const expressSell =
-    expressBuy != null && normalSell != null
-      ? applyStxExpressFloor(normalSell, expressCalc)
-      : null;
-
-  return { normalSell, expressSell };
+/** Write express money + flip express_available so theme never shows stale/inverted price. */
+async function writeShopifyExpressPrice(
+  variantId: string,
+  expressSell: number
+): Promise<string | null> {
+  const expressValue = JSON.stringify({
+    amount: expressSell.toFixed(2),
+    currency_code: "CHF",
+  });
+  const mf = await shopifyGraphQL<{
+    metafieldsSet: { userErrors: Array<{ message: string }> };
+  }>(EXPRESS_METAFIELD_MUTATION, {
+    metafields: [
+      {
+        ownerId: variantId,
+        namespace: "custom",
+        key: "express_price",
+        type: "money",
+        value: expressValue,
+      },
+      {
+        ownerId: variantId,
+        namespace: "custom",
+        key: "express_available",
+        type: "boolean",
+        value: "true",
+      },
+    ],
+  });
+  const mfErrors = mf.errors ?? [];
+  const mfUe = mf.data?.metafieldsSet?.userErrors ?? [];
+  if (mfErrors.length || mfUe.length) {
+    return [...mfErrors, ...mfUe].map((e) => e.message).join("; ");
+  }
+  return null;
 }
 
 function calcSellFromBuy(
@@ -339,36 +347,17 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   }
 
   if (expressSell != null) {
-    const expressValue = JSON.stringify({
-      amount: expressSell.toFixed(2),
-      currency_code: "CHF",
-    });
-    const mf = await shopifyGraphQL<{
-      metafieldsSet: { userErrors: Array<{ message: string }> };
-    }>(EXPRESS_METAFIELD_MUTATION, {
-      metafields: [
-        {
-          ownerId: shopifyVariant.variantId,
-          namespace: "custom",
-          key: "express_price",
-          type: "money",
-          value: expressValue,
-        },
-      ],
-    });
-    const mfErrors = mf.errors ?? [];
-    const mfUe = mf.data?.metafieldsSet?.userErrors ?? [];
-    if (mfErrors.length || mfUe.length) {
+    const err = await writeShopifyExpressPrice(shopifyVariant.variantId, expressSell);
+    if (err) {
       return {
         gtin: cleanGtin,
         ok: false,
-        reason: [...mfErrors, ...mfUe].map((e) => e.message).join("; "),
+        reason: err,
         normalPrice: normalSell,
       };
     }
   } else {
-    // No StockX express lane (or express buy missing) — clear stale metafield so
-    // checkout can never charge yesterday's express price on a hidden option.
+    // No sell price → clear stale express so checkout cannot charge inverted totals.
     await deleteShopifyExpressPriceMetafield(shopifyVariant.variantId);
   }
 
@@ -523,37 +512,18 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
     }
 
     if (expressSell != null) {
-      const expressValue = JSON.stringify({
-        amount: expressSell.toFixed(2),
-        currency_code: "CHF",
-      });
-      const mf = await shopifyGraphQL<{
-        metafieldsSet: { userErrors: Array<{ message: string }> };
-      }>(EXPRESS_METAFIELD_MUTATION, {
-        metafields: [
-          {
-            ownerId: match.variantId,
-            namespace: "custom",
-            key: "express_price",
-            type: "money",
-            value: expressValue,
-          },
-        ],
-      });
-      const mfErrors = mf.errors ?? [];
-      const mfUe = mf.data?.metafieldsSet?.userErrors ?? [];
-      if (mfErrors.length || mfUe.length) {
+      const err = await writeShopifyExpressPrice(match.variantId, expressSell);
+      if (err) {
         results.push({
           supplierVariantId,
           ok: false,
-          reason: [...mfErrors, ...mfUe].map((e) => e.message).join("; "),
+          reason: err,
           matchedVariantId: match.variantId,
           normalPrice: normalSell,
         });
         continue;
       }
     } else {
-      // No StockX express lane — clear stale metafield.
       await deleteShopifyExpressPriceMetafield(match.variantId);
     }
 
