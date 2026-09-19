@@ -1,16 +1,18 @@
 /**
- * Compare legacy vs slim Galaxus image gate — exact ID sets, not totals.
+ * Single-pass compare: legacy vs slim image gate on the **same** mapping rows.
  *
- * Modes:
- *   (A) legacy — has-image via pickGalaxusProductImageList(images+urls)
- *   (B) slim   — hasImageSignal (URLs + boolean JSONB presence, no JSONB payload)
+ * - legacy: hasImageSignal = pickGalaxusProductImageList(full row).length > 0
+ * - slim:   attachHasImageSignalToMappings (URL short-circuit + pick-equivalent presence)
+ *
+ * One scan → no catalog drift between modes.
  *
  * Usage:
  *   npx tsx scripts/compare-galaxus-feed-image-gate.ts [--limit=50000] [--out=tmp/gate-compare.json]
  *
- * Exit 0 only when eligible providerKeys AND rejected (MISSING_IMAGE) sets match exactly.
- * Read-only. No feed writes.
+ * Exit 0 only for exact_id_match (exactEligible && exactRejected).
+ * Read-only. Loads env via dotenv only — never `source .env`.
  */
+import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { prismaDirect } from "@/app/lib/prisma";
@@ -50,43 +52,33 @@ function setDiff(a: string[], b: string[]): { onlyA: string[]; onlyB: string[] }
   };
 }
 
-async function loadPage(params: {
-  cursorId: string | null;
-  take: number;
-  withImages: boolean;
-}) {
-  const prismaAny = prismaDirect as any;
-  const mappingsWhere = buildFeedMappingsWhere(null, true);
-  const whereClause = {
-    ...mappingsWhere,
-    ...(params.cursorId ? { id: { lt: params.cursorId } } : {}),
-  };
-  const mappings = await prismaAny.variantMapping.findMany({
-    where: whereClause,
-    select: {
-      id: true,
-      gtin: true,
-      updatedAt: true,
-      supplierVariantId: true,
-      supplierVariant: {
-        select: params.withImages
-          ? { ...FEED_VARIANT_SELECT_GATE_NO_IMAGES, images: true }
-          : FEED_VARIANT_SELECT_GATE_NO_IMAGES,
-      },
-    },
-    orderBy: [{ id: "desc" }],
-    take: params.take,
+function cloneMappingsForMode(mappings: any[], mode: "legacy" | "slim"): any[] {
+  return mappings.map((m) => {
+    const v = m?.supplierVariant;
+    if (!v) return { ...m, supplierVariant: null };
+    if (mode === "legacy") {
+      const full = { ...v };
+      const has = pickGalaxusProductImageList(full).length > 0;
+      const { images: _drop, ...rest } = full;
+      return {
+        ...m,
+        supplierVariant: { ...rest, hasImageSignal: has },
+      };
+    }
+    // slim: strip images so attachHasImageSignal uses production path (URL or DB pick-load)
+    const { images: _drop, ...rest } = v;
+    return {
+      ...m,
+      supplierVariant: { ...rest },
+    };
   });
-  return mappings as any[];
 }
 
 type GateSets = {
   mappingsScanned: number;
-  /** GTIN winners that pass filterExportCandidates + isGalaxusCatalogReady */
   eligibleProviderKeys: string[];
   eligibleGtins: string[];
   eligibleSupplierVariantIds: string[];
-  /** Excluded during accumulate with MISSING_IMAGE (supplierVariantId) */
   rejectedMissingImageSupplierVariantIds: string[];
   counts: {
     winnerGtins: number;
@@ -96,66 +88,14 @@ type GateSets = {
   };
 };
 
-async function collectGateSets(opts: {
-  mode: "legacy" | "slim";
-  maxMappings: number | null;
-}): Promise<GateSets> {
-  const prismaAny = prismaDirect as any;
-  const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
-  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
-  const bestByGtin = new Map<string, any>();
-  const rejectedMissingImage = new Set<string>();
-  let cursorId: string | null = null;
-  let mappingsScanned = 0;
-  const pageSize = 5000;
-  let lastBatch = 0;
-
-  do {
-    const take =
-      opts.maxMappings == null
-        ? pageSize
-        : Math.min(pageSize, Math.max(0, opts.maxMappings - mappingsScanned));
-    if (take <= 0) break;
-
-    const mappings = await loadPage({
-      cursorId,
-      take,
-      withImages: opts.mode === "legacy",
-    });
-    lastBatch = mappings.length;
-    mappingsScanned += lastBatch;
-    if (mappings.length > 0) cursorId = mappings[mappings.length - 1]?.id ?? null;
-
-    if (opts.mode === "slim") {
-      await attachHasImageSignalToMappings(mappings);
-    } else {
-      for (const m of mappings) {
-        const v = m?.supplierVariant;
-        if (!v) continue;
-        v.hasImageSignal = pickGalaxusProductImageList(v).length > 0;
-      }
-    }
-
-    accumulateBestCandidates(mappings, bestByGtin, {
-      keyBy: "gtin",
-      requireProductName: false,
-      requireImage: true,
-      preferInStock: true,
-      galaxusPartnerKeysLower,
-      onExclude: (payload) => {
-        if (payload.reason !== "MISSING_IMAGE") return;
-        const id = String(
-          payload.variant?.supplierVariantId ?? payload.mapping?.supplierVariantId ?? ""
-        ).trim();
-        if (id) rejectedMissingImage.add(id);
-      },
-    });
-  } while (lastBatch === pageSize && (opts.maxMappings == null || mappingsScanned < opts.maxMappings));
-
+function finalizeGateSets(
+  mappingsScanned: number,
+  bestByGtin: Map<string, any>,
+  rejectedMissingImage: Set<string>
+): GateSets {
   const candidates = Array.from(bestByGtin.values()).filter((c) => String(c?.providerKey ?? ""));
   const { valid } = filterExportCandidates(candidates);
   const catalogReady = valid.filter((c) => isGalaxusCatalogReady(c.variant));
-
   return {
     mappingsScanned,
     eligibleProviderKeys: sortedUnique(catalogReady.map((c) => String(c.providerKey ?? ""))),
@@ -173,16 +113,112 @@ async function collectGateSets(opts: {
   };
 }
 
+async function collectBothGateSetsSinglePass(maxMappings: number | null): Promise<{
+  legacy: GateSets;
+  slim: GateSets;
+}> {
+  const prismaAny = prismaDirect as any;
+  const partners = await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT });
+  const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
+
+  const bestLegacy = new Map<string, any>();
+  const bestSlim = new Map<string, any>();
+  const rejectedLegacy = new Set<string>();
+  const rejectedSlim = new Set<string>();
+
+  let cursorId: string | null = null;
+  let mappingsScanned = 0;
+  const pageSize = 5000;
+  let lastBatch = 0;
+  const mappingsWhere = buildFeedMappingsWhere(null, true);
+
+  do {
+    const take =
+      maxMappings == null
+        ? pageSize
+        : Math.min(pageSize, Math.max(0, maxMappings - mappingsScanned));
+    if (take <= 0) break;
+
+    const whereClause = {
+      ...mappingsWhere,
+      ...(cursorId ? { id: { lt: cursorId } } : {}),
+    };
+    const mappings = (await prismaAny.variantMapping.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        gtin: true,
+        updatedAt: true,
+        supplierVariantId: true,
+        supplierVariant: {
+          select: { ...FEED_VARIANT_SELECT_GATE_NO_IMAGES, images: true },
+        },
+      },
+      orderBy: [{ id: "desc" }],
+      take,
+    })) as any[];
+
+    lastBatch = mappings.length;
+    mappingsScanned += lastBatch;
+    if (mappings.length > 0) cursorId = mappings[mappings.length - 1]?.id ?? null;
+
+    const legacyMappings = cloneMappingsForMode(mappings, "legacy");
+    const slimMappings = cloneMappingsForMode(mappings, "slim");
+    await attachHasImageSignalToMappings(slimMappings);
+
+    const accumulateOpts = {
+      keyBy: "gtin" as const,
+      requireProductName: false,
+      requireImage: true,
+      preferInStock: true,
+      galaxusPartnerKeysLower,
+    };
+
+    accumulateBestCandidates(legacyMappings, bestLegacy, {
+      ...accumulateOpts,
+      onExclude: (payload) => {
+        if (payload.reason !== "MISSING_IMAGE") return;
+        const id = String(
+          payload.variant?.supplierVariantId ?? payload.mapping?.supplierVariantId ?? ""
+        ).trim();
+        if (id) rejectedLegacy.add(id);
+      },
+    });
+    accumulateBestCandidates(slimMappings, bestSlim, {
+      ...accumulateOpts,
+      onExclude: (payload) => {
+        if (payload.reason !== "MISSING_IMAGE") return;
+        const id = String(
+          payload.variant?.supplierVariantId ?? payload.mapping?.supplierVariantId ?? ""
+        ).trim();
+        if (id) rejectedSlim.add(id);
+      },
+    });
+  } while (lastBatch === pageSize && (maxMappings == null || mappingsScanned < maxMappings));
+
+  return {
+    legacy: finalizeGateSets(mappingsScanned, bestLegacy, rejectedLegacy),
+    slim: finalizeGateSets(mappingsScanned, bestSlim, rejectedSlim),
+  };
+}
+
 async function main() {
   const limit = argLimit();
   const outPath = argValue("out");
   const sampleN = 20;
+
+  if (!process.env.DATABASE_URL && !process.env.DIRECT_URL) {
+    console.error("DATABASE_URL/DIRECT_URL missing (load via dotenv — never source .env)");
+    process.exitCode = 1;
+    return;
+  }
 
   console.log(
     JSON.stringify(
       {
         startedAt: new Date().toISOString(),
         limit: limit ?? "all",
+        mode: "single-pass",
         requirement: "exact eligible + rejected ID sets must match",
       },
       null,
@@ -190,8 +226,7 @@ async function main() {
     )
   );
 
-  const legacy = await collectGateSets({ mode: "legacy", maxMappings: limit });
-  const slim = await collectGateSets({ mode: "slim", maxMappings: limit });
+  const { legacy, slim } = await collectBothGateSetsSinglePass(limit);
 
   const eligiblePk = setDiff(legacy.eligibleProviderKeys, slim.eligibleProviderKeys);
   const eligibleGtin = setDiff(legacy.eligibleGtins, slim.eligibleGtins);

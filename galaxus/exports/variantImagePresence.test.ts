@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachHasImageSignalToMappings,
   hasAbsoluteImageUrl,
   hasGalaxusPrimaryImage,
 } from "@/galaxus/exports/variantImagePresence";
@@ -30,5 +31,42 @@ describe("hasGalaxusPrimaryImage", () => {
       })
     ).toBe(true);
     expect(hasGalaxusPrimaryImage({ images: null, sourceImageUrl: null })).toBe(false);
+  });
+});
+
+describe("attachHasImageSignalToMappings", () => {
+  it("matches pickGalaxus: absolute URL in images JSON, not mere non-empty JSON", async () => {
+    const withHttp = {
+      supplierVariant: {
+        supplierVariantId: "a",
+        images: ["https://cdn.example.com/x.jpg"],
+        sourceImageUrl: null,
+        hostedImageUrl: null,
+      },
+    };
+    const emptyish = {
+      supplierVariant: {
+        supplierVariantId: "b",
+        images: [{ caption: "no-url" }],
+        sourceImageUrl: null,
+        hostedImageUrl: null,
+      },
+    };
+    await attachHasImageSignalToMappings([withHttp, emptyish]);
+    expect(withHttp.supplierVariant.hasImageSignal).toBe(true);
+    expect(emptyish.supplierVariant.hasImageSignal).toBe(false);
+    expect("images" in withHttp.supplierVariant).toBe(false);
+    expect("images" in emptyish.supplierVariant).toBe(false);
+  });
+
+  it("URL short-circuit true without needing images", async () => {
+    const row = {
+      supplierVariant: {
+        supplierVariantId: "c",
+        hostedImageUrl: "https://cdn.example.com/y.jpg",
+      },
+    };
+    await attachHasImageSignalToMappings([row]);
+    expect(row.supplierVariant.hasImageSignal).toBe(true);
   });
 });

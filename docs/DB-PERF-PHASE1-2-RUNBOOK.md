@@ -23,12 +23,15 @@ Do **not** merge until all three pass. Do **not** run ops SQL until merge+CI gre
 1. Exact image-gate ID sets (not totals):
 
 ```bash
+# dotenv only — never `source .env`
 npx tsx scripts/compare-galaxus-feed-image-gate.ts --limit=50000 --out=tmp/gate-compare.json
-# full catalog when ready:
+# full catalog:
 # npx tsx scripts/compare-galaxus-feed-image-gate.ts --out=tmp/gate-compare-full.json
 ```
 
-Expect exit 0 with `"pass": "exact_id_match"`. Eligible `providerKey` / `gtin` / `supplierVariantId` sets **and** `MISSING_IMAGE` reject `supplierVariantId` set must match exactly.
+Single-pass (legacy+slim on same rows). Presence = `pickGalaxusProductImageList` would find ≥1 absolute http(s) URL — not “JSONB non-empty”.
+
+Expect exit 0 with `"pass": "exact_id_match"`, `exactEligible: true`, `exactRejected: true`.
 
 2. Stock + offer dry-run (CSV in-process, no Galaxus push):
 
