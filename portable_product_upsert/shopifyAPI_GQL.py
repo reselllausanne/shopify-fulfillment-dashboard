@@ -409,161 +409,62 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    HYBRID ADS-COST PRICING MODEL: ~12% EBITDA @ 35-37k CHF monthly revenue (calibration band)
+    LOCKED Shopify sell formula (v2026-09-19) — manual constants only.
 
-    Goal: Output a Shopify sell price that includes shipping and yields ~12% EBITDA
-    using a hybrid ads-cost model (percent for low AOV, flat CPA for high AOV).
+    shopifySellPrice =
+      (sourceCostChf + fixedFulfillmentAndShippingChf)
+      / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
+    then ceil to next centime.
 
-    HALF only (CPA_CAP=24). No adidas lifestyle / FULL (31) branch exists.
+    Do not silently update from Shopify plan data or payment-method mix.
+    No markup. No fixed costs after the denominator. No +0.30 fee.
 
-    Higher CA (e.g. ~55k) does not auto-retune constants — if ops/ads % change materially,
-    adjust ADS_PCT / CM2_TARGET / CPA_CAP manually.
+    sourceCost (sneakers): stockx_raw * 1.08 + 20
+    LEGO: (C + ship) * 1.33, ceil centime
 
-    Why hybrid? Ad spend per order doesn't scale linearly at high AOV. % ads overcharges
-    premium items. We use:
-    - % of price for lower AOV (below ~190 CHF)
-    - Flat CPA cap (CHF/order) above that threshold
-
-    Pipeline (classic / restored):
-    1. After-fees cost C (StockX fees + inbound shipping model)
-    2. C_plus_ship = C + SHIP_F (customer ship inside hybrid base; bump SHIP_F when fulfil model changes)
-    3. Hybrid on C_plus_ship: % mode if implied price ≤ 190, else CPA-cap with CPA_CAP
-    4. No brand/category margin discounts (removed Q4 — full hybrid CM2)
-    5. Low-AOV floor when C ≤ 100: max(hybrid, C + 50 + 13) — hybrid wins above ~86 all-in
-    6. Psychological rounding (no global +3%, no second ship bump)
-    
-    LEGO: C_plus_ship * 1.33 (33% brut) only, then psych rounding. Manual inbound ship via get_lego_shipping_cost(handle).
-    
-    Args:
-        stockx_raw: StockX tile price BEFORE their fees (CHF)
-        product_category: Product category (sneakers, lego, etc.)
-        is_express: Express delivery — higher ship in base + 5% upsell before rounding
-        product_handle: Product URL slug for LEGO-specific shipping
-        brand: unused (kept for call-site compat)
+    is_express / brand unused for the locked base (express premium via apply_stx_express_floor).
     """
+    _ = (is_express, brand)
     print(f"[PRICE DEBUG] calc_sell_price INPUT: stockx_raw={stockx_raw}")
-    
-    # ---- Tunables (update monthly if needed) ----
-    # HALF only (CPA_CAP=24) — sole automatic formula for all brands/families.
-    PSP = 0.032         # payment fee %
-    VAT = 0.023         # VAT %
-    ADS_PCT = 0.14      # ads as % of CA on low-AOV branch (blended MER≈7 → ~14%; was 19%)
-    CPA_CAP = 24.0      # CHF/order high-AOV (HALF — sole automatic formula)
-    CM2_TARGET = 0.21   # ~21% after ads → ~12% after ops
-    SHIP_F_STANDARD = 14.5  # STX dropship outbound (was 7 warehouse)
-    SHIP_F_EXPRESS = 15.0
-    EXPRESS_UPSELL_PCT = 0.05  # small express premium on top of hybrid price
-    SHIP_F = SHIP_F_EXPRESS if is_express else SHIP_F_STANDARD
-    LOW_AOV_COST_THRESHOLD = 100.0  # all-in StockX buy (C) at or below this
-    LOW_AOV_MIN_MARGIN = 50.0       # fixed margin on low-AOV items
-    LOW_AOV_FULFIL = 15.0 if is_express else 13.0  # outbound logistics
-    
-    # Check if this is a LEGO product
+
+    FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5
+    BLENDED_PAYMENT_COST_RATE = 0.0275
+    VAT_FLAT_RATE = 0.023
+    PAID_ADS_RATE = 0.15
+    TARGET_CM2_RATE = 0.12
+    DENOM = 1.0 - (
+        BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
+    )
+
     is_lego = "lego" in str(product_category or "").lower() or "lego" in str(product_handle or "").lower()
-    
-    # Step 1: After-fees cost from StockX
+
     if is_lego:
-        # LEGO: 10% processing fees + variable shipping
         lego_shipping = get_lego_shipping_cost(product_handle)
         C = stockx_raw * 1.10 + lego_shipping
-        print(f"[PRICE DEBUG] LEGO After-fees cost C: {stockx_raw} * 1.10 + {lego_shipping} (shipping) = {C:.2f} CHF")
-    else:
-        # Sneakers: 8% processing fees + standard 20 CHF shipping
-        C = stockx_raw * 1.08 + 20.0
-        print(f"[PRICE DEBUG] After-fees cost C: {stockx_raw} * 1.08 + 20 = {C:.2f} CHF")
-    
-    # Step 2: Include customer ship in hybrid base
-    C_plus_ship = C + SHIP_F
-    print(f"[PRICE DEBUG] C + Shipping: {C:.2f} + {SHIP_F} = {C_plus_ship:.2f} CHF")
-    
-    # LEGO pricing: 33% brut markup on C_plus_ship (manual inbound ship per handle in get_lego_shipping_cost)
-    LEGO_MARKUP = 1.33
-    if is_lego:
-        final_price_raw = C_plus_ship * LEGO_MARKUP
-        mode = "LEGO 33% brut"
-        print(f"[PRICE DEBUG] LEGO detected → Using 33% brut markup (inbound ship={lego_shipping} CHF via handle override)")
-        print(f"[PRICE DEBUG] LEGO price: {C_plus_ship:.2f} × {LEGO_MARKUP} = {final_price_raw:.2f} CHF")
-
-        if is_express:
-            before_upsell = final_price_raw
-            final_price_raw *= 1.0 + EXPRESS_UPSELL_PCT
-            print(
-                f"[PRICE DEBUG] Express upsell: {before_upsell:.2f} → {final_price_raw:.2f} "
-                f"(+{EXPRESS_UPSELL_PCT * 100:.0f}%)"
-            )
-            mode = f"{mode} + express upsell"
-        
-        # Round UP to psychological endings (...9, ...19, ...29, ...39, ...49, ...59, ...69, ...79, ...89, ...99)
-        endings = [9, 19, 29, 39, 49, 59, 69, 79, 89, 99]
-        base = (int(final_price_raw) // 100) * 100
-        final_price = base + 109  # default to next hundred's ...09
-        for e in endings:
-            cand = base + e
-            if cand >= final_price_raw:
-                final_price = cand
-                break
-        
-        print(f"[PRICE DEBUG] Final price: {final_price_raw:.2f} → Rounded to {final_price} CHF ({mode})")
+        final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) * 1.33
+        final_price = _ceil_to_centime(final_price_raw)
+        print(
+            f"[PRICE DEBUG] LEGO: C={C:.2f} → {final_price_raw:.4f} → ceil {final_price:.2f}"
+        )
         print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
         return final_price
-    
-    # Step 3: Hybrid on C_plus_ship
-    k_pct = 1.0 / (1.0 - (PSP + VAT + ADS_PCT + CM2_TARGET))
-    price_pct = C_plus_ship * k_pct
-    print(f"[PRICE DEBUG] % mode multiplier: {k_pct:.3f} (PSP+VAT+ADS+CM2={PSP+VAT+ADS_PCT+CM2_TARGET:.3f})")
-    print(f"[PRICE DEBUG] % mode price: {C_plus_ship:.2f} * {k_pct:.3f} = {price_pct:.2f} CHF")
-    
-    # Step 4: Choose mode based on price threshold
-    if price_pct <= 190.0:
-        # Use % mode for low AOV (ads scale with price)
-        final_price_raw = price_pct
-        mode = "% mode"
-        print(f"[PRICE DEBUG] Using % MODE (price ≤ 190 CHF)")
-    else:
-        # Use CPA-cap mode for high AOV (flat CPA, ads don't scale)
-        denom = 1.0 - (PSP + VAT + CM2_TARGET)
-        price_cpa = (C_plus_ship + CPA_CAP) / denom
-        final_price_raw = price_cpa
-        mode = "CPA-cap mode"
-        print(f"[PRICE DEBUG] Switching to CPA-CAP MODE (% price > 190 CHF)")
-        print(f"[PRICE DEBUG] CPA mode: ({C_plus_ship:.2f} + {CPA_CAP}) / {denom:.3f} = {price_cpa:.2f} CHF")
-    
-    # Step 4.5: no brand/category margin discounts (removed Q4)
-    _ = brand  # API parity; unused for pricing
 
-    # Step 4.6: Low-AOV floor — fixed margin + fulfil when all-in cost ≤ 100 CHF
-    if C <= LOW_AOV_COST_THRESHOLD:
-        low_aov_floor = C + LOW_AOV_MIN_MARGIN + LOW_AOV_FULFIL
-        if final_price_raw < low_aov_floor:
-            print(
-                f"[PRICE DEBUG] Low-AOV floor: {final_price_raw:.2f} → {low_aov_floor:.2f} "
-                f"(C={C:.2f} + {LOW_AOV_MIN_MARGIN} + {LOW_AOV_FULFIL})"
-            )
-            final_price_raw = low_aov_floor
-            mode = "low-AOV floor"
-
-    if is_express:
-        before_upsell = final_price_raw
-        final_price_raw *= 1.0 + EXPRESS_UPSELL_PCT
-        print(
-            f"[PRICE DEBUG] Express upsell: {before_upsell:.2f} → {final_price_raw:.2f} "
-            f"(+{EXPRESS_UPSELL_PCT * 100:.0f}%)"
-        )
-        mode = f"{mode} + express upsell"
-
-    # Step 5: Round UP to psychological endings (...9, ...19, ...29, ...39, ...49, ...59, ...69, ...79, ...89, ...99)
-    endings = [9, 19, 29, 39, 49, 59, 69, 79, 89, 99]
-    base = (int(final_price_raw) // 100) * 100
-    final_price = base + 109  # default to next hundred's ...09
-    for e in endings:
-        cand = base + e
-        if cand >= final_price_raw:
-            final_price = cand
-            break
-
-    print(f"[PRICE DEBUG] Final price: {final_price_raw:.2f} → Rounded to {final_price} CHF ({mode})")
+    C = stockx_raw * 1.08 + 20.0
+    final_price_raw = (C + FIXED_FULFILLMENT_AND_SHIPPING_CHF) / DENOM
+    final_price = _ceil_to_centime(final_price_raw)
+    print(
+        f"[PRICE DEBUG] Locked: (C={C:.2f} + {FIXED_FULFILLMENT_AND_SHIPPING_CHF}) / {DENOM:.4f} "
+        f"= {final_price_raw:.4f} → ceil {final_price:.2f}"
+    )
     print(f"[PRICE DEBUG] calc_sell_price OUTPUT: {final_price} CHF")
     return final_price
+
+
+def _ceil_to_centime(price: float) -> float:
+    """Absolute margin floor: never publish below — ceil to next centime."""
+    from math import ceil
+
+    return ceil(float(price) * 100.0 - 1e-12) / 100.0
 
 
 def _psych_round_up(price: float) -> int:
@@ -598,8 +499,9 @@ def read_stx_express_surcharge_chf() -> float:
 
 def apply_stx_express_floor(standard_sell, express_calc=None):
     """
-    Preserve express-ask pricing, but guarantee express never lands at/under
-    standard by applying a +surcharge floor (default 20 CHF).
+    Single-offer express premium: express = standard + surcharge (ceil centime).
+    Dual-lane callers must pass express_calc=None only for the +surcharge case,
+    or skip this helper and use locked calc(express buy) directly.
     """
     try:
         std = float(standard_sell or 0)
@@ -608,7 +510,7 @@ def apply_stx_express_floor(standard_sell, express_calc=None):
     if std <= 0:
         return express_calc
 
-    floor = _psych_round_up(std + read_stx_express_surcharge_chf())
+    floor = _ceil_to_centime(std + read_stx_express_surcharge_chf())
     if express_calc is None:
         return floor
     try:
@@ -617,7 +519,7 @@ def apply_stx_express_floor(standard_sell, express_calc=None):
         exp = 0.0
     if exp <= std:
         return floor
-    return max(int(exp), floor)
+    return max(exp, floor)
 
 
 def calc_liquidation_sell_price(cost_chf) -> int:
