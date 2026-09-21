@@ -163,6 +163,19 @@ type ScanResult = {
     autoDirectOrderDbId?: string | null;
     autoDirectLineId?: string | null;
     autoDirectRemaining?: number;
+    autoDirectOpenUnits?: Array<{
+      lineItemId: string;
+      lineId?: string;
+      title: string;
+      remainingQuantity: number;
+      isScannedLine?: boolean;
+    }>;
+    autoDirectUnitSelection?: {
+      requiresPopup: boolean;
+      totalOpenUnits: number;
+      openLineCount: number;
+      reason: string;
+    } | null;
     autoShopify?: {
       shopifyOrderId: string;
       shopifyOrderName?: string | null;
@@ -950,7 +963,7 @@ export default function ScanPage() {
     setDirectQtyPrompt(null);
   };
 
-  /** Always ask how many to ship for GTIN → Galaxus direct (every scan). */
+  /** Ask qty when order has multi_qty / multi_line; skip when single remaining unit. */
   const promptDirectShipQuantity = (params: {
     orderDbId: string;
     lineId: string;
@@ -1870,20 +1883,42 @@ export default function ScanPage() {
               gtinAutoDirectOrderDbId;
             const productName =
               String(autoRow?.productName ?? data.gtin?.productName ?? "").trim() || "Item";
-            const qty = await promptDirectShipQuantity({
-              orderDbId: gtinAutoDirectOrderDbId,
-              lineId,
-              orderLabel,
-              productName,
-              remaining,
-              requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired),
-            });
-            if (qty && qty > 0) {
+            const requiresDeliveryNote = Boolean(autoRow?.physicalDeliveryNoteRequired);
+            const unitSelection = data.gtin?.autoDirectUnitSelection;
+            const openUnits = (data.gtin?.autoDirectOpenUnits ?? []).filter(
+              (u) => Math.max(0, Number(u.remainingQuantity)) > 0
+            );
+            // Order-scoped: popup only when multi_line or multi_qty. Single unit → auto ship.
+            const needsPopup =
+              unitSelection?.requiresPopup === true ||
+              (!unitSelection &&
+                (openUnits.length > 1 ||
+                  remaining > 1 ||
+                  (openUnits.length === 1 &&
+                    Math.max(0, Number(openUnits[0]?.remainingQuantity)) > 1)));
+
+            if (!needsPopup) {
               await runDirectLabelForOrder(
                 gtinAutoDirectOrderDbId,
-                { lineId, quantity: qty },
-                { requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired) }
+                { lineId, quantity: 1 },
+                { requiresDeliveryNote }
               );
+            } else {
+              const qty = await promptDirectShipQuantity({
+                orderDbId: gtinAutoDirectOrderDbId,
+                lineId,
+                orderLabel,
+                productName,
+                remaining,
+                requiresDeliveryNote,
+              });
+              if (qty && qty > 0) {
+                await runDirectLabelForOrder(
+                  gtinAutoDirectOrderDbId,
+                  { lineId, quantity: qty },
+                  { requiresDeliveryNote }
+                );
+              }
             }
           }
         }
@@ -2928,7 +2963,8 @@ export default function ScanPage() {
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
                   No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
-                  asks how many to ship (per order line) before printing a label. When Galaxus
+                  asks how many to ship only when the order has multiple open units;
+                  a single remaining unit ships and prints immediately. When Galaxus
                   requires a physical delivery note, that warning shows before ship and the note
                   opens with the Post label.
                 </p>
