@@ -589,8 +589,10 @@ const openLabelPreview = (payload: LabelDataPayload) => {
 };
 
 /**
- * Show label to operator. Prefer silent QZ when activated; else CUPS ok skips popup;
- * else browser print dialog.
+ * Show label to operator.
+ * 1) Real CUPS success (ok && !skipped) → no popup
+ * 2) QZ silent if Activate'd
+ * 3) Else browser print dialog
  */
 const presentScanLabel = async (options: {
   labelData?: LabelDataPayload | null;
@@ -599,26 +601,31 @@ const presentScanLabel = async (options: {
   deliveryNotePrintResult?: PrintJobClientResult | null;
   blockedMessage: string;
 }): Promise<boolean> => {
-  const cupsOk = options.printJobResult?.ok === true;
-  if (cupsOk) {
+  const cupsPrinted =
+    options.printJobResult?.ok === true && options.printJobResult?.skipped !== true;
+  if (cupsPrinted) {
     alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
     return true;
   }
   if (!options.labelData?.base64) return false;
 
   const ext = String(options.labelData.mimeType || "").includes("png") ? "png" : "pdf";
-  const qz = await tryStationAutoPrint({
-    matchCertainty: "certain",
-    job: {
-      base64: options.labelData.base64,
-      extension: ext === "png" ? "png" : "pdf",
-      jobName: "scan-label",
-      copies: 1,
-    },
-  });
-  if (qz.ok) {
-    alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
-    return true;
+  try {
+    const qz = await tryStationAutoPrint({
+      matchCertainty: "certain",
+      job: {
+        base64: options.labelData.base64,
+        extension: ext === "png" ? "png" : "pdf",
+        jobName: "scan-label",
+        copies: 1,
+      },
+    });
+    if (qz.ok) {
+      alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
+      return true;
+    }
+  } catch {
+    // QZ optional — fall through to browser print.
   }
 
   const opened = ENABLE_BROWSER_PRINT
