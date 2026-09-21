@@ -146,42 +146,66 @@ export default function GalaxusDirectDeliveryPage() {
     setLoadingMoreOrders(false);
     setError(null);
     try {
-      // Single 500-row page. Pagination via OFFSET was firing 4 sequential API
-      // calls per refresh and, with a shared orderDate, was returning the same
-      // row on multiple pages → visual duplicates in the list. One request +
-      // stable orderDate+id sort on the server keeps the list clean and fast.
-      const params = new URLSearchParams({
-        limit: "500",
-        offset: "0",
-        view: "active",
-        sort: "orderDate",
-        deliveryType: "direct_delivery",
-        includeInvoice: "0",
-        includeWarehouse: "0",
-      });
-      if (query) params.set("q", query);
-      const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (seq !== ordersLoadSeq.current) return;
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-      const items = dedupeById<OrderListItem>(
-        Array.isArray(data.items) ? (data.items as OrderListItem[]) : []
-      );
-      setOrders(items);
-
-      const current = selectedOrderIdRef.current;
-      if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
-        setSelectedOrderId(items[0].id);
-      }
-
+      // Active direct-delivery set is >500 (1170 on 2026-09-21). A single page
+      // hid everything older than ~8 Sep, including unlinked/unbought orders.
+      // Server sort is orderDate desc + id desc, so OFFSET pages stay unique.
+      // dedupeById still guards a row that shifts while pages are in flight.
+      const PAGE_SIZE = 500;
+      const MAX_PAGES = 20;
+      const collected: OrderListItem[] = [];
+      let offset = 0;
       const prevKnown = knownOrderIds.current;
-      const fresh = new Set<string>();
-      for (const item of items) {
-        if (!prevKnown.has(item.id)) fresh.add(item.id);
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        if (page > 0) setLoadingMoreOrders(true);
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          offset: String(offset),
+          view: "active",
+          sort: "orderDate",
+          deliveryType: "direct_delivery",
+          includeInvoice: "0",
+          includeWarehouse: "0",
+        });
+        if (query) params.set("q", query);
+        const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (seq !== ordersLoadSeq.current) return;
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+        const pageItems: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+        collected.push(...pageItems);
+        const items = dedupeById(collected);
+        setOrders(items);
+
+        if (page === 0) {
+          const current = selectedOrderIdRef.current;
+          if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
+            setSelectedOrderId(items[0].id);
+          }
+          // Only the newest page can be "just arrived". Older pages are the
+          // backlog the 500 cap used to drop — not new orders.
+          const fresh = new Set<string>();
+          for (const item of pageItems) {
+            if (!prevKnown.has(item.id)) fresh.add(item.id);
+          }
+          setNewOrderIds(fresh);
+        }
+
+        const nextOffset = data.nextOffset == null ? null : Number(data.nextOffset);
+        if (
+          nextOffset == null ||
+          !Number.isFinite(nextOffset) ||
+          nextOffset <= offset ||
+          pageItems.length === 0
+        ) {
+          break;
+        }
+        offset = nextOffset;
       }
-      setNewOrderIds(fresh);
+
+      const items = dedupeById(collected);
+      setOrders(items);
       const nextKnown = new Set([...prevKnown, ...items.map((item) => item.id)]);
       knownOrderIds.current = nextKnown;
       writeKnownOrderIds(nextKnown);
@@ -378,7 +402,9 @@ export default function GalaxusDirectDeliveryPage() {
     return orderedList.filter((order) => {
       const state = order.fulfillmentState ?? "to_process";
       if (leftTab === "fulfilled") return state === "fulfilled";
-      return state === "to_process";
+      // "shipped" is the fallback when open-line coverage fails. Keep those
+      // visible in À traiter so a tracked-but-unbought order cannot vanish.
+      return state === "to_process" || state === "shipped";
     });
   }, [orderedList, leftTab]);
 
