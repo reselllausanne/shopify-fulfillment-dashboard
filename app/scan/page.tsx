@@ -450,12 +450,11 @@ const SUGGEST_DEBOUNCE_MS = 150;
 const SCANNER_BURST_THRESHOLD_MS = 120;
 
 /**
- * Heuristic: does this input value look like it was typed by a human vs
- * pasted by a barcode scanner? We only surface suggestions for typing.
- *
- * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD..., >=8 digits pure numeric).
- * - Accept short queries (<8 chars), values that contain letters, or values
- *   with two consecutive identical chars (typists repeat, scanners don't).
+ * Heuristic: does this input look like typed search (show predictive) vs
+ * scanner dump / AWB?
+ * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD...).
+ * - Allow short text, letters, and partial GTINs / order ids (3–14 digits).
+ * - Full instant digit dumps are filtered separately (scanner paste).
  */
 const looksLikeManualQuery = (value: string): boolean => {
   const v = String(value ?? "").trim();
@@ -464,10 +463,21 @@ const looksLikeManualQuery = (value: string): boolean => {
   if (upper.startsWith("1Z") && upper.length >= 10) return false;
   if (upper.startsWith("JJD") && upper.length >= 10) return false;
   if (upper.startsWith("JD") && upper.length >= 10) return false;
-  if (/^\d{8,}$/.test(v)) return false;
+  // Partial GTIN / Galaxus order number while typing → predictive OK.
+  if (/^\d{3,14}$/.test(v)) return true;
   if (v.length < 8) return true;
   if (/[a-z]/i.test(v)) return true;
   if (/(.)\1/.test(v)) return true;
+  return false;
+};
+
+/** Instant long dump (scanner/paste) — do not open predictive dropdown. */
+const looksLikeScannerDump = (prev: string, next: string): boolean => {
+  if (prev.length > 0) return false;
+  const v = next.trim();
+  if (v.length < 8) return false;
+  if (/^\d{8,}$/.test(v)) return true;
+  if (/^(1Z|JJD|JD)/i.test(v) && v.length >= 10) return true;
   return false;
 };
 
@@ -703,6 +713,7 @@ export default function ScanPage() {
   const suggestReqIdRef = useRef(0);
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstKeystrokeAtRef = useRef<number | null>(null);
+  const scannerDumpRef = useRef(false);
   const [packingSession, setPackingSession] = useState<PackingSessionEntry[]>([]);
   const [packingReject, setPackingReject] = useState<{ scanCode: string; reason: string } | null>(null);
   const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
@@ -713,6 +724,11 @@ export default function ScanPage() {
   const [printStationStatus, setPrintStationStatus] =
     useState<PrintStationProbeStatus | null>(null);
   const [qzBusy, setQzBusy] = useState(false);
+  const [qzPrinterPick, setQzPrinterPick] = useState<{
+    printers: string[];
+    filter: string;
+  } | null>(null);
+
   const refreshPrintStation = async (connect = false) => {
     try {
       const status = await probePrintStationStatus(undefined, { connect });
@@ -738,11 +754,31 @@ export default function ScanPage() {
     };
   }, []);
 
+  const finishQzActivateWithPrinter = async (printerName: string) => {
+    setQzBusy(true);
+    try {
+      const result = await activatePrintStation({ printerName });
+      setPrintStationStatus(result.status);
+      setQzPrinterPick(null);
+      if (!result.ok) {
+        window.alert(result.error || "QZ activate failed.");
+        return;
+      }
+      window.alert(`QZ Tray active → ${result.status.printerName || printerName}.`);
+    } finally {
+      setQzBusy(false);
+    }
+  };
+
   const handleActivateQz = async () => {
     setQzBusy(true);
     try {
       const result = await activatePrintStation();
       setPrintStationStatus(result.status);
+      if (result.printers && result.printers.length > 1 && result.error === "Pick a printer") {
+        setQzPrinterPick({ printers: result.printers, filter: "" });
+        return;
+      }
       if (!result.ok) {
         window.alert(
           result.error ||
@@ -760,6 +796,7 @@ export default function ScanPage() {
 
   const handleDeactivateQz = async () => {
     deactivatePrintStation();
+    setQzPrinterPick(null);
     await refreshPrintStation(false);
   };
   const [finalizeBusy, setFinalizeBusy] = useState(false);
@@ -836,7 +873,11 @@ export default function ScanPage() {
       suggestDebounceRef.current = null;
     }
     const q = code.trim();
-    if (q.length < 2 || !looksLikeManualQuery(q)) {
+    if (
+      q.length < 2 ||
+      scannerDumpRef.current ||
+      !looksLikeManualQuery(q)
+    ) {
       setSuggestions([]);
       setSuggestOpen(false);
       setSuggestLoading(false);
@@ -2292,46 +2333,51 @@ export default function ScanPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <span
-              title={
-                printStationStatus
-                  ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · validated=${printStationStatus.silentPrintValidated}`
-                  : "QZ Tray off"
-              }
-              className={
-                "px-2 py-0.5 text-xs rounded border " +
-                (printStationStatus?.readyForSilentPrint
-                  ? "bg-emerald-50 border-emerald-300 text-emerald-800"
-                  : "bg-gray-100 border-gray-300 text-gray-700")
-              }
-            >
-              QZ:{" "}
-              {printStationStatus?.readyForSilentPrint
-                ? "on"
-                : printStationStatus?.reason === "off" || !printStationStatus
-                  ? "off"
-                  : printStationStatus.reason}
-            </span>
-            {printStationStatus?.readyForSilentPrint ? (
-              <button
-                type="button"
-                onClick={() => void handleDeactivateQz()}
-                disabled={qzBusy}
-                className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          <div className="flex flex-col items-end gap-0.5">
+            <div className="flex items-center gap-1">
+              <span
+                title={
+                  printStationStatus
+                    ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · validated=${printStationStatus.silentPrintValidated}`
+                    : "QZ Tray off"
+                }
+                className={
+                  "px-2 py-0.5 text-xs rounded border " +
+                  (printStationStatus?.readyForSilentPrint
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                    : "bg-gray-100 border-gray-300 text-gray-700")
+                }
               >
-                Off
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void handleActivateQz()}
-                disabled={qzBusy}
-                className="px-2 py-0.5 text-xs rounded border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
-              >
-                {qzBusy ? "…" : "Activate"}
-              </button>
-            )}
+                QZ:{" "}
+                {printStationStatus?.readyForSilentPrint
+                  ? "on"
+                  : printStationStatus?.reason === "off" || !printStationStatus
+                    ? "off"
+                    : printStationStatus.reason}
+              </span>
+              {printStationStatus?.readyForSilentPrint ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDeactivateQz()}
+                  disabled={qzBusy}
+                  className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Off
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleActivateQz()}
+                  disabled={qzBusy}
+                  className="px-2 py-0.5 text-xs rounded border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                >
+                  {qzBusy ? "…" : "Activate"}
+                </button>
+              )}
+            </div>
+            <p className="max-w-[16rem] text-right text-[10px] leading-snug text-gray-500">
+              Need QZ Tray app installed + running on this Mac, then Activate.
+            </p>
           </div>
           <a
             href="/scan/stats"
@@ -2379,10 +2425,15 @@ export default function ScanPage() {
               value={code}
               onChange={(e) => {
                 const next = e.target.value;
-                const prevEmpty = code.length === 0;
-                if (prevEmpty && next.length > 0) {
+                const prev = code;
+                if (looksLikeScannerDump(prev, next)) {
+                  scannerDumpRef.current = true;
+                  firstKeystrokeAtRef.current = null;
+                } else if (prev.length === 0 && next.length > 0) {
+                  scannerDumpRef.current = false;
                   firstKeystrokeAtRef.current = Date.now();
                 } else if (next.length === 0) {
+                  scannerDumpRef.current = false;
                   firstKeystrokeAtRef.current = null;
                 }
                 setCode(next);
@@ -3442,6 +3493,65 @@ export default function ScanPage() {
             </div>
           </div>
         )}
+
+        {qzPrinterPick ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div
+              className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="qz-printer-pick-title"
+            >
+              <h2 id="qz-printer-pick-title" className="text-lg font-semibold text-gray-900">
+                QZ Tray — pick printer
+              </h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Need QZ Tray app installed + running. Type to filter.
+              </p>
+              <input
+                type="search"
+                autoFocus
+                value={qzPrinterPick.filter}
+                onChange={(e) =>
+                  setQzPrinterPick((prev) =>
+                    prev ? { ...prev, filter: e.target.value } : prev
+                  )
+                }
+                placeholder="Brother, QL, Zebra…"
+                className="mt-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+              <ul className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-200">
+                {qzPrinterPick.printers
+                  .filter((p) => {
+                    const f = qzPrinterPick.filter.trim().toLowerCase();
+                    if (!f) return true;
+                    return p.toLowerCase().includes(f);
+                  })
+                  .map((p) => (
+                    <li key={p}>
+                      <button
+                        type="button"
+                        disabled={qzBusy}
+                        onClick={() => void finishQzActivateWithPrinter(p)}
+                        className="w-full border-b border-gray-100 px-3 py-2 text-left text-sm hover:bg-indigo-50 disabled:opacity-50"
+                      >
+                        {p}
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setQzPrinterPick(null)}
+                  className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {directQtyPrompt ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

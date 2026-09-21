@@ -213,8 +213,25 @@ export async function activatePrintStation(options?: {
     const found = await window.qz.printers.find();
     const printers = (Array.isArray(found) ? found : found ? [found] : []).map(String);
     const preferred = String(options?.printerName || "").trim();
+
+    if (!preferred && printers.length > 1) {
+      const status = await probePrintStationStatus(undefined, { connect: true });
+      return {
+        ok: false,
+        status: {
+          ...status,
+          qzInstalled: true,
+          qzConnected: true,
+          reason: "no_printer",
+        },
+        error: "Pick a printer",
+        printers,
+      };
+    }
+
     const picked =
       (preferred && printers.includes(preferred) ? preferred : null) ||
+      (preferred && printers.length === 0 ? preferred : null) ||
       printers.find((p) => /brother|ql|zebra|label/i.test(p)) ||
       printers[0] ||
       preferred ||
