@@ -22,16 +22,18 @@ both are unavailable.
 
 ## Honesty contract (READ BEFORE ENABLING)
 
-The scan page will refuse to silent-print unless BOTH:
+The scan page shows **QZ: off** by default. Nothing connects to QZ Tray until
+the operator clicks **Activate** (loads `qz-tray.js`, `websocket.connect()` →
+Allow/Accept prompt, picks a printer, then sets `autoPrintOnCertainMatch` +
+`silentPrintValidated`).
 
-1. `silentPrintValidated: true` is set on the station config
-   (`localStorage.resell.printStation.v1`).
-2. `window.qz` exists and its websocket is active on `localhost`.
+Silent print only runs when BOTH:
 
-Defaults ship with `autoPrintOnCertainMatch: false` and
-`silentPrintValidated: false`. This is on purpose: we would rather show a
-browser popup on every scan than silently drop labels because QZ died at
-02:00.
+1. Station is activated (those flags true in `localStorage.resell.printStation.v1`)
+2. `window.qz` websocket is active
+
+**Off / Deactivate** clears the flags → browser print popup again. Page load
+never calls `connect()` while off (avoids Allow spam).
 
 ## Per-station config
 

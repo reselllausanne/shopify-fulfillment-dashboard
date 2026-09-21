@@ -9,7 +9,10 @@ import {
   shouldAutoGalaxusDirectLabelFor,
 } from "./scanInboundGuards";
 import {
+  activatePrintStation,
+  deactivatePrintStation,
   probePrintStationStatus,
+  tryStationAutoPrint,
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
 
@@ -586,24 +589,38 @@ const openLabelPreview = (payload: LabelDataPayload) => {
 };
 
 /**
- * Show label to operator. Skip popup only when CUPS actually printed
- * (printJobResult.ok). VPS never succeeds CUPS → always opens popup.
- * Ignores browserPrintConfig.enabled=false from stale server paths that
- * attempted CUPS and then suppressed the popup for nothing.
+ * Show label to operator. Prefer silent QZ when activated; else CUPS ok skips popup;
+ * else browser print dialog.
  */
-const presentScanLabel = (options: {
+const presentScanLabel = async (options: {
   labelData?: LabelDataPayload | null;
   browserPrintConfig?: BrowserPrintConfig | null;
   printJobResult?: PrintJobClientResult | null;
   deliveryNotePrintResult?: PrintJobClientResult | null;
   blockedMessage: string;
-}): boolean => {
+}): Promise<boolean> => {
   const cupsOk = options.printJobResult?.ok === true;
   if (cupsOk) {
     alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
     return true;
   }
   if (!options.labelData?.base64) return false;
+
+  const ext = String(options.labelData.mimeType || "").includes("png") ? "png" : "pdf";
+  const qz = await tryStationAutoPrint({
+    matchCertainty: "certain",
+    job: {
+      base64: options.labelData.base64,
+      extension: ext === "png" ? "png" : "pdf",
+      jobName: "scan-label",
+      copies: 1,
+    },
+  });
+  if (qz.ok) {
+    alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
+    return true;
+  }
+
   const opened = ENABLE_BROWSER_PRINT
     ? openLabelPrintDialog(options.labelData, options.browserPrintConfig ?? undefined)
     : openLabelPreview(options.labelData);
@@ -695,9 +712,21 @@ export default function ScanPage() {
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [printStationStatus, setPrintStationStatus] =
     useState<PrintStationProbeStatus | null>(null);
+  const [qzBusy, setQzBusy] = useState(false);
+  const refreshPrintStation = async (connect = false) => {
+    try {
+      const status = await probePrintStationStatus(undefined, { connect });
+      setPrintStationStatus(status);
+      return status;
+    } catch {
+      setPrintStationStatus(null);
+      return null;
+    }
+  };
   useEffect(() => {
     let cancelled = false;
-    probePrintStationStatus()
+    // Inactive: probe without connect (no QZ Allow spam on page load).
+    probePrintStationStatus(undefined, { connect: false })
       .then((status) => {
         if (!cancelled) setPrintStationStatus(status);
       })
@@ -708,6 +737,31 @@ export default function ScanPage() {
       cancelled = true;
     };
   }, []);
+
+  const handleActivateQz = async () => {
+    setQzBusy(true);
+    try {
+      const result = await activatePrintStation();
+      setPrintStationStatus(result.status);
+      if (!result.ok) {
+        window.alert(
+          result.error ||
+            "QZ activate failed. Install/start QZ Tray, Allow this site, then retry."
+        );
+        return;
+      }
+      window.alert(
+        `QZ Tray active → ${result.status.printerName || "printer"}. Labels print silently on scan.`
+      );
+    } finally {
+      setQzBusy(false);
+    }
+  };
+
+  const handleDeactivateQz = async () => {
+    deactivatePrintStation();
+    await refreshPrintStation(false);
+  };
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
@@ -1141,7 +1195,7 @@ export default function ScanPage() {
         deliveryNoteNotice: dn.message,
       });
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -1184,7 +1238,7 @@ export default function ScanPage() {
       } = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2041,7 +2095,7 @@ export default function ScanPage() {
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2157,7 +2211,7 @@ export default function ScanPage() {
         return;
       }
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2238,21 +2292,47 @@ export default function ScanPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2">
-          {printStationStatus ? (
+          <div className="flex items-center gap-1">
             <span
-              title={`QZ Tray: ${printStationStatus.reason} · validated=${printStationStatus.silentPrintValidated} · autoPrint=${printStationStatus.autoPrintOn}`}
+              title={
+                printStationStatus
+                  ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · validated=${printStationStatus.silentPrintValidated}`
+                  : "QZ Tray off"
+              }
               className={
                 "px-2 py-0.5 text-xs rounded border " +
-                (printStationStatus.readyForSilentPrint
+                (printStationStatus?.readyForSilentPrint
                   ? "bg-emerald-50 border-emerald-300 text-emerald-800"
-                  : "bg-amber-50 border-amber-300 text-amber-800")
+                  : "bg-gray-100 border-gray-300 text-gray-700")
               }
             >
-              QZ: {printStationStatus.readyForSilentPrint
-                ? "ready"
-                : printStationStatus.reason}
+              QZ:{" "}
+              {printStationStatus?.readyForSilentPrint
+                ? "on"
+                : printStationStatus?.reason === "off" || !printStationStatus
+                  ? "off"
+                  : printStationStatus.reason}
             </span>
-          ) : null}
+            {printStationStatus?.readyForSilentPrint ? (
+              <button
+                type="button"
+                onClick={() => void handleDeactivateQz()}
+                disabled={qzBusy}
+                className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Off
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleActivateQz()}
+                disabled={qzBusy}
+                className="px-2 py-0.5 text-xs rounded border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+              >
+                {qzBusy ? "…" : "Activate"}
+              </button>
+            )}
+          </div>
           <a
             href="/scan/stats"
             className="px-3 py-1 text-sm bg-emerald-100 text-emerald-900 rounded hover:bg-emerald-200 transition-colors"
