@@ -450,11 +450,12 @@ const SUGGEST_DEBOUNCE_MS = 150;
 const SCANNER_BURST_THRESHOLD_MS = 120;
 
 /**
- * Heuristic: does this input look like typed search (show predictive) vs
- * scanner dump / AWB?
- * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD...).
- * - Allow short text, letters, and partial GTINs / order ids (3–14 digits).
- * - Full instant digit dumps are filtered separately (scanner paste).
+ * Heuristic: does this input value look like it was typed by a human vs
+ * pasted by a barcode scanner? We only surface suggestions for typing.
+ *
+ * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD..., >=8 digits pure numeric).
+ * - Accept short queries (<8 chars), values that contain letters, or values
+ *   with two consecutive identical chars (typists repeat, scanners don't).
  */
 const looksLikeManualQuery = (value: string): boolean => {
   const v = String(value ?? "").trim();
@@ -463,21 +464,10 @@ const looksLikeManualQuery = (value: string): boolean => {
   if (upper.startsWith("1Z") && upper.length >= 10) return false;
   if (upper.startsWith("JJD") && upper.length >= 10) return false;
   if (upper.startsWith("JD") && upper.length >= 10) return false;
-  // Partial GTIN / Galaxus order number while typing → predictive OK.
-  if (/^\d{3,14}$/.test(v)) return true;
+  if (/^\d{8,}$/.test(v)) return false;
   if (v.length < 8) return true;
   if (/[a-z]/i.test(v)) return true;
   if (/(.)\1/.test(v)) return true;
-  return false;
-};
-
-/** Instant long dump (scanner/paste) — do not open predictive dropdown. */
-const looksLikeScannerDump = (prev: string, next: string): boolean => {
-  if (prev.length > 0) return false;
-  const v = next.trim();
-  if (v.length < 8) return false;
-  if (/^\d{8,}$/.test(v)) return true;
-  if (/^(1Z|JJD|JD)/i.test(v) && v.length >= 10) return true;
   return false;
 };
 
@@ -713,7 +703,6 @@ export default function ScanPage() {
   const suggestReqIdRef = useRef(0);
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstKeystrokeAtRef = useRef<number | null>(null);
-  const scannerDumpRef = useRef(false);
   const [packingSession, setPackingSession] = useState<PackingSessionEntry[]>([]);
   const [packingReject, setPackingReject] = useState<{ scanCode: string; reason: string } | null>(null);
   const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
@@ -873,11 +862,7 @@ export default function ScanPage() {
       suggestDebounceRef.current = null;
     }
     const q = code.trim();
-    if (
-      q.length < 2 ||
-      scannerDumpRef.current ||
-      !looksLikeManualQuery(q)
-    ) {
+    if (q.length < 2 || !looksLikeManualQuery(q)) {
       setSuggestions([]);
       setSuggestOpen(false);
       setSuggestLoading(false);
@@ -2425,15 +2410,10 @@ export default function ScanPage() {
               value={code}
               onChange={(e) => {
                 const next = e.target.value;
-                const prev = code;
-                if (looksLikeScannerDump(prev, next)) {
-                  scannerDumpRef.current = true;
-                  firstKeystrokeAtRef.current = null;
-                } else if (prev.length === 0 && next.length > 0) {
-                  scannerDumpRef.current = false;
+                const prevEmpty = code.length === 0;
+                if (prevEmpty && next.length > 0) {
                   firstKeystrokeAtRef.current = Date.now();
                 } else if (next.length === 0) {
-                  scannerDumpRef.current = false;
                   firstKeystrokeAtRef.current = null;
                 }
                 setCode(next);
