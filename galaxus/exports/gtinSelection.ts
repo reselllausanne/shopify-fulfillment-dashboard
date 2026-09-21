@@ -3,6 +3,7 @@ import { GALAXUS_PRICE_MODEL } from "@/galaxus/edi/config";
 import { validateGtin } from "@/app/lib/normalize";
 import { resolveGalaxusSellExVatForChannel } from "@/galaxus/exports/pricing";
 import { shouldOmitWelPokemonFromGalaxusFeed } from "@/galaxus/exports/welFeedOmit";
+import { shouldExcludeNonStxPokemon } from "@/galaxus/exports/pokemonCatalogExclude";
 import { shouldOmitStxFromGalaxusFeed } from "@/galaxus/exports/stxFeedGate";
 import { hasGalaxusPrimaryImage } from "@/galaxus/exports/variantImagePresence";
 
@@ -45,6 +46,7 @@ type CandidateExcludeReason =
   | "INVALID_PRICE"
   | "INVALID_PROVIDER_KEY"
   | "SUPPLIER_BLOCKED"
+  | "POKEMON_NON_STX"
   ;
 
 type AccumulateOptions = {
@@ -103,6 +105,16 @@ export function accumulateBestCandidates(
     // BAE stays in candidates so stock feed can emit QuantityOnStock=0 (delist).
     // Master/offer routes call isBaeFeedBlocked separately.
     if (
+      shouldExcludeNonStxPokemon({
+        supplierKey,
+        providerKey: variant?.providerKey ?? mapping?.providerKey,
+        supplierVariantId: variant?.supplierVariantId ?? mapping?.supplierVariantId,
+        title: variant?.supplierProductName,
+        brand: variant?.supplierBrand,
+        productType: variant?.supplierProductType,
+        url: variant?.manualNote,
+        categories: [mapping?.kickdbVariant?.product?.category],
+      }) ||
       shouldOmitWelPokemonFromGalaxusFeed({
         supplierKey,
         providerKey: variant?.providerKey ?? mapping?.providerKey,
@@ -118,7 +130,7 @@ export function accumulateBestCandidates(
       })
     ) {
       options?.onExclude?.({
-        reason: "SUPPLIER_BLOCKED",
+        reason: "POKEMON_NON_STX",
         supplierKey: supplierKey ?? "wel",
         mapping,
         variant,

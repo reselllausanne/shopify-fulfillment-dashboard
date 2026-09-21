@@ -23,34 +23,44 @@ describe("venova shipping + margin", () => {
     }
   });
 
-  it("uses PostPac Economy 10 + 20% on landed", () => {
+  it("quotes PostPac Economy by weight, not flat 10", () => {
     delete process.env.SCRAPER_VEN_MARGIN_PERCENT;
     delete process.env.SCRAPER_VEN_SHIPPING_CHF;
-    expect(venovaPricingConfig().shippingChf).toBe(10);
+    expect(venovaPricingConfig().shippingChf).toBeNull();
     const cost = computeVenovaSellPrice(1944, 5);
-    expect(cost?.shippingChf).toBe(10);
-    expect(cost?.landedChf).toBe(1954);
-    expect(cost?.sellPriceChf).toBe(2344.8); // 1954 * 1.2
+    expect(cost?.shippingChf).toBe(12);
+    expect(cost?.shippingReason).toBe("postpac_economy_le_10kg");
+    expect(cost?.landedChf).toBe(1956);
+    expect(cost?.sellPriceChf).toBe(2347.2);
     expect(cost?.skippedReason).toBeNull();
   });
 
-  it("keeps ship floor on heavy SKUs (no skip by default)", () => {
-    delete process.env.SCRAPER_VEN_BULKY_SHIPPING_CHF;
-    delete process.env.SCRAPER_VEN_SKIP_OVER_30KG;
-    const ship = resolveVenovaShippingChf(128);
-    expect(ship.skip).toBe(false);
-    expect(ship.shippingChf).toBe(10);
-    expect(ship.reason).toBe("postpac_economy_floor_heavy");
-    const cost = computeVenovaSellPrice(1944, 128);
-    expect(cost?.skippedReason).toBeNull();
-    expect(cost?.shippingChf).toBe(10);
-    expect(cost?.sellPriceChf).toBe(2344.8);
+  it("2kg band is CHF 9", () => {
+    delete process.env.SCRAPER_VEN_SHIPPING_CHF;
+    expect(resolveVenovaShippingChf(1.2).shippingChf).toBe(9);
   });
 
-  it("can still skip heavy when SCRAPER_VEN_SKIP_OVER_30KG=1", () => {
+  it("unknown weight is not sellable — no invented ship", () => {
+    delete process.env.SCRAPER_VEN_SHIPPING_CHF;
+    const ship = resolveVenovaShippingChf(null);
+    expect(ship.skip).toBe(true);
+    expect(ship.reason).toBe("weight_unknown");
+    const cost = computeVenovaSellPrice(100, null);
+    expect(cost?.skippedReason).toBe("weight_unknown");
+    expect(cost?.sellPriceChf).toBe(0);
+  });
+
+  it("over 30kg is Planzer — skip, do not charge CHF 10", () => {
     delete process.env.SCRAPER_VEN_BULKY_SHIPPING_CHF;
-    process.env.SCRAPER_VEN_SKIP_OVER_30KG = "1";
+    delete process.env.SCRAPER_VEN_SHIPPING_CHF;
     const ship = resolveVenovaShippingChf(128);
     expect(ship.skip).toBe(true);
+    expect(ship.reason).toBe("over_30kg_not_postpac");
+  });
+
+  it("env flat override still wins when set", () => {
+    process.env.SCRAPER_VEN_SHIPPING_CHF = "10";
+    expect(resolveVenovaShippingChf(5).shippingChf).toBe(10);
+    expect(resolveVenovaShippingChf(5).reason).toBe("env_flat_override");
   });
 });

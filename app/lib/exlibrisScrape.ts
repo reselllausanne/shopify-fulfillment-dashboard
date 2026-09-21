@@ -348,7 +348,12 @@ export async function scrapeExlibrisShop(
     ])
   );
 
-  const progress = loadProgress(progressFile, catalog);
+  const progressRaw = loadProgress(progressFile, catalog);
+  const progress =
+    (progressRaw.rowsWritten ?? 0) === 0 &&
+    (progressRaw.doneCategories.length > 0 || progressRaw.pendingCategories.length > 0)
+      ? emptyProgress(catalog)
+      : progressRaw;
   // Only treat checkpoint EANs as done if already in DB — Python seen-set
   // blocked ~14k CSV rows that never got upserted.
   for (const e of progress.seenEans) {
@@ -457,20 +462,32 @@ export async function scrapeExlibrisShop(
     imageSynced += img.synced;
     imageFailed += img.failed;
 
+    const invalidEmpty = stats.listed === 0;
+    if (invalidEmpty) {
+      try {
+        fs.unlinkSync(progressFile);
+      } catch {
+        /* no checkpoint */
+      }
+    }
+
     await updateRun(runId, {
-      status: "completed",
+      status: invalidEmpty ? "error" : "completed",
       finished_at: new Date(),
       products_listed: stats.listed,
       variants_upserted: stats.wrote,
       message: [
-        `source=exlibris-listing`,
+        invalidEmpty ? "SCRAPE_INVALID" : "source=exlibris-listing",
         `catalog=${catalog}`,
         `listed=${stats.listed}`,
         `wrote=${stats.wrote}`,
         `req_errors=${stats.requestErrors}`,
         `images_synced=${imageSynced}`,
         deferExlImageSync() ? "image_sync=deferred" : "image_sync=inline",
-      ].join(" "),
+        invalidEmpty ? "empty_run_is_not_stock_proof" : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
     });
   } catch (err) {
     progress.seenEans = [...seen];
