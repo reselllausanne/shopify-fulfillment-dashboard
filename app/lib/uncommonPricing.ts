@@ -1,4 +1,5 @@
 /** The Uncommon Shop CHF retail → Galaxus sell (ship + % margin). */
+import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
 
 export type UncommonLandedCost = {
   buyChf: number;
@@ -18,7 +19,7 @@ export const UNCOMMON_FLAT_SHIPPING_CHF = 7;
 
 export function uncommonPricingConfig() {
   return {
-    marginPercent: Math.max(0, Number(process.env.SCRAPER_TUS_MARGIN_PERCENT || "20")),
+    marginPercent: Math.max(0, Number(process.env.SCRAPER_TUS_MARGIN_PERCENT || "30")),
     shippingChf: Math.max(
       0,
       Number(process.env.SCRAPER_TUS_SHIPPING_CHF || UNCOMMON_FLAT_SHIPPING_CHF)
@@ -42,14 +43,19 @@ export function computeUncommonLandedCost(buyChf: number): UncommonLandedCost | 
   const free = buy >= cfg.freeShipThresholdChf;
   const shippingChf = free ? 0 : cfg.shippingChf;
   const landedChf = roundChf(buy + shippingChf);
-  const sellPriceChf = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const fromPct = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const floor = applyCheapItemSellFloor({
+    buyChf: buy,
+    landedChf,
+    sellFromPercentChf: fromPct,
+  });
   return {
     buyChf: buy,
     shippingChf,
     shippingReason: free ? "free_ship_threshold" : "flat_under_threshold",
     landedChf,
     marginPercent: cfg.marginPercent,
-    sellPriceChf,
+    sellPriceChf: floor.sellPriceChf,
     priceSource: "chf_shelf_plus_ship_plus_margin",
     freeShipThresholdChf: cfg.freeShipThresholdChf,
   };

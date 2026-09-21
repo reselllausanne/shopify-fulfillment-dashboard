@@ -1,4 +1,6 @@
 /** Reichelt CH (Suisse / DPD) shipping tiers — EUR, from /shop/service/-12_28 */
+import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+
 export const REICHELT_CH_SHIPPING_TIERS_EUR: Array<{ maxKg: number; priceEur: number }> = [
   { maxKg: 10, priceEur: 10.21 },
   { maxKg: 20, priceEur: 15.59 },
@@ -262,7 +264,13 @@ export function computeReicheltLandedCost(input: {
   const shippingChf = roundChf(shippingEur * resolved.eurChfRate);
   const landedChf = roundChf(resolved.productChf + shippingChf);
   const marginPercent = input.marginPercent ?? cfg.marginPercent;
-  const sellPriceChf = roundChf(landedChf * (1 + marginPercent / 100));
+  const fromPct = roundChf(landedChf * (1 + marginPercent / 100));
+  const floor = applyCheapItemSellFloor({
+    buyChf: resolved.productChf,
+    landedChf,
+    sellFromPercentChf: fromPct,
+  });
+  const sellPriceChf = floor.sellPriceChf;
 
   return {
     productChf: resolved.productChf,

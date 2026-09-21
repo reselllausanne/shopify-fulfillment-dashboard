@@ -151,7 +151,7 @@ export function resolvePricingOverrides(overrides?: PricingOverrides | null) {
 /**
  * Sell ex VAT = DB price as-is (no second uplift).
  * - ner / the: partner buy = sell
- * - rei / wrk / fan / haw / exl / bae / ven / tus: scrapers already store landed×margin shelf
+ * - rei / wrk / fan / haw / exl / bae / ven / tus / alt: scrapers already store landed×margin shelf
  */
 const GALAXUS_ZERO_MARGIN_SUPPLIER_KEYS = new Set([
   "ner",
@@ -164,6 +164,7 @@ const GALAXUS_ZERO_MARGIN_SUPPLIER_KEYS = new Set([
   "bae",
   "ven",
   "tus",
+  "alt",
 ]);
 const GALAXUS_GLD_SUPPLIER_KEYS = new Set(["golden", "gld"]);
 
@@ -377,7 +378,7 @@ export type ResolveGalaxusSellOptions = {
 /**
  * Galaxus retail feed:
  * - `ner` / `the` = sell ex VAT equals partner buy (0% margin)
- * - `rei` / `wrk` / `fan` / `haw` / `exl` / `bae` / `ven` = scraper shelf already includes
+ * - `rei` / `wrk` / `fan` / `haw` / `exl` / `bae` / `ven` / `tus` / `alt` = scraper shelf already includes
  *   ship + % margin — push DB price as-is (no second Galaxus net-margin pass)
  * - other partners = +10% on buy ex VAT
  * - `golden` / `gld` = (buy + ship + CH import VAT + douane) × 1.15
@@ -438,7 +439,7 @@ export function resolveGalaxusSellExVatForChannel(
     );
   const bufferPerPair = resolveBufferPerPairForSupplier(supplierKey, defaults.bufferPerPair);
 
-  return computeGalaxusSellPriceExVat({
+  const priced = computeGalaxusSellPriceExVat({
     buyPriceExVatCHF,
     shippingPerPairCHF: shippingPerPair,
     targetNetMargin,
@@ -446,6 +447,18 @@ export function resolveGalaxusSellExVatForChannel(
     roundTo: defaults.roundTo,
     vatRate: defaults.vatRate,
   }).sellPriceExVatCHF;
+
+  // Cheap BWZ/WEL: absolute CHF 5 pocket when buy < 10 (same rule as scrapers).
+  if (
+    (isBwzGalaxusSupplierKey(supplierKey) || isWelGalaxusSupplierKey(supplierKey)) &&
+    buyPriceExVatCHF < 10
+  ) {
+    const landed = buyPriceExVatCHF + shippingPerPair + bufferPerPair;
+    const floor = Math.round((landed + 5) * 100) / 100;
+    return Math.max(priced, floor);
+  }
+
+  return priced;
 }
 
 /**

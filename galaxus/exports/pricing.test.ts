@@ -116,8 +116,9 @@ describe("Galaxus STX locked margin", () => {
   });
 
   it("uses higher default shipping for WEL own-catalog lines", () => {
+    // buy 3 < 10 → cheap floor (3+7+1)+5 = 16 beats net path 12.95
     const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
-    expect(welSell).toBe(12.95);
+    expect(welSell).toBe(16);
   });
 
   it("defaults WEL to at least 15% net + CHF 1 buffer", () => {
@@ -127,8 +128,8 @@ describe("Galaxus STX locked margin", () => {
   it("allows WEL shipping override via env", () => {
     process.env.GALAXUS_WEL_SHIPPING_CHF = "4";
     const welSell = resolveGalaxusSellExVatForChannel(3, "wel", new Set());
-    // (3 + 4 + 1) / 0.85 → 9.411 → round up 0.05 → 9.45
-    expect(welSell).toBe(9.45);
+    // cheap floor: (3+4+1)+5 = 13
+    expect(welSell).toBe(13);
   });
 
   it("WEL never goes below 15% even if env lower", () => {
@@ -156,6 +157,17 @@ describe("Galaxus STX locked margin", () => {
       shippingPerPairChf: 12,
     });
     expect(standard).toBe(72.8);
+  });
+
+  it("BWZ/WEL cheap buy under 10 gets +5 abs floor", () => {
+    // buy 6 + ship 2 → (8)/0.85=9.411→9.45; floor 8+5=13
+    expect(resolveGalaxusSellExVatForChannel(6, "bwz", new Set())).toBe(13);
+    // WEL: buy 6 + ship 7 + buf 1 = 14; /0.85=16.47→16.5; floor 14+5=19 → 19
+    expect(resolveGalaxusSellExVatForChannel(6, "wel", new Set())).toBe(19);
+  });
+
+  it("ALT is zero-pass (no second Galaxus net)", () => {
+    expect(resolveGalaxusSellExVatForChannel(49.99, "alt", new Set())).toBeCloseTo(50, 1);
   });
 
   it("BWZ floor 15% / allows higher", () => {

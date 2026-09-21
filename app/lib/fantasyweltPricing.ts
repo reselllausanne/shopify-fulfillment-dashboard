@@ -1,4 +1,5 @@
 /** FantasyWelt.de (DE/EUR) → CHF sell pricing for Galaxus SupplierVariant.price */
+import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
 
 export type FantasyweltLandedCost = {
   buyEurGross: number;
@@ -57,7 +58,12 @@ export function computeFantasyweltLandedCost(buyEurGross: number): FantasyweltLa
   const buyChf = roundChf(buyEurGross * cfg.eurChfRate);
   const { shippingChf, reason } = resolveFantasyweltShippingChf(buyEurGross);
   const landedChf = roundChf(buyChf + shippingChf);
-  const sellPriceChf = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const fromPct = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const floor = applyCheapItemSellFloor({
+    buyChf,
+    landedChf,
+    sellFromPercentChf: fromPct,
+  });
   return {
     buyEurGross: roundChf(buyEurGross),
     buyChf,
@@ -65,7 +71,7 @@ export function computeFantasyweltLandedCost(buyEurGross: number): FantasyweltLa
     shippingReason: reason,
     landedChf,
     marginPercent: cfg.marginPercent,
-    sellPriceChf,
+    sellPriceChf: floor.sellPriceChf,
     eurChfRate: cfg.eurChfRate,
     deVatRate: cfg.deVatRate,
     priceSource: "eur_gross_converted",
