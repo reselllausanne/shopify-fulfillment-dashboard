@@ -1,4 +1,6 @@
-/** Venova.ch CHF retail → Galaxus sell (ship + % margin). */
+import { quotePostPacEconomy } from "@/app/lib/swissPostEconomy";
+
+/** Venova.ch CHF retail → Galaxus sell (PostPac Economy by weight + % margin). */
 
 export type VenovaLandedCost = {
   buyChf: number;
@@ -12,7 +14,7 @@ export type VenovaLandedCost = {
   skippedReason: string | null;
 };
 
-/** PostPac Economy — Venova default parcel rate (no free shipping). */
+/** @deprecated Flat CHF 10 is not a shipping quote. Kept so old env checks fail closed. */
 export const VENOVA_POSTPAC_ECONOMY_CHF = 10;
 /** Skip / Planzer territory — FAQ: >30 kg goes Planzer (variable). */
 export const VENOVA_POST_MAX_KG = 30;
@@ -20,11 +22,15 @@ export const VENOVA_POST_MAX_KG = 30;
 export function venovaPricingConfig() {
   return {
     marginPercent: Math.max(0, Number(process.env.SCRAPER_VEN_MARGIN_PERCENT || "20")),
-    /** PostPac Economy floor — applied to all SKUs (incl. heavy / unknown Planzer). */
-    shippingChf: Math.max(
-      0,
-      Number(process.env.SCRAPER_VEN_SHIPPING_CHF || VENOVA_POSTPAC_ECONOMY_CHF)
-    ),
+    /**
+     * Optional override. Unset → quote from weight (Swiss Post 2026).
+     * Do not default to flat CHF 10.
+     */
+    shippingChf:
+      process.env.SCRAPER_VEN_SHIPPING_CHF === undefined ||
+      process.env.SCRAPER_VEN_SHIPPING_CHF === ""
+        ? null
+        : Math.max(0, Number(process.env.SCRAPER_VEN_SHIPPING_CHF)),
     /** Optional flat for known bulky; unused when skip-over-30 is off (default). */
     bulkyShippingChf:
       process.env.SCRAPER_VEN_BULKY_SHIPPING_CHF === undefined ||
@@ -48,16 +54,17 @@ export function resolveVenovaShippingChf(weightKg: number | null): {
   skipReason: string | null;
 } {
   const cfg = venovaPricingConfig();
-  if (weightKg != null && weightKg > cfg.postMaxKg) {
-    if (cfg.skipOverPostMax && cfg.bulkyShippingChf == null) {
-      return {
-        shippingChf: 0,
-        reason: "planzer_unknown",
-        skip: true,
-        skipReason: `weight_kg>${cfg.postMaxKg}_planzer`,
-      };
-    }
-    if (cfg.bulkyShippingChf != null) {
+  if (cfg.shippingChf != null) {
+    return {
+      shippingChf: cfg.shippingChf,
+      reason: "env_flat_override",
+      skip: false,
+      skipReason: null,
+    };
+  }
+  const quote = quotePostPacEconomy({ weightKg });
+  if (!quote.shippable || quote.shippingChf == null) {
+    if (weightKg != null && weightKg > cfg.postMaxKg && cfg.bulkyShippingChf != null) {
       return {
         shippingChf: cfg.bulkyShippingChf,
         reason: "bulky_env_flat",
@@ -65,17 +72,16 @@ export function resolveVenovaShippingChf(weightKg: number | null): {
         skipReason: null,
       };
     }
-    // Heavy but allowed: still charge PostPac floor (ops absorbs Planzer delta).
     return {
-      shippingChf: cfg.shippingChf,
-      reason: "postpac_economy_floor_heavy",
-      skip: false,
-      skipReason: null,
+      shippingChf: 0,
+      reason: quote.reason,
+      skip: true,
+      skipReason: quote.reason,
     };
   }
   return {
-    shippingChf: cfg.shippingChf,
-    reason: "postpac_economy",
+    shippingChf: quote.shippingChf,
+    reason: quote.reason,
     skip: false,
     skipReason: null,
   };

@@ -19,7 +19,7 @@ export type SupplierContractStatus = {
 const DISPLAY: Record<string, string> = {
   wel: "WellPlayed",
   rei: "Reichelt",
-  bae: "Bächli",
+  bae: "Bächli (REMOVAL_READY)",
   fan: "FantasyWelt",
   exl: "Ex Libris",
   haw: "Hawk",
@@ -65,9 +65,12 @@ export function getSupplierContractStatus(supplierKey: string): SupplierContract
     displayName: DISPLAY[key] ?? key.toUpperCase(),
     observationContractImplemented: implemented,
     observationContractValidated: false,
-    notes: implemented
-      ? "Scraper emits SupplierVariantObservation"
-      : "Pending — runner finalizes runs but scraper does not yet emit page proofs",
+    notes:
+      key === "bae"
+        ? "REMOVAL_READY — scraper dead, feeds blocked, Galaxus stock zero not armed until BAE_GALAXUS_STOCK_ZERO=1"
+        : implemented
+          ? "Scraper emits SupplierVariantObservation"
+          : "Pending — runner finalizes runs but scraper does not yet emit page proofs",
   };
 }
 

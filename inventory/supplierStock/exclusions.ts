@@ -1,3 +1,5 @@
+import { classifyPokemonCatalog } from "@/galaxus/exports/pokemonCatalogExclude";
+
 /**
  * Supplier-specific exclusion rules (self-contained — no feedIntegrity dependency).
  */
@@ -37,8 +39,24 @@ export function evaluateSupplierExclusion(input: {
   supplierKey?: string | null;
   productName?: string | null;
   brand?: string | null;
+  productType?: string | null;
   extraText?: string | null;
 }): ExclusionResult {
+  const poke = classifyPokemonCatalog({
+    supplierKey: input.supplierKey,
+    title: input.productName,
+    brand: input.brand,
+    productType: input.productType,
+    url: input.extraText,
+  });
+  if (poke.excluded) {
+    return {
+      excluded: true,
+      reason: "POKEMON_NON_STX",
+      detail: `${poke.confidence}:${poke.reason}`,
+    };
+  }
+
   const key = String(input.supplierKey ?? "")
     .trim()
     .toLowerCase();

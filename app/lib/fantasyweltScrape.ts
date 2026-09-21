@@ -573,10 +573,16 @@ export async function scrapeFantasyweltShop(
     });
   } catch (err: any) {
     saveProgress(cfg.progressFile, progress);
+    const msg = String(err?.message || err);
+    const blocked = /cloudflare/i.test(msg);
     await updateRun(runId, {
       status: "error",
       finished_at: new Date(),
-      message: String(err?.message || err).slice(0, 2000),
+      products_listed: listed,
+      variants_upserted: wrote,
+      message: blocked
+        ? `SCRAPE_BLOCKED_CLOUDFLARE ${msg}`.slice(0, 2000)
+        : msg.slice(0, 2000),
     });
     throw err;
   }

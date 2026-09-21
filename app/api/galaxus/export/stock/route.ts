@@ -122,6 +122,7 @@ export async function GET(request: Request) {
     ? await prismaAny.partner.findMany({ select: PARTNER_KEY_SELECT })
     : [];
   const galaxusPartnerKeysLower = partnerKeysLowerSet(partners);
+  const pokemonDelistKeys = new Set<string>();
 
   do {
     const whereClause: Record<string, unknown> = all
@@ -166,6 +167,12 @@ export async function GET(request: Request) {
       onExclude: (payload) => {
         if (payload.supplierKey === "trm") {
           recordTrmFeedExclusion(trmExclusionStats, payload.reason);
+        }
+        if (payload.reason === "POKEMON_NON_STX") {
+          const key = String(
+            payload.variant?.providerKey ?? payload.mapping?.providerKey ?? ""
+          ).trim();
+          if (key) pokemonDelistKeys.add(key);
         }
       },
     });
@@ -491,6 +498,26 @@ export async function GET(request: Request) {
           { ok: false, error: "Alternative merge would shrink export rows." },
           { status: 409 }
         );
+      }
+    }
+
+    if (String(process.env.POKEMON_NON_STX_STOCK_ZERO ?? "").trim() === "1") {
+      const already = new Set(finalRows.map((row) => String(row.ProviderKey ?? "")));
+      for (const key of pokemonDelistKeys) {
+        if (!key || already.has(key)) continue;
+        already.add(key);
+        finalRows.push({
+          ProviderKey: key,
+          QuantityOnStock: "0",
+          RestockTime: "",
+          RestockDate: "",
+          MinimumOrderQuantity: "",
+          OrderQuantitySteps: "",
+          TradeUnit: "",
+          LogisticUnit: "",
+          WarehouseCountry: "Poland",
+          DirectDeliverySupported: "0",
+        });
       }
     }
 
