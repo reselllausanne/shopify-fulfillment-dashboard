@@ -106,9 +106,10 @@ export async function unshipGalaxusDirectOrder(
               delrError: null,
               galaxusShippedAt: null,
               trackingNumber: null,
-              shippingLabelPdfUrl: null,
-              deliveryNotePdfUrl: null,
-            } as any,
+              labelPdfUrl: null,
+              labelZpl: null,
+              labelGeneratedAt: null,
+            },
           })
           .catch(() => undefined);
         shipmentsReset += 1;
@@ -120,9 +121,10 @@ export async function unshipGalaxusDirectOrder(
           where: { id: shipment.id },
           data: {
             trackingNumber: null,
-            shippingLabelPdfUrl: null,
-            deliveryNotePdfUrl: null,
-          } as any,
+            labelPdfUrl: null,
+            labelZpl: null,
+            labelGeneratedAt: null,
+          },
         })
         .catch(() => undefined);
     }
