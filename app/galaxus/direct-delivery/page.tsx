@@ -101,6 +101,7 @@ export default function GalaxusDirectDeliveryPage() {
   const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [sendingOrdr, setSendingOrdr] = useState(false);
   const [reprintBusy, setReprintBusy] = useState(false);
+  const [unshipBusy, setUnshipBusy] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
   // Partial (per-pair) shipping: lineId → quantity to ship now.
@@ -658,6 +659,38 @@ export default function GalaxusDirectDeliveryPage() {
     setSelectedPairs((prev) => ({ ...prev, [lineId]: clamped }));
   };
 
+  const unshipDirectOrder = async () => {
+    if (!selectedOrderId) return;
+    const ok = window.confirm(
+      "Unship this order?\n\n" +
+        "• Clears Fulfilled / shipped marks\n" +
+        "• Deletes local Swiss Post shipments + labels\n" +
+        "• Puts lines back to À traiter\n\n" +
+        "Only if Galaxus has NOT already processed the DELR (or you will fix EDI manually).\n\nContinue?"
+    );
+    if (!ok) return;
+    setUnshipBusy(true);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/unship`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? data?.result?.message ?? "Unship failed");
+      }
+      setOpsLog(JSON.stringify(data.result ?? data, null, 2));
+      setSelectedPairs({});
+      await loadOrders({ force: true });
+      await loadOrderDetail(selectedOrderId, { force: true });
+    } catch (err: any) {
+      setError(err?.message ?? "Unship failed");
+    } finally {
+      setUnshipBusy(false);
+    }
+  };
+
   const reprintDirectDocuments = async () => {
     if (!selectedOrderId) return;
     setReprintBusy(true);
@@ -1170,15 +1203,26 @@ export default function GalaxusDirectDeliveryPage() {
                       </button>
                     </>
                   )}
-                  {(orderFulfilled || shippingLabelUrl || packingSlipUrl) && (
+                  {(orderFulfilled || partiallyShipped || shippingLabelUrl || packingSlipUrl) && (
                     <button
                       type="button"
                       onClick={() => void reprintDirectDocuments()}
-                      disabled={reprintBusy || !selectedOrderId}
+                      disabled={reprintBusy || unshipBusy || !selectedOrderId}
                       title="Reprint Swiss Post label (Brother) + delivery note (HP) if present"
                       className="px-2 py-1.5 bg-amber-700 text-white rounded text-xs disabled:opacity-50"
                     >
                       {reprintBusy ? "Reprint…" : "Reprint docs"}
+                    </button>
+                  )}
+                  {(orderFulfilled || partiallyShipped) && (
+                    <button
+                      type="button"
+                      onClick={() => void unshipDirectOrder()}
+                      disabled={unshipBusy || reprintBusy || shipping || !selectedOrderId}
+                      title="Mistake recovery: delete local shipments and reopen lines"
+                      className="px-2 py-1.5 bg-red-700 text-white rounded text-xs disabled:opacity-50"
+                    >
+                      {unshipBusy ? "Unship…" : "Unship"}
                     </button>
                   )}
                   {packingSlipUrl ? (

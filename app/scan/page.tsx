@@ -9,7 +9,10 @@ import {
   shouldAutoGalaxusDirectLabelFor,
 } from "./scanInboundGuards";
 import {
+  activatePrintStation,
+  deactivatePrintStation,
   probePrintStationStatus,
+  tryStationAutoPrint,
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
 
@@ -163,6 +166,19 @@ type ScanResult = {
     autoDirectOrderDbId?: string | null;
     autoDirectLineId?: string | null;
     autoDirectRemaining?: number;
+    autoDirectOpenUnits?: Array<{
+      lineItemId: string;
+      lineId?: string;
+      title: string;
+      remainingQuantity: number;
+      isScannedLine?: boolean;
+    }>;
+    autoDirectUnitSelection?: {
+      requiresPopup: boolean;
+      totalOpenUnits: number;
+      openLineCount: number;
+      reason: string;
+    } | null;
     autoShopify?: {
       shopifyOrderId: string;
       shopifyOrderName?: string | null;
@@ -335,6 +351,12 @@ const ENABLE_BROWSER_PRINT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
   true
 );
+/** Packing Mac on localhost — hide QZ UI; labels go CUPS (`LOCAL_STATION=1`). */
+const isLocalhostPackingBrowser = () => {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location.hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+};
 // Force fulfill is destructive — never surface unless explicitly enabled per station.
 const ENABLE_FORCE_FULFILL = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_FORCE_FULFILL,
@@ -573,24 +595,47 @@ const openLabelPreview = (payload: LabelDataPayload) => {
 };
 
 /**
- * Show label to operator. Skip popup only when CUPS actually printed
- * (printJobResult.ok). VPS never succeeds CUPS → always opens popup.
- * Ignores browserPrintConfig.enabled=false from stale server paths that
- * attempted CUPS and then suppressed the popup for nothing.
+ * Show label to operator.
+ * 1) Real CUPS success (LOCAL_STATION packing Mac) → silent, no popup
+ * 2) QZ silent if Activate'd (remote / VPS browser stations)
+ * 3) Else browser print dialog
  */
-const presentScanLabel = (options: {
+const presentScanLabel = async (options: {
   labelData?: LabelDataPayload | null;
   browserPrintConfig?: BrowserPrintConfig | null;
   printJobResult?: PrintJobClientResult | null;
   deliveryNotePrintResult?: PrintJobClientResult | null;
   blockedMessage: string;
-}): boolean => {
-  const cupsOk = options.printJobResult?.ok === true;
-  if (cupsOk) {
+}): Promise<boolean> => {
+  const cupsPrinted =
+    options.printJobResult?.ok === true &&
+    options.printJobResult?.skipped !== true;
+
+  if (cupsPrinted) {
     alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
     return true;
   }
   if (!options.labelData?.base64) return false;
+
+  const ext = String(options.labelData.mimeType || "").includes("png") ? "png" : "pdf";
+  try {
+    const qz = await tryStationAutoPrint({
+      matchCertainty: "certain",
+      job: {
+        base64: options.labelData.base64,
+        extension: ext === "png" ? "png" : "pdf",
+        jobName: "scan-label",
+        copies: 1,
+      },
+    });
+    if (qz.ok) {
+      alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
+      return true;
+    }
+  } catch {
+    // QZ optional — fall through to browser print.
+  }
+
   const opened = ENABLE_BROWSER_PRINT
     ? openLabelPrintDialog(options.labelData, options.browserPrintConfig ?? undefined)
     : openLabelPreview(options.labelData);
@@ -682,9 +727,39 @@ export default function ScanPage() {
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [printStationStatus, setPrintStationStatus] =
     useState<PrintStationProbeStatus | null>(null);
+  const [qzBusy, setQzBusy] = useState(false);
+  const [qzPrinterPick, setQzPrinterPick] = useState<{
+    printers: string[];
+    filter: string;
+  } | null>(null);
+  /** pending until mount — avoids SSR/client QZ flash mismatch */
+  const [packingHost, setPackingHost] = useState<"pending" | "local" | "remote">(
+    "pending"
+  );
+  const showQzControls = packingHost === "remote";
+  const showLocalCupsBadge = packingHost === "local";
+
+  const refreshPrintStation = async (connect = false) => {
+    try {
+      const status = await probePrintStationStatus(undefined, { connect });
+      setPrintStationStatus(status);
+      return status;
+    } catch {
+      setPrintStationStatus(null);
+      return null;
+    }
+  };
   useEffect(() => {
+    setPackingHost(isLocalhostPackingBrowser() ? "local" : "remote");
+  }, []);
+  useEffect(() => {
+    if (!showQzControls) {
+      setPrintStationStatus(null);
+      return;
+    }
     let cancelled = false;
-    probePrintStationStatus()
+    // Inactive: probe without connect (no QZ Allow spam on page load).
+    probePrintStationStatus(undefined, { connect: false })
       .then((status) => {
         if (!cancelled) setPrintStationStatus(status);
       })
@@ -694,7 +769,53 @@ export default function ScanPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showQzControls]);
+
+  const finishQzActivateWithPrinter = async (printerName: string) => {
+    setQzBusy(true);
+    try {
+      const result = await activatePrintStation({ printerName });
+      setPrintStationStatus(result.status);
+      setQzPrinterPick(null);
+      if (!result.ok) {
+        window.alert(result.error || "QZ activate failed.");
+        return;
+      }
+      window.alert(`QZ Tray active → ${result.status.printerName || printerName}.`);
+    } finally {
+      setQzBusy(false);
+    }
+  };
+
+  const handleActivateQz = async () => {
+    setQzBusy(true);
+    try {
+      const result = await activatePrintStation();
+      setPrintStationStatus(result.status);
+      if (result.printers && result.printers.length > 1 && result.error === "Pick a printer") {
+        setQzPrinterPick({ printers: result.printers, filter: "" });
+        return;
+      }
+      if (!result.ok) {
+        window.alert(
+          result.error ||
+            "QZ activate failed. Install/start QZ Tray, Allow this site, then retry."
+        );
+        return;
+      }
+      window.alert(
+        `QZ Tray active → ${result.status.printerName || "printer"}. Labels print silently on scan.`
+      );
+    } finally {
+      setQzBusy(false);
+    }
+  };
+
+  const handleDeactivateQz = async () => {
+    deactivatePrintStation();
+    setQzPrinterPick(null);
+    await refreshPrintStation(false);
+  };
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
@@ -950,7 +1071,7 @@ export default function ScanPage() {
     setDirectQtyPrompt(null);
   };
 
-  /** Always ask how many to ship for GTIN → Galaxus direct (every scan). */
+  /** Ask qty when order has multi_qty / multi_line; skip when single remaining unit. */
   const promptDirectShipQuantity = (params: {
     orderDbId: string;
     lineId: string;
@@ -1128,7 +1249,7 @@ export default function ScanPage() {
         deliveryNoteNotice: dn.message,
       });
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -1171,7 +1292,7 @@ export default function ScanPage() {
       } = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -1870,20 +1991,42 @@ export default function ScanPage() {
               gtinAutoDirectOrderDbId;
             const productName =
               String(autoRow?.productName ?? data.gtin?.productName ?? "").trim() || "Item";
-            const qty = await promptDirectShipQuantity({
-              orderDbId: gtinAutoDirectOrderDbId,
-              lineId,
-              orderLabel,
-              productName,
-              remaining,
-              requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired),
-            });
-            if (qty && qty > 0) {
+            const requiresDeliveryNote = Boolean(autoRow?.physicalDeliveryNoteRequired);
+            const unitSelection = data.gtin?.autoDirectUnitSelection;
+            const openUnits = (data.gtin?.autoDirectOpenUnits ?? []).filter(
+              (u) => Math.max(0, Number(u.remainingQuantity)) > 0
+            );
+            // Order-scoped: popup only when multi_line or multi_qty. Single unit → auto ship.
+            const needsPopup =
+              unitSelection?.requiresPopup === true ||
+              (!unitSelection &&
+                (openUnits.length > 1 ||
+                  remaining > 1 ||
+                  (openUnits.length === 1 &&
+                    Math.max(0, Number(openUnits[0]?.remainingQuantity)) > 1)));
+
+            if (!needsPopup) {
               await runDirectLabelForOrder(
                 gtinAutoDirectOrderDbId,
-                { lineId, quantity: qty },
-                { requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired) }
+                { lineId, quantity: 1 },
+                { requiresDeliveryNote }
               );
+            } else {
+              const qty = await promptDirectShipQuantity({
+                orderDbId: gtinAutoDirectOrderDbId,
+                lineId,
+                orderLabel,
+                productName,
+                remaining,
+                requiresDeliveryNote,
+              });
+              if (qty && qty > 0) {
+                await runDirectLabelForOrder(
+                  gtinAutoDirectOrderDbId,
+                  { lineId, quantity: qty },
+                  { requiresDeliveryNote }
+                );
+              }
             }
           }
         }
@@ -2006,7 +2149,7 @@ export default function ScanPage() {
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2122,7 +2265,7 @@ export default function ScanPage() {
         return;
       }
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2203,19 +2346,60 @@ export default function ScanPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2">
-          {printStationStatus ? (
+          {showQzControls ? (
+          <div className="flex flex-col items-end gap-0.5">
+            <div className="flex items-center gap-1">
+              <span
+                title={
+                  printStationStatus
+                    ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · validated=${printStationStatus.silentPrintValidated}`
+                    : "QZ Tray off"
+                }
+                className={
+                  "px-2 py-0.5 text-xs rounded border " +
+                  (printStationStatus?.readyForSilentPrint
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                    : "bg-gray-100 border-gray-300 text-gray-700")
+                }
+              >
+                QZ:{" "}
+                {printStationStatus?.readyForSilentPrint
+                  ? "on"
+                  : printStationStatus?.reason === "off" || !printStationStatus
+                    ? "off"
+                    : printStationStatus.reason}
+              </span>
+              {printStationStatus?.readyForSilentPrint ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDeactivateQz()}
+                  disabled={qzBusy}
+                  className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Off
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleActivateQz()}
+                  disabled={qzBusy}
+                  className="px-2 py-0.5 text-xs rounded border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                >
+                  {qzBusy ? "…" : "Activate"}
+                </button>
+              )}
+            </div>
+            <p className="max-w-[16rem] text-right text-[10px] leading-snug text-gray-500">
+              Need QZ Tray app installed + running on this Mac, then Activate.
+            </p>
+          </div>
+          ) : null}
+          {showLocalCupsBadge ? (
             <span
-              title={`QZ Tray: ${printStationStatus.reason} · validated=${printStationStatus.silentPrintValidated} · autoPrint=${printStationStatus.autoPrintOn}`}
-              className={
-                "px-2 py-0.5 text-xs rounded border " +
-                (printStationStatus.readyForSilentPrint
-                  ? "bg-emerald-50 border-emerald-300 text-emerald-800"
-                  : "bg-amber-50 border-amber-300 text-amber-800")
-              }
+              title="Localhost: labels auto-print via CUPS (LOCAL_STATION) to Brother. No QZ, no browser dialog."
+              className="px-2 py-0.5 text-xs rounded border bg-emerald-50 border-emerald-300 text-emerald-900"
             >
-              QZ: {printStationStatus.readyForSilentPrint
-                ? "ready"
-                : printStationStatus.reason}
+              Print: CUPS
             </span>
           ) : null}
           <a
@@ -2928,7 +3112,8 @@ export default function ScanPage() {
                 </p>
                 <p className="text-xs mt-1 text-fuchsia-800">
                   No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
-                  asks how many to ship (per order line) before printing a label. When Galaxus
+                  asks how many to ship only when the order has multiple open units;
+                  a single remaining unit ships and prints immediately. When Galaxus
                   requires a physical delivery note, that warning shows before ship and the note
                   opens with the Post label.
                 </p>
@@ -3326,6 +3511,65 @@ export default function ScanPage() {
             </div>
           </div>
         )}
+
+        {qzPrinterPick ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div
+              className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="qz-printer-pick-title"
+            >
+              <h2 id="qz-printer-pick-title" className="text-lg font-semibold text-gray-900">
+                QZ Tray — pick printer
+              </h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Need QZ Tray app installed + running. Type to filter.
+              </p>
+              <input
+                type="search"
+                autoFocus
+                value={qzPrinterPick.filter}
+                onChange={(e) =>
+                  setQzPrinterPick((prev) =>
+                    prev ? { ...prev, filter: e.target.value } : prev
+                  )
+                }
+                placeholder="Brother, QL, Zebra…"
+                className="mt-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+              <ul className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-200">
+                {qzPrinterPick.printers
+                  .filter((p) => {
+                    const f = qzPrinterPick.filter.trim().toLowerCase();
+                    if (!f) return true;
+                    return p.toLowerCase().includes(f);
+                  })
+                  .map((p) => (
+                    <li key={p}>
+                      <button
+                        type="button"
+                        disabled={qzBusy}
+                        onClick={() => void finishQzActivateWithPrinter(p)}
+                        className="w-full border-b border-gray-100 px-3 py-2 text-left text-sm hover:bg-indigo-50 disabled:opacity-50"
+                      >
+                        {p}
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setQzPrinterPick(null)}
+                  className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {directQtyPrompt ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

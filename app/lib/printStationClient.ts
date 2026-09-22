@@ -5,10 +5,10 @@
  * Falls back to returning { ok:false } so callers use browser print.
  *
  * HONESTY CONTRACT — we never claim silent print is ready unless BOTH:
- *   1. `window.qz` exists and its websocket is active on `localhost`.
- *   2. The operator has ticked `silentPrintValidated` in the station config.
- * Missing either → we refuse to silent-print and let the UI show the browser
- * label popup / status pill.
+ *   1. Operator clicked Activate (autoPrint + silentPrintValidated).
+ *   2. `window.qz` exists and its websocket is active on `localhost`.
+ *
+ * Probe must NOT call connect() while inactive — that spams QZ "Allow" prompts.
  */
 
 import {
@@ -19,11 +19,14 @@ import {
   type PrintStationConfig,
 } from "@/lib/printStation";
 
+const QZ_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/qz-tray@2.2.5/qz-tray.min.js";
+
 declare global {
   interface Window {
     qz?: {
       websocket: {
-        connect: () => Promise<void>;
+        connect: (opts?: Record<string, unknown>) => Promise<void>;
+        disconnect?: () => Promise<void>;
         isActive: () => boolean;
       };
       printers: { find: (name?: string) => Promise<string | string[]> };
@@ -49,6 +52,11 @@ export function savePrintStationConfig(config: PrintStationConfig): void {
   window.localStorage.setItem(PRINT_STATION_STORAGE_KEY, JSON.stringify(config));
 }
 
+export function isPrintStationActivated(config?: PrintStationConfig): boolean {
+  const cfg = config ?? loadPrintStationConfig();
+  return Boolean(cfg.autoPrintOnCertainMatch && cfg.silentPrintValidated);
+}
+
 async function ensureQzConnected(): Promise<boolean> {
   const qz = typeof window !== "undefined" ? window.qz : undefined;
   if (!qz?.websocket) return false;
@@ -62,16 +70,49 @@ async function ensureQzConnected(): Promise<boolean> {
   }
 }
 
+/** Load QZ Tray browser lib once (no connect). */
+export async function loadQzTrayScript(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  if (window.qz?.websocket) return true;
+  const existing = document.querySelector<HTMLScriptElement>("script[data-qz-tray]");
+  if (existing) {
+    await new Promise<void>((resolve, reject) => {
+      if (window.qz?.websocket) {
+        resolve();
+        return;
+      }
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("QZ script load failed")), {
+        once: true,
+      });
+    });
+    return Boolean(window.qz?.websocket);
+  }
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = QZ_SCRIPT_URL;
+    script.async = true;
+    script.dataset.qzTray = "1";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load QZ Tray script"));
+    document.head.appendChild(script);
+  });
+  return Boolean(window.qz?.websocket);
+}
+
 export type PrintStationProbeStatus = {
+  activated: boolean;
   qzInstalled: boolean;
   qzConnected: boolean;
   printerConfigured: boolean;
+  printerName: string;
   silentPrintValidated: boolean;
   autoPrintOn: boolean;
   /** True iff we would silent-print right now on a certain match. */
   readyForSilentPrint: boolean;
   reason:
     | "ready"
+    | "off"
     | "qz_not_installed"
     | "qz_not_connected"
     | "no_printer"
@@ -80,25 +121,40 @@ export type PrintStationProbeStatus = {
 };
 
 /**
- * Probe the local station without printing anything. Meant for a status pill
- * on the scan page so operators see the real state (QZ up? validated?)
- * instead of assuming silent print is armed.
+ * Probe station state. Never connects while inactive (avoids Allow spam).
+ * Pass `connect: true` only after Activate / when already activated.
  */
 export async function probePrintStationStatus(
-  config?: PrintStationConfig
+  config?: PrintStationConfig,
+  options?: { connect?: boolean }
 ): Promise<PrintStationProbeStatus> {
   const cfg = config ?? loadPrintStationConfig();
-  const qz = typeof window !== "undefined" ? window.qz : undefined;
-  const qzInstalled = Boolean(qz?.websocket);
-  let qzConnected = false;
-  if (qzInstalled) {
-    qzConnected = await ensureQzConnected();
+  const activated = isPrintStationActivated(cfg);
+  const shouldConnect = Boolean(options?.connect) || activated;
+
+  let qzInstalled = Boolean(typeof window !== "undefined" && window.qz?.websocket);
+  if (shouldConnect && !qzInstalled) {
+    try {
+      qzInstalled = await loadQzTrayScript();
+    } catch {
+      qzInstalled = false;
+    }
   }
-  const printerConfigured =
-    Boolean(String(cfg.printerName || "").trim()) || cfg.provider === "browser";
+
+  let qzConnected = false;
+  if (qzInstalled && typeof window !== "undefined" && window.qz?.websocket) {
+    if (shouldConnect) {
+      qzConnected = await ensureQzConnected();
+    } else {
+      qzConnected = window.qz.websocket.isActive();
+    }
+  }
+
+  const printerName = String(cfg.printerName || "").trim();
+  const printerConfigured = Boolean(printerName) || cfg.provider === "browser";
 
   let reason: PrintStationProbeStatus["reason"];
-  if (!cfg.autoPrintOnCertainMatch) reason = "auto_off";
+  if (!cfg.autoPrintOnCertainMatch) reason = "off";
   else if (!cfg.silentPrintValidated) reason = "silent_not_validated";
   else if (!qzInstalled) reason = "qz_not_installed";
   else if (!qzConnected) reason = "qz_not_connected";
@@ -106,14 +162,120 @@ export async function probePrintStationStatus(
   else reason = "ready";
 
   return {
+    activated,
     qzInstalled,
     qzConnected,
     printerConfigured,
+    printerName,
     silentPrintValidated: Boolean(cfg.silentPrintValidated),
     autoPrintOn: Boolean(cfg.autoPrintOnCertainMatch),
     readyForSilentPrint: reason === "ready",
     reason,
   };
+}
+
+export type ActivatePrintStationResult = {
+  ok: boolean;
+  status: PrintStationProbeStatus;
+  error?: string;
+  printers?: string[];
+};
+
+/**
+ * Operator clicked Activate: load QZ → connect (Allow prompt) → pick printer → save on.
+ */
+export async function activatePrintStation(options?: {
+  printerName?: string;
+}): Promise<ActivatePrintStationResult> {
+  try {
+    const loaded = await loadQzTrayScript();
+    if (!loaded || !window.qz?.websocket) {
+      const status = await probePrintStationStatus(undefined, { connect: false });
+      return {
+        ok: false,
+        status: { ...status, reason: "qz_not_installed" },
+        error:
+          "QZ Tray not found. Install and start the QZ Tray desktop app, then click Activate again.",
+      };
+    }
+
+    const connected = await ensureQzConnected();
+    if (!connected) {
+      const status = await probePrintStationStatus(undefined, { connect: false });
+      return {
+        ok: false,
+        status: { ...status, reason: "qz_not_connected", qzInstalled: true },
+        error:
+          "Could not connect to QZ Tray. Start the app and Accept / Allow this site when prompted.",
+      };
+    }
+
+    const found = await window.qz.printers.find();
+    const printers = (Array.isArray(found) ? found : found ? [found] : []).map(String);
+    const preferred = String(options?.printerName || "").trim();
+
+    if (!preferred && printers.length > 1) {
+      const status = await probePrintStationStatus(undefined, { connect: true });
+      return {
+        ok: false,
+        status: {
+          ...status,
+          qzInstalled: true,
+          qzConnected: true,
+          reason: "no_printer",
+        },
+        error: "Pick a printer",
+        printers,
+      };
+    }
+
+    const picked =
+      (preferred && printers.includes(preferred) ? preferred : null) ||
+      (preferred && printers.length === 0 ? preferred : null) ||
+      printers.find((p) => /brother|ql|zebra|label/i.test(p)) ||
+      printers[0] ||
+      preferred ||
+      "";
+
+    if (!picked) {
+      const status = await probePrintStationStatus(undefined, { connect: true });
+      return {
+        ok: false,
+        status: { ...status, reason: "no_printer", qzInstalled: true, qzConnected: true },
+        error: "No printers found in QZ Tray.",
+        printers,
+      };
+    }
+
+    const next = defaultPrintStationConfig({
+      ...loadPrintStationConfig(),
+      provider: "qz_tray",
+      printerName: picked,
+      autoPrintOnCertainMatch: true,
+      silentPrintValidated: true,
+    });
+    savePrintStationConfig(next);
+    const status = await probePrintStationStatus(next, { connect: true });
+    return { ok: status.readyForSilentPrint, status, printers };
+  } catch (err: any) {
+    const status = await probePrintStationStatus(undefined, { connect: false });
+    return {
+      ok: false,
+      status,
+      error: err?.message || String(err),
+    };
+  }
+}
+
+/** Turn silent QZ off — browser print popup again. Does not kill QZ Tray app. */
+export function deactivatePrintStation(): PrintStationConfig {
+  const next = defaultPrintStationConfig({
+    ...loadPrintStationConfig(),
+    autoPrintOnCertainMatch: false,
+    silentPrintValidated: false,
+  });
+  savePrintStationConfig(next);
+  return next;
 }
 
 /**
@@ -135,8 +297,14 @@ export async function tryStationAutoPrint(params: {
     return { ok: false, skipped: true, reason: decision.reason };
   }
 
-  // Extra client-side guard: never silent-print without a live `window.qz`.
   if (config.provider === "qz_tray") {
+    if (typeof window === "undefined" || !window.qz) {
+      try {
+        await loadQzTrayScript();
+      } catch {
+        // fall through
+      }
+    }
     if (typeof window === "undefined" || !window.qz) {
       return {
         ok: false,
@@ -192,7 +360,6 @@ export async function tryStationAutoPrint(params: {
     }
   }
 
-  // PrintNode / other providers: not wired yet — signal fallback.
   return {
     ok: false,
     skipped: true,
