@@ -10,17 +10,29 @@
  * calling syncShopifyStxPricesForGtins in batches so Shopify always reflects
  * the current DB-computed sell price.
  *
+ * Priorisation (2026-09):
+ *   - On ne synchronise QUE les GTIN dont le produit KickDB est réellement sur
+ *     Shopify (ShopifySyncState.syncStatus='synced'). Cela retire ~134k GTIN
+ *     feed-only (Galaxus/Decathlon) que le sync ignorait de toute façon.
+ *   - Tri par date de dernière synchro croissante: la variante la plus périmée
+ *     passe en premier, donc un redémarrage ne peut jamais affamer la fin de
+ *     file. La péremption maximale est bornée par la durée d'un cycle.
+ *
  * Env:
- *   SHOPIFY_STX_SYNC_INTERVAL_MS   default 86400000 (24h)
+ *   SHOPIFY_STX_SYNC_INTERVAL_MS   default 3600000 (1h de repos entre cycles)
  *   SHOPIFY_STX_SYNC_INITIAL_DELAY_MS  default 120000
  *   SHOPIFY_STX_SYNC_BATCH_SIZE    default 50 gtins per call
  *   SHOPIFY_STX_SYNC_BATCH_SLEEP_MS  default 1500 (throttle Shopify writes)
+ *   SHOPIFY_STX_SYNC_ONLY_ON_SHOPIFY  default "1" (set "0" to scan every GTIN)
  */
 import { prisma } from "../../app/lib/prisma";
 import { syncShopifyStxPricesForGtins } from "../../shopify/stx/syncShopifyStxPrices";
 
 const INTERVAL_MS = Number(
-  process.env.SHOPIFY_STX_SYNC_INTERVAL_MS ?? 24 * 60 * 60 * 1000
+  process.env.SHOPIFY_STX_SYNC_INTERVAL_MS ?? 60 * 60 * 1000
+);
+const ONLY_ON_SHOPIFY = !["0", "false", "no"].includes(
+  String(process.env.SHOPIFY_STX_SYNC_ONLY_ON_SHOPIFY ?? "1").toLowerCase()
 );
 const INITIAL_DELAY_MS = Number(
   process.env.SHOPIFY_STX_SYNC_INITIAL_DELAY_MS ?? 120_000
@@ -39,14 +51,36 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function loadInStockStxGtins(): Promise<string[]> {
-  const rows = await prisma.$queryRaw<Array<{ gtin: string }>>`
-    SELECT DISTINCT sv."gtin"
-    FROM "public"."SupplierVariant" sv
-    WHERE sv."supplierVariantId" LIKE 'stx_%'
-      AND sv."gtin" IS NOT NULL
-      AND sv."stock" > 0
-      AND coalesce(sv."manualLock", false) = false
-  `;
+  // Oldest-synced first so the tail is never starved by a restart. Restricted to
+  // products actually on Shopify unless explicitly told to scan everything.
+  const rows = ONLY_ON_SHOPIFY
+    ? await prisma.$queryRaw<Array<{ gtin: string }>>`
+        SELECT sv."gtin"
+        FROM "public"."SupplierVariant" sv
+        JOIN "public"."KickDBVariant" kv
+          ON kv."gtin" = sv."gtin" OR kv."ean" = sv."gtin"
+        JOIN "public"."KickDBProduct" p ON p."id" = kv."productId"
+        JOIN "public"."ShopifySyncState" sss
+          ON sss."kickdbProductId" = p."kickdbProductId"
+        WHERE sv."supplierVariantId" LIKE 'stx_%'
+          AND sv."gtin" IS NOT NULL
+          AND sv."stock" > 0
+          AND coalesce(sv."manualLock", false) = false
+          AND sss."syncStatus" = 'synced'
+          AND sss."shopifyProductId" IS NOT NULL
+        GROUP BY sv."gtin"
+        ORDER BY MIN(sv."lastSyncAt") ASC NULLS FIRST
+      `
+    : await prisma.$queryRaw<Array<{ gtin: string }>>`
+        SELECT sv."gtin"
+        FROM "public"."SupplierVariant" sv
+        WHERE sv."supplierVariantId" LIKE 'stx_%'
+          AND sv."gtin" IS NOT NULL
+          AND sv."stock" > 0
+          AND coalesce(sv."manualLock", false) = false
+        GROUP BY sv."gtin"
+        ORDER BY MIN(sv."lastSyncAt") ASC NULLS FIRST
+      `;
   return rows.map((r) => String(r.gtin ?? "").trim()).filter((g) => g.length > 0);
 }
 
@@ -119,6 +153,7 @@ async function main(): Promise<void> {
     initialDelayMs: INITIAL_DELAY_MS,
     batchSize: BATCH_SIZE,
     batchSleepMs: BATCH_SLEEP_MS,
+    onlyOnShopify: ONLY_ON_SHOPIFY,
   });
   await sleep(INITIAL_DELAY_MS);
   while (true) {
