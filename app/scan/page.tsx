@@ -351,6 +351,12 @@ const ENABLE_BROWSER_PRINT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
   true
 );
+/** Packing Mac on localhost — hide QZ UI; labels go CUPS (`LOCAL_STATION=1`). */
+const isLocalhostPackingBrowser = () => {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location.hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+};
 // Force fulfill is destructive — never surface unless explicitly enabled per station.
 const ENABLE_FORCE_FULFILL = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_FORCE_FULFILL,
@@ -590,8 +596,8 @@ const openLabelPreview = (payload: LabelDataPayload) => {
 
 /**
  * Show label to operator.
- * 1) Real CUPS success (ok && !skipped) → no popup
- * 2) QZ silent if Activate'd
+ * 1) Real CUPS success (LOCAL_STATION packing Mac) → silent, no popup
+ * 2) QZ silent if Activate'd (remote / VPS browser stations)
  * 3) Else browser print dialog
  */
 const presentScanLabel = async (options: {
@@ -602,7 +608,9 @@ const presentScanLabel = async (options: {
   blockedMessage: string;
 }): Promise<boolean> => {
   const cupsPrinted =
-    options.printJobResult?.ok === true && options.printJobResult?.skipped !== true;
+    options.printJobResult?.ok === true &&
+    options.printJobResult?.skipped !== true;
+
   if (cupsPrinted) {
     alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
     return true;
@@ -724,6 +732,12 @@ export default function ScanPage() {
     printers: string[];
     filter: string;
   } | null>(null);
+  /** pending until mount — avoids SSR/client QZ flash mismatch */
+  const [packingHost, setPackingHost] = useState<"pending" | "local" | "remote">(
+    "pending"
+  );
+  const showQzControls = packingHost === "remote";
+  const showLocalCupsBadge = packingHost === "local";
 
   const refreshPrintStation = async (connect = false) => {
     try {
@@ -736,6 +750,13 @@ export default function ScanPage() {
     }
   };
   useEffect(() => {
+    setPackingHost(isLocalhostPackingBrowser() ? "local" : "remote");
+  }, []);
+  useEffect(() => {
+    if (!showQzControls) {
+      setPrintStationStatus(null);
+      return;
+    }
     let cancelled = false;
     // Inactive: probe without connect (no QZ Allow spam on page load).
     probePrintStationStatus(undefined, { connect: false })
@@ -748,7 +769,7 @@ export default function ScanPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showQzControls]);
 
   const finishQzActivateWithPrinter = async (printerName: string) => {
     setQzBusy(true);
@@ -2325,6 +2346,7 @@ export default function ScanPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
         <div className="absolute right-0 top-0 flex items-center gap-2">
+          {showQzControls ? (
           <div className="flex flex-col items-end gap-0.5">
             <div className="flex items-center gap-1">
               <span
@@ -2371,6 +2393,15 @@ export default function ScanPage() {
               Need QZ Tray app installed + running on this Mac, then Activate.
             </p>
           </div>
+          ) : null}
+          {showLocalCupsBadge ? (
+            <span
+              title="Localhost: labels auto-print via CUPS (LOCAL_STATION) to Brother. No QZ, no browser dialog."
+              className="px-2 py-0.5 text-xs rounded border bg-emerald-50 border-emerald-300 text-emerald-900"
+            >
+              Print: CUPS
+            </span>
+          ) : null}
           <a
             href="/scan/stats"
             className="px-3 py-1 text-sm bg-emerald-100 text-emerald-900 rounded hover:bg-emerald-200 transition-colors"

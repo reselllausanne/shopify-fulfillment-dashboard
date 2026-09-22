@@ -4,41 +4,46 @@
 
 Each packing desk prints Swiss Post labels on **its own** thermal printer
 (Brother QL-W810, Zebra, …) with the **same 62×100 mm PDF format**.
-Auto-print only on **certain** matches (never ambiguous), and only after
-silent print has been physically validated on that station.
+Auto-print only on **certain** matches (never ambiguous).
 
-## Recommended stack: QZ Tray
+## Modes (what you asked for)
 
-| Option | Pros | Cons |
-|--------|------|------|
-| **QZ Tray** (chosen) | Local websocket, silent signed print, works offline, per-station printer pick | Needs desktop install + cert for silent mode |
-| PrintNode | Central API, multi-site | Cloud hop, subscription |
-| CUPS `lp` (existing) | Already on packing Mac via `LOCAL_STATION` | Server-bound; not per-browser station |
-| Browser popup | Always available | Manual / popup blockers |
+| Where | Path | Popup? |
+|-------|------|--------|
+| **Localhost packing Mac** (`LOCAL_STATION=1`) | Server `lp` → Brother CUPS queue | **No** — silent auto-print. QZ UI hidden. |
+| **VPS / remote browser + QZ Activate'd** | QZ Tray silent | **No** |
+| **VPS / remote, no QZ** | Browser print dialog | Yes |
 
-**Decision:** wire **QZ Tray** as the primary client path; keep **CUPS** when the
-request hits a `LOCAL_STATION` packing Mac; fall back to **browser print** when
-both are unavailable.
+## Call chain
 
-## Honesty contract (READ BEFORE ENABLING)
+1. Scan resolves a **certain** match.
+2. Server CUPS when `LOCAL_STATION=1` → `printJobResult.ok && !skipped` → client **stops** (no dialog).
+3. Else client `tryStationAutoPrint` → QZ if Activate'd + validated → silent.
+4. Else browser print dialog (`SCAN_BROWSER_PRINT_*`).
 
-The scan page shows **QZ: off** by default. Nothing connects to QZ Tray until
-the operator clicks **Activate** (loads `qz-tray.js`, `websocket.connect()` →
-Allow/Accept prompt, picks a printer, then sets `autoPrintOnCertainMatch` +
-`silentPrintValidated`).
+## Local setup (cable Brother, no QZ)
 
-Silent print only runs when BOTH:
+```bash
+# packing Mac .env — never on VPS
+LOCAL_STATION=1
+SWISS_POST_PRINTER_NAME="Brother_QL_810W"
+# optional media / scale — see SWISS_POST_PRINT_*
+```
 
-1. Station is activated (those flags true in `localStorage.resell.printStation.v1`)
-2. `window.qz` websocket is active
+Badge on `/scan`: **Print: CUPS**. Restart Next after changing `.env`.
 
-**Off / Deactivate** clears the flags → browser print popup again. Page load
-never calls `connect()` while off (avoids Allow spam).
+If CUPS fails (`ok:false` / misconfigured queue), client falls through to browser dialog so you still get a label.
 
-## Per-station config
+## QZ (remote stations only)
 
-Stored in `localStorage` key `resell.printStation.v1` (`lib/printStation.ts` /
-`app/lib/printStationClient.ts`):
+Default **QZ: off**. Nothing connects until **Activate**.
+
+Silent only when:
+
+1. Activate'd (`autoPrintOnCertainMatch` + `silentPrintValidated` in `localStorage.resell.printStation.v1`)
+2. `window.qz` websocket active
+
+**Off** → browser popup again. Page load never `connect()` while off.
 
 ```json
 {
@@ -52,36 +57,15 @@ Stored in `localStorage` key `resell.printStation.v1` (`lib/printStation.ts` /
 }
 ```
 
-Each operator picks their CUPS/QZ printer name once. Label bytes stay identical.
+## First-time QZ checklist (Brother QL-W810)
 
-## First-time silent-print validation checklist (Brother QL-W810)
-
-Run through every step on the physical station before flipping
-`silentPrintValidated` to `true`:
-
-- [ ] Install QZ Tray on the station (macOS or Windows).
-- [ ] Import the signed cert into QZ Tray so silent print is allowed
-      (Preferences → Site Manager → allow this origin without prompt).
-- [ ] Install Brother QL-W810 drivers + `62×100 mm` media label profile.
-- [ ] Print a self-test label directly from the printer.
-- [ ] Print a Swiss Post PDF via QZ from a terminal / QZ demo page — confirm
-      it comes out on the correct 62×100 label without a print dialog.
-- [ ] Open the scan page. The QZ status pill must read **ready** (green).
-- [ ] Scan a known certain match → confirm label prints silently and no
-      popup appears.
-- [ ] Only now, in the station settings, flip `silentPrintValidated` to
-      `true` and save.
-
-If ANY step fails, leave `silentPrintValidated: false`. The station will
-fall through to the browser popup instead of dropping labels.
-
-## Call chain
-
-1. Scan resolves a **certain** match (single SKU+size+causal, or pinned line).
-2. `decideStationAutoPrint({ matchCertainty: "certain", config })`.
-3. `tryStationAutoPrint` → QZ Tray if available AND validated.
-4. Else server `printLabelLocally` (CUPS) when `LOCAL_STATION=1`.
-5. Else existing `SCAN_BROWSER_PRINT_*` popup.
+- [ ] Install QZ Tray on the station.
+- [ ] Import signed cert / allow this origin without prompt.
+- [ ] Brother drivers + 62×100 media.
+- [ ] Self-test label from printer.
+- [ ] QZ demo print → correct roll.
+- [ ] Scan page pill **ready** → scan certain match → silent, no popup.
+- [ ] Then set `silentPrintValidated: true`.
 
 ## Multi-account StockX (later)
 
