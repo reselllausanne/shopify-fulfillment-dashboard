@@ -33,13 +33,21 @@ export const SHOPIFY_CPA_CAP_HALF = 24.0;
 // then ceil to whole CHF (WeTheNew-style clean francs; never below floor).
 // No …9/…5 psych bump. No fixed costs after the denominator.
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-09-19-franc";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-09-22-volume";
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
 /** Blended cards / invoice / TWINT / PayPal — already includes per-order fee mix. No +0.30. */
 export const SHOPIFY_BLENDED_PAYMENT_COST_RATE = 0.0275;
 export const SHOPIFY_VAT_FLAT_RATE = 0.023;
-export const SHOPIFY_PAID_ADS_RATE = 0.15;
-export const SHOPIFY_TARGET_CM2_RATE = 0.12;
+/**
+ * Ads and CM2 were 15% + 12% under the 2026-09-19 lock. Charging 27% on every
+ * item priced us a median 41% above the Swiss benchmark Google measures, and
+ * volume collapsed from 434 orders in August to 236 over the first 21 days of
+ * September. Measured reality over the period that worked: ads were 14.5% of
+ * revenue in August (MER 6.91) and a pair bought at 179 CHF sold at ~245.
+ * 11% + 5% reproduces that price point (179 → 246) at a ~14% cut.
+ */
+export const SHOPIFY_PAID_ADS_RATE = 0.11;
+export const SHOPIFY_TARGET_CM2_RATE = 0.05;
 
 /** Exact floor before storefront publish (centime). */
 export function ceilToCentime(value: number): number {

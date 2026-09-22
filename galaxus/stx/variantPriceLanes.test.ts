@@ -2,9 +2,51 @@ import { afterEach, describe, expect, it } from "vitest";
 import { selectStxActiveOffer, selectStxStandardOffer } from "@/galaxus/stx/offerSelection";
 import {
   buildStxDualPriceFields,
+  isOutlierStxOffer,
   isStxMarketplacePublishableDeliveryType,
   shouldPreferStandardOverExpress,
+  stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
+
+describe("stxProductAskMedian", () => {
+  it("takes the median across every size and lane", () => {
+    expect(
+      stxProductAskMedian([
+        { prices: [{ type: "standard", price: 100, asks: 3 }] },
+        { prices: [{ type: "standard", price: 200, asks: 3 }] },
+        { prices: [{ type: "express_standard", price: 300, asks: 3 }] },
+      ])
+    ).toBe(200);
+  });
+
+  it("returns null when the product carries no usable ask", () => {
+    expect(stxProductAskMedian([])).toBeNull();
+    expect(stxProductAskMedian([{ prices: [] }])).toBeNull();
+  });
+});
+
+describe("isOutlierStxOffer", () => {
+  it("rejects a lone placeholder ask far above the product median", () => {
+    // Supreme top parked at 542'799 CHF by a single seller.
+    expect(isOutlierStxOffer({ price: 542799, asks: 1 }, 180)).toBe(true);
+  });
+
+  it("keeps a lone ask that stays close to the product median", () => {
+    expect(isOutlierStxOffer({ price: 240, asks: 1 }, 180)).toBe(false);
+  });
+
+  it("keeps a genuinely expensive item when the lane is deep", () => {
+    expect(isOutlierStxOffer({ price: 4000, asks: 12 }, 3800)).toBe(false);
+  });
+
+  it("still rejects anything above the absolute ceiling", () => {
+    expect(isOutlierStxOffer({ price: 70000, asks: 40 }, 65000)).toBe(true);
+  });
+
+  it("does not judge a thin lane when no median is known", () => {
+    expect(isOutlierStxOffer({ price: 900, asks: 1 }, null)).toBe(false);
+  });
+});
 
 describe("selectStxStandardOffer", () => {
   it("picks cheapest standard lane", () => {
@@ -39,6 +81,35 @@ describe("shouldPreferStandardOverExpress", () => {
 
   it("matches Hoka Clifton complaint (~5× express)", () => {
     expect(shouldPreferStandardOverExpress(1051.26, 212.53, 2)).toBe(true);
+  });
+});
+
+describe("buildStxDualPriceFields — outlier asks", () => {
+  it("drops a placeholder standard ask instead of publishing it", () => {
+    const lanes = buildStxDualPriceFields(
+      {
+        prices: [
+          { type: "standard", price: 63362, asks: 1 },
+          { type: "express_expedited", price: 210, asks: 4 },
+        ],
+      },
+      { slug: "nike-mercurial", title: "Nike Mercurial" },
+      "Nike Mercurial",
+      { productAskMedian: 200 }
+    );
+    expect(lanes?.standardBuyPrice).toBeNull();
+    expect(lanes?.expressBuyPrice).toBeGreaterThan(0);
+    expect(lanes?.deliveryType).toBe("express_expedited");
+  });
+
+  it("returns null when every lane of the variant is an outlier", () => {
+    const lanes = buildStxDualPriceFields(
+      { prices: [{ type: "standard", price: 542799, asks: 1 }] },
+      { slug: "supreme-top", title: "Supreme Top" },
+      "Supreme Top",
+      { productAskMedian: 180 }
+    );
+    expect(lanes).toBeNull();
   });
 });
 

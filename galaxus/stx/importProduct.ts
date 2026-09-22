@@ -21,6 +21,7 @@ import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSell
 import {
   allowsStxStandardImport,
   buildStxDualPriceFields,
+  stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
 import {
   buildPhysicalOnlySelectedOffer,
@@ -379,6 +380,7 @@ export async function importStxProductByInput(
   }
 
   const variants = Array.isArray(product?.variants) ? product.variants : [];
+  const productAskMedian = stxProductAskMedian(variants);
   diagnostics.variantsTotal = variants.length;
   const supplierSkuFallback = pickString(styleId, product?.sku, slug, product?.id) ?? `stx_${normalizedInput}`;
   // Runtime override (options.forceImport) wins over the static allowlist so
@@ -493,6 +495,7 @@ export async function importStxProductByInput(
     const lanes = buildStxDualPriceFields(variant, product, name, {
       forceImport,
       slug: slug ?? normalizedInput,
+      productAskMedian,
     });
     if (!lanes) {
       const physicalTarget = targetGtin || attachGtin || "";

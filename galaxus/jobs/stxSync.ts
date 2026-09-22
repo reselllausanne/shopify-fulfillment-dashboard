@@ -7,6 +7,7 @@ import { type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import {
   allowsStxStandardImport,
   buildStxDualPriceFields,
+  stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
 import {
   syncShopifyStxPricesForGtins,
@@ -128,6 +129,7 @@ function stxVariantSyncPatch(row: ParsedStxRow) {
 function extractRowsFromPayload(payload: any, productId: string) {
   const rows: ParsedStxRow[] = [];
   const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const productAskMedian = stxProductAskMedian(variants);
   const supplierBrand = pickString(payload?.brand);
   const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
   const images = pickImages(payload);
@@ -146,6 +148,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
     const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
       forceImport,
       slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey),
+      productAskMedian,
     });
     if (!lanes) continue;
 
@@ -270,6 +273,7 @@ type IngestParsedRow = ParsedStxRow & {
 function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestParsedRow[] {
   const rows: IngestParsedRow[] = [];
   const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const productAskMedian = stxProductAskMedian(variants);
   const supplierBrand = pickString(payload?.brand);
   const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
   const images = pickImages(payload);
@@ -284,6 +288,7 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
     const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
       forceImport,
       slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey),
+      productAskMedian,
     });
     if (!lanes) continue;
 
@@ -561,6 +566,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
         }
         processedProducts += 1;
         const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+        const productAskMedian = stxProductAskMedian(variants);
         const supplierBrand = pickString(payload?.brand);
         const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
         const images = pickImages(payload);
@@ -583,6 +589,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
           const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
             forceImport,
             slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey),
+            productAskMedian,
           });
           if (!lanes) continue;
 
