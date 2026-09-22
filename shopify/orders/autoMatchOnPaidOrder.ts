@@ -12,11 +12,14 @@
  *
  * Format `shopifyLineItemId` = GID complet (`gid://shopify/LineItem/…`) pour matcher la
  * convention legacy (UI save-match, package protection). Évite les doublons numeric/GID.
+ * Idem pour `shopifyOrderId`: `ShopifyOrder` stocke le GID, donc toute autre forme casse
+ * silencieusement la jointure coût ↔ commande.
  *
  * Idempotent: upsert sur shopifyLineItemId.
  */
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
+import { toShopifyOrderGid } from "@/app/lib/swissPostCustomerTracking";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 import { resolveInStockFixedPriceRule } from "@/shopify/inventory/inStockFixedPrice";
@@ -193,7 +196,7 @@ export async function upsertAutoOrderMatchesForPaidOrder(
   if (!order || order.cancelledAt) return result;
 
   result.orderName = order.name;
-  const shopifyOrderId = order.id.match(/\/(\d+)$/)?.[1] ?? order.id;
+  const shopifyOrderId = toShopifyOrderGid(order.id);
   const createdAt = toShopifyCreatedAtStorage(new Date(order.createdAt));
 
   // Line GID → fulfillment location

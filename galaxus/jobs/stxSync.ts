@@ -64,6 +64,8 @@ type ParsedStxRow = {
   standardBuyPrice: number | null;
   expressBuyPrice: number | null;
   standardSuggestedRetailPriceInclVat: number | null;
+  /** Both StockX lanes were resolved for this row, so a null lane means "gone". */
+  lanesEvaluated: boolean;
 };
 
 const STX_PREFIX = "stx_";
@@ -168,6 +170,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
       standardBuyPrice: lanes.standardBuyPrice,
       expressBuyPrice: lanes.expressBuyPrice,
       standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+      lanesEvaluated: true,
     });
   }
   return rows;
@@ -306,6 +309,7 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
       standardBuyPrice: lanes.standardBuyPrice,
       expressBuyPrice: lanes.expressBuyPrice,
       standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+      lanesEvaluated: true,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -603,6 +607,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
             standardBuyPrice: lanes.standardBuyPrice,
             expressBuyPrice: lanes.expressBuyPrice,
             standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+            lanesEvaluated: true,
           });
         }
       })
