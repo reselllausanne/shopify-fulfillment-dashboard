@@ -102,6 +102,70 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/**
+ * Last Shopify price we recorded pushing for this providerKey, if any. Lets the
+ * sync skip a redundant Shopify write when the computed price has not moved.
+ * Best-effort: returns null if the delegate is absent (e.g. in unit tests).
+ */
+async function readLastPushedShopifyPrice(
+  providerKey: string | null | undefined
+): Promise<number | null> {
+  const key = String(providerKey ?? "").trim();
+  if (!key) return null;
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.findUnique) return null;
+  try {
+    const row = await cls.findUnique({
+      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
+      select: { lastPushedPrice: true },
+    });
+    const v = row?.lastPushedPrice == null ? null : Number(row.lastPushedPrice);
+    return Number.isFinite(v as number) ? (v as number) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Record a Shopify price push on ChannelListingState so the nightly worker can
+ * skip anything already fresh (see shopifyStxPriceSyncWorker MIN_AGE_HOURS) and
+ * so the next sync can diff against it. Only non-null ids are written, so a
+ * skip-path record never clobbers a known variant/product id. Never sets stock
+ * or status — inventory ownership stays with the sold-check flow.
+ */
+async function recordShopifyStxPush(input: {
+  providerKey: string | null | undefined;
+  supplierVariantId?: string | null;
+  gtin: string | null;
+  variantId?: string | null;
+  productId?: string | null;
+  price: number;
+}): Promise<void> {
+  const key = String(input.providerKey ?? "").trim();
+  if (!key) return;
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.upsert) return;
+  const now = new Date();
+  const common = {
+    supplierVariantId: input.supplierVariantId ?? undefined,
+    gtin: input.gtin ?? undefined,
+    externalVariantId: input.variantId ?? undefined,
+    externalProductId: input.productId ?? undefined,
+    lastPushedPrice: input.price,
+    lastSyncedAt: now,
+    lastError: null,
+  };
+  try {
+    await cls.upsert({
+      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
+      create: { channel: "SHOPIFY", providerKey: key, ...common },
+      update: common,
+    });
+  } catch {
+    /* best-effort — a failed bookkeeping write must not fail the price sync */
+  }
+}
+
 async function readShopifyPriceLocked(variantId: string): Promise<boolean> {
   const { data, errors } = await shopifyGraphQL<{
     productVariant: { metafield: { value: string | null } | null } | null;
@@ -283,6 +347,8 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     },
     orderBy: { updatedAt: "desc" },
     select: {
+      supplierVariantId: true,
+      providerKey: true,
       supplierProductName: true,
       supplierBrand: true,
       deliveryType: true,
@@ -292,6 +358,42 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     },
   });
   if (!stxRow) return { gtin: cleanGtin, ok: false, reason: "no_stx_row" };
+
+  // Diff-skip before any Shopify call: if the price has not moved since our last
+  // recorded push, refresh the freshness stamp and return. This is the common
+  // case on the nightly full sweep and saves 3–4 Shopify round-trips per GTIN.
+  const providerKey = stxRow.providerKey ?? null;
+  const handleForCalc =
+    (await resolveProductHandle(cleanGtin)) ?? null;
+  const preview = computeSellPrices({
+    stxRow: {
+      deliveryType: stxRow.deliveryType ?? null,
+      price: stxRow.price,
+      standardBuyPrice: stxRow.standardBuyPrice,
+      expressBuyPrice: stxRow.expressBuyPrice,
+      supplierProductName: stxRow.supplierProductName ?? null,
+      supplierBrand: stxRow.supplierBrand ?? null,
+    },
+    productHandle: handleForCalc,
+  });
+  if (preview.normalSell != null) {
+    const lastPushed = await readLastPushedShopifyPrice(providerKey);
+    if (lastPushed != null && Math.abs(lastPushed - preview.normalSell) < 0.005) {
+      await recordShopifyStxPush({
+        providerKey,
+        supplierVariantId: stxRow.supplierVariantId ?? null,
+        gtin: cleanGtin,
+        price: preview.normalSell,
+      });
+      return {
+        gtin: cleanGtin,
+        ok: true,
+        reason: "price_unchanged",
+        normalPrice: preview.normalSell,
+        expressPrice: preview.expressSell,
+      };
+    }
+  }
 
   const { match: shopifyVariant, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
   if (!shopifyVariant?.variantId || !shopifyVariant.productId) {
@@ -361,6 +463,15 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     await deleteShopifyExpressPriceMetafield(shopifyVariant.variantId);
   }
 
+  await recordShopifyStxPush({
+    providerKey,
+    supplierVariantId: stxRow.supplierVariantId ?? null,
+    gtin: cleanGtin,
+    variantId: shopifyVariant.variantId,
+    productId: shopifyVariant.productId,
+    price: normalSell,
+  });
+
   return {
     gtin: cleanGtin,
     ok: true,
@@ -395,6 +506,7 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
       where: { supplierVariantId },
       select: {
         supplierVariantId: true,
+        providerKey: true,
         gtin: true,
         sizeRaw: true,
         supplierProductName: true,
@@ -526,6 +638,15 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
     } else {
       await deleteShopifyExpressPriceMetafield(match.variantId);
     }
+
+    await recordShopifyStxPush({
+      providerKey: row.providerKey ?? null,
+      supplierVariantId,
+      gtin: row.gtin ?? null,
+      variantId: match.variantId,
+      productId: match.productId,
+      price: normalSell,
+    });
 
     results.push({
       supplierVariantId,
