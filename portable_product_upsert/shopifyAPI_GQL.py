@@ -409,7 +409,8 @@ def calc_touch_price(stockx_raw_price, product_category="sneakers", product_hand
 
 def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, product_handle="", brand=""):
     """
-    LOCKED Shopify sell formula (v2026-09-19-franc) — manual constants only.
+    LOCKED Shopify sell formula (v2026-09-22-volume) — manual constants only.
+    Must stay in sync with shopify/pricing/calcShopifySellPrice.ts.
 
     shopifySellPrice =
       (sourceCostChf + fixedFulfillmentAndShippingChf)
@@ -430,8 +431,9 @@ def calc_sell_price(stockx_raw, product_category="sneakers", is_express=False, p
     FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5
     BLENDED_PAYMENT_COST_RATE = 0.0275
     VAT_FLAT_RATE = 0.023
-    PAID_ADS_RATE = 0.15
-    TARGET_CM2_RATE = 0.12
+    # Was 0.15 + 0.12 (overpriced vs Swiss GMC). Volume lock: 0.11 + 0.05.
+    PAID_ADS_RATE = 0.11
+    TARGET_CM2_RATE = 0.05
     DENOM = 1.0 - (
         BLENDED_PAYMENT_COST_RATE + VAT_FLAT_RATE + PAID_ADS_RATE + TARGET_CM2_RATE
     )
