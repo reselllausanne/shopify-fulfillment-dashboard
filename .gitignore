@@ -62,6 +62,10 @@ Thumbs.db
 .cursor/
 terminals/
 
+# scratch diagnostics + git worktrees (never track — they dirty the tree and block sync)
+/tmp/
+/.worktrees/
+
 # local auth/session artifacts
 .data/*session*.json
 .data/*token*.json
