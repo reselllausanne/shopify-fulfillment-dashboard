@@ -24,7 +24,10 @@ import {
   calcShopifySellFromSourceCost,
   SHOPIFY_PRICING_LOCK_VERSION,
 } from "@/shopify/pricing/calcShopifySellPrice";
-import { syncShopifyStxPricesForSupplierVariantIds } from "@/shopify/stx/syncShopifyStxPrices";
+import {
+  syncShopifyStxPricesForGtins,
+  syncShopifyStxPricesForSupplierVariantIds,
+} from "@/shopify/stx/syncShopifyStxPrices";
 
 function flag(name: string, fallback: number): number {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
@@ -41,6 +44,7 @@ const STALE_HOURS = flag("stale-hours", 0);
 
 type Row = {
   supplierVariantId: string;
+  gtin: string | null;
   name: string | null;
   buy: number;
   lastPushedPrice: number | null;
@@ -58,17 +62,25 @@ async function main() {
 
   const rows = await prisma.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
+           sv."gtin",
            sv."supplierProductName" AS name,
            COALESCE(sv."standardBuyPrice", sv.price)::float AS buy,
            cls."lastPushedPrice"::float AS "lastPushedPrice",
            sv."lastSyncAt"
     FROM "SupplierVariant" sv
+    JOIN "KickDBVariant" kv
+      ON kv."gtin" = sv."gtin" OR kv."ean" = sv."gtin"
+    JOIN "KickDBProduct" p ON p."id" = kv."productId"
+    JOIN "ShopifySyncState" sss
+      ON sss."kickdbProductId" = p."kickdbProductId"
     LEFT JOIN "ChannelListingState" cls
       ON cls."supplierVariantId" = sv."supplierVariantId" AND cls.channel = 'SHOPIFY'
     WHERE sv.stock > 0
       AND sv."manualLock" IS DISTINCT FROM TRUE
       AND sv."supplierVariantId" LIKE 'stx_%'
       AND COALESCE(sv."standardBuyPrice", sv.price) > 0
+      AND sss."syncStatus" = 'synced'
+      AND sss."shopifyProductId" IS NOT NULL
       ${staleClause}
     ORDER BY sv."lastSyncAt" ASC NULLS FIRST
     LIMIT ${Math.max(1, LIMIT)}
@@ -77,10 +89,15 @@ async function main() {
   console.log(`Variantes candidates: ${rows.length}`);
   if (rows.length === 0) return;
 
-  const toSync: string[] = [];
+  // GTIN path is the real Shopify writer. The supplierVariantId path refuses
+  // any row that has a GTIN (has_gtin_use_gtin_path) — that was why a 5k
+  // --apply only pushed ~67 (no-GTIN leftovers) and skipped the rest.
+  const gtinsToSync: string[] = [];
+  const noGtinIds: string[] = [];
   const blocked: Array<{ id: string; from: number; to: number; pct: number; name: string }> = [];
   let noReference = 0;
   let unchanged = 0;
+  const seenGtin = new Set<string>();
 
   for (const row of rows) {
     const target = calcShopifySellFromSourceCost(row.buy);
@@ -96,31 +113,39 @@ async function main() {
       continue;
     }
     const current = row.lastPushedPrice;
-    if (current == null || current <= 0) {
+    if (current != null && current > 0) {
+      if (Math.abs(target - current) < 0.5) {
+        unchanged += 1;
+        continue;
+      }
+      const pct = Math.abs((target - current) / current) * 100;
+      if (pct > MAX_DELTA_PCT) {
+        blocked.push({
+          id: row.supplierVariantId,
+          from: current,
+          to: target,
+          pct: Math.round(pct),
+          name: (row.name ?? "").slice(0, 44),
+        });
+        continue;
+      }
+    } else {
       noReference += 1;
-      toSync.push(row.supplierVariantId);
-      continue;
     }
-    if (Math.abs(target - current) < 0.5) {
-      unchanged += 1;
-      continue;
+
+    const gtin = String(row.gtin ?? "").trim();
+    if (gtin) {
+      if (!seenGtin.has(gtin)) {
+        seenGtin.add(gtin);
+        gtinsToSync.push(gtin);
+      }
+    } else {
+      noGtinIds.push(row.supplierVariantId);
     }
-    const pct = Math.abs((target - current) / current) * 100;
-    if (pct > MAX_DELTA_PCT) {
-      blocked.push({
-        id: row.supplierVariantId,
-        from: current,
-        to: target,
-        pct: Math.round(pct),
-        name: (row.name ?? "").slice(0, 44),
-      });
-      continue;
-    }
-    toSync.push(row.supplierVariantId);
   }
 
   console.log(
-    `A republier: ${toSync.length} | inchangees: ${unchanged} | sans prix de reference: ${noReference} | bloquees par le garde-fou: ${blocked.length}`
+    `A republier: gtin=${gtinsToSync.length} noGtin=${noGtinIds.length} | inchangees: ${unchanged} | sans prix de reference: ${noReference} | bloquees par le garde-fou: ${blocked.length}`
   );
   if (blocked.length > 0) {
     console.log("\nBLOQUEES (verifier le cout avant de forcer):");
@@ -137,14 +162,24 @@ async function main() {
   let synced = 0;
   let skipped = 0;
   let failed = 0;
-  for (let i = 0; i < toSync.length; i += BATCH) {
-    const chunk = toSync.slice(i, i + BATCH);
+  for (let i = 0; i < gtinsToSync.length; i += BATCH) {
+    const chunk = gtinsToSync.slice(i, i + BATCH);
+    const res = await syncShopifyStxPricesForGtins(chunk);
+    synced += res.synced;
+    skipped += res.skipped;
+    failed += res.failed;
+    console.log(
+      `  gtin lot ${Math.floor(i / BATCH) + 1}: +${res.synced} pousses, ${res.skipped} ignores, ${res.failed} echecs (cumul ${synced})`
+    );
+  }
+  for (let i = 0; i < noGtinIds.length; i += BATCH) {
+    const chunk = noGtinIds.slice(i, i + BATCH);
     const res = await syncShopifyStxPricesForSupplierVariantIds(chunk);
     synced += res.synced;
     skipped += res.skipped;
     failed += res.failed;
     console.log(
-      `  lot ${Math.floor(i / BATCH) + 1}: +${res.synced} pousses, ${res.skipped} ignores, ${res.failed} echecs (cumul ${synced})`
+      `  noGtin lot ${Math.floor(i / BATCH) + 1}: +${res.synced} pousses, ${res.skipped} ignores, ${res.failed} echecs (cumul ${synced})`
     );
   }
   console.log(`\nRESUME: pousses=${synced} ignores=${skipped} echecs=${failed}`);
