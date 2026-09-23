@@ -174,6 +174,7 @@ type ScanResult = {
       title: string;
       remainingQuantity: number;
       isScannedLine?: boolean;
+      size?: string | null;
     }>;
     autoDirectUnitSelection?: {
       requiresPopup: boolean;
@@ -376,6 +377,14 @@ type DirectQtyPromptState = {
   remaining: number;
   qty: number;
   requiresDeliveryNote: boolean;
+  /** All still-open lines on this order (incl. scanned). Empty = unknown. */
+  openUnits: Array<{
+    lineId: string;
+    title: string;
+    remainingQuantity: number;
+    isScannedLine?: boolean;
+    size?: string | null;
+  }>;
 };
 
 type DirectRescanHint = {
@@ -1082,15 +1091,20 @@ export default function ScanPage() {
     productName: string;
     remaining: number;
     requiresDeliveryNote?: boolean;
+    openUnits?: DirectQtyPromptState["openUnits"];
   }): Promise<number | null> =>
     new Promise((resolve) => {
       const remaining = Math.max(1, Math.floor(Number(params.remaining) || 1));
       directQtyPromptResolver.current = resolve;
       setDirectQtyPrompt({
-        ...params,
+        orderDbId: params.orderDbId,
+        lineId: params.lineId,
+        orderLabel: params.orderLabel,
+        productName: params.productName,
         remaining,
         qty: 1,
         requiresDeliveryNote: Boolean(params.requiresDeliveryNote),
+        openUnits: Array.isArray(params.openUnits) ? params.openUnits : [],
       });
     });
 
@@ -2022,6 +2036,13 @@ export default function ScanPage() {
                 productName,
                 remaining,
                 requiresDeliveryNote,
+                openUnits: openUnits.map((u) => ({
+                  lineId: String(u.lineId || u.lineItemId || ""),
+                  title: String(u.title || "Item").trim() || "Item",
+                  remainingQuantity: Math.max(0, Number(u.remainingQuantity) || 0),
+                  isScannedLine: Boolean(u.isScannedLine) || String(u.lineId || u.lineItemId) === lineId,
+                  size: u.size ?? null,
+                })),
               });
               if (qty && qty > 0) {
                 await runDirectLabelForOrder(
@@ -2204,12 +2225,21 @@ export default function ScanPage() {
         openUnits.find((u) => u.isScannedLine) ||
         openUnits.find((u) => u.lineItemId === scan.match?.shopifyLineItemId) ||
         openUnits[0];
+      const others = openUnits.filter((u) => u !== scanned);
       const summary = openUnits
-        .map((u) => `• ${u.title} ×${u.remainingQuantity}`)
+        .map((u) => {
+          const mark = u === scanned || u.isScannedLine ? " ← scanned now" : "";
+          return `• ${u.title} ×${u.remainingQuantity}${mark}`;
+        })
         .join("\n");
+      const otherNote =
+        others.length > 0
+          ? `\n\n⚠️ Other open pairs on this order (do NOT forget):\n` +
+            others.map((u) => `• ${u.title} ×${u.remainingQuantity}`).join("\n")
+          : "";
       const ok = window.confirm(
         `Multi-product / qty>1 order — select units for THIS parcel only.\n\n` +
-          `${summary || "(open units)"}\n\n` +
+          `${summary || "(open units)"}${otherNote}\n\n` +
           `OK = ship 1× scanned line only` +
           (scanned ? ` (${scanned.title})` : "") +
           `\nCancel = abort (no whole-order fulfill).`
@@ -3600,8 +3630,47 @@ export default function ScanPage() {
               <p className="text-sm text-gray-700">{directQtyPrompt.productName}</p>
               <p className="mt-2 text-sm text-gray-600">
                 <span className="font-semibold text-emerald-800">{directQtyPrompt.remaining}</span>{" "}
-                left on this line.
+                left on this scanned line.
               </p>
+              {(() => {
+                const others = (directQtyPrompt.openUnits || []).filter(
+                  (u) =>
+                    !u.isScannedLine &&
+                    u.lineId !== directQtyPrompt.lineId &&
+                    u.remainingQuantity > 0
+                );
+                const totalOpen = (directQtyPrompt.openUnits || []).reduce(
+                  (n, u) => n + Math.max(0, u.remainingQuantity),
+                  0
+                );
+                if (others.length === 0 && totalOpen <= directQtyPrompt.remaining) {
+                  return null;
+                }
+                return (
+                  <div className="mt-3 rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                    <div className="font-semibold">
+                      Attention — autres paires encore ouvertes sur cette commande
+                    </div>
+                    <p className="mt-1 text-xs">
+                      Tu ships seulement la ligne scannée. Vérifie le colis / le reste avant de
+                      continuer ({totalOpen} unité(s) ouvertes au total).
+                    </p>
+                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs">
+                      {(directQtyPrompt.openUnits || [])
+                        .filter((u) => u.remainingQuantity > 0)
+                        .map((u) => (
+                          <li key={u.lineId || u.title}>
+                            {u.title}
+                            {u.size ? ` (${u.size})` : ""} ×{u.remainingQuantity}
+                            {u.isScannedLine || u.lineId === directQtyPrompt.lineId
+                              ? " ← scannée maintenant"
+                              : ""}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                );
+              })()}
               {directQtyPrompt.requiresDeliveryNote ? (
                 <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
                   <div className="font-semibold">Delivery note required</div>
