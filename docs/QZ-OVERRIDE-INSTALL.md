@@ -23,24 +23,23 @@ QZ_PRIVATE_KEY="$(cat private-key.pem | awk 'NF{printf "%s\\n",$0}')"
 
 Restart the web app after setting env.
 
-## Every packing PC (colleague — manual, once)
+## Every packing PC (colleague)
 
-Send them **only** `override.crt` (same file as the admin Mac).
+No env access needed. On the **VPS `/scan` page**:
+
+1. Click **override.crt** (or wizard → Télécharger override.crt).
+2. Quit QZ Tray.
+3. Copy the file:
 
 ### macOS
-1. Quit QZ Tray.
-2. Copy `override.crt` into:
-   `/Applications/QZ Tray.app/Contents/Resources/override.crt`
-   (replace if present)
-3. Start QZ Tray again.
+`/Applications/QZ Tray.app/Contents/Resources/override.crt`
 
 ### Windows
-1. Quit QZ Tray.
-2. Copy `override.crt` into:
-   `C:\Program Files\QZ Tray\override.crt`
-3. Start QZ Tray (as admin if needed).
+`C:\Program Files\QZ Tray\override.crt`
 
-Then open the **VPS `/scan`** page → **Configurer ce poste** (paper size) → **Activate**.
+4. Start QZ Tray → `/scan` → Configurer ce poste → Activate.
+
+API: `GET /api/qz/override.crt` (public cert only — never the private key).
 
 ## What you do NOT send colleagues
 - Private key (`private-key.pem`) — stays on the **server** only.

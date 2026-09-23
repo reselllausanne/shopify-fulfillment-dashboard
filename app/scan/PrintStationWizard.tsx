@@ -210,6 +210,19 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
               >
                 Installer QZ Tray
               </a>
+              <a
+                href="/api/qz/override.crt"
+                download="override.crt"
+                className="inline-flex w-full justify-center rounded border border-amber-300 bg-amber-50 px-3 py-2 text-amber-950 hover:bg-amber-100"
+              >
+                Télécharger override.crt (ce poste)
+              </a>
+              <p className="text-xs text-gray-500">
+                Après téléchargement : quitter QZ Tray, coller le fichier dans{" "}
+                <code className="text-[10px]">QZ Tray.app/Contents/Resources/</code> (Mac) ou{" "}
+                <code className="text-[10px]">C:\Program Files\QZ Tray\</code> (Windows),
+                puis relancer QZ. Pas besoin d’accès serveur.
+              </p>
               <button
                 type="button"
                 disabled={busy}

@@ -2409,6 +2409,14 @@ export default function ScanPage() {
               >
                 Configurer ce poste
               </button>
+              <a
+                href="/api/qz/override.crt"
+                download="override.crt"
+                className="px-2 py-0.5 text-xs rounded border border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100"
+                title="Télécharger override.crt — à coller dans le dossier QZ Tray de CE Mac/PC (une fois). Pas besoin d’accès env."
+              >
+                override.crt
+              </a>
               {printStationStatus?.readyForSilentPrint ? (
                 <button
                   type="button"
@@ -3652,8 +3660,9 @@ export default function ScanPage() {
                       Attention — autres paires encore ouvertes sur cette commande
                     </div>
                     <p className="mt-1 text-xs">
-                      Tu ships seulement la ligne scannée. Vérifie le colis / le reste avant de
-                      continuer ({totalOpen} unité(s) ouvertes au total).
+                      Tu ships <strong>uniquement</strong> la ligne scannée (pas toute la
+                      commande). Les autres paires restent ouvertes — vérifie le colis avant
+                      de continuer ({totalOpen} unité(s) ouvertes au total).
                     </p>
                     <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs">
                       {(directQtyPrompt.openUnits || [])
