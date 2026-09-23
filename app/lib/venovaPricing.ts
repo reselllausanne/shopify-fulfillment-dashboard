@@ -1,3 +1,5 @@
+import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+
 /** Venova.ch CHF retail → Galaxus sell (ship + % margin). */
 
 export type VenovaLandedCost = {
@@ -19,7 +21,7 @@ export const VENOVA_POST_MAX_KG = 30;
 
 export function venovaPricingConfig() {
   return {
-    marginPercent: Math.max(0, Number(process.env.SCRAPER_VEN_MARGIN_PERCENT || "20")),
+    marginPercent: Math.max(0, Number(process.env.SCRAPER_VEN_MARGIN_PERCENT || "30")),
     /** PostPac Economy floor — applied to all SKUs (incl. heavy / unknown Planzer). */
     shippingChf: Math.max(
       0,
@@ -103,15 +105,20 @@ export function computeVenovaSellPrice(
     };
   }
   const landedChf = roundChf(buyChf + ship.shippingChf);
-  const sellPriceChf = roundChf(landedChf * (1 + cfg.marginPercent / 100));
-  if (!Number.isFinite(sellPriceChf) || sellPriceChf <= 0) return null;
+  const fromPct = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const floor = applyCheapItemSellFloor({
+    buyChf: roundChf(buyChf),
+    landedChf,
+    sellFromPercentChf: fromPct,
+  });
+  if (!Number.isFinite(floor.sellPriceChf) || floor.sellPriceChf <= 0) return null;
   return {
     buyChf: roundChf(buyChf),
     shippingChf: ship.shippingChf,
     shippingReason: ship.reason,
     landedChf,
     marginPercent: cfg.marginPercent,
-    sellPriceChf,
+    sellPriceChf: floor.sellPriceChf,
     priceSource: "chf_shelf_plus_ship_plus_margin",
     weightKg,
     skippedReason: null,

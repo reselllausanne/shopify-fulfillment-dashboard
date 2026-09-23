@@ -54,7 +54,6 @@ defaults = {
     "SCRAPER_VEN_DEFER_IMAGE_SYNC": "1",
     "SCRAPER_VEN_REQUEST_DELAY_MS": "120",
     "SCRAPER_VEN_CONCURRENCY": "6",
-    "SCRAPER_VEN_MARGIN_PERCENT": "20",
     "SCRAPER_VEN_SHIPPING_CHF": "10",
     "SCRAPER_VEN_REQUIRE_EXACT_QTY": "1",
     "SCRAPER_VEN_SKIP_OVER_30KG": "0",
@@ -65,6 +64,11 @@ for k, v in defaults.items():
     text = text.rstrip() + f"\n{k}={v}\n"
     changed = True
     print(f"set default {k}={v}")
+
+# Force margin 30% (was 20 in older deploys)
+text, ch_m = upsert_line("SCRAPER_VEN_MARGIN_PERCENT", "30", text)
+changed = changed or ch_m
+print("SCRAPER_VEN_MARGIN_PERCENT=30")
 
 if changed:
     Path("/opt/resell/.env.bak.ven").write_text(path.read_text())

@@ -64,7 +64,6 @@ defaults = {
     "SCRAPER_ALT_REQUEST_DELAY_MS": "120",
     "SCRAPER_ALT_CONCURRENCY": "6",
     "SCRAPER_ALT_SHIPPING_CHF": "16",
-    "SCRAPER_ALT_MARGIN_PERCENT": "20",
     "SCRAPER_ALT_DEFAULT_STOCK": "5",
 }
 for k, v in defaults.items():
@@ -73,6 +72,10 @@ for k, v in defaults.items():
     text = text.rstrip() + f"\n{k}={v}\n"
     changed = True
     print(f"set default {k}={v}")
+
+text, ch_m = upsert_line("SCRAPER_ALT_MARGIN_PERCENT", "30", text)
+changed = changed or ch_m
+print("SCRAPER_ALT_MARGIN_PERCENT=30")
 
 if changed:
     Path("/opt/resell/.env.bak.alt").write_text(path.read_text())

@@ -38,7 +38,6 @@ defaults = {
     "SCRAPER_TUS_CONCURRENCY": "6",
     "SCRAPER_TUS_VARIATION_CONCURRENCY": "8",
     "SCRAPER_TUS_PAGE_SIZE": "50",
-    "SCRAPER_TUS_MARGIN_PERCENT": "20",
     "SCRAPER_TUS_SHIPPING_CHF": "7",
     "SCRAPER_TUS_FREE_SHIP_CHF": "79",
     "SCRAPER_TUS_REQUIRE_EXACT_QTY": "1",
@@ -50,6 +49,10 @@ for k, v in defaults.items():
     text = text.rstrip() + f"\n{k}={v}\n"
     changed = True
     print(f"set default {k}={v}")
+
+text, ch_m = upsert_line("SCRAPER_TUS_MARGIN_PERCENT", "30", text)
+changed = changed or ch_m
+print("SCRAPER_TUS_MARGIN_PERCENT=30")
 
 # Galaxus feed allowlist
 m_allow = re.search(r"^GALAXUS_FEED_SUPPLIER_ALLOWLIST=(.*)$", text, re.M)

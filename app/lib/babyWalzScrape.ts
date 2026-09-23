@@ -69,6 +69,14 @@ function formatBabyWalzNote(product: BabyWalzProduct) {
     gtinSource: product.gtinSource,
     sizeRaw: product.sizeRaw,
     bulkyOrLoad: product.bulkyOrLoad,
+    lengthCm: product.parcel.lengthCm,
+    widthCm: product.parcel.widthCm,
+    heightCm: product.parcel.heightCm,
+    weightKg: product.parcel.weightKg,
+    longestCm: product.parcel.longestCm,
+    girthCm: product.parcel.girthCm,
+    parcelClass: product.parcel.parcelClass,
+    shipChf: product.parcel.shipChf,
     stockSource: "nuxt_variant_stock.quantity",
     buyPriceSource: "nuxt_variant_price.withTax",
   });
@@ -108,6 +116,7 @@ export async function scrapeBabyWalzShop(
   let skippedNoPrice = 0;
   let skippedTooCheap = 0;
   let skippedBulky = 0;
+  let skippedOversized = 0;
   let requestErrors = 0;
   let imageSynced = 0;
   let imageFailed = 0;
@@ -271,6 +280,20 @@ export async function scrapeBabyWalzShop(
             skippedBulky++;
             continue;
           }
+          if (product.parcel.parcelClass === "unshippable") {
+            skippedOversized++;
+            if (mayMutateMarketplaceStock()) {
+              await prismaAny.supplierVariant.updateMany({
+                where: { supplierVariantId: `${shop.key}_${product.gtin}` },
+                data: {
+                  stock: 0,
+                  manualNote: formatBabyWalzNote(product),
+                  lastSyncAt: new Date(),
+                },
+              });
+            }
+            continue;
+          }
           const ok = await upsertVariant(product);
           if (ok) {
             wrote++;
@@ -297,6 +320,7 @@ export async function scrapeBabyWalzShop(
             `skipped_no_price=${skippedNoPrice}`,
             `skipped_too_cheap=${skippedTooCheap}`,
             `skipped_bulky=${skippedBulky}`,
+            `skipped_oversized=${skippedOversized}`,
           ].join(" "),
         });
       }
@@ -337,6 +361,7 @@ export async function scrapeBabyWalzShop(
         `skipped_no_price=${skippedNoPrice}`,
         `skipped_too_cheap=${skippedTooCheap}`,
         `skipped_bulky=${skippedBulky}`,
+        `skipped_oversized=${skippedOversized}`,
         deferBabyWalzImageSync() ? "image_sync=deferred" : `images_synced=${imageSynced}`,
         `images_failed=${imageFailed}`,
       ].join(" "),

@@ -3,6 +3,7 @@
 FAQ: portofrei if order ≥ CHF 9.90; else Kleinmengenzuschlag CHF 5.00.
 Post transit after dispatch: +2–3 Werktage.
 */
+import { applyCheapItemSellFloor, SCRAPER_CHEAP_MIN_ABS_MARGIN_CHF } from "@/app/lib/scraperCheapFloor";
 export type ExlibrisLandedCost = {
   buyChf: number;
   shippingChf: number;
@@ -159,7 +160,14 @@ export function computeExlibrisLandedCost(input: {
   const landedChf = roundChf(buyChf + shippingChf);
   const sellPct = roundChf(landedChf * (1 + marginPercent / 100));
   const sellFloor = roundChf(landedChf + minAbs);
-  const sellPriceChf = Math.max(sellPct, sellFloor);
+  const fromAbs = Math.max(sellPct, sellFloor);
+  const cheap = applyCheapItemSellFloor({
+    buyChf,
+    landedChf,
+    sellFromPercentChf: fromAbs,
+    minAbsMarginChf: Math.max(minAbs, SCRAPER_CHEAP_MIN_ABS_MARGIN_CHF),
+  });
+  const sellPriceChf = cheap.sellPriceChf;
   const lead = parseExlibrisLeadTime(input.availabilityText || "");
 
   return {
@@ -169,7 +177,7 @@ export function computeExlibrisLandedCost(input: {
     freeShipMinChf: cfg.freeShipMinChf,
     landedChf,
     marginPercent,
-    minAbsMarginChf: minAbs,
+    minAbsMarginChf: Math.max(minAbs, cheap.usedMinAbsFloor ? SCRAPER_CHEAP_MIN_ABS_MARGIN_CHF : minAbs),
     marginMode: sellPriceChf === sellPct ? "percent" : "min_abs_floor",
     sellPriceChf,
     vatRate: cfg.vatRate,

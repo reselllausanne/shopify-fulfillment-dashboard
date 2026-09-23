@@ -3,6 +3,7 @@
  * CH ships DE warehouse: flat CHF 16 / package (no free-ship AOV floor).
  * MOQ 1 pricing always bakes full package fee — cheap SKUs stay uncompetitive, expensive ones amortize.
  */
+import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
 
 export type AlternateLandedCost = {
   buyChf: number;
@@ -19,7 +20,7 @@ export const ALTERNATE_PACKAGE_SHIP_CHF = 16;
 
 export function alternatePricingConfig() {
   return {
-    marginPercent: Math.max(0, Number(process.env.SCRAPER_ALT_MARGIN_PERCENT || "20")),
+    marginPercent: Math.max(0, Number(process.env.SCRAPER_ALT_MARGIN_PERCENT || "30")),
     shippingChf: Math.max(
       0,
       Number(process.env.SCRAPER_ALT_SHIPPING_CHF || ALTERNATE_PACKAGE_SHIP_CHF)
@@ -38,15 +39,20 @@ export function computeAlternateLandedCost(buyChf: number): AlternateLandedCost 
   const buy = roundChf(buyChf);
   const shippingChf = cfg.shippingChf;
   const landedChf = roundChf(buy + shippingChf);
-  const sellPriceChf = roundChf(landedChf * (1 + cfg.marginPercent / 100));
-  if (!Number.isFinite(sellPriceChf) || sellPriceChf <= 0) return null;
+  const fromPct = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const floor = applyCheapItemSellFloor({
+    buyChf: buy,
+    landedChf,
+    sellFromPercentChf: fromPct,
+  });
+  if (!Number.isFinite(floor.sellPriceChf) || floor.sellPriceChf <= 0) return null;
   return {
     buyChf: buy,
     shippingChf,
     shippingReason: `package_flat_chf${shippingChf}`,
     landedChf,
     marginPercent: cfg.marginPercent,
-    sellPriceChf,
+    sellPriceChf: floor.sellPriceChf,
     priceSource: "chf_shelf_plus_ship_plus_margin",
   };
 }
