@@ -3,71 +3,61 @@
 ## Goal
 
 Each packing desk prints Swiss Post labels on **its own** thermal printer
-(Brother QL-W810, Zebra, …) with the **same 62×100 mm PDF format**.
-Auto-print only on **certain** matches (never ambiguous).
+with a **shared label PDF** from the backend (VPS). Config is done in the
+browser on that desk — via the **VPS-hosted** `/scan` page (not SSH).
 
-## Modes (what you asked for)
+## Why we fell behind `main`
 
-| Where | Path | Popup? |
-|-------|------|--------|
-| **Localhost packing Mac** (`LOCAL_STATION=1`) | Server `lp` → Brother CUPS queue | **No** — silent auto-print. QZ UI hidden. |
-| **VPS / remote browser + QZ Activate'd** | QZ Tray silent | **No** |
-| **VPS / remote, no QZ** | Browser print dialog | Yes |
+Feature branches do **not** auto-rebase. `main` kept receiving other PRs
+while this branch sat. `safe-sync` protects dirty trees; it does not keep
+feature branches current. Fix: rebase/replay onto `origin/main` before PR.
 
-## Call chain
+## Rule
 
-1. Scan resolves a **certain** match.
-2. Server CUPS when `LOCAL_STATION=1` → `printJobResult.ok && !skipped` → client **stops** (no dialog).
-3. Else client `tryStationAutoPrint` → QZ if Activate'd + validated → silent.
-4. Else browser print dialog (`SCAN_BROWSER_PRINT_*`).
+1. Backend creates the label / fulfillment / DELR once.
+2. Browser prints that existing PDF (QZ silent or PDF popup).
+3. Print failures **never** re-call fulfill / Swiss Post / DELR.
 
-## Local setup (cable Brother, no QZ)
+## Where to set paper size (per PC)
+
+On the **production site** (VPS app) open `/scan` → **Configurer ce poste**
+→ step **format** (presets, mm, DPI, margins, driver paper).
+
+Stored in **that browser’s** `localStorage`. Theo’s Brother ≠ other thermal.
+
+Quick path: **Activate** picks a printer and turns auto-print on (keeps
+existing size from wizard if already set).
+
+## QZ certificate (paid — silent, no popup)
+
+Buy Premium Support (trusted cert, all machines):
+
+- https://buy.qz.io/Premium-Support-_p_13.html — **$749 USD / year**
+- Overview: https://qz.io/
+- Generate cert after purchase: https://qz.io/docs/generate-certificate
+- Signing docs: https://qz.io/docs/signing
+
+Then on VPS `.env` (once):
 
 ```bash
-# packing Mac .env — never on VPS
-LOCAL_STATION=1
-SWISS_POST_PRINTER_NAME="Brother_QL_810W"
-# optional media / scale — see SWISS_POST_PRINT_*
+QZ_PUBLIC_CERT="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n"
+QZ_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
 
-Badge on `/scan`: **Print: CUPS**. Restart Next after changing `.env`.
+Restart web. App signs **every** print via `/api/qz/sign` (SHA512).
+Private key never reaches the browser.
 
-If CUPS fails (`ok:false` / misconfigured queue), client falls through to browser dialog so you still get a label.
+## Multi-station
 
-## QZ (remote stations only)
+| What | Where |
+|------|--------|
+| Cert/key | VPS env (shared) |
+| Printer + paper size + validated | each PC browser |
+| QZ Tray app | each PC |
 
-Default **QZ: off**. Nothing connects until **Activate**.
+## Localhost
 
-Silent only when:
-
-1. Activate'd (`autoPrintOnCertainMatch` + `silentPrintValidated` in `localStorage.resell.printStation.v1`)
-2. `window.qz` websocket active
-
-**Off** → browser popup again. Page load never `connect()` while off.
-
-```json
-{
-  "stationId": "desk-1",
-  "provider": "qz_tray",
-  "printerName": "Brother_QL_W810W",
-  "labelWidthMm": 62,
-  "labelHeightMm": 100,
-  "autoPrintOnCertainMatch": true,
-  "silentPrintValidated": true
-}
+```bash
+./scripts/setup-qz-local.sh
+npm run dev
 ```
-
-## First-time QZ checklist (Brother QL-W810)
-
-- [ ] Install QZ Tray on the station.
-- [ ] Import signed cert / allow this origin without prompt.
-- [ ] Brother drivers + 62×100 media.
-- [ ] Self-test label from printer.
-- [ ] QZ demo print → correct roll.
-- [ ] Scan page pill **ready** → scan certain match → silent, no popup.
-- [ ] Then set `silentPrintValidated: true`.
-
-## Multi-account StockX (later)
-
-`StockxInboundPackage.stockxAccountKey` is ready for Galaxus-side StockX
-accounts without changing Shopify AWB fallback today.

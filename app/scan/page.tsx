@@ -15,6 +15,8 @@ import {
   tryStationAutoPrint,
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
+import PrintStationWizard from "./PrintStationWizard";
+import type { PrintStationConfig } from "@/lib/printStation";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
@@ -172,6 +174,7 @@ type ScanResult = {
       title: string;
       remainingQuantity: number;
       isScannedLine?: boolean;
+      size?: string | null;
     }>;
     autoDirectUnitSelection?: {
       requiresPopup: boolean;
@@ -374,6 +377,14 @@ type DirectQtyPromptState = {
   remaining: number;
   qty: number;
   requiresDeliveryNote: boolean;
+  /** All still-open lines on this order (incl. scanned). Empty = unknown. */
+  openUnits: Array<{
+    lineId: string;
+    title: string;
+    remainingQuantity: number;
+    isScannedLine?: boolean;
+    size?: string | null;
+  }>;
 };
 
 type DirectRescanHint = {
@@ -727,6 +738,7 @@ export default function ScanPage() {
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [printStationStatus, setPrintStationStatus] =
     useState<PrintStationProbeStatus | null>(null);
+  const [printStationWizardOpen, setPrintStationWizardOpen] = useState(false);
   const [qzBusy, setQzBusy] = useState(false);
   const [qzPrinterPick, setQzPrinterPick] = useState<{
     printers: string[];
@@ -1079,15 +1091,20 @@ export default function ScanPage() {
     productName: string;
     remaining: number;
     requiresDeliveryNote?: boolean;
+    openUnits?: DirectQtyPromptState["openUnits"];
   }): Promise<number | null> =>
     new Promise((resolve) => {
       const remaining = Math.max(1, Math.floor(Number(params.remaining) || 1));
       directQtyPromptResolver.current = resolve;
       setDirectQtyPrompt({
-        ...params,
+        orderDbId: params.orderDbId,
+        lineId: params.lineId,
+        orderLabel: params.orderLabel,
+        productName: params.productName,
         remaining,
         qty: 1,
         requiresDeliveryNote: Boolean(params.requiresDeliveryNote),
+        openUnits: Array.isArray(params.openUnits) ? params.openUnits : [],
       });
     });
 
@@ -2019,6 +2036,13 @@ export default function ScanPage() {
                 productName,
                 remaining,
                 requiresDeliveryNote,
+                openUnits: openUnits.map((u) => ({
+                  lineId: String(u.lineId || u.lineItemId || ""),
+                  title: String(u.title || "Item").trim() || "Item",
+                  remainingQuantity: Math.max(0, Number(u.remainingQuantity) || 0),
+                  isScannedLine: Boolean(u.isScannedLine) || String(u.lineId || u.lineItemId) === lineId,
+                  size: u.size ?? null,
+                })),
               });
               if (qty && qty > 0) {
                 await runDirectLabelForOrder(
@@ -2201,12 +2225,21 @@ export default function ScanPage() {
         openUnits.find((u) => u.isScannedLine) ||
         openUnits.find((u) => u.lineItemId === scan.match?.shopifyLineItemId) ||
         openUnits[0];
+      const others = openUnits.filter((u) => u !== scanned);
       const summary = openUnits
-        .map((u) => `• ${u.title} ×${u.remainingQuantity}`)
+        .map((u) => {
+          const mark = u === scanned || u.isScannedLine ? " ← scanned now" : "";
+          return `• ${u.title} ×${u.remainingQuantity}${mark}`;
+        })
         .join("\n");
+      const otherNote =
+        others.length > 0
+          ? `\n\n⚠️ Other open pairs on this order (do NOT forget):\n` +
+            others.map((u) => `• ${u.title} ×${u.remainingQuantity}`).join("\n")
+          : "";
       const ok = window.confirm(
         `Multi-product / qty>1 order — select units for THIS parcel only.\n\n` +
-          `${summary || "(open units)"}\n\n` +
+          `${summary || "(open units)"}${otherNote}\n\n` +
           `OK = ship 1× scanned line only` +
           (scanned ? ` (${scanned.title})` : "") +
           `\nCancel = abort (no whole-order fulfill).`
@@ -2348,11 +2381,11 @@ export default function ScanPage() {
         <div className="absolute right-0 top-0 flex items-center gap-2">
           {showQzControls ? (
           <div className="flex flex-col items-end gap-0.5">
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 flex-wrap justify-end">
               <span
                 title={
                   printStationStatus
-                    ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · validated=${printStationStatus.silentPrintValidated}`
+                    ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · format=${printStationStatus.labelFormat} · sign=${printStationStatus.qzSigningConfigured ? "ok" : "off"} · validated=${printStationStatus.silentPrintValidated}`
                     : "QZ Tray off"
                 }
                 className={
@@ -2364,11 +2397,26 @@ export default function ScanPage() {
               >
                 QZ:{" "}
                 {printStationStatus?.readyForSilentPrint
-                  ? "on"
+                  ? `on · ${printStationStatus.labelFormat}`
                   : printStationStatus?.reason === "off" || !printStationStatus
                     ? "off"
                     : printStationStatus.reason}
               </span>
+              <button
+                type="button"
+                onClick={() => setPrintStationWizardOpen(true)}
+                className="px-2 py-0.5 text-xs rounded border border-violet-300 bg-violet-50 text-violet-900 hover:bg-violet-100"
+              >
+                Configurer ce poste
+              </button>
+              <a
+                href="/api/qz/override.crt"
+                download="override.crt"
+                className="px-2 py-0.5 text-xs rounded border border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100"
+                title="Télécharger override.crt — à coller dans le dossier QZ Tray de CE Mac/PC (une fois). Pas besoin d’accès env."
+              >
+                override.crt
+              </a>
               {printStationStatus?.readyForSilentPrint ? (
                 <button
                   type="button"
@@ -2389,8 +2437,9 @@ export default function ScanPage() {
                 </button>
               )}
             </div>
-            <p className="max-w-[16rem] text-right text-[10px] leading-snug text-gray-500">
-              Need QZ Tray app installed + running on this Mac, then Activate.
+            <p className="max-w-[18rem] text-right text-[10px] leading-snug text-gray-500">
+              Site VPS + QZ Tray sur cet ordi. Configurer = taille papier / test.
+              Activate = auto-print.
             </p>
           </div>
           ) : null}
@@ -3589,8 +3638,48 @@ export default function ScanPage() {
               <p className="text-sm text-gray-700">{directQtyPrompt.productName}</p>
               <p className="mt-2 text-sm text-gray-600">
                 <span className="font-semibold text-emerald-800">{directQtyPrompt.remaining}</span>{" "}
-                left on this line.
+                left on this scanned line.
               </p>
+              {(() => {
+                const others = (directQtyPrompt.openUnits || []).filter(
+                  (u) =>
+                    !u.isScannedLine &&
+                    u.lineId !== directQtyPrompt.lineId &&
+                    u.remainingQuantity > 0
+                );
+                const totalOpen = (directQtyPrompt.openUnits || []).reduce(
+                  (n, u) => n + Math.max(0, u.remainingQuantity),
+                  0
+                );
+                if (others.length === 0 && totalOpen <= directQtyPrompt.remaining) {
+                  return null;
+                }
+                return (
+                  <div className="mt-3 rounded-md border border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                    <div className="font-semibold">
+                      Attention — autres paires encore ouvertes sur cette commande
+                    </div>
+                    <p className="mt-1 text-xs">
+                      Tu ships <strong>uniquement</strong> la ligne scannée (pas toute la
+                      commande). Les autres paires restent ouvertes — vérifie le colis avant
+                      de continuer ({totalOpen} unité(s) ouvertes au total).
+                    </p>
+                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs">
+                      {(directQtyPrompt.openUnits || [])
+                        .filter((u) => u.remainingQuantity > 0)
+                        .map((u) => (
+                          <li key={u.lineId || u.title}>
+                            {u.title}
+                            {u.size ? ` (${u.size})` : ""} ×{u.remainingQuantity}
+                            {u.isScannedLine || u.lineId === directQtyPrompt.lineId
+                              ? " ← scannée maintenant"
+                              : ""}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                );
+              })()}
               {directQtyPrompt.requiresDeliveryNote ? (
                 <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
                   <div className="font-semibold">Delivery note required</div>
@@ -3715,6 +3804,15 @@ export default function ScanPage() {
           </div>
         </div>
       </div>
+
+      <PrintStationWizard
+        open={printStationWizardOpen}
+        onClose={() => setPrintStationWizardOpen(false)}
+        onSaved={(_config: PrintStationConfig, status) => {
+          setPrintStationStatus(status);
+          setPrintStationWizardOpen(false);
+        }}
+      />
     </div>
   );
 }
