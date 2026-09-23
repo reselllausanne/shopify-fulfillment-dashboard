@@ -72,10 +72,13 @@ export function planAfterLabelCreated(params: {
   };
 }
 
+/** Silent print failed → always a browser fallback plan (carries `reason`). */
+export type BrowserFallbackPlan = Extract<PostLabelPrintPlan, { action: "browser_fallback" }>;
+
 export function planAfterSilentFailure(params: {
   label: ExistingLabelRef;
   error: string;
-}): PostLabelPrintPlan {
+}): BrowserFallbackPlan {
   return {
     action: "browser_fallback",
     event: "SILENT_PRINT_FAILED_FALLBACK_OPENED",
