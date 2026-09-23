@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { toShopifyOrderGid } from "@/app/lib/swissPostCustomerTracking";
 import { isPackageProtectionShopifyLine } from "@/app/utils/matching";
 import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 
@@ -62,11 +63,12 @@ export async function upsertPackageProtectionMatches(
 
     const createdAt = toDate(line.shopifyCreatedAt);
     const ref = supplierRef(line.shopifyLineItemId);
+    const shopifyOrderId = toShopifyOrderGid(line.shopifyOrderId);
 
     await prisma.orderMatch.upsert({
       where: { shopifyLineItemId: line.shopifyLineItemId },
       create: {
-        shopifyOrderId: line.shopifyOrderId,
+        shopifyOrderId,
         shopifyOrderName: line.shopifyOrderName,
         shopifyLineItemId: line.shopifyLineItemId,
         shopifyProductTitle: line.shopifyProductTitle,
@@ -91,6 +93,8 @@ export async function upsertPackageProtectionMatches(
         shopifyMetafieldsSynced: true,
       },
       update: {
+        // Heals rows written before the GID normalisation landed.
+        shopifyOrderId,
         shopifyOrderName: line.shopifyOrderName,
         shopifyProductTitle: line.shopifyProductTitle,
         shopifySku: line.shopifySku ?? null,

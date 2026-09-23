@@ -21,6 +21,7 @@ import { calcSuggestedRetailFromStxOffer } from "@/galaxus/pricing/suggestedSell
 import {
   allowsStxStandardImport,
   buildStxDualPriceFields,
+  stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
 import {
   buildPhysicalOnlySelectedOffer,
@@ -95,6 +96,8 @@ type ParsedVariantRow = {
   standardBuyPrice: number | null;
   expressBuyPrice: number | null;
   standardSuggestedRetailPriceInclVat: number | null;
+  /** Both StockX lanes were resolved for this row, so a null lane means "gone". */
+  lanesEvaluated: boolean;
   kickdbVariantExternalId: string;
   sizeUs: string | null;
   sizeEu: string | null;
@@ -377,6 +380,7 @@ export async function importStxProductByInput(
   }
 
   const variants = Array.isArray(product?.variants) ? product.variants : [];
+  const productAskMedian = stxProductAskMedian(variants);
   diagnostics.variantsTotal = variants.length;
   const supplierSkuFallback = pickString(styleId, product?.sku, slug, product?.id) ?? `stx_${normalizedInput}`;
   // Runtime override (options.forceImport) wins over the static allowlist so
@@ -438,6 +442,9 @@ export async function importStxProductByInput(
       standardBuyPrice: stxSellPrice,
       expressBuyPrice: null,
       standardSuggestedRetailPriceInclVat: suggestedRetailPriceInclVat,
+      // Synthetic fallback row (no StockX asks at all): the lanes were not observed,
+      // so it must not clear lane prices a real sync already stored.
+      lanesEvaluated: false,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -488,6 +495,7 @@ export async function importStxProductByInput(
     const lanes = buildStxDualPriceFields(variant, product, name, {
       forceImport,
       slug: slug ?? normalizedInput,
+      productAskMedian,
     });
     if (!lanes) {
       const physicalTarget = targetGtin || attachGtin || "";
@@ -552,6 +560,7 @@ export async function importStxProductByInput(
       standardBuyPrice: lanes.standardBuyPrice,
       expressBuyPrice: lanes.expressBuyPrice,
       standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+      lanesEvaluated: true,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),

@@ -7,6 +7,7 @@ import { type StxDeliveryType } from "@/galaxus/stx/offerSelection";
 import {
   allowsStxStandardImport,
   buildStxDualPriceFields,
+  stxProductAskMedian,
 } from "@/galaxus/stx/variantPriceLanes";
 import {
   syncShopifyStxPricesForGtins,
@@ -64,6 +65,8 @@ type ParsedStxRow = {
   standardBuyPrice: number | null;
   expressBuyPrice: number | null;
   standardSuggestedRetailPriceInclVat: number | null;
+  /** Both StockX lanes were resolved for this row, so a null lane means "gone". */
+  lanesEvaluated: boolean;
 };
 
 const STX_PREFIX = "stx_";
@@ -126,6 +129,7 @@ function stxVariantSyncPatch(row: ParsedStxRow) {
 function extractRowsFromPayload(payload: any, productId: string) {
   const rows: ParsedStxRow[] = [];
   const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const productAskMedian = stxProductAskMedian(variants);
   const supplierBrand = pickString(payload?.brand);
   const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
   const images = pickImages(payload);
@@ -144,6 +148,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
     const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
       forceImport,
       slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey),
+      productAskMedian,
     });
     if (!lanes) continue;
 
@@ -168,6 +173,7 @@ function extractRowsFromPayload(payload: any, productId: string) {
       standardBuyPrice: lanes.standardBuyPrice,
       expressBuyPrice: lanes.expressBuyPrice,
       standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+      lanesEvaluated: true,
     });
   }
   return rows;
@@ -267,6 +273,7 @@ type IngestParsedRow = ParsedStxRow & {
 function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestParsedRow[] {
   const rows: IngestParsedRow[] = [];
   const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const productAskMedian = stxProductAskMedian(variants);
   const supplierBrand = pickString(payload?.brand);
   const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
   const images = pickImages(payload);
@@ -281,6 +288,7 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
     const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
       forceImport,
       slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey),
+      productAskMedian,
     });
     if (!lanes) continue;
 
@@ -306,6 +314,7 @@ function extractOfferedRowsKeepNoGtin(payload: any, productId: string): IngestPa
       standardBuyPrice: lanes.standardBuyPrice,
       expressBuyPrice: lanes.expressBuyPrice,
       standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+      lanesEvaluated: true,
       kickdbVariantExternalId: variantId,
       sizeUs: pickString(variant?.size_us),
       sizeEu: pickString(variant?.size_eu),
@@ -557,6 +566,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
         }
         processedProducts += 1;
         const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+        const productAskMedian = stxProductAskMedian(variants);
         const supplierBrand = pickString(payload?.brand);
         const supplierProductName = pickString(payload?.title, payload?.primary_title, payload?.secondary_title);
         const images = pickImages(payload);
@@ -579,6 +589,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
           const lanes = buildStxDualPriceFields(variant, payload, supplierProductName, {
             forceImport,
             slug: pickString(payload?.slug, payload?.url_key, payload?.urlKey, row?.urlKey),
+            productAskMedian,
           });
           if (!lanes) continue;
 
@@ -603,6 +614,7 @@ export async function runStxSync(options: StxSyncOptions = {}): Promise<StxSyncR
             standardBuyPrice: lanes.standardBuyPrice,
             expressBuyPrice: lanes.expressBuyPrice,
             standardSuggestedRetailPriceInclVat: lanes.standardSuggestedRetailPriceInclVat,
+            lanesEvaluated: true,
           });
         }
       })

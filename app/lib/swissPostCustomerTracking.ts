@@ -1,3 +1,16 @@
+/**
+ * Canonical storage form for a Shopify order id: always the full GID.
+ * `ShopifyOrder.shopifyOrderId` holds GIDs, so every table that joins against it
+ * must store the same shape or the join silently returns nothing.
+ */
+export function toShopifyOrderGid(raw: string | number | null | undefined): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  if (value.startsWith("gid://")) return value;
+  const numeric = value.replace(/\D/g, "");
+  return numeric ? `gid://shopify/Order/${numeric}` : value;
+}
+
 export function shopifyOrderIdAliases(raw: string | number | null | undefined): string[] {
   const value = String(raw ?? "").trim();
   if (!value) return [];

@@ -17,11 +17,11 @@ import {
   shopifyLockedDenom,
 } from "@/shopify/pricing/calcShopifySellPrice";
 
-/** Locked floor: raw 100 → C=128 → (128+14.5)/0.6795 → ceil whole CHF. */
-const EXPECTED_SELL_RAW_100 = 210;
-const EXPECTED_SELL_RAW_108_45 = 224;
-const EXPECTED_SELL_RAW_126 = 252;
-const EXPECTED_SELL_RAW_170 = 321;
+/** Locked floor: raw 100 → C=128 → (128+14.5)/0.7895 → ceil whole CHF. */
+const EXPECTED_SELL_RAW_100 = 181;
+const EXPECTED_SELL_RAW_108_45 = 193;
+const EXPECTED_SELL_RAW_126 = 217;
+const EXPECTED_SELL_RAW_170 = 277;
 const BUY_CHF_140 = 140;
 const EXPECTED_RAW_FROM_BUY_140 = 108.45;
 
@@ -53,9 +53,15 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF).toBe(14.5);
     expect(SHOPIFY_BLENDED_PAYMENT_COST_RATE).toBe(0.0275);
     expect(SHOPIFY_VAT_FLAT_RATE).toBe(0.023);
-    expect(SHOPIFY_PAID_ADS_RATE).toBe(0.15);
-    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0.12);
-    expect(shopifyLockedDenom()).toBeCloseTo(0.6795, 6);
+    expect(SHOPIFY_PAID_ADS_RATE).toBe(0.11);
+    expect(SHOPIFY_TARGET_CM2_RATE).toBe(0.05);
+    expect(shopifyLockedDenom()).toBeCloseTo(0.7895, 6);
+  });
+
+  it("reproduces the price point that actually sold (cost 179 → 245 CHF)", () => {
+    // Measured on real orders: pairs bought 170–190 CHF sold at ~245 CHF before
+    // the 25 August increase. raw 147 → C = 147×1.08 + 20 = 178.76.
+    expect(calcShopifySellPrice({ stockxRaw: 147, productCategory: "sneakers" })).toBe(245);
   });
 
   it("ceilToCentime never rounds down", () => {
@@ -69,8 +75,8 @@ describe("calcShopifySellPrice locked formula", () => {
     expect(ceilToWholeFranc(286.36)).toBe(287);
   });
 
-  it("sourceCost 180.08 → 287 (whole CHF)", () => {
-    expect(calcShopifySellFromSourceCost(180.08)).toBe(287);
+  it("sourceCost 180.08 → 247 (whole CHF)", () => {
+    expect(calcShopifySellFromSourceCost(180.08)).toBe(247);
   });
 
   it("prices brands the same", () => {

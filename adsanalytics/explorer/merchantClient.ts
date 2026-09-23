@@ -356,6 +356,33 @@ export async function insertSupplementalProductLabel(
   );
 }
 
+/**
+ * Write arbitrary supplemental attributes for one offer.
+ *
+ * Same overlay mechanism as `insertSupplementalProductLabel`, but not limited to
+ * custom_label_3. Used to publish per-pair delivery options, which Google models
+ * as a repeated `shipping` attribute on the product rather than a second offer.
+ */
+export async function insertSupplementalProductAttributes(
+  merchantId: string,
+  dataSource: string,
+  product: MerchantProductRef,
+  productAttributes: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const q = encodeURIComponent(dataSource);
+  return requestJson(
+    `https://merchantapi.googleapis.com/products/v1/accounts/${merchantId}/productInputs:insert?dataSource=${q}`,
+    "POST",
+    {
+      offerId: product.offerId,
+      contentLanguage: product.contentLanguage,
+      feedLabel: product.feedLabel,
+      productAttributes,
+    },
+    3
+  );
+}
+
 export async function deleteSupplementalProductInput(
   merchantId: string,
   dataSource: string,
