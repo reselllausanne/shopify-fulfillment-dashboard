@@ -10,6 +10,8 @@ const WEBHOOKS = [
   { topic: "orders/paid", path: "/api/shopify/webhooks/orders-paid" },
   { topic: "fulfillments/create", path: "/api/shopify/webhooks/fulfillments-create" },
   { topic: "fulfillments/update", path: "/api/shopify/webhooks/fulfillments-update" },
+  // Reprice trigger — keep custom.express_available / custom.express_price synced.
+  { topic: "products/update", path: "/api/shopify/webhooks/products-update" },
 ] as const;
 
 async function main() {
