@@ -136,7 +136,10 @@ export const LABEL_PRESETS = [
 
 /**
  * Pure QZ pixel config from station settings.
- * Never sends empty-string height (breaks some drivers).
+ *
+ * IMPORTANT: with `units: "mm"`, QZ treats `density` as dots-per-mm, NOT DPI.
+ * Sending density: 300 with mm units (≈ 7620 DPI) breaks Brother/thermal jobs.
+ * We either omit density (driver default) or convert DPI → dpmm.
  */
 export function buildQzPixelConfigOptions(
   config: PrintStationConfig,
@@ -146,7 +149,8 @@ export function buildQzPixelConfigOptions(
     units: "mm",
     copies: Math.max(1, copies || 1),
     orientation: config.orientation,
-    scaleContent: config.scaleContent !== false,
+    // Autoscale + custom size is a common QZ/thermal failure mode.
+    scaleContent: config.scaleContent === true,
     colorType: "grayscale",
     margins: {
       top: config.marginTopMm || 0,
@@ -156,23 +160,26 @@ export function buildQzPixelConfigOptions(
     },
   };
 
-  if (!config.useDriverPaperSize) {
-    const width = Number(config.labelWidthMm);
-    const height = Number(config.labelHeightMm);
-    if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
-      opts.size = { width, height };
-    }
+  // Default path: let the OS/Brother driver pick the roll — most reliable.
+  if (config.useDriverPaperSize) {
+    return opts;
+  }
+
+  const width = Number(config.labelWidthMm);
+  const height = Number(config.labelHeightMm);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    opts.size = { width, height };
   }
 
   if (config.dpi != null && Number.isFinite(config.dpi) && config.dpi > 0) {
-    opts.density = config.dpi;
-    opts.rasterize = true;
+    // DPI → dots per mm (units are mm)
+    opts.density = Number(config.dpi) / 25.4;
   }
 
   return opts;
 }
 
-/** PDF data options — pageWidth/pageHeight help when driver ignores config.size. */
+/** PDF data options — only when forcing custom size (not driver paper). */
 export function buildQzPdfDataOptions(config: PrintStationConfig): Record<string, unknown> | undefined {
   if (config.useDriverPaperSize) return undefined;
   const width = Number(config.labelWidthMm);
@@ -221,8 +228,10 @@ export function defaultPrintStationConfig(
     marginRightMm: numOr(partial?.marginRightMm, 0),
     marginBottomMm: numOr(partial?.marginBottomMm, 0),
     marginLeftMm: numOr(partial?.marginLeftMm, 0),
-    scaleContent: partial?.scaleContent !== false,
-    useDriverPaperSize: Boolean(partial?.useDriverPaperSize),
+    // Off by default — scaleContent+custom size breaks many thermals in QZ.
+    scaleContent: partial?.scaleContent === true,
+    // On by default — OS/Brother roll is the reliable path; mm is optional override.
+    useDriverPaperSize: partial?.useDriverPaperSize !== false,
     autoPrintEnabled,
     autoPrintOnCertainMatch: autoPrintEnabled,
     silentPrintValidated: partial?.silentPrintValidated ?? false,
