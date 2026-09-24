@@ -1,0 +1,65 @@
+---
+description: GitHub is sole source of truth; VPS deploy-only; no destructive git
+alwaysApply: true
+---
+
+# Git → GitHub → VPS
+
+## Source of truth
+
+- **GitHub** is the only shared source of truth between laptops and the VPS.
+- Every code change: branch → commit → push to GitHub → (PR) merge to `main` → deploy.
+- **Never** hotfix directly on the VPS. **Never** commit feature work on the VPS.
+- VPS at `/opt/resell` is a **pull/deploy** machine only. It must run a precise GitHub revision (prefer `main` or a deploy tag).
+
+## Day-to-day (laptops)
+
+1. `git fetch origin` before work.
+2. Pull **only** if working tree clean: `git pull --ff-only`. If dirty → stop; show status; commit/stash/WIP branch first. Never overwrite local work.
+3. Non-trivial work on a **feature branch** (not long-lived parallel `main` edits on two Macs).
+4. Push so the other Mac can fetch. Prefer PR → `main`, then deploy.
+5. Use `scripts/safe-sync.sh` (or equivalent) for status/sync — no silent auto-commit, no silent overwrite.
+
+## Forbidden unless user explicitly orders it
+
+- `git push --force` / `--force-with-lease` to `main` (warn even for other branches)
+- `git reset --hard`
+- `git clean -fd` (or any clean that deletes untracked)
+- Destructive checkout that discards uncommitted work
+- Editing `/opt/resell` as a source of changes
+- Committing `.env`, API keys, credentials, or secret dumps
+
+## Merge → VPS is automatic (default)
+
+Push/merge to GitHub `main` triggers [`.github/workflows/deploy-vps.yml`](.github/workflows/deploy-vps.yml). That is the normal path to production. **No separate “deploy VPS” ask needed** when the user says change + merge / ship / put on prod.
+
+### After the agent merges (or lands) on `main`
+
+1. Note the target SHA (`git rev-parse origin/main` or the merge commit).
+2. Wait for workflow **Deploy VPS** on that SHA: `gh run list --workflow=deploy-vps.yml --limit 3` / `gh run watch <id>`.
+3. Confirm success; if failed → diagnose and fix (do not leave “merged but not on VPS”).
+4. Optionally verify VPS: `ssh resell-vps 'cd /opt/resell && git rev-parse HEAD'` must equal that SHA.
+5. Tell the user: merged + deploy status (+ VPS SHA).
+
+### Manual SSH deploy — only when
+
+- User explicitly asks for a rescue / dry-run / non-`main` SHA, **or**
+- CI deploy failed and user wants an emergency SSH path.
+
+```bash
+ssh resell-vps
+cd /opt/resell
+git fetch origin
+git status -sb
+# confirm no unexpected tracked dirty files; never discard unknown hotfixes without confirm
+# Prefer the GitHub Action script path; or:
+EXPECTED_SHA=$(git rev-parse origin/main) bash scripts/vps-deploy-from-github.sh --sha="$EXPECTED_SHA"
+git rev-parse HEAD   # must equal intended GitHub SHA
+```
+
+Prefer committing any leftover VPS-only code from a laptop into GitHub first, then deploy via `main`.
+
+## SSH
+
+- Host alias: `resell-vps` (key `~/.ssh/hetzner`) when configured.
+- Repo path: `/opt/resell`. Logs: `docker compose logs --since 24h`.

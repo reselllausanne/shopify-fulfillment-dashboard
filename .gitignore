@@ -58,8 +58,11 @@ local-sftp/
 .DS_Store
 Thumbs.db
 
-# cursor
-.cursor/
+# cursor — ignore local/MCP junk; keep shared agent rules tracked
+.cursor/*
+!.cursor/rules/
+.cursor/rules/*
+!.cursor/rules/*.mdc
 terminals/
 
 # scratch diagnostics + git worktrees (never track — they dirty the tree and block sync)
