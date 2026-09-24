@@ -29,6 +29,12 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { computeStxSellPrices } from "@/shopify/stx/syncShopifyStxPrices";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
+import { cleanGtin } from "@/shopify/restock/gtinNormalize";
+
+/** Zero-padding-tolerant GTIN key (UPC-A vs EAN-13 vs GTIN-14). */
+function gtinKey(value: string | null | undefined): string {
+  return cleanGtin(String(value ?? "")).replace(/^0+/, "");
+}
 
 function num(name: string, fallback: number): number {
   const raw = process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
@@ -76,6 +82,7 @@ type Row = {
   supplierVariantId: string;
   providerKey: string | null;
   gtin: string | null;
+  ean: string | null;
   deliveryType: string | null;
   price: number | null;
   standardBuyPrice: number | null;
@@ -112,6 +119,7 @@ async function main() {
     SELECT sv."supplierVariantId",
            sv."providerKey",
            sv."gtin",
+           kv."ean" AS "ean",
            sv."deliveryType",
            sv."price"::float AS price,
            sv."standardBuyPrice"::float AS "standardBuyPrice",
@@ -142,18 +150,19 @@ async function main() {
     LIMIT ${Math.max(1, Math.floor(LIMIT))}
   `);
 
-  // Group rows by Shopify product, keyed by barcode(=gtin) for local matching.
+  // Group rows by Shopify product, keyed by zero-padding-tolerant GTIN and EAN
+  // so a Shopify barcode stored as UPC-A / EAN-13 / GTIN-14 still matches.
   const byProduct = new Map<string, Map<string, Row>>();
   for (const r of rows) {
     const pid = String(r.shopifyProductId);
-    const gtin = String(r.gtin ?? "").trim();
-    if (!gtin) continue;
+    const keys = new Set([gtinKey(r.gtin), gtinKey(r.ean)].filter(Boolean));
+    if (keys.size === 0) continue;
     let m = byProduct.get(pid);
     if (!m) {
       m = new Map();
       byProduct.set(pid, m);
     }
-    m.set(gtin, r);
+    for (const k of keys) m.set(k, r);
   }
 
   console.log(`Rows: ${rows.length} | products: ${byProduct.size}`);
@@ -204,12 +213,14 @@ async function main() {
       value: string;
     }> = [];
     const stamped: Array<{ providerKey: string; supplierVariantId: string; gtin: string; variantId: string; price: number }> = [];
+    const matchedSv = new Set<string>();
 
     for (const node of nodes) {
-      const barcode = String(node.barcode ?? "").trim();
+      const barcode = gtinKey(node.barcode);
       if (!barcode) continue;
       const row = gtinMap.get(barcode);
       if (!row) continue; // size not in stock / not our row
+      matchedSv.add(row.supplierVariantId);
       if (truthy(node.priceLocked?.value)) {
         variantsLocked += 1;
         continue;
@@ -269,16 +280,16 @@ async function main() {
         stamped.push({
           providerKey: row.providerKey,
           supplierVariantId: row.supplierVariantId,
-          gtin: barcode,
+          gtin: String(row.gtin ?? barcode),
           variantId: node.id,
           price: normalSell,
         });
       }
     }
 
-    for (const gtin of gtinMap.keys()) {
-      if (!nodes.some((n) => String(n.barcode ?? "").trim() === gtin)) variantsNoMatch += 1;
-    }
+    // Rows for this product whose GTIN/EAN matched no Shopify barcode.
+    const distinctRows = new Set(Array.from(gtinMap.values()).map((r) => r.supplierVariantId));
+    for (const sv of distinctRows) if (!matchedSv.has(sv)) variantsNoMatch += 1;
 
     if (bulkVariants.length === 0) {
       productsDone += 1;
