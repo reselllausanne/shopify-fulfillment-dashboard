@@ -2378,7 +2378,15 @@ export default function ScanPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
-        <div className="absolute right-0 top-0 flex items-center gap-2">
+        <div className="absolute right-0 top-0 flex items-center gap-2 flex-wrap justify-end max-w-[75%]">
+          <a
+            href="/api/qz/override.crt"
+            download="override.crt"
+            className="px-3 py-1 text-sm rounded border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 font-medium"
+            title="Fichier public pour QZ Tray — coller dans le dossier QZ de ce Mac/PC"
+          >
+            Télécharger override.crt
+          </a>
           {showQzControls ? (
           <div className="flex flex-col items-end gap-0.5">
             <div className="flex items-center gap-1 flex-wrap justify-end">
@@ -2409,14 +2417,6 @@ export default function ScanPage() {
               >
                 Configurer ce poste
               </button>
-              <a
-                href="/api/qz/override.crt"
-                download="override.crt"
-                className="px-2 py-0.5 text-xs rounded border border-amber-300 bg-amber-50 text-amber-950 hover:bg-amber-100"
-                title="Télécharger override.crt — à coller dans le dossier QZ Tray de CE Mac/PC (une fois). Pas besoin d’accès env."
-              >
-                override.crt
-              </a>
               {printStationStatus?.readyForSilentPrint ? (
                 <button
                   type="button"
