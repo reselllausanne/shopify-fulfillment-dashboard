@@ -249,6 +249,25 @@ async function findShopifyVariantByHandleAndSize(input: {
   return null;
 }
 
+/**
+ * Normal + express Shopify sell prices for one STX row, using the locked
+ * formula. Exported so the batched one-shot reprice computes prices identically
+ * to SSE ingest and the nightly worker — a single source of pricing truth.
+ */
+export function computeStxSellPrices(input: {
+  stxRow: {
+    deliveryType: string | null;
+    price: unknown;
+    standardBuyPrice: unknown;
+    expressBuyPrice: unknown;
+    supplierProductName: string | null;
+    supplierBrand: string | null;
+  };
+  productHandle: string | null;
+}): { normalSell: number | null; expressSell: number | null } {
+  return computeSellPrices(input);
+}
+
 function computeSellPrices(input: {
   stxRow: {
     deliveryType: string | null;
