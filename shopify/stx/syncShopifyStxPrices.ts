@@ -166,6 +166,45 @@ async function recordShopifyStxPush(input: {
   }
 }
 
+/**
+ * Stamp a freshness marker for a GTIN we could not price this cycle
+ * (no Shopify variant, ambiguous, locked, admin-only, no computed price).
+ *
+ * Without this, such GTINs keep a NULL lastSyncedAt forever. The worker orders
+ * `lastSyncedAt ASC NULLS FIRST`, so ~100k permanently-unmatchable GTINs would
+ * sit at the head of every cycle, re-attempted endlessly and starving the
+ * variants that actually need a price. Stamping lastSyncedAt (without touching
+ * lastPushedPrice) lets the 48h skip drop them out of the head, while still
+ * re-checking every 48h in case the Shopify variant appears later. This is what
+ * keeps the steady-state queue bounded.
+ */
+async function recordShopifyStxSkip(
+  providerKey: string | null | undefined,
+  gtin: string | null,
+  reason: string
+): Promise<void> {
+  const key = String(providerKey ?? "").trim();
+  if (!key) return;
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.upsert) return;
+  const now = new Date();
+  try {
+    await cls.upsert({
+      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
+      create: {
+        channel: "SHOPIFY",
+        providerKey: key,
+        gtin: gtin ?? undefined,
+        lastSyncedAt: now,
+        lastError: reason,
+      },
+      update: { lastSyncedAt: now, lastError: reason },
+    });
+  } catch {
+    /* best-effort — bookkeeping must never fail the sync */
+  }
+}
+
 async function readShopifyPriceLocked(variantId: string): Promise<boolean> {
   const { data, errors } = await shopifyGraphQL<{
     productVariant: { metafield: { value: string | null } | null } | null;
@@ -416,17 +455,21 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
 
   const { match: shopifyVariant, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
   if (!shopifyVariant?.variantId || !shopifyVariant.productId) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "no_shopify_variant");
     return { gtin: cleanGtin, ok: false, reason: "no_shopify_variant" };
   }
   if (ambiguous) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "ambiguous_shopify_variant");
     return { gtin: cleanGtin, ok: false, reason: "ambiguous_shopify_variant" };
   }
 
   if (await readShopifyPriceLocked(shopifyVariant.variantId)) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "price_locked");
     return { gtin: cleanGtin, ok: false, reason: "price_locked" };
   }
 
   if (isAdminOnlyShopifyVariant(shopifyVariant.variantId, shopifyVariant.productId)) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "admin_only_product");
     return { gtin: cleanGtin, ok: false, reason: "admin_only_product" };
   }
 
@@ -445,6 +488,7 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   });
 
   if (normalSell == null) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "no_computed_normal_price");
     return { gtin: cleanGtin, ok: false, reason: "no_computed_normal_price" };
   }
 
