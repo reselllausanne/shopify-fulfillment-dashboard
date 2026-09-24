@@ -358,7 +358,10 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
                     }))
                   }
                 />
-                Utiliser le format papier du driver OS (ignorer mm ci-dessus)
+                <span>
+                  <strong>Recommandé :</strong> format papier du driver Windows/Mac
+                  (ignorer mm pour QZ). Décoche seulement si le driver imprime mal.
+                </span>
               </label>
               <label className="flex items-center gap-2">
                 <input
@@ -368,7 +371,7 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
                     setDraft((d) => ({ ...d, scaleContent: e.target.checked }))
                   }
                 />
-                Adapter le PDF à la taille (scale)
+                Forcer scale PDF → taille (souvent casse les thermiques — laisse OFF)
               </label>
               <label className="block">
                 Orientation
@@ -388,12 +391,13 @@ export default function PrintStationWizard({ open, onClose, onSaved }: Props) {
                 </select>
               </label>
               <label className="block">
-                DPI (Brother QL ≈ 300, thermique ≈ 203)
+                DPI (info / override avancé — converti automatiquement)
                 <input
                   type="number"
                   className="mt-1 w-full rounded border px-2 py-1"
-                  placeholder="ex. 300"
+                  placeholder="vide = driver (recommandé)"
                   value={draft.dpi ?? ""}
+                  disabled={draft.useDriverPaperSize}
                   onChange={(e) => {
                     const v = e.target.value.trim();
                     setDraft((d) => ({

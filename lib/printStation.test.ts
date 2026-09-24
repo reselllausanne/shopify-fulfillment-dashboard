@@ -29,8 +29,8 @@ describe("printStation", () => {
     expect(config.autoPrintEnabled).toBe(false);
     expect(config.autoPrintOnCertainMatch).toBe(false);
     expect(config.silentPrintValidated).toBe(false);
-    expect(config.scaleContent).toBe(true);
-    expect(config.useDriverPaperSize).toBe(false);
+    expect(config.scaleContent).toBe(false);
+    expect(config.useDriverPaperSize).toBe(true);
     expect(decideStationAutoPrint({ config }).shouldAutoPrint).toBe(false);
     expect(
       decideStationAutoPrint({ matchCertainty: "certain", config }).shouldAutoPrint
@@ -117,7 +117,7 @@ describe("printStation", () => {
     expect(a.dpi).not.toBe(b.dpi);
   });
 
-  it("builds QZ size options with real mm (never empty-string height)", () => {
+  it("builds QZ size options with mm and DPI converted to dots-per-mm", () => {
     const config = defaultPrintStationConfig({
       labelWidthMm: 62,
       labelHeightMm: 100,
@@ -125,18 +125,36 @@ describe("printStation", () => {
       dpi: 300,
       marginTopMm: 1,
       marginLeftMm: 2,
+      useDriverPaperSize: false,
+      scaleContent: false,
     });
     const opts = buildQzPixelConfigOptions(config, 1);
     expect(opts.units).toBe("mm");
     expect(opts.size).toEqual({ width: 62, height: 100 });
     expect((opts.size as any).height).not.toBe("");
-    expect(opts.density).toBe(300);
+    // 300 DPI / 25.4 ≈ 11.81 dpmm — NOT raw 300 (that broke thermal prints)
+    expect(opts.density).toBeCloseTo(300 / 25.4, 5);
+    expect(opts.rasterize).toBeUndefined();
+    expect(opts.scaleContent).toBe(false);
     expect(opts.margins).toEqual({ top: 1, right: 0, bottom: 0, left: 2 });
     expect(buildQzPdfDataOptions(config)).toEqual({
       pageWidth: 62,
       pageHeight: 100,
       ignoreTransparency: true,
     });
+  });
+
+  it("driver paper mode omits size and density even if dpi is set", () => {
+    const config = defaultPrintStationConfig({
+      useDriverPaperSize: true,
+      labelWidthMm: 62,
+      labelHeightMm: 100,
+      dpi: 300,
+    });
+    const opts = buildQzPixelConfigOptions(config, 1);
+    expect(opts.size).toBeUndefined();
+    expect(opts.density).toBeUndefined();
+    expect(buildQzPdfDataOptions(config)).toBeUndefined();
   });
 
   it("can defer paper size to the OS driver per station", () => {
@@ -150,7 +168,6 @@ describe("printStation", () => {
     expect(buildQzPdfDataOptions(config)).toBeUndefined();
   });
 });
-
 describe("printLabelFlow", () => {
   const readyConfig = defaultPrintStationConfig({
     printerName: "Brother_QL_W810W",
