@@ -288,6 +288,10 @@ export function schedulePhysicalInStockSyncForVariant(shopifyVariantId: string):
       setTimeout(() => {
         debounceByProduct.delete(productId);
         void syncPhysicalInStockMetafieldForProduct(productId).catch(() => {});
+        // Keep the SALES badge (custom.soldes_48h) linked to local soldes stock.
+        void import("@/shopify/inventory/productSoldes48hMetafield")
+          .then((m) => m.syncProductSoldes48hMetafield(productId))
+          .catch(() => {});
       }, 1500)
     );
   })().catch(() => {});
