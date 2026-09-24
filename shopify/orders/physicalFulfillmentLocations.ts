@@ -1,3 +1,5 @@
+import { PHYSICAL_LOCATIONS } from "@/shopify/inventory/locationConfig";
+
 /**
  * Locations Shopify où le stock est physique (déjà expensé via achat / retour).
  * Pour ces locations, la vente doit générer un OrderMatch(cost=0, matchType=physical_fulfillment)
@@ -26,6 +28,18 @@ const PHYSICAL_FULFILLMENT_LOCATION_NAMES_LC = new Set(
   ].map((n) => n.toLowerCase())
 );
 
+/** Live Shopify names may be prefixed (e.g. sort order) — match by hint, not exact string. */
+const PHYSICAL_FULFILLMENT_NAME_HINTS: RegExp[] = [
+  /bussigny/i,
+  /antica/i,
+  /cold\s*bien/i,
+  /rare\s*bienne/i,
+  /\blab\b|concept store|the lab/i,
+];
+
+/** Resolve Bussigny from Shopify Admin location list (renames / prefixes ok). */
+export const BUSSIGNY_LOCATION_NAME_MATCH = /bussigny/i;
+
 /**
  * Nom d'une location Shopify → est-elle un site physique dont le stock est déjà expensé?
  * Insensible à la casse et aux espaces terminaux.
@@ -33,9 +47,14 @@ const PHYSICAL_FULFILLMENT_LOCATION_NAMES_LC = new Set(
 export function isPhysicalFulfillmentLocationName(
   name: string | null | undefined
 ): boolean {
-  const key = String(name ?? "").trim().toLowerCase();
-  if (!key) return false;
-  return PHYSICAL_FULFILLMENT_LOCATION_NAMES_LC.has(key);
+  const raw = String(name ?? "").trim();
+  if (!raw) return false;
+  const key = raw.toLowerCase();
+  if (PHYSICAL_FULFILLMENT_LOCATION_NAMES_LC.has(key)) return true;
+  if (PHYSICAL_FULFILLMENT_NAME_HINTS.some((rx) => rx.test(raw))) return true;
+  return PHYSICAL_LOCATIONS.some(
+    (l) => key.includes(l.name.toLowerCase()) || l.name.toLowerCase().includes(key)
+  );
 }
 
 /** Nom canonique (pour storage) — retourne le nom original si pas de canonicalisation. */
