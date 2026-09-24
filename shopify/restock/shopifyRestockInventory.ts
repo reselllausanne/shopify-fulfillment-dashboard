@@ -10,6 +10,7 @@ import {
   resolveProviderKeyForGtin,
   upsertShopifyListingState,
 } from "@/shopify/restock/channelListingState";
+import { BUSSIGNY_LOCATION_NAME_MATCH } from "@/shopify/orders/physicalFulfillmentLocations";
 
 /**
  * Phase 0 foundation for the restock flow.
@@ -169,8 +170,6 @@ export function isRestockDryRun(): boolean {
   return String(process.env.SHOPIFY_RESTOCK_DRY_RUN ?? "1").trim() !== "0";
 }
 
-const BUSSIGNY_NAME_MATCH = /bussign?y|warehouse/i;
-
 let cachedBussignyLocationId: string | null = null;
 
 /**
@@ -200,7 +199,7 @@ export async function resolveBussignyLocationId(options: { force?: boolean } = {
   }
 
   const nodes = data?.locations?.nodes ?? [];
-  const bussigny = nodes.find((node) => BUSSIGNY_NAME_MATCH.test(node.name));
+  const bussigny = nodes.find((node) => BUSSIGNY_LOCATION_NAME_MATCH.test(node.name));
   if (bussigny) {
     cachedBussignyLocationId = bussigny.id;
     return { locationId: bussigny.id, source: "name-match" };
