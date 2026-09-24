@@ -35,12 +35,25 @@ function flag(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function intFlagAllowZero(name: string, fallback: number): number {
+  const raw = process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
 const APPLY = process.argv.includes("--apply");
 const LIMIT = flag("limit", 500);
 const BATCH = flag("batch", 50);
 const MAX_DELTA_PCT = flag("max-delta-pct", 35);
 const MAX_PRICE = flag("max-price", 5000);
 const STALE_HOURS = flag("stale-hours", 0);
+// Parallelism: run N copies with --shards=N --shard=0..N-1 to drain the backlog
+// in parallel without overlap (each process owns a disjoint hash slice).
+const SHARDS = Math.max(1, intFlagAllowZero("shards", 1));
+const SHARD = Math.min(SHARDS - 1, intFlagAllowZero("shard", 0));
+// Skip rows already pushed within this window so restarts and parallel passes
+// don't re-walk fresh variants. 0 = process everything (default).
+const SKIP_FRESH_HOURS = intFlagAllowZero("skip-fresh-hours", 0);
 
 type Row = {
   supplierVariantId: string;
@@ -56,8 +69,21 @@ async function main() {
     `${APPLY ? "MODE: APPLY" : "MODE: DRY-RUN"} | lock=${SHOPIFY_PRICING_LOCK_VERSION} | limite=${LIMIT} | garde-fou=${MAX_DELTA_PCT}%`
   );
 
+  if (SHARDS > 1) {
+    console.log(`SHARD ${SHARD}/${SHARDS} | skip-fresh-hours=${SKIP_FRESH_HOURS}`);
+  }
+
   const staleClause = STALE_HOURS
     ? `AND (sv."lastSyncAt" IS NULL OR sv."lastSyncAt" < NOW() - INTERVAL '${Math.round(STALE_HOURS)} hours')`
+    : "";
+  const shardClause =
+    SHARDS > 1
+      ? `AND (abs(hashtextextended(COALESCE(sv."gtin", sv."supplierVariantId"), 0)) % ${SHARDS}) = ${SHARD}`
+      : "";
+  // NULL lastSyncedAt = never pushed → always in scope. Only skip rows pushed
+  // inside the window so parallel passes / restarts don't re-walk fresh work.
+  const skipFreshClause = SKIP_FRESH_HOURS
+    ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
     : "";
 
   const rows = await prisma.$queryRawUnsafe<Row[]>(`
@@ -82,6 +108,8 @@ async function main() {
       AND sss."syncStatus" = 'synced'
       AND sss."shopifyProductId" IS NOT NULL
       ${staleClause}
+      ${shardClause}
+      ${skipFreshClause}
     ORDER BY sv."lastSyncAt" ASC NULLS FIRST
     LIMIT ${Math.max(1, LIMIT)}
   `);
