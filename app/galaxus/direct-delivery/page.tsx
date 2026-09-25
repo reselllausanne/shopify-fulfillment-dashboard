@@ -1362,10 +1362,15 @@ export default function GalaxusDirectDeliveryPage() {
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
-                                  disabled={!procOk || shipping}
+                                  disabled={shipping}
                                   onChange={(e) => togglePairSelected(line, e.target.checked)}
                                 />
                                 Ship this pair
+                                {!procOk ? (
+                                  <span className="text-amber-800" title="StockX not linked — print still allowed">
+                                    (unlinked OK)
+                                  </span>
+                                ) : null}
                                 {orderedQty > 1 ? (
                                   <>
                                     {" "}
