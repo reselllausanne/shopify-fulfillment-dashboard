@@ -95,6 +95,38 @@ describe("buildSwissPostRecipientNameFields", () => {
 });
 
 describe("buildSwissPostRecipientFromGalaxusOrder", () => {
+  it("company + Digitec placeholder + real referencePerson → person on label (not Digitec)", () => {
+    const recipient = buildSwissPostRecipientFromGalaxusOrder({
+      recipientName: "Digitec Galaxus AG",
+      recipientAddress1: "Rue de la Pierre-à-Mazel 10",
+      recipientPostalCode: "2000",
+      recipientCity: "Neuchâtel",
+      recipientCountryCode: "CH",
+      customerName: "Digitec Galaxus AG",
+      referencePerson: "Sergen Olivier Tarabbia",
+      customerType: "company",
+    });
+    expect(recipient.personallyAddressed).toBe(true);
+    expect(recipient.firstName).toBe("Sergen");
+    expect(recipient.name1).toBe("Olivier Tarabbia");
+    expect(recipient.name1).not.toMatch(/digitec|galaxus/i);
+  });
+
+  it("company + Digitec + Dock facility code → Digitec stays name1", () => {
+    const recipient = buildSwissPostRecipientFromGalaxusOrder({
+      recipientName: "Digitec Galaxus AG",
+      recipientAddress1: "Ferroring 23",
+      recipientPostalCode: "5612",
+      recipientCity: "Villmergen",
+      recipientCountryCode: "CH",
+      referencePerson: "Dock A19",
+      customerType: "company",
+    });
+    expect(recipient.personallyAddressed).toBe(false);
+    expect(recipient.name1).toBe("Digitec Galaxus AG");
+    expect(recipient.name2).toBe("Dock A19");
+  });
+
   it("company + referencePerson → business layout", () => {
     const recipient = buildSwissPostRecipientFromGalaxusOrder({
       recipientName: "Digitec Galaxus AG",

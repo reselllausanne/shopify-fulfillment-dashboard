@@ -78,6 +78,22 @@ export function looksLikeSwissPostBusinessName(name: string): boolean {
   ].some((needle) => normalized.includes(needle));
 }
 
+/** Galaxus ORDP often puts marketplace legal name as recipient — not the end customer. */
+export function isGalaxusMarketplacePlaceholderName(name: string | null | undefined): boolean {
+  const n = normalizeSwissPostText(name).toLowerCase();
+  if (!n) return false;
+  if (n.includes("digitec")) return true;
+  if (/\bgalaxus\b/.test(n) && /\bag\b/.test(n)) return true;
+  return n === "galaxus";
+}
+
+/** Warehouse dock / gate codes — keep Digitec as label name1. */
+export function isGalaxusFacilityOrDockReference(name: string | null | undefined): boolean {
+  const n = normalizeSwissPostText(name);
+  if (!n) return false;
+  return /\b(dock|tor\s*\d|gate|halle|ramp|wareneingang|receiving|lager|gdn[- ])/i.test(n);
+}
+
 function sameName(a: string | null | undefined, b: string | null | undefined): boolean {
   const left = normalizeSwissPostText(a).toLowerCase();
   const right = normalizeSwissPostText(b).toLowerCase();
@@ -391,6 +407,40 @@ export function buildSwissPostRecipientFromGalaxusOrder(order: {
   const customerName = normalizeSwissPostText(order.customerName) || null;
   const contact = normalizeSwissPostText(order.referencePerson) || null;
   const customerType = order.customerType ?? null;
+
+  // ORDP often sets recipientName/customerName = "Digitec Galaxus AG" even for
+  // direct-to-end-customer parcels (customerType=company included). Never put the
+  // marketplace legal name on the Swiss Post label when we have a real end-customer
+  // contact. Warehouse dock codes (Dock A19) keep Digitec as name1.
+  const marketplacePlaceholder =
+    isGalaxusMarketplacePlaceholderName(primaryName) ||
+    isGalaxusMarketplacePlaceholderName(customerName);
+  const endCustomerContact =
+    contact && !isGalaxusFacilityOrDockReference(contact) ? contact : null;
+
+  if (marketplacePlaceholder && endCustomerContact) {
+    return buildSwissPostRecipient({
+      company: null,
+      personName: endCustomerContact,
+      // Force particulier layout so Name1/Firstname are the real person.
+      customerType: "private_customer",
+      department: null,
+      address1: hasRecipient ? order.recipientAddress1 : order.customerAddress1,
+      address2: hasRecipient ? order.recipientAddress2 : order.customerAddress2,
+      postalCode: hasRecipient ? order.recipientPostalCode : order.customerPostalCode,
+      city: hasRecipient ? order.recipientCity : order.customerCity,
+      countryCodeOrName: hasRecipient
+        ? order.recipientCountryCode ?? order.recipientCountry
+        : order.customerCountryCode ?? order.customerCountry,
+      phone: hasRecipient
+        ? order.recipientPhone ?? null
+        : order.customerPhone ?? order.recipientPhone ?? null,
+      email: hasRecipient
+        ? order.recipientEmail ?? order.customerEmail ?? null
+        : order.customerEmail ?? null,
+    });
+  }
+
   const isBusiness =
     isSwissPostBusinessCustomerType(customerType) ||
     (!isSwissPostPrivateCustomerType(customerType) &&
