@@ -6,6 +6,11 @@ import {
   catalogSkuHitIndexes,
   resolveCatalogSkuHits,
 } from "@/app/api/scan-awb/catalogSkuLookup";
+import {
+  computeShipmentCoverageForOrders,
+  loadDelrShipmentIdsForOrders,
+  loadShipmentItemsForOrders,
+} from "@/galaxus/warehouse/shipmentLineCoverage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,6 +26,9 @@ export const dynamic = "force-dynamic";
  *
  * Also resolves catalog `SupplierVariant.supplierSku` (e.g. Reichelt `MW 3A03GS`)
  * → GTIN / providerKey so typed style SKUs find open Galaxus/Decathlon lines.
+ *
+ * Fulfilled / fully-covered lines never appear — /scan typeahead is pending work
+ * only (use Direct Delivery search for history).
  */
 
 type SuggestKind = "galaxus_direct" | "galaxus_warehouse" | "decathlon" | "shopify";
@@ -142,12 +150,6 @@ async function searchGalaxus(
           deliveryType: true,
           recipientCity: true,
           customerCity: true,
-          shipments: {
-            select: {
-              delrSentAt: true,
-              delrStatus: true,
-            },
-          },
         },
       },
     },
@@ -155,24 +157,63 @@ async function searchGalaxus(
     take: limit * FETCH_MULTIPLIER,
   });
 
+  // Same coverage as GTIN fallback / DD — reserved MANUAL+track and DELR both
+  // zero remaining. Order-level DELR alone missed partials + pre-DELR labels.
+  const orderDbIds = Array.from(new Set(rows.map((r) => r.order.id)));
+  const orderRefs = Array.from(
+    new Set(rows.map((r) => String(r.order.galaxusOrderId ?? "").trim()).filter(Boolean))
+  );
+  let remainingByLineId = new Map<string, number>();
+  if (orderDbIds.length > 0) {
+    const fullOrders = await prisma.galaxusOrder.findMany({
+      where: { id: { in: orderDbIds } },
+      select: {
+        id: true,
+        galaxusOrderId: true,
+        lines: {
+          select: {
+            id: true,
+            quantity: true,
+            buyerPid: true,
+            supplierPid: true,
+            gtin: true,
+            warehouseMarkedShippedAt: true,
+          },
+        },
+      },
+    });
+    const [delrShipmentIds, existingItems] = await Promise.all([
+      loadDelrShipmentIdsForOrders(orderDbIds, orderRefs),
+      loadShipmentItemsForOrders(orderDbIds),
+    ]);
+    const coverage = computeShipmentCoverageForOrders(
+      fullOrders,
+      existingItems,
+      delrShipmentIds
+    );
+    remainingByLineId = new Map(
+      Object.entries(coverage).map(([lineId, cov]) => [
+        lineId,
+        Math.max(0, Number(cov?.remaining ?? 0)),
+      ])
+    );
+  }
+
   const items: SuggestItem[] = [];
   for (const line of rows) {
     const deliveryType = String(line.order.deliveryType ?? "").toLowerCase();
     const isDirect = deliveryType === "direct_delivery";
-    const alreadyFulfilled = (line.order.shipments ?? []).some(
-      (s) => Boolean(s.delrSentAt) || String(s.delrStatus ?? "").toUpperCase() === "UPLOADED"
-    );
     const gtin = line.gtin ?? null;
-    const providerKey = String(line.providerKey ?? line.supplierPid ?? "").trim();
-    const matchedViaCatalog =
-      Boolean(catalog?.gtins.length) &&
-      ((gtin != null && catalog!.gtins.includes(gtin)) ||
-        (providerKey && catalog!.providerKeys.includes(providerKey)));
-    // Line-level pending signal for warehouse: not yet warehouse-shipped.
+    // Warehouse: line marked shipped.
     if (!isDirect && line.warehouseMarkedShippedAt) continue;
-    // Direct-delivery: hide fulfilled unless the hit came from a catalog style SKU
-    // search (GOOBAY 232 / MW 3A03) — operators still need to find that order.
-    if (isDirect && alreadyFulfilled && !matchedViaCatalog) continue;
+    // Pending only: line remaining from shipment coverage (DELR, reserved
+    // MANUAL+track, warehouse mark). Catalog SKU hits do not resurrect fulfilled.
+    const remaining = remainingByLineId.has(line.id)
+      ? (remainingByLineId.get(line.id) as number)
+      : line.warehouseMarkedShippedAt
+        ? 0
+        : 1;
+    if (remaining <= 0) continue;
     const styleSku = gtin ? catalog?.skuByGtin.get(gtin) ?? null : null;
     items.push({
       id: `galaxus:${line.id}`,

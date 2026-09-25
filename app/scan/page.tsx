@@ -472,6 +472,8 @@ type SuggestItem = {
 };
 
 const SUGGEST_LIMIT = 8;
+/** Stale suggest must not keep fulfilled orders after a ship. */
+const SUGGEST_CACHE_TTL_MS = 5_000;
 const SUGGEST_DEBOUNCE_MS = 150;
 const SCANNER_BURST_THRESHOLD_MS = 120;
 
@@ -713,6 +715,7 @@ export default function ScanPage() {
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestFocusIdx, setSuggestFocusIdx] = useState<number>(-1);
   const suggestCacheRef = useRef<Map<string, SuggestItem[]>>(new Map());
+  const suggestCacheAtRef = useRef<Map<string, number>>(new Map());
   const suggestReqIdRef = useRef(0);
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstKeystrokeAtRef = useRef<number | null>(null);
@@ -899,7 +902,8 @@ export default function ScanPage() {
       return;
     }
     const cached = suggestCacheRef.current.get(q.toLowerCase());
-    if (cached) {
+    const cacheAt = suggestCacheAtRef.current.get(q.toLowerCase()) ?? 0;
+    if (cached && Date.now() - cacheAt < SUGGEST_CACHE_TTL_MS) {
       setSuggestions(cached);
       setSuggestOpen(cached.length > 0);
       setSuggestLoading(false);
@@ -919,6 +923,7 @@ export default function ScanPage() {
         if (data?.ok && Array.isArray(data.items)) {
           const items: SuggestItem[] = data.items;
           suggestCacheRef.current.set(q.toLowerCase(), items);
+          suggestCacheAtRef.current.set(q.toLowerCase(), Date.now());
           setSuggestions(items);
           setSuggestOpen(items.length > 0);
         } else {
@@ -1226,6 +1231,9 @@ export default function ScanPage() {
         return;
       }
       if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
+        // Drop stale typeahead so fulfilled lines vanish immediately.
+        suggestCacheRef.current.clear();
+        suggestCacheAtRef.current.clear();
         // Mark selected lines done in the GTIN panel.
         let leftAfterShip = 0;
         let rescanMeta: DirectRescanHint | null = null;
