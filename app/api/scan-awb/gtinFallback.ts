@@ -115,8 +115,14 @@ export type GtinFallbackPayload = {
     orderDbId: string;
     shipmentId: string | null;
   } | null;
-  /** Oldest open fulfillable channel (direct / shopify / decathlon). Null if none. */
+  /** Oldest open fulfillable channel (direct / shopify / decathlon). Null if none
+   *  or when warehouse + direct both open for the same GTIN (operator must pick). */
   autoChannel: GtinAutoChannel | null;
+  /**
+   * Same physical GTIN is owed on Galaxus warehouse AND direct. Auto-fulfill /
+   * auto-packing must not claim both — operator chooses one channel for this unit.
+   */
+  requiresChannelChoice: boolean;
   orders: GtinOrderRow[];
 };
 
@@ -505,6 +511,27 @@ function autoChannelOf(row: GtinOrderRow): GtinAutoChannel | null {
 }
 
 /**
+ * Decide whether GTIN scan may auto-claim a fulfill channel.
+ * When the same GTIN is open on warehouse AND direct, never auto — one physical
+ * unit cannot pack into a warehouse box and also ship as direct.
+ */
+export function decideGtinAutoChannel(params: {
+  openDirect: number;
+  openWarehouse: number;
+  autoRowChannel: GtinAutoChannel | null;
+}): { autoChannel: GtinAutoChannel | null; requiresChannelChoice: boolean } {
+  const requiresChannelChoice =
+    params.openDirect > 0 && params.openWarehouse > 0;
+  if (requiresChannelChoice) {
+    return { autoChannel: null, requiresChannelChoice: true };
+  }
+  return {
+    autoChannel: params.autoRowChannel,
+    requiresChannelChoice: false,
+  };
+}
+
+/**
  * Parallel multi-channel GTIN lookup for /scan when no AWB hit.
  * Returns null when no lines found on any channel.
  */
@@ -545,7 +572,11 @@ export async function resolveGtinFallback(
 
   // Oldest fulfillable open row across Galaxus direct / Shopify / Decathlon.
   const autoRow = openOrders.find(isAutoFulfillable) ?? null;
-  const autoChannel = autoRow ? autoChannelOf(autoRow) : null;
+  const { autoChannel, requiresChannelChoice } = decideGtinAutoChannel({
+    openDirect,
+    openWarehouse,
+    autoRowChannel: autoRow ? autoChannelOf(autoRow) : null,
+  });
 
   // Reprint pointer: latest Decathlon shipment for this GTIN when nothing left to ship.
   const shippedDecathlon = orderedList
@@ -607,6 +638,7 @@ export async function resolveGtinFallback(
           }
         : null,
     autoChannel,
+    requiresChannelChoice,
     orders: orderedList,
   };
 }

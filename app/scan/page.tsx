@@ -9,6 +9,10 @@ import {
   shouldAutoGalaxusDirectLabelFor,
 } from "./scanInboundGuards";
 import {
+  looksLikeManualQuery,
+  shouldAllowScanAutoActions,
+} from "./scanInputGuards";
+import {
   activatePrintStation,
   deactivatePrintStation,
   probePrintStationStatus,
@@ -96,6 +100,8 @@ type ScanResult = {
   status: ScanStatus;
   awb: string;
   manualShopifySuggest?: boolean;
+  /** Picked from typeahead — never auto-fulfill / auto-print. */
+  manualSuggest?: boolean;
   fulfillmentDemo?: ScanDemoChannel | null;
   match: ScanMatchPayload | null;
   decathlon?: {
@@ -165,6 +171,7 @@ type ScanResult = {
     openWarehouse: number;
     openShopify?: number;
     openDecathlon?: number;
+    requiresChannelChoice?: boolean;
     autoDirectOrderDbId?: string | null;
     autoDirectLineId?: string | null;
     autoDirectRemaining?: number;
@@ -465,28 +472,6 @@ type SuggestItem = {
 const SUGGEST_LIMIT = 8;
 const SUGGEST_DEBOUNCE_MS = 150;
 const SCANNER_BURST_THRESHOLD_MS = 120;
-
-/**
- * Heuristic: does this input value look like it was typed by a human vs
- * pasted by a barcode scanner? We only surface suggestions for typing.
- *
- * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD..., >=8 digits pure numeric).
- * - Accept short queries (<8 chars), values that contain letters, or values
- *   with two consecutive identical chars (typists repeat, scanners don't).
- */
-const looksLikeManualQuery = (value: string): boolean => {
-  const v = String(value ?? "").trim();
-  if (v.length < 2) return false;
-  const upper = v.toUpperCase();
-  if (upper.startsWith("1Z") && upper.length >= 10) return false;
-  if (upper.startsWith("JJD") && upper.length >= 10) return false;
-  if (upper.startsWith("JD") && upper.length >= 10) return false;
-  if (/^\d{8,}$/.test(v)) return false;
-  if (v.length < 8) return true;
-  if (/[a-z]/i.test(v)) return true;
-  if (/(.)\1/.test(v)) return true;
-  return false;
-};
 
 const ensureScanSessionKey = () => {
   if (typeof window === "undefined") return null;
@@ -1864,12 +1849,18 @@ export default function ScanPage() {
   const handleSuggestionSelect = (item: SuggestItem) => {
     const canonical =
       item.gtin || item.supplierPid || item.buyerPid || item.orderNumber || item.orderId || "";
+    setCode(canonical);
+    setFulfillResult(null);
+    closeSuggestions();
+
+    // Preview only — NEVER auto-submit / auto-print / auto-pack from typeahead.
     if (item.kind === "shopify") {
       const synthetic: ScanResult = {
         ok: true,
         status: "FOUND",
         awb: canonical || item.lineId || item.orderId,
         manualShopifySuggest: true,
+        manualSuggest: true,
         match: {
           shopifyOrderId: item.orderId,
           shopifyOrderName: item.orderNumber ?? null,
@@ -1888,29 +1879,85 @@ export default function ScanPage() {
         gtin: null,
         stxInboundBuy: null,
       };
-      setCode(canonical);
       setResult(synthetic);
-      setFulfillResult(null);
-      closeSuggestions();
       focusInput();
       return;
     }
-    setCode(canonical);
-    closeSuggestions();
-    // Run scan with the canonical code so we don't wait for React state.
-    void handleSubmit(canonical);
+
+    if (item.kind === "decathlon") {
+      setResult({
+        ok: true,
+        status: "FOUND",
+        awb: canonical || item.orderId,
+        manualSuggest: true,
+        match: null,
+        decathlon: {
+          orderId: item.orderId,
+          orderDbId: item.orderDbId,
+          orderNumber: item.orderNumber,
+          lineId: item.lineId,
+          quantity: 1,
+          source: "decathlon_stockx_match",
+        },
+        galaxus: null,
+        inboundHome: null,
+        gtin: null,
+        stxInboundBuy: null,
+      });
+      focusInput();
+      return;
+    }
+
+    // galaxus_direct | galaxus_warehouse
+    setResult({
+      ok: true,
+      status: "FOUND",
+      awb: canonical || item.orderId,
+      manualSuggest: true,
+      match: null,
+      decathlon: null,
+      galaxus: {
+        orderId: item.orderId,
+        orderDbId: item.orderDbId,
+        orderNumber: item.orderNumber,
+        lineId: item.lineId,
+        deliveryType: item.deliveryType ?? null,
+        isDirectDelivery: item.kind === "galaxus_direct",
+        allLinked: true,
+        source: "galaxus_stockx_match",
+      },
+      inboundHome: null,
+      gtin: null,
+      stxInboundBuy: null,
+    });
+    focusInput();
   };
 
-  const handleSubmit = async (overrideCode?: string) => {
+  const handleSubmit = async (
+    overrideCode?: string,
+    opts?: { fromScannerBurst?: boolean; fromSuggestion?: boolean }
+  ) => {
     const startedAt = Date.now();
     const rawCode = overrideCode !== undefined ? overrideCode : code;
     const scanCodeForPacking = String(rawCode ?? "").trim();
+    const allowAutoActions = shouldAllowScanAutoActions({
+      code: scanCodeForPacking,
+      fromScannerBurst: opts?.fromScannerBurst,
+      fromSuggestion: opts?.fromSuggestion,
+    });
     if (!scanCodeForPacking) {
       setResult({
         ok: false,
         status: "UNMATCHED",
         awb: "",
       } as ScanResult);
+      focusInput();
+      return;
+    }
+    // Typed junk ("allo") with no barcode shape: refuse to run scan pipeline.
+    if (!allowAutoActions && looksLikeManualQuery(scanCodeForPacking) && !opts?.fromSuggestion) {
+      // Keep suggestions open; do not fulfill anything.
+      if (suggestions.length > 0) setSuggestOpen(true);
       focusInput();
       return;
     }
@@ -1923,6 +1970,12 @@ export default function ScanPage() {
       isWarehouse: boolean;
       isDirectDelivery: boolean;
     } | null = null;
+    let gtinAutoChannelForPacking:
+      | "galaxus_direct"
+      | "shopify"
+      | "decathlon"
+      | null = null;
+    let gtinRequiresChannelChoice = false;
     try {
       const res = await fetch("/api/scan-awb", {
         method: "POST",
@@ -1930,8 +1983,10 @@ export default function ScanPage() {
         body: JSON.stringify({ code: rawCode, scanSessionKey }),
       });
       const data: ScanResult = await res.json();
-      setResult(data);
+      // Preserve manualSuggest if we ever route suggestion through submit.
+      if (opts?.fromSuggestion) data.manualSuggest = true;
       const finishedAt = Date.now();
+      setResult(data);
       setHistory((prev) => {
         const prevTs = prev[0]?.ts ? new Date(prev[0].ts).getTime() : null;
         const entry: HistoryItem = {
@@ -1966,20 +2021,30 @@ export default function ScanPage() {
           data.gtin
       );
 
-      await handleChannelActions(data);
+      // Autos only for real scanner / barcode input — never typed search / suggest.
+      if (allowAutoActions) {
+        await handleChannelActions(data);
+      }
 
       // GTIN fallback auto-fulfill: AWB miss + product barcode hit.
       // Oldest open across Galaxus direct / Shopify / Decathlon (server picks
       // via `gtin.autoChannel`). Skip when any other channel already claimed.
+      // Never auto when input came from typeahead / typed search.
       const gtinBlockedByOtherChannel =
         Boolean(data.galaxus) ||
         Boolean(data.inboundHome) ||
         Boolean(data.match) ||
         Boolean(data.stxInboundBuy) ||
         Boolean(data.decathlon);
-      const gtinAutoChannel = !gtinBlockedByOtherChannel
-        ? data.gtin?.autoChannel ?? null
-        : null;
+      gtinRequiresChannelChoice =
+        allowAutoActions &&
+        !gtinBlockedByOtherChannel &&
+        Boolean(data.gtin?.requiresChannelChoice);
+      const gtinAutoChannel =
+        allowAutoActions && !gtinBlockedByOtherChannel
+          ? data.gtin?.autoChannel ?? null
+          : null;
+      gtinAutoChannelForPacking = gtinAutoChannel;
 
       if (gtinAutoChannel === "galaxus_direct") {
         const gtinAutoDirectOrderDbId =
@@ -2091,6 +2156,7 @@ export default function ScanPage() {
           ""
         );
       } else if (
+        allowAutoActions &&
         !gtinBlockedByOtherChannel &&
         !gtinAutoChannel &&
         data.gtin?.autoDecathlonReprint?.orderId
@@ -2103,6 +2169,7 @@ export default function ScanPage() {
       }
 
       if (
+        allowAutoActions &&
         ENABLE_AUTO_FULFILLMENT &&
         data.ok &&
         data.match &&
@@ -2127,11 +2194,17 @@ export default function ScanPage() {
       setLoading(false);
       // Non-blocking: resolve packing-session assignment in the background so
       // scanner focus returns immediately. Warehouse inbound StockX buys MUST
-      // be added to the box. Direct-delivery inbounds are skipped.
+      // be added to the box. Direct-delivery inbounds / GTIN channel claims skip.
       const scanShapeForGuard = {
         stxInboundBuy: inboundBuyForPacking,
       };
-      if (shouldAutoAddToPackingSession(scanShapeForGuard)) {
+      if (
+        allowAutoActions &&
+        shouldAutoAddToPackingSession(scanShapeForGuard, {
+          gtinAutoChannel: gtinAutoChannelForPacking,
+          gtinRequiresChannelChoice,
+        })
+      ) {
         void tryAddScanToPackingSession(scanCodeForPacking, { mainScanHandled });
       }
       focusInput();
@@ -2541,11 +2614,12 @@ export default function ScanPage() {
                     suggestFocusIdx >= 0 &&
                     suggestions[suggestFocusIdx]
                   ) {
+                    // Preview only — never auto-fulfill from typeahead.
                     handleSuggestionSelect(suggestions[suggestFocusIdx]);
                     return;
                   }
                   closeSuggestions();
-                  void handleSubmit();
+                  void handleSubmit(undefined, { fromScannerBurst: isScannerBurst });
                 }
               }}
               onBlur={() => {
@@ -3092,6 +3166,12 @@ export default function ScanPage() {
                 <div className="font-semibold text-teal-900">
                   Galaxus {result.galaxus.isDirectDelivery ? "direct delivery" : "marketplace"}
                 </div>
+                {result.manualSuggest ? (
+                  <div className="mt-2 rounded border border-amber-400 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                    Recherche manuelle — <strong>aucune action auto</strong>. Clique le bouton
+                    ci-dessous pour ship / pack.
+                  </div>
+                ) : null}
                 <p className="text-sm mt-1">
                   Order ref: <span className="font-mono">{galaxusOrderRef(result.galaxus)}</span>
                   {result.galaxus.isDirectDelivery ? (
@@ -3138,12 +3218,28 @@ export default function ScanPage() {
                     </a>
                   </div>
                 ) : (
-                  <a
-                    href="/galaxus/warehouse"
-                    className="mt-2 inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
-                  >
-                    Open Galaxus warehouse →
-                  </a>
+                  <div className="mt-2 flex flex-wrap gap-2 items-center">
+                    {result.manualSuggest ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void tryAddScanToPackingSession(
+                            String(result.awb || code || "").trim(),
+                            { mainScanHandled: true }
+                          )
+                        }
+                        className="px-3 py-1.5 rounded bg-indigo-700 text-white text-sm"
+                      >
+                        Add to packing box
+                      </button>
+                    ) : null}
+                    <a
+                      href="/galaxus/warehouse"
+                      className="inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
+                    >
+                      Open Galaxus warehouse →
+                    </a>
+                  </div>
                 )}
               </div>
             )}
@@ -3159,6 +3255,62 @@ export default function ScanPage() {
                   Shopify · {result.gtin.openDecathlon ?? 0} Decathlon (of{" "}
                   {result.gtin.orders.length} recent lines).
                 </p>
+                {result.gtin.requiresChannelChoice ? (
+                  <div className="mt-3 rounded-md border border-amber-500 bg-amber-50 px-3 py-3 text-amber-950">
+                    <div className="font-semibold text-sm">
+                      Même GTIN ouvert en warehouse ET direct — une seule paire physique
+                    </div>
+                    <p className="mt-1 text-xs">
+                      Auto désactivé. Choisis où va <strong>cette</strong> unité (pas les deux).
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={fulfillLoading}
+                        onClick={() => {
+                          void tryAddScanToPackingSession(
+                            String(result.gtin?.gtin || code || "").trim(),
+                            { mainScanHandled: true }
+                          );
+                        }}
+                        className="rounded bg-indigo-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Pack warehouse box
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          fulfillLoading ||
+                          !result.gtin.autoDirectOrderDbId ||
+                          !result.gtin.autoDirectLineId
+                        }
+                        onClick={() => {
+                          const orderDbId = String(result.gtin?.autoDirectOrderDbId ?? "").trim();
+                          const lineId = String(result.gtin?.autoDirectLineId ?? "").trim();
+                          if (!orderDbId || !lineId) return;
+                          const autoRow =
+                            result.gtin?.orders?.find(
+                              (o) =>
+                                String(o.galaxusOrderDbId ?? "") === orderDbId &&
+                                o.isDirectDelivery
+                            ) ?? null;
+                          void runDirectLabelForOrder(
+                            orderDbId,
+                            { lineId, quantity: 1 },
+                            {
+                              requiresDeliveryNote: Boolean(
+                                autoRow?.physicalDeliveryNoteRequired
+                              ),
+                            }
+                          );
+                        }}
+                        className="rounded bg-teal-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Ship Galaxus direct + label
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <p className="text-xs mt-1 text-fuchsia-800">
                   No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
                   asks how many to ship only when the order has multiple open units;

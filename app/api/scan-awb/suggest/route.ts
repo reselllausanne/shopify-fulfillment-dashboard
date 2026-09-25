@@ -98,11 +98,14 @@ async function searchGalaxus(
     { gtin: contains },
     { supplierSku: contains },
     { description: contains },
-    { productName: contains },
     { providerKey: contains },
     { order: { orderNumber: contains } },
     { order: { galaxusOrderId: contains } },
   ];
+  // Product-name contains needs a longer needle — "allo" hit Fallout / Allowed / Mallo.
+  if (q.length >= 5) {
+    lineOr.push({ productName: contains });
+  }
   if (catalog?.gtins.length) lineOr.push({ gtin: { in: catalog.gtins } });
   if (catalog?.providerKeys.length) {
     lineOr.push({ providerKey: { in: catalog.providerKeys } });
