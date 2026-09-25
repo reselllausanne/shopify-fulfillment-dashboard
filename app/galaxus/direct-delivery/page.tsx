@@ -35,6 +35,36 @@ function firstNonEmptyText(...values: unknown[]): string {
   return "";
 }
 
+/** ORDP often stores Digitec as customer/recipient — real client is referencePerson. */
+function isGalaxusMarketplacePlaceholderName(name: unknown): boolean {
+  const n = String(name ?? "")
+    .trim()
+    .toLowerCase();
+  if (!n) return false;
+  if (n.includes("digitec")) return true;
+  if (/\bgalaxus\b/.test(n) && /\bag\b/.test(n)) return true;
+  return n === "galaxus";
+}
+
+function galaxusEndCustomerDisplayName(order: {
+  referencePerson?: string | null;
+  customerName?: string | null;
+  recipientName?: string | null;
+}): string {
+  const ref = String(order.referencePerson ?? "").trim();
+  const customer = String(order.customerName ?? "").trim();
+  const recipient = String(order.recipientName ?? "").trim();
+  if (
+    ref &&
+    (isGalaxusMarketplacePlaceholderName(customer) ||
+      isGalaxusMarketplacePlaceholderName(recipient) ||
+      !customer)
+  ) {
+    return ref;
+  }
+  return firstNonEmptyText(customer, recipient, ref);
+}
+
 function deriveListCountsFromOrderDetail(order: any): { linkedCount: number; needsBuyCount: number } {
   const lines = Array.isArray(order?.lines) ? order.lines : [];
   const matches = new Map<string, any>();
@@ -795,7 +825,11 @@ export default function GalaxusDirectDeliveryPage() {
     const title = buildLineTitle(line);
     const sizePrefill = String(line.size ?? "");
     const skuPrefill = String(line.supplierSku ?? "N/A");
-    const orderLabel = `${selectedOrder?.galaxusOrderId ?? ""}${selectedOrder?.recipientName ? ` · ${selectedOrder.recipientName}` : ""}`;
+    const orderLabel = `${selectedOrder?.galaxusOrderId ?? ""}${
+      selectedOrder
+        ? ` · ${galaxusEndCustomerDisplayName(selectedOrder) || selectedOrder.recipientName || ""}`
+        : ""
+    }`;
     const resolvedOrderNumber = firstNonEmptyText(match?.stockxOrderNumber, proc?.stockxOrderNumber);
     const resolvedOrderId = firstNonEmptyText(match?.stockxOrderId, proc?.stockxOrderId);
     const resolvedAwb = firstNonEmptyText(match?.stockxAwb, proc?.awb);
@@ -1121,25 +1155,40 @@ export default function GalaxusDirectDeliveryPage() {
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="text-sm min-w-0">
-                  {/* End customer (EDI-parsed) always shown first — needed when
-                      recipient block is a Galaxus warehouse and the actual
-                      client is only visible in customerName / customer address. */}
-                  {selectedOrder.customerName ? (
-                    <div className="font-medium text-gray-900">
-                      {selectedOrder.customerName}
-                      {selectedOrder.customerCity ? (
-                        <span className="text-gray-500 text-xs font-normal">
-                          {" "}
-                          · {selectedOrder.customerPostalCode ?? ""} {selectedOrder.customerCity}{" "}
-                          {selectedOrder.customerCountryCode ?? selectedOrder.customerCountry ?? ""}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className={selectedOrder.customerName ? "text-gray-700 text-xs mt-1" : "font-medium text-gray-900"}>
-                    {selectedOrder.customerName ? "Ship to: " : ""}
-                    {selectedOrder.recipientName ?? "—"}
-                  </div>
+                  {/* End customer first: ORDP often puts Digitec Galaxus AG in
+                      customerName/recipientName; real person is referencePerson. */}
+                  {(() => {
+                    const endCustomer = galaxusEndCustomerDisplayName(selectedOrder);
+                    const recipientIsPlaceholder = isGalaxusMarketplacePlaceholderName(
+                      selectedOrder.recipientName
+                    );
+                    const showShipTo =
+                      Boolean(selectedOrder.recipientName) &&
+                      !recipientIsPlaceholder &&
+                      String(selectedOrder.recipientName).trim() !== endCustomer;
+                    return (
+                      <>
+                        <div className="font-medium text-gray-900">
+                          {endCustomer || "—"}
+                          {selectedOrder.referencePerson &&
+                          endCustomer === String(selectedOrder.referencePerson).trim() &&
+                          selectedOrder.customerCity &&
+                          !isGalaxusMarketplacePlaceholderName(selectedOrder.customerName) ? (
+                            <span className="text-gray-500 text-xs font-normal">
+                              {" "}
+                              · {selectedOrder.customerPostalCode ?? ""} {selectedOrder.customerCity}{" "}
+                              {selectedOrder.customerCountryCode ?? selectedOrder.customerCountry ?? ""}
+                            </span>
+                          ) : null}
+                        </div>
+                        {showShipTo ? (
+                          <div className="text-gray-700 text-xs mt-1">
+                            Ship to: {selectedOrder.recipientName}
+                          </div>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                   <div className="text-gray-500 text-xs">
                     {selectedOrder.recipientAddress1 ?? ""} {selectedOrder.recipientAddress2 ?? ""}
                   </div>
