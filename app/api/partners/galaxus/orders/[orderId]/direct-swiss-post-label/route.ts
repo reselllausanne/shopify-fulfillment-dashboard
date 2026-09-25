@@ -55,7 +55,7 @@ export async function POST(
     const result = await runDirectSwissPostLabelForOrder(order.id, {
       includeLabelData: Boolean(body?.includeLabelData),
       allowReprint: body?.allowReprint,
-      requireLinked: body?.requireLinked,
+      requireLinked: body?.requireLinked === true,
     });
     if (!result.ok) {
       const status =

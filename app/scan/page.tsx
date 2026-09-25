@@ -1600,10 +1600,6 @@ export default function ScanPage() {
       } else if (scan.galaxus.isDirectDelivery) {
         if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && shouldAutoGalaxusDirectLabel(scan)) {
           await runGalaxusDirectLabelFromScan(scan);
-        } else if (scan.galaxus.allLinked === false) {
-          window.alert(
-            `Galaxus direct delivery ${ref}\nAWB linked but order not fully linked yet — link all lines first.`
-          );
         } else if (!ENABLE_AUTO_GALAXUS_DIRECT_LABEL) {
           window.alert(`Galaxus direct delivery ${ref}\nAuto label disabled — use Direct Delivery page.`);
         }
@@ -3237,7 +3233,7 @@ export default function ScanPage() {
                       {" "}
                       ·{" "}
                       {result.galaxus.allLinked === false
-                        ? "Not fully linked"
+                        ? "StockX not linked (print OK)"
                         : result.galaxus.alreadyFulfilled
                           ? "Fulfilled"
                           : "Linked"}
@@ -3263,7 +3259,7 @@ export default function ScanPage() {
                     <button
                       type="button"
                       onClick={() => void runGalaxusDirectLabelFromScan(result)}
-                      disabled={fulfillLoading || result.galaxus.allLinked === false}
+                      disabled={fulfillLoading}
                       className="px-3 py-1.5 rounded bg-teal-800 text-white text-sm disabled:opacity-50"
                     >
                       {fulfillLoading ? "Generating…" : "Generate Swiss Post label"}
