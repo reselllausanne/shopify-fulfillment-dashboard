@@ -165,6 +165,7 @@ type ScanResult = {
     openWarehouse: number;
     openShopify?: number;
     openDecathlon?: number;
+    requiresChannelChoice?: boolean;
     autoDirectOrderDbId?: string | null;
     autoDirectLineId?: string | null;
     autoDirectRemaining?: number;
@@ -1923,6 +1924,12 @@ export default function ScanPage() {
       isWarehouse: boolean;
       isDirectDelivery: boolean;
     } | null = null;
+    let gtinAutoChannelForPacking:
+      | "galaxus_direct"
+      | "shopify"
+      | "decathlon"
+      | null = null;
+    let gtinRequiresChannelChoice = false;
     try {
       const res = await fetch("/api/scan-awb", {
         method: "POST",
@@ -1977,9 +1984,13 @@ export default function ScanPage() {
         Boolean(data.match) ||
         Boolean(data.stxInboundBuy) ||
         Boolean(data.decathlon);
+      gtinRequiresChannelChoice =
+        !gtinBlockedByOtherChannel &&
+        Boolean(data.gtin?.requiresChannelChoice);
       const gtinAutoChannel = !gtinBlockedByOtherChannel
         ? data.gtin?.autoChannel ?? null
         : null;
+      gtinAutoChannelForPacking = gtinAutoChannel;
 
       if (gtinAutoChannel === "galaxus_direct") {
         const gtinAutoDirectOrderDbId =
@@ -2127,11 +2138,16 @@ export default function ScanPage() {
       setLoading(false);
       // Non-blocking: resolve packing-session assignment in the background so
       // scanner focus returns immediately. Warehouse inbound StockX buys MUST
-      // be added to the box. Direct-delivery inbounds are skipped.
+      // be added to the box. Direct-delivery inbounds / GTIN channel claims skip.
       const scanShapeForGuard = {
         stxInboundBuy: inboundBuyForPacking,
       };
-      if (shouldAutoAddToPackingSession(scanShapeForGuard)) {
+      if (
+        shouldAutoAddToPackingSession(scanShapeForGuard, {
+          gtinAutoChannel: gtinAutoChannelForPacking,
+          gtinRequiresChannelChoice,
+        })
+      ) {
         void tryAddScanToPackingSession(scanCodeForPacking, { mainScanHandled });
       }
       focusInput();
@@ -3159,6 +3175,62 @@ export default function ScanPage() {
                   Shopify · {result.gtin.openDecathlon ?? 0} Decathlon (of{" "}
                   {result.gtin.orders.length} recent lines).
                 </p>
+                {result.gtin.requiresChannelChoice ? (
+                  <div className="mt-3 rounded-md border border-amber-500 bg-amber-50 px-3 py-3 text-amber-950">
+                    <div className="font-semibold text-sm">
+                      Même GTIN ouvert en warehouse ET direct — une seule paire physique
+                    </div>
+                    <p className="mt-1 text-xs">
+                      Auto désactivé. Choisis où va <strong>cette</strong> unité (pas les deux).
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={fulfillLoading}
+                        onClick={() => {
+                          void tryAddScanToPackingSession(
+                            String(result.gtin?.gtin || code || "").trim(),
+                            { mainScanHandled: true }
+                          );
+                        }}
+                        className="rounded bg-indigo-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Pack warehouse box
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          fulfillLoading ||
+                          !result.gtin.autoDirectOrderDbId ||
+                          !result.gtin.autoDirectLineId
+                        }
+                        onClick={() => {
+                          const orderDbId = String(result.gtin?.autoDirectOrderDbId ?? "").trim();
+                          const lineId = String(result.gtin?.autoDirectLineId ?? "").trim();
+                          if (!orderDbId || !lineId) return;
+                          const autoRow =
+                            result.gtin?.orders?.find(
+                              (o) =>
+                                String(o.galaxusOrderDbId ?? "") === orderDbId &&
+                                o.isDirectDelivery
+                            ) ?? null;
+                          void runDirectLabelForOrder(
+                            orderDbId,
+                            { lineId, quantity: 1 },
+                            {
+                              requiresDeliveryNote: Boolean(
+                                autoRow?.physicalDeliveryNoteRequired
+                              ),
+                            }
+                          );
+                        }}
+                        className="rounded bg-teal-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Ship Galaxus direct + label
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <p className="text-xs mt-1 text-fuchsia-800">
                   No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
                   asks how many to ship only when the order has multiple open units;
