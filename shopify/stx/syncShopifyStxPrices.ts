@@ -240,10 +240,30 @@ function sizeTokens(raw: string | null | undefined): string[] {
   return Array.from(tokens);
 }
 
-function sharesSizeToken(a: string | null | undefined, b: string | null | undefined): boolean {
+/** Exported for fast reprice: barcodes are optional on Shopify, size EU is the fallback. */
+export function sharesSizeToken(a: string | null | undefined, b: string | null | undefined): boolean {
   const aSet = new Set(sizeTokens(a));
   if (aSet.size === 0) return false;
   return sizeTokens(b).some((t) => aSet.has(t));
+}
+
+/**
+ * Pick the single Shopify variant that matches size EU (title) or US (metafield).
+ * Returns null when 0 or >1 candidates — never guess under ambiguity.
+ */
+export function pickShopifyVariantBySize<
+  T extends { title?: string | null; usSize?: { value: string | null } | null },
+>(
+  variants: T[],
+  sizeEu?: string | null,
+  sizeUs?: string | null
+): T | null {
+  const byEu = variants.filter((v) => sharesSizeToken(v.title, sizeEu));
+  if (byEu.length === 1) return byEu[0]!;
+  if (byEu.length > 1) return null;
+  const byUs = variants.filter((v) => sharesSizeToken(v.usSize?.value, sizeUs));
+  if (byUs.length === 1) return byUs[0]!;
+  return null;
 }
 
 async function findShopifyVariantByHandleAndSize(input: {
@@ -281,10 +301,8 @@ async function findShopifyVariantByHandleAndSize(input: {
     (data?.products?.nodes ?? []).find((node) => String(node.handle ?? "").trim() === handle) ?? null;
   if (!product) return null;
   const variants = product.variants?.nodes ?? [];
-  const byEu = variants.find((v) => sharesSizeToken(v.title, input.sizeEu));
-  if (byEu?.id && byEu.product?.id) return { variantId: byEu.id, productId: byEu.product.id };
-  const byUs = variants.find((v) => sharesSizeToken(v.usSize?.value, input.sizeUs));
-  if (byUs?.id && byUs.product?.id) return { variantId: byUs.id, productId: byUs.product.id };
+  const hit = pickShopifyVariantBySize(variants, input.sizeEu, input.sizeUs);
+  if (hit?.id && hit.product?.id) return { variantId: hit.id, productId: hit.product.id };
   return null;
 }
 
@@ -413,6 +431,7 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
       price: true,
       standardBuyPrice: true,
       expressBuyPrice: true,
+      sizeRaw: true,
     },
   });
   if (!stxRow) return { gtin: cleanGtin, ok: false, reason: "no_stx_row" };
@@ -453,28 +472,60 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     }
   }
 
-  const { match: shopifyVariant, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
-  if (!shopifyVariant?.variantId || !shopifyVariant.productId) {
-    await recordShopifyStxSkip(providerKey, cleanGtin, "no_shopify_variant");
-    return { gtin: cleanGtin, ok: false, reason: "no_shopify_variant" };
-  }
+  const { match: barcodeMatch, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
   if (ambiguous) {
     await recordShopifyStxSkip(providerKey, cleanGtin, "ambiguous_shopify_variant");
     return { gtin: cleanGtin, ok: false, reason: "ambiguous_shopify_variant" };
   }
 
-  if (await readShopifyPriceLocked(shopifyVariant.variantId)) {
+  // Barcodes are optional on Shopify (we create every size even without one).
+  // When barcode lookup misses, fall back to handle + EU/US size — same path
+  // the no-GTIN sync already uses — so empty barcodes don't strand in-stock sizes.
+  let variantId: string | null = barcodeMatch?.variantId ?? null;
+  let productId: string | null = barcodeMatch?.productId ?? null;
+  let productHandleHint: string | null = barcodeMatch?.productHandle ?? null;
+  let matchedBySize = false;
+  if (!variantId || !productId) {
+    const kv = await prisma.kickDBVariant.findFirst({
+      where: { OR: [{ gtin: cleanGtin }, { ean: cleanGtin }] },
+      select: {
+        sizeEu: true,
+        sizeUs: true,
+        product: { select: { urlKey: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    const handle = kv?.product?.urlKey ?? handleForCalc;
+    const sizeHit =
+      handle != null
+        ? await findShopifyVariantByHandleAndSize({
+            handle,
+            sizeEu: kv?.sizeEu ?? stxRow.sizeRaw ?? null,
+            sizeUs: kv?.sizeUs ?? null,
+          })
+        : null;
+    if (!sizeHit?.variantId || !sizeHit.productId) {
+      await recordShopifyStxSkip(providerKey, cleanGtin, "no_shopify_variant");
+      return { gtin: cleanGtin, ok: false, reason: "no_shopify_variant" };
+    }
+    variantId = sizeHit.variantId;
+    productId = sizeHit.productId;
+    productHandleHint = handle;
+    matchedBySize = true;
+  }
+
+  if (await readShopifyPriceLocked(variantId)) {
     await recordShopifyStxSkip(providerKey, cleanGtin, "price_locked");
     return { gtin: cleanGtin, ok: false, reason: "price_locked" };
   }
 
-  if (isAdminOnlyShopifyVariant(shopifyVariant.variantId, shopifyVariant.productId)) {
+  if (isAdminOnlyShopifyVariant(variantId, productId)) {
     await recordShopifyStxSkip(providerKey, cleanGtin, "admin_only_product");
     return { gtin: cleanGtin, ok: false, reason: "admin_only_product" };
   }
 
   const productHandle =
-    (await resolveProductHandle(cleanGtin)) ?? shopifyVariant.productHandle ?? null;
+    (await resolveProductHandle(cleanGtin)) ?? productHandleHint;
   const { normalSell, expressSell } = computeSellPrices({
     stxRow: {
       deliveryType: stxRow.deliveryType ?? null,
@@ -495,10 +546,10 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   const { errors, data } = await shopifyGraphQL<{
     productVariantsBulkUpdate: { userErrors: Array<{ message: string }> };
   }>(VARIANT_PRICE_MUTATION, {
-    productId: shopifyVariant.productId,
+    productId,
     variants: [
       {
-        id: shopifyVariant.variantId,
+        id: variantId,
         price: normalSell.toFixed(2),
       },
     ],
@@ -512,7 +563,7 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   }
 
   if (expressSell != null) {
-    const err = await writeShopifyExpressPrice(shopifyVariant.variantId, expressSell);
+    const err = await writeShopifyExpressPrice(variantId, expressSell);
     if (err) {
       return {
         gtin: cleanGtin,
@@ -523,21 +574,22 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     }
   } else {
     // No sell price → clear stale express so checkout cannot charge inverted totals.
-    await deleteShopifyExpressPriceMetafield(shopifyVariant.variantId);
+    await deleteShopifyExpressPriceMetafield(variantId);
   }
 
   await recordShopifyStxPush({
     providerKey,
     supplierVariantId: stxRow.supplierVariantId ?? null,
     gtin: cleanGtin,
-    variantId: shopifyVariant.variantId,
-    productId: shopifyVariant.productId,
+    variantId,
+    productId,
     price: normalSell,
   });
 
   return {
     gtin: cleanGtin,
     ok: true,
+    reason: matchedBySize ? "matched_by_size" : undefined,
     normalPrice: normalSell,
     expressPrice: expressSell,
   };
