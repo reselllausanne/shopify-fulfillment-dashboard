@@ -27,7 +27,7 @@ import "dotenv/config";
 
 import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
-import { computeStxSellPrices } from "@/shopify/stx/syncShopifyStxPrices";
+import { computeStxSellPrices, pickShopifyVariantBySize } from "@/shopify/stx/syncShopifyStxPrices";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 import { cleanGtin } from "@/shopify/restock/gtinNormalize";
 
@@ -57,8 +57,10 @@ query FastRepriceProduct($id: ID!) {
     variants(first: 250) {
       nodes {
         id
+        title
         barcode
         priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
+        usSize: metafield(namespace: "custom", key: "us_size") { value }
       }
     }
   }
@@ -83,6 +85,9 @@ type Row = {
   providerKey: string | null;
   gtin: string | null;
   ean: string | null;
+  sizeEu: string | null;
+  sizeUs: string | null;
+  sizeRaw: string | null;
   deliveryType: string | null;
   price: number | null;
   standardBuyPrice: number | null;
@@ -120,6 +125,9 @@ async function main() {
            sv."providerKey",
            sv."gtin",
            kv."ean" AS "ean",
+           kv."sizeEu" AS "sizeEu",
+           kv."sizeUs" AS "sizeUs",
+           sv."sizeRaw" AS "sizeRaw",
            sv."deliveryType",
            sv."price"::float AS price,
            sv."standardBuyPrice"::float AS "standardBuyPrice",
@@ -150,19 +158,23 @@ async function main() {
     LIMIT ${Math.max(1, Math.floor(LIMIT))}
   `);
 
-  // Group rows by Shopify product, keyed by zero-padding-tolerant GTIN and EAN
-  // so a Shopify barcode stored as UPC-A / EAN-13 / GTIN-14 still matches.
-  const byProduct = new Map<string, Map<string, Row>>();
+  // Group rows by Shopify product. Barcode map for primary match; full list for
+  // size-EU fallback when Shopify has the size but an empty/wrong barcode.
+  const byProduct = new Map<string, { byBarcode: Map<string, Row>; rows: Row[] }>();
+  const seenSv = new Set<string>();
   for (const r of rows) {
+    if (seenSv.has(r.supplierVariantId)) continue;
+    seenSv.add(r.supplierVariantId);
     const pid = String(r.shopifyProductId);
-    const keys = new Set([gtinKey(r.gtin), gtinKey(r.ean)].filter(Boolean));
-    if (keys.size === 0) continue;
-    let m = byProduct.get(pid);
-    if (!m) {
-      m = new Map();
-      byProduct.set(pid, m);
+    let bucket = byProduct.get(pid);
+    if (!bucket) {
+      bucket = { byBarcode: new Map(), rows: [] };
+      byProduct.set(pid, bucket);
     }
-    for (const k of keys) m.set(k, r);
+    bucket.rows.push(r);
+    for (const k of [gtinKey(r.gtin), gtinKey(r.ean)].filter(Boolean)) {
+      bucket.byBarcode.set(k, r);
+    }
   }
 
   console.log(`Rows: ${rows.length} | products: ${byProduct.size}`);
@@ -173,11 +185,12 @@ async function main() {
   let variantsUnchanged = 0;
   let variantsLocked = 0;
   let variantsNoMatch = 0;
+  let variantsMatchedBySize = 0;
   let variantsCeiling = 0;
   let variantsAdminOnly = 0;
   let productErrors = 0;
 
-  for (const [rawProductId, gtinMap] of byProduct) {
+  for (const [rawProductId, bucket] of byProduct) {
     const productGid = toProductGid(rawProductId);
     let productData: {
       product: {
@@ -185,8 +198,10 @@ async function main() {
         variants: {
           nodes: Array<{
             id: string;
+            title: string | null;
             barcode: string | null;
             priceLocked: { value: string | null } | null;
+            usSize: { value: string | null } | null;
           }>;
         };
       } | null;
@@ -212,15 +227,46 @@ async function main() {
       type: string;
       value: string;
     }> = [];
-    const stamped: Array<{ providerKey: string; supplierVariantId: string; gtin: string; variantId: string; price: number }> = [];
+    const stamped: Array<{
+      providerKey: string;
+      supplierVariantId: string;
+      gtin: string;
+      variantId: string;
+      price: number;
+    }> = [];
     const matchedSv = new Set<string>();
+    const claimedVariantIds = new Set<string>();
 
+    // Pass 1: barcode match (preferred when present and unique).
+    const pairings: Array<{ row: Row; node: (typeof nodes)[number]; via: "barcode" | "size" }> = [];
     for (const node of nodes) {
       const barcode = gtinKey(node.barcode);
       if (!barcode) continue;
-      const row = gtinMap.get(barcode);
-      if (!row) continue; // size not in stock / not our row
+      const row = bucket.byBarcode.get(barcode);
+      if (!row) continue;
+      if (matchedSv.has(row.supplierVariantId)) continue;
       matchedSv.add(row.supplierVariantId);
+      claimedVariantIds.add(node.id);
+      pairings.push({ row, node, via: "barcode" });
+    }
+
+    // Pass 2: size EU/US fallback for leftover DB rows (empty/wrong Shopify barcode).
+    const unmatchedRows = bucket.rows.filter((r) => !matchedSv.has(r.supplierVariantId));
+    const freeNodes = nodes.filter((n) => !claimedVariantIds.has(n.id));
+    for (const row of unmatchedRows) {
+      const sizeEu = row.sizeEu ?? row.sizeRaw;
+      const hit = pickShopifyVariantBySize(freeNodes, sizeEu, row.sizeUs);
+      if (!hit) continue;
+      matchedSv.add(row.supplierVariantId);
+      claimedVariantIds.add(hit.id);
+      // Remove claimed node from free pool for subsequent size matches.
+      const idx = freeNodes.findIndex((n) => n.id === hit.id);
+      if (idx >= 0) freeNodes.splice(idx, 1);
+      pairings.push({ row, node: hit, via: "size" });
+      variantsMatchedBySize += 1;
+    }
+
+    for (const { row, node, via } of pairings) {
       if (truthy(node.priceLocked?.value)) {
         variantsLocked += 1;
         continue;
@@ -267,7 +313,6 @@ async function main() {
           value: "true",
         });
       } else {
-        // No express lane: hide it so the theme never shows a stale/inverted price.
         metafields.push({
           ownerId: node.id,
           namespace: "custom",
@@ -280,16 +325,15 @@ async function main() {
         stamped.push({
           providerKey: row.providerKey,
           supplierVariantId: row.supplierVariantId,
-          gtin: String(row.gtin ?? barcode),
+          gtin: String(row.gtin ?? ""),
           variantId: node.id,
           price: normalSell,
         });
       }
+      void via; // counted above for size; barcode is default
     }
 
-    // Rows for this product whose GTIN/EAN matched no Shopify barcode.
-    const distinctRows = new Set(Array.from(gtinMap.values()).map((r) => r.supplierVariantId));
-    for (const sv of distinctRows) if (!matchedSv.has(sv)) variantsNoMatch += 1;
+    for (const r of bucket.rows) if (!matchedSv.has(r.supplierVariantId)) variantsNoMatch += 1;
 
     if (bulkVariants.length === 0) {
       productsDone += 1;
@@ -300,7 +344,9 @@ async function main() {
       variantsPushed += bulkVariants.length;
       productsDone += 1;
       if (productsDone % PROGRESS_EVERY === 0) {
-        console.log(`  [dry] ${productsDone} products, would push ${variantsPushed} variants`);
+        console.log(
+          `  [dry] ${productsDone} products, would push ${variantsPushed} variants (size-fallback ${variantsMatchedBySize})`
+        );
       }
       continue;
     }
@@ -320,17 +366,18 @@ async function main() {
       continue;
     }
 
-    // Express metafields (best-effort; chunk to Shopify's 25-per-call limit).
     for (let i = 0; i < metafields.length; i += 25) {
       const chunk = metafields.slice(i, i + 25);
       try {
         await shopifyGraphQL(METAFIELDS_SET, { metafields: chunk });
       } catch (err) {
-        console.error(`  product ${productGid} metafields chunk failed:`, err instanceof Error ? err.message : err);
+        console.error(
+          `  product ${productGid} metafields chunk failed:`,
+          err instanceof Error ? err.message : err
+        );
       }
     }
 
-    // Stamp ChannelListingState so the worker treats these as fresh.
     const cls = (prisma as any).channelListingState;
     if (cls?.upsert) {
       const now = new Date();
@@ -369,13 +416,13 @@ async function main() {
     productsDone += 1;
     if (productsDone % PROGRESS_EVERY === 0) {
       console.log(
-        `  ${productsDone}/${byProduct.size} products | pushed ${variantsPushed} variants | unchanged ${variantsUnchanged} | errors ${productErrors}`
+        `  ${productsDone}/${byProduct.size} products | pushed ${variantsPushed} variants | size-fallback ${variantsMatchedBySize} | unchanged ${variantsUnchanged} | errors ${productErrors}`
       );
     }
   }
 
   console.log(
-    `\nRESUME shard ${SHARD}/${SHARDS}: products=${productsDone} pushedVariants=${variantsPushed} unchanged=${variantsUnchanged} locked=${variantsLocked} adminOnly=${variantsAdminOnly} ceiling=${variantsCeiling} noMatch=${variantsNoMatch} productErrors=${productErrors}`
+    `\nRESUME shard ${SHARD}/${SHARDS}: products=${productsDone} pushedVariants=${variantsPushed} matchedBySize=${variantsMatchedBySize} unchanged=${variantsUnchanged} locked=${variantsLocked} adminOnly=${variantsAdminOnly} ceiling=${variantsCeiling} noMatch=${variantsNoMatch} productErrors=${productErrors}`
   );
 }
 
