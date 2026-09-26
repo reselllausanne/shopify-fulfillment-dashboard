@@ -43,6 +43,7 @@ function num(name: string, fallback: number): number {
 }
 
 const APPLY = process.argv.includes("--apply");
+const ONLY_UNPRICED = process.argv.includes("--only-unpriced");
 const LIMIT = num("limit", 1000);
 const SHARDS = Math.max(1, Math.floor(num("shards", 1)));
 const SHARD = Math.min(SHARDS - 1, Math.floor(num("shard", 0)));
@@ -109,7 +110,7 @@ function truthy(v: string | null | undefined): boolean {
 
 async function main() {
   console.log(
-    `${APPLY ? "APPLY" : "DRY-RUN"} | shard ${SHARD}/${SHARDS} | skip-fresh=${SKIP_FRESH_HOURS}h | max-price=${MAX_PRICE} | limit=${LIMIT}`
+    `${APPLY ? "APPLY" : "DRY-RUN"} | shard ${SHARD}/${SHARDS} | skip-fresh=${SKIP_FRESH_HOURS}h | only-unpriced=${ONLY_UNPRICED} | max-price=${MAX_PRICE} | limit=${LIMIT}`
   );
 
   const shardClause =
@@ -119,6 +120,7 @@ async function main() {
   const skipFreshClause = SKIP_FRESH_HOURS
     ? `AND (cls."lastSyncedAt" IS NULL OR cls."lastSyncedAt" < NOW() - INTERVAL '${Math.round(SKIP_FRESH_HOURS)} hours')`
     : "";
+  const onlyUnpricedClause = ONLY_UNPRICED ? `AND cls."lastPushedPrice" IS NULL` : "";
 
   const rows = await prisma.$queryRawUnsafe<Row[]>(`
     SELECT sv."supplierVariantId",
@@ -154,6 +156,7 @@ async function main() {
       AND sss."shopifyProductId" IS NOT NULL
       ${shardClause}
       ${skipFreshClause}
+      ${onlyUnpricedClause}
     ORDER BY sss."shopifyProductId"
     LIMIT ${Math.max(1, Math.floor(LIMIT))}
   `);
