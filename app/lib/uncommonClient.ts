@@ -1,4 +1,10 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
+import {
+  matchWelGtinForUncommon,
+  resolveUncommonGtinFromHtml,
+  type UncommonGtinResolved,
+  type WelGtinIndexEntry,
+} from "@/app/lib/uncommonGtin";
 
 const DEFAULT_UA =
   process.env.SCRAPER_USER_AGENT ||
@@ -249,42 +255,21 @@ export function resolveUncommonSellable(
 }
 
 export function extractUncommonGtinFromHtml(html: string): { gtin: string; source: string } | null {
-  const blocks = [...html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
-  for (const match of blocks) {
-    const raw = match[1]?.trim();
-    if (!raw || (!/gtin/i.test(raw) && !/"Product"/i.test(raw))) continue;
-    try {
-      const data = JSON.parse(raw) as unknown;
-      const nodes: unknown[] = Array.isArray(data)
-        ? data
-        : data && typeof data === "object" && Array.isArray((data as { "@graph"?: unknown })["@graph"])
-          ? ((data as { "@graph": unknown[] })["@graph"] as unknown[])
-          : [data];
-      for (const node of nodes) {
-        if (!node || typeof node !== "object") continue;
-        const obj = node as Record<string, unknown>;
-        const type = obj["@type"];
-        const isProduct =
-          type === "Product" || (Array.isArray(type) && type.includes("Product"));
-        if (!isProduct && !obj.gtin && !obj.gtin13 && !obj.gtin14) continue;
-        const gtinRaw =
-          (typeof obj.gtin13 === "string" && obj.gtin13) ||
-          (typeof obj.gtin14 === "string" && obj.gtin14) ||
-          (typeof obj.gtin === "string" && obj.gtin) ||
-          null;
-        const normalized = normalizeUncommonGtin(gtinRaw);
-        if (normalized) return normalized;
-      }
-    } catch {
-      /* next */
-    }
-  }
-  const m =
-    html.match(/"gtin13"\s*:\s*"(\d{8,14})"/i) ||
-    html.match(/"gtin"\s*:\s*"(\d{8,14})"/i) ||
-    html.match(/itemprop=["']gtin13["'][^>]*content=["'](\d{8,14})["']/i);
-  return normalizeUncommonGtin(m?.[1] ?? null);
+  // Legacy helper (simple / single-gtin pages). Multi-lang ProductGroup needs
+  // resolveUncommonGtinFromHtml with SKU/permalink context.
+  const result = resolveUncommonGtinFromHtml(html, {
+    sku: "",
+    permalink: "",
+    variationLabel: null,
+    productName: "",
+  });
+  return result.ok ? result.resolved : null;
 }
+
+export type UncommonEnrichOpts = {
+  /** Cross-fill GTIN from WEL when ProductGroup shares one barcode across langs. */
+  welGtinIndex?: WelGtinIndexEntry[];
+};
 
 export function isSchemaPreorderAvailability(html: string): boolean {
   return /schema\.org\/PreOrder/i.test(html) || /"availability"\s*:\s*"[^"]*PreOrder/i.test(html);
@@ -420,7 +405,8 @@ export class UncommonClient {
 
   async enrichFromPdp(
     product: UncommonWooProduct,
-    decision: UncommonSellDecision
+    decision: UncommonSellDecision,
+    opts?: UncommonEnrichOpts
   ): Promise<UncommonProduct | null> {
     const priceChf = parseUncommonChfPrice(product.prices);
     if (!priceChf || priceChf <= 0) return null;
@@ -453,7 +439,24 @@ export class UncommonClient {
       stockSource = "pdp_html";
     }
 
-    const gtin = extractUncommonGtinFromHtml(html);
+    const variationLabel = String(product.variation || "").trim() || null;
+    const baseName = decodeUncommonHtml(product.name || "");
+    const name = variationLabel ? `${baseName} — ${variationLabel}` : baseName;
+    const sku = String(product.sku || "").trim();
+
+    const gtinResult = resolveUncommonGtinFromHtml(html, {
+      sku,
+      permalink: productUrl,
+      variationLabel,
+      productName: name,
+    });
+
+    let gtin: UncommonGtinResolved | null = null;
+    if (gtinResult.ok) {
+      gtin = gtinResult.resolved;
+    } else if (gtinResult.ambiguity && opts?.welGtinIndex?.length) {
+      gtin = matchWelGtinForUncommon(gtinResult.ambiguity, opts.welGtinIndex);
+    }
     if (!gtin) return null;
 
     const brand = product.brands?.[0]?.name ? decodeUncommonHtml(product.brands[0].name) : null;
@@ -462,9 +465,6 @@ export class UncommonClient {
       : null;
     const weightRaw = Number.parseFloat(String(product.weight || "").replace(",", "."));
     const weightKg = Number.isFinite(weightRaw) && weightRaw > 0 ? weightRaw : null;
-    const variationLabel = String(product.variation || "").trim() || null;
-    const baseName = decodeUncommonHtml(product.name || "");
-    const name = variationLabel ? `${baseName} — ${variationLabel}` : baseName;
 
     return {
       productUrl,
@@ -474,7 +474,7 @@ export class UncommonClient {
       name,
       brand,
       productType,
-      sku: String(product.sku || "").trim() || gtin.gtin,
+      sku: sku || gtin.gtin,
       gtin: gtin.gtin,
       gtinSource: gtin.source,
       priceChf,

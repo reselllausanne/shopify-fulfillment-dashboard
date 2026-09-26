@@ -9,6 +9,11 @@ import {
   type UncommonWooProduct,
 } from "@/app/lib/uncommonClient";
 import {
+  buildWelGtinIndex,
+  isUncommonParentUrlWithoutLangAttr,
+  type WelGtinIndexEntry,
+} from "@/app/lib/uncommonGtin";
+import {
   computeUncommonLandedCost,
   isPlausibleUncommonSellPrice,
   type UncommonLandedCost,
@@ -29,6 +34,23 @@ const IMAGE_SYNC_BATCH = 200;
 
 function deferUncommonImageSync(): boolean {
   return String(process.env.SCRAPER_TUS_DEFER_IMAGE_SYNC ?? "1") !== "0";
+}
+
+async function loadWelGtinIndex(): Promise<WelGtinIndexEntry[]> {
+  const prismaAny = prisma as any;
+  const rows = (await prismaAny.supplierVariant.findMany({
+    where: {
+      supplierVariantId: { startsWith: "wel_" },
+      gtin: { not: null },
+      supplierProductName: { not: null },
+    },
+    select: { gtin: true, supplierProductName: true },
+  })) as Array<{ gtin: string | null; supplierProductName: string | null }>;
+  return buildWelGtinIndex(
+    rows
+      .filter((r) => r.gtin && r.supplierProductName)
+      .map((r) => ({ gtin: r.gtin!, name: r.supplierProductName }))
+  );
 }
 
 type ExistingVariantImage = {
@@ -117,6 +139,8 @@ export async function scrapeUncommonShop(
   let wrote = 0;
   let gtinMatched = 0;
   let skippedNoGtin = 0;
+  let skippedGtinAmbiguous = 0;
+  let gtinFromWel = 0;
   let skippedNoPrice = 0;
   let skippedPreorder = 0;
   let skippedNoStock = 0;
@@ -125,10 +149,12 @@ export async function scrapeUncommonShop(
   let imageSynced = 0;
   let imageFailed = 0;
   let zeroedStale = 0;
+  let zeroedOrphanParent = 0;
   const seenGtins = new Set<string>();
   const touchedIds = new Set<string>();
   const imageSyncQueue = new Set<string>();
 
+  const welGtinIndex = await loadWelGtinIndex();
   const existingRows = (await prismaAny.supplierVariant.findMany({
     where: { supplierVariantId: { startsWith: `${shop.key}_` } },
     select: {
@@ -285,11 +311,16 @@ export async function scrapeUncommonShop(
     }
     if (decision.reason === "preorder") skippedPreorder++;
 
-    const product = await client.enrichFromPdp(merged, decision);
+    const product = await client.enrichFromPdp(merged, decision, { welGtinIndex });
     if (!product) {
       skippedNoGtin++;
+      // Ambiguous ProductGroup (no WEL fill) counted separately when name has Sprache.
+      if (/sprache\s*:/i.test(String(merged.variation || "")) || /attribute_pa_sprache=/i.test(merged.permalink || "")) {
+        skippedGtinAmbiguous++;
+      }
       return;
     }
+    if (product.gtinSource === "wel_lang_match") gtinFromWel++;
 
     const cost = computeUncommonLandedCost(product.priceChf);
     if (!cost || !isPlausibleUncommonSellPrice(cost)) {
@@ -357,6 +388,8 @@ export async function scrapeUncommonShop(
             `processed=${processed}/${parents.length}`,
             `wrote=${wrote}`,
             `skipped_no_gtin=${skippedNoGtin}`,
+            `skipped_gtin_ambiguous=${skippedGtinAmbiguous}`,
+            `gtin_from_wel=${gtinFromWel}`,
             `skipped_preorder=${skippedPreorder}`,
             `skipped_no_stock=${skippedNoStock}`,
             `skipped_gift=${skippedGift}`,
@@ -386,6 +419,34 @@ export async function scrapeUncommonShop(
       zeroedStale = Number(result?.count || 0);
     }
 
+    // Parent PDP URLs without Sprache attr are unsafe (shared ProductGroup GTIN).
+    // Zero any leftover orphan rows still pointing at bare /product/… URLs.
+    const orphanCandidates = (await prismaAny.supplierVariant.findMany({
+      where: {
+        supplierVariantId: { startsWith: `${shop.key}_` },
+        stock: { gt: 0 },
+        supplierProductName: { contains: "Sprache:" },
+      },
+      select: { supplierVariantId: true, manualNote: true },
+    })) as Array<{ supplierVariantId: string; manualNote: string | null }>;
+    const orphanIds: string[] = [];
+    for (const row of orphanCandidates) {
+      try {
+        const note = row.manualNote ? JSON.parse(row.manualNote) : null;
+        const url = String(note?.productUrl || "");
+        if (isUncommonParentUrlWithoutLangAttr(url)) orphanIds.push(row.supplierVariantId);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (orphanIds.length) {
+      const result = await prismaAny.supplierVariant.updateMany({
+        where: { supplierVariantId: { in: orphanIds }, stock: { gt: 0 } },
+        data: { stock: 0, leadTimeDays: null, lastSyncAt: runStartedAt },
+      });
+      zeroedOrphanParent = Number(result?.count || 0);
+    }
+
     if (!deferUncommonImageSync()) {
       while (imageSyncQueue.size > 0) {
         const img = await flushImageSyncQueue(imageSyncQueue);
@@ -412,11 +473,14 @@ export async function scrapeUncommonShop(
         `processed=${processed}`,
         `wrote=${wrote}`,
         `skipped_no_gtin=${skippedNoGtin}`,
+        `skipped_gtin_ambiguous=${skippedGtinAmbiguous}`,
+        `gtin_from_wel=${gtinFromWel}`,
         `skipped_no_price=${skippedNoPrice}`,
         `skipped_preorder=${skippedPreorder}`,
         `skipped_no_stock=${skippedNoStock}`,
         `skipped_gift=${skippedGift}`,
         `zeroed_stale=${zeroedStale}`,
+        `zeroed_orphan_parent=${zeroedOrphanParent}`,
         deferUncommonImageSync() ? "image_sync=deferred" : `images_synced=${imageSynced}`,
         `images_failed=${imageFailed}`,
       ].join(" "),
