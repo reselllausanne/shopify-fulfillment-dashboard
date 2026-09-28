@@ -9,7 +9,8 @@
  * - standard ≤10 kg or weight unknown: 12
  * - standard >10 kg: 21
  * - bulky that still fits Post: 30
- * Missing dims → unknown (caller keeps default ship CHF 2 until next scrape).
+ * Missing structured dims → description text (Maße / Klappmaß / Gewicht) → category estimate.
+ * Still unknown → caller keeps default ship CHF 2 (small goods: clothes, care, food).
  */
 
 export const BWZ_POST_STANDARD_MAX_CM = { length: 100, mid: 60, short: 60 } as const;
@@ -24,6 +25,7 @@ export const BWZ_SHIP_STANDARD_HEAVY_CHF = 21;
 export const BWZ_SHIP_BULKY_CHF = 30;
 
 export type BwzParcelClass = "standard" | "bulky" | "unshippable" | "unknown";
+export type BwzParcelSource = "attrs" | "description" | "category";
 
 export type BwzParcelAssessment = {
   lengthCm: number | null;
@@ -35,6 +37,8 @@ export type BwzParcelAssessment = {
   parcelClass: BwzParcelClass;
   /** Null when unknown or unshippable. */
   shipChf: number | null;
+  /** Where dims/class came from; absent when unknown. */
+  source?: BwzParcelSource;
 };
 
 export function parseBwzCm(raw: string | null | undefined): number | null {
@@ -129,6 +133,145 @@ export function classifyBwzParcel(input: {
   }
 
   return { ...base, parcelClass: "unshippable", shipChf: null };
+}
+
+type DimsTriple = { lengthCm: number; widthCm: number; heightCm: number };
+
+const DIM_NUM = String.raw`(\d+(?:[.,]\d+)?)`;
+const DIM_TAG = String.raw`\s*(?:\([A-Za-z]\))?\s*`;
+const DIM_RE = new RegExp(
+  `${DIM_NUM}${DIM_TAG}[x×]\\s*${DIM_NUM}${DIM_TAG}[x×]\\s*${DIM_NUM}${DIM_TAG}(cm|mm)\\b`,
+  "i"
+);
+
+function dimsLinePriority(line: string): number {
+  if (/verpack|packma|paketma|karton/i.test(line)) return 3;
+  if (/klappma|faltma|zusammengeklappt|zusammengefaltet|gefaltet/i.test(line)) return 2;
+  if (/ma(?:ß|ss)e|abmessung|aufbauma|gr(?:ö|oe)(?:ß|ss)e/i.test(line)) return 1;
+  return 0;
+}
+
+function decodeBasicEntities(s: string): string {
+  return s
+    .replace(/&szlig;/g, "ß")
+    .replace(/&auml;/g, "ä")
+    .replace(/&ouml;/g, "ö")
+    .replace(/&uuml;/g, "ü")
+    .replace(/&Auml;/g, "Ä")
+    .replace(/&Ouml;/g, "Ö")
+    .replace(/&Uuml;/g, "Ü")
+    .replace(/&times;/g, "×")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
+/** Plain-text lines of the rendered product page (Nuxt JSON script dropped). */
+export function bwzDescriptionLines(html: string): string[] {
+  const body = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(li|p|div|tr|h\d)>|<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+  return decodeBasicEntities(body)
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+/**
+ * Dims + weight from the Walz description list (e.g. "Klappmaß: 67,5(L) x 61,5(B) x 47,5(H) cm",
+ * "Gewicht: Kinderwagen mit Tragewanne 15,6 kg, …"). Packaging &gt; folded &gt; generic Maße line.
+ */
+export function parseBwzDescriptionParcel(html: string): BwzParcelAssessment | null {
+  const lines = bwzDescriptionLines(html);
+  let best: { dims: DimsTriple; priority: number } | null = null;
+  let weightKg: number | null = null;
+
+  for (const line of lines) {
+    if (line.length > 400) continue;
+    const priority = dimsLinePriority(line);
+    if (priority > 0) {
+      const m = line.match(DIM_RE);
+      if (m) {
+        const div = m[4].toLowerCase() === "mm" ? 10 : 1;
+        const nums = [m[1], m[2], m[3]].map((x) => Number(x.replace(",", ".")) / div);
+        if (nums.every((n) => Number.isFinite(n) && n > 0) && (!best || priority > best.priority)) {
+          best = {
+            dims: { lengthCm: nums[0], widthCm: nums[1], heightCm: nums[2] },
+            priority,
+          };
+        }
+      }
+    }
+    if (/^(?:netto-?|gesamt-?|produkt-?)?gewicht\b/i.test(line) && !/belastbar|h(?:ö|oe)chst|maximal/i.test(line)) {
+      const kgs = [...line.matchAll(/(\d+(?:[.,]\d+)?)\s*kg\b/gi)]
+        .map((k) => Number(k[1].replace(",", ".")))
+        .filter((n) => Number.isFinite(n) && n > 0);
+      if (kgs.length) weightKg = Math.max(weightKg ?? 0, ...kgs);
+    }
+  }
+
+  if (!best) return null;
+  const parcel = classifyBwzParcel({ ...best.dims, weightKg });
+  if (parcel.parcelClass === "unknown") return null;
+  const overweight = weightKg != null && weightKg > BWZ_POST_MAX_KG;
+  // Generic "Maße" is usually the assembled item (cot, wardrobe) — flat-pack still ships bulky.
+  if (parcel.parcelClass === "unshippable" && best.priority < 2 && !overweight) {
+    return { ...parcel, parcelClass: "bulky", shipChf: BWZ_SHIP_BULKY_CHF, source: "description" };
+  }
+  return { ...parcel, source: "description" };
+}
+
+const BIG_ITEM_NAME_RE =
+  /(kinderwagen|buggy|sportwagen|zwillingswagen|geschwisterwagen|kinderbett|babybett|gitterbett|beistellbett|stubenwagen|laufstall|laufgitter|hochstuhl|wickelkommode|kommode|kleiderschrank|laufrad|fahrrad|dreirad|kettcar|rutschauto|bobby.?car|trampolin|spielhaus|sandkasten|werkbank|kinderk(?:ü|ue)che|schaukel|rutsche\b|tisch\b|stuhl\b|bett\b)/i;
+const ACCESSORY_NAME_RE =
+  /(spannbett|bettw(?:ä|ae)sche|laken|bezug|nestchen|himmel|moskito|regenschutz|regenverdeck|insektenschutz|schirm|segel|verdeck|fu(?:ß|ss)sack|auflage|aufsatz|einlage|adapter|halter|haken|kette|clip|tasche|organizer|ersatz|zubeh(?:ö|oe)r|klingel|helm|korb|kissen|decke|matratzenschoner|schlafsack|spieluhr|mobile|lampe|aufkleber|schutz|griff|licht|handschuh|muff|netz|spielzeug|socke|matte|w(?:ä|ae)rmer|tablett|gurt|polster)/i;
+const PRAM_CATEGORY_MIN_BUY_CHF = 250;
+const CAR_SEAT_CATEGORY_MIN_BUY_CHF = 50;
+/** No reliable dims above this buy → always bulky ship (worst case = overpriced, never a loss). */
+const UNKNOWN_BULKY_CAP_MIN_BUY_CHF = 250;
+/** Only these top-level Walz categories may keep the CHF 2 default when dims are unknown. */
+const SMALL_GOODS_CATEGORIES = new Set(["bekleidung", "pflege", "ernährung", "ernaehrung"]);
+const SMALL_GOODS_MAX_BUY_CHF = 50;
+
+/**
+ * Last resort when Walz has no dims anywhere. Fail-safe: unknown defaults to standard ship;
+ * CHF 2 only for small-goods whitelist, so a miss overprices instead of losing money.
+ */
+export function estimateBwzParcelFromCategory(input: {
+  name: string;
+  productType: string | null;
+  buyChf: number;
+}): BwzParcelAssessment | null {
+  const name = input.name || "";
+  const type = (input.productType || "").toLowerCase();
+  const buy = Number(input.buyChf);
+  const accessory = ACCESSORY_NAME_RE.test(name);
+  const est = (parcelClass: "standard" | "bulky", shipChf: number): BwzParcelAssessment => ({
+    ...unknownBwzParcel(),
+    parcelClass,
+    shipChf,
+    source: "category",
+  });
+
+  // "Handwärmer für Kinderwagen" is an accessory; "Buggy für Zwillinge" is not.
+  const headName = name.split(/\bf(?:ü|ue)r\b/i)[0];
+  if (BIG_ITEM_NAME_RE.test(headName) && !accessory) return est("bulky", BWZ_SHIP_BULKY_CHF);
+  if (Number.isFinite(buy) && !accessory) {
+    if (type === "kinderwagen" && buy >= PRAM_CATEGORY_MIN_BUY_CHF) {
+      return est("bulky", BWZ_SHIP_BULKY_CHF);
+    }
+    if (type === "kindersitze" && buy >= CAR_SEAT_CATEGORY_MIN_BUY_CHF) {
+      return est("standard", BWZ_SHIP_STANDARD_HEAVY_CHF);
+    }
+  }
+  if (Number.isFinite(buy) && buy >= UNKNOWN_BULKY_CAP_MIN_BUY_CHF) {
+    return est("bulky", BWZ_SHIP_BULKY_CHF);
+  }
+  if (SMALL_GOODS_CATEGORIES.has(type) && Number.isFinite(buy) && buy < SMALL_GOODS_MAX_BUY_CHF) {
+    return null;
+  }
+  return est("standard", BWZ_SHIP_STANDARD_CHF);
 }
 
 /** Galaxus ship override from a stored baby-walz note. Null → keep default CHF 2. */
