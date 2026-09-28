@@ -25,7 +25,15 @@ export type VenovaProduct = {
   inStock: boolean;
   stockSource: string;
   weightKg: number | null;
+  /** Parsed from PDP FzShippingCalc widget when present. */
+  shippingQuote: VenovaPageShipping | null;
   imageUrl: string | null;
+};
+
+export type VenovaPageShipping = {
+  method: string;
+  shippingChf: number;
+  kind: "postpac_economy" | "stueckgut" | "other";
 };
 
 export function venovaConfig() {
@@ -179,6 +187,47 @@ export function parseVenovaQuantitySelectMax(html: string): number | null {
   const positive = values.filter((n) => Number.isFinite(n) && n > 0);
   if (!positive.length) return null;
   return Math.max(...positive);
+}
+
+/** Parse Venova PDP shipping widget (FzShippingCalc). Prefer Economy; Stückgut when only freight. */
+export function parseVenovaPageShipping(html: string): VenovaPageShipping | null {
+  const block =
+    html.match(/class=["']fz_shipping["'][\s\S]{0,12000}?<\/table>/i)?.[0] ??
+    html.match(/data-content=['"]([\s\S]*?fz_shipping[\s\S]*?)['"]/i)?.[1] ??
+    "";
+  if (!block) return null;
+
+  const rows: Array<{ name: string; chf: number }> = [];
+  const nameRe = /fz_dispatch_name["']?\s*>\s*([^<]+)/gi;
+  const costRe = /fz_shipping_value["']?\s*>\s*([^<]+)/gi;
+  const names = [...block.matchAll(nameRe)].map((m) => decodeHtml(m[1]!.trim()));
+  const costs = [...block.matchAll(costRe)].map((m) => {
+    const n = Number.parseFloat(
+      String(m[1])
+        .replace(/'/g, "")
+        .replace(/\s/g, "")
+        .replace(",", ".")
+        .replace(/CHF/i, "")
+    );
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  });
+  for (let i = 0; i < Math.min(names.length, costs.length); i++) {
+    const chf = costs[i];
+    if (chf == null) continue;
+    rows.push({ name: names[i]!, chf });
+  }
+  if (!rows.length) return null;
+
+  const economy = rows.find((r) => /postpac\s*economy/i.test(r.name));
+  if (economy) {
+    return { method: economy.name, shippingChf: economy.chf, kind: "postpac_economy" };
+  }
+  const freight = rows.find((r) => /stückgut|stueckgut|sped|kurier|planzer|cargo/i.test(r.name));
+  if (freight) {
+    return { method: freight.name, shippingChf: freight.chf, kind: "stueckgut" };
+  }
+  const first = rows[0]!;
+  return { method: first.name, shippingChf: first.chf, kind: "other" };
 }
 
 /** Parse article weight from description / spec tables. null = not published on PDP. */
@@ -399,6 +448,7 @@ export function parseVenovaProductHtml(
   const mpn = parseMpn(html);
   const sku = orderNumber || mpn || barcode.gtin;
   const weightKg = parseVenovaWeightKg(html);
+  const shippingQuote = parseVenovaPageShipping(html);
 
   const crumbs = parseBreadcrumbs(html);
   const locale = cfg.locale;
@@ -420,6 +470,7 @@ export function parseVenovaProductHtml(
     inStock: stockInfo.inStock,
     stockSource: stockInfo.stockSource,
     weightKg,
+    shippingQuote,
     imageUrl: imageUrl(product),
   };
 }

@@ -146,7 +146,7 @@ export async function scrapeVenovaShop(
   const upsertVariant = async (product: VenovaProduct) => {
     if (!product.inStock || product.stock <= 0) return false;
 
-    const cost = computeVenovaSellPrice(product.priceChf, product.weightKg);
+    const cost = computeVenovaSellPrice(product.priceChf, product.weightKg, product.shippingQuote);
     if (!cost) return false;
     if (cost.skippedReason) return false;
     if (!isPlausibleVenovaSellPrice(cost.sellPriceChf)) return false;
@@ -283,7 +283,11 @@ export async function scrapeVenovaShop(
           return;
         }
 
-        const costPreview = computeVenovaSellPrice(product.priceChf, product.weightKg);
+        const costPreview = computeVenovaSellPrice(
+          product.priceChf,
+          product.weightKg,
+          product.shippingQuote
+        );
         if (costPreview?.skippedReason) {
           skippedBulky++;
           return;
