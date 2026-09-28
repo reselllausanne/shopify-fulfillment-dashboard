@@ -453,6 +453,10 @@ main() {
 
   verify_web_deployment "$WANT"
 
+  # Cron Python (SSE consumer / create queue) runs from /opt/shopify-automation;
+  # keep it on the same GitHub SHA. Non-fatal: web is already live.
+  bash "$REPO/scripts/sync-shopify-automation.sh" || echo "WARN: shopify-automation sync failed"
+
   echo "DEPLOY_OK requested=$WANT running=$HEAD_NOW pre_tag=$PRE_TAG"
 }
 
