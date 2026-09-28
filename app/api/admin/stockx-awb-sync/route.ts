@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getStaffRoleFromRequest } from "@/app/lib/staffAuth";
 import { runDecathlonAwbBackfill } from "@/lib/decathlonAwbBackfill";
 import { runGalaxusAwbBackfill } from "@/lib/galaxusAwbBackfill";
+import { runGalaxusStockxAutoLinkSweep } from "@/galaxus/orders/autoLinkSweep";
 import { runAwbBackfill } from "@/lib/stockxAwbBackfill";
 import { refreshStockxToken } from "@/lib/stockxSessionRefresh";
 import { readServerStockxToken } from "@/lib/stockxServerToken";
@@ -21,6 +22,7 @@ function isLocalCron(req: NextRequest): boolean {
  * Cron should hit this over localhost instead of `docker compose exec npx tsx …`.
  */
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   try {
     const role = await getStaffRoleFromRequest(req);
     if (role !== "admin" && !isLocalCron(req)) {
@@ -53,6 +55,14 @@ export async function POST(req: NextRequest) {
     const galaxus = await runGalaxusAwbBackfill(shared);
     const decathlon = await runDecathlonAwbBackfill(shared);
 
+    const galaxusAutoLink =
+      dryRun || body?.skipGalaxusAutoLink === true
+        ? null
+        : await runGalaxusStockxAutoLinkSweep({
+            days: Number(body?.galaxusAutoLinkDays ?? 30),
+            budgetMs: Math.max(30_000, 600_000 - (Date.now() - startedAt)),
+          }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
+
     const abortedReason =
       shopify.abortedReason || galaxus.abortedReason || decathlon.abortedReason || null;
 
@@ -68,6 +78,7 @@ export async function POST(req: NextRequest) {
       shopify,
       galaxus,
       decathlon,
+      galaxusAutoLink,
       scanned: shopify.scanned + galaxus.scanned + decathlon.scanned,
       candidates: shopify.candidates + galaxus.candidates + decathlon.candidates,
       updated: shopify.updated + galaxus.updated + decathlon.updated,

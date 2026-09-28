@@ -14,6 +14,7 @@ import {
   isValidGalaxusStockxCausalBuy,
 } from "@/app/lib/stockxCausal";
 import { shouldSkipGalaxusOrderForMatching } from "@/galaxus/orders/openGalaxusOrderFilter";
+import { resolveSupplierVariantIdForGalaxusLine } from "@/galaxus/stx/purchaseUnits";
 import {
   galaxusLineWarehouseStockHint,
   isCrocsLightningMcQueenLine,
@@ -209,11 +210,13 @@ export async function POST(
         }
         continue;
       }
+      const resolvedSupplierVariantId = await resolveSupplierVariantIdForGalaxusLine(line).catch(
+        () => null
+      );
+      const variantId = resolvedSupplierVariantId
+        ? resolvedSupplierVariantId.replace(/^stx_/i, "")
+        : null;
       for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
-        const supplierVariantId = String(line?.supplierVariantId ?? "").trim();
-        const variantId = supplierVariantId.startsWith("stx_")
-          ? supplierVariantId.replace(/^stx_/, "")
-          : null;
         const candidates = variantId
           ? availableSupplier.filter(
               (s) =>
