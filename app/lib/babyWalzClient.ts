@@ -1,7 +1,9 @@
 import { isValidGtin } from "@/galaxus/exports/feedValidation";
 import {
   classifyBwzParcel,
+  estimateBwzParcelFromCategory,
   parseBwzCm,
+  parseBwzDescriptionParcel,
   parseBwzKg,
   unknownBwzParcel,
   type BwzParcelAssessment,
@@ -210,11 +212,28 @@ function attrMap(payload: NuxtPayload, ...refs: unknown[]): Record<string, strin
 }
 
 function parcelFromAttrs(attrs: Record<string, string>): BwzParcelAssessment {
-  return classifyBwzParcel({
+  const parcel = classifyBwzParcel({
     lengthCm: parseBwzCm(attrs.laengeProdukt),
     widthCm: parseBwzCm(attrs.breiteProdukt),
     heightCm: parseBwzCm(attrs.hoeheProdukt),
     weightKg: parseBwzKg(attrs.gewichtOhneVerpackung),
+  });
+  return parcel.parcelClass === "unknown" ? parcel : { ...parcel, source: "attrs" };
+}
+
+function withParcelFallbacks(html: string, products: BabyWalzProduct[]): BabyWalzProduct[] {
+  if (!products.some((p) => p.parcel.parcelClass === "unknown")) return products;
+  const fromDescription = parseBwzDescriptionParcel(html);
+  return products.map((p) => {
+    if (p.parcel.parcelClass !== "unknown") return p;
+    const parcel =
+      fromDescription ??
+      estimateBwzParcelFromCategory({
+        name: p.name,
+        productType: p.productType,
+        buyChf: p.priceChf,
+      });
+    return parcel ? { ...p, parcel } : p;
   });
 }
 
@@ -425,7 +444,7 @@ export function parseBabyWalzProductHtml(
       defaultStock,
       cdnBase: cfg.cdnBase,
     });
-    if (fromNuxt.length) return fromNuxt;
+    if (fromNuxt.length) return withParcelFallbacks(html, fromNuxt);
   }
 
   // JSON-LD rarely has GTIN on this shop — kept as last-resort name/price probe only.

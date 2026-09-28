@@ -77,6 +77,7 @@ function formatBabyWalzNote(product: BabyWalzProduct) {
     girthCm: product.parcel.girthCm,
     parcelClass: product.parcel.parcelClass,
     shipChf: product.parcel.shipChf,
+    parcelSource: product.parcel.source ?? null,
     stockSource: "nuxt_variant_stock.quantity",
     buyPriceSource: "nuxt_variant_price.withTax",
   });

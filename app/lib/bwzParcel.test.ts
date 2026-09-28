@@ -5,8 +5,10 @@ import {
   BWZ_SHIP_STANDARD_HEAVY_CHF,
   bwzShipChfFromManualNote,
   classifyBwzParcel,
+  estimateBwzParcelFromCategory,
   isBwzUnshippableNote,
   parseBwzCm,
+  parseBwzDescriptionParcel,
   parseBwzKg,
 } from "@/app/lib/bwzParcel";
 
@@ -106,5 +108,87 @@ describe("bwzShipChfFromManualNote", () => {
 
   it("ignores notes without a parcel class", () => {
     expect(bwzShipChfFromManualNote(JSON.stringify({ bulkyOrLoad: false }))).toBeNull();
+  });
+});
+
+describe("parseBwzDescriptionParcel", () => {
+  const pramHtml = `<script id="__NUXT_DATA__">[1,"Klappmaß: 10 x 10 x 10 cm"]</script>
+    <ul><li><strong>Belastbarkeit:</strong> 22 kg, Tragewanne bis 9 kg</li>
+    <li><strong>Klappma&szlig;:</strong> 67,5(L) x 61,5(B) x 47,5(H) cm</li>
+    <li><strong>Gewicht:</strong> Kinderwagen mit Tragewanne 15,6 kg, Babyschale 4,7 kg</li></ul>`;
+
+  it("reads folded pram dims + weight from description (ignores Nuxt JSON + load limits)", () => {
+    const parcel = parseBwzDescriptionParcel(pramHtml);
+    expect(parcel?.source).toBe("description");
+    expect(parcel?.lengthCm).toBe(67.5);
+    expect(parcel?.weightKg).toBe(15.6);
+    expect(parcel?.parcelClass).toBe("bulky");
+    expect(parcel?.shipChf).toBe(BWZ_SHIP_BULKY_CHF);
+  });
+
+  it("prefers packaging dims over assembled Maße", () => {
+    const html = `<li>Maße: 124 x 66 x 90 cm</li><li>Verpackungsmaße: 90 x 40 x 20 cm</li>`;
+    const parcel = parseBwzDescriptionParcel(html);
+    expect(parcel?.parcelClass).toBe("standard");
+    expect(parcel?.shipChf).toBe(BWZ_SHIP_STANDARD_CHF);
+  });
+
+  it("assembled furniture dims fall back to bulky, not unshippable", () => {
+    const parcel = parseBwzDescriptionParcel(`<li>Maße: 124 x 66 x 90 cm</li>`);
+    expect(parcel?.parcelClass).toBe("bulky");
+  });
+
+  it("returns null without dims lines", () => {
+    expect(parseBwzDescriptionParcel(`<li>Material: 100% Baumwolle</li>`)).toBeNull();
+  });
+});
+
+describe("estimateBwzParcelFromCategory", () => {
+  it("big-item names get bulky ship", () => {
+    const p = estimateBwzParcelFromCategory({ name: "Laufrad Classic", productType: "Spielzeug", buyChf: 60 });
+    expect(p?.shipChf).toBe(BWZ_SHIP_BULKY_CHF);
+    expect(p?.source).toBe("category");
+  });
+
+  it("accessories of big items stay on default", () => {
+    expect(
+      estimateBwzParcelFromCategory({
+        name: "Jersey-Spannbetttuch für Beistellbett",
+        productType: "Wohnen",
+        buyChf: 25,
+      })
+    ).toBeNull();
+    expect(
+      estimateBwzParcelFromCategory({ name: "Rutschfeste Socken", productType: "Bekleidung", buyChf: 8 })
+    ).toBeNull();
+  });
+
+  it("pricey pram / home / car-seat category without dims", () => {
+    expect(
+      estimateBwzParcelFromCategory({ name: "Fame Travel-Set", productType: "Kinderwagen", buyChf: 1400 })?.shipChf
+    ).toBe(BWZ_SHIP_BULKY_CHF);
+    expect(
+      estimateBwzParcelFromCategory({ name: "Pebble 360", productType: "Kindersitze", buyChf: 300 })?.shipChf
+    ).toBe(BWZ_SHIP_STANDARD_HEAVY_CHF);
+  });
+
+  it("accessory named \"für <big item>\" is not bulky", () => {
+    expect(
+      estimateBwzParcelFromCategory({
+        name: "Lammfell-Handwärmer Big Double für Kinderwagen",
+        productType: "Kinderwagen",
+        buyChf: 68,
+      })
+    ).toBeNull();
+    expect(
+      estimateBwzParcelFromCategory({ name: "Buggy für Zwillinge", productType: "Kinderwagen", buyChf: 300 })?.shipChf
+    ).toBe(BWZ_SHIP_BULKY_CHF);
+  });
+
+  it("other expensive unknown → standard; cheap unknown → null", () => {
+    expect(
+      estimateBwzParcelFromCategory({ name: "Babyphone Video", productType: "Pflege", buyChf: 180 })?.shipChf
+    ).toBe(BWZ_SHIP_STANDARD_CHF);
+    expect(estimateBwzParcelFromCategory({ name: "Body", productType: "Bekleidung", buyChf: 20 })).toBeNull();
   });
 });
