@@ -150,17 +150,14 @@ describe("estimateBwzParcelFromCategory", () => {
     expect(p?.source).toBe("category");
   });
 
-  it("accessories of big items stay on default", () => {
+  it("accessories of big items get standard ship, not bulky", () => {
     expect(
       estimateBwzParcelFromCategory({
         name: "Jersey-Spannbetttuch für Beistellbett",
         productType: "Wohnen",
         buyChf: 25,
-      })
-    ).toBeNull();
-    expect(
-      estimateBwzParcelFromCategory({ name: "Rutschfeste Socken", productType: "Bekleidung", buyChf: 8 })
-    ).toBeNull();
+      })?.shipChf
+    ).toBe(BWZ_SHIP_STANDARD_CHF);
   });
 
   it("pricey pram / home / car-seat category without dims", () => {
@@ -178,17 +175,32 @@ describe("estimateBwzParcelFromCategory", () => {
         name: "Lammfell-Handwärmer Big Double für Kinderwagen",
         productType: "Kinderwagen",
         buyChf: 68,
-      })
-    ).toBeNull();
+      })?.shipChf
+    ).toBe(BWZ_SHIP_STANDARD_CHF);
     expect(
       estimateBwzParcelFromCategory({ name: "Buggy für Zwillinge", productType: "Kinderwagen", buyChf: 300 })?.shipChf
     ).toBe(BWZ_SHIP_BULKY_CHF);
   });
 
-  it("other expensive unknown → standard; cheap unknown → null", () => {
+  it("fail-safe: unknown defaults to standard, CHF 2 only for small-goods whitelist", () => {
+    expect(
+      estimateBwzParcelFromCategory({ name: "Babydecke Musselin", productType: "Wohnen", buyChf: 42 })?.shipChf
+    ).toBe(BWZ_SHIP_STANDARD_CHF);
     expect(
       estimateBwzParcelFromCategory({ name: "Babyphone Video", productType: "Pflege", buyChf: 180 })?.shipChf
     ).toBe(BWZ_SHIP_STANDARD_CHF);
     expect(estimateBwzParcelFromCategory({ name: "Body", productType: "Bekleidung", buyChf: 20 })).toBeNull();
+    expect(
+      estimateBwzParcelFromCategory({ name: "Rutschfeste Socken", productType: "Bekleidung", buyChf: 8 })
+    ).toBeNull();
+    expect(
+      estimateBwzParcelFromCategory({ name: "Schneeanzug", productType: "Bekleidung", buyChf: 80 })?.shipChf
+    ).toBe(BWZ_SHIP_STANDARD_CHF);
+  });
+
+  it("unknown above CHF 250 is always bulky (cap)", () => {
+    expect(
+      estimateBwzParcelFromCategory({ name: "Babyphone Premium", productType: "Pflege", buyChf: 320 })?.shipChf
+    ).toBe(BWZ_SHIP_BULKY_CHF);
   });
 });

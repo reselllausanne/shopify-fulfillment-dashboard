@@ -228,11 +228,15 @@ const ACCESSORY_NAME_RE =
   /(spannbett|bettw(?:ä|ae)sche|laken|bezug|nestchen|himmel|moskito|regenschutz|regenverdeck|insektenschutz|schirm|segel|verdeck|fu(?:ß|ss)sack|auflage|aufsatz|einlage|adapter|halter|haken|kette|clip|tasche|organizer|ersatz|zubeh(?:ö|oe)r|klingel|helm|korb|kissen|decke|matratzenschoner|schlafsack|spieluhr|mobile|lampe|aufkleber|schutz|griff|licht|handschuh|muff|netz|spielzeug|socke|matte|w(?:ä|ae)rmer|tablett|gurt|polster)/i;
 const PRAM_CATEGORY_MIN_BUY_CHF = 250;
 const CAR_SEAT_CATEGORY_MIN_BUY_CHF = 50;
-const UNKNOWN_EXPENSIVE_MIN_BUY_CHF = 100;
+/** No reliable dims above this buy → always bulky ship (worst case = overpriced, never a loss). */
+const UNKNOWN_BULKY_CAP_MIN_BUY_CHF = 250;
+/** Only these top-level Walz categories may keep the CHF 2 default when dims are unknown. */
+const SMALL_GOODS_CATEGORIES = new Set(["bekleidung", "pflege", "ernährung", "ernaehrung"]);
+const SMALL_GOODS_MAX_BUY_CHF = 50;
 
 /**
- * Last resort when Walz has no dims anywhere: big-item names / categories get a conservative
- * ship so a CHF 1'400 pram never goes out on the CHF 2 default.
+ * Last resort when Walz has no dims anywhere. Fail-safe: unknown defaults to standard ship;
+ * CHF 2 only for small-goods whitelist, so a miss overprices instead of losing money.
  */
 export function estimateBwzParcelFromCategory(input: {
   name: string;
@@ -261,10 +265,13 @@ export function estimateBwzParcelFromCategory(input: {
       return est("standard", BWZ_SHIP_STANDARD_HEAVY_CHF);
     }
   }
-  if (Number.isFinite(buy) && buy >= UNKNOWN_EXPENSIVE_MIN_BUY_CHF) {
-    return est("standard", BWZ_SHIP_STANDARD_CHF);
+  if (Number.isFinite(buy) && buy >= UNKNOWN_BULKY_CAP_MIN_BUY_CHF) {
+    return est("bulky", BWZ_SHIP_BULKY_CHF);
   }
-  return null;
+  if (SMALL_GOODS_CATEGORIES.has(type) && Number.isFinite(buy) && buy < SMALL_GOODS_MAX_BUY_CHF) {
+    return null;
+  }
+  return est("standard", BWZ_SHIP_STANDARD_CHF);
 }
 
 /** Galaxus ship override from a stored baby-walz note. Null → keep default CHF 2. */
