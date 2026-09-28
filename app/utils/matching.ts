@@ -649,7 +649,18 @@ function productNameMatch(name1: string, name2: string): { matches: boolean; sim
   const union = new Set([...words1, ...words2]);
   
   const similarity = union.size > 0 ? intersection.size / union.size : 0;
-  return { matches: similarity >= 0.95, similarity }; // 95% match required
+  if (similarity >= 0.95) return { matches: true, similarity };
+
+  // Galaxus short titles vs StockX titles with colorway/gender suffixes:
+  // "UGG W Tasman" ⊆ "UGG Tasman Slipper Chestnut (Women's)" → allow when
+  // every significant word of the shorter name appears in the longer (≥2 words).
+  const minSize = Math.min(words1.size, words2.size);
+  if (minSize >= 2 && intersection.size === minSize) {
+    const overlap = intersection.size / minSize;
+    return { matches: true, similarity: Math.max(similarity, overlap) };
+  }
+
+  return { matches: false, similarity };
 }
 
 function sizeMatch(size1: string | null, size2: string | null, context?: SizeMatchContext): boolean {
@@ -1026,9 +1037,18 @@ export function matchShopifyToSupplier(
     let allowSkuOverride = false;
     if (!nameMatchesStrictly) {
       // Name didn't match - check if SKU can save it
-      if (timeDiffHours <= 96) { // Within 4 days threshold
-        const hasStrongSkuMatch = skuStrongMatch(shopifyItem.sku, supplierOrder.skuKey);
-        
+      const hasStrongSkuMatch = skuStrongMatch(shopifyItem.sku, supplierOrder.skuKey);
+      const shopifyBase = skuBaseFromShopifySKU(shopifyItem.sku);
+      const skuExactForOverride =
+        !!shopifyBase &&
+        shopifyBase.trim().toUpperCase() === String(supplierOrder.skuKey ?? "").trim().toUpperCase();
+      // Exact style SKU: allow up to 7d (same as delayed-fulfillment auto threshold).
+      // Partial/contains SKU: stay at 4d.
+      const skuOverrideMaxHours = skuExactForOverride
+        ? SKU_EXACT_AUTO_THRESHOLD_HOURS
+        : THRESHOLD_HOURS;
+
+      if (timeDiffHours <= skuOverrideMaxHours) {
         if (hasStrongSkuMatch) {
           allowSkuOverride = true;
           reasons.push(`🔐 SKU override (name: ${(nameMatchResult.similarity * 100).toFixed(0)}%, time: ${timeDiffHours.toFixed(1)}h)`);
@@ -1044,9 +1064,9 @@ export function matchShopifyToSupplier(
           continue;
         }
       } else {
-        // Time diff > 96 hours - too risky even with SKU match
+        // Time diff too large even with SKU match
         console.log(
-          `[MATCH] ❌ Name below threshold and time diff ${timeDiffHours.toFixed(1)}h > 96h - SKIPPING`
+          `[MATCH] ❌ Name below threshold and time diff ${timeDiffHours.toFixed(1)}h > ${skuOverrideMaxHours}h - SKIPPING`
         );
         continue;
       }

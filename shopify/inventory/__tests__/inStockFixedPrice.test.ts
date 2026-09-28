@@ -51,6 +51,21 @@ describe("inStockFixedPrice", () => {
     expect(r?.expressChf).toBe(109);
   });
 
+  it("resolves Essentials Galaxus title + KickDB styleId 125HO244360F", () => {
+    expect(
+      isInStockFixedPriceProduct({
+        title: "Essentials Fear of God Jersey Crewneck T-Shirt Black (XS)",
+        sku: "125HO244360F",
+      })
+    ).toBe(true);
+    const r = resolveInStockFixedPrice({
+      title: "Essentials Fear of God Jersey Crewneck T-Shirt Black (XS)",
+      sku: "125HO244360F",
+    });
+    expect(r?.sellChf).toBe(59);
+    expect(r?.expressChf).toBe(89);
+  });
+
   it("does not match liquidation sneakers with Essential in name", () => {
     expect(
       isInStockFixedPriceProduct({

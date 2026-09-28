@@ -100,3 +100,5 @@ logs.jsonl
 
 # stray host file from bad scp/ssh
 77.42.74.184
+# Matching Review Lab local reviews (JSONL). Never commit secrets.
+data/matching-review-lab/reviews.jsonl

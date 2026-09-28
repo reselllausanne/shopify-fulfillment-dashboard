@@ -83,10 +83,12 @@ export const IN_STOCK_FIXED_PRICE_RULES: InStockFixedPriceRule[] = [
       "15349630501250", // Tee Light Oatmeal (SS22)
       "15369534538114", // Tee Dark Oatmeal SS22
     ],
-    skuBases: ["125HO244368F"],
+    skuBases: ["125HO244368F", "125HO244360F"],
     titlePatterns: [
       /Fear of God Essentials.*(Jersey|Crewneck|T-Shirt|Tee)\b/i,
+      /Essentials Fear of God.*(Jersey|Crewneck|T-Shirt|Tee)\b/i,
       /^Essentials Tee\b/i,
+      /^Essentials Fear of God Jersey Crewneck T-Shirt\b/i,
     ],
   },
   {
