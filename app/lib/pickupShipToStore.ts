@@ -83,7 +83,7 @@ const NAME_ALIASES: Array<{ re: RegExp; locationId: string }> = [
   { re: /antica/i, locationId: "gid://shopify/Location/111267217794" },
   { re: /\blab\b|concept store|the lab concept/i, locationId: "gid://shopify/Location/111267250562" },
   { re: /cold\s*bien(ne)?|rare\s*bienne|sporting\s*bar/i, locationId: "gid://shopify/Location/111272100226" },
-  { re: /bussigny|warehouse/i, locationId: "gid://shopify/Location/111267971458" },
+  { re: /bussigny/i, locationId: "gid://shopify/Location/111267971458" },
   { re: /website|chemin|bas-de-plan|online/i, locationId: "gid://shopify/Location/72553660705" },
 ];
 

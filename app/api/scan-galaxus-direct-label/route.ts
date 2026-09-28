@@ -165,7 +165,9 @@ export async function POST(req: NextRequest) {
       includeLabelData,
       allowReprint,
       // Partial path checks only the selected parcel inside runDirectSwissPostLabelForOrder.
-      requireLinked: true,
+      // Manual /scan and DD UI must print Swiss Post even when StockX is not
+      // linked (warehouse stock, external buy, operator ships first).
+      requireLinked: false,
       selection: isPartial ? selection : undefined,
     });
 

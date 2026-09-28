@@ -119,4 +119,40 @@ describe("shouldAutoAddToPackingSession", () => {
       })
     ).toBe(false);
   });
+
+  it("does not add when GTIN already claimed Galaxus direct", () => {
+    expect(
+      shouldAutoAddToPackingSession({}, { gtinAutoChannel: "galaxus_direct" })
+    ).toBe(false);
+  });
+
+  it("does not add when GTIN already claimed Shopify or Decathlon", () => {
+    expect(shouldAutoAddToPackingSession({}, { gtinAutoChannel: "shopify" })).toBe(
+      false
+    );
+    expect(
+      shouldAutoAddToPackingSession({}, { gtinAutoChannel: "decathlon" })
+    ).toBe(false);
+  });
+
+  it("does not add when GTIN is warehouse+direct ambiguous", () => {
+    expect(
+      shouldAutoAddToPackingSession({}, { gtinRequiresChannelChoice: true })
+    ).toBe(false);
+  });
+
+  it("still adds warehouse inbound even if gtinAutoChannel is null", () => {
+    expect(
+      shouldAutoAddToPackingSession(
+        {
+          stxInboundBuy: {
+            orderCancelledAt: null,
+            isWarehouse: true,
+            isDirectDelivery: false,
+          },
+        },
+        { gtinAutoChannel: null }
+      )
+    ).toBe(true);
+  });
 });

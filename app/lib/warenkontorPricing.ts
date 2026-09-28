@@ -15,6 +15,8 @@ export type WarenkontorLandedCost = {
  * "Versand mit Schweizerische Post oder DPD" = CHF 6.00.
  * Holds at high cart totals (no free-shipping threshold observed).
  */
+import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+
 export const WARENKONTOR_FLAT_SHIPPING_CHF = 6;
 
 export function isWarenkontorShop(input: {
@@ -57,15 +59,20 @@ export function computeWarenkontorLandedCost(buyChf: number): WarenkontorLandedC
   const buy = roundChf(buyChf);
   const shippingChf = cfg.shippingChf;
   const landedChf = roundChf(buy + shippingChf);
-  const sellPriceChf = roundChf(landedChf * (1 + cfg.marginPercent / 100));
-  if (!Number.isFinite(sellPriceChf) || sellPriceChf <= 0) return null;
+  const fromPct = roundChf(landedChf * (1 + cfg.marginPercent / 100));
+  const floor = applyCheapItemSellFloor({
+    buyChf: buy,
+    landedChf,
+    sellFromPercentChf: fromPct,
+  });
+  if (!Number.isFinite(floor.sellPriceChf) || floor.sellPriceChf <= 0) return null;
   return {
     buyChf: buy,
     shippingChf,
     shippingReason: shippingChf === WARENKONTOR_FLAT_SHIPPING_CHF ? "flat_post_dpd_chf6" : "env_override",
     landedChf,
     marginPercent: cfg.marginPercent,
-    sellPriceChf,
+    sellPriceChf: floor.sellPriceChf,
     priceSource: "chf_shelf_plus_ship_plus_margin",
   };
 }

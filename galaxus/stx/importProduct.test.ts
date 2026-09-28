@@ -37,6 +37,7 @@ vi.mock("@/galaxus/kickdb/client", async (importOriginal) => {
 
 vi.mock("@/galaxus/stx/variantPriceLanes", () => ({
   allowsStxStandardImport: vi.fn().mockReturnValue(false),
+  stxProductAskMedian: vi.fn().mockReturnValue(100),
   buildStxDualPriceFields: vi.fn().mockReturnValue({
     price: 110,
     stock: 5,

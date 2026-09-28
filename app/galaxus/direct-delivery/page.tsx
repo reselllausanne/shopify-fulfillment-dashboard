@@ -35,6 +35,36 @@ function firstNonEmptyText(...values: unknown[]): string {
   return "";
 }
 
+/** ORDP often stores Digitec as customer/recipient — real client is referencePerson. */
+function isGalaxusMarketplacePlaceholderName(name: unknown): boolean {
+  const n = String(name ?? "")
+    .trim()
+    .toLowerCase();
+  if (!n) return false;
+  if (n.includes("digitec")) return true;
+  if (/\bgalaxus\b/.test(n) && /\bag\b/.test(n)) return true;
+  return n === "galaxus";
+}
+
+function galaxusEndCustomerDisplayName(order: {
+  referencePerson?: string | null;
+  customerName?: string | null;
+  recipientName?: string | null;
+}): string {
+  const ref = String(order.referencePerson ?? "").trim();
+  const customer = String(order.customerName ?? "").trim();
+  const recipient = String(order.recipientName ?? "").trim();
+  if (
+    ref &&
+    (isGalaxusMarketplacePlaceholderName(customer) ||
+      isGalaxusMarketplacePlaceholderName(recipient) ||
+      !customer)
+  ) {
+    return ref;
+  }
+  return firstNonEmptyText(customer, recipient, ref);
+}
+
 function deriveListCountsFromOrderDetail(order: any): { linkedCount: number; needsBuyCount: number } {
   const lines = Array.isArray(order?.lines) ? order.lines : [];
   const matches = new Map<string, any>();
@@ -92,15 +122,17 @@ export default function GalaxusDirectDeliveryPage() {
   const [error, setError] = useState<string | null>(null);
   const [newOrderIds, setNewOrderIds] = useState<Set<string>>(new Set());
   const knownOrderIds = useRef<Set<string>>(readKnownOrderIds());
-  const ordersListCacheRef = useRef<{ at: number; key: string; items: OrderListItem[] } | null>(null);
+  const ordersListCacheRef = useRef<{ at: number; items: OrderListItem[] } | null>(null);
   const orderDetailCacheRef = useRef<Map<string, { at: number; order: any }>>(new Map());
   const selectedOrderIdRef = useRef<string | null>(null);
   const detailLoadSeq = useRef(0);
   const ordersLoadSeq = useRef(0);
+  const searchSeq = useRef(0);
   const [polling, setPolling] = useState(false);
   const [bulkStockxSyncing, setBulkStockxSyncing] = useState(false);
   const [sendingOrdr, setSendingOrdr] = useState(false);
   const [reprintBusy, setReprintBusy] = useState(false);
+  const [unshipBusy, setUnshipBusy] = useState(false);
   const [purgingOrder, setPurgingOrder] = useState(false);
   const [stockxToolsOpen, setStockxToolsOpen] = useState(false);
   // Partial (per-pair) shipping: lineId → quantity to ship now.
@@ -109,6 +141,9 @@ export default function GalaxusDirectDeliveryPage() {
   const [leftTab, setLeftTab] = useState<"to_process" | "fulfilled">("to_process");
   const [orderSearch, setOrderSearch] = useState("");
   const [debouncedOrderSearch, setDebouncedOrderSearch] = useState("");
+  /** null = no search; array = filtered hits (may be local preview then server). */
+  const [searchHits, setSearchHits] = useState<OrderListItem[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [manualEntryModal, setManualEntryModal] = useState<{
     isOpen: boolean;
     mode: "create" | "edit";
@@ -121,17 +156,16 @@ export default function GalaxusDirectDeliveryPage() {
   selectedOrderIdRef.current = selectedOrderId;
 
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedOrderSearch(orderSearch.trim()), 300);
+    const t = setTimeout(() => setDebouncedOrderSearch(orderSearch.trim()), 250);
     return () => clearTimeout(t);
   }, [orderSearch]);
 
   const loadOrders = useCallback(async (opts?: { selectFirstIfEmpty?: boolean; force?: boolean }) => {
     const seq = ++ordersLoadSeq.current;
     const force = Boolean(opts?.force);
-    const query = debouncedOrderSearch;
-    const cacheKey = query.toLowerCase();
+
     const cached = ordersListCacheRef.current;
-    if (!force && cached && cached.key === cacheKey && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
+    if (!force && cached && Date.now() - cached.at < ORDERS_LIST_CACHE_TTL_MS) {
       const items = dedupeById(cached.items);
       setOrders(items);
       const current = selectedOrderIdRef.current;
@@ -142,50 +176,74 @@ export default function GalaxusDirectDeliveryPage() {
       setLoadingMoreOrders(false);
       return;
     }
+
     setLoadingOrders(true);
     setLoadingMoreOrders(false);
     setError(null);
     try {
-      // Single 500-row page. Pagination via OFFSET was firing 4 sequential API
-      // calls per refresh and, with a shared orderDate, was returning the same
-      // row on multiple pages → visual duplicates in the list. One request +
-      // stable orderDate+id sort on the server keeps the list clean and fast.
-      const params = new URLSearchParams({
-        limit: "500",
-        offset: "0",
-        view: "active",
-        sort: "orderDate",
-        deliveryType: "direct_delivery",
-        includeInvoice: "0",
-        includeWarehouse: "0",
-      });
-      if (query) params.set("q", query);
-      const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
-        cache: "no-store",
-      });
-      const data = await res.json();
-      if (seq !== ordersLoadSeq.current) return;
-      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
-      const items = dedupeById<OrderListItem>(
-        Array.isArray(data.items) ? (data.items as OrderListItem[]) : []
-      );
-      setOrders(items);
-
-      const current = selectedOrderIdRef.current;
-      if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
-        setSelectedOrderId(items[0].id);
-      }
-
+      // Active direct-delivery set is >500 (1170 on 2026-09-21). A single page
+      // hid everything older than ~8 Sep, including unlinked/unbought orders.
+      // Server sort is orderDate desc + id desc, so OFFSET pages stay unique.
+      // dedupeById still guards a row that shifts while pages are in flight.
+      const PAGE_SIZE = 500;
+      const MAX_PAGES = 20;
+      const collected: OrderListItem[] = [];
+      let offset = 0;
       const prevKnown = knownOrderIds.current;
-      const fresh = new Set<string>();
-      for (const item of items) {
-        if (!prevKnown.has(item.id)) fresh.add(item.id);
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        if (page > 0) setLoadingMoreOrders(true);
+        const params = new URLSearchParams({
+          limit: String(PAGE_SIZE),
+          offset: String(offset),
+          view: "active",
+          sort: "orderDate",
+          deliveryType: "direct_delivery",
+          includeInvoice: "0",
+          includeWarehouse: "0",
+        });
+        const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (seq !== ordersLoadSeq.current) return;
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load orders");
+        const pageItems: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+        collected.push(...pageItems);
+        const items = dedupeById(collected);
+        setOrders(items);
+
+        if (page === 0) {
+          const current = selectedOrderIdRef.current;
+          if (opts?.selectFirstIfEmpty && !current && items[0]?.id) {
+            setSelectedOrderId(items[0].id);
+          }
+          // Only the newest page can be "just arrived". Older pages are the
+          // backlog the 500 cap used to drop — not new orders.
+          const fresh = new Set<string>();
+          for (const item of pageItems) {
+            if (!prevKnown.has(item.id)) fresh.add(item.id);
+          }
+          setNewOrderIds(fresh);
+        }
+
+        const nextOffset = data.nextOffset == null ? null : Number(data.nextOffset);
+        if (
+          nextOffset == null ||
+          !Number.isFinite(nextOffset) ||
+          nextOffset <= offset ||
+          pageItems.length === 0
+        ) {
+          break;
+        }
+        offset = nextOffset;
       }
-      setNewOrderIds(fresh);
+
+      const items = dedupeById(collected);
+      setOrders(items);
       const nextKnown = new Set([...prevKnown, ...items.map((item) => item.id)]);
       knownOrderIds.current = nextKnown;
       writeKnownOrderIds(nextKnown);
-      ordersListCacheRef.current = { at: Date.now(), items, key: cacheKey };
+      ordersListCacheRef.current = { at: Date.now(), items };
     } catch (err: any) {
       if (seq !== ordersLoadSeq.current) return;
       setError(err.message);
@@ -195,6 +253,71 @@ export default function GalaxusDirectDeliveryPage() {
         setLoadingMoreOrders(false);
       }
     }
+  }, []);
+
+  // Search is independent of browse pagination — otherwise a late page write
+  // clobbers filtered results while the "N matches" label already updated.
+  useEffect(() => {
+    const query = debouncedOrderSearch.trim();
+    if (query.length < 2) {
+      searchSeq.current += 1;
+      setSearchHits(null);
+      setSearchLoading(false);
+      return;
+    }
+
+    const seq = ++searchSeq.current;
+    const qLower = query.toLowerCase();
+
+    // Instant local filter so the list shrinks immediately (order # / id).
+    // Empty local → show empty until server hits arrive — never leave full list up.
+    const local = orders.filter((o) => {
+      const num = String(o.orderNumber ?? "").toLowerCase();
+      const gid = String(o.galaxusOrderId ?? "").toLowerCase();
+      return num.includes(qLower) || gid.includes(qLower);
+    });
+    setSearchHits(local);
+    setSearchLoading(true);
+
+    void (async () => {
+      try {
+        const params = new URLSearchParams({
+          limit: "200",
+          offset: "0",
+          view: "active",
+          sort: "orderDate",
+          deliveryType: "direct_delivery",
+          includeInvoice: "0",
+          includeWarehouse: "0",
+          includeLinked: "0",
+          q: query,
+        });
+        const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (seq !== searchSeq.current) return;
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "Search failed");
+        const pageItems: OrderListItem[] = Array.isArray(data.items) ? data.items : [];
+        setSearchHits(dedupeById(pageItems));
+        if (pageItems.length === 0) {
+          setSelectedOrderId(null);
+          return;
+        }
+        const firstId = pageItems[0]?.id;
+        if (firstId) {
+          const current = selectedOrderIdRef.current;
+          const stillVisible = current ? pageItems.some((o) => o.id === current) : false;
+          if (!current || !stillVisible) setSelectedOrderId(firstId);
+        }
+      } catch (err: any) {
+        if (seq !== searchSeq.current) return;
+        setError(err?.message ?? "Search failed");
+      } finally {
+        if (seq === searchSeq.current) setSearchLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- local preview uses orders snapshot; server search keyed on query only
   }, [debouncedOrderSearch]);
 
   const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
@@ -368,19 +491,24 @@ export default function GalaxusDirectDeliveryPage() {
     line.productName || line.description || line.supplierPid || "—";
 
   const orderedList = useMemo(() => {
-    if (newOrderIds.size === 0) return orders;
-    const fresh = orders.filter((o) => newOrderIds.has(o.id));
-    const rest = orders.filter((o) => !newOrderIds.has(o.id));
+    const source = searchHits !== null ? searchHits : orders;
+    if (searchHits !== null || newOrderIds.size === 0) return source;
+    const fresh = source.filter((o) => newOrderIds.has(o.id));
+    const rest = source.filter((o) => !newOrderIds.has(o.id));
     return [...fresh, ...rest];
-  }, [orders, newOrderIds]);
+  }, [orders, searchHits, newOrderIds]);
 
   const ordersByTab = useMemo(() => {
+    // Search: show hits across both tabs (fulfilled order must not vanish).
+    if (searchHits !== null) return orderedList;
     return orderedList.filter((order) => {
       const state = order.fulfillmentState ?? "to_process";
       if (leftTab === "fulfilled") return state === "fulfilled";
-      return state === "to_process";
+      // "shipped" is the fallback when open-line coverage fails. Keep those
+      // visible in À traiter so a tracked-but-unbought order cannot vanish.
+      return state === "to_process" || state === "shipped";
     });
-  }, [orderedList, leftTab]);
+  }, [orderedList, leftTab, searchHits]);
 
   const runBulkStockxSyncVisible = async () => {
     const targets = ordersByTab;
@@ -632,6 +760,38 @@ export default function GalaxusDirectDeliveryPage() {
     setSelectedPairs((prev) => ({ ...prev, [lineId]: clamped }));
   };
 
+  const unshipDirectOrder = async () => {
+    if (!selectedOrderId) return;
+    const ok = window.confirm(
+      "Unship this order?\n\n" +
+        "• Clears Fulfilled / shipped marks\n" +
+        "• Deletes local Swiss Post shipments + labels\n" +
+        "• Puts lines back to À traiter\n\n" +
+        "Only if Galaxus has NOT already processed the DELR (or you will fix EDI manually).\n\nContinue?"
+    );
+    if (!ok) return;
+    setUnshipBusy(true);
+    setError(null);
+    setOpsLog(null);
+    try {
+      const res = await fetch(`/api/galaxus/orders/${selectedOrderId}/unship`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? data?.result?.message ?? "Unship failed");
+      }
+      setOpsLog(JSON.stringify(data.result ?? data, null, 2));
+      setSelectedPairs({});
+      await loadOrders({ force: true });
+      await loadOrderDetail(selectedOrderId, { force: true });
+    } catch (err: any) {
+      setError(err?.message ?? "Unship failed");
+    } finally {
+      setUnshipBusy(false);
+    }
+  };
+
   const reprintDirectDocuments = async () => {
     if (!selectedOrderId) return;
     setReprintBusy(true);
@@ -736,7 +896,11 @@ export default function GalaxusDirectDeliveryPage() {
     const title = buildLineTitle(line);
     const sizePrefill = String(line.size ?? "");
     const skuPrefill = String(line.supplierSku ?? "N/A");
-    const orderLabel = `${selectedOrder?.galaxusOrderId ?? ""}${selectedOrder?.recipientName ? ` · ${selectedOrder.recipientName}` : ""}`;
+    const orderLabel = `${selectedOrder?.galaxusOrderId ?? ""}${
+      selectedOrder
+        ? ` · ${galaxusEndCustomerDisplayName(selectedOrder) || selectedOrder.recipientName || ""}`
+        : ""
+    }`;
     const resolvedOrderNumber = firstNonEmptyText(match?.stockxOrderNumber, proc?.stockxOrderNumber);
     const resolvedOrderId = firstNonEmptyText(match?.stockxOrderId, proc?.stockxOrderId);
     const resolvedAwb = firstNonEmptyText(match?.stockxAwb, proc?.awb);
@@ -943,10 +1107,22 @@ export default function GalaxusDirectDeliveryPage() {
           <div className="font-semibold mb-2">Orders</div>
           <input
             className="w-full border rounded px-2 py-1 text-xs mb-2"
-            placeholder="Search order, SKU, GTIN, product..."
+            placeholder="Name, model, SKU, order #…"
+            title="midnight → all matching names · 1130 → all Asics 1130 · FQ8144-001 → that SKU only"
             value={orderSearch}
             onChange={(e) => setOrderSearch(e.target.value)}
           />
+          {debouncedOrderSearch.trim().length >= 2 ? (
+            <div className="text-[11px] text-gray-500 mb-2">
+              {searchLoading && searchHits === null
+                ? "Searching…"
+                : searchHits !== null && searchHits.length === 0 && !searchLoading
+                  ? "0 matches"
+                  : `${ordersByTab.length} match${ordersByTab.length === 1 ? "" : "es"}${
+                      searchLoading ? "…" : ""
+                    } (all tabs)`}
+            </div>
+          ) : null}
           <div className="mb-2 grid grid-cols-2 gap-1 text-xs">
             <button
               type="button"
@@ -1018,8 +1194,10 @@ export default function GalaxusDirectDeliveryPage() {
                 </button>
               );
             })}
-            {ordersByTab.length === 0 && !loadingOrders ? (
-              <div className="text-xs text-gray-500">No orders in this tab.</div>
+            {ordersByTab.length === 0 && !loadingOrders && !searchLoading ? (
+              <div className="text-xs text-gray-500">
+                {searchHits !== null ? "No matching orders." : "No orders in this tab."}
+              </div>
             ) : null}
             {loadingMoreOrders ? (
               <div className="text-xs text-gray-400 pt-1">Loading more orders…</div>
@@ -1062,25 +1240,40 @@ export default function GalaxusDirectDeliveryPage() {
             <div className="space-y-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="text-sm min-w-0">
-                  {/* End customer (EDI-parsed) always shown first — needed when
-                      recipient block is a Galaxus warehouse and the actual
-                      client is only visible in customerName / customer address. */}
-                  {selectedOrder.customerName ? (
-                    <div className="font-medium text-gray-900">
-                      {selectedOrder.customerName}
-                      {selectedOrder.customerCity ? (
-                        <span className="text-gray-500 text-xs font-normal">
-                          {" "}
-                          · {selectedOrder.customerPostalCode ?? ""} {selectedOrder.customerCity}{" "}
-                          {selectedOrder.customerCountryCode ?? selectedOrder.customerCountry ?? ""}
-                        </span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <div className={selectedOrder.customerName ? "text-gray-700 text-xs mt-1" : "font-medium text-gray-900"}>
-                    {selectedOrder.customerName ? "Ship to: " : ""}
-                    {selectedOrder.recipientName ?? "—"}
-                  </div>
+                  {/* End customer first: ORDP often puts Digitec Galaxus AG in
+                      customerName/recipientName; real person is referencePerson. */}
+                  {(() => {
+                    const endCustomer = galaxusEndCustomerDisplayName(selectedOrder);
+                    const recipientIsPlaceholder = isGalaxusMarketplacePlaceholderName(
+                      selectedOrder.recipientName
+                    );
+                    const showShipTo =
+                      Boolean(selectedOrder.recipientName) &&
+                      !recipientIsPlaceholder &&
+                      String(selectedOrder.recipientName).trim() !== endCustomer;
+                    return (
+                      <>
+                        <div className="font-medium text-gray-900">
+                          {endCustomer || "—"}
+                          {selectedOrder.referencePerson &&
+                          endCustomer === String(selectedOrder.referencePerson).trim() &&
+                          selectedOrder.customerCity &&
+                          !isGalaxusMarketplacePlaceholderName(selectedOrder.customerName) ? (
+                            <span className="text-gray-500 text-xs font-normal">
+                              {" "}
+                              · {selectedOrder.customerPostalCode ?? ""} {selectedOrder.customerCity}{" "}
+                              {selectedOrder.customerCountryCode ?? selectedOrder.customerCountry ?? ""}
+                            </span>
+                          ) : null}
+                        </div>
+                        {showShipTo ? (
+                          <div className="text-gray-700 text-xs mt-1">
+                            Ship to: {selectedOrder.recipientName}
+                          </div>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                   <div className="text-gray-500 text-xs">
                     {selectedOrder.recipientAddress1 ?? ""} {selectedOrder.recipientAddress2 ?? ""}
                   </div>
@@ -1144,15 +1337,26 @@ export default function GalaxusDirectDeliveryPage() {
                       </button>
                     </>
                   )}
-                  {(orderFulfilled || shippingLabelUrl || packingSlipUrl) && (
+                  {(orderFulfilled || partiallyShipped || shippingLabelUrl || packingSlipUrl) && (
                     <button
                       type="button"
                       onClick={() => void reprintDirectDocuments()}
-                      disabled={reprintBusy || !selectedOrderId}
+                      disabled={reprintBusy || unshipBusy || !selectedOrderId}
                       title="Reprint Swiss Post label (Brother) + delivery note (HP) if present"
                       className="px-2 py-1.5 bg-amber-700 text-white rounded text-xs disabled:opacity-50"
                     >
                       {reprintBusy ? "Reprint…" : "Reprint docs"}
+                    </button>
+                  )}
+                  {(orderFulfilled || partiallyShipped) && (
+                    <button
+                      type="button"
+                      onClick={() => void unshipDirectOrder()}
+                      disabled={unshipBusy || reprintBusy || shipping || !selectedOrderId}
+                      title="Mistake recovery: delete local shipments and reopen lines"
+                      className="px-2 py-1.5 bg-red-700 text-white rounded text-xs disabled:opacity-50"
+                    >
+                      {unshipBusy ? "Unship…" : "Unship"}
                     </button>
                   )}
                   {packingSlipUrl ? (
@@ -1292,10 +1496,15 @@ export default function GalaxusDirectDeliveryPage() {
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
-                                  disabled={!procOk || shipping}
+                                  disabled={shipping}
                                   onChange={(e) => togglePairSelected(line, e.target.checked)}
                                 />
                                 Ship this pair
+                                {!procOk ? (
+                                  <span className="text-amber-800" title="StockX not linked — print still allowed">
+                                    (unlinked OK)
+                                  </span>
+                                ) : null}
                                 {orderedQty > 1 ? (
                                   <>
                                     {" "}

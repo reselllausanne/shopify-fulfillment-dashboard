@@ -177,22 +177,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
 
     const resolvedPurchaseDate =
       parseMaybeDate(data.stockxPurchaseDate) ?? a.stockxPurchaseDate ?? existing?.stockxPurchaseDate ?? null;
-    if (
-      looksLikeStockxOrderNumber(stockxOrderNumberFinal) &&
-      resolvedPurchaseDate &&
-      !isValidGalaxusStockxCausalBuy(order.orderDate, resolvedPurchaseDate)
-    ) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "StockX purchase date is older than Galaxus order date. Rejecting non-causal link.",
-          reason: "stockx_purchase_before_galaxus_sale",
-          galaxusOrderDate: order.orderDate,
-          stockxPurchaseDate: resolvedPurchaseDate,
-        },
-        { status: 422 }
-      );
+    if (looksLikeStockxOrderNumber(stockxOrderNumberFinal)) {
+      // Real StockX refs require a purchase date so causality can be enforced.
+      // Missing date used to skip the gate and attach pre-sale buys.
+      if (!resolvedPurchaseDate) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "StockX purchase date missing — cannot verify buy is after Galaxus sale. Enrich from StockX or enter purchase date.",
+            reason: "stockx_purchase_date_required",
+            galaxusOrderDate: order.orderDate,
+          },
+          { status: 422 }
+        );
+      }
+      if (!isValidGalaxusStockxCausalBuy(order.orderDate, resolvedPurchaseDate)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "StockX purchase date is older than Galaxus order date. Rejecting non-causal link.",
+            reason: "stockx_purchase_before_galaxus_sale",
+            galaxusOrderDate: order.orderDate,
+            stockxPurchaseDate: resolvedPurchaseDate,
+          },
+          { status: 422 }
+        );
+      }
     }
 
     // LOCAL-/MANUAL- refs are not real StockX buys — skip cross-channel claim gate.

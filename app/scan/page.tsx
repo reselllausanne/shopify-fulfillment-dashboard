@@ -9,9 +9,18 @@ import {
   shouldAutoGalaxusDirectLabelFor,
 } from "./scanInboundGuards";
 import {
+  looksLikeManualQuery,
+  shouldAllowScanAutoActions,
+} from "./scanInputGuards";
+import {
+  activatePrintStation,
+  deactivatePrintStation,
   probePrintStationStatus,
+  tryStationAutoPrint,
   type PrintStationProbeStatus,
 } from "@/app/lib/printStationClient";
+import PrintStationWizard from "./PrintStationWizard";
+import type { PrintStationConfig } from "@/lib/printStation";
 
 type ScanStatus = "FOUND" | "NOT_FOUND" | "UNMATCHED" | "ERROR";
 
@@ -91,6 +100,8 @@ type ScanResult = {
   status: ScanStatus;
   awb: string;
   manualShopifySuggest?: boolean;
+  /** Picked from typeahead — never auto-fulfill / auto-print. */
+  manualSuggest?: boolean;
   fulfillmentDemo?: ScanDemoChannel | null;
   match: ScanMatchPayload | null;
   decathlon?: {
@@ -160,9 +171,24 @@ type ScanResult = {
     openWarehouse: number;
     openShopify?: number;
     openDecathlon?: number;
+    requiresChannelChoice?: boolean;
     autoDirectOrderDbId?: string | null;
     autoDirectLineId?: string | null;
     autoDirectRemaining?: number;
+    autoDirectOpenUnits?: Array<{
+      lineItemId: string;
+      lineId?: string;
+      title: string;
+      remainingQuantity: number;
+      isScannedLine?: boolean;
+      size?: string | null;
+    }>;
+    autoDirectUnitSelection?: {
+      requiresPopup: boolean;
+      totalOpenUnits: number;
+      openLineCount: number;
+      reason: string;
+    } | null;
     autoShopify?: {
       shopifyOrderId: string;
       shopifyOrderName?: string | null;
@@ -335,6 +361,12 @@ const ENABLE_BROWSER_PRINT = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_BROWSER_PRINT,
   true
 );
+/** Packing Mac on localhost — hide QZ UI; labels go CUPS (`LOCAL_STATION=1`). */
+const isLocalhostPackingBrowser = () => {
+  if (typeof window === "undefined") return false;
+  const host = String(window.location.hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+};
 // Force fulfill is destructive — never surface unless explicitly enabled per station.
 const ENABLE_FORCE_FULFILL = resolveClientFlag(
   process.env.NEXT_PUBLIC_SCAN_FORCE_FULFILL,
@@ -344,15 +376,25 @@ const SCAN_SESSION_STORAGE_KEY = "scan.fulfillment.session.key.v1";
 const PACKING_SESSION_STORAGE_KEY = "scan.packingSession.entries.v1";
 const PACKING_SESSION_CAP = 8;
 
-type DirectQtyPromptState = {
-  orderDbId: string;
+type DirectOpenUnit = {
   lineId: string;
-  orderLabel: string;
-  productName: string;
-  remaining: number;
-  qty: number;
-  requiresDeliveryNote: boolean;
+  title: string;
+  remainingQuantity: number;
+  isScannedLine?: boolean;
+  size?: string | null;
 };
+
+type DirectShipPromptState = {
+  orderDbId: string;
+  scannedLineId: string;
+  orderLabel: string;
+  requiresDeliveryNote: boolean;
+  openUnits: DirectOpenUnit[];
+  /** qty to ship per lineId — 0 / missing = not selected */
+  selectedQtyByLineId: Record<string, number>;
+};
+
+type DirectShipSelection = Array<{ lineId: string; quantity: number }>;
 
 type DirectRescanHint = {
   gtin: string;
@@ -430,30 +472,10 @@ type SuggestItem = {
 };
 
 const SUGGEST_LIMIT = 8;
+/** Stale suggest must not keep fulfilled orders after a ship. */
+const SUGGEST_CACHE_TTL_MS = 5_000;
 const SUGGEST_DEBOUNCE_MS = 150;
 const SCANNER_BURST_THRESHOLD_MS = 120;
-
-/**
- * Heuristic: does this input value look like it was typed by a human vs
- * pasted by a barcode scanner? We only surface suggestions for typing.
- *
- * - Skip AWB/UPS/DHL shapes (1Z..., JJD..., JD..., >=8 digits pure numeric).
- * - Accept short queries (<8 chars), values that contain letters, or values
- *   with two consecutive identical chars (typists repeat, scanners don't).
- */
-const looksLikeManualQuery = (value: string): boolean => {
-  const v = String(value ?? "").trim();
-  if (v.length < 2) return false;
-  const upper = v.toUpperCase();
-  if (upper.startsWith("1Z") && upper.length >= 10) return false;
-  if (upper.startsWith("JJD") && upper.length >= 10) return false;
-  if (upper.startsWith("JD") && upper.length >= 10) return false;
-  if (/^\d{8,}$/.test(v)) return false;
-  if (v.length < 8) return true;
-  if (/[a-z]/i.test(v)) return true;
-  if (/(.)\1/.test(v)) return true;
-  return false;
-};
 
 const ensureScanSessionKey = () => {
   if (typeof window === "undefined") return null;
@@ -573,24 +595,47 @@ const openLabelPreview = (payload: LabelDataPayload) => {
 };
 
 /**
- * Show label to operator. Skip popup only when CUPS actually printed
- * (printJobResult.ok). VPS never succeeds CUPS → always opens popup.
- * Ignores browserPrintConfig.enabled=false from stale server paths that
- * attempted CUPS and then suppressed the popup for nothing.
+ * Show label to operator.
+ * 1) Real CUPS success (LOCAL_STATION packing Mac) → silent, no popup
+ * 2) QZ silent if Activate'd (remote / VPS browser stations)
+ * 3) Else browser print dialog
  */
-const presentScanLabel = (options: {
+const presentScanLabel = async (options: {
   labelData?: LabelDataPayload | null;
   browserPrintConfig?: BrowserPrintConfig | null;
   printJobResult?: PrintJobClientResult | null;
   deliveryNotePrintResult?: PrintJobClientResult | null;
   blockedMessage: string;
-}): boolean => {
-  const cupsOk = options.printJobResult?.ok === true;
-  if (cupsOk) {
+}): Promise<boolean> => {
+  const cupsPrinted =
+    options.printJobResult?.ok === true &&
+    options.printJobResult?.skipped !== true;
+
+  if (cupsPrinted) {
     alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
     return true;
   }
   if (!options.labelData?.base64) return false;
+
+  const ext = String(options.labelData.mimeType || "").includes("png") ? "png" : "pdf";
+  try {
+    const qz = await tryStationAutoPrint({
+      matchCertainty: "certain",
+      job: {
+        base64: options.labelData.base64,
+        extension: ext === "png" ? "png" : "pdf",
+        jobName: "scan-label",
+        copies: 1,
+      },
+    });
+    if (qz.ok) {
+      alertOnServerPrintFailure(options.deliveryNotePrintResult, "Delivery note print");
+      return true;
+    }
+  } catch {
+    // QZ optional — fall through to browser print.
+  }
+
   const opened = ENABLE_BROWSER_PRINT
     ? openLabelPrintDialog(options.labelData, options.browserPrintConfig ?? undefined)
     : openLabelPreview(options.labelData);
@@ -670,21 +715,55 @@ export default function ScanPage() {
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestFocusIdx, setSuggestFocusIdx] = useState<number>(-1);
   const suggestCacheRef = useRef<Map<string, SuggestItem[]>>(new Map());
+  const suggestCacheAtRef = useRef<Map<string, number>>(new Map());
   const suggestReqIdRef = useRef(0);
   const suggestDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstKeystrokeAtRef = useRef<number | null>(null);
   const [packingSession, setPackingSession] = useState<PackingSessionEntry[]>([]);
   const [packingReject, setPackingReject] = useState<{ scanCode: string; reason: string } | null>(null);
   const [packingSessionReady, setPackingSessionReady] = useState<boolean>(false);
-  const [directQtyPrompt, setDirectQtyPrompt] = useState<DirectQtyPromptState | null>(null);
-  const directQtyPromptResolver = useRef<((qty: number | null) => void) | null>(null);
+  const [directShipPrompt, setDirectShipPrompt] = useState<DirectShipPromptState | null>(null);
+  const directShipPromptResolver = useRef<((selection: DirectShipSelection | null) => void) | null>(
+    null
+  );
   const pendingDirectDeliveryNoteWinRef = useRef<Window | null>(null);
   const [directRescanHint, setDirectRescanHint] = useState<DirectRescanHint | null>(null);
   const [printStationStatus, setPrintStationStatus] =
     useState<PrintStationProbeStatus | null>(null);
+  const [printStationWizardOpen, setPrintStationWizardOpen] = useState(false);
+  const [qzBusy, setQzBusy] = useState(false);
+  const [qzPrinterPick, setQzPrinterPick] = useState<{
+    printers: string[];
+    filter: string;
+  } | null>(null);
+  /** pending until mount — avoids SSR/client QZ flash mismatch */
+  const [packingHost, setPackingHost] = useState<"pending" | "local" | "remote">(
+    "pending"
+  );
+  const showQzControls = packingHost === "remote";
+  const showLocalCupsBadge = packingHost === "local";
+
+  const refreshPrintStation = async (connect = false) => {
+    try {
+      const status = await probePrintStationStatus(undefined, { connect });
+      setPrintStationStatus(status);
+      return status;
+    } catch {
+      setPrintStationStatus(null);
+      return null;
+    }
+  };
   useEffect(() => {
+    setPackingHost(isLocalhostPackingBrowser() ? "local" : "remote");
+  }, []);
+  useEffect(() => {
+    if (!showQzControls) {
+      setPrintStationStatus(null);
+      return;
+    }
     let cancelled = false;
-    probePrintStationStatus()
+    // Inactive: probe without connect (no QZ Allow spam on page load).
+    probePrintStationStatus(undefined, { connect: false })
       .then((status) => {
         if (!cancelled) setPrintStationStatus(status);
       })
@@ -694,7 +773,53 @@ export default function ScanPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showQzControls]);
+
+  const finishQzActivateWithPrinter = async (printerName: string) => {
+    setQzBusy(true);
+    try {
+      const result = await activatePrintStation({ printerName });
+      setPrintStationStatus(result.status);
+      setQzPrinterPick(null);
+      if (!result.ok) {
+        window.alert(result.error || "QZ activate failed.");
+        return;
+      }
+      window.alert(`QZ Tray active → ${result.status.printerName || printerName}.`);
+    } finally {
+      setQzBusy(false);
+    }
+  };
+
+  const handleActivateQz = async () => {
+    setQzBusy(true);
+    try {
+      const result = await activatePrintStation();
+      setPrintStationStatus(result.status);
+      if (result.printers && result.printers.length > 1 && result.error === "Pick a printer") {
+        setQzPrinterPick({ printers: result.printers, filter: "" });
+        return;
+      }
+      if (!result.ok) {
+        window.alert(
+          result.error ||
+            "QZ activate failed. Install/start QZ Tray, Allow this site, then retry."
+        );
+        return;
+      }
+      window.alert(
+        `QZ Tray active → ${result.status.printerName || "printer"}. Labels print silently on scan.`
+      );
+    } finally {
+      setQzBusy(false);
+    }
+  };
+
+  const handleDeactivateQz = async () => {
+    deactivatePrintStation();
+    setQzPrinterPick(null);
+    await refreshPrintStation(false);
+  };
   const [finalizeBusy, setFinalizeBusy] = useState(false);
   const [finalizeStatus, setFinalizeStatus] = useState<
     { tone: "ok" | "error"; text: string } | null
@@ -777,7 +902,8 @@ export default function ScanPage() {
       return;
     }
     const cached = suggestCacheRef.current.get(q.toLowerCase());
-    if (cached) {
+    const cacheAt = suggestCacheAtRef.current.get(q.toLowerCase()) ?? 0;
+    if (cached && Date.now() - cacheAt < SUGGEST_CACHE_TTL_MS) {
       setSuggestions(cached);
       setSuggestOpen(cached.length > 0);
       setSuggestLoading(false);
@@ -797,6 +923,7 @@ export default function ScanPage() {
         if (data?.ok && Array.isArray(data.items)) {
           const items: SuggestItem[] = data.items;
           suggestCacheRef.current.set(q.toLowerCase(), items);
+          suggestCacheAtRef.current.set(q.toLowerCase(), Date.now());
           setSuggestions(items);
           setSuggestOpen(items.length > 0);
         } else {
@@ -936,8 +1063,8 @@ export default function ScanPage() {
     );
   };
 
-  const closeDirectQtyPrompt = (qty: number | null) => {
-    if (qty == null) {
+  const closeDirectShipPrompt = (selection: DirectShipSelection | null) => {
+    if (selection == null) {
       try {
         pendingDirectDeliveryNoteWinRef.current?.close();
       } catch {
@@ -945,39 +1072,81 @@ export default function ScanPage() {
       }
       pendingDirectDeliveryNoteWinRef.current = null;
     }
-    directQtyPromptResolver.current?.(qty);
-    directQtyPromptResolver.current = null;
-    setDirectQtyPrompt(null);
+    directShipPromptResolver.current?.(selection);
+    directShipPromptResolver.current = null;
+    setDirectShipPrompt(null);
   };
 
-  /** Always ask how many to ship for GTIN → Galaxus direct (every scan). */
-  const promptDirectShipQuantity = (params: {
+  /**
+   * Multi-line / multi-qty direct: pick which pairs go in THIS parcel
+   * (partial DELR), same idea as Direct Delivery / warehouse packing.
+   */
+  const promptDirectShipSelection = (params: {
     orderDbId: string;
-    lineId: string;
+    scannedLineId: string;
     orderLabel: string;
-    productName: string;
-    remaining: number;
     requiresDeliveryNote?: boolean;
-  }): Promise<number | null> =>
+    openUnits: DirectOpenUnit[];
+  }): Promise<DirectShipSelection | null> =>
     new Promise((resolve) => {
-      const remaining = Math.max(1, Math.floor(Number(params.remaining) || 1));
-      directQtyPromptResolver.current = resolve;
-      setDirectQtyPrompt({
-        ...params,
-        remaining,
-        qty: 1,
+      const units = params.openUnits.filter((u) => u.remainingQuantity > 0);
+      const selectedQtyByLineId: Record<string, number> = {};
+      const scanned =
+        units.find((u) => u.isScannedLine || u.lineId === params.scannedLineId) ??
+        null;
+      if (scanned) {
+        selectedQtyByLineId[scanned.lineId] = 1;
+      } else if (params.scannedLineId) {
+        selectedQtyByLineId[params.scannedLineId] = 1;
+      }
+      directShipPromptResolver.current = resolve;
+      setDirectShipPrompt({
+        orderDbId: params.orderDbId,
+        scannedLineId: params.scannedLineId,
+        orderLabel: params.orderLabel,
         requiresDeliveryNote: Boolean(params.requiresDeliveryNote),
+        openUnits: units,
+        selectedQtyByLineId,
       });
     });
 
-  const submitDirectQty = (qty: number) => {
-    if (!directQtyPrompt) return;
-    const clamped = Math.min(
-      directQtyPrompt.remaining,
-      Math.max(1, Math.floor(Number(qty) || 1))
-    );
+  const toggleDirectShipUnit = (lineId: string, checked: boolean, maxQty: number) => {
+    setDirectShipPrompt((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev.selectedQtyByLineId };
+      if (checked) next[lineId] = Math.max(1, Math.min(maxQty, next[lineId] || 1));
+      else delete next[lineId];
+      return { ...prev, selectedQtyByLineId: next };
+    });
+  };
+
+  const setDirectShipUnitQty = (lineId: string, qty: number, maxQty: number) => {
+    const clamped = Math.min(maxQty, Math.max(1, Math.floor(Number(qty) || 1)));
+    setDirectShipPrompt((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        selectedQtyByLineId: { ...prev.selectedQtyByLineId, [lineId]: clamped },
+      };
+    });
+  };
+
+  const submitDirectShipSelection = () => {
+    if (!directShipPrompt) return;
+    const selection: DirectShipSelection = Object.entries(
+      directShipPrompt.selectedQtyByLineId
+    )
+      .map(([lineId, quantity]) => ({
+        lineId,
+        quantity: Math.max(0, Math.floor(Number(quantity) || 0)),
+      }))
+      .filter((x) => x.lineId && x.quantity > 0);
+    if (selection.length === 0) {
+      window.alert("Coche au moins une paire à mettre dans ce colis.");
+      return;
+    }
     // Pre-open DN tab inside the click gesture (before async label fetch).
-    if (directQtyPrompt.requiresDeliveryNote && typeof window !== "undefined") {
+    if (directShipPrompt.requiresDeliveryNote && typeof window !== "undefined") {
       try {
         pendingDirectDeliveryNoteWinRef.current?.close();
       } catch {
@@ -989,14 +1158,8 @@ export default function ScanPage() {
         "noopener,noreferrer"
       );
     }
-    closeDirectQtyPrompt(clamped);
+    closeDirectShipPrompt(selection);
   };
-
-  const confirmDirectQtyPrompt = () => {
-    if (!directQtyPrompt) return;
-    submitDirectQty(directQtyPrompt.qty);
-  };
-
 
   // Auto-fire direct-delivery Swiss Post label for the oldest open direct
   // order matched by GTIN when nothing matched by AWB. Same print handling as
@@ -1005,11 +1168,26 @@ export default function ScanPage() {
   // still sees the GTIN fallback panel and can pick manually.
   const runDirectLabelForOrder = async (
     orderDbId: string,
-    selection?: { lineId: string; quantity: number },
+    selection?: DirectShipSelection | { lineId: string; quantity: number },
     options?: { requiresDeliveryNote?: boolean }
   ) => {
     if (!orderDbId) return;
-    const shippedQty = Math.max(1, Math.floor(Number(selection?.quantity) || 1));
+    const selectionList: DirectShipSelection = Array.isArray(selection)
+      ? selection
+          .map((s) => ({
+            lineId: String(s.lineId || "").trim(),
+            quantity: Math.max(0, Math.floor(Number(s.quantity) || 0)),
+          }))
+          .filter((s) => s.lineId && s.quantity > 0)
+      : selection?.lineId
+        ? [
+            {
+              lineId: String(selection.lineId).trim(),
+              quantity: Math.max(1, Math.floor(Number(selection.quantity) || 1)),
+            },
+          ]
+        : [];
+    const shippedQtyTotal = selectionList.reduce((n, s) => n + s.quantity, 0);
     setFulfillLoading(true);
     setFulfillResult(null);
     const requiresDeliveryNoteHint = Boolean(options?.requiresDeliveryNote);
@@ -1027,9 +1205,7 @@ export default function ScanPage() {
           orderDbId,
           includeLabelData: true,
           allowReprint: false,
-          ...(selection?.lineId
-            ? { selection: [{ lineId: selection.lineId, quantity: shippedQty }] }
-            : {}),
+          ...(selectionList.length > 0 ? { selection: selectionList } : {}),
         }),
       });
       const data: FulfillResponse & { error?: string; orderNumber?: string | null; galaxusOrderId?: string | null } =
@@ -1055,37 +1231,40 @@ export default function ScanPage() {
         return;
       }
       if (res.ok && data.ok && (data.status === "CREATED" || data.status === "REPRINT")) {
-        // Mark this order as done in the GTIN panel so it stops looking like both are still open.
+        // Drop stale typeahead so fulfilled lines vanish immediately.
+        suggestCacheRef.current.clear();
+        suggestCacheAtRef.current.clear();
+        // Mark selected lines done in the GTIN panel.
         let leftAfterShip = 0;
         let rescanMeta: DirectRescanHint | null = null;
+        const qtyByLine = new Map(selectionList.map((s) => [s.lineId, s.quantity]));
         setResult((prev) => {
           if (!prev?.gtin?.orders?.length) return prev;
-          const targetLineId = String(selection?.lineId ?? "").trim();
           const orders = prev.gtin.orders.map((c) => {
             const sameOrder =
               String(c.galaxusOrderDbId ?? "") === orderDbId ||
               (orderRef && String(c.galaxusOrderId ?? "") === orderRef) ||
               (data.orderNumber && String(c.orderNumber ?? "") === String(data.orderNumber));
             if (!sameOrder) return c;
-            if (targetLineId && String(c.lineId ?? "") !== targetLineId) return c;
+            const lineKey = String(c.lineId ?? "").trim();
+            const shippedThis = qtyByLine.get(lineKey);
+            if (shippedThis == null) return c;
             const prevRemaining = Math.max(0, Number(c.remaining ?? 0));
-            const nextRemaining = Math.max(0, prevRemaining - shippedQty);
-            if (targetLineId) {
-              leftAfterShip = nextRemaining;
-              if (nextRemaining > 0) {
-                rescanMeta = {
-                  gtin: String(prev.gtin?.gtin ?? "").trim(),
-                  productName: String(c.productName ?? prev.gtin?.productName ?? "").trim() || "Item",
-                  orderLabel: orderRef || orderDbId,
-                  shippedNow: shippedQty,
-                  remaining: nextRemaining,
-                };
-              }
+            const nextRemaining = Math.max(0, prevRemaining - shippedThis);
+            leftAfterShip += nextRemaining;
+            if (nextRemaining > 0 && !rescanMeta) {
+              rescanMeta = {
+                gtin: String(prev.gtin?.gtin ?? "").trim(),
+                productName: String(c.productName ?? prev.gtin?.productName ?? "").trim() || "Item",
+                orderLabel: orderRef || orderDbId,
+                shippedNow: shippedQtyTotal,
+                remaining: nextRemaining,
+              };
             }
             return {
               ...c,
               remaining: nextRemaining,
-              shipped: Number(c.shipped ?? 0) + shippedQty,
+              shipped: Number(c.shipped ?? 0) + shippedThis,
             };
           });
           const openDirect = orders.filter(
@@ -1128,7 +1307,7 @@ export default function ScanPage() {
         deliveryNoteNotice: dn.message,
       });
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -1171,7 +1350,7 @@ export default function ScanPage() {
       } = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -1429,10 +1608,6 @@ export default function ScanPage() {
       } else if (scan.galaxus.isDirectDelivery) {
         if (ENABLE_AUTO_GALAXUS_DIRECT_LABEL && shouldAutoGalaxusDirectLabel(scan)) {
           await runGalaxusDirectLabelFromScan(scan);
-        } else if (scan.galaxus.allLinked === false) {
-          window.alert(
-            `Galaxus direct delivery ${ref}\nAWB linked but order not fully linked yet — link all lines first.`
-          );
         } else if (!ENABLE_AUTO_GALAXUS_DIRECT_LABEL) {
           window.alert(`Galaxus direct delivery ${ref}\nAuto label disabled — use Direct Delivery page.`);
         }
@@ -1726,12 +1901,18 @@ export default function ScanPage() {
   const handleSuggestionSelect = (item: SuggestItem) => {
     const canonical =
       item.gtin || item.supplierPid || item.buyerPid || item.orderNumber || item.orderId || "";
+    setCode(canonical);
+    setFulfillResult(null);
+    closeSuggestions();
+
+    // Preview only — NEVER auto-submit / auto-print / auto-pack from typeahead.
     if (item.kind === "shopify") {
       const synthetic: ScanResult = {
         ok: true,
         status: "FOUND",
         awb: canonical || item.lineId || item.orderId,
         manualShopifySuggest: true,
+        manualSuggest: true,
         match: {
           shopifyOrderId: item.orderId,
           shopifyOrderName: item.orderNumber ?? null,
@@ -1750,29 +1931,85 @@ export default function ScanPage() {
         gtin: null,
         stxInboundBuy: null,
       };
-      setCode(canonical);
       setResult(synthetic);
-      setFulfillResult(null);
-      closeSuggestions();
       focusInput();
       return;
     }
-    setCode(canonical);
-    closeSuggestions();
-    // Run scan with the canonical code so we don't wait for React state.
-    void handleSubmit(canonical);
+
+    if (item.kind === "decathlon") {
+      setResult({
+        ok: true,
+        status: "FOUND",
+        awb: canonical || item.orderId,
+        manualSuggest: true,
+        match: null,
+        decathlon: {
+          orderId: item.orderId,
+          orderDbId: item.orderDbId,
+          orderNumber: item.orderNumber,
+          lineId: item.lineId,
+          quantity: 1,
+          source: "decathlon_stockx_match",
+        },
+        galaxus: null,
+        inboundHome: null,
+        gtin: null,
+        stxInboundBuy: null,
+      });
+      focusInput();
+      return;
+    }
+
+    // galaxus_direct | galaxus_warehouse
+    setResult({
+      ok: true,
+      status: "FOUND",
+      awb: canonical || item.orderId,
+      manualSuggest: true,
+      match: null,
+      decathlon: null,
+      galaxus: {
+        orderId: item.orderId,
+        orderDbId: item.orderDbId,
+        orderNumber: item.orderNumber,
+        lineId: item.lineId,
+        deliveryType: item.deliveryType ?? null,
+        isDirectDelivery: item.kind === "galaxus_direct",
+        allLinked: true,
+        source: "galaxus_stockx_match",
+      },
+      inboundHome: null,
+      gtin: null,
+      stxInboundBuy: null,
+    });
+    focusInput();
   };
 
-  const handleSubmit = async (overrideCode?: string) => {
+  const handleSubmit = async (
+    overrideCode?: string,
+    opts?: { fromScannerBurst?: boolean; fromSuggestion?: boolean }
+  ) => {
     const startedAt = Date.now();
     const rawCode = overrideCode !== undefined ? overrideCode : code;
     const scanCodeForPacking = String(rawCode ?? "").trim();
+    const allowAutoActions = shouldAllowScanAutoActions({
+      code: scanCodeForPacking,
+      fromScannerBurst: opts?.fromScannerBurst,
+      fromSuggestion: opts?.fromSuggestion,
+    });
     if (!scanCodeForPacking) {
       setResult({
         ok: false,
         status: "UNMATCHED",
         awb: "",
       } as ScanResult);
+      focusInput();
+      return;
+    }
+    // Typed junk ("allo") with no barcode shape: refuse to run scan pipeline.
+    if (!allowAutoActions && looksLikeManualQuery(scanCodeForPacking) && !opts?.fromSuggestion) {
+      // Keep suggestions open; do not fulfill anything.
+      if (suggestions.length > 0) setSuggestOpen(true);
       focusInput();
       return;
     }
@@ -1785,6 +2022,12 @@ export default function ScanPage() {
       isWarehouse: boolean;
       isDirectDelivery: boolean;
     } | null = null;
+    let gtinAutoChannelForPacking:
+      | "galaxus_direct"
+      | "shopify"
+      | "decathlon"
+      | null = null;
+    let gtinRequiresChannelChoice = false;
     try {
       const res = await fetch("/api/scan-awb", {
         method: "POST",
@@ -1792,8 +2035,10 @@ export default function ScanPage() {
         body: JSON.stringify({ code: rawCode, scanSessionKey }),
       });
       const data: ScanResult = await res.json();
-      setResult(data);
+      // Preserve manualSuggest if we ever route suggestion through submit.
+      if (opts?.fromSuggestion) data.manualSuggest = true;
       const finishedAt = Date.now();
+      setResult(data);
       setHistory((prev) => {
         const prevTs = prev[0]?.ts ? new Date(prev[0].ts).getTime() : null;
         const entry: HistoryItem = {
@@ -1828,20 +2073,30 @@ export default function ScanPage() {
           data.gtin
       );
 
-      await handleChannelActions(data);
+      // Autos only for real scanner / barcode input — never typed search / suggest.
+      if (allowAutoActions) {
+        await handleChannelActions(data);
+      }
 
       // GTIN fallback auto-fulfill: AWB miss + product barcode hit.
       // Oldest open across Galaxus direct / Shopify / Decathlon (server picks
       // via `gtin.autoChannel`). Skip when any other channel already claimed.
+      // Never auto when input came from typeahead / typed search.
       const gtinBlockedByOtherChannel =
         Boolean(data.galaxus) ||
         Boolean(data.inboundHome) ||
         Boolean(data.match) ||
         Boolean(data.stxInboundBuy) ||
         Boolean(data.decathlon);
-      const gtinAutoChannel = !gtinBlockedByOtherChannel
-        ? data.gtin?.autoChannel ?? null
-        : null;
+      gtinRequiresChannelChoice =
+        allowAutoActions &&
+        !gtinBlockedByOtherChannel &&
+        Boolean(data.gtin?.requiresChannelChoice);
+      const gtinAutoChannel =
+        allowAutoActions && !gtinBlockedByOtherChannel
+          ? data.gtin?.autoChannel ?? null
+          : null;
+      gtinAutoChannelForPacking = gtinAutoChannel;
 
       if (gtinAutoChannel === "galaxus_direct") {
         const gtinAutoDirectOrderDbId =
@@ -1870,20 +2125,59 @@ export default function ScanPage() {
               gtinAutoDirectOrderDbId;
             const productName =
               String(autoRow?.productName ?? data.gtin?.productName ?? "").trim() || "Item";
-            const qty = await promptDirectShipQuantity({
-              orderDbId: gtinAutoDirectOrderDbId,
-              lineId,
-              orderLabel,
-              productName,
-              remaining,
-              requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired),
-            });
-            if (qty && qty > 0) {
+            const requiresDeliveryNote = Boolean(autoRow?.physicalDeliveryNoteRequired);
+            const unitSelection = data.gtin?.autoDirectUnitSelection;
+            const openUnits = (data.gtin?.autoDirectOpenUnits ?? []).filter(
+              (u) => Math.max(0, Number(u.remainingQuantity)) > 0
+            );
+            // Order-scoped: popup only when multi_line or multi_qty. Single unit → auto ship.
+            const needsPopup =
+              unitSelection?.requiresPopup === true ||
+              (!unitSelection &&
+                (openUnits.length > 1 ||
+                  remaining > 1 ||
+                  (openUnits.length === 1 &&
+                    Math.max(0, Number(openUnits[0]?.remainingQuantity)) > 1)));
+
+            if (!needsPopup) {
               await runDirectLabelForOrder(
                 gtinAutoDirectOrderDbId,
-                { lineId, quantity: qty },
-                { requiresDeliveryNote: Boolean(autoRow?.physicalDeliveryNoteRequired) }
+                [{ lineId, quantity: 1 }],
+                { requiresDeliveryNote }
               );
+            } else {
+              const mappedUnits: DirectOpenUnit[] = openUnits.map((u) => ({
+                lineId: String(u.lineId || u.lineItemId || ""),
+                title: String(u.title || "Item").trim() || "Item",
+                remainingQuantity: Math.max(0, Number(u.remainingQuantity) || 0),
+                isScannedLine:
+                  Boolean(u.isScannedLine) ||
+                  String(u.lineId || u.lineItemId) === lineId,
+                size: u.size ?? null,
+              }));
+              // Fallback: if API didn't return openUnits, at least show scanned line.
+              if (mappedUnits.length === 0) {
+                mappedUnits.push({
+                  lineId,
+                  title: productName,
+                  remainingQuantity: remaining,
+                  isScannedLine: true,
+                });
+              }
+              const selection = await promptDirectShipSelection({
+                orderDbId: gtinAutoDirectOrderDbId,
+                scannedLineId: lineId,
+                orderLabel,
+                requiresDeliveryNote,
+                openUnits: mappedUnits,
+              });
+              if (selection && selection.length > 0) {
+                await runDirectLabelForOrder(
+                  gtinAutoDirectOrderDbId,
+                  selection,
+                  { requiresDeliveryNote }
+                );
+              }
             }
           }
         }
@@ -1924,6 +2218,7 @@ export default function ScanPage() {
           ""
         );
       } else if (
+        allowAutoActions &&
         !gtinBlockedByOtherChannel &&
         !gtinAutoChannel &&
         data.gtin?.autoDecathlonReprint?.orderId
@@ -1936,6 +2231,7 @@ export default function ScanPage() {
       }
 
       if (
+        allowAutoActions &&
         ENABLE_AUTO_FULFILLMENT &&
         data.ok &&
         data.match &&
@@ -1960,11 +2256,17 @@ export default function ScanPage() {
       setLoading(false);
       // Non-blocking: resolve packing-session assignment in the background so
       // scanner focus returns immediately. Warehouse inbound StockX buys MUST
-      // be added to the box. Direct-delivery inbounds are skipped.
+      // be added to the box. Direct-delivery inbounds / GTIN channel claims skip.
       const scanShapeForGuard = {
         stxInboundBuy: inboundBuyForPacking,
       };
-      if (shouldAutoAddToPackingSession(scanShapeForGuard)) {
+      if (
+        allowAutoActions &&
+        shouldAutoAddToPackingSession(scanShapeForGuard, {
+          gtinAutoChannel: gtinAutoChannelForPacking,
+          gtinRequiresChannelChoice,
+        })
+      ) {
         void tryAddScanToPackingSession(scanCodeForPacking, { mainScanHandled });
       }
       focusInput();
@@ -2006,7 +2308,7 @@ export default function ScanPage() {
       const data: FulfillResponse = await res.json();
       setFulfillResult(data);
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2058,12 +2360,21 @@ export default function ScanPage() {
         openUnits.find((u) => u.isScannedLine) ||
         openUnits.find((u) => u.lineItemId === scan.match?.shopifyLineItemId) ||
         openUnits[0];
+      const others = openUnits.filter((u) => u !== scanned);
       const summary = openUnits
-        .map((u) => `• ${u.title} ×${u.remainingQuantity}`)
+        .map((u) => {
+          const mark = u === scanned || u.isScannedLine ? " ← scanned now" : "";
+          return `• ${u.title} ×${u.remainingQuantity}${mark}`;
+        })
         .join("\n");
+      const otherNote =
+        others.length > 0
+          ? `\n\n⚠️ Other open pairs on this order (do NOT forget):\n` +
+            others.map((u) => `• ${u.title} ×${u.remainingQuantity}`).join("\n")
+          : "";
       const ok = window.confirm(
         `Multi-product / qty>1 order — select units for THIS parcel only.\n\n` +
-          `${summary || "(open units)"}\n\n` +
+          `${summary || "(open units)"}${otherNote}\n\n` +
           `OK = ship 1× scanned line only` +
           (scanned ? ` (${scanned.title})` : "") +
           `\nCancel = abort (no whole-order fulfill).`
@@ -2122,7 +2433,7 @@ export default function ScanPage() {
         return;
       }
       if (res.ok && data.ok && data.labelData?.base64) {
-        presentScanLabel({
+        await presentScanLabel({
           labelData: data.labelData,
           browserPrintConfig: data.browserPrintConfig,
           printJobResult: data.printJobResult,
@@ -2202,20 +2513,77 @@ export default function ScanPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center p-6">
       <div className="w-full max-w-3xl relative">
-        <div className="absolute right-0 top-0 flex items-center gap-2">
-          {printStationStatus ? (
+        <div className="absolute right-0 top-0 flex items-center gap-2 flex-wrap justify-end max-w-[75%]">
+          <a
+            href="/api/qz/override.crt"
+            download="override.crt"
+            className="px-3 py-1 text-sm rounded border border-amber-400 bg-amber-50 text-amber-950 hover:bg-amber-100 font-medium"
+            title="Fichier public pour QZ Tray — coller dans le dossier QZ de ce Mac/PC"
+          >
+            Télécharger override.crt
+          </a>
+          {showQzControls ? (
+          <div className="flex flex-col items-end gap-0.5">
+            <div className="flex items-center gap-1 flex-wrap justify-end">
+              <span
+                title={
+                  printStationStatus
+                    ? `QZ: ${printStationStatus.reason} · printer=${printStationStatus.printerName || "—"} · format=${printStationStatus.labelFormat} · sign=${printStationStatus.qzSigningConfigured ? "ok" : "off"} · validated=${printStationStatus.silentPrintValidated}`
+                    : "QZ Tray off"
+                }
+                className={
+                  "px-2 py-0.5 text-xs rounded border " +
+                  (printStationStatus?.readyForSilentPrint
+                    ? "bg-emerald-50 border-emerald-300 text-emerald-800"
+                    : "bg-gray-100 border-gray-300 text-gray-700")
+                }
+              >
+                QZ:{" "}
+                {printStationStatus?.readyForSilentPrint
+                  ? `on · ${printStationStatus.labelFormat}`
+                  : printStationStatus?.reason === "off" || !printStationStatus
+                    ? "off"
+                    : printStationStatus.reason}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPrintStationWizardOpen(true)}
+                className="px-2 py-0.5 text-xs rounded border border-violet-300 bg-violet-50 text-violet-900 hover:bg-violet-100"
+              >
+                Configurer ce poste
+              </button>
+              {printStationStatus?.readyForSilentPrint ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDeactivateQz()}
+                  disabled={qzBusy}
+                  className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Off
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void handleActivateQz()}
+                  disabled={qzBusy}
+                  className="px-2 py-0.5 text-xs rounded border border-indigo-300 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                >
+                  {qzBusy ? "…" : "Activate"}
+                </button>
+              )}
+            </div>
+            <p className="max-w-[18rem] text-right text-[10px] leading-snug text-gray-500">
+              Site VPS + QZ Tray sur cet ordi. Configurer = taille papier / test.
+              Activate = auto-print.
+            </p>
+          </div>
+          ) : null}
+          {showLocalCupsBadge ? (
             <span
-              title={`QZ Tray: ${printStationStatus.reason} · validated=${printStationStatus.silentPrintValidated} · autoPrint=${printStationStatus.autoPrintOn}`}
-              className={
-                "px-2 py-0.5 text-xs rounded border " +
-                (printStationStatus.readyForSilentPrint
-                  ? "bg-emerald-50 border-emerald-300 text-emerald-800"
-                  : "bg-amber-50 border-amber-300 text-amber-800")
-              }
+              title="Localhost: labels auto-print via CUPS (LOCAL_STATION) to Brother. No QZ, no browser dialog."
+              className="px-2 py-0.5 text-xs rounded border bg-emerald-50 border-emerald-300 text-emerald-900"
             >
-              QZ: {printStationStatus.readyForSilentPrint
-                ? "ready"
-                : printStationStatus.reason}
+              Print: CUPS
             </span>
           ) : null}
           <a
@@ -2308,11 +2676,12 @@ export default function ScanPage() {
                     suggestFocusIdx >= 0 &&
                     suggestions[suggestFocusIdx]
                   ) {
+                    // Preview only — never auto-fulfill from typeahead.
                     handleSuggestionSelect(suggestions[suggestFocusIdx]);
                     return;
                   }
                   closeSuggestions();
-                  void handleSubmit();
+                  void handleSubmit(undefined, { fromScannerBurst: isScannerBurst });
                 }
               }}
               onBlur={() => {
@@ -2859,6 +3228,12 @@ export default function ScanPage() {
                 <div className="font-semibold text-teal-900">
                   Galaxus {result.galaxus.isDirectDelivery ? "direct delivery" : "marketplace"}
                 </div>
+                {result.manualSuggest ? (
+                  <div className="mt-2 rounded border border-amber-400 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                    Recherche manuelle — <strong>aucune action auto</strong>. Clique le bouton
+                    ci-dessous pour ship / pack.
+                  </div>
+                ) : null}
                 <p className="text-sm mt-1">
                   Order ref: <span className="font-mono">{galaxusOrderRef(result.galaxus)}</span>
                   {result.galaxus.isDirectDelivery ? (
@@ -2866,7 +3241,7 @@ export default function ScanPage() {
                       {" "}
                       ·{" "}
                       {result.galaxus.allLinked === false
-                        ? "Not fully linked"
+                        ? "StockX not linked (print OK)"
                         : result.galaxus.alreadyFulfilled
                           ? "Fulfilled"
                           : "Linked"}
@@ -2892,7 +3267,7 @@ export default function ScanPage() {
                     <button
                       type="button"
                       onClick={() => void runGalaxusDirectLabelFromScan(result)}
-                      disabled={fulfillLoading || result.galaxus.allLinked === false}
+                      disabled={fulfillLoading}
                       className="px-3 py-1.5 rounded bg-teal-800 text-white text-sm disabled:opacity-50"
                     >
                       {fulfillLoading ? "Generating…" : "Generate Swiss Post label"}
@@ -2905,12 +3280,28 @@ export default function ScanPage() {
                     </a>
                   </div>
                 ) : (
-                  <a
-                    href="/galaxus/warehouse"
-                    className="mt-2 inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
-                  >
-                    Open Galaxus warehouse →
-                  </a>
+                  <div className="mt-2 flex flex-wrap gap-2 items-center">
+                    {result.manualSuggest ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void tryAddScanToPackingSession(
+                            String(result.awb || code || "").trim(),
+                            { mainScanHandled: true }
+                          )
+                        }
+                        className="px-3 py-1.5 rounded bg-indigo-700 text-white text-sm"
+                      >
+                        Add to packing box
+                      </button>
+                    ) : null}
+                    <a
+                      href="/galaxus/warehouse"
+                      className="inline-block text-sm font-medium text-teal-800 underline hover:text-teal-950"
+                    >
+                      Open Galaxus warehouse →
+                    </a>
+                  </div>
                 )}
               </div>
             )}
@@ -2926,9 +3317,66 @@ export default function ScanPage() {
                   Shopify · {result.gtin.openDecathlon ?? 0} Decathlon (of{" "}
                   {result.gtin.orders.length} recent lines).
                 </p>
+                {result.gtin.requiresChannelChoice ? (
+                  <div className="mt-3 rounded-md border border-amber-500 bg-amber-50 px-3 py-3 text-amber-950">
+                    <div className="font-semibold text-sm">
+                      Même GTIN ouvert en warehouse ET direct — une seule paire physique
+                    </div>
+                    <p className="mt-1 text-xs">
+                      Auto désactivé. Choisis où va <strong>cette</strong> unité (pas les deux).
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={fulfillLoading}
+                        onClick={() => {
+                          void tryAddScanToPackingSession(
+                            String(result.gtin?.gtin || code || "").trim(),
+                            { mainScanHandled: true }
+                          );
+                        }}
+                        className="rounded bg-indigo-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Pack warehouse box
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          fulfillLoading ||
+                          !result.gtin.autoDirectOrderDbId ||
+                          !result.gtin.autoDirectLineId
+                        }
+                        onClick={() => {
+                          const orderDbId = String(result.gtin?.autoDirectOrderDbId ?? "").trim();
+                          const lineId = String(result.gtin?.autoDirectLineId ?? "").trim();
+                          if (!orderDbId || !lineId) return;
+                          const autoRow =
+                            result.gtin?.orders?.find(
+                              (o) =>
+                                String(o.galaxusOrderDbId ?? "") === orderDbId &&
+                                o.isDirectDelivery
+                            ) ?? null;
+                          void runDirectLabelForOrder(
+                            orderDbId,
+                            { lineId, quantity: 1 },
+                            {
+                              requiresDeliveryNote: Boolean(
+                                autoRow?.physicalDeliveryNoteRequired
+                              ),
+                            }
+                          );
+                        }}
+                        className="rounded bg-teal-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        Ship Galaxus direct + label
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <p className="text-xs mt-1 text-fuchsia-800">
                   No shipping AWB matched this code; treating it as a product GTIN. Galaxus direct
-                  asks how many to ship (per order line) before printing a label. When Galaxus
+                  asks how many to ship only when the order has multiple open units;
+                  a single remaining unit ships and prints immediately. When Galaxus
                   requires a physical delivery note, that warning shows before ship and the note
                   opens with the Post label.
                 </p>
@@ -3327,27 +3775,178 @@ export default function ScanPage() {
           </div>
         )}
 
-        {directQtyPrompt ? (
+        {qzPrinterPick ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div
               className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl"
               role="dialog"
               aria-modal="true"
-              aria-labelledby="direct-qty-prompt-title"
+              aria-labelledby="qz-printer-pick-title"
             >
-              <h2 id="direct-qty-prompt-title" className="text-lg font-semibold text-gray-900">
-                Galaxus direct — how many to ship?
+              <h2 id="qz-printer-pick-title" className="text-lg font-semibold text-gray-900">
+                QZ Tray — pick printer
+              </h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Need QZ Tray app installed + running. Type to filter.
+              </p>
+              <input
+                type="search"
+                autoFocus
+                value={qzPrinterPick.filter}
+                onChange={(e) =>
+                  setQzPrinterPick((prev) =>
+                    prev ? { ...prev, filter: e.target.value } : prev
+                  )
+                }
+                placeholder="Brother, QL, Zebra…"
+                className="mt-3 w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              />
+              <ul className="mt-2 max-h-56 overflow-y-auto rounded border border-gray-200">
+                {qzPrinterPick.printers
+                  .filter((p) => {
+                    const f = qzPrinterPick.filter.trim().toLowerCase();
+                    if (!f) return true;
+                    return p.toLowerCase().includes(f);
+                  })
+                  .map((p) => (
+                    <li key={p}>
+                      <button
+                        type="button"
+                        disabled={qzBusy}
+                        onClick={() => void finishQzActivateWithPrinter(p)}
+                        className="w-full border-b border-gray-100 px-3 py-2 text-left text-sm hover:bg-indigo-50 disabled:opacity-50"
+                      >
+                        {p}
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setQzPrinterPick(null)}
+                  className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {directShipPrompt ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div
+              className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="direct-ship-prompt-title"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeDirectShipPrompt(null);
+                }
+                if (e.key === "Enter" && !(e.target instanceof HTMLInputElement)) {
+                  e.preventDefault();
+                  submitDirectShipSelection();
+                }
+              }}
+            >
+              <h2 id="direct-ship-prompt-title" className="text-lg font-semibold text-gray-900">
+                Galaxus direct — quelles paires dans ce colis ?
               </h2>
               <p className="mt-1 text-sm text-gray-600">
                 Order{" "}
-                <span className="font-mono font-medium">{directQtyPrompt.orderLabel}</span>
+                <span className="font-mono font-medium">{directShipPrompt.orderLabel}</span>
               </p>
-              <p className="text-sm text-gray-700">{directQtyPrompt.productName}</p>
-              <p className="mt-2 text-sm text-gray-600">
-                <span className="font-semibold text-emerald-800">{directQtyPrompt.remaining}</span>{" "}
-                left on this line.
+              <p className="mt-2 text-xs text-gray-500">
+                Comme un warehouse shipment : coche les paires que tu mets dans{" "}
+                <strong>cette</strong> boîte. Les autres restent ouvertes (partial DELR).
               </p>
-              {directQtyPrompt.requiresDeliveryNote ? (
+              {(() => {
+                const totalOpen = directShipPrompt.openUnits.reduce(
+                  (n, u) => n + Math.max(0, u.remainingQuantity),
+                  0
+                );
+                const selectedCount = Object.values(
+                  directShipPrompt.selectedQtyByLineId
+                ).reduce((n, q) => n + Math.max(0, Number(q) || 0), 0);
+                return (
+                  <p className="mt-1 text-sm text-gray-600">
+                    <span className="font-semibold text-emerald-800">{selectedCount}</span>{" "}
+                    sélectionnée(s) / {totalOpen} ouverte(s)
+                  </p>
+                );
+              })()}
+              <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+                {directShipPrompt.openUnits.map((u) => {
+                  const maxQty = Math.max(1, u.remainingQuantity);
+                  const selectedQty = directShipPrompt.selectedQtyByLineId[u.lineId];
+                  const isSelected = selectedQty != null && selectedQty > 0;
+                  const isScanned =
+                    Boolean(u.isScannedLine) ||
+                    u.lineId === directShipPrompt.scannedLineId;
+                  return (
+                    <li
+                      key={u.lineId}
+                      className={`rounded-md border px-3 py-2 text-sm ${
+                        isScanned
+                          ? "border-teal-400 bg-teal-50/60"
+                          : "border-gray-200 bg-white"
+                      }`}
+                    >
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={isSelected}
+                          disabled={fulfillLoading}
+                          onChange={(e) =>
+                            toggleDirectShipUnit(u.lineId, e.target.checked, maxQty)
+                          }
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium text-gray-900">
+                            {u.title}
+                            {u.size ? (
+                              <span className="text-gray-500"> · {u.size}</span>
+                            ) : null}
+                          </span>
+                          {isScanned ? (
+                            <span className="ml-1 text-[10px] font-semibold uppercase text-teal-800">
+                              scannée
+                            </span>
+                          ) : null}
+                          <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
+                            <span>×{u.remainingQuantity} restante(s)</span>
+                            {isSelected && maxQty > 1 ? (
+                              <>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={maxQty}
+                                  value={selectedQty}
+                                  disabled={fulfillLoading}
+                                  onChange={(e) =>
+                                    setDirectShipUnitQty(
+                                      u.lineId,
+                                      Number(e.target.value),
+                                      maxQty
+                                    )
+                                  }
+                                  className="w-14 rounded border border-gray-300 px-1 py-0.5 text-xs"
+                                />
+                                <span className="text-gray-400">/ {maxQty}</span>
+                              </>
+                            ) : null}
+                          </div>
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              {directShipPrompt.requiresDeliveryNote ? (
                 <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
                   <div className="font-semibold">Delivery note required</div>
                   <div className="mt-0.5 text-xs">
@@ -3356,74 +3955,33 @@ export default function ScanPage() {
                   </div>
                 </div>
               ) : null}
-              {directQtyPrompt.remaining > 1 ? (
-                <>
-                  <p className="mt-3 text-xs text-gray-500">
-                    One unit per scan: ship 1, pack the next item, rescan the same GTIN. Or enter a
-                    higher qty below if several are ready in one box.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => submitDirectQty(1)}
-                    disabled={fulfillLoading}
-                    className="mt-3 w-full rounded-lg bg-teal-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50"
-                  >
-                    Ship 1 — then rescan GTIN for next
-                  </button>
-                  <div className="my-3 text-center text-xs text-gray-400">— or ship several now —</div>
-                </>
-              ) : null}
-              <label className="block text-sm font-medium text-gray-800">
-                {directQtyPrompt.remaining > 1 ? "Quantity to ship in one go" : "Quantity to ship"}
-                <input
-                  type="number"
-                  min={1}
-                  max={directQtyPrompt.remaining}
-                  value={directQtyPrompt.qty}
-                  autoFocus={directQtyPrompt.remaining <= 1}
-                  onChange={(e) =>
-                    setDirectQtyPrompt((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            qty: Math.min(
-                              prev.remaining,
-                              Math.max(1, Math.floor(Number(e.target.value) || 1))
-                            ),
-                          }
-                        : prev
-                    )
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      confirmDirectQtyPrompt();
-                    }
-                    if (e.key === "Escape") {
-                      e.preventDefault();
-                      closeDirectQtyPrompt(null);
-                    }
-                  }}
-                  className="mt-1 w-full rounded border border-gray-300 px-3 py-2 text-lg font-semibold"
-                />
-              </label>
               <div className="mt-5 flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => closeDirectQtyPrompt(null)}
+                  onClick={() => closeDirectShipPrompt(null)}
                   className="rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={confirmDirectQtyPrompt}
-                  disabled={fulfillLoading}
-                  className="rounded bg-indigo-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  onClick={submitDirectShipSelection}
+                  disabled={
+                    fulfillLoading ||
+                    Object.values(directShipPrompt.selectedQtyByLineId).every(
+                      (q) => !(Number(q) > 0)
+                    )
+                  }
+                  className="rounded bg-emerald-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {directQtyPrompt.remaining > 1 && directQtyPrompt.qty > 1
-                    ? `Ship ${directQtyPrompt.qty} now`
-                    : "Ship & print label"}
+                  {(() => {
+                    const n = Object.values(
+                      directShipPrompt.selectedQtyByLineId
+                    ).reduce((sum, q) => sum + Math.max(0, Number(q) || 0), 0);
+                    return n > 1
+                      ? `Ship ${n} & print label`
+                      : "Ship & print label";
+                  })()}
                 </button>
               </div>
             </div>
@@ -3471,6 +4029,15 @@ export default function ScanPage() {
           </div>
         </div>
       </div>
+
+      <PrintStationWizard
+        open={printStationWizardOpen}
+        onClose={() => setPrintStationWizardOpen(false)}
+        onSaved={(_config: PrintStationConfig, status) => {
+          setPrintStationStatus(status);
+          setPrintStationWizardOpen(false);
+        }}
+      />
     </div>
   );
 }

@@ -84,6 +84,65 @@ export function shouldPreferStandardOverExpress(
   return expressBuy >= standardBuy * maxRatio;
 }
 
+/**
+ * Hard ceiling for a StockX ask, in CHF. Only used when no product median is
+ * available (single-size products). Env: STX_MAX_ASK_CHF.
+ */
+export function readStxMaxAskChf(): number {
+  const n = Number.parseFloat(String(process.env.STX_MAX_ASK_CHF ?? "20000"));
+  return Number.isFinite(n) && n > 0 ? n : 20000;
+}
+
+/**
+ * How far above the product median a thin lane may sit before we treat it as a
+ * typo/placeholder ask. Env: STX_OUTLIER_ASK_MULTIPLE.
+ */
+export function readStxOutlierAskMultiple(): number {
+  const n = Number.parseFloat(String(process.env.STX_OUTLIER_ASK_MULTIPLE ?? "5"));
+  return Number.isFinite(n) && n >= 2 ? n : 5;
+}
+
+/**
+ * Median ask across every size and lane of one product. Used as the reference a
+ * thin outlier ask is judged against: a single seller asking 542'799 CHF for a
+ * t-shirt must not become our buy price.
+ */
+export function stxProductAskMedian(variants: unknown): number | null {
+  const list = Array.isArray(variants) ? variants : [];
+  const prices: number[] = [];
+  for (const variant of list) {
+    const rows = (variant as { prices?: unknown })?.prices;
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const price = Number((row as { price?: unknown })?.price);
+      if (Number.isFinite(price) && price > 0) prices.push(price);
+    }
+  }
+  if (prices.length === 0) return null;
+  prices.sort((a, b) => a - b);
+  const mid = Math.floor(prices.length / 2);
+  return prices.length % 2 === 0 ? (prices[mid - 1]! + prices[mid]!) / 2 : prices[mid]!;
+}
+
+/**
+ * Reject an offer whose price cannot be a real market ask. Thin lanes (a single
+ * ask) are the ones sellers use to park an item, so they are the only ones
+ * judged against the product median; a deep lane is real demand even if pricey.
+ */
+export function isOutlierStxOffer(
+  offer: Pick<SelectedStxOffer, "price" | "asks"> | null | undefined,
+  productAskMedian: number | null | undefined,
+  options?: { maxAskChf?: number; outlierMultiple?: number }
+): boolean {
+  if (!offer || !(offer.price > 0)) return false;
+  const maxAsk = options?.maxAskChf ?? readStxMaxAskChf();
+  if (offer.price > maxAsk) return true;
+  if (offer.asks > 1) return false;
+  const median = Number(productAskMedian);
+  if (!Number.isFinite(median) || median <= 0) return false;
+  return offer.price > median * (options?.outlierMultiple ?? readStxOutlierAskMultiple());
+}
+
 export function allowsStxStandardImport(payload: unknown, slug?: string | null): boolean {
   const handle = slug ?? pickString(
     (payload as { slug?: unknown })?.slug,
@@ -132,10 +191,18 @@ export function buildStxDualPriceFields(
   variant: { prices?: unknown },
   payload: ShippingPayload,
   productName: string | null,
-  _options?: { forceImport?: boolean; slug?: string | null }
+  _options?: {
+    forceImport?: boolean;
+    slug?: string | null;
+    /** Median ask of the whole product; lets us drop placeholder asks. */
+    productAskMedian?: number | null;
+  }
 ): StxDualPriceFields | null {
-  const express = selectStxActiveOffer(variant?.prices);
-  const standard = selectStxStandardOffer(variant?.prices);
+  const median = _options?.productAskMedian ?? null;
+  const expressRaw = selectStxActiveOffer(variant?.prices);
+  const standardRaw = selectStxStandardOffer(variant?.prices);
+  const express = isOutlierStxOffer(expressRaw, median) ? null : expressRaw;
+  const standard = isOutlierStxOffer(standardRaw, median) ? null : standardRaw;
   if (!express && !standard) return null;
 
   const expressBuy = express ? buyFromOffer(express, payload) : null;

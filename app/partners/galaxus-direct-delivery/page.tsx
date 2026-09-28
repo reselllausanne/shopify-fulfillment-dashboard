@@ -67,15 +67,17 @@ export default function PartnerGalaxusDirectDeliveryPage() {
     })();
   }, [selectedOrderId]);
 
-  const directOrderFulfilled = useMemo(() => {
-    const shipments = Array.isArray(selectedOrder?.shipments) ? selectedOrder.shipments : [];
-    return shipments.some((shipment: any) => {
-      const delrStatus = String(shipment?.delrStatus ?? "").toUpperCase();
-      return Boolean(shipment?.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
-    });
-  }, [selectedOrder]);
+  const openDraftIds: string[] = useMemo(
+    () => (Array.isArray(selectedOrder?.openDraftShipmentIds) ? selectedOrder.openDraftShipmentIds : []),
+    [selectedOrder]
+  );
 
-  const runDirectShipment = async () => {
+  const directOrderFulfilled = useMemo(() => {
+    if (!selectedOrder) return false;
+    return Number(selectedOrder.partnerRemainingUnits ?? 0) <= 0 && openDraftIds.length === 0;
+  }, [selectedOrder, openDraftIds]);
+
+  const runDirectShipment = async (shipmentId?: string) => {
     if (!selectedOrderId) return;
     setLoading(true);
     setError(null);
@@ -84,7 +86,7 @@ export default function PartnerGalaxusDirectDeliveryPage() {
       const res = await fetch(`/api/partners/galaxus/orders/${selectedOrderId}/direct-swiss-post-label`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(shipmentId ? { shipmentId } : {}),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Direct shipment failed");
@@ -130,8 +132,8 @@ export default function PartnerGalaxusDirectDeliveryPage() {
           <div className="font-semibold">Order detail</div>
           <div className="flex justify-end">
             <button
-              onClick={runDirectShipment}
-              disabled={!selectedOrderId || directOrderFulfilled}
+              onClick={() => runDirectShipment()}
+              disabled={!selectedOrderId || !selectedOrder || directOrderFulfilled}
               className="rounded bg-slate-900 px-3 py-1.5 text-xs text-white disabled:opacity-50"
             >
               {directOrderFulfilled ? "Already fulfilled" : "Generate Swiss Post label + DELR"}
@@ -143,6 +145,42 @@ export default function PartnerGalaxusDirectDeliveryPage() {
               <div className="text-slate-600">
                 {selectedOrder.galaxusOrderId} · {selectedOrder.orderNumber ?? "—"}
               </div>
+              {selectedOrder.hasOtherSupplierLines ? (
+                <div className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                  Mixed order: other lines ship from another supplier. Your label covers only your lines below.
+                </div>
+              ) : null}
+              {(selectedOrder.shipments ?? []).length > 0 ? (
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold text-slate-700">Your shipments</div>
+                  {(selectedOrder.shipments ?? []).map((shipment: any) => {
+                    const isOpen = openDraftIds.includes(shipment.id);
+                    return (
+                      <div
+                        key={shipment.id}
+                        className="flex items-center justify-between gap-2 rounded border border-slate-200 p-2 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-medium text-slate-800">{shipment.shipmentId}</div>
+                          <div className="text-slate-500">
+                            {(shipment.items ?? []).map((item: any) => item.gtin14).join(", ") || "—"} · Tracking{" "}
+                            {shipment.trackingNumber ?? "—"} · DELR {shipment.delrStatus ?? "—"}
+                          </div>
+                        </div>
+                        {isOpen ? (
+                          <button
+                            onClick={() => runDirectShipment(shipment.id)}
+                            disabled={loading}
+                            className="shrink-0 rounded bg-slate-900 px-2 py-1 text-white disabled:opacity-50"
+                          >
+                            Label + DELR
+                          </button>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
               <div className="rounded border border-slate-200 p-2 text-xs text-slate-500">
                 {selectedOrder.recipientName ?? "—"} · {selectedOrder.recipientAddress1 ?? "—"} ·{" "}
                 {selectedOrder.recipientPostalCode ?? "—"} {selectedOrder.recipientCity ?? "—"}

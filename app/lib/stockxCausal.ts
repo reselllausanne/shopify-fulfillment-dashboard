@@ -3,6 +3,9 @@
  * order. No clock-skew allowance — buyMs >= customerMs is the only valid
  * predicate. A StockX purchase must never link to a customer order created
  * after that purchase.
+ *
+ * Callers that create NEW links must treat a missing purchase date as a hard
+ * reject (do not skip the gate when the date is null).
  */
 
 export const STOCKX_CAUSAL_SKEW_MINUTES = 0;

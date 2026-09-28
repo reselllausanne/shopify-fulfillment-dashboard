@@ -39,6 +39,23 @@ describe("isGalaxusCatalogReady", () => {
     ).toBe(true);
   });
 
+  it("accepts hasImageSignal without images JSONB", () => {
+    expect(
+      isGalaxusCatalogReady({
+        supplierProductName: "Nike Air Force 1",
+        supplierBrand: "Nike",
+        hasImageSignal: true,
+      })
+    ).toBe(true);
+    expect(
+      isGalaxusCatalogReady({
+        supplierProductName: "Nike Air Force 1",
+        supplierBrand: "Nike",
+        hasImageSignal: false,
+      })
+    ).toBe(false);
+  });
+
   // XNT block is enforced at the master + offer route level (not inside
   // isGalaxusCatalogReady) so the stock route can still push stock=0 rows to
   // delist. See isXntFeedBlockedBrand tests below.

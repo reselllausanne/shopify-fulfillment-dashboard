@@ -2,8 +2,8 @@ import { prisma } from "@/app/lib/prisma";
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import { deriveStockxRawAskFromStoredBuyPrice } from "@/galaxus/pricing/suggestedSellPrice";
 import {
-  applyStxExpressFloor,
   calcShopifySellPrice,
+  resolveStxWebsiteSellPrices,
 } from "@/shopify/pricing/calcShopifySellPrice";
 import { findShopifyVariantByGtin } from "@/shopify/restock/shopifyRestockInventory";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
@@ -102,6 +102,109 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/**
+ * Last Shopify price we recorded pushing for this providerKey, if any. Lets the
+ * sync skip a redundant Shopify write when the computed price has not moved.
+ * Best-effort: returns null if the delegate is absent (e.g. in unit tests).
+ */
+async function readLastPushedShopifyPrice(
+  providerKey: string | null | undefined
+): Promise<number | null> {
+  const key = String(providerKey ?? "").trim();
+  if (!key) return null;
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.findUnique) return null;
+  try {
+    const row = await cls.findUnique({
+      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
+      select: { lastPushedPrice: true },
+    });
+    const v = row?.lastPushedPrice == null ? null : Number(row.lastPushedPrice);
+    return Number.isFinite(v as number) ? (v as number) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Record a Shopify price push on ChannelListingState so the nightly worker can
+ * skip anything already fresh (see shopifyStxPriceSyncWorker MIN_AGE_HOURS) and
+ * so the next sync can diff against it. Only non-null ids are written, so a
+ * skip-path record never clobbers a known variant/product id. Never sets stock
+ * or status — inventory ownership stays with the sold-check flow.
+ */
+async function recordShopifyStxPush(input: {
+  providerKey: string | null | undefined;
+  supplierVariantId?: string | null;
+  gtin: string | null;
+  variantId?: string | null;
+  productId?: string | null;
+  price: number;
+}): Promise<void> {
+  const key = String(input.providerKey ?? "").trim();
+  if (!key) return;
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.upsert) return;
+  const now = new Date();
+  const common = {
+    supplierVariantId: input.supplierVariantId ?? undefined,
+    gtin: input.gtin ?? undefined,
+    externalVariantId: input.variantId ?? undefined,
+    externalProductId: input.productId ?? undefined,
+    lastPushedPrice: input.price,
+    lastSyncedAt: now,
+    lastError: null,
+  };
+  try {
+    await cls.upsert({
+      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
+      create: { channel: "SHOPIFY", providerKey: key, ...common },
+      update: common,
+    });
+  } catch {
+    /* best-effort — a failed bookkeeping write must not fail the price sync */
+  }
+}
+
+/**
+ * Stamp a freshness marker for a GTIN we could not price this cycle
+ * (no Shopify variant, ambiguous, locked, admin-only, no computed price).
+ *
+ * Without this, such GTINs keep a NULL lastSyncedAt forever. The worker orders
+ * `lastSyncedAt ASC NULLS FIRST`, so ~100k permanently-unmatchable GTINs would
+ * sit at the head of every cycle, re-attempted endlessly and starving the
+ * variants that actually need a price. Stamping lastSyncedAt (without touching
+ * lastPushedPrice) lets the 48h skip drop them out of the head, while still
+ * re-checking every 48h in case the Shopify variant appears later. This is what
+ * keeps the steady-state queue bounded.
+ */
+async function recordShopifyStxSkip(
+  providerKey: string | null | undefined,
+  gtin: string | null,
+  reason: string
+): Promise<void> {
+  const key = String(providerKey ?? "").trim();
+  if (!key) return;
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.upsert) return;
+  const now = new Date();
+  try {
+    await cls.upsert({
+      where: { channel_providerKey: { channel: "SHOPIFY", providerKey: key } },
+      create: {
+        channel: "SHOPIFY",
+        providerKey: key,
+        gtin: gtin ?? undefined,
+        lastSyncedAt: now,
+        lastError: reason,
+      },
+      update: { lastSyncedAt: now, lastError: reason },
+    });
+  } catch {
+    /* best-effort — bookkeeping must never fail the sync */
+  }
+}
+
 async function readShopifyPriceLocked(variantId: string): Promise<boolean> {
   const { data, errors } = await shopifyGraphQL<{
     productVariant: { metafield: { value: string | null } | null } | null;
@@ -137,10 +240,30 @@ function sizeTokens(raw: string | null | undefined): string[] {
   return Array.from(tokens);
 }
 
-function sharesSizeToken(a: string | null | undefined, b: string | null | undefined): boolean {
+/** Exported for fast reprice: barcodes are optional on Shopify, size EU is the fallback. */
+export function sharesSizeToken(a: string | null | undefined, b: string | null | undefined): boolean {
   const aSet = new Set(sizeTokens(a));
   if (aSet.size === 0) return false;
   return sizeTokens(b).some((t) => aSet.has(t));
+}
+
+/**
+ * Pick the single Shopify variant that matches size EU (title) or US (metafield).
+ * Returns null when 0 or >1 candidates — never guess under ambiguity.
+ */
+export function pickShopifyVariantBySize<
+  T extends { title?: string | null; usSize?: { value: string | null } | null },
+>(
+  variants: T[],
+  sizeEu?: string | null,
+  sizeUs?: string | null
+): T | null {
+  const byEu = variants.filter((v) => sharesSizeToken(v.title, sizeEu));
+  if (byEu.length === 1) return byEu[0]!;
+  if (byEu.length > 1) return null;
+  const byUs = variants.filter((v) => sharesSizeToken(v.usSize?.value, sizeUs));
+  if (byUs.length === 1) return byUs[0]!;
+  return null;
 }
 
 async function findShopifyVariantByHandleAndSize(input: {
@@ -178,11 +301,28 @@ async function findShopifyVariantByHandleAndSize(input: {
     (data?.products?.nodes ?? []).find((node) => String(node.handle ?? "").trim() === handle) ?? null;
   if (!product) return null;
   const variants = product.variants?.nodes ?? [];
-  const byEu = variants.find((v) => sharesSizeToken(v.title, input.sizeEu));
-  if (byEu?.id && byEu.product?.id) return { variantId: byEu.id, productId: byEu.product.id };
-  const byUs = variants.find((v) => sharesSizeToken(v.usSize?.value, input.sizeUs));
-  if (byUs?.id && byUs.product?.id) return { variantId: byUs.id, productId: byUs.product.id };
+  const hit = pickShopifyVariantBySize(variants, input.sizeEu, input.sizeUs);
+  if (hit?.id && hit.product?.id) return { variantId: hit.id, productId: hit.product.id };
   return null;
+}
+
+/**
+ * Normal + express Shopify sell prices for one STX row, using the locked
+ * formula. Exported so the batched one-shot reprice computes prices identically
+ * to SSE ingest and the nightly worker — a single source of pricing truth.
+ */
+export function computeStxSellPrices(input: {
+  stxRow: {
+    deliveryType: string | null;
+    price: unknown;
+    standardBuyPrice: unknown;
+    expressBuyPrice: unknown;
+    supplierProductName: string | null;
+    supplierBrand: string | null;
+  };
+  productHandle: string | null;
+}): { normalSell: number | null; expressSell: number | null } {
+  return computeSellPrices(input);
 }
 
 function computeSellPrices(input: {
@@ -196,50 +336,58 @@ function computeSellPrices(input: {
   };
   productHandle: string | null;
 }): { normalSell: number | null; expressSell: number | null } {
-  const standardBuy =
-    toNumber(input.stxRow.standardBuyPrice) ??
-    (String(input.stxRow.deliveryType ?? "") === "standard" ? toNumber(input.stxRow.price) : null);
-  const expressBuy =
-    toNumber(input.stxRow.expressBuyPrice) ??
-    (String(input.stxRow.deliveryType ?? "").startsWith("express_") ? toNumber(input.stxRow.price) : null);
+  const resolved = resolveStxWebsiteSellPrices({
+    standardBuyPrice: toNumber(input.stxRow.standardBuyPrice),
+    expressBuyPrice: toNumber(input.stxRow.expressBuyPrice),
+    fallbackBuyPrice: toNumber(input.stxRow.price),
+    deliveryType: input.stxRow.deliveryType,
+    calcFromBuy: (buyPrice, isExpress) =>
+      calcSellFromBuy(
+        buyPrice,
+        input.productHandle,
+        input.stxRow.supplierProductName,
+        input.stxRow.supplierBrand,
+        isExpress
+      ),
+  });
+  return { normalSell: resolved.normalSell, expressSell: resolved.expressSell };
+}
 
-  const normalSell =
-    (standardBuy != null
-      ? calcSellFromBuy(
-          standardBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          false
-        )
-      : null) ??
-    (expressBuy != null
-      ? calcSellFromBuy(
-          expressBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          false
-        )
-      : null);
-  const expressCalc =
-    expressBuy != null
-      ? calcSellFromBuy(
-          expressBuy,
-          input.productHandle,
-          input.stxRow.supplierProductName,
-          input.stxRow.supplierBrand,
-          true
-        )
-      : null;
-  // Express price comes from express ask calculation, with +20 floor only when
-  // it collides with/undercuts the standard sell.
-  const expressSell =
-    expressBuy != null && normalSell != null
-      ? applyStxExpressFloor(normalSell, expressCalc)
-      : null;
-
-  return { normalSell, expressSell };
+/** Write express money + flip express_available so theme never shows stale/inverted price. */
+async function writeShopifyExpressPrice(
+  variantId: string,
+  expressSell: number
+): Promise<string | null> {
+  const expressValue = JSON.stringify({
+    amount: expressSell.toFixed(2),
+    currency_code: "CHF",
+  });
+  const mf = await shopifyGraphQL<{
+    metafieldsSet: { userErrors: Array<{ message: string }> };
+  }>(EXPRESS_METAFIELD_MUTATION, {
+    metafields: [
+      {
+        ownerId: variantId,
+        namespace: "custom",
+        key: "express_price",
+        type: "money",
+        value: expressValue,
+      },
+      {
+        ownerId: variantId,
+        namespace: "custom",
+        key: "express_available",
+        type: "boolean",
+        value: "true",
+      },
+    ],
+  });
+  const mfErrors = mf.errors ?? [];
+  const mfUe = mf.data?.metafieldsSet?.userErrors ?? [];
+  if (mfErrors.length || mfUe.length) {
+    return [...mfErrors, ...mfUe].map((e) => e.message).join("; ");
+  }
+  return null;
 }
 
 function calcSellFromBuy(
@@ -275,34 +423,109 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
     },
     orderBy: { updatedAt: "desc" },
     select: {
+      supplierVariantId: true,
+      providerKey: true,
       supplierProductName: true,
       supplierBrand: true,
       deliveryType: true,
       price: true,
       standardBuyPrice: true,
       expressBuyPrice: true,
+      sizeRaw: true,
     },
   });
   if (!stxRow) return { gtin: cleanGtin, ok: false, reason: "no_stx_row" };
 
-  const { match: shopifyVariant, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
-  if (!shopifyVariant?.variantId || !shopifyVariant.productId) {
-    return { gtin: cleanGtin, ok: false, reason: "no_shopify_variant" };
+  // Diff-skip before any Shopify call: if the price has not moved since our last
+  // recorded push, refresh the freshness stamp and return. This is the common
+  // case on the nightly full sweep and saves 3–4 Shopify round-trips per GTIN.
+  const providerKey = stxRow.providerKey ?? null;
+  const handleForCalc =
+    (await resolveProductHandle(cleanGtin)) ?? null;
+  const preview = computeSellPrices({
+    stxRow: {
+      deliveryType: stxRow.deliveryType ?? null,
+      price: stxRow.price,
+      standardBuyPrice: stxRow.standardBuyPrice,
+      expressBuyPrice: stxRow.expressBuyPrice,
+      supplierProductName: stxRow.supplierProductName ?? null,
+      supplierBrand: stxRow.supplierBrand ?? null,
+    },
+    productHandle: handleForCalc,
+  });
+  if (preview.normalSell != null) {
+    const lastPushed = await readLastPushedShopifyPrice(providerKey);
+    if (lastPushed != null && Math.abs(lastPushed - preview.normalSell) < 0.005) {
+      await recordShopifyStxPush({
+        providerKey,
+        supplierVariantId: stxRow.supplierVariantId ?? null,
+        gtin: cleanGtin,
+        price: preview.normalSell,
+      });
+      return {
+        gtin: cleanGtin,
+        ok: true,
+        reason: "price_unchanged",
+        normalPrice: preview.normalSell,
+        expressPrice: preview.expressSell,
+      };
+    }
   }
+
+  const { match: barcodeMatch, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
   if (ambiguous) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "ambiguous_shopify_variant");
     return { gtin: cleanGtin, ok: false, reason: "ambiguous_shopify_variant" };
   }
 
-  if (await readShopifyPriceLocked(shopifyVariant.variantId)) {
+  // Barcodes are optional on Shopify (we create every size even without one).
+  // When barcode lookup misses, fall back to handle + EU/US size — same path
+  // the no-GTIN sync already uses — so empty barcodes don't strand in-stock sizes.
+  let variantId: string | null = barcodeMatch?.variantId ?? null;
+  let productId: string | null = barcodeMatch?.productId ?? null;
+  let productHandleHint: string | null = barcodeMatch?.productHandle ?? null;
+  let matchedBySize = false;
+  if (!variantId || !productId) {
+    const kv = await prisma.kickDBVariant.findFirst({
+      where: { OR: [{ gtin: cleanGtin }, { ean: cleanGtin }] },
+      select: {
+        sizeEu: true,
+        sizeUs: true,
+        product: { select: { urlKey: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    const handle = kv?.product?.urlKey ?? handleForCalc;
+    const sizeHit =
+      handle != null
+        ? await findShopifyVariantByHandleAndSize({
+            handle,
+            sizeEu: kv?.sizeEu ?? stxRow.sizeRaw ?? null,
+            sizeUs: kv?.sizeUs ?? null,
+          })
+        : null;
+    if (!sizeHit?.variantId || !sizeHit.productId) {
+      await recordShopifyStxSkip(providerKey, cleanGtin, "no_shopify_variant");
+      return { gtin: cleanGtin, ok: false, reason: "no_shopify_variant" };
+    }
+    variantId = sizeHit.variantId;
+    productId = sizeHit.productId;
+    productHandleHint = handle;
+    matchedBySize = true;
+  }
+
+  if (await readShopifyPriceLocked(variantId)) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "price_locked");
     return { gtin: cleanGtin, ok: false, reason: "price_locked" };
   }
 
-  if (isAdminOnlyShopifyVariant(shopifyVariant.variantId, shopifyVariant.productId)) {
+  if (isAdminOnlyShopifyVariant(variantId, productId)) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "admin_only_product");
     return { gtin: cleanGtin, ok: false, reason: "admin_only_product" };
   }
 
   const productHandle =
-    (await resolveProductHandle(cleanGtin)) ?? shopifyVariant.productHandle ?? null;
+    (await resolveProductHandle(cleanGtin)) ?? productHandleHint;
   const { normalSell, expressSell } = computeSellPrices({
     stxRow: {
       deliveryType: stxRow.deliveryType ?? null,
@@ -316,16 +539,17 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   });
 
   if (normalSell == null) {
+    await recordShopifyStxSkip(providerKey, cleanGtin, "no_computed_normal_price");
     return { gtin: cleanGtin, ok: false, reason: "no_computed_normal_price" };
   }
 
   const { errors, data } = await shopifyGraphQL<{
     productVariantsBulkUpdate: { userErrors: Array<{ message: string }> };
   }>(VARIANT_PRICE_MUTATION, {
-    productId: shopifyVariant.productId,
+    productId,
     variants: [
       {
-        id: shopifyVariant.variantId,
+        id: variantId,
         price: normalSell.toFixed(2),
       },
     ],
@@ -339,42 +563,33 @@ export async function syncShopifyStxPricesForGtin(gtin: string): Promise<SyncSho
   }
 
   if (expressSell != null) {
-    const expressValue = JSON.stringify({
-      amount: expressSell.toFixed(2),
-      currency_code: "CHF",
-    });
-    const mf = await shopifyGraphQL<{
-      metafieldsSet: { userErrors: Array<{ message: string }> };
-    }>(EXPRESS_METAFIELD_MUTATION, {
-      metafields: [
-        {
-          ownerId: shopifyVariant.variantId,
-          namespace: "custom",
-          key: "express_price",
-          type: "money",
-          value: expressValue,
-        },
-      ],
-    });
-    const mfErrors = mf.errors ?? [];
-    const mfUe = mf.data?.metafieldsSet?.userErrors ?? [];
-    if (mfErrors.length || mfUe.length) {
+    const err = await writeShopifyExpressPrice(variantId, expressSell);
+    if (err) {
       return {
         gtin: cleanGtin,
         ok: false,
-        reason: [...mfErrors, ...mfUe].map((e) => e.message).join("; "),
+        reason: err,
         normalPrice: normalSell,
       };
     }
   } else {
-    // No StockX express lane (or express buy missing) — clear stale metafield so
-    // checkout can never charge yesterday's express price on a hidden option.
-    await deleteShopifyExpressPriceMetafield(shopifyVariant.variantId);
+    // No sell price → clear stale express so checkout cannot charge inverted totals.
+    await deleteShopifyExpressPriceMetafield(variantId);
   }
+
+  await recordShopifyStxPush({
+    providerKey,
+    supplierVariantId: stxRow.supplierVariantId ?? null,
+    gtin: cleanGtin,
+    variantId,
+    productId,
+    price: normalSell,
+  });
 
   return {
     gtin: cleanGtin,
     ok: true,
+    reason: matchedBySize ? "matched_by_size" : undefined,
     normalPrice: normalSell,
     expressPrice: expressSell,
   };
@@ -406,6 +621,7 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
       where: { supplierVariantId },
       select: {
         supplierVariantId: true,
+        providerKey: true,
         gtin: true,
         sizeRaw: true,
         supplierProductName: true,
@@ -523,39 +739,29 @@ export async function syncShopifyStxPricesForSupplierVariantIds(
     }
 
     if (expressSell != null) {
-      const expressValue = JSON.stringify({
-        amount: expressSell.toFixed(2),
-        currency_code: "CHF",
-      });
-      const mf = await shopifyGraphQL<{
-        metafieldsSet: { userErrors: Array<{ message: string }> };
-      }>(EXPRESS_METAFIELD_MUTATION, {
-        metafields: [
-          {
-            ownerId: match.variantId,
-            namespace: "custom",
-            key: "express_price",
-            type: "money",
-            value: expressValue,
-          },
-        ],
-      });
-      const mfErrors = mf.errors ?? [];
-      const mfUe = mf.data?.metafieldsSet?.userErrors ?? [];
-      if (mfErrors.length || mfUe.length) {
+      const err = await writeShopifyExpressPrice(match.variantId, expressSell);
+      if (err) {
         results.push({
           supplierVariantId,
           ok: false,
-          reason: [...mfErrors, ...mfUe].map((e) => e.message).join("; "),
+          reason: err,
           matchedVariantId: match.variantId,
           normalPrice: normalSell,
         });
         continue;
       }
     } else {
-      // No StockX express lane — clear stale metafield.
       await deleteShopifyExpressPriceMetafield(match.variantId);
     }
+
+    await recordShopifyStxPush({
+      providerKey: row.providerKey ?? null,
+      supplierVariantId,
+      gtin: row.gtin ?? null,
+      variantId: match.variantId,
+      productId: match.productId,
+      price: normalSell,
+    });
 
     results.push({
       supplierVariantId,

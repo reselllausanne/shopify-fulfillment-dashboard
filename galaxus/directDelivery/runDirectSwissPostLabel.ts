@@ -208,7 +208,13 @@ export async function runDirectSwissPostLabelForOrder(
   options?: {
     includeLabelData?: boolean;
     allowReprint?: boolean;
-    requireLinked?: boolean;
+  /**
+   * When true, refuse Swiss Post if StockX units are not all linked.
+   * Default false: StockX link is procurement tracking — not a gate for
+   * printing/shipping (physical stock, external buys, manual ship).
+   * Callers that still want the guard pass requireLinked: true explicitly.
+   */
+  requireLinked?: boolean;
     /**
      * Partial shipment: ship only the selected order lines (single pair / subset).
      * Creates a dedicated Swiss Post parcel + DELR covering only these lines so the
@@ -219,7 +225,7 @@ export async function runDirectSwissPostLabelForOrder(
 ): Promise<RunDirectSwissPostLabelResult> {
   const includeLabelData = Boolean(options?.includeLabelData ?? true);
   const allowReprint = Boolean(options?.allowReprint ?? true);
-  const requireLinked = Boolean(options?.requireLinked ?? true);
+  const requireLinked = Boolean(options?.requireLinked ?? false);
   const selection = (options?.selection ?? [])
     .map((item) => ({
       lineId: String(item?.lineId ?? "").trim(),

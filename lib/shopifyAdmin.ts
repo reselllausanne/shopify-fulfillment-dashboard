@@ -104,6 +104,23 @@ export async function sleepForShopifyQueryCost(
   await sleepMs(waitMs);
 }
 
+/**
+ * Transient transport failures (DNS blips, connection resets, gateway/rate-limit
+ * HTTP statuses) throw out of `shopifyGraphQLOnce` before we ever see a GraphQL
+ * error body. Left unhandled they abort an entire price-sync batch. Retry them
+ * with backoff so the worker and the one-shot reprice survive a flaky network.
+ */
+function isTransientShopifyTransportError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toUpperCase();
+  return (
+    /FETCH FAILED|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|SOCKET HANG UP|NETWORK|UND_ERR|TIMEOUT/.test(
+      message
+    ) ||
+    /HTTP 429|HTTP 500|HTTP 502|HTTP 503|HTTP 504/.test(message) ||
+    /NOT JSON \(STATUS 5\d\d\)|NOT JSON \(STATUS 429\)/.test(message)
+  );
+}
+
 function isRetryableShopifyGraphQLError(errors: ShopifyGqlError[] | undefined): boolean {
   return (errors ?? []).some((error) => {
     const code = String(error?.extensions?.code ?? "").toUpperCase();
@@ -192,7 +209,21 @@ export async function shopifyGraphQL<T>(
         await waitForShopifyCapacity(requiredCost);
       }
 
-      const result = await shopifyGraphQLOnce<T>(query, normalizedVariables);
+      let result: ShopifyGraphQLResult<T>;
+      try {
+        result = await shopifyGraphQLOnce<T>(query, normalizedVariables);
+      } catch (error) {
+        if (isTransientShopifyTransportError(error) && attempt < 14) {
+          const delayMs = Math.min(20000, 1000 + attempt * 1200);
+          console.warn(
+            `[SHOPIFY] transport retry ${attempt + 1}/15 in ${delayMs}ms`,
+            error instanceof Error ? error.message : String(error)
+          );
+          await sleepMs(delayMs);
+          continue;
+        }
+        throw error;
+      }
       lastResult = result;
       applyThrottleExtensions(result.extensions);
 

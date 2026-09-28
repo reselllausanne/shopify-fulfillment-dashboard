@@ -196,7 +196,9 @@ export function attachProcurementToLines(
       return {
         ...line,
         procurement: {
-          ok: allLinked || Boolean(primary),
+          // qty>1: one external buy at unit 0 must not mark the whole line done
+          // unless lineLevelCover intentionally expanded it across units.
+          ok: allLinked,
           source: "external_buy" as const,
           supplierKey,
           stockxOrderNumber: primary?.supplierOrderNumber ?? null,
@@ -390,11 +392,12 @@ export function attachProcurementToLines(
       return { unitIndex: i, linked: false, source: null as string | null };
     });
     const allLinked = units.every((u) => u.linked);
-    const lineOk = allLinked || ok;
+    // Units are source of truth: one saved match on qty>1 must not mark the line fully linked.
+    const lineOk = allLinked;
 
     // When buckets missing but units already linked (list/count path), still surface cost/ETA.
     if (
-      lineOk &&
+      (lineOk || ok) &&
       (stockxEstimatedDelivery == null || stockxCostChf == null) &&
       relevantStxUnits.length > 0
     ) {
@@ -448,6 +451,8 @@ export function attachProcurementToLines(
         stockxEstimatedDelivery,
         stockxLatestEstimatedDelivery,
         units,
+        linkedUnitCount: units.filter((u) => u.linked).length,
+        neededUnitCount: qty,
       },
     };
   });

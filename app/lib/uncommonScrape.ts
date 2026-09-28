@@ -15,6 +15,12 @@ import {
 } from "@/app/lib/uncommonPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { decideTusPublishedQty } from "@/inventory/supplierStock/tusQty";
+import {
+  beginTusObservationRun,
+  recordTusObservation,
+} from "@/inventory/supplierStock/batch1Observations";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -155,8 +161,33 @@ export async function scrapeUncommonShop(
       product.sellable && !deferUncommonImageSync() && needsImageHosting(existing, product.imageUrl);
     const now = new Date();
     const manualNote = formatUncommonNote(product, cost);
-    const stock = product.sellable ? product.stock : 0;
+    const decision = decideTusPublishedQty({
+      verfuegbarQty: product.sellable ? product.stock : 0,
+      purchasable: product.sellable,
+      inStock: product.sellable,
+      isPreorder: product.sellReason === "preorder",
+      isGiftCard: product.sellReason === "gift_card",
+    });
+    const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
     const leadTimeDays = product.sellable ? cfg.leadTimeDays : null;
+    recordTusObservation(
+      {
+        productUrl: product.productUrl,
+        gtin: product.gtin,
+        wooId: product.wooId,
+        parentWooId: product.parentId,
+        sku: product.sku,
+        productName: product.name,
+        variationLabel: product.variationLabel,
+        priceChf: cost.sellPriceChf,
+        verfuegbarQty: product.sellable ? product.stock : 0,
+        purchasable: product.sellable,
+        inStock: product.sellable,
+        isPreorder: product.sellReason === "preorder",
+        isGiftCard: product.sellReason === "gift_card",
+      },
+      { scrapeRunId: runId, observedAt: now }
+    );
 
     await prismaAny.supplierVariant.upsert({
       where: { supplierVariantId },
@@ -166,7 +197,7 @@ export async function scrapeUncommonShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock,
+        stock: stockWrite ?? 0,
         leadTimeDays,
         sizeRaw: product.variationLabel,
         sizeNormalized: null,
@@ -184,7 +215,7 @@ export async function scrapeUncommonShop(
         providerKey,
         gtin: product.gtin,
         price: cost.sellPriceChf,
-        stock,
+        ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
         leadTimeDays,
         sizeRaw: product.variationLabel,
         supplierBrand: product.brand,
@@ -274,6 +305,7 @@ export async function scrapeUncommonShop(
   };
 
   try {
+    beginTusObservationRun(runId);
     const parents: UncommonWooProduct[] = [];
     for await (const { product, total } of client.iterProducts(maxProducts)) {
       if (!listed) {

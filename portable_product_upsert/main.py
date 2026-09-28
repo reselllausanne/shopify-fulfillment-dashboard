@@ -39,6 +39,7 @@ from shopifyAPI_GQL import (
     set_variant_express_price_metafields,
     delete_variant_express_price_metafields,
     apply_stx_express_floor,
+    read_stx_express_surcharge_chf,
     get_taxonomy_category_id,
     get_category_attributes,
     map_stockx_to_shopify_category,
@@ -2957,27 +2958,40 @@ def process_url(url, thread_id=0, prefetched=None):
                     f"COST={cost_value:.2f} CHF, SELL={sell_price} CHF"
                 )
 
-            # Express sell price for metafield (only when asks > 2 on express lanes).
-            # When no express lane is available we leave express_sell_price=None
-            # and the update path deletes the stale custom.express_price metafield
-            # so checkout can never charge yesterday's express price on a lane
-            # that is now hidden (express_available=false).
+            # Express sell:
+            # - Distinct STX express+standard asks → each locked calc (no +20)
+            # - Single offer only → standard=calc; express=standard+20
             express_sell_price = None
-            if express_prices:
+            if express_prices and standard_prices:
                 lowest_express_entry = min(express_prices, key=lambda x: x["price"])
+                lowest_standard_entry = min(standard_prices, key=lambda x: x["price"])
                 express_raw_price = lowest_express_entry["price"]
-                express_calc = calc_sell_price(
-                    express_raw_price,
-                    pc,
-                    is_express=True,
-                    product_handle=product_handle,
-                    brand=brand,
-                )
-                express_sell_price = apply_stx_express_floor(sell_price, express_calc)
+                standard_raw_price = lowest_standard_entry["price"]
+                if abs(float(express_raw_price) - float(standard_raw_price)) >= 0.5:
+                    express_sell_price = calc_sell_price(
+                        express_raw_price,
+                        pc,
+                        is_express=True,
+                        product_handle=product_handle,
+                        brand=brand,
+                    )
+                    print(
+                        f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
+                        f"type={lowest_express_entry['type']} asks={lowest_express_entry['asks']} "
+                        f"→ SELL={express_sell_price} CHF (dual-lane, standard={sell_price})"
+                    )
+                else:
+                    express_sell_price = apply_stx_express_floor(sell_price, None)
+                    print(
+                        f"[EXPRESS +{int(read_stx_express_surcharge_chf())}] {title} - Size {eu_size}: "
+                        f"identical STX lanes → express={express_sell_price} (normal={sell_price})"
+                    )
+            else:
+                # One StockX offer only (std-only OR express-only): standard=calc, express=+20
+                express_sell_price = apply_stx_express_floor(sell_price, None)
                 print(
-                    f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
-                    f"type={lowest_express_entry['type']} asks={lowest_express_entry['asks']} "
-                    f"→ SELL={express_sell_price} CHF (standard={sell_price} floor guarded)"
+                    f"[EXPRESS +{int(read_stx_express_surcharge_chf())}] {title} - Size {eu_size}: "
+                    f"single STX offer → express={express_sell_price} (normal={sell_price})"
                 )
         else:
             print(f"[Thread {thread_id}] [WARNING] Invalid price for {title} size {eu_size}, skipping variant.")

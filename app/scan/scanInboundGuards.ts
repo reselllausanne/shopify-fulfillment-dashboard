@@ -11,6 +11,8 @@
  * - Galaxus direct Swiss Post label: ALLOWED only for the scanned line (partial).
  *   Never auto-ship the whole multi-pair order from a single AWB scan.
  * - Packing session: ADD when warehouse inbound; skip for direct-delivery inbound.
+ *   Also skip when GTIN auto-claimed direct/Shopify/Decathlon, or when the same
+ *   GTIN is open on warehouse AND direct (operator must pick one channel).
  */
 
 export type StxInboundBuyLike = {
@@ -54,8 +56,26 @@ export function shouldAutoGalaxusDirectLabelFor(scan: ScanLike): boolean {
 /**
  * True when scan should auto-add the AWB to the warehouse packing session.
  * Warehouse inbound StockX buys MUST be added. Direct-delivery inbounds must not.
+ *
+ * Also false when a GTIN auto-channel already claimed this scan (Galaxus direct /
+ * Shopify / Decathlon) — one physical unit cannot also enter the warehouse box.
+ * False when GTIN is ambiguous across warehouse + direct (operator must pick).
  */
-export function shouldAutoAddToPackingSession(scan: ScanLike): boolean {
+export function shouldAutoAddToPackingSession(
+  scan: ScanLike,
+  opts?: {
+    gtinAutoChannel?: "galaxus_direct" | "shopify" | "decathlon" | null;
+    gtinRequiresChannelChoice?: boolean;
+  }
+): boolean {
+  if (opts?.gtinRequiresChannelChoice) return false;
+  if (
+    opts?.gtinAutoChannel === "galaxus_direct" ||
+    opts?.gtinAutoChannel === "shopify" ||
+    opts?.gtinAutoChannel === "decathlon"
+  ) {
+    return false;
+  }
   const inbound = scan?.stxInboundBuy;
   if (!inbound || inbound.orderCancelledAt) return true;
   // Active inbound buy for a warehouse Galaxus order → add to the box.

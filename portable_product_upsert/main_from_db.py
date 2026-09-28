@@ -9,15 +9,26 @@ push (POST /api/kickdb/mark-synced).
 Create quota: NEVER counted locally. Probe Shopify GraphQL cost bucket at run
 start; keep creating until Shopify returns "Daily variant creation limit
 reached" (RateLimitException). That API signal alone writes a cooldown marker
-so subsequent cron ticks no-op until the wait expires.
+so subsequent *create* cron ticks no-op until the wait expires.
+
+Price updates (status=pending) also add sizes that appeared on StockX after the
+product was created, while the create cooldown is inactive. Once Shopify returns
+the daily variant-create limit, the rest of the run (and later runs until the
+cooldown expires) only touch existing sizes — the create cap never aborts an
+update run.
+
+New-product creation (status=untracked/create_candidate) is paused while
+logs/create_products_paused exists or SSE_CREATE_PRODUCTS_PAUSED=1, so the daily
+variant quota goes to missing sizes on existing products first.
 
 Usage:
     python3 main_from_db.py --db-api http://127.0.0.1:3000 --test-mode
     python3 main_from_db.py --db-api http://127.0.0.1:3000 --limit 50
     python3 main_from_db.py --db-api http://127.0.0.1:3000 --status untracked
 
-Exit codes: 0 ok, 2 catalog fetch failed, 3 Shopify daily variant limit (retry later),
-            4 create cooldown active (Shopify previously said wait).
+Exit codes: 0 ok, 2 catalog fetch failed, 3 Shopify daily variant limit on create run,
+            4 create cooldown active (Shopify previously said wait),
+            5 new-product creation paused.
 """
 
 import argparse
@@ -35,11 +46,13 @@ from shopifyAPI_GQL import get_all_products, probe_shopify_capacity, RateLimitEx
 
 DB_API_DEFAULT = os.environ.get("KICKDB_BUFFER_BASE", os.environ.get("RESELL_API_BASE", "http://127.0.0.1:3002"))
 CATALOG_CACHE_FILE = Path(__file__).resolve().parent / ".shopify_catalog_cache.json"
-CATALOG_CACHE_TTL_SEC = 3600  # refetching 20k products every cron run is pointless
+# Full catalog is ~45k+ products / ~180MB — hourly refetch burns entire cron slots.
+CATALOG_CACHE_TTL_SEC = 12 * 3600
 # Written ONLY when Shopify returns daily variant-create limit — not a counter.
 CREATE_BLOCKED_UNTIL_FILE = Path(__file__).resolve().parent / "logs" / "variant_create_blocked_until"
 # Legacy local tally — deleted on startup so it can never poison creates again.
 LEGACY_BUDGET_FILE = Path(__file__).resolve().parent / "logs" / "variant_create_budget.json"
+CREATE_PRODUCTS_PAUSED_FILE = Path(__file__).resolve().parent / "logs" / "create_products_paused"
 MIN_THROTTLE_AVAILABLE = 50  # wait/restore if GraphQL bucket nearly empty
 
 
@@ -106,6 +119,12 @@ def save_create_blocked_until(until_ts, reason=""):
         f"[COOLDOWN] Shopify daily variant-create limit — blocked for ~{wait_h:.1f}h "
         f"(until={int(until_ts)}){(' reason=' + reason) if reason else ''}"
     )
+
+
+def create_products_paused():
+    if os.environ.get("SSE_CREATE_PRODUCTS_PAUSED", "").strip() == "1":
+        return True
+    return CREATE_PRODUCTS_PAUSED_FILE.exists()
 
 
 def clear_create_blocked_until():
@@ -302,6 +321,23 @@ def main():
 
     action = "create" if args.status in ("create_candidate", "untracked") else "update"
 
+    if action == "create" and create_products_paused():
+        print(
+            f"[SKIP] new-product creation paused ({CREATE_PRODUCTS_PAUSED_FILE.name} "
+            f"or SSE_CREATE_PRODUCTS_PAUSED=1) — quota reserved for missing sizes"
+        )
+        return 5
+
+    if action == "update":
+        if load_create_blocked_until() > time.time():
+            main_mod.NO_NEW_VARIANTS_MODE = True
+            print(
+                "[INFO] Update mode: create cooldown active — price/qty on existing sizes only"
+            )
+        else:
+            main_mod.NO_NEW_VARIANTS_MODE = False
+            print("[INFO] Update mode: adding missing in-stock sizes until Shopify daily cap")
+
     if action == "create" and not args.force:
         blocked_until = load_create_blocked_until()
         now = time.time()
@@ -332,14 +368,24 @@ def main():
     except Exception as e:
         print(f"[WARNING] capacity probe failed (continuing): {e}")
 
-    try:
-        shopify_products = load_shopify_catalog(force_refresh=args.fresh_catalog)
-    except RateLimitException as e:
-        print(f"[ERROR] Shopify rate limit on catalog fetch: {e}")
-        return 2
-    except Exception as e:
-        print(f"[ERROR] Shopify catalog fetch failed: {e}")
-        return 2
+    # Update path: skip full-catalog prefetch. Matching uses StockX slug / handle
+    # GraphQL lookups per product (find_existing_product). Prefetching 45k products
+    # was eating the whole 15-min cron window while storefront sold under cost.
+    if action == "update" and not args.fresh_catalog:
+        shopify_products = []
+        print(
+            "[INFO] Update mode: skipping Shopify catalog prefetch "
+            "(per-product handle/slug lookup)"
+        )
+    else:
+        try:
+            shopify_products = load_shopify_catalog(force_refresh=args.fresh_catalog)
+        except RateLimitException as e:
+            print(f"[ERROR] Shopify rate limit on catalog fetch: {e}")
+            return 2
+        except Exception as e:
+            print(f"[ERROR] Shopify catalog fetch failed: {e}")
+            return 2
 
     fresh = fetch_fresh_products(args.db_api, limit=args.limit, status=args.status)
     print(f"[INFO] {len(fresh)} fresh products (status={args.status}, limit={args.limit})")
@@ -356,6 +402,7 @@ def main():
 
     processed = success = 0
     variants_created = 0
+    create_limit_hits = 0
 
     for row in fresh:
         kickdb_product_id = row.get("kickdbProductId")
@@ -405,6 +452,13 @@ def main():
                 # mid-create daily limit — do NOT mark synced; retry next run after cooldown
                 print(f"[DEFER] variant limit hit mid-create: {slug}")
                 save_create_blocked_until(time.time() + 24 * 3600, reason="deferred_mid_create")
+                if action == "update":
+                    # Never abort price batch; row stays in /fresh and is retried
+                    # price-only next run while the cooldown is active.
+                    create_limit_hits += 1
+                    main_mod.NO_NEW_VARIANTS_MODE = True
+                    processed += 1
+                    continue
                 print(
                     f"\n[DONE] processed={processed} success={success} "
                     f"variants_created={variants_created} (stopped: Shopify daily limit)"
@@ -443,11 +497,35 @@ def main():
                 retry_s = float(retry) if retry is not None else 24 * 3600
             except (TypeError, ValueError):
                 retry_s = 24 * 3600
-            if is_daily_variant_limit(e) or action == "create":
+            if is_daily_variant_limit(e):
                 save_create_blocked_until(time.time() + retry_s, reason=str(e))
+                if action == "update":
+                    # Create cap must not kill price sync. Skip this row, keep going.
+                    create_limit_hits += 1
+                    main_mod.NO_NEW_VARIANTS_MODE = True
+                    print(
+                        f"[WARN] daily variant-create limit on update of {slug} — "
+                        f"skipping creates for rest of run, continuing price updates"
+                    )
+                    processed += 1
+                    continue
+                print(
+                    "[CRITICAL] Shopify daily variant-create limit — stopping CREATE run."
+                )
+                print(
+                    f"\n[DONE] processed={processed} success={success} "
+                    f"variants_created={variants_created} (stopped: rate limit)"
+                )
+                return 3
+            # Soft GraphQL throttle / other 429: brief pause, continue on updates.
+            if action == "update":
+                wait_s = min(30.0, max(2.0, retry_s if retry_s < 120 else 5.0))
+                print(f"[WARN] Shopify 429 on update {slug} — sleep {wait_s:.0f}s then continue")
+                time.sleep(wait_s)
+                processed += 1
+                continue
             print(
-                "[CRITICAL] Shopify 429 — stopping run; main.py saved partials. "
-                "Retry after cooldown."
+                "[CRITICAL] Shopify 429 — stopping create run; main.py saved partials."
             )
             print(
                 f"\n[DONE] processed={processed} success={success} "
@@ -462,7 +540,11 @@ def main():
         if args.test_mode and processed >= 10:
             break
 
-    print(f"\n[DONE] processed={processed} success={success} variants_created={variants_created}")
+    extra = f", create_limit_skips={create_limit_hits}" if create_limit_hits else ""
+    print(
+        f"\n[DONE] processed={processed} success={success} "
+        f"variants_created={variants_created}{extra}"
+    )
     return 0
 
 

@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { lookupGalaxusStockxBuyViaProxy } from "@/app/lib/galaxusStockxLookupClient";
+
+const STOCKX_TOKEN_STORAGE_KEY = "supplier_stockx_token";
 
 type ManualEntryModalProps = {
   isOpen: boolean;
@@ -9,6 +12,18 @@ type ManualEntryModalProps = {
   onClose: () => void;
 };
 
+function looksLikeStockxOrderNumberClient(input: string): boolean {
+  const value = String(input ?? "")
+    .trim()
+    .replace(/^#+/, "")
+    .trim();
+  if (!value) return false;
+  if (value.length < 6 || value.length > 60) return false;
+  if (/^https?:\/\//i.test(value)) return false;
+  if (/\s/.test(value)) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._:/#-]*$/.test(value);
+}
+
 export default function ManualEntryModal({
   isOpen,
   mode,
@@ -18,13 +33,122 @@ export default function ManualEntryModal({
   onClose,
 }: ManualEntryModalProps) {
   const [localData, setLocalData] = useState<any>(initialData);
+  const [lookupStatus, setLookupStatus] = useState<string | null>(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [getBuyOrderHash, setGetBuyOrderHash] = useState<string | null>(null);
+
+  const readSessionStockxToken = (): string | null => {
+    try {
+      const raw = localStorage.getItem(STOCKX_TOKEN_STORAGE_KEY);
+      const trimmed = String(raw ?? "").trim().replace(/^Bearer\s+/i, "");
+      return trimmed || null;
+    } catch {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/galaxus/stx/hash", { cache: "no-store" });
+        const json = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok && json?.ok && typeof json.hash === "string") {
+          setGetBuyOrderHash(json.hash.trim() || null);
+        }
+      } catch {
+        // optional hash
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   // Sync when opening
   useEffect(() => {
     if (isOpen) {
       setLocalData(initialData);
+      setLookupStatus(null);
+      setLookupBusy(false);
     }
   }, [isOpen, initialData]);
+
+  const applyLookupFields = (fields: Record<string, unknown>) => {
+    setLocalData((prev: any) => {
+      const revenue =
+        prev.shopifyTotalPrice != null && Number.isFinite(Number(prev.shopifyTotalPrice))
+          ? Number(prev.shopifyTotalPrice)
+          : null;
+      const costRaw = fields.stockxAmount ?? fields.supplierCost;
+      const cost =
+        costRaw != null && Number.isFinite(Number(costRaw)) ? Number(costRaw) : null;
+      const marginAmount =
+        revenue != null && cost != null ? Number((revenue - cost).toFixed(2)) : prev.marginAmount;
+      const marginPercent =
+        revenue != null && cost != null && revenue > 0
+          ? Number((((revenue - cost) / revenue) * 100).toFixed(2))
+          : prev.marginPercent;
+      const confidenceRaw = fields.matchConfidence;
+      const matchConfidence =
+        typeof confidenceRaw === "string" && confidenceRaw.trim()
+          ? confidenceRaw.trim().toUpperCase()
+          : prev.matchConfidence;
+      return {
+        ...prev,
+        ...fields,
+        stockxAmount: cost,
+        supplierCost: cost != null ? String(cost) : prev.supplierCost,
+        supplierSource: "STOCKX",
+        matchConfidence,
+        marginAmount: marginAmount != null ? String(marginAmount) : prev.marginAmount,
+        marginPercent: marginPercent != null ? String(marginPercent) : prev.marginPercent,
+      };
+    });
+  };
+
+  const lookupStockxOrder = async (orderNumber: string) => {
+    const trimmed = orderNumber.trim().replace(/^#+/, "").trim();
+    if (!trimmed || !looksLikeStockxOrderNumberClient(trimmed)) return;
+
+    const token = readSessionStockxToken();
+    setLookupBusy(true);
+    setLookupStatus(null);
+    try {
+      if (token) {
+        const viaProxy = await lookupGalaxusStockxBuyViaProxy(token, trimmed, {
+          getBuyOrderHash,
+        });
+        if (viaProxy.ok) {
+          applyLookupFields(viaProxy.fields);
+          setLookupStatus("Loaded from StockX");
+          return;
+        }
+      }
+
+      const headers: Record<string, string> = {};
+      if (token) headers["x-stockx-bearer"] = token;
+      const res = await fetch(
+        `/api/stockx/lookup-by-order-number?orderNumber=${encodeURIComponent(trimmed)}`,
+        { headers }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok || !json.fields) {
+        setLookupStatus(
+          String(json.error ?? "Order not found on StockX") +
+            " — or enter Supplier Cost and save anyway."
+        );
+        return;
+      }
+      applyLookupFields(json.fields);
+      setLookupStatus("Loaded from StockX (server accounts)");
+    } catch (error: any) {
+      setLookupStatus(String(error?.message ?? "Lookup failed"));
+    } finally {
+      setLookupBusy(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -36,6 +160,10 @@ export default function ManualEntryModal({
     type: "number",
     className: "w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500",
   });
+
+  const lookupOk =
+    lookupStatus === "Loaded from StockX" ||
+    lookupStatus === "Loaded from StockX (server accounts)";
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
@@ -99,13 +227,29 @@ export default function ManualEntryModal({
           <div className="space-y-3">
             <h3 className="font-semibold text-gray-900">🏪 Supplier</h3>
             <div className="grid grid-cols-2 gap-3">
-              <input
-                type="text"
-                value={localData.stockxOrderNumber || ""}
-                onChange={(e) => update({ stockxOrderNumber: e.target.value })}
-                placeholder="Supplier Order Number"
-                className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
-              />
+              <div>
+                <input
+                  type="text"
+                  value={localData.stockxOrderNumber || ""}
+                  onChange={(e) => {
+                    setLookupStatus(null);
+                    update({ stockxOrderNumber: e.target.value });
+                  }}
+                  onBlur={(e) => {
+                    void lookupStockxOrder(e.target.value);
+                  }}
+                  placeholder="StockX order # (e.g. 03-8UFE4CHPSZ)"
+                  className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
+                />
+                {lookupBusy ? (
+                  <p className="text-xs text-gray-500 mt-1">Looking up StockX…</p>
+                ) : null}
+                {lookupStatus ? (
+                  <p className={`text-xs mt-1 ${lookupOk ? "text-green-700" : "text-amber-700"}`}>
+                    {lookupStatus}
+                  </p>
+                ) : null}
+              </div>
               <input
                 type="text"
                 value={localData.stockxProductName || ""}
@@ -131,14 +275,14 @@ export default function ManualEntryModal({
                 type="text"
                 value={localData.stockxChainId || ""}
                 onChange={(e) => update({ stockxChainId: e.target.value })}
-                placeholder="Chain ID (optional)"
+                placeholder="Chain ID (optional, filled by lookup)"
                 className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
               />
               <input
                 type="text"
                 value={localData.stockxOrderId || ""}
                 onChange={(e) => update({ stockxOrderId: e.target.value })}
-                placeholder="Order ID (optional)"
+                placeholder="Order ID (optional, filled by lookup)"
                 className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -303,4 +447,3 @@ export default function ManualEntryModal({
     </div>
   );
 }
-

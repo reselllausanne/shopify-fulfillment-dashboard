@@ -10,44 +10,13 @@ import {
   catalogSkuHitIndexes,
   resolveCatalogSkuHits,
 } from "@/app/api/scan-awb/catalogSkuLookup";
-import { searchTokens, compactSearchKey } from "@/lib/searchNormalize";
+import {
+  buildOrderListSearchOrClauses,
+  shouldResolveCatalogSku,
+} from "@/galaxus/orders/orderListSearch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-function buildSearchOrClauses(q: string): Prisma.GalaxusOrderWhereInput[] {
-  const tokens = searchTokens(q);
-  const compact = compactSearchKey(q);
-  const variants = Array.from(
-    new Set([q, ...tokens, compact].map((v) => String(v ?? "").trim()).filter((v) => v.length >= 2))
-  );
-  const clauses: Prisma.GalaxusOrderWhereInput[] = [];
-  for (const variant of variants.slice(0, 8)) {
-    clauses.push(
-      { galaxusOrderId: { contains: variant, mode: "insensitive" } },
-      { orderNumber: { contains: variant, mode: "insensitive" } },
-      { recipientName: { contains: variant, mode: "insensitive" } },
-      { referencePerson: { contains: variant, mode: "insensitive" } },
-      {
-        lines: {
-          some: {
-            OR: [
-              { gtin: { contains: variant, mode: "insensitive" } },
-              { supplierSku: { contains: variant, mode: "insensitive" } },
-              { productName: { contains: variant, mode: "insensitive" } },
-              { description: { contains: variant, mode: "insensitive" } },
-              { supplierPid: { contains: variant, mode: "insensitive" } },
-              { providerKey: { contains: variant, mode: "insensitive" } },
-              { buyerPid: { contains: variant, mode: "insensitive" } },
-              { size: { contains: variant, mode: "insensitive" } },
-            ],
-          },
-        },
-      }
-    );
-  }
-  return clauses;
-}
 
 export async function GET(request: Request) {
   try {
@@ -103,40 +72,43 @@ export async function GET(request: Request) {
       };
     }
 
-    // Catalog style SKU (GOOBAY 23235, MW 3A03GS) lives on SupplierVariant, not
-    // GalaxusOrderLine.supplierSku (that stays REI_/STX_…). Resolve → GTIN/providerKey.
-    const catalog =
-      q.length >= 2 && /[a-z]/i.test(q)
-        ? catalogSkuHitIndexes(await resolveCatalogSkuHits(q, 40))
-        : { gtins: [] as string[], providerKeys: [] as string[], skuByGtin: new Map<string, string>() };
+    // Catalog style SKU (GOOBAY 23235, MW 3A03GS, Asics 1130) lives on
+    // SupplierVariant, not GalaxusOrderLine.supplierSku (REI_/STX_…).
+    // Resolve → GTIN/providerKey for name / model / full SKU queries.
+    const catalog = shouldResolveCatalogSku(q)
+      ? catalogSkuHitIndexes(await resolveCatalogSkuHits(q, 80))
+      : { gtins: [] as string[], providerKeys: [] as string[], skuByGtin: new Map<string, string>() };
+
+    const searchOr = buildOrderListSearchOrClauses(q);
+    const catalogOr: Prisma.GalaxusOrderWhereInput[] = [];
+    if (catalog.gtins.length) {
+      catalogOr.push({ lines: { some: { gtin: { in: catalog.gtins } } } });
+    }
+    if (catalog.providerKeys.length) {
+      catalogOr.push({
+        lines: {
+          some: {
+            OR: [
+              { providerKey: { in: catalog.providerKeys } },
+              { supplierPid: { in: catalog.providerKeys } },
+            ],
+          },
+        },
+      });
+    }
+    const searchUnion = [...searchOr, ...catalogOr];
+
+    // Empty OR is invalid Prisma — treat as no hits.
+    if (q.length > 0 && searchUnion.length === 0) {
+      return NextResponse.json({ ok: true, items: [], nextOffset: null });
+    }
 
     const where: Prisma.GalaxusOrderWhereInput =
       q.length > 0
         ? {
             AND: [
               baseWhere as Prisma.GalaxusOrderWhereInput,
-              {
-                OR: [
-                  ...buildSearchOrClauses(q),
-                  ...(catalog.gtins.length
-                    ? [{ lines: { some: { gtin: { in: catalog.gtins } } } }]
-                    : []),
-                  ...(catalog.providerKeys.length
-                    ? [
-                        {
-                          lines: {
-                            some: {
-                              OR: [
-                                { providerKey: { in: catalog.providerKeys } },
-                                { supplierPid: { in: catalog.providerKeys } },
-                              ],
-                            },
-                          },
-                        },
-                      ]
-                    : []),
-                ],
-              },
+              { OR: searchUnion },
             ],
           }
         : (baseWhere as Prisma.GalaxusOrderWhereInput);

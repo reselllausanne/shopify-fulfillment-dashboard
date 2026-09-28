@@ -13,6 +13,7 @@ import { createProductFullFlow } from "@/shopify/restock/createProductFullFlow";
 import { isEssentialsShopifyVariant } from "@/shopify/inventory/essentialsProduct";
 import { resolveInStockFixedPrice } from "@/shopify/inventory/inStockFixedPrice";
 import { syncPhysicalExpressAvailability } from "@/shopify/inventory/syncPhysicalExpressAvailability";
+import { syncProductSoldes48hMetafield } from "@/shopify/inventory/productSoldes48hMetafield";
 import { isAdminOnlyShopifyVariant } from "@/shopify/protection/adminOnlyProducts";
 
 /**
@@ -968,6 +969,12 @@ export async function convergeVariant(
     });
     changes.push(...expressSync.changes);
     warnings.push(...expressSync.warnings);
+  }
+
+  // Product-level SALES badge (custom.soldes_48h) follows variant delivery_48h.
+  // Cleared automatically when the last soldes unit sells (delivery_48h=false).
+  if (shopifyVariant?.productId) {
+    await syncProductSoldes48hMetafield(shopifyVariant.productId, changes, warnings);
   }
 
   return {

@@ -249,17 +249,11 @@ export function discoverCategoryPaths(html: string, catalogRoot: string): string
   return found;
 }
 
+import { decideExlPublishedQty } from "@/inventory/supplierStock/exlQty";
+
 export function exlibrisStockFromLabel(stockLabel: string, availabilityText: string): number {
-  const cfg = exlibrisConfig();
-  const low = availabilityText.toLowerCase();
-  if (
-    stockLabel === "out_of_stock" ||
-    /vergriffen|nicht\s+lieferbar|ausverkauft/.test(low)
-  ) {
-    return 0;
-  }
-  if (stockLabel === "preorder") return 0;
-  return cfg.defaultStock;
+  const d = decideExlPublishedQty({ stockLabel, availabilityText, scrapeValid: true });
+  return d.proposedQty;
 }
 
 const UA =

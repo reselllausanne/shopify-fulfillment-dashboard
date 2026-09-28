@@ -384,19 +384,27 @@ describe("enforce mode + contract registry", () => {
     expect(mayMutateMarketplaceStock({ SUPPLIER_STOCK_PUBLISH_ENFORCED: "1" })).toBe(true);
   });
 
-  it("all scrapers pending contract — not eligible for approval", () => {
+  it("batch1 suppliers have observation contract implemented", () => {
     const statuses = listSupplierContractStatuses();
     expect(statuses.length).toBeGreaterThanOrEqual(14);
-    expect(statuses.every((s) => s.observationContractImplemented === false)).toBe(true);
-    expect(isEligibleForApproval({ supplierKey: "haw" }).eligibleForApproval).toBe(false);
-    expect(isEligibleForApproval({ supplierKey: "haw" }).reason).toBe(
-      "observation_contract_not_implemented"
+    for (const key of ["fan", "haw", "bwz", "tus", "exl", "ven", "wrk"]) {
+      expect(statuses.find((s) => s.supplierKey === key)?.observationContractImplemented).toBe(true);
+    }
+    expect(statuses.filter((s) => s.supplierKey === "wel" || s.supplierKey === "rei").every((s) => !s.observationContractImplemented)).toBe(
+      true
+    );
+    expect(isEligibleForApproval({ supplierKey: "wel" }).eligibleForApproval).toBe(false);
+    expect(isEligibleForApproval({ supplierKey: "haw", observationsReceivedThisRun: 1 }).eligibleForApproval).toBe(
+      true
+    );
+    expect(isEligibleForApproval({ supplierKey: "fan", observationsReceivedThisRun: 1 }).eligibleForApproval).toBe(
+      true
     );
   });
 
   it("run contract report honest when 0 observations", () => {
     const report = buildRunContractReport({
-      supplierKey: "exl",
+      supplierKey: "alt",
       observationsReceivedThisRun: 0,
       variantsProcessed: 0,
     });

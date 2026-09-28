@@ -15,15 +15,27 @@ vi.mock("@/lib/shopifyAdmin", () => ({
   shopifyGraphQL: vi.fn(),
 }));
 
-vi.mock("@/galaxus/pricing/suggestedSellPrice", () => ({
-  deriveStockxRawAskFromStoredBuyPrice: vi.fn().mockReturnValue(120),
-}));
+vi.mock("@/galaxus/pricing/suggestedSellPrice", async () => {
+  const actual = await vi.importActual<typeof import("@/galaxus/pricing/suggestedSellPrice")>(
+    "@/galaxus/pricing/suggestedSellPrice"
+  );
+  return {
+    ...actual,
+    deriveStockxRawAskFromStoredBuyPrice: vi.fn().mockReturnValue(120),
+  };
+});
 
-vi.mock("@/shopify/pricing/calcShopifySellPrice", () => ({
-  calcShopifySellPrice: vi.fn().mockImplementation(({ isExpress }: { isExpress?: boolean }) =>
-    isExpress ? 229 : 199
-  ),
-}));
+vi.mock("@/shopify/pricing/calcShopifySellPrice", async () => {
+  const actual = await vi.importActual<typeof import("@/shopify/pricing/calcShopifySellPrice")>(
+    "@/shopify/pricing/calcShopifySellPrice"
+  );
+  return {
+    ...actual,
+    calcShopifySellPrice: vi.fn().mockImplementation(({ isExpress }: { isExpress?: boolean }) =>
+      isExpress ? 229 : 199
+    ),
+  };
+});
 
 vi.mock("@/shopify/restock/shopifyRestockInventory", () => ({
   findShopifyVariantByGtin: vi.fn(),
@@ -98,6 +110,11 @@ describe("syncShopifyStxPricesForSupplierVariantIds", () => {
       .mockResolvedValueOnce({
         data: { productVariantsBulkUpdate: { userErrors: [] } },
         errors: undefined,
+      })
+      // EXPRESS_METAFIELD_MUTATION (express_price + express_available)
+      .mockResolvedValueOnce({
+        data: { metafieldsSet: { userErrors: [] } },
+        errors: undefined,
       });
 
     const res = await syncShopifyStxPricesForSupplierVariantIds(["stx_test_1"]);
@@ -108,6 +125,7 @@ describe("syncShopifyStxPricesForSupplierVariantIds", () => {
         ok: true,
         matchedVariantId: "gid://shopify/ProductVariant/1",
         normalPrice: 199,
+        expressPrice: 219,
       })
     );
   });

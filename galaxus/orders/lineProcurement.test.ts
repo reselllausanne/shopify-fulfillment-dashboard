@@ -120,4 +120,76 @@ describe("attachProcurementToLines", () => {
     expect(row.procurement.stockxCostChf).toBe(131.79);
     expect(row.procurement.stockxEstimatedDelivery).toEqual(eta);
   });
+
+  it("does not mark qty 2 fully linked when only unit 0 has a saved match", () => {
+    const lines = [
+      {
+        id: "line-qty2",
+        gtin: "9788325340889",
+        quantity: 2,
+        supplierPid: "STX_9788325340889",
+        supplierVariantId: "stx_book",
+        providerKey: "STX",
+        unitNetPrice: 140,
+        lineNetAmount: 280,
+      },
+    ];
+    const matches = [
+      {
+        galaxusOrderLineId: "line-qty2",
+        unitIndex: 0,
+        stockxOrderNumber: "03-B6VE6MD0Q1",
+        stockxOrderId: "oid-1",
+        stockxAmount: 112.61,
+        stockxCurrencyCode: "CHF",
+        matchType: "MANUAL",
+      },
+    ];
+
+    const [row] = attachProcurementToLines(lines, null, matches, []);
+    expect(row.procurement.ok).toBe(false);
+    expect(row.procurement.units).toHaveLength(2);
+    expect(row.procurement.units[0].linked).toBe(true);
+    expect(row.procurement.units[0].stockxOrderNumber).toBe("03-B6VE6MD0Q1");
+    expect(row.procurement.units[1].linked).toBe(false);
+    expect(row.procurement.linkedUnitCount).toBe(1);
+    expect(row.procurement.neededUnitCount).toBe(2);
+    expect(row.procurement.stockxCostChf).toBe(112.61);
+  });
+
+  it("marks qty 2 fully linked only when both unit indexes have matches", () => {
+    const lines = [
+      {
+        id: "line-qty2",
+        gtin: "9788325340889",
+        quantity: 2,
+        supplierPid: "STX_9788325340889",
+        supplierVariantId: "stx_book",
+        providerKey: "STX",
+      },
+    ];
+    const matches = [
+      {
+        galaxusOrderLineId: "line-qty2",
+        unitIndex: 0,
+        stockxOrderNumber: "03-AAAA",
+        stockxOrderId: "oid-1",
+        stockxAmount: 100,
+        stockxCurrencyCode: "CHF",
+      },
+      {
+        galaxusOrderLineId: "line-qty2",
+        unitIndex: 1,
+        stockxOrderNumber: "03-BBBB",
+        stockxOrderId: "oid-2",
+        stockxAmount: 110,
+        stockxCurrencyCode: "CHF",
+      },
+    ];
+
+    const [row] = attachProcurementToLines(lines, null, matches, []);
+    expect(row.procurement.ok).toBe(true);
+    expect(row.procurement.units.every((u: any) => u.linked)).toBe(true);
+    expect(row.procurement.stockxCostChf).toBe(210);
+  });
 });

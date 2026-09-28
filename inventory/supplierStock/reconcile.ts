@@ -96,6 +96,27 @@ export function reconcileObservation(obs: VariantObservation): ReconcileResult {
   let needsReview = qtyDecision.needsReview;
   let zeroReason = qtyDecision.zeroReason ?? null;
 
+  // FAN: page formula already computed (incl. SALE max(0, ceil((N-2)/2))).
+  const fanProposed = (obs.rawParseJson as { proposedPublishQty?: unknown } | null | undefined)
+    ?.proposedPublishQty;
+  if (
+    String(obs.supplierKey ?? "").toLowerCase() === "fan" &&
+    typeof fanProposed === "number" &&
+    Number.isFinite(fanProposed) &&
+    fanProposed >= 0
+  ) {
+    publishedQty = Math.floor(fanProposed);
+    if (publishedQty <= 0) {
+      zeroReason =
+        typeof (obs.rawParseJson as { qtyReason?: unknown })?.qtyReason === "string"
+          ? String((obs.rawParseJson as { qtyReason: string }).qtyReason)
+          : zeroReason ?? "fan_no_positive_proof";
+      needsReview = needsReview || publishedQty === 0;
+    } else {
+      zeroReason = null;
+    }
+  }
+
   const inflation = detectPackSizeInflation({
     internalQty: obs.supplierStockQty ?? 0,
     publishedQty,

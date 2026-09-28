@@ -3,7 +3,8 @@
 ## GitHub source of truth (mandatory)
 
 - **GitHub `main`** is the only shared source of truth for both Macs and the VPS.
-- Every change: feature branch → commit → push → PR/merge to `main` → deploy.
+- Every change: feature branch → commit → push → PR/merge to `main` → **auto deploy** (Actions).
+- When the user asks to **change and merge** (or ship / put on prod): merge to `main`, then **verify Deploy VPS succeeded** and report VPS SHA. Do not wait for a separate “deploy VPS” ask.
 - **Never** hotfix on the VPS (`/opt/resell` is deploy-only).
 - **Never** `git pull` over tracked dirty files; use `scripts/safe-sync.sh` / `scripts/safe-push.sh`.
 - **Never** force-push, `reset --hard`, or `clean` unless the user explicitly orders it.

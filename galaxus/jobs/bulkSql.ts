@@ -405,6 +405,13 @@ export async function bulkUpdateSupplierVariants(
     standardBuyPrice?: number | null;
     expressBuyPrice?: number | null;
     standardSuggestedRetailPriceInclVat?: number | null;
+    /**
+     * True when the caller actually evaluated both StockX lanes for this variant.
+     * Then a null lane means "the lane disappeared" and must overwrite the stored
+     * value; without this flag a COALESCE would freeze a vanished express price
+     * forever and we would keep selling a lane StockX no longer offers.
+     */
+    lanesEvaluated?: boolean;
   }>,
   now: Date,
   options?: { updateGtinWhenProvided?: boolean }
@@ -432,9 +439,26 @@ export async function bulkUpdateSupplierVariants(
       ${numericOrNull(r.suggestedRetailPriceInclVat, "numeric")},
       ${numericOrNull(r.standardBuyPrice, "numeric")},
       ${numericOrNull(r.expressBuyPrice, "numeric")},
-      ${numericOrNull(r.standardSuggestedRetailPriceInclVat, "numeric")}
+      ${numericOrNull(r.standardSuggestedRetailPriceInclVat, "numeric")},
+      ${Boolean(r.lanesEvaluated)}::boolean
     )`;
   });
+
+  /**
+   * Effective value a lane column will take. Mirrors the SET clauses so that change
+   * detection also fires when an evaluated lane goes from a price to NULL.
+   */
+  const laneTarget = (column: string) => Prisma.sql`
+    CASE
+      WHEN vals."lanesEvaluated" THEN vals.${Prisma.raw(`"${column}"`)}
+      ELSE COALESCE(vals.${Prisma.raw(`"${column}"`)}, t.${Prisma.raw(`"${column}"`)})
+    END`;
+  const laneChanged = Prisma.sql`
+    t."standardBuyPrice" IS DISTINCT FROM (${laneTarget("standardBuyPrice")}) OR
+    t."expressBuyPrice" IS DISTINCT FROM (${laneTarget("expressBuyPrice")}) OR
+    t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM (${laneTarget(
+      "standardSuggestedRetailPriceInclVat"
+    )})`;
 
   const query = Prisma.sql`
     WITH vals (
@@ -456,7 +480,8 @@ export async function bulkUpdateSupplierVariants(
       "suggestedRetailPriceInclVat",
       "standardBuyPrice",
       "expressBuyPrice",
-      "standardSuggestedRetailPriceInclVat"
+      "standardSuggestedRetailPriceInclVat",
+      "lanesEvaluated"
     ) AS (
       VALUES ${Prisma.join(values)}
     ),
@@ -480,12 +505,23 @@ export async function bulkUpdateSupplierVariants(
         "supplierGender" = COALESCE(vals."supplierGender", t."supplierGender"),
         "supplierColorway" = COALESCE(vals."supplierColorway", t."supplierColorway"),
         "suggestedRetailPriceInclVat" = COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat"),
-        "standardBuyPrice" = COALESCE(vals."standardBuyPrice", t."standardBuyPrice"),
-        "expressBuyPrice" = COALESCE(vals."expressBuyPrice", t."expressBuyPrice"),
-        "standardSuggestedRetailPriceInclVat" = COALESCE(
-          vals."standardSuggestedRetailPriceInclVat",
-          t."standardSuggestedRetailPriceInclVat"
-        ),
+        -- Lane fields are authoritative when the caller evaluated them: a NULL then means
+        -- "StockX dropped this lane" and must clear the stored price.
+        "standardBuyPrice" = CASE
+          WHEN vals."lanesEvaluated" THEN vals."standardBuyPrice"
+          ELSE COALESCE(vals."standardBuyPrice", t."standardBuyPrice")
+        END,
+        "expressBuyPrice" = CASE
+          WHEN vals."lanesEvaluated" THEN vals."expressBuyPrice"
+          ELSE COALESCE(vals."expressBuyPrice", t."expressBuyPrice")
+        END,
+        "standardSuggestedRetailPriceInclVat" = CASE
+          WHEN vals."lanesEvaluated" THEN vals."standardSuggestedRetailPriceInclVat"
+          ELSE COALESCE(
+            vals."standardSuggestedRetailPriceInclVat",
+            t."standardSuggestedRetailPriceInclVat"
+          )
+        END,
         "gtin" = COALESCE(t."gtin", vals."gtin"),
         "lastSyncAt" = CASE
           WHEN (
@@ -501,12 +537,7 @@ export async function bulkUpdateSupplierVariants(
             t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
             t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
             t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
-            t."standardBuyPrice" IS DISTINCT FROM COALESCE(vals."standardBuyPrice", t."standardBuyPrice") OR
-            t."expressBuyPrice" IS DISTINCT FROM COALESCE(vals."expressBuyPrice", t."expressBuyPrice") OR
-            t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(
-              vals."standardSuggestedRetailPriceInclVat",
-              t."standardSuggestedRetailPriceInclVat"
-            ) OR
+            ${laneChanged} OR
             (t."gtin" IS NULL AND vals."gtin" IS NOT NULL) OR
             (t."providerKey" IS NULL AND vals."providerKey" IS NOT NULL) OR
             (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")
@@ -531,12 +562,7 @@ export async function bulkUpdateSupplierVariants(
           t."supplierGender" IS DISTINCT FROM COALESCE(vals."supplierGender", t."supplierGender") OR
           t."supplierColorway" IS DISTINCT FROM COALESCE(vals."supplierColorway", t."supplierColorway") OR
           t."suggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(vals."suggestedRetailPriceInclVat", t."suggestedRetailPriceInclVat") OR
-          t."standardBuyPrice" IS DISTINCT FROM COALESCE(vals."standardBuyPrice", t."standardBuyPrice") OR
-          t."expressBuyPrice" IS DISTINCT FROM COALESCE(vals."expressBuyPrice", t."expressBuyPrice") OR
-          t."standardSuggestedRetailPriceInclVat" IS DISTINCT FROM COALESCE(
-            vals."standardSuggestedRetailPriceInclVat",
-            t."standardSuggestedRetailPriceInclVat"
-          ) OR
+          ${laneChanged} OR
           (t."gtin" IS NULL AND vals."gtin" IS NOT NULL) OR
           (t."providerKey" IS NULL AND vals."providerKey" IS NOT NULL) OR
           (vals."supplierSku" IS NOT NULL AND t."supplierSku" IS DISTINCT FROM vals."supplierSku")

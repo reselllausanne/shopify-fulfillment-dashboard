@@ -38,7 +38,8 @@ export async function POST(
     const result = await runDirectSwissPostLabelForOrder(orderId, {
       includeLabelData,
       allowReprint,
-      requireLinked: body?.requireLinked,
+      // StockX link ≠ Swiss Post eligibility. Default off; opt-in via body.
+      requireLinked: body?.requireLinked === true,
       selection: selection.length > 0 ? selection : undefined,
     });
 

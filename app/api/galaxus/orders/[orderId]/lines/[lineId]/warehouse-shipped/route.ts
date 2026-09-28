@@ -34,20 +34,38 @@ async function resolveOrder(orderIdOrRef: string) {
 /** True if line can be marked shipped: StockX-linked, or THE_/NER_ warehouse stock. */
 async function isLineReadyToShip(
   order: { id: string; galaxusOrderId: string },
-  line: { id: string; gtin: string | null; supplierSku?: string | null; providerKey?: string | null }
+  line: {
+    id: string;
+    gtin: string | null;
+    quantity?: number | null;
+    supplierSku?: string | null;
+    providerKey?: string | null;
+  }
 ) {
   if (galaxusLineWarehouseStockHint(line)) return true;
 
-  const match = await (prisma as any).galaxusStockxMatch.findFirst({
+  const qty = Math.max(1, Math.round(Number(line.quantity ?? 1)) || 1);
+  const matches = await (prisma as any).galaxusStockxMatch.findMany({
     where: { galaxusOrderLineId: line.id },
-    select: { stockxOrderNumber: true, matchType: true },
+    select: { unitIndex: true, stockxOrderNumber: true, matchType: true },
   });
-  if (
-    match &&
-    (String(match.stockxOrderNumber ?? "").trim() || String(match.matchType ?? "").trim() === "LOCAL_STOCK")
-  ) {
-    return true;
+  const linkedUnitIndexes = new Set<number>();
+  for (const match of matches ?? []) {
+    const hasRef =
+      String(match?.stockxOrderNumber ?? "").trim().length > 0 ||
+      String(match?.matchType ?? "").trim().toUpperCase() === "LOCAL_STOCK";
+    if (!hasRef) continue;
+    linkedUnitIndexes.add(Number(match?.unitIndex ?? 0));
   }
+  // qty>1 requires every unitIndex linked — one match must not unlock ship.
+  let allUnitsMatched = true;
+  for (let unitIndex = 0; unitIndex < qty; unitIndex++) {
+    if (!linkedUnitIndexes.has(unitIndex)) {
+      allUnitsMatched = false;
+      break;
+    }
+  }
+  if (allUnitsMatched && linkedUnitIndexes.size > 0) return true;
 
   const gtin = String(line.gtin ?? "").trim();
   if (!gtin) return false;

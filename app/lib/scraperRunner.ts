@@ -4,11 +4,7 @@
 import type { ScraperShop } from "@/app/lib/scraperShops";
 import { findScraperShop, parseScraperShops } from "@/app/lib/scraperShops";
 import { startRun, scrapeShop, hasRunningRun, recoverStaleRuns } from "@/app/lib/shopifyScrape";
-import { scrapeHhvShop } from "@/app/lib/hhvScrape";
-import { scrapeSnowleaderShop } from "@/app/lib/snowleaderScrape";
 import { scrapeReicheltShop } from "@/app/lib/reicheltScrape";
-import { scrapeNewsoleShop } from "@/app/lib/newsoleScrape";
-import { scrapeBaechliShop } from "@/app/lib/baechliScrape";
 import { scrapeFantasyweltShop } from "@/app/lib/fantasyweltScrape";
 import { scrapeExlibrisShop } from "@/app/lib/exlibrisScrape";
 import { scrapeHawkShop } from "@/app/lib/hawkScrape";
@@ -17,6 +13,10 @@ import { scrapeUncommonShop } from "@/app/lib/uncommonScrape";
 import { scrapeAlternateShop } from "@/app/lib/alternateScrape";
 import { scrapeVenovaShop } from "@/app/lib/venovaScrape";
 import { finalizeSupplierStockFromScrapeRun } from "@/inventory/supplierStock/hookScrape";
+import { drainFanObservations } from "@/inventory/supplierStock/fanObservation";
+import { drainSupplierObservations } from "@/inventory/supplierStock/observationBuffer";
+import "@/inventory/supplierStock/fanObservation";
+import "@/inventory/supplierStock/batch1Observations";
 import type { FinalizeRunResult } from "@/inventory/supplierStock/applyRun";
 import type { SnapshotCompleteness, SupplierVariantObservation } from "@/inventory/supplierStock/types";
 
@@ -26,18 +26,17 @@ export type ScrapeFn = (
   maxProducts?: number
 ) => Promise<void>;
 
+const KILLED_SCRAPERS: Record<string, string> = {
+  bae: "BAE_SCRAPER_KILLED — Bächli removed from codebase",
+  hhv: "HHV_SCRAPER_KILLED — HHV removed from codebase",
+  snl: "SNL_SCRAPER_KILLED — Snowleader removed (no GTIN)",
+  nso: "NSO_SCRAPER_KILLED — Newsole removed from codebase",
+};
+
 export function resolveScrapeFn(shop: ScraperShop): ScrapeFn {
   switch (shop.platform) {
-    case "hhv":
-      return scrapeHhvShop;
-    case "snl":
-      return scrapeSnowleaderShop;
     case "rei":
       return scrapeReicheltShop;
-    case "nso":
-      return scrapeNewsoleShop;
-    case "bae":
-      return scrapeBaechliShop;
     case "fan":
       return scrapeFantasyweltShop;
     case "exl":
@@ -84,6 +83,19 @@ export type RunScraperJobResult = {
  * CLI scripts and the API route must use this (or call finalize in finally).
  */
 export async function runScraperJob(input: RunScraperJobInput): Promise<RunScraperJobResult> {
+  const shopKey = String(input.shopKey ?? "")
+    .trim()
+    .toLowerCase();
+  const killed = KILLED_SCRAPERS[shopKey];
+  if (killed) {
+    return {
+      ok: false,
+      shop: shopKey,
+      runId: null,
+      error: killed,
+    };
+  }
+
   const shop = findScraperShop(input.shopKey) ?? parseScraperShops().find((s) => s.key === input.shopKey);
   if (!shop) {
     return { ok: false, shop: input.shopKey, runId: null, error: `Unknown shop '${input.shopKey}'` };
@@ -110,8 +122,21 @@ export async function runScraperJob(input: RunScraperJobInput): Promise<RunScrap
     } catch (e: any) {
       console.error(`[SCRAPER] ${shop.key} run#${runId} failed:`, e?.message || e);
     }
+    const batchKeys = ["fan", "haw", "bwz", "tus", "exl", "ven", "wrk"] as const;
+    const drained: SupplierVariantObservation[] = [];
+    if (shop.key === "fan") drained.push(...drainFanObservations(runId));
+    else if ((batchKeys as readonly string[]).includes(shop.key)) {
+      drained.push(...drainSupplierObservations(shop.key, runId));
+    }
+    const observations: SupplierVariantObservation[] | undefined =
+      input.observations ??
+      (input.observationSink?.length
+        ? input.observationSink
+        : drained.length
+          ? drained
+          : undefined);
     return finalizeSupplierStockFromScrapeRun(shop.key, runId, {
-      observations: input.observations ?? input.observationSink,
+      observations,
       snapshotCompleteness,
       incompletenessReason,
       partialRun,
@@ -146,10 +171,8 @@ export const SCRAPER_STOCK_HOOK_CALL_SITES = [
   { path: "scripts/run-exlibris-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-exlibris-detached.sh", via: "run-exlibris-scrape.ts", hooked: true },
   { path: "scripts/run-hawk-scrape.ts", via: "runScraperJob", hooked: true },
-  { path: "scripts/run-baechli-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-baby-walz-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-uncommon-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-alternate-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-venova-scrape.ts", via: "runScraperJob", hooked: true },
-  { path: "scripts/run-snl-scrape.ts", via: "runScraperJob", hooked: true },
 ] as const;

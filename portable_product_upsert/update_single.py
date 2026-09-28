@@ -363,31 +363,39 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
         cost_value = calc_touch_price(raw_stockx_price, product_category, product_handle)
         sell_price = calc_sell_price(raw_stockx_price, product_category, is_express=False, product_handle=product_handle, brand=brand)
 
-        # Express sell: real StockX express lane (asks > 2) preferred; when the
-        # lane is missing we leave express_sell_price=None so the update path
-        # deletes the stale custom.express_price metafield rather than pushing a
-        # derived-from-standard number that only ever equals the floor.
+        # Express sell:
+        # - Distinct STX express+standard → each locked calc (no +20)
+        # - Single offer → standard=calc; express=standard+20
         express_sell_price = None
-        if express_prices:
+        if express_prices and standard_prices:
             lowest_express_entry = min(express_prices, key=lambda x: x['price'])
+            lowest_standard_entry = min(standard_prices, key=lambda x: x['price'])
             express_raw_price = lowest_express_entry['price']
-            express_calc = calc_sell_price(
-                express_raw_price,
-                product_category,
-                is_express=True,
-                product_handle=product_handle,
-                brand=brand,
-            )
-            express_sell_price = apply_stx_express_floor(sell_price, express_calc)
-            print(
-                f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
-                f"type={lowest_express_entry['type']} asks={lowest_express_entry['asks']} "
-                f"→ SELL={express_sell_price} CHF (standard={sell_price} floor guarded)"
-            )
+            standard_raw_price = lowest_standard_entry['price']
+            if abs(float(express_raw_price) - float(standard_raw_price)) >= 0.5:
+                express_sell_price = calc_sell_price(
+                    express_raw_price,
+                    product_category,
+                    is_express=True,
+                    product_handle=product_handle,
+                    brand=brand,
+                )
+                print(
+                    f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
+                    f"type={lowest_express_entry['type']} asks={lowest_express_entry['asks']} "
+                    f"→ SELL={express_sell_price} CHF (dual-lane, standard={sell_price})"
+                )
+            else:
+                express_sell_price = apply_stx_express_floor(sell_price, None)
+                print(
+                    f"[EXPRESS +20] {title} - Size {eu_size}: identical STX lanes → "
+                    f"express={express_sell_price} (normal={sell_price})"
+                )
         else:
+            express_sell_price = apply_stx_express_floor(sell_price, None)
             print(
-                f"[NO EXPRESS] {title} - Size {eu_size}: no StockX express lane "
-                f"(asks<=2 or removed) — express option will be hidden"
+                f"[EXPRESS +20] {title} - Size {eu_size}: single STX offer → "
+                f"express={express_sell_price} (normal={sell_price})"
             )
         
         print(f"[STOCKX PRICE] {title} - Size {eu_size}: RAW STOCKX = {raw_stockx_price} CHF (type: {price_type}, asks: {asks_count})")

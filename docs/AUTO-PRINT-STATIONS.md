@@ -3,85 +3,61 @@
 ## Goal
 
 Each packing desk prints Swiss Post labels on **its own** thermal printer
-(Brother QL-W810, Zebra, …) with the **same 62×100 mm PDF format**.
-Auto-print only on **certain** matches (never ambiguous), and only after
-silent print has been physically validated on that station.
+with a **shared label PDF** from the backend (VPS). Config is done in the
+browser on that desk — via the **VPS-hosted** `/scan` page (not SSH).
 
-## Recommended stack: QZ Tray
+## Why we fell behind `main`
 
-| Option | Pros | Cons |
-|--------|------|------|
-| **QZ Tray** (chosen) | Local websocket, silent signed print, works offline, per-station printer pick | Needs desktop install + cert for silent mode |
-| PrintNode | Central API, multi-site | Cloud hop, subscription |
-| CUPS `lp` (existing) | Already on packing Mac via `LOCAL_STATION` | Server-bound; not per-browser station |
-| Browser popup | Always available | Manual / popup blockers |
+Feature branches do **not** auto-rebase. `main` kept receiving other PRs
+while this branch sat. `safe-sync` protects dirty trees; it does not keep
+feature branches current. Fix: rebase/replay onto `origin/main` before PR.
 
-**Decision:** wire **QZ Tray** as the primary client path; keep **CUPS** when the
-request hits a `LOCAL_STATION` packing Mac; fall back to **browser print** when
-both are unavailable.
+## Rule
 
-## Honesty contract (READ BEFORE ENABLING)
+1. Backend creates the label / fulfillment / DELR once.
+2. Browser prints that existing PDF (QZ silent or PDF popup).
+3. Print failures **never** re-call fulfill / Swiss Post / DELR.
 
-The scan page will refuse to silent-print unless BOTH:
+## Where to set paper size (per PC)
 
-1. `silentPrintValidated: true` is set on the station config
-   (`localStorage.resell.printStation.v1`).
-2. `window.qz` exists and its websocket is active on `localhost`.
+On the **production site** (VPS app) open `/scan` → **Configurer ce poste**
+→ step **format** (presets, mm, DPI, margins, driver paper).
 
-Defaults ship with `autoPrintOnCertainMatch: false` and
-`silentPrintValidated: false`. This is on purpose: we would rather show a
-browser popup on every scan than silently drop labels because QZ died at
-02:00.
+Stored in **that browser’s** `localStorage`. Theo’s Brother ≠ other thermal.
 
-## Per-station config
+Quick path: **Activate** picks a printer and turns auto-print on (keeps
+existing size from wizard if already set).
 
-Stored in `localStorage` key `resell.printStation.v1` (`lib/printStation.ts` /
-`app/lib/printStationClient.ts`):
+## QZ certificate (paid — silent, no popup)
 
-```json
-{
-  "stationId": "desk-1",
-  "provider": "qz_tray",
-  "printerName": "Brother_QL_W810W",
-  "labelWidthMm": 62,
-  "labelHeightMm": 100,
-  "autoPrintOnCertainMatch": true,
-  "silentPrintValidated": true
-}
+Buy Premium Support (trusted cert, all machines):
+
+- https://buy.qz.io/Premium-Support-_p_13.html — **$749 USD / year**
+- Overview: https://qz.io/
+- Generate cert after purchase: https://qz.io/docs/generate-certificate
+- Signing docs: https://qz.io/docs/signing
+
+Then on VPS `.env` (once):
+
+```bash
+QZ_PUBLIC_CERT="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n"
+QZ_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 ```
 
-Each operator picks their CUPS/QZ printer name once. Label bytes stay identical.
+Restart web. App signs **every** print via `/api/qz/sign` (SHA512).
+Private key never reaches the browser.
 
-## First-time silent-print validation checklist (Brother QL-W810)
+## Multi-station
 
-Run through every step on the physical station before flipping
-`silentPrintValidated` to `true`:
+| What | Where |
+|------|--------|
+| Cert/key | VPS env (shared) |
+| Printer + paper size + validated | each PC browser |
+| QZ Tray app | each PC |
 
-- [ ] Install QZ Tray on the station (macOS or Windows).
-- [ ] Import the signed cert into QZ Tray so silent print is allowed
-      (Preferences → Site Manager → allow this origin without prompt).
-- [ ] Install Brother QL-W810 drivers + `62×100 mm` media label profile.
-- [ ] Print a self-test label directly from the printer.
-- [ ] Print a Swiss Post PDF via QZ from a terminal / QZ demo page — confirm
-      it comes out on the correct 62×100 label without a print dialog.
-- [ ] Open the scan page. The QZ status pill must read **ready** (green).
-- [ ] Scan a known certain match → confirm label prints silently and no
-      popup appears.
-- [ ] Only now, in the station settings, flip `silentPrintValidated` to
-      `true` and save.
+## Localhost
 
-If ANY step fails, leave `silentPrintValidated: false`. The station will
-fall through to the browser popup instead of dropping labels.
-
-## Call chain
-
-1. Scan resolves a **certain** match (single SKU+size+causal, or pinned line).
-2. `decideStationAutoPrint({ matchCertainty: "certain", config })`.
-3. `tryStationAutoPrint` → QZ Tray if available AND validated.
-4. Else server `printLabelLocally` (CUPS) when `LOCAL_STATION=1`.
-5. Else existing `SCAN_BROWSER_PRINT_*` popup.
-
-## Multi-account StockX (later)
-
-`StockxInboundPackage.stockxAccountKey` is ready for Galaxus-side StockX
-accounts without changing Shopify AWB fallback today.
+```bash
+./scripts/setup-qz-local.sh
+npm run dev
+```

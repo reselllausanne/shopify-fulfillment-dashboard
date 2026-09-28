@@ -3,6 +3,7 @@ import { notifyCustomerShippedViaLaPoste } from "@/app/lib/notifications/shopify
 import {
   resolveSwissPostCustomerTracking,
   shopifyOrderIdAliases,
+  toShopifyOrderGid,
 } from "@/app/lib/swissPostCustomerTracking";
 
 export type ShopifyFulfillmentWebhookPayload = {
@@ -57,7 +58,10 @@ export async function processFulfillmentWebhook(
     where: { shopifyOrderId: { in: aliases } },
     select: { shopifyOrderId: true, shopifyOrderName: true },
   });
-  const shopifyOrderId = match?.shopifyOrderId || gid;
+  // Normalise rather than trust the stored value: this webhook keys the
+  // fulfillment record on (shopifyOrderId, trackingNumber), so a non-canonical
+  // id here creates a second, near-empty row next to the one the label flow wrote.
+  const shopifyOrderId = toShopifyOrderGid(match?.shopifyOrderId || gid);
   const shopifyOrderName = match?.shopifyOrderName || payload.name || null;
 
   await prisma.shopifyFulfillmentRecord.upsert({

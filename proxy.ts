@@ -71,6 +71,9 @@ const PUBLIC_PATHS = [
   // Phase 4 orphan reconciliation (physical stock without STX row).
   "/api/inventory/reconcile-orphans",
   "/api/tracking/token",
+  // QZ Tray public cert only (never private key). Needed for silent print + override.crt download.
+  "/api/qz/certificate",
+  "/api/qz/override.crt",
   "/_next",
   "/static",
   "/favicon.ico",

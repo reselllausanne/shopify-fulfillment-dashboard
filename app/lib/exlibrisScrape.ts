@@ -9,7 +9,6 @@ import {
   discoverCategoryPaths,
   emptyProgress,
   exlibrisConfig,
-  exlibrisStockFromLabel,
   extractProductTiles,
   fetchExlibrisHtml,
   type ExlibrisScrapeProgress,
@@ -23,6 +22,12 @@ import {
 } from "@/app/lib/exlibrisPricing";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
+import { mayMutateMarketplaceStock } from "@/inventory/supplierStock/enforceMode";
+import { decideExlPublishedQty } from "@/inventory/supplierStock/exlQty";
+import {
+  beginExlObservationRun,
+  recordExlObservation,
+} from "@/inventory/supplierStock/batch1Observations";
 
 export { startRun, hasRunningRun, recoverStaleRuns };
 
@@ -155,7 +160,8 @@ export async function upsertExlibrisTile(
   shop: ScraperShop,
   tile: ExlibrisTile,
   existingById: Map<string, ExistingVariantImage>,
-  imageSyncQueue: Set<string>
+  imageSyncQueue: Set<string>,
+  runCtx?: { scrapeRunId: number; observedAt?: Date }
 ): Promise<boolean> {
   const prismaAny = prisma as any;
   const cost = computeExlibrisLandedCost({
@@ -168,10 +174,15 @@ export async function upsertExlibrisTile(
   const providerKey = buildProviderKey(tile.ean, supplierVariantId);
   if (!providerKey) return false;
 
-  const stock = exlibrisStockFromLabel(tile.stockLabel, tile.availabilityText);
+  const decision = decideExlPublishedQty({
+    stockLabel: tile.stockLabel,
+    availabilityText: tile.availabilityText,
+    scrapeValid: true,
+  });
+  const stockWrite = mayMutateMarketplaceStock() ? decision.proposedQty : undefined;
   const existing = existingById.get(supplierVariantId);
   const queueImage = !deferExlImageSync() && needsImageHosting(existing, tile.imageUrl || null);
-  const now = new Date();
+  const now = runCtx?.observedAt ?? new Date();
   const manualNote = formatExlibrisManualNote({
     ean: tile.ean,
     productUrl: tile.url,
@@ -181,6 +192,22 @@ export async function upsertExlibrisTile(
     cost,
   });
 
+  if (runCtx) {
+    recordExlObservation(
+      {
+        productUrl: tile.url.startsWith("http") ? tile.url : `${EXLIBRIS_BASE}${tile.url}`,
+        gtin: tile.ean,
+        sku: tile.ean,
+        productName: tile.title,
+        priceChf: cost.sellPriceChf,
+        stockLabel: tile.stockLabel,
+        availabilityText: tile.availabilityText,
+        scrapeValid: true,
+      },
+      { scrapeRunId: runCtx.scrapeRunId, observedAt: now }
+    );
+  }
+
   await prismaAny.supplierVariant.upsert({
     where: { supplierVariantId },
     create: {
@@ -189,7 +216,7 @@ export async function upsertExlibrisTile(
       providerKey,
       gtin: tile.ean,
       price: cost.sellPriceChf,
-      stock,
+      stock: stockWrite ?? 0,
       supplierBrand: tile.brand?.trim() || tile.formatLabel?.trim() || "Ex Libris",
       supplierProductName: tile.title,
       supplierProductType: tile.formatLabel || tile.sampleBucket || null,
@@ -204,7 +231,7 @@ export async function upsertExlibrisTile(
       providerKey,
       gtin: tile.ean,
       price: cost.sellPriceChf,
-      stock,
+      ...(stockWrite !== undefined ? { stock: stockWrite } : {}),
       supplierBrand: tile.brand?.trim() || tile.formatLabel?.trim() || "Ex Libris",
       supplierProductName: tile.title,
       supplierProductType: tile.formatLabel || tile.sampleBucket || null,
@@ -334,6 +361,7 @@ export async function scrapeExlibrisShop(
   const done = new Set(progress.doneCategories);
 
   try {
+    beginExlObservationRun(runId);
     if (!queue.length) {
       const seedHtml = await fetchExlibrisHtml(`${EXLIBRIS_BASE}${catalogRoot}`);
       progress.requests++;
@@ -372,13 +400,14 @@ export async function scrapeExlibrisShop(
         let newOnPage = 0;
         for (const tile of tiles) {
           if (maxProducts && stats.wrote >= maxProducts) break;
-          const tileId = `${shop.key}_${tile.ean}`;
           if (seen.has(tile.ean)) continue;
           seen.add(tile.ean);
           stats.listed++;
-          if (existingById.has(tileId)) continue;
 
-          const result = await upsertExlibrisTile(shop, tile, existingById, imageSyncQueue);
+          // Always refresh existing tiles — skip blocked observation + stock updates.
+          const result = await upsertExlibrisTile(shop, tile, existingById, imageSyncQueue, {
+            scrapeRunId: runId,
+          });
           if (result) {
             stats.wrote++;
             newOnPage++;

@@ -23,20 +23,22 @@ describe("venova shipping + margin", () => {
     }
   });
 
-  it("uses PostPac Economy 10 + 20% on landed", () => {
+  it("uses PostPac Economy 10 + 30% on landed", () => {
     delete process.env.SCRAPER_VEN_MARGIN_PERCENT;
     delete process.env.SCRAPER_VEN_SHIPPING_CHF;
     expect(venovaPricingConfig().shippingChf).toBe(10);
+    expect(venovaPricingConfig().marginPercent).toBe(30);
     const cost = computeVenovaSellPrice(1944, 5);
     expect(cost?.shippingChf).toBe(10);
     expect(cost?.landedChf).toBe(1954);
-    expect(cost?.sellPriceChf).toBe(2344.8); // 1954 * 1.2
+    expect(cost?.sellPriceChf).toBe(2540.2); // 1954 * 1.3
     expect(cost?.skippedReason).toBeNull();
   });
 
   it("keeps ship floor on heavy SKUs (no skip by default)", () => {
     delete process.env.SCRAPER_VEN_BULKY_SHIPPING_CHF;
     delete process.env.SCRAPER_VEN_SKIP_OVER_30KG;
+    delete process.env.SCRAPER_VEN_MARGIN_PERCENT;
     const ship = resolveVenovaShippingChf(128);
     expect(ship.skip).toBe(false);
     expect(ship.shippingChf).toBe(10);
@@ -44,7 +46,7 @@ describe("venova shipping + margin", () => {
     const cost = computeVenovaSellPrice(1944, 128);
     expect(cost?.skippedReason).toBeNull();
     expect(cost?.shippingChf).toBe(10);
-    expect(cost?.sellPriceChf).toBe(2344.8);
+    expect(cost?.sellPriceChf).toBe(2540.2);
   });
 
   it("can still skip heavy when SCRAPER_VEN_SKIP_OVER_30KG=1", () => {

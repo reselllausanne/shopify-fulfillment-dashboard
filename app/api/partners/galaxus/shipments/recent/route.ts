@@ -30,7 +30,6 @@ export async function GET(request: NextRequest) {
     const shipments = await prisma.shipment.findMany({
       where: {
         providerKey: access.providerKey,
-        order: { deliveryType: { not: "direct_delivery" } },
       },
       orderBy: { createdAt: "desc" },
       take: limit,

@@ -4,7 +4,24 @@ import {
   looksLikeSwissPostIdent,
   resolveSwissPostCustomerTracking,
   shopifyOrderIdAliases,
+  toShopifyOrderGid,
 } from "@/app/lib/swissPostCustomerTracking";
+
+describe("toShopifyOrderGid", () => {
+  it("promotes a bare numeric id to the canonical GID", () => {
+    expect(toShopifyOrderGid("13497769853314")).toBe("gid://shopify/Order/13497769853314");
+    expect(toShopifyOrderGid(13497769853314)).toBe("gid://shopify/Order/13497769853314");
+  });
+
+  it("leaves an already canonical GID untouched", () => {
+    expect(toShopifyOrderGid("gid://shopify/Order/123")).toBe("gid://shopify/Order/123");
+  });
+
+  it("returns an empty string for blank input", () => {
+    expect(toShopifyOrderGid(null)).toBe("");
+    expect(toShopifyOrderGid("   ")).toBe("");
+  });
+});
 
 describe("swissPostCustomerTracking", () => {
   it("aliases numeric and gid order ids", () => {

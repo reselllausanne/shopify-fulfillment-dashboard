@@ -8,6 +8,11 @@ import {
   isShopifyOrderMatchFresh,
   shopifyMatchMinCreatedAt,
 } from "@/app/lib/shopifyMatchEligibility";
+import {
+  listGalaxusDirectOpenUnits,
+  type GalaxusDirectOpenUnit,
+} from "@/lib/galaxusDirectOpenUnits";
+import type { UnitSelectionDecision } from "@/lib/shopifyFulfillUnitSelection";
 
 const DECATHLON_TERMINAL_STATES = new Set([
   "CANCELED",
@@ -90,6 +95,9 @@ export type GtinFallbackPayload = {
   autoDirectOrderDbId: string | null;
   autoDirectLineId: string | null;
   autoDirectRemaining: number;
+  /** All open lines on the matched direct order (not only GTIN hits). */
+  autoDirectOpenUnits: GalaxusDirectOpenUnit[];
+  autoDirectUnitSelection: UnitSelectionDecision | null;
   autoShopify: {
     shopifyOrderId: string;
     shopifyOrderName: string | null;
@@ -107,8 +115,14 @@ export type GtinFallbackPayload = {
     orderDbId: string;
     shipmentId: string | null;
   } | null;
-  /** Oldest open fulfillable channel (direct / shopify / decathlon). Null if none. */
+  /** Oldest open fulfillable channel (direct / shopify / decathlon). Null if none
+   *  or when warehouse + direct both open for the same GTIN (operator must pick). */
   autoChannel: GtinAutoChannel | null;
+  /**
+   * Same physical GTIN is owed on Galaxus warehouse AND direct. Auto-fulfill /
+   * auto-packing must not claim both — operator chooses one channel for this unit.
+   */
+  requiresChannelChoice: boolean;
   orders: GtinOrderRow[];
 };
 
@@ -497,6 +511,27 @@ function autoChannelOf(row: GtinOrderRow): GtinAutoChannel | null {
 }
 
 /**
+ * Decide whether GTIN scan may auto-claim a fulfill channel.
+ * When the same GTIN is open on warehouse AND direct, never auto — one physical
+ * unit cannot pack into a warehouse box and also ship as direct.
+ */
+export function decideGtinAutoChannel(params: {
+  openDirect: number;
+  openWarehouse: number;
+  autoRowChannel: GtinAutoChannel | null;
+}): { autoChannel: GtinAutoChannel | null; requiresChannelChoice: boolean } {
+  const requiresChannelChoice =
+    params.openDirect > 0 && params.openWarehouse > 0;
+  if (requiresChannelChoice) {
+    return { autoChannel: null, requiresChannelChoice: true };
+  }
+  return {
+    autoChannel: params.autoRowChannel,
+    requiresChannelChoice: false,
+  };
+}
+
+/**
  * Parallel multi-channel GTIN lookup for /scan when no AWB hit.
  * Returns null when no lines found on any channel.
  */
@@ -537,7 +572,11 @@ export async function resolveGtinFallback(
 
   // Oldest fulfillable open row across Galaxus direct / Shopify / Decathlon.
   const autoRow = openOrders.find(isAutoFulfillable) ?? null;
-  const autoChannel = autoRow ? autoChannelOf(autoRow) : null;
+  const { autoChannel, requiresChannelChoice } = decideGtinAutoChannel({
+    openDirect,
+    openWarehouse,
+    autoRowChannel: autoRow ? autoChannelOf(autoRow) : null,
+  });
 
   // Reprint pointer: latest Decathlon shipment for this GTIN when nothing left to ship.
   const shippedDecathlon = orderedList
@@ -550,6 +589,16 @@ export async function resolveGtinFallback(
     .sort((a, b) => b.orderDate.localeCompare(a.orderDate));
   const reprintRow = !autoDecathlonRow ? shippedDecathlon[0] ?? null : null;
 
+  const autoDirectOrderDbId = autoDirectOrder?.galaxusOrderDbId ?? null;
+  const autoDirectLineId = autoDirectOrder?.lineId ?? null;
+  const directOpen =
+    autoDirectOrderDbId
+      ? await listGalaxusDirectOpenUnits({
+          orderDbId: autoDirectOrderDbId,
+          scannedLineId: autoDirectLineId,
+        }).catch(() => null)
+      : null;
+
   return {
     gtin: gtinCandidates[0],
     productName: orderedList.find((o) => o.productName)?.productName ?? null,
@@ -558,9 +607,11 @@ export async function resolveGtinFallback(
     openWarehouse,
     openShopify,
     openDecathlon,
-    autoDirectOrderDbId: autoDirectOrder?.galaxusOrderDbId ?? null,
-    autoDirectLineId: autoDirectOrder?.lineId ?? null,
+    autoDirectOrderDbId,
+    autoDirectLineId,
     autoDirectRemaining: Math.max(0, Number(autoDirectOrder?.remaining ?? 0)),
+    autoDirectOpenUnits: directOpen?.openUnits ?? [],
+    autoDirectUnitSelection: directOpen?.unitSelection ?? null,
     autoShopify:
       autoShopifyRow?.shopifyLineItemId && autoShopifyRow.shopifyOrderId
         ? {
@@ -587,6 +638,7 @@ export async function resolveGtinFallback(
           }
         : null,
     autoChannel,
+    requiresChannelChoice,
     orders: orderedList,
   };
 }

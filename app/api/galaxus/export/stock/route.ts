@@ -35,6 +35,12 @@ import {
   resolveGalaxusDirectDeliverySupported,
   shouldForceGalaxusStockZero,
 } from "@/galaxus/exports/feedEligibility";
+import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
+import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
+import {
+  attachHasImageSignalToMappings,
+  FEED_VARIANT_SELECT_GATE_NO_IMAGES,
+} from "@/galaxus/exports/variantImagePresence";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
 
 export const runtime = "nodejs";
@@ -136,31 +142,14 @@ export async function GET(request: Request) {
         updatedAt: true,
         supplierVariantId: true,
         supplierVariant: {
-          select: {
-            supplierVariantId: true,
-            price: true,
-            stock: true,
-            manualPrice: true,
-            manualStock: true,
-            manualLock: true,
-            manualNote: true,
-            leadTimeDays: true,
-            deliveryType: true,
-            // Catalog-ready gate (must match master eligibility).
-            supplierProductName: true,
-            supplierBrand: true,
-            supplierSku: true,
-            images: true,
-            hostedImageUrl: true,
-            sourceImageUrl: true,
-            imageSyncStatus: true,
-          },
+          select: FEED_VARIANT_SELECT_GATE_NO_IMAGES,
         },
       },
       orderBy: [{ id: "desc" }],
       take: pageSize,
       ...(all ? {} : { skip: currentOffset }),
     });
+    await attachHasImageSignalToMappings(mappings);
     lastBatch = mappings.length;
     if (mappings.length > 0) {
       const last: any = mappings[mappings.length - 1];
@@ -303,11 +292,21 @@ export async function GET(request: Request) {
     if (!providerKey) return;
     const mappingSupplierKey = (candidate as any)?.mapping?.supplierKey ?? null;
     const supplierVariantIdEarly = String(variant?.supplierVariantId ?? "");
-    // Force stock=0 delist rows (XNT brand block OR stock-positive allowlist).
+    // Force stock=0 delist rows (XNT / BAE kill / stock-positive allowlist).
     // Bypass catalog-ready / MOQ so previously published ProviderKeys still
     // receive QuantityOnStock=0 and Galaxus removes the live offer.
     if (
       isXntFeedBlockedBrand(variant) ||
+      shouldForceDeadStockZero({
+        supplierKey: mappingSupplierKey,
+        supplierVariantId: supplierVariantIdEarly,
+        providerKey,
+      }) ||
+      shouldForceBaeStockZero({
+        supplierKey: mappingSupplierKey,
+        supplierVariantId: supplierVariantIdEarly,
+        providerKey,
+      }) ||
       shouldForceGalaxusStockZero({
         supplierKey: mappingSupplierKey,
         supplierVariantId: supplierVariantIdEarly,

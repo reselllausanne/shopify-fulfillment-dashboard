@@ -87,7 +87,7 @@ describe("fantasyweltClient", () => {
 <meta itemprop="price" content="29.99">
 <meta itemprop="priceCurrency" content="EUR">
 <link itemprop="availability" href="https://schema.org/InStock">
-<p>auf Lager · Lieferzeit 1-2 Werktage</p>
+<p>SOFORT VERFÜGBAR Lieferzeit 1-2 Werktage 3 Stk. auf Lager</p>
 <input type="hidden" name="a" value="225200">
 </body></html>`;
     const row = parseFantasyweltProductHtml(
@@ -99,5 +99,8 @@ describe("fantasyweltClient", () => {
     expect(row?.sku).toBe("CMYD0003");
     expect(row?.brand).toBe("CMYK");
     expect(row?.availability).toBe("InStock");
+    expect(row?.sourceStockQty).toBe(3);
+    expect(row?.proposedPublishQty).toBe(2);
+    expect(row?.hasPositiveStockProof).toBe(true);
   });
 });

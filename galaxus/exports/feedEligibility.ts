@@ -1,21 +1,20 @@
-import { pickGalaxusProductImageList } from "@/galaxus/exports/productImages";
 import {
   meetsGalaxusStockMoq,
   resolveGalaxusStockMoq,
   type GalaxusStockMoq,
 } from "@/galaxus/exports/stockMoq";
+import {
+  hasGalaxusPrimaryImage,
+  type WithImageSignal,
+} from "@/galaxus/exports/variantImagePresence";
 
-type CatalogVariant = {
-  images?: unknown;
-  sourceImageUrl?: string | null;
-  hostedImageUrl?: string | null;
-  imageSyncStatus?: string | null;
+type CatalogVariant = (WithImageSignal & {
   supplierProductName?: string | null;
   supplierBrand?: string | null;
   supplierSku?: string | null;
   supplierKey?: string | null;
   supplierVariantId?: string | null;
-} | null | undefined;
+}) | null | undefined;
 
 /**
  * True when the variant is a XNT partner row we must exclude from all Galaxus
@@ -95,7 +94,7 @@ export function shouldForceGalaxusStockZero(input: {
  */
 export function isGalaxusCatalogReady(variant: CatalogVariant): boolean {
   if (!variant) return false;
-  if (pickGalaxusProductImageList(variant).length === 0) return false;
+  if (!hasGalaxusPrimaryImage(variant)) return false;
   const name = String(variant.supplierProductName ?? "").trim();
   const brand = String(variant.supplierBrand ?? "").trim();
   // Name or SKU required so master can build a title; brand required by Galaxus.
