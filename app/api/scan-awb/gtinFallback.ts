@@ -8,6 +8,11 @@ import {
   isShopifyOrderMatchFresh,
   shopifyMatchMinCreatedAt,
 } from "@/app/lib/shopifyMatchEligibility";
+import {
+  listGalaxusDirectOpenUnits,
+  type GalaxusDirectOpenUnit,
+} from "@/lib/galaxusDirectOpenUnits";
+import type { UnitSelectionDecision } from "@/lib/shopifyFulfillUnitSelection";
 
 const DECATHLON_TERMINAL_STATES = new Set([
   "CANCELED",
@@ -90,6 +95,9 @@ export type GtinFallbackPayload = {
   autoDirectOrderDbId: string | null;
   autoDirectLineId: string | null;
   autoDirectRemaining: number;
+  /** All open lines on the matched direct order (not only GTIN hits). */
+  autoDirectOpenUnits: GalaxusDirectOpenUnit[];
+  autoDirectUnitSelection: UnitSelectionDecision | null;
   autoShopify: {
     shopifyOrderId: string;
     shopifyOrderName: string | null;
@@ -550,6 +558,16 @@ export async function resolveGtinFallback(
     .sort((a, b) => b.orderDate.localeCompare(a.orderDate));
   const reprintRow = !autoDecathlonRow ? shippedDecathlon[0] ?? null : null;
 
+  const autoDirectOrderDbId = autoDirectOrder?.galaxusOrderDbId ?? null;
+  const autoDirectLineId = autoDirectOrder?.lineId ?? null;
+  const directOpen =
+    autoDirectOrderDbId
+      ? await listGalaxusDirectOpenUnits({
+          orderDbId: autoDirectOrderDbId,
+          scannedLineId: autoDirectLineId,
+        }).catch(() => null)
+      : null;
+
   return {
     gtin: gtinCandidates[0],
     productName: orderedList.find((o) => o.productName)?.productName ?? null,
@@ -558,9 +576,11 @@ export async function resolveGtinFallback(
     openWarehouse,
     openShopify,
     openDecathlon,
-    autoDirectOrderDbId: autoDirectOrder?.galaxusOrderDbId ?? null,
-    autoDirectLineId: autoDirectOrder?.lineId ?? null,
+    autoDirectOrderDbId,
+    autoDirectLineId,
     autoDirectRemaining: Math.max(0, Number(autoDirectOrder?.remaining ?? 0)),
+    autoDirectOpenUnits: directOpen?.openUnits ?? [],
+    autoDirectUnitSelection: directOpen?.unitSelection ?? null,
     autoShopify:
       autoShopifyRow?.shopifyLineItemId && autoShopifyRow.shopifyOrderId
         ? {

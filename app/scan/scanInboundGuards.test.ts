@@ -81,6 +81,18 @@ describe("shouldAutoGalaxusDirectLabelFor", () => {
       })
     ).toBe(true);
   });
+
+  it("blocks auto when order needs unit selection popup (multi-line / multi-qty)", () => {
+    expect(
+      shouldAutoGalaxusDirectLabelFor({
+        galaxus: {
+          isDirectDelivery: true,
+          lineId: "line-1",
+          unitSelection: { requiresPopup: true, reason: "multi_line", totalOpenUnits: 3 },
+        },
+      })
+    ).toBe(false);
+  });
 });
 
 describe("shouldAutoAddToPackingSession", () => {
