@@ -60,6 +60,7 @@ query FastRepriceProduct($id: ID!) {
         id
         title
         barcode
+        price
         priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
         usSize: metafield(namespace: "custom", key: "us_size") { value }
       }
@@ -203,6 +204,7 @@ async function main() {
             id: string;
             title: string | null;
             barcode: string | null;
+            price: string | null;
             priceLocked: { value: string | null } | null;
             usSize: { value: string | null } | null;
           }>;
@@ -294,7 +296,10 @@ async function main() {
         variantsCeiling += 1;
         continue;
       }
-      if (row.lastPushedPrice != null && Math.abs(row.lastPushedPrice - normalSell) < 0.005) {
+      // Compare against the live Shopify price, not our last push: another writer
+      // (legacy SSE consumer) may have overwritten it since.
+      const livePrice = node.price != null ? Number(node.price) : null;
+      if (livePrice != null && Number.isFinite(livePrice) && Math.abs(livePrice - normalSell) < 0.005) {
         variantsUnchanged += 1;
         continue;
       }
