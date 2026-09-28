@@ -46,9 +46,16 @@ trigger_shop() {
   local shop="$1"
   local url="$BASE/api/scraper/scrape?shop=${shop}"
   echo "[$(date -Is)] triggering scrape shop=${shop} -> $url"
-  curl -fsS -m 120 -X POST -H "Cookie: auth_token=$JWT" "$url"
+  if ! curl -fsS -m 120 -X POST -H "Cookie: auth_token=$JWT" "$url"; then
+    echo
+    echo "[$(date -Is)] ERROR: trigger failed shop=${shop}"
+    return 1
+  fi
   echo
 }
+
+# Permanently removed adapters (see scraperShops.ts) — stale SCRAPER_SHOPS entries must not 400 the batch.
+KILLED_SHOPS="bae hhv snl nso"
 
 SHOP="${1:-}"
 if [ -n "$SHOP" ]; then
@@ -68,16 +75,25 @@ KEYS=$(echo "$SHOPS_RAW" | tr ',' '\n' | while IFS= read -r entry; do
 done)
 
 triggered=0
+failed=0
 for key in $KEYS; do
   if echo "$SKIP" | grep -qx "$key"; then
     echo "[$(date -Is)] skip shop=${key} (SCRAPER_CRON_SKIP)"
     continue
   fi
-  trigger_shop "$key"
-  triggered=$((triggered + 1))
+  if echo "$KILLED_SHOPS" | tr ' ' '\n' | grep -qx "$key"; then
+    echo "[$(date -Is)] skip shop=${key} (killed adapter — remove from SCRAPER_SHOPS)"
+    continue
+  fi
+  if trigger_shop "$key"; then
+    triggered=$((triggered + 1))
+  else
+    failed=$((failed + 1))
+  fi
 done
 
 if [ "$triggered" -eq 0 ]; then
   echo "[$(date -Is)] WARNING: no shops triggered (check SCRAPER_SHOPS / SCRAPER_CRON_SKIP)"
   exit 1
 fi
+[ "$failed" -eq 0 ] || { echo "[$(date -Is)] WARNING: ${failed} shop trigger(s) failed"; exit 1; }
