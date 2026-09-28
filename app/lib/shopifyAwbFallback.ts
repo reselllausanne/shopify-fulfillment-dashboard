@@ -193,7 +193,9 @@ export function filterShopifyAwbFallbackCandidates(
     ) {
       return false;
     }
+    // Unknown purchase date: keep as proposal (resolver never auto-links it).
     if (
+      hasPurchaseDate(pkg) &&
       !isValidStockxBuyAfterCustomerOrder(line.shopifyCreatedAt, pkg.purchaseDate)
     ) {
       return false;
@@ -202,12 +204,65 @@ export function filterShopifyAwbFallbackCandidates(
   });
 }
 
+function hasPurchaseDate(pkg: Pick<InboundPackageLike, "purchaseDate">): boolean {
+  if (!pkg.purchaseDate) return false;
+  return !Number.isNaN(new Date(pkg.purchaseDate).getTime());
+}
+
+export type ExistingOrderMatchLink = {
+  shopifyLineItemId: string;
+  stockxAwb: string | null;
+  matchType: string | null;
+};
+
+/** Lines shipped from owned stock — a StockX parcel never belongs to them. */
+const NON_STOCKX_MATCH_TYPES = new Set([
+  "physical_fulfillment",
+  "fixed_price_cost",
+  "money_kickz_cost",
+  "local_auto",
+]);
+
+/**
+ * Drop open lines already claimed by another parcel (OrderMatch with a
+ * different AWB) or fulfilled from owned stock. Lines with no OrderMatch, or
+ * an OrderMatch without AWB, stay candidates.
+ */
+export function dropLinesLinkedElsewhere(
+  candidates: OpenShopifyLineCandidate[],
+  existing: ExistingOrderMatchLink[],
+  scannedAwbs: string[]
+): OpenShopifyLineCandidate[] {
+  const scanned = new Set(scannedAwbs.map((a) => normalizeSku(a)).filter(Boolean));
+  const byLine = new Map(existing.map((e) => [e.shopifyLineItemId, e]));
+  return candidates.filter((c) => {
+    const row = byLine.get(c.shopifyLineItemId);
+    if (!row) return true;
+    if (NON_STOCKX_MATCH_TYPES.has(String(row.matchType ?? "").toLowerCase())) return false;
+    const awb = normalizeSku(row.stockxAwb);
+    return !awb || scanned.has(awb);
+  });
+}
+
+export function sortOpenLinesFifo(
+  lines: OpenShopifyLineCandidate[]
+): OpenShopifyLineCandidate[] {
+  return [...lines].sort((a, b) => {
+    const am = new Date(a.shopifyCreatedAt).getTime();
+    const bm = new Date(b.shopifyCreatedAt).getTime();
+    return am - bm;
+  });
+}
+
 export function resolveShopifyAwbFallbackMatch(
   pkg: InboundPackageLike,
   openLines: OpenShopifyLineCandidate[]
 ): ShopifyAwbFallbackMatch {
-  const candidates = filterShopifyAwbFallbackCandidates(pkg, openLines);
+  const candidates = sortOpenLinesFifo(filterShopifyAwbFallbackCandidates(pkg, openLines));
   if (candidates.length === 0) return { status: "none" };
+  if (!hasPurchaseDate(pkg)) {
+    return { status: "ambiguous", candidates, reason: "no_purchase_date" };
+  }
   if (candidates.length === 1) {
     return {
       status: "exact",
@@ -215,16 +270,10 @@ export function resolveShopifyAwbFallbackMatch(
       reason: "exact_sku_size_causal",
     };
   }
-  // Prefer oldest customer order (FIFO) when still ambiguous after filters —
-  // but surface as ambiguous so UI confirms (operator must pick).
-  const sorted = [...candidates].sort((a, b) => {
-    const am = new Date(a.shopifyCreatedAt).getTime();
-    const bm = new Date(b.shopifyCreatedAt).getTime();
-    return am - bm;
-  });
+  // Oldest customer order first (FIFO) — operator must pick.
   return {
     status: "ambiguous",
-    candidates: sorted,
+    candidates,
     reason: "multiple_exact_sku_size_causal",
   };
 }

@@ -254,6 +254,10 @@ type ScanResult = {
       shopifyOrderName?: string | null;
       shopifyLineItemId?: string | null;
       shopifySku?: string | null;
+      shopifySizeEU?: string | null;
+      shopifySizeUnverified?: boolean;
+      /** Open Shopify line without OrderMatch — operator taps to link. */
+      shopifyNeedsLink?: boolean;
       decathlonOrderDbId?: string;
       decathlonOrderId?: string;
       decathlonOrderState?: string | null;
@@ -274,6 +278,29 @@ type ScanResult = {
     orderCancelledAt: string | null;
   } | null;
   shopifyMatchSuppressed?: boolean;
+  /** AWB without pre-link: open Shopify lines matched from the inbound StockX package. */
+  shopifyAwbFallback?: {
+    status: "exact" | "ambiguous" | "none";
+    reason?: string;
+    candidates?: Array<{
+      shopifyOrderId: string;
+      shopifyOrderName: string | null;
+      shopifyLineItemId: string;
+      shopifySku: string | null;
+      shopifySizeEU: string | null;
+      shopifyProductTitle: string | null;
+      shopifyCreatedAt: string;
+      remainingQuantity: number;
+    }>;
+    package?: {
+      awb: string;
+      sku: string | null;
+      sizeEU: string | null;
+      productName: string | null;
+      purchaseDate: string | null;
+      stockxAccountKey: string | null;
+    };
+  } | null;
   error?: { message?: string; code?: string };
 };
 
@@ -704,6 +731,7 @@ export default function ScanPage() {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [fulfillLoading, setFulfillLoading] = useState(false);
+  const [linkingLineItemId, setLinkingLineItemId] = useState<string | null>(null);
   const [fulfillResult, setFulfillResult] = useState<FulfillResponse | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -2462,6 +2490,48 @@ export default function ScanPage() {
     }
   };
 
+  /**
+   * Operator picked one Shopify proposal (unmatched AWB or GTIN). Server
+   * re-verifies it is still an open candidate and creates / backfills the
+   * OrderMatch link. Never auto-fulfills: the Fulfill button stays a tap.
+   */
+  const confirmShopifyProposal = async (
+    shopifyLineItemId: string,
+    source: "awb" | "gtin"
+  ) => {
+    const code = source === "gtin" ? result?.gtin?.gtin : result?.awb;
+    if (!code || !shopifyLineItemId) return;
+    setLinkingLineItemId(shopifyLineItemId);
+    try {
+      const res = await fetch("/api/scan-awb", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          code,
+          scanSessionKey,
+          confirmShopifyLineItemId: shopifyLineItemId,
+        }),
+      });
+      const data: ScanResult = await res.json();
+      if (!data.match || data.match.shopifyLineItemId !== shopifyLineItemId) {
+        window.alert(
+          "Link failed — order no longer open for this parcel. Rescan or match manually."
+        );
+        return;
+      }
+      setResult({
+        ...data,
+        manualSuggest: true,
+        manualShopifySuggest: source === "gtin" ? true : data.manualShopifySuggest,
+      });
+    } catch (err: any) {
+      window.alert(err?.message || "Link network error");
+    } finally {
+      setLinkingLineItemId(null);
+      focusInput();
+    }
+  };
+
   const handleFulfill = async () => {
     if (!result?.awb || !result?.match || result.galaxus || result.stxInboundBuy) return;
     await runFulfillFromScan(result, {
@@ -3030,6 +3100,63 @@ export default function ScanPage() {
               <div className="text-lg font-semibold">Status: {result.status}</div>
               <div className="text-sm text-gray-600">AWB: {result.awb || "—"}</div>
             </div>
+            {!result.match &&
+              result.shopifyAwbFallback?.status === "ambiguous" &&
+              (result.shopifyAwbFallback.candidates?.length ?? 0) > 0 && (
+                <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950">
+                  <div className="font-semibold">
+                    Parcel not linked to any order — pick the Shopify order it belongs to
+                  </div>
+                  {result.shopifyAwbFallback.package ? (
+                    <p className="text-sm mt-1">
+                      StockX package:{" "}
+                      <span className="font-mono">{result.shopifyAwbFallback.package.sku || "—"}</span>
+                      {result.shopifyAwbFallback.package.sizeEU
+                        ? ` · size ${result.shopifyAwbFallback.package.sizeEU}`
+                        : ""}
+                      {result.shopifyAwbFallback.package.productName
+                        ? ` · ${result.shopifyAwbFallback.package.productName}`
+                        : ""}
+                      {result.shopifyAwbFallback.package.purchaseDate
+                        ? ` · bought ${new Date(result.shopifyAwbFallback.package.purchaseDate).toLocaleDateString("de-CH")}`
+                        : " · purchase date unknown"}
+                    </p>
+                  ) : null}
+                  <p className="text-xs mt-1 text-amber-800">
+                    Oldest open order first. Linking does not print — press Fulfill after.
+                  </p>
+                  <div className="mt-2 flex flex-col gap-2">
+                    {(result.shopifyAwbFallback.candidates ?? []).map((c, idx) => (
+                      <div
+                        key={c.shopifyLineItemId}
+                        className="flex items-center justify-between gap-2 rounded border border-amber-200 bg-white px-3 py-2 text-sm"
+                      >
+                        <div>
+                          <span className="font-mono">{c.shopifyOrderName || c.shopifyOrderId}</span>
+                          {idx === 0 ? (
+                            <span className="ml-2 rounded bg-amber-200 px-1.5 py-0.5 text-[11px]">oldest</span>
+                          ) : null}
+                          <div className="text-xs text-gray-700">
+                            {new Date(c.shopifyCreatedAt).toLocaleDateString("de-CH")} ·{" "}
+                            {c.shopifyProductTitle || "—"}
+                            {c.shopifySizeEU ? ` · ${c.shopifySizeEU}` : ""}
+                            {c.shopifySku ? ` · ${c.shopifySku}` : ""}
+                            {c.remainingQuantity > 1 ? ` · ${c.remainingQuantity} open` : ""}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={fulfillLoading || linkingLineItemId !== null}
+                          onClick={() => void confirmShopifyProposal(c.shopifyLineItemId, "awb")}
+                          className="shrink-0 rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                        >
+                          {linkingLineItemId === c.shopifyLineItemId ? "Linking…" : "Link parcel"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             {result.stxInboundBuy && (
               <div className="mt-4 rounded-lg border border-fuchsia-300 bg-fuchsia-50 p-4 text-fuchsia-950">
                 <div className="font-semibold text-fuchsia-900">
@@ -3484,7 +3611,28 @@ export default function ScanPage() {
                               {(o.shipped ?? 0)}/{(o.reserved ?? 0)}
                               {o.warehouseMarkedShippedAt ? " · marked" : ""}
                             </td>
-                            <td className="py-1 font-mono text-[10px]">{refLabel}</td>
+                            <td className="py-1 font-mono text-[10px]">
+                              {refLabel}
+                              {channel === "shopify" && o.shopifyNeedsLink && !closed && o.shopifyLineItemId ? (
+                                <div className="mt-1 font-sans">
+                                  <span className="text-[10px] text-amber-800">
+                                    no StockX match
+                                    {o.shopifySizeEU ? ` · ${o.shopifySizeEU}` : ""}
+                                    {o.shopifySizeUnverified ? " · size unverified" : ""}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    disabled={fulfillLoading || linkingLineItemId !== null}
+                                    onClick={() =>
+                                      void confirmShopifyProposal(String(o.shopifyLineItemId), "gtin")
+                                    }
+                                    className="ml-2 rounded bg-emerald-700 px-2 py-0.5 text-[11px] font-medium text-white disabled:opacity-50"
+                                  >
+                                    {linkingLineItemId === o.shopifyLineItemId ? "Linking…" : "Link this order"}
+                                  </button>
+                                </div>
+                              ) : null}
+                            </td>
                           </tr>
                         );
                       })}

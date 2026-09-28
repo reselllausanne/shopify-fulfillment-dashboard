@@ -1,4 +1,5 @@
 import { prisma } from "@/app/lib/prisma";
+import { normalizeSize } from "@/app/lib/normalize";
 import {
   computeShipmentCoverageForOrders,
   loadDelrShipmentIdsForOrders,
@@ -13,6 +14,16 @@ import {
   type GalaxusDirectOpenUnit,
 } from "@/lib/galaxusDirectOpenUnits";
 import type { UnitSelectionDecision } from "@/lib/shopifyFulfillUnitSelection";
+import {
+  discoverOpenShopifyOrderHintsBySku,
+  loadExistingOrderMatchLinks,
+  loadLiveOpenShopifyLines,
+} from "@/app/lib/shopifyOpenLineCandidates";
+import {
+  sizesCompatible,
+  skuEquals,
+  type OpenShopifyLineCandidate,
+} from "@/app/lib/shopifyAwbFallback";
 
 const DECATHLON_TERMINAL_STATES = new Set([
   "CANCELED",
@@ -77,6 +88,11 @@ export type GtinOrderRow = {
   shopifyOrderName?: string | null;
   shopifyLineItemId?: string | null;
   shopifySku?: string | null;
+  shopifySizeEU?: string | null;
+  /** Shared style SKU and size could not be confirmed → show, never auto-fulfill. */
+  shopifySizeUnverified?: boolean;
+  /** Open Shopify line with no OrderMatch yet — operator tap links it (never auto). */
+  shopifyNeedsLink?: boolean;
   // Decathlon
   decathlonOrderDbId?: string;
   decathlonOrderId?: string;
@@ -293,18 +309,191 @@ async function loadGalaxusGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
   });
 }
 
-async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrderRow[]> {
-  const skuRows = await prisma.shopifyVariantLocationStock.findMany({
-    where: { gtin: { in: gtinCandidates }, sku: { not: null } },
-    select: { sku: true, gtin: true },
-    take: 40,
+export function sizeKeyForGtinMatch(value: string | null | undefined): string | null {
+  const n = normalizeSize(value);
+  if (!n) return null;
+  const key = n.replace(/^EU/, "");
+  return key || null;
+}
+
+/**
+ * Shopify SKU is sometimes a style code shared by every size variant. A GTIN
+ * resolves one size, so OrderMatch rows on a shared SKU must match that size.
+ * Unknown size on either side → keep row but never auto-fulfill it.
+ */
+export function filterShopifyMatchesByScannedSize<
+  T extends { shopifySku: string | null; shopifySizeEU: string | null },
+>(
+  matches: T[],
+  params: { sharedSkus: Set<string>; scannedSizeKeys: Set<string> }
+): Array<T & { sizeUnverified: boolean }> {
+  const out: Array<T & { sizeUnverified: boolean }> = [];
+  for (const m of matches) {
+    const sku = String(m.shopifySku ?? "").trim();
+    if (!params.sharedSkus.has(sku)) {
+      out.push({ ...m, sizeUnverified: false });
+      continue;
+    }
+    const matchKey = sizeKeyForGtinMatch(m.shopifySizeEU);
+    if (params.scannedSizeKeys.size === 0 || !matchKey) {
+      out.push({ ...m, sizeUnverified: true });
+      continue;
+    }
+    if (params.scannedSizeKeys.has(matchKey)) {
+      out.push({ ...m, sizeUnverified: false });
+    }
+  }
+  return out;
+}
+
+/**
+ * Live open Shopify lines (no OrderMatch) found by SKU for a scanned GTIN.
+ * - exact variant SKU from the GTIN, SKU unique to one variant → size implied
+ * - exact SKU shared by several sizes, or catalog style SKU → size must match
+ *   the GTIN size; unknown size → kept but unverified (never auto)
+ * - mismatching size → dropped
+ */
+export function classifyDiscoveredGtinLines(
+  lines: OpenShopifyLineCandidate[],
+  params: {
+    exactSkus: Set<string>;
+    sharedSkus: Set<string>;
+    styleSkus: Set<string>;
+    scannedSizes: string[];
+  }
+): Array<OpenShopifyLineCandidate & { sizeUnverified: boolean }> {
+  const upper = (s: string | null | undefined) => String(s ?? "").trim().toUpperCase();
+  const exact = new Set(Array.from(params.exactSkus).map(upper));
+  const shared = new Set(Array.from(params.sharedSkus).map(upper));
+  const out: Array<OpenShopifyLineCandidate & { sizeUnverified: boolean }> = [];
+  for (const line of lines) {
+    const sku = upper(line.shopifySku);
+    const isExact = exact.has(sku);
+    const isStyle =
+      !isExact && Array.from(params.styleSkus).some((s) => skuEquals(s, line.shopifySku));
+    if (!isExact && !isStyle) continue;
+    if (isExact && !shared.has(sku)) {
+      out.push({ ...line, sizeUnverified: false });
+      continue;
+    }
+    if (params.scannedSizes.length === 0 || (!line.shopifySizeEU && !line.shopifySku)) {
+      out.push({ ...line, sizeUnverified: true });
+      continue;
+    }
+    const sizeOk = params.scannedSizes.some((s) =>
+      sizesCompatible(s, line.shopifySizeEU, line.shopifySku, line.shopifyProductTitle)
+    );
+    if (sizeOk) out.push({ ...line, sizeUnverified: false });
+  }
+  return out;
+}
+
+async function discoverUnmatchedShopifyGtinRows(params: {
+  exactSkus: Set<string>;
+  sharedSkus: Set<string>;
+  styleSkus: Set<string>;
+  scannedSizes: string[];
+}): Promise<GtinOrderRow[]> {
+  const searchSkus = [...params.exactSkus, ...params.styleSkus];
+  if (searchSkus.length === 0) return [];
+  const hints = await discoverOpenShopifyOrderHintsBySku({ skus: searchSkus });
+  if (hints.length === 0) return [];
+  const live = await loadLiveOpenShopifyLines({
+    hints,
+    acceptSku: (sku) => Boolean(sku) && searchSkus.some((s) => skuEquals(s, sku)),
   });
-  const skus = Array.from(
-    new Set(skuRows.map((r) => String(r.sku ?? "").trim()).filter(Boolean))
+  const classified = classifyDiscoveredGtinLines(live, params);
+  if (classified.length === 0) return [];
+  // "No pre-existing match": any OrderMatch row already covers the line.
+  const existing = await loadExistingOrderMatchLinks(
+    classified.map((l) => l.shopifyLineItemId)
   );
+  const linked = new Set(existing.map((e) => e.shopifyLineItemId));
+  return classified
+    .filter((l) => !linked.has(l.shopifyLineItemId))
+    .map((l) => ({
+      channel: "shopify" as const,
+      lineId: l.shopifyLineItemId,
+      lineNumber: null,
+      productName: l.shopifyProductTitle ?? null,
+      quantity: l.remainingQuantity,
+      ordered: l.remainingQuantity,
+      shipped: 0,
+      reserved: 0,
+      remaining: l.remainingQuantity,
+      warehouseMarkedShippedAt: null,
+      orderDate: new Date(l.shopifyCreatedAt).toISOString(),
+      orderNumber: l.shopifyOrderName ?? null,
+      cancelledAt: null,
+      recipient: { name: null, city: null, postalCode: null, countryCode: null },
+      shopifyOrderId: l.shopifyOrderId,
+      shopifyOrderName: l.shopifyOrderName ?? null,
+      shopifyLineItemId: l.shopifyLineItemId,
+      shopifySku: l.shopifySku,
+      shopifySizeEU: l.shopifySizeEU,
+      shopifySizeUnverified: l.sizeUnverified,
+      shopifyNeedsLink: true,
+      hasAnyShipment: false,
+      hasStockxLink: false,
+    }));
+}
+
+async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrderRow[]> {
+  const [skuRows, supplierRows] = await Promise.all([
+    prisma.shopifyVariantLocationStock.findMany({
+      where: { gtin: { in: gtinCandidates }, sku: { not: null } },
+      select: { sku: true, gtin: true },
+      take: 40,
+    }),
+    prisma.supplierVariant.findMany({
+      where: { gtin: { in: gtinCandidates } },
+      select: { supplierSku: true, sizeRaw: true, sizeNormalized: true },
+      take: 20,
+    }),
+  ]);
+  const shopifyGtinSkus = new Set(
+    skuRows.map((r) => String(r.sku ?? "").trim()).filter(Boolean)
+  );
+  // Partner/catalog barcodes (e.g. NER 2000…) are not on the Shopify variant;
+  // reach the order via supplierSku, always size-checked below.
+  const supplierOnlySkus = new Set(
+    supplierRows
+      .flatMap((r) => {
+        const s = String(r.supplierSku ?? "").trim();
+        return [s, s.toUpperCase()];
+      })
+      .filter((s) => s && !shopifyGtinSkus.has(s))
+  );
+  const skus = Array.from(new Set([...shopifyGtinSkus, ...supplierOnlySkus]));
   if (skus.length === 0) return [];
 
-  const matches = await prisma.orderMatch.findMany({
+  const scannedSizeKeys = new Set(
+    supplierRows
+      .map((r) => sizeKeyForGtinMatch(r.sizeNormalized ?? r.sizeRaw))
+      .filter((k): k is string => Boolean(k))
+  );
+  const skuVariants = shopifyGtinSkus.size
+    ? await prisma.shopifyVariantLocationStock.findMany({
+        where: { sku: { in: Array.from(shopifyGtinSkus) } },
+        select: { sku: true, shopifyVariantId: true },
+        distinct: ["shopifyVariantId"],
+        take: 200,
+      })
+    : [];
+  const variantsBySku = new Map<string, Set<string>>();
+  for (const v of skuVariants) {
+    const sku = String(v.sku ?? "").trim();
+    if (!sku) continue;
+    const set = variantsBySku.get(sku) ?? new Set<string>();
+    set.add(v.shopifyVariantId);
+    variantsBySku.set(sku, set);
+  }
+  const sharedSkus = new Set<string>(supplierOnlySkus);
+  for (const [sku, variants] of variantsBySku) {
+    if (variants.size > 1) sharedSkus.add(sku);
+  }
+
+  const rawMatches = await prisma.orderMatch.findMany({
     where: {
       shopifySku: { in: skus },
       returnAppliedAt: null,
@@ -318,13 +507,33 @@ async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
       shopifyOrderName: true,
       shopifyLineItemId: true,
       shopifySku: true,
+      shopifySizeEU: true,
       shopifyProductTitle: true,
       shopifyCreatedAt: true,
       shopifyCustomerFirstName: true,
       shopifyCustomerLastName: true,
     },
   });
-  if (matches.length === 0) return [];
+  const matches = filterShopifyMatchesByScannedSize(rawMatches, {
+    sharedSkus,
+    scannedSizeKeys,
+  });
+  const discovered = await discoverUnmatchedShopifyGtinRows({
+    exactSkus: shopifyGtinSkus,
+    sharedSkus,
+    styleSkus: supplierOnlySkus,
+    scannedSizes: Array.from(
+      new Set(
+        supplierRows
+          .map((r) => String(r.sizeNormalized ?? r.sizeRaw ?? "").trim())
+          .filter(Boolean)
+      )
+    ),
+  }).catch((err) => {
+    console.warn("[GTIN-FALLBACK] Shopify discovery failed", err?.message || err);
+    return [] as GtinOrderRow[];
+  });
+  if (matches.length === 0) return discovered;
 
   const orderIds = Array.from(new Set(matches.map((m) => m.shopifyOrderId)));
   const [fulfillmentRows, shopifyOrders] = await Promise.all([
@@ -384,11 +593,14 @@ async function loadShopifyGtinOrders(gtinCandidates: string[]): Promise<GtinOrde
       shopifyOrderName: m.shopifyOrderName ?? orderNameById.get(m.shopifyOrderId) ?? null,
       shopifyLineItemId: m.shopifyLineItemId,
       shopifySku: m.shopifySku,
+      shopifySizeEU: m.shopifySizeEU,
+      shopifySizeUnverified: m.sizeUnverified,
       hasAnyShipment: false,
       hasStockxLink: false,
     });
   }
-  return rows;
+  const seenLines = new Set(rows.map((r) => r.shopifyLineItemId));
+  return [...rows, ...discovered.filter((d) => !seenLines.has(d.shopifyLineItemId))];
 }
 
 async function loadDecathlonGtinOrders(gtinCandidates: string[]): Promise<GtinOrderRow[]> {
@@ -497,10 +709,31 @@ function isOpen(row: GtinOrderRow): boolean {
 
 function isAutoFulfillable(row: GtinOrderRow): boolean {
   if (!isOpen(row)) return false;
-  if (row.channel === "shopify") return Boolean(row.shopifyLineItemId && row.shopifyOrderId);
+  if (row.channel === "shopify") {
+    return Boolean(
+      row.shopifyLineItemId &&
+        row.shopifyOrderId &&
+        !row.shopifySizeUnverified &&
+        !row.shopifyNeedsLink
+    );
+  }
   if (row.channel === "decathlon") return Boolean(row.decathlonOrderId && row.lineId);
   if (row.channel === "galaxus") return Boolean(row.isDirectDelivery && row.galaxusOrderDbId);
   return false;
+}
+
+/**
+ * Oldest open row that could claim this unit. If it is an unlinked Shopify
+ * order (needs tap), nothing is auto-claimed — a newer order must not win.
+ */
+export function pickGtinAutoRow(openOrdersOldestFirst: GtinOrderRow[]): GtinOrderRow | null {
+  const oldest =
+    openOrdersOldestFirst.find(
+      (r) =>
+        isAutoFulfillable(r) ||
+        (r.channel === "shopify" && r.shopifyNeedsLink && !r.shopifySizeUnverified && isOpen(r))
+    ) ?? null;
+  return oldest && isAutoFulfillable(oldest) ? oldest : null;
 }
 
 function autoChannelOf(row: GtinOrderRow): GtinAutoChannel | null {
@@ -566,12 +799,20 @@ export async function resolveGtinFallback(
 
   const autoDirectOrder =
     openOrders.find((o) => o.channel === "galaxus" && o.isDirectDelivery) ?? null;
-  const autoShopifyRow = openOrders.find((o) => o.channel === "shopify" && o.shopifyLineItemId) ?? null;
+  // FIFO: an older unlinked Shopify order (needs operator tap) blocks auto on a newer one.
+  const oldestVerifiedShopify =
+    openOrders.find(
+      (o) => o.channel === "shopify" && o.shopifyLineItemId && !o.shopifySizeUnverified
+    ) ?? null;
+  const autoShopifyRow =
+    oldestVerifiedShopify && !oldestVerifiedShopify.shopifyNeedsLink
+      ? oldestVerifiedShopify
+      : null;
   const autoDecathlonRow =
     openOrders.find((o) => o.channel === "decathlon" && o.decathlonOrderId) ?? null;
 
   // Oldest fulfillable open row across Galaxus direct / Shopify / Decathlon.
-  const autoRow = openOrders.find(isAutoFulfillable) ?? null;
+  const autoRow = pickGtinAutoRow(openOrders);
   const { autoChannel, requiresChannelChoice } = decideGtinAutoChannel({
     openDirect,
     openWarehouse,

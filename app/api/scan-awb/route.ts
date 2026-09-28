@@ -33,6 +33,7 @@ import {
 } from "@/app/lib/stockxInboundPackages";
 import { resolveVerifiedShopifyAwbFallback } from "@/app/lib/shopifyOpenLineCandidates";
 import type { OpenShopifyLineCandidate } from "@/app/lib/shopifyAwbFallback";
+import { ensureOrderMatchForScannedLine } from "@/app/lib/shopifyScanBackfill";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -257,6 +258,9 @@ export async function POST(req: NextRequest) {
     const rawCode = body?.code;
     const scanSessionKey = String(body?.scanSessionKey ?? "").trim() || null;
     scanSessionKeyForLog = scanSessionKey;
+    // Operator picked one Shopify proposal on /scan (never set by scanner input).
+    const confirmShopifyLineItemId =
+      String(body?.confirmShopifyLineItemId ?? "").trim() || null;
     const rawClean = String(rawCode ?? "").trim();
     rawCleanForLog = rawClean;
     // Include DHL JJD→10-digit AWB variants; StockX stores the short AWB, scanners often send JJD…
@@ -587,19 +591,27 @@ export async function POST(req: NextRequest) {
     } | null = null;
     let fallbackMatchRow: typeof match = null;
 
-    if (!effectiveMatch && !stxInboundBuy && awbCandidates.length > 0) {
+    const noOtherChannelHit =
+      !galaxusMatch && !decathlonMatch && !galaxusWarehouseShipment && !decathlonWarehouseShipment;
+    if (!effectiveMatch && !stxInboundBuy && noOtherChannelHit && awbCandidates.length > 0) {
       const pkg =
         (await findStockxInboundPackageByAwb(awbCandidates[0])) ||
         (await findStockxInboundPackageByAwb(awb));
-      if (pkg?.sku) {
-        const resolved = await resolveVerifiedShopifyAwbFallback({
-          awb: String(pkg.awb),
-          sku: pkg.sku,
-          sizeEU: pkg.sizeEU,
-          productName: pkg.productName,
-          purchaseDate: pkg.purchaseDate,
-          stockxAccountKey: pkg.stockxAccountKey,
-        });
+      const pkgIsGalaxus =
+        Boolean(pkg?.linkedGalaxusOrderId) ||
+        String(pkg?.channelHint ?? "").toLowerCase() === "galaxus";
+      if (pkg?.sku && !pkgIsGalaxus) {
+        const resolved = await resolveVerifiedShopifyAwbFallback(
+          {
+            awb: String(pkg.awb),
+            sku: pkg.sku,
+            sizeEU: pkg.sizeEU,
+            productName: pkg.productName,
+            purchaseDate: pkg.purchaseDate,
+            stockxAccountKey: pkg.stockxAccountKey,
+          },
+          { scannedAwbs: awbCandidates }
+        );
         shopifyAwbFallback = {
           status: resolved.status,
           reason: resolved.status === "none" ? undefined : resolved.reason,
@@ -618,29 +630,43 @@ export async function POST(req: NextRequest) {
             stockxAccountKey: pkg.stockxAccountKey ?? null,
           },
         };
-        if (resolved.status === "exact") {
-          const c = resolved.candidate;
-          await prisma.orderMatch
-            .updateMany({
-              where: {
-                shopifyLineItemId: c.shopifyLineItemId,
-                OR: [{ stockxAwb: null }, { stockxAwb: "" }],
+        // Exact → backfill automatically. Operator tap (confirmShopifyLineItemId)
+        // → backfill the picked proposal, only if it is still a verified candidate.
+        const picked =
+          resolved.status === "exact"
+            ? resolved.candidate
+            : confirmShopifyLineItemId && resolved.status === "ambiguous"
+              ? resolved.candidates.find(
+                  (c) => c.shopifyLineItemId === confirmShopifyLineItemId
+                ) ?? null
+              : null;
+        if (picked) {
+          try {
+            fallbackMatchRow = (await ensureOrderMatchForScannedLine({
+              candidate: picked,
+              awb: String(pkg.awb),
+              reason:
+                resolved.status === "exact" ? "scan_awb_exact" : "scan_awb_operator_pick",
+              stockx: {
+                orderNumber: pkg.stockxOrderNumber ?? null,
+                productName: pkg.productName ?? null,
+                sizeEU: pkg.sizeEU ?? null,
+                sku: pkg.sku ?? null,
+                purchaseDate: pkg.purchaseDate ?? null,
               },
-              data: { stockxAwb: String(pkg.awb) },
-            })
-            .catch(() => null);
-          await upsertStockxInboundPackage({
-            awb: String(pkg.awb),
-            sku: pkg.sku,
-            sizeEU: pkg.sizeEU,
-            productName: pkg.productName,
-            purchaseDate: pkg.purchaseDate,
-            stockxAccountKey: pkg.stockxAccountKey,
-            channelHint: "shopify",
-          });
-          fallbackMatchRow = await prisma.orderMatch.findFirst({
-            where: { shopifyLineItemId: c.shopifyLineItemId },
-          });
+            })) as typeof match;
+            await upsertStockxInboundPackage({
+              awb: String(pkg.awb),
+              sku: pkg.sku,
+              sizeEU: pkg.sizeEU,
+              productName: pkg.productName,
+              purchaseDate: pkg.purchaseDate,
+              stockxAccountKey: pkg.stockxAccountKey,
+              channelHint: "shopify",
+            });
+          } catch (err: any) {
+            console.error("[SCAN-AWB] Shopify backfill failed:", err?.message || err);
+          }
         }
       } else {
         shopifyAwbFallback = { status: "none" };
@@ -691,12 +717,47 @@ export async function POST(req: NextRequest) {
         ? await resolveGtinFallback(gtinCandidates)
         : null;
 
+    // Operator tapped an unlinked Shopify proposal from a GTIN scan → create the
+    // OrderMatch link (no AWB) so gtinFulfill can resolve the line.
+    let gtinConfirmedMatchRow: typeof match = null;
+    if (confirmShopifyLineItemId && gtinFallback && !resolvedShopifyMatch) {
+      const row = gtinFallback.orders.find(
+        (o) =>
+          o.channel === "shopify" &&
+          o.shopifyLineItemId === confirmShopifyLineItemId &&
+          o.shopifyOrderId &&
+          o.remaining > 0 &&
+          !o.cancelledAt
+      );
+      if (row?.shopifyLineItemId && row.shopifyOrderId) {
+        try {
+          gtinConfirmedMatchRow = (await ensureOrderMatchForScannedLine({
+            candidate: {
+              shopifyOrderId: row.shopifyOrderId,
+              shopifyOrderName: row.shopifyOrderName ?? null,
+              shopifyLineItemId: row.shopifyLineItemId,
+              shopifySku: row.shopifySku ?? null,
+              shopifySizeEU: row.shopifySizeEU ?? null,
+              shopifyProductTitle: row.productName,
+              shopifyCreatedAt: row.orderDate,
+              remainingQuantity: row.remaining,
+            },
+            awb: null,
+            reason: "scan_gtin_operator_pick",
+          })) as typeof match;
+        } catch (err: any) {
+          console.error("[SCAN-AWB] GTIN Shopify backfill failed:", err?.message || err);
+        }
+      }
+    }
+    const shopifyMatchForPayload = resolvedShopifyMatch || gtinConfirmedMatchRow;
+
     const hasAnyMatch = hasShipmentMatch || Boolean(gtinFallback);
     const status: ScanStatus = hasAnyMatch ? "FOUND" : "NOT_FOUND";
 
     let shopifyMatchPayload: Record<string, unknown> | null = null;
-    if (resolvedShopifyMatch) {
-      const match = resolvedShopifyMatch;
+    if (shopifyMatchForPayload) {
+      const match = shopifyMatchForPayload;
       const base = {
         shopifyOrderId: match.shopifyOrderId,
         shopifyOrderName: match.shopifyOrderName,
