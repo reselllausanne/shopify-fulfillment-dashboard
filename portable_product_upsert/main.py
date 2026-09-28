@@ -2040,28 +2040,38 @@ def build_description(original_description, traits, title="", sku="", product_da
             for b in bc_sorted if isinstance(b, dict) and b.get("value")
         )
 
+    gender_fr = {
+        "Men": "Homme",
+        "Women": "Femme",
+        "Unisex": "Unisexe",
+        "Child": "Enfant",
+        "Preschool": "Enfant",
+        "Toddler": "Bébé",
+        "Infant": "Bébé",
+    }.get(gender, gender)
+
     # Structured details block (always appended or used as base).
     lines = []
     if colorway:
-        lines.append(f"<strong>Colorway:</strong> {colorway}")
+        lines.append(f"<strong>Coloris :</strong> {colorway}")
     if style_id:
-        lines.append(f"<strong>Style Code:</strong> {style_id}")
+        lines.append(f"<strong>Code style :</strong> {style_id}")
     if rel_date:
-        lines.append(f"<strong>Release Date:</strong> {rel_date}")
+        lines.append(f"<strong>Date de sortie :</strong> {rel_date}")
     if retail:
-        lines.append(f"<strong>Retail Price:</strong> {retail} CHF")
+        lines.append(f"<strong>Prix de vente conseillé :</strong> {retail} CHF")
     if silhouette:
-        lines.append(f"<strong>Silhouette:</strong> {silhouette}")
+        lines.append(f"<strong>Silhouette :</strong> {silhouette}")
     if material:
-        lines.append(f"<strong>Material:</strong> {material}")
-    if gender:
-        lines.append(f"<strong>Gender:</strong> {gender}")
+        lines.append(f"<strong>Matière :</strong> {material}")
+    if gender_fr:
+        lines.append(f"<strong>Genre :</strong> {gender_fr}")
     if country:
-        lines.append(f"<strong>Country of Manufacture:</strong> {country}")
+        lines.append(f"<strong>Pays de fabrication :</strong> {country}")
     if cat_label:
-        lines.append(f"<strong>Category:</strong> {cat_label}")
+        lines.append(f"<strong>Catégorie :</strong> {cat_label}")
     if sku:
-        lines.append(f"<strong>SKU:</strong> {sku}")
+        lines.append(f"<strong>SKU :</strong> {sku}")
 
     details_html = "<br>".join(lines) if lines else ""
 
@@ -2072,9 +2082,9 @@ def build_description(original_description, traits, title="", sku="", product_da
         return base
 
     # No StockX description — generate a full SEO block.
-    brand_str = f" by {brand}" if brand else ""
-    gender_str = f" — {gender}" if gender else ""
-    colorway_str = f" in {colorway}" if colorway else ""
+    brand_str = f" de {brand}" if brand else ""
+    gender_str = f" — {gender_fr}" if gender_fr else ""
+    colorway_str = f", coloris {colorway}" if colorway else ""
     intro = (
         f"<p>Découvrez {title}{brand_str}{colorway_str}{gender_str}. "
         f"Disponible chez Resell Lausanne, chaque article est authentifié et vérifié manuellement avant expédition. "
