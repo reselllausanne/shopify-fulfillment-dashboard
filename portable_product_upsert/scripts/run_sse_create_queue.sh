@@ -21,6 +21,8 @@ flock -n 9 || exit 0
 cd "${ROOT}"
 {
   echo "=== $(date -Is) create queue run ==="
-  "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked --limit 500
+  # Hard cap: a stuck Shopify socket once held this flock for 9 days.
+  timeout --kill-after=60 "${SSE_CREATE_QUEUE_TIMEOUT_SEC:-10800}" \
+    "${PYTHON}" main_from_db.py --db-api "${API}" --status untracked --limit 500
   echo "=== exit=$? ==="
 } >> "${LOG}" 2>&1

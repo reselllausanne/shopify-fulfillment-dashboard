@@ -72,7 +72,9 @@ def _run_query(query, variables=None, max_retries=3, delay=5):
     
     for attempt in range(max_retries):
         try:
-            response = requests.post(SHOP_URL, json=payload, headers=HEADERS)
+            # (connect, read). Without a read timeout a half-dead socket blocked
+            # the create cron for 9 days while holding its flock.
+            response = requests.post(SHOP_URL, json=payload, headers=HEADERS, timeout=(15, 120))
             
             # ========== SHOPIFY API RESPONSE LOGGING ==========
             if VERBOSE_SHOPIFY_HTTP:
