@@ -10,7 +10,7 @@ import {
 } from "@/shopify/restock/shopifyRestockInventory";
 
 export type ShopifyPaidPhysicalSaleInput = {
-  gtin: string;
+  gtin: string | null;
   sku?: string | null;
   variantId?: string | null;
   lineItemId?: string | null;
@@ -111,7 +111,41 @@ export async function processShopifyPaidPhysicalSale(
   const revenue = Number(input.revenue) || 0;
 
   if (!gtin) {
-    return { isPhysicalStoreSale: false, lotConsumed: false, refreshAlreadyRan: false, warnings: ["empty_gtin"] };
+    // Still try lot consume by SKU/variant (physical store sale without barcode).
+    let consumed: Awaited<ReturnType<typeof tryConsumeLocalStockLot>> = null;
+    try {
+      consumed = await tryConsumeLocalStockLot({
+        shopifySku: sku,
+        shopifyVariantId: variantId,
+        revenue,
+        quantity: 1,
+      });
+    } catch (err: any) {
+      warnings.push(`lot consume: ${err?.message ?? err}`);
+    }
+    if (consumed && lineItemGid) {
+      try {
+        const side = await applyLocalStockSaleSideEffects({
+          consumed,
+          shopifyLineItemId: lineItemGid,
+        });
+        warnings.push(...side.warnings);
+        return {
+          isPhysicalStoreSale: true,
+          lotConsumed: true,
+          refreshAlreadyRan: true,
+          warnings,
+        };
+      } catch (err: any) {
+        warnings.push(`local stock side effects: ${err?.message ?? err}`);
+      }
+    }
+    return {
+      isPhysicalStoreSale: Boolean(consumed),
+      lotConsumed: Boolean(consumed),
+      refreshAlreadyRan: false,
+      warnings,
+    };
   }
 
   const mirrorRows = await loadPhysicalMirrorLocationRowsByGtin(gtin);

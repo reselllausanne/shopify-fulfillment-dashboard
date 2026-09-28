@@ -18,7 +18,11 @@ import { isJmoneyPriceLockNote } from "@/shopify/inventory/locationConfig";
 import {
   decrementShopifyWebSaleStock,
   syncMirrorForGtinFromShopify,
+  syncMirrorForVariantFromShopify,
 } from "@/shopify/orders/webSaleInventory";
+import {
+  resolvePostSaleProductIdentifier,
+} from "@/shopify/orders/saleIdentity";
 
 async function hasJmoneyPriceLockInDb(gtin: string): Promise<boolean> {
   const prismaAny = prisma as any;
@@ -74,6 +78,8 @@ export type PostSaleRefreshOptions = {
   lineItemId?: string | null;
   /** Exact sold Shopify variant (preferred when GTIN exists on duplicate products). */
   variantId?: string | null;
+  /** Shopify line SKU — KickDB uuid`-OS` when barcode missing. */
+  sku?: string | null;
   /** Stock already decremented (marketplace physical route) — skip web decrement. */
   skipInventoryDecrement?: boolean;
   /** Local physical sale — skip main.py dropship relist (convergence only). */
@@ -112,17 +118,25 @@ export async function refreshAfterShopifySale(
 ): Promise<PostSaleRefreshResult> {
   const cleanGtin = String(gtin ?? "").trim();
   const warnings: string[] = [];
-  const base: PostSaleRefreshResult = { gtin: cleanGtin, warnings };
+  const preferredVariantId = String(options.variantId ?? "").trim() || null;
+  const sku = String(options.sku ?? "").trim() || null;
+  let effectiveGtin = cleanGtin;
 
-  if (!cleanGtin) {
-    return { ...base, warnings: ["empty_gtin"] };
+  // GTIN optional when Shopify variant id is known (no-barcode Website stock sales).
+  if (!cleanGtin && !preferredVariantId) {
+    return { gtin: "", warnings: ["empty_gtin"] };
   }
 
   const inventory: NonNullable<PostSaleRefreshResult["inventory"]> = {};
-  const preferredVariantId = String(options.variantId ?? "").trim() || null;
 
   try {
-    await syncMirrorForGtinFromShopify(cleanGtin, { preferredVariantId });
+    if (cleanGtin) {
+      await syncMirrorForGtinFromShopify(cleanGtin, { preferredVariantId });
+    } else if (preferredVariantId) {
+      const mirror = await syncMirrorForVariantFromShopify(preferredVariantId);
+      if (mirror.gtin) effectiveGtin = mirror.gtin;
+      warnings.push("mirror synced by shopifyVariantId (no GTIN on sale line)");
+    }
     inventory.mirrorSynced = true;
   } catch (err: any) {
     warnings.push(`mirror sync: ${err?.message ?? err}`);
@@ -137,36 +151,44 @@ export async function refreshAfterShopifySale(
 
   let isEssentials = false;
   let isAdminOnly = false;
-  let shopifyMatchVariantId: string | null = null;
+  let shopifyMatchVariantId: string | null = preferredVariantId;
   try {
-    const { match } = await findShopifyVariantByGtin(cleanGtin);
-    isEssentials = isEssentialsShopifyVariant(match);
-    isAdminOnly = isAdminOnlyShopifyVariant(match?.variantId, match?.productId);
-    shopifyMatchVariantId = match?.variantId ?? null;
+    if (effectiveGtin) {
+      const { match } = await findShopifyVariantByGtin(effectiveGtin);
+      isEssentials = isEssentialsShopifyVariant(match);
+      isAdminOnly = isAdminOnlyShopifyVariant(match?.variantId, match?.productId);
+      shopifyMatchVariantId = match?.variantId ?? preferredVariantId;
+    } else if (preferredVariantId) {
+      // No GTIN — essentials/admin checks need variant tags; converge loads detail.
+      isEssentials = false;
+      isAdminOnly = isAdminOnlyShopifyVariant(preferredVariantId, null);
+    }
   } catch {
     // Non-fatal — fall through to StockX refresh attempt.
   }
 
   const [dbJmoneyLocked, shopifyJmoneyLocked] = await Promise.all([
-    hasJmoneyPriceLockInDb(cleanGtin),
+    effectiveGtin ? hasJmoneyPriceLockInDb(effectiveGtin) : Promise.resolve(false),
     hasJmoneyPriceLockOnShopify(preferredVariantId ?? shopifyMatchVariantId),
   ]);
   const jmoneyLocked = dbJmoneyLocked || shopifyJmoneyLocked;
   if (jmoneyLocked) {
     warnings.push("JMoney Kickz price lock — unlock/reprice skipped");
-  } else if (!isAdminOnly) {
-    const unlock = await unlockShopifyPriceByBarcode(cleanGtin);
+  } else if (!isAdminOnly && effectiveGtin) {
+    const unlock = await unlockShopifyPriceByBarcode(effectiveGtin);
     if (!unlock.ok && unlock.error && unlock.error !== "empty_barcode") {
       warnings.push(`unlock: ${unlock.error}`);
     }
-  } else {
+  } else if (!isAdminOnly && !effectiveGtin) {
+    warnings.push("no GTIN — price unlock by barcode skipped");
+  } else if (isAdminOnly) {
     warnings.push("Admin-only Shopify product — price unlock skipped");
   }
 
   let convergence: ConvergeVariantResult | undefined;
   const afterSale = Boolean(options.forceMarketPrice) || soldQty > 0;
   try {
-    convergence = await convergeVariant(cleanGtin, {
+    convergence = await convergeVariant(effectiveGtin, {
       afterWebSale: afterSale,
       preferredVariantId,
     });
@@ -180,13 +202,24 @@ export async function refreshAfterShopifySale(
   let shopifyRefresh: PostSaleRefreshResult["shopifyRefresh"];
   const stillLiquidation = convergence?.desired === "liquidation";
 
+  const { identifier: productIdentifier } = await resolvePostSaleProductIdentifier({
+    gtin: effectiveGtin || null,
+    sku,
+  });
+
   let kickdbSync: PostSaleRefreshResult["kickdbSync"];
   if (isEssentials || isAdminOnly || jmoneyLocked) {
     kickdbSync = { ok: true, updated: 0, error: null };
   } else if (!stillLiquidation) {
     // Fresh KickDB → STX DB before Shopify upsert (price + stock source of truth).
     try {
-      kickdbSync = await syncKickdbBufferAndStxForGtin(cleanGtin);
+      if (effectiveGtin) {
+        kickdbSync = await syncKickdbBufferAndStxForGtin(effectiveGtin);
+      } else if (productIdentifier) {
+        kickdbSync = await syncKickdbBufferAndStxForIdentifier(productIdentifier);
+      } else {
+        kickdbSync = { ok: false, error: "no_kickdb_identifier" };
+      }
       if (!kickdbSync.ok) {
         warnings.push(`kickdb sync: ${kickdbSync.error ?? "failed"}`);
       }
@@ -210,9 +243,12 @@ export async function refreshAfterShopifySale(
     shopifyRefresh = { ok: true, action: "skipped_liquidation", error: null };
   } else if (skipDropshipRelist) {
     shopifyRefresh = { ok: true, action: "skipped_local_physical_sale", error: null };
+  } else if (!productIdentifier) {
+    shopifyRefresh = { ok: false, action: null, error: "no_product_identifier" };
+    warnings.push("shopify refresh: no GTIN/KickDB slug — skipped main.py upsert");
   } else {
     // Full variant recreate from live KickDB: market price, Chemin qty (0 when no ask).
-    const refresh = await createProductFullFlow(cleanGtin);
+    const refresh = await createProductFullFlow(productIdentifier);
     shopifyRefresh = {
       ok: refresh.ok,
       action: refresh.action,
@@ -230,11 +266,12 @@ export async function refreshAfterShopifySale(
     !stillLiquidation &&
     soldQty > 0 &&
     options.orderId &&
-    shopifyRefresh?.ok
+    shopifyRefresh?.ok &&
+    effectiveGtin
   ) {
     try {
       const post = await decrementShopifyWebSaleStock({
-        gtin: cleanGtin,
+        gtin: effectiveGtin,
         quantity: soldQty,
         orderId: options.orderId,
         lineItemId: options.lineItemId,
@@ -244,17 +281,37 @@ export async function refreshAfterShopifySale(
       inventory.decremented = (inventory.decremented ?? 0) + post.decremented;
       if (post.warnings.length) warnings.push(...post.warnings.map((w) => `inventory: ${w}`));
       if (post.decremented > 0) {
-        await syncMirrorForGtinFromShopify(cleanGtin, { preferredVariantId });
+        await syncMirrorForGtinFromShopify(effectiveGtin, { preferredVariantId });
       }
     } catch (err: any) {
       warnings.push(`inventory post-refresh decrement: ${err?.message ?? err}`);
+    }
+  } else if (
+    !options.skipInventoryDecrement &&
+    !stillLiquidation &&
+    soldQty > 0 &&
+    options.orderId &&
+    shopifyRefresh?.ok &&
+    !effectiveGtin &&
+    preferredVariantId
+  ) {
+    // No GTIN: re-sync mirror after main.py so Website stock reflects live qty.
+    try {
+      await syncMirrorForVariantFromShopify(preferredVariantId);
+      inventory.mirrorSynced = true;
+    } catch (err: any) {
+      warnings.push(`inventory post-refresh mirror: ${err?.message ?? err}`);
     }
   }
 
   if (stillLiquidation && !isEssentials && !isAdminOnly) {
     try {
-      kickdbSync = await syncKickdbBufferAndStxForGtin(cleanGtin);
-      if (!kickdbSync.ok) {
+      if (effectiveGtin) {
+        kickdbSync = await syncKickdbBufferAndStxForGtin(effectiveGtin);
+      } else if (productIdentifier) {
+        kickdbSync = await syncKickdbBufferAndStxForIdentifier(productIdentifier);
+      }
+      if (kickdbSync && !kickdbSync.ok) {
         warnings.push(`kickdb sync: ${kickdbSync.error ?? "failed"}`);
       }
     } catch (err: any) {
@@ -264,14 +321,16 @@ export async function refreshAfterShopifySale(
   }
 
   let channelSyncScheduled = false;
-  try {
-    const { providerKey, synthetic } = await resolveProviderKeyForGtin(cleanGtin);
-    if (!synthetic && providerKey) {
-      scheduleMarketplaceStockPush({ providerKeys: [providerKey] });
-      channelSyncScheduled = true;
+  if (effectiveGtin) {
+    try {
+      const { providerKey, synthetic } = await resolveProviderKeyForGtin(effectiveGtin);
+      if (!synthetic && providerKey) {
+        scheduleMarketplaceStockPush({ providerKeys: [providerKey] });
+        channelSyncScheduled = true;
+      }
+    } catch (err: any) {
+      warnings.push(`channel sync: ${err?.message ?? err}`);
     }
-  } catch (err: any) {
-    warnings.push(`channel sync: ${err?.message ?? err}`);
   }
 
   if (inventory.mirrorSynced || inventory.decremented != null) {
@@ -279,7 +338,7 @@ export async function refreshAfterShopifySale(
   }
 
   return {
-    gtin: cleanGtin,
+    gtin: effectiveGtin,
     shopifyRefresh,
     kickdbSync,
     convergence,
@@ -290,12 +349,12 @@ export async function refreshAfterShopifySale(
 }
 
 /** Pull fresh KickDB payload → buffer + STX SupplierVariant price/stock (marketplace DB). */
-async function syncKickdbBufferAndStxForGtin(gtin: string): Promise<{
+async function syncKickdbBufferAndStxForIdentifier(identifier: string): Promise<{
   ok: boolean;
   updated?: number;
   error?: string | null;
 }> {
-  const slug = await resolveKickdbSlugForGtin(gtin);
+  const slug = String(identifier ?? "").trim();
   if (!slug) {
     return { ok: false, error: "no_kickdb_slug" };
   }
@@ -386,4 +445,16 @@ async function syncKickdbBufferAndStxForGtin(gtin: string): Promise<{
 
   const ingest = await ingestStxFromRawPayload(data, kickdbProductId);
   return { ok: true, updated: ingest.updated + ingest.created };
+}
+
+async function syncKickdbBufferAndStxForGtin(gtin: string): Promise<{
+  ok: boolean;
+  updated?: number;
+  error?: string | null;
+}> {
+  const slug = await resolveKickdbSlugForGtin(gtin);
+  if (!slug) {
+    return { ok: false, error: "no_kickdb_slug" };
+  }
+  return syncKickdbBufferAndStxForIdentifier(slug);
 }
