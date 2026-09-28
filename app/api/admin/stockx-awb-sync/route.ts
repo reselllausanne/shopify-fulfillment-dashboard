@@ -35,16 +35,27 @@ export async function POST(req: NextRequest) {
     const limit = Number(body?.limit ?? 60);
     const dryRun = Boolean(body?.dryRun ?? false);
 
+    const runAutoLinkSweep = () =>
+      dryRun || body?.skipGalaxusAutoLink === true
+        ? Promise.resolve(null)
+        : runGalaxusStockxAutoLinkSweep({
+            days: Number(body?.galaxusAutoLinkDays ?? 30),
+            budgetMs: Math.max(30_000, 600_000 - (Date.now() - startedAt)),
+          }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
+
     const refresh = await refreshStockxToken({ force: forceRefresh });
     const token = refresh.token ?? (await readServerStockxToken())?.token ?? null;
 
     if (!token) {
+      // Sweep uses every valid account token (e.g. Galaxus file), not only the dashboard one.
+      const galaxusAutoLink = await runAutoLinkSweep();
       return NextResponse.json(
         {
           ok: false,
           error: refresh.error || "No valid StockX token",
           needsManualLogin: refresh.needsManualLogin,
           refresh,
+          galaxusAutoLink,
         },
         { status: 401 }
       );
@@ -55,13 +66,7 @@ export async function POST(req: NextRequest) {
     const galaxus = await runGalaxusAwbBackfill(shared);
     const decathlon = await runDecathlonAwbBackfill(shared);
 
-    const galaxusAutoLink =
-      dryRun || body?.skipGalaxusAutoLink === true
-        ? null
-        : await runGalaxusStockxAutoLinkSweep({
-            days: Number(body?.galaxusAutoLinkDays ?? 30),
-            budgetMs: Math.max(30_000, 600_000 - (Date.now() - startedAt)),
-          }).catch((err: any) => ({ ok: false, error: String(err?.message ?? err) }));
+    const galaxusAutoLink = await runAutoLinkSweep();
 
     const abortedReason =
       shopify.abortedReason || galaxus.abortedReason || decathlon.abortedReason || null;
