@@ -52,10 +52,11 @@ const MAX_PRICE = num("max-price", 5000);
 const PROGRESS_EVERY = Math.max(1, Math.floor(num("progress-every", 200)));
 
 const VARIANTS_QUERY = /* GraphQL */ `
-query FastRepriceProduct($id: ID!) {
+query FastRepriceProduct($id: ID!, $first: Int!) {
   product(id: $id) {
     id
-    variants(first: 250) {
+    variants(first: $first) {
+      pageInfo { hasNextPage }
       nodes {
         id
         title
@@ -200,6 +201,7 @@ async function main() {
       product: {
         id: string;
         variants: {
+          pageInfo: { hasNextPage: boolean };
           nodes: Array<{
             id: string;
             title: string | null;
@@ -212,10 +214,20 @@ async function main() {
       } | null;
     };
     try {
-      const res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
+      // Shopify throttles on *requested* cost (scales with `first`); most
+      // products have < 40 sizes, so ask small and refetch only when truncated.
+      let res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
         id: productGid,
+        first: 80,
       });
       if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
+      if (res.data?.product?.variants?.pageInfo?.hasNextPage) {
+        res = await shopifyGraphQL<typeof productData>(VARIANTS_QUERY, {
+          id: productGid,
+          first: 250,
+        });
+        if (res.errors?.length) throw new Error(res.errors.map((e) => e.message).join("; "));
+      }
       productData = res.data;
     } catch (err) {
       productErrors += 1;
