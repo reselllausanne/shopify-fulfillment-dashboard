@@ -2,6 +2,9 @@
  * Dry-run matching simulation for Matching Review Lab.
  * Reuses matchShopifyToSupplier + Galaxus VARIANT_ID causal FIFO.
  * Never writes OrderMatch / GalaxusStockxMatch.
+ *
+ * Product identity first (name → SKU → size inside prod matcher). Causal is a
+ * hard filter inside those paths — not a reason to spam every unrelated buy.
  */
 
 import {
@@ -13,8 +16,14 @@ import {
   computeCausalTimeDiffHours,
   isValidStockxBuyAfterCustomerOrder,
 } from "@/app/lib/stockxCausal";
+import {
+  localStockMatchRef,
+  shouldAutoLocalStockMatch,
+} from "@/galaxus/orders/localStockMatch";
+import { resolveInStockFixedPrice } from "@/shopify/inventory/inStockFixedPrice";
 import { accountKeyMatchesChannel } from "./accountKeys";
 import { requiresGenderOrSizeSystemReview } from "./genderReview";
+import { normalizeSkuKey } from "./normalize";
 import type {
   LabClientUnit,
   LabMatchProposal,
@@ -58,38 +67,98 @@ function asNormalized(buy: LabStockxBuy): NormalizedSupplierOrder {
   };
 }
 
+/** Mirror prod name gate (≥95% word overlap) for near-miss refusals only. */
+function productNameLooksSame(a: string, b: string): boolean {
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  const n1 = norm(a);
+  const n2 = norm(b);
+  if (!n1 || !n2) return false;
+  if (n1 === n2) return true;
+  const words1 = new Set(n1.split(/\s+/).filter((w) => w.length > 2 && !/^\d+(\.\d+)?$/.test(w)));
+  const words2 = new Set(n2.split(/\s+/).filter((w) => w.length > 2 && !/^\d+(\.\d+)?$/.test(w)));
+  if (words1.size === 0 || words2.size === 0) return false;
+  const intersection = [...words1].filter((w) => words2.has(w)).length;
+  const union = new Set([...words1, ...words2]).size;
+  return union > 0 && intersection / union >= 0.95;
+}
+
+/**
+ * Same product family as the client unit? Name / SKU / variant — not date.
+ * Used only to decide whether WRONG_CAUSAL_DATE is a meaningful refusal.
+ */
+function isSameProductCandidate(unit: LabClientUnit, buy: LabStockxBuy): boolean {
+  const unitVid = String(unit.stockxVariantId ?? "").trim();
+  const buyVid = String(buy.productVariantId ?? "").trim();
+  if (unitVid && buyVid && unitVid === buyVid) return true;
+
+  const unitSku = normalizeSkuKey(unit.sku || unit.styleId);
+  const buySku = normalizeSkuKey(buy.skuKey);
+  if (unitSku && buySku && unitSku.length >= 6 && buySku.length >= 6) {
+    if (unitSku === buySku || unitSku.includes(buySku) || buySku.includes(unitSku)) {
+      return true;
+    }
+  }
+
+  const clientTitle = String(unit.productTitle ?? unit.shopifyLine?.title ?? "");
+  const buyTitle = String(buy.productTitle ?? buy.productName ?? "");
+  return productNameLooksSame(clientTitle, buyTitle);
+}
+
+/**
+ * Pre-filter like Galaxus match route: claim + account only.
+ * Causal stays inside VARIANT_ID / matchShopifyToSupplier (prod).
+ */
 function filterAvailableBuys(
   unit: LabClientUnit,
   buys: LabStockxBuy[],
   usedNumbers: Set<string>,
   usedIds: Set<string>,
   enforceAccount: boolean
-): { available: LabStockxBuy[]; refusals: string[] } {
+): { available: LabStockxBuy[]; refusals: string[]; productNearMisses: LabStockxBuy[] } {
   const refusals: string[] = [];
   const available: LabStockxBuy[] = [];
+  const productNearMisses: LabStockxBuy[] = [];
 
   for (const buy of buys) {
     const num = String(buy.supplierOrderNumber ?? "").trim();
     const id = String(buy.orderId ?? "").trim();
     if (num && usedNumbers.has(num)) {
-      refusals.push(`ALREADY_CONSUMED:${num}`);
+      if (isSameProductCandidate(unit, buy)) {
+        refusals.push(`ALREADY_CONSUMED:${num}`);
+      }
       continue;
     }
     if (id && usedIds.has(id)) {
-      refusals.push(`ALREADY_CONSUMED_ID:${id}`);
+      if (isSameProductCandidate(unit, buy)) {
+        refusals.push(`ALREADY_CONSUMED_ID:${id}`);
+      }
       continue;
     }
     if (enforceAccount && !accountKeyMatchesChannel(unit.channel, buy.stockxAccountKey)) {
-      refusals.push(`WRONG_STOCKX_ACCOUNT:${buy.stockxAccountKey}`);
+      if (isSameProductCandidate(unit, buy)) {
+        refusals.push(`WRONG_STOCKX_ACCOUNT:${buy.stockxAccountKey}`);
+      }
       continue;
     }
-    if (!isValidStockxBuyAfterCustomerOrder(unit.orderDate, buy.purchaseDate)) {
+
+    // Same product but buy before sale → meaningful causal refusal (not every buy).
+    if (
+      isSameProductCandidate(unit, buy) &&
+      !isValidStockxBuyAfterCustomerOrder(unit.orderDate, buy.purchaseDate)
+    ) {
       refusals.push(`WRONG_CAUSAL_DATE:${num || id}`);
+      productNearMisses.push(buy);
       continue;
     }
+
     available.push(buy);
   }
-  return { available, refusals };
+  return { available, refusals, productNearMisses };
 }
 
 /** Galaxus primary path: exact StockX variantId + causal FIFO (mirrors match route). */
@@ -122,6 +191,78 @@ export function simulateGalaxusVariantMatch(
   };
 }
 
+/**
+ * Shopify/Galaxus warehouse lane: Essentials/Bape/… fixed margins, or physical
+ * mirror stock (Money Kickz / Bussigny). No StockX buy expected.
+ */
+export function simulateFixedPriceOrLocalStock(
+  unit: LabClientUnit
+): { candidate: MatchCandidate; matchMethod: "FIXED_PRICE" | "LOCAL_STOCK" } | null {
+  const fixed = resolveInStockFixedPrice({
+    sku: unit.sku || unit.styleId,
+    title: unit.productTitle,
+  });
+  const physicalQty = Number(unit.shopifyLine.physicalStockQty ?? 0);
+  const auto = shouldAutoLocalStockMatch({
+    productName: unit.productTitle,
+    supplierSku: unit.sku,
+    styleSku: unit.styleId,
+    shopifySku: unit.sku,
+    physicalStock: {
+      qty: physicalQty,
+      locationName: null,
+    },
+  });
+  if (!auto.ok) return null;
+
+  const ref = localStockMatchRef(unit.orderNumber, unit.unitIndex + 1);
+  const isFixed = Boolean(fixed);
+  const label = fixed?.label ?? "Local / warehouse stock";
+  const sellNote =
+    fixed?.sellChf != null && fixed?.expressChf != null
+      ? `sell ${fixed.sellChf}/${fixed.expressChf} CHF`
+      : null;
+
+  const supplierOrder: NormalizedSupplierOrder = {
+    chainId: "",
+    orderId: ref,
+    supplierOrderNumber: ref,
+    supplierSource: "LOCAL",
+    purchaseDate: unit.orderDate,
+    offerAmount: auto.costChf,
+    totalTTC: auto.costChf,
+    productTitle: unit.productTitle,
+    skuKey: unit.sku || unit.styleId || "",
+    sizeEU: unit.sizeRaw,
+    statusKey: isFixed ? "ESSENTIAL_STOCK" : "LOCAL_STOCK",
+    statusTitle: label,
+    currencyCode: unit.shopifyLine.currencyCode || "CHF",
+    estimatedDeliveryDate: null,
+    productVariantId: undefined,
+    awb: null,
+    trackingUrl: null,
+  };
+
+  const reasons = [
+    auto.reason,
+    fixed?.matchReason ?? "LOCAL_PHYSICAL_STOCK",
+    ...(sellNote ? [sellNote] : []),
+    `cost ${auto.costChf} CHF (dashboard margin)`,
+  ];
+
+  return {
+    matchMethod: isFixed ? "FIXED_PRICE" : "LOCAL_STOCK",
+    candidate: {
+      supplierOrder,
+      score: 1000,
+      confidence: "high",
+      reasons,
+      timeDiffHours: 0,
+      overThreshold: true,
+    },
+  };
+}
+
 export function simulateUnitMatch(
   unit: LabClientUnit,
   buys: LabStockxBuy[],
@@ -130,7 +271,7 @@ export function simulateUnitMatch(
   options?: SimulateOptions
 ): LabMatchProposal {
   const enforceAccount = options?.enforceAccountSeparation !== false;
-  const { available, refusals } = filterAvailableBuys(
+  const { available, refusals, productNearMisses } = filterAvailableBuys(
     unit,
     buys,
     usedNumbers,
@@ -142,7 +283,16 @@ export function simulateUnitMatch(
   let matchMethod: LabMatchProposal["matchMethod"] = "NONE";
   let topCandidates: MatchCandidate[] = [];
 
-  if (unit.channel === "GALAXUS") {
+  // Warehouse fixed-margin / physical stock BEFORE StockX (Shopify Essentials lane + Galaxus LOCAL_STOCK).
+  const local = simulateFixedPriceOrLocalStock(unit);
+  if (local) {
+    proposed = local.candidate;
+    matchMethod = local.matchMethod;
+    topCandidates = [local.candidate];
+  }
+
+  // Galaxus/Decathlon: VARIANT_ID first (prod match route), then NAME→SKU→SIZE via matchShopifyToSupplier.
+  if (!proposed && (unit.channel === "GALAXUS" || unit.channel === "DECATHLON")) {
     proposed = simulateGalaxusVariantMatch(unit, available);
     if (proposed) {
       matchMethod = "VARIANT_ID";
@@ -158,39 +308,62 @@ export function simulateUnitMatch(
     );
     proposed = result.bestMatch;
     topCandidates = (result.allCandidates ?? []).slice(0, 5);
-    if (proposed) matchMethod = "NAME_SIZE_TIME";
+    if (proposed) {
+      const status = String(proposed.supplierOrder.statusKey ?? "").toUpperCase();
+      if (status === "ESSENTIAL_STOCK") matchMethod = "FIXED_PRICE";
+      else if (status === "LOCAL_STOCK") matchMethod = "LOCAL_STOCK";
+      else matchMethod = "NAME_SIZE_TIME";
+    }
   }
 
   if (proposed?.supplierOrder) {
     const num = String(proposed.supplierOrder.supplierOrderNumber ?? "").trim();
     const id = String(proposed.supplierOrder.orderId ?? "").trim();
-    if (num) usedNumbers.add(num);
-    if (id) usedIds.add(id);
+    // Don't consume StockX buy slots for synthetic LOCAL/ESS refs.
+    const synthetic =
+      proposed.supplierOrder.supplierSource === "LOCAL" ||
+      num.startsWith("LOCAL-") ||
+      num.startsWith("ESS-");
+    if (!synthetic) {
+      if (num) usedNumbers.add(num);
+      if (id) usedIds.add(id);
+    }
   }
 
   const buyTitle = proposed?.supplierOrder?.productTitle ?? null;
   const buySize = proposed?.supplierOrder?.sizeEU ?? null;
-  const needsGenderOrSizeReview = requiresGenderOrSizeSystemReview({
-    clientTitle: unit.productTitle,
-    clientSize: unit.sizeRaw,
-    clientVariantTitle: unit.shopifyLine.variantTitle,
-    buyTitle,
-    buySize,
-  });
+  const needsGenderOrSizeReview =
+    matchMethod === "FIXED_PRICE" || matchMethod === "LOCAL_STOCK"
+      ? false
+      : requiresGenderOrSizeSystemReview({
+          clientTitle: unit.productTitle,
+          clientSize: unit.sizeRaw,
+          clientVariantTitle: unit.shopifyLine.variantTitle,
+          buyTitle,
+          buySize,
+        });
 
   const accountKey =
-    (proposed?.supplierOrder as LabStockxBuy | undefined)?.stockxAccountKey ??
-    (proposed
-      ? (buys.find(
-          (b) =>
-            b.supplierOrderNumber === proposed!.supplierOrder.supplierOrderNumber ||
-            b.orderId === proposed!.supplierOrder.orderId
-        )?.stockxAccountKey ?? null)
-      : null);
+    matchMethod === "FIXED_PRICE" || matchMethod === "LOCAL_STOCK"
+      ? null
+      : ((proposed?.supplierOrder as LabStockxBuy | undefined)?.stockxAccountKey ??
+        (proposed
+          ? (buys.find(
+              (b) =>
+                b.supplierOrderNumber === proposed!.supplierOrder.supplierOrderNumber ||
+                b.orderId === proposed!.supplierOrder.orderId
+            )?.stockxAccountKey ?? null)
+          : null));
 
-  const refusalReasons = [...new Set(refusals)].slice(0, 20);
+  const refusalReasons = [...new Set(refusals)].slice(0, 12);
   if (!proposed) {
-    refusalReasons.push("NO_STOCKX_PURCHASE_OR_FILTERED");
+    if (productNearMisses.length > 0) {
+      if (!refusalReasons.some((r) => r.startsWith("WRONG_CAUSAL_DATE"))) {
+        refusalReasons.push("NO_STOCKX_PURCHASE");
+      }
+    } else {
+      refusalReasons.push("NO_STOCKX_PURCHASE");
+    }
   }
   if (needsGenderOrSizeReview) {
     refusalReasons.push("WOMEN_OR_GS_SENT_TO_REVIEW");

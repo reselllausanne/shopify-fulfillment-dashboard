@@ -179,6 +179,170 @@ describe("Matching Review Lab", () => {
     expect(proposal.refusalReasons.some((r) => r.startsWith("WRONG_CAUSAL_DATE"))).toBe(true);
   });
 
+  it("does not spam WRONG_CAUSAL_DATE for unrelated early buys (never purchased product)", () => {
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-15T12:00:00.000Z",
+      title: "Nike M2K Tekno White Black Orange",
+      sku: "STX_191885870090",
+      stockxVariantId: "vid-m2k-never-bought",
+      sizeRaw: "42",
+    });
+    u.shopifyLine.title = "Nike M2K Tekno White Black Orange";
+    u.shopifyLine.sku = "STX_191885870090";
+    const buys = [
+      buy({
+        account: "galaxus:default",
+        number: "01-OTHER-EARLY",
+        purchaseDate: "2026-09-10T10:00:00.000Z",
+        title: "Adidas Samba OG Black",
+        skuKey: "B75806",
+        productVariantId: "vid-samba",
+        sizeEU: "42",
+      }),
+      buy({
+        account: "galaxus:default",
+        number: "01-OTHER-LATE",
+        purchaseDate: "2026-09-16T10:00:00.000Z",
+        title: "New Balance 550 White Green",
+        skuKey: "BB550WT1",
+        productVariantId: "vid-550",
+        sizeEU: "43",
+      }),
+    ];
+    const proposal = simulateUnitMatch(u, buys, new Set(), new Set());
+    expect(proposal.proposed).toBeNull();
+    expect(proposal.refusalReasons.some((r) => r.startsWith("WRONG_CAUSAL_DATE"))).toBe(false);
+    expect(proposal.refusalReasons).toContain("NO_STOCKX_PURCHASE");
+  });
+
+  it("matches UGG Tasman Galaxus short title + style SKU after 5 days (VARIANT_ID)", () => {
+    const variantId = "7bb03828-abfd-4e7a-a15d-e73205c01199";
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-12T02:57:25.000Z",
+      title: "UGG W Tasman (40)",
+      sku: "5955-CHE",
+      stockxVariantId: variantId,
+      sizeRaw: "40",
+    });
+    u.shopifyLine.title = "UGG W Tasman (40)";
+    u.shopifyLine.sku = "5955-CHE";
+    u.shopifyLine.sizeEU = "40";
+    const buys = [
+      buy({
+        account: "galaxus:default",
+        number: "03-PLSBHYUVXY",
+        purchaseDate: "2026-09-17T12:00:00.000Z",
+        title: "UGG Tasman Slipper Chestnut (Women's)",
+        skuKey: "5955-CHE",
+        productVariantId: variantId,
+        sizeEU: "40",
+      }),
+    ];
+    const proposal = simulateUnitMatch(u, buys, new Set(), new Set());
+    expect(proposal.proposed).not.toBeNull();
+    expect(proposal.matchMethod).toBe("VARIANT_ID");
+    expect(proposal.proposed!.supplierOrder.supplierOrderNumber).toBe("03-PLSBHYUVXY");
+  });
+
+  it("matches UGG Tasman via NAME_SIZE_TIME when variant id missing (short⊆long title)", () => {
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-12T02:57:25.000Z",
+      title: "UGG W Tasman (40)",
+      sku: "5955-CHE",
+      stockxVariantId: null,
+      sizeRaw: "40",
+    });
+    u.shopifyLine.title = "UGG W Tasman (40)";
+    u.shopifyLine.sku = "5955-CHE";
+    u.shopifyLine.sizeEU = "40";
+    const buys = [
+      buy({
+        account: "galaxus:default",
+        number: "03-PLSBHYUVXY",
+        purchaseDate: "2026-09-17T12:00:00.000Z",
+        title: "UGG Tasman Slipper Chestnut (Women's)",
+        skuKey: "5955-CHE",
+        productVariantId: "other-variant",
+        sizeEU: "40",
+      }),
+    ];
+    const proposal = simulateUnitMatch(u, buys, new Set(), new Set());
+    expect(proposal.proposed).not.toBeNull();
+    expect(proposal.matchMethod).toBe("NAME_SIZE_TIME");
+    expect(proposal.proposed!.supplierOrder.supplierOrderNumber).toBe("03-PLSBHYUVXY");
+  });
+
+  it("matches Nike Air Max 90 short Galaxus title to Recraft via VARIANT_ID", () => {
+    const variantId = "a20e8fe5-e090-4514-ab84-42212e19f2eb";
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-12T11:17:23.000Z",
+      title: "Nike Air Max 90 (44.5)",
+      sku: "CN8490-003",
+      stockxVariantId: variantId,
+      sizeRaw: "EU 44.5",
+    });
+    u.shopifyLine.title = "Nike Air Max 90 (44.5)";
+    u.shopifyLine.sku = "CN8490-003";
+    u.shopifyLine.sizeEU = "EU 44.5";
+    const buys = [
+      buy({
+        account: "galaxus:default",
+        number: "01-RA7PJFRE1J",
+        purchaseDate: "2026-09-17T16:35:21.939Z",
+        title: "Nike Air Max 90 Recraft Triple Black",
+        skuKey: "CN8490-003",
+        productVariantId: variantId,
+        sizeEU: "EU 44.5",
+      }),
+    ];
+    const proposal = simulateUnitMatch(u, buys, new Set(), new Set());
+    expect(proposal.proposed).not.toBeNull();
+    expect(proposal.matchMethod).toBe("VARIANT_ID");
+    expect(proposal.proposed!.supplierOrder.supplierOrderNumber).toBe("01-RA7PJFRE1J");
+  });
+
+  it("matches Essentials FOG tee as FIXED_PRICE (no StockX buy)", () => {
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-13T10:00:00.000Z",
+      title: "Essentials Fear of God Jersey Crewneck T-Shirt Black (XS)",
+      sku: "125HO244360F",
+      sizeRaw: "XS",
+      stockxVariantId: null,
+    });
+    u.shopifyLine.title = "Essentials Fear of God Jersey Crewneck T-Shirt Black (XS)";
+    u.shopifyLine.sku = "125HO244360F";
+    u.shopifyLine.physicalStockQty = 0;
+    const proposal = simulateUnitMatch(u, [], new Set(), new Set());
+    expect(proposal.matchMethod).toBe("FIXED_PRICE");
+    expect(proposal.proposed).not.toBeNull();
+    expect(proposal.proposed!.supplierOrder.statusKey).toBe("ESSENTIAL_STOCK");
+    expect(proposal.refusalReasons).not.toContain("NO_STOCKX_PURCHASE");
+  });
+
+  it("matches Stussy with physical mirror qty as LOCAL_STOCK (no StockX buy)", () => {
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-13T10:00:00.000Z",
+      title: "Stussy Basic T-shirt Black (S)",
+      sku: "1904762/1905000/1904870-BLAC",
+      sizeRaw: "S",
+      stockxVariantId: null,
+    });
+    u.shopifyLine.title = "Stussy Basic T-shirt Black (S)";
+    u.shopifyLine.sku = "1904762/1905000/1904870-BLAC";
+    u.shopifyLine.physicalStockQty = 3;
+    const proposal = simulateUnitMatch(u, [], new Set(), new Set());
+    expect(proposal.matchMethod).toBe("LOCAL_STOCK");
+    expect(proposal.proposed).not.toBeNull();
+    expect(String(proposal.proposed!.supplierOrder.supplierOrderNumber)).toMatch(/^LOCAL-STOCK-/);
+    expect(proposal.refusalReasons).not.toContain("NO_STOCKX_PURCHASE");
+  });
+
   it("refuses wrong StockX account", () => {
     const u = unit({
       channel: "SHOPIFY",
@@ -348,6 +512,7 @@ describe("Matching Review Lab", () => {
     ];
     expect(searchStockxBuys(buys, { awb: "TRACK-999" })).toHaveLength(1);
     expect(searchStockxBuys(buys, { buyOrderId: "oid-search" })).toHaveLength(1);
+    expect(searchStockxBuys(buys, { buyOrderId: "# 01-SEARCH" })).toHaveLength(1);
     expect(searchStockxBuys(buys, { sku: "BB550WT1" })).toHaveLength(1);
     expect(searchStockxBuys(buys, { name: "New Balance", size: "43" })).toHaveLength(1);
     expect(searchStockxBuys(buys, { awb: "NOPE" })).toHaveLength(0);
@@ -377,5 +542,77 @@ describe("Matching Review Lab", () => {
     );
     expect(result.stats.totalUnits).toBe(1);
     expect(result.stats.withProposal).toBe(1);
+  });
+});
+
+import {
+  isLabDecathlonStxLine,
+  isLabGalaxusStxLine,
+} from "@/matching-review-lab/stxLineFilter";
+
+describe("STX_ line filters for lab load", () => {
+  it("keeps Galaxus STX_ and drops GLD/warehouse", () => {
+    expect(
+      isLabGalaxusStxLine({
+        supplierPid: "STX_ABC",
+        supplierVariantId: "stx_var1",
+      })
+    ).toBe(true);
+    expect(
+      isLabGalaxusStxLine({
+        supplierPid: "GLD_ABC",
+        providerKey: "GLD",
+      })
+    ).toBe(false);
+    expect(
+      isLabGalaxusStxLine({
+        supplierPid: "STX_ABC",
+        warehouseMarkedShippedAt: new Date().toISOString(),
+      })
+    ).toBe(false);
+  });
+
+  it("keeps Decathlon STX_ and drops GLD_/TRM_", () => {
+    expect(isLabDecathlonStxLine({ providerKey: "STX_123" })).toBe(true);
+    expect(isLabDecathlonStxLine({ supplierSku: "stx_variant" })).toBe(true);
+    expect(isLabDecathlonStxLine({ providerKey: "GLD_1" })).toBe(false);
+    expect(isLabDecathlonStxLine({ providerKey: "TRM_1" })).toBe(false);
+    expect(isLabDecathlonStxLine({ providerKey: "OTHER" })).toBe(false);
+  });
+});
+
+describe("two StockX accounts strict separation", () => {
+  it("Shopify never consumes galaxus buys; Galaxus/Decathlon never consume shopify buys", () => {
+    expect(accountKeyMatchesChannel("SHOPIFY", "shopify:default")).toBe(true);
+    expect(accountKeyMatchesChannel("SHOPIFY", "galaxus:default")).toBe(false);
+    expect(accountKeyMatchesChannel("GALAXUS", "galaxus:default")).toBe(true);
+    expect(accountKeyMatchesChannel("GALAXUS", "shopify:default")).toBe(false);
+    expect(accountKeyMatchesChannel("DECATHLON", "galaxus:default")).toBe(true);
+    expect(accountKeyMatchesChannel("DECATHLON", "shopify:default")).toBe(false);
+  });
+
+  it("refuses Galaxus unit matched against Shopify-account buy", () => {
+    const u = unit({
+      channel: "GALAXUS",
+      orderDate: "2026-09-10T10:00:00.000Z",
+      title: "Adidas Samba OG",
+      stockxVariantId: "var-abc",
+      sizeRaw: "42",
+    });
+    const buys = [
+      buy({
+        account: "shopify:default",
+        number: "01-SHOP-ONLY",
+        purchaseDate: "2026-09-10T11:00:00.000Z",
+        title: "Adidas Samba OG",
+        productVariantId: "var-abc",
+        sizeEU: "42",
+      }),
+    ];
+    const proposal = simulateUnitMatch(u, buys, new Set(), new Set(), {
+      enforceAccountSeparation: true,
+    });
+    expect(proposal.proposed).toBeNull();
+    expect(proposal.refusalReasons.some((r) => r.startsWith("WRONG_STOCKX_ACCOUNT"))).toBe(true);
   });
 });

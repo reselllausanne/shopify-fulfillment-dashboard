@@ -6,4 +6,7 @@ export * from "./simulate";
 export * from "./searchBuys";
 export * from "./reviewsStore";
 export * from "./proposeRules";
+export * from "./stxLineFilter";
+export * from "./tokens";
 export * from "./loadBatch";
+export * from "./batchStore";

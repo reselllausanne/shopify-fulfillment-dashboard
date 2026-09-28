@@ -1,11 +1,14 @@
 import type { StockxAccountKey } from "./types";
 
 /**
- * Lab account keys — explicit Shopify vs Galaxus separation.
- * Mirrors production intent:
- * - Shopify inbound uses customerUuid or shopify:{source}
- * - Galaxus prefers galaxus token file (source: "galaxus")
+ * Two StockX accounts — never mixed:
+ * - Shopify (dashboard/db token) → shopify:*
+ * - Galaxus (stockx-token-galaxus.json) → galaxus:*
+ *
+ * Decathlon STX lines consume the Galaxus StockX account (shared claim pool
+ * with GalaxusStockxMatch / DecathlonStockxMatch — not OrderMatch).
  */
+
 export function stockxAccountKeyForShopify(params: {
   customerUuid?: string | null;
   source?: "db" | "dashboard" | string | null;
@@ -24,6 +27,7 @@ export function stockxAccountKeyForGalaxus(params: {
   const uuid = String(params.customerUuid ?? "").trim().toLowerCase();
   if (uuid) return `galaxus:${uuid}`;
   const source = String(params.source ?? "").trim().toLowerCase();
+  if (source === "galaxus") return "galaxus:galaxus";
   if (source) return `galaxus:${source}`;
   return "galaxus:default";
 }
@@ -36,11 +40,34 @@ export function isGalaxusAccountKey(key: StockxAccountKey | string | null | unde
   return String(key ?? "").startsWith("galaxus:");
 }
 
-/** Wrong-account filter: Shopify units must not consume galaxus:* buys (and vice versa). */
+/**
+ * Strict channel ↔ StockX account:
+ * - SHOPIFY → shopify:* only
+ * - GALAXUS → galaxus:* only
+ * - DECATHLON → galaxus:* only (same StockX account as Galaxus)
+ */
 export function accountKeyMatchesChannel(
-  channel: "SHOPIFY" | "GALAXUS",
+  channel: "SHOPIFY" | "GALAXUS" | "DECATHLON",
   accountKey: StockxAccountKey | string | null | undefined
 ): boolean {
   if (channel === "SHOPIFY") return isShopifyAccountKey(accountKey);
+  // Galaxus + Decathlon share the Galaxus StockX account.
   return isGalaxusAccountKey(accountKey);
+}
+
+/** Label a server token by its source file / origin — never cross-tag. */
+export function accountKeyFromTokenSource(params: {
+  source: "db" | "dashboard" | "galaxus" | string;
+  customerUuid?: string | null;
+}): StockxAccountKey {
+  if (params.source === "galaxus") {
+    return stockxAccountKeyForGalaxus({
+      customerUuid: params.customerUuid,
+      source: "galaxus",
+    });
+  }
+  return stockxAccountKeyForShopify({
+    customerUuid: params.customerUuid,
+    source: params.source === "db" || params.source === "dashboard" ? params.source : "dashboard",
+  });
 }

@@ -24,14 +24,18 @@ export function searchStockxBuys(
 ): LabStockxBuy[] {
   const limit = Math.max(1, Math.min(50, query.limit ?? 20));
   const awb = String(query.awb ?? "").trim();
-  const buyOrderId = String(query.buyOrderId ?? "").trim();
-  const buyOrderNumber = String(query.buyOrderNumber ?? query.buyOrderId ?? "").trim();
+  const buyOrderRaw = String(query.buyOrderId ?? query.buyOrderNumber ?? "")
+    .trim()
+    .replace(/^#\s*/, "")
+    .replace(/\s+/g, "");
+  const buyOrderId = buyOrderRaw;
+  const buyOrderNumber = buyOrderRaw;
   const gtin = normalizeGtin(query.gtin);
   const sku = normalizeSkuKey(query.sku);
   const name = String(query.name ?? "").trim();
   const size = normalizeSizeLabel(query.size);
 
-  const hasAny = awb || buyOrderId || buyOrderNumber || gtin || sku || name || size;
+  const hasAny = awb || buyOrderId || gtin || sku || name || size;
   if (!hasAny) return [];
 
   const hits: LabStockxBuy[] = [];
@@ -41,13 +45,17 @@ export function searchStockxBuys(
       if (!buyAwb || buyAwb.toLowerCase() !== awb.toLowerCase()) continue;
     }
     if (buyOrderId) {
-      const id = String(buy.orderId ?? "").trim();
-      const num = String(buy.supplierOrderNumber ?? "").trim();
-      if (id !== buyOrderId && num !== buyOrderId) continue;
-    }
-    if (buyOrderNumber && !buyOrderId) {
-      const num = String(buy.supplierOrderNumber ?? "").trim();
-      if (num !== buyOrderNumber) continue;
+      const id = String(buy.orderId ?? "").trim().replace(/^#\s*/, "");
+      const num = String(buy.supplierOrderNumber ?? "").trim().replace(/^#\s*/, "");
+      const idNorm = id.replace(/\s+/g, "");
+      const numNorm = num.replace(/\s+/g, "");
+      // Exact or suffix match (paste with/without #, partial order number).
+      const idOk =
+        idNorm === buyOrderId ||
+        numNorm === buyOrderId ||
+        (buyOrderId.length >= 6 &&
+          (idNorm.endsWith(buyOrderId) || numNorm.endsWith(buyOrderId)));
+      if (!idOk) continue;
     }
     if (gtin) {
       const buyGtin = normalizeGtin(buy.gtin);

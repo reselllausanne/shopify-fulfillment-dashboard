@@ -1,19 +1,30 @@
 import { NextResponse } from "next/server";
-import { searchStockxBuys, type LabStockxBuy } from "@/matching-review-lab";
+import {
+  getBatch,
+  searchStockxBuys,
+  slimBuyForClient,
+} from "@/matching-review-lab";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Manual StockX buy search against the in-memory/snapshot buys payload. */
+/** Manual StockX buy search against the server-held batch snapshot. */
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
-    const buys = (body?.buys ?? []) as LabStockxBuy[];
-    if (!Array.isArray(buys)) {
-      return NextResponse.json({ ok: false, error: "buys array required" }, { status: 400 });
+    const batchId = String(body?.batchId ?? "").trim();
+    if (!batchId) {
+      return NextResponse.json({ ok: false, error: "batchId required" }, { status: 400 });
+    }
+    const batch = getBatch(batchId);
+    if (!batch) {
+      return NextResponse.json(
+        { ok: false, error: "batch expired or unknown — reload lot" },
+        { status: 404 }
+      );
     }
 
-    const hits = searchStockxBuys(buys, {
+    const hits = searchStockxBuys(batch.buys, {
       awb: body?.awb,
       buyOrderId: body?.buyOrderId,
       buyOrderNumber: body?.buyOrderNumber,
@@ -27,7 +38,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       count: hits.length,
-      hits: hits.map((b) => ({ ...b, rawNode: undefined })),
+      hits: hits.map(slimBuyForClient),
     });
   } catch (err) {
     return NextResponse.json(

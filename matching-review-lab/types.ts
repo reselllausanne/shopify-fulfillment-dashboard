@@ -30,7 +30,7 @@ export type MatchingReviewDecision =
   | "SPECIAL_EQUIVALENCE"
   | "NEVER_AUTO_MATCH";
 
-export type LabChannel = "SHOPIFY" | "GALAXUS";
+export type LabChannel = "SHOPIFY" | "GALAXUS" | "DECATHLON";
 
 /** Explicit StockX account label used by the lab (not mixed across channels). */
 export type StockxAccountKey =
@@ -73,7 +73,7 @@ export type LabMatchProposal = {
   unit: LabClientUnit;
   proposed: MatchCandidate | null;
   topCandidates: MatchCandidate[];
-  matchMethod: "VARIANT_ID" | "NAME_SIZE_TIME" | "NONE";
+  matchMethod: "VARIANT_ID" | "NAME_SIZE_TIME" | "FIXED_PRICE" | "LOCAL_STOCK" | "NONE";
   refusalReasons: string[];
   needsGenderOrSizeReview: boolean;
   stockxAccountKey: StockxAccountKey | null;
