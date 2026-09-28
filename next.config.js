@@ -1,8 +1,23 @@
 /** @type {import('next').NextConfig} */
+const path = require("path");
+
+const NATIVE_SERVER_ONLY = [
+  "ssh2",
+  "ssh2-sftp-client",
+  "cpu-features",
+  "@prisma/client",
+  "prisma",
+  "sharp",
+  "playwright",
+  "playwright-core",
+];
+
 const nextConfig = {
-  // Prisma must stay external: Turbopack bundling the query engine causes
-  // intermittent "Response from the Engine was empty" crashes in `next dev`.
-  serverExternalPackages: ["ssh2", "ssh2-sftp-client", "@prisma/client", "prisma"],
+  // Worktree: pin tracing root so parent lockfile is not preferred.
+  outputFileTracingRoot: path.join(__dirname),
+  // Prisma / ssh2 / sharp must stay external: bundling native addons crashes
+  // `next dev` (cpu-features.node "not supported in the browser").
+  serverExternalPackages: NATIVE_SERVER_ONLY,
   experimental: {
     /**
      * Playwright login (GOAT/StockX) can sit on Cloudflare + manual login for minutes.
@@ -19,7 +34,21 @@ const nextConfig = {
       bodySizeLimit: "50mb",
     },
   },
-}
+  webpack: (config, { isServer }) => {
+    // Never ship native Node addons to the browser graph.
+    if (!isServer) {
+      config.resolve.alias = {
+        ...(config.resolve.alias || {}),
+        ssh2: false,
+        "ssh2-sftp-client": false,
+        "cpu-features": false,
+        sharp: false,
+        playwright: false,
+        "playwright-core": false,
+      };
+    }
+    return config;
+  },
+};
 
-module.exports = nextConfig
-
+module.exports = nextConfig;

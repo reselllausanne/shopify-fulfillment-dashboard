@@ -33,6 +33,7 @@ import {
 } from "@/app/lib/stockxInboundPackages";
 import { resolveVerifiedShopifyAwbFallback } from "@/app/lib/shopifyOpenLineCandidates";
 import type { OpenShopifyLineCandidate } from "@/app/lib/shopifyAwbFallback";
+import { listGalaxusDirectOpenUnits } from "@/lib/galaxusDirectOpenUnits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -758,21 +759,33 @@ export async function POST(req: NextRequest) {
         (s) => Boolean(s.delrSentAt) || String(s.delrStatus ?? "").toUpperCase() === "UPLOADED"
       );
       const deliveryType = String(galaxusOrder?.deliveryType ?? "").toLowerCase();
+      const orderDbId = galaxusOrder?.id ?? galaxusMatch.galaxusOrderId ?? null;
+      const scannedLineId = galaxusMatch.galaxusOrderLineId ?? null;
+      const isDirect = deliveryType === "direct_delivery";
+      const openUnitsPayload =
+        isDirect && orderDbId
+          ? await listGalaxusDirectOpenUnits({
+              orderDbId,
+              scannedLineId,
+            }).catch(() => null)
+          : null;
       galaxusPayload = {
         matchId: galaxusMatch.id,
         orderId: galaxusOrder?.galaxusOrderId ?? null,
-        orderDbId: galaxusOrder?.id ?? galaxusMatch.galaxusOrderId ?? null,
+        orderDbId,
         orderNumber: galaxusOrder?.orderNumber ?? null,
         // Pair the scanned AWB belongs to — required for partial Swiss Post label.
-        lineId: galaxusMatch.galaxusOrderLineId ?? null,
+        lineId: scannedLineId,
         deliveryType: galaxusOrder?.deliveryType ?? null,
-        isDirectDelivery: deliveryType === "direct_delivery",
+        isDirectDelivery: isDirect,
         physicalDeliveryNoteRequired: Boolean(galaxusOrder?.physicalDeliveryNoteRequired),
         allLinked: linkStatus?.allLinked ?? null,
         alreadyFulfilled,
         trackingNumber:
           shipments.find((s) => String(s.trackingNumber ?? "").trim())?.trackingNumber ?? null,
         source: "galaxus_stockx_match" as const,
+        openUnits: openUnitsPayload?.openUnits ?? [],
+        unitSelection: openUnitsPayload?.unitSelection ?? null,
       };
     } else if (galaxusWarehouseShipment) {
       // Fallback: no StockX match, but the AWB is stored on a Galaxus warehouse
