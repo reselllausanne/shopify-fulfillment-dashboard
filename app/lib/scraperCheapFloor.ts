@@ -5,6 +5,16 @@
 export const SCRAPER_CHEAP_BUY_THRESHOLD_CHF = 10;
 export const SCRAPER_CHEAP_MIN_ABS_MARGIN_CHF = 5;
 
+/** Env may raise scraper % margin but never drop it below this (VPS .env had stale 20). */
+export const SCRAPER_MIN_MARGIN_PERCENT = 30;
+
+export function scraperMarginPercent(envValue: string | undefined): number {
+  const n = Number(envValue);
+  return Number.isFinite(n) && envValue?.trim()
+    ? Math.max(SCRAPER_MIN_MARGIN_PERCENT, n)
+    : SCRAPER_MIN_MARGIN_PERCENT;
+}
+
 export function applyCheapItemSellFloor(input: {
   buyChf: number;
   landedChf: number;

@@ -1,4 +1,4 @@
-import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+import { applyCheapItemSellFloor, scraperMarginPercent } from "@/app/lib/scraperCheapFloor";
 
 /** Venova.ch CHF retail → Galaxus sell (ship + % margin). */
 
@@ -21,7 +21,7 @@ export const VENOVA_POST_MAX_KG = 30;
 
 export function venovaPricingConfig() {
   return {
-    marginPercent: Math.max(0, Number(process.env.SCRAPER_VEN_MARGIN_PERCENT || "30")),
+    marginPercent: scraperMarginPercent(process.env.SCRAPER_VEN_MARGIN_PERCENT),
     /** PostPac Economy floor — applied to all SKUs (incl. heavy / unknown Planzer). */
     shippingChf: Math.max(
       0,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+import { applyCheapItemSellFloor, scraperMarginPercent } from "@/app/lib/scraperCheapFloor";
 
 describe("applyCheapItemSellFloor", () => {
   it("raises sell when buy under 10 and % margin is thin", () => {
@@ -31,5 +31,21 @@ describe("applyCheapItemSellFloor", () => {
     });
     expect(out.sellPriceChf).toBe(16);
     expect(out.usedMinAbsFloor).toBe(false);
+  });
+});
+
+describe("scraperMarginPercent", () => {
+  it("defaults to 30 when env unset or blank", () => {
+    expect(scraperMarginPercent(undefined)).toBe(30);
+    expect(scraperMarginPercent("")).toBe(30);
+    expect(scraperMarginPercent("abc")).toBe(30);
+  });
+
+  it("clamps stale lower env up to 30", () => {
+    expect(scraperMarginPercent("20")).toBe(30);
+  });
+
+  it("allows env to raise margin", () => {
+    expect(scraperMarginPercent("35")).toBe(35);
   });
 });
