@@ -37,7 +37,7 @@ from shopifyAPI_GQL import (
     calc_sell_price,
     RateLimitException,
 )
-from main import get_eu_size, extended_size_lookup
+from main import get_eu_size, extended_size_lookup, PRESERVE_COPY_ON_UPDATE
 
 
 def resolve_shopify_size(variant, brand, gender):
@@ -175,7 +175,7 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
     product_id = shopify_product['id']
     shopify_handle = shopify_product.get('handle', '')
     current_title = (shopify_product.get('title') or '').strip()
-    if title and current_title != title.strip():
+    if title and current_title != title.strip() and not PRESERVE_COPY_ON_UPDATE:
         update_product_title(product_id, title)
         shopify_product['title'] = title
     print(
@@ -228,7 +228,9 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
 
     # Update description
     description = product_data.get('description', '').replace('StockX', 'Resell-lausanne')
-    if description:
+    if description and PRESERVE_COPY_ON_UPDATE:
+        print("[INFO] Preserving Shopify description (SHOPIFY_PRESERVE_COPY_ON_UPDATE=1)")
+    elif description:
         try:
             # Add SKU to description
             sku = product_data.get('sku', '')
