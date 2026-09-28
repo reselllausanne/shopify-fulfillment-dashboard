@@ -20,7 +20,6 @@ export async function GET(request: NextRequest) {
         order: {
           archivedAt: null,
           cancelledAt: null,
-          deliveryType: { not: "direct_delivery" },
         },
       },
       include: {
@@ -54,6 +53,7 @@ export async function GET(request: NextRequest) {
         packageId: shipment.packageId ?? null,
         trackingNumber: shipment.trackingNumber ?? null,
         delrStatus: shipment.delrStatus ?? null,
+        deliveryType: shipment.order?.deliveryType ?? null,
         createdAt: shipment.createdAt,
         orderNumbers,
         itemCount: (shipment.items ?? []).length,

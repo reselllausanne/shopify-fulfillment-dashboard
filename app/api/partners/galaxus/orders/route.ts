@@ -9,6 +9,7 @@ import {
   lineMatchesPartnerScope,
   loadPartnerMappedGtins,
 } from "./partnerLineScope";
+import { filterPartnerShipments } from "./partnerDirectShipments";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +67,7 @@ export async function GET(req: NextRequest) {
         },
         shipments: {
           select: {
+            providerKey: true,
             shippedAt: true,
             trackingNumber: true,
             galaxusShippedAt: true,
@@ -85,12 +87,13 @@ export async function GET(req: NextRequest) {
       const totalUnits = partnerLines.reduce((sum, line) => sum + Number(line.quantity ?? 0), 0);
       const warehouseLinesShipped = partnerLines.filter((line) => line.warehouseMarkedShippedAt).length;
       const isDirect = String(order.deliveryType ?? "").toLowerCase() === "direct_delivery";
+      const partnerShipments = filterPartnerShipments(order.shipments, pk);
       const shippedCount = isDirect
-        ? order.shipments.filter((shipment) => Boolean(shipment.trackingNumber)).length
-        : order.shipments.filter(isGalaxusShipmentDispatchConfirmed).length;
+        ? partnerShipments.filter((shipment) => Boolean(shipment.trackingNumber)).length
+        : partnerShipments.filter(isGalaxusShipmentDispatchConfirmed).length;
       const fulfilledCount = isDirect
-        ? order.shipments.filter((shipment) => Boolean(shipment.delrSentAt)).length
-        : order.shipments.filter((shipment) => {
+        ? partnerShipments.filter((shipment) => Boolean(shipment.delrSentAt)).length
+        : partnerShipments.filter((shipment) => {
             const delrStatus = String(shipment.delrStatus ?? "").toUpperCase();
             return Boolean(shipment.delrSentAt) || delrStatus === "UPLOADED" || delrStatus === "SENT";
           }).length;

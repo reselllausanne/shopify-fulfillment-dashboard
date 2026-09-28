@@ -8,6 +8,11 @@ import {
   lineMatchesPartnerScope,
   resolvePartnerGtins,
 } from "../partnerLineScope";
+import {
+  filterPartnerShipments,
+  isFinalizedPartnerShipment,
+  remainingPartnerLineSelection,
+} from "../partnerDirectShipments";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,13 +39,13 @@ export async function GET(
         where: {
           id: orderId,
         },
-        include: { lines: true, shipments: true },
+        include: { lines: true, shipments: { include: { items: true } } },
       })) ??
       (await prisma.galaxusOrder.findFirst({
         where: {
           galaxusOrderId: orderId,
         },
-        include: { lines: true, shipments: true },
+        include: { lines: true, shipments: { include: { items: true } } },
       }));
 
     if (!order) {
@@ -63,9 +68,25 @@ export async function GET(
       return NextResponse.json({ ok: false, error: "Order not found" }, { status: 404 });
     }
 
+    const partnerShipments = filterPartnerShipments(order.shipments, pk);
+    const partnerRemainingUnits = remainingPartnerLineSelection(partnerLines, order.shipments).reduce(
+      (sum, item) => sum + item.quantity,
+      0
+    );
+    const openDraftShipmentIds = partnerShipments
+      .filter((shipment) => !isFinalizedPartnerShipment(shipment) && !String(shipment.trackingNumber ?? "").trim())
+      .map((shipment) => shipment.id);
+
     return NextResponse.json({
       ok: true,
-      order: { ...order, lines: partnerLines },
+      order: {
+        ...order,
+        lines: partnerLines,
+        shipments: partnerShipments,
+        hasOtherSupplierLines: partnerLines.length < order.lines.length,
+        partnerRemainingUnits,
+        openDraftShipmentIds,
+      },
     });
   } catch (error: any) {
     return NextResponse.json(

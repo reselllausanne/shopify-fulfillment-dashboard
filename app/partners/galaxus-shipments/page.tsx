@@ -213,7 +213,7 @@ export default function PartnerGalaxusShipmentsPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Partner Galaxus Shipments</h1>
-        <p className="text-sm text-slate-500">Warehouse delivery only. Scope locked to your partner lines.</p>
+        <p className="text-sm text-slate-500">Build warehouse shipments. Drafts include direct-delivery parcels. Scope locked to your partner lines.</p>
       </div>
       {loading ? <div className="text-xs text-slate-500">Loading…</div> : null}
       {error ? <div className="text-sm text-red-600">{error}</div> : null}
@@ -299,18 +299,32 @@ export default function PartnerGalaxusShipmentsPage() {
         <div className="rounded border bg-white p-3">
           <div className="mb-2 font-semibold">Draft shipments</div>
           <div className="space-y-2 max-h-[340px] overflow-auto">
-            {drafts.map((draft) => (
-              <div key={draft.id} className="rounded border border-slate-200 p-2 text-xs space-y-1">
-                <div className="font-medium">{draft.shipmentId ?? draft.id}</div>
-                <div className="text-slate-500">{draft.anchorOrderNumber ?? "—"} · {draft.itemCount} items</div>
-                <div className="flex flex-wrap gap-1">
-                  <button onClick={() => runDraftAction(draft.id, "label")} className="rounded bg-slate-100 px-2 py-1">SSCC</button>
-                  <button onClick={() => runDraftAction(draft.id, "deliveryNote")} className="rounded bg-slate-100 px-2 py-1">Delivery note</button>
-                  <button onClick={() => runDraftAction(draft.id, "postLabel")} className="rounded bg-slate-900 px-2 py-1 text-white">Swiss Post + DELR</button>
-                  <button onClick={() => runDraftAction(draft.id, "delr")} className="rounded bg-slate-100 px-2 py-1">DELR only</button>
+            {drafts.map((draft) => {
+              const isDirect = String(draft.deliveryType ?? "").toLowerCase() === "direct_delivery";
+              return (
+                <div key={draft.id} className="rounded border border-slate-200 p-2 text-xs space-y-1">
+                  <div className="font-medium">
+                    {draft.shipmentId ?? draft.id}
+                    {isDirect ? (
+                      <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800">Direct delivery</span>
+                    ) : null}
+                  </div>
+                  <div className="text-slate-500">{draft.anchorOrderNumber ?? "—"} · {draft.itemCount} items</div>
+                  <div className="flex flex-wrap gap-1">
+                    {!isDirect ? (
+                      <>
+                        <button onClick={() => runDraftAction(draft.id, "label")} className="rounded bg-slate-100 px-2 py-1">SSCC</button>
+                        <button onClick={() => runDraftAction(draft.id, "deliveryNote")} className="rounded bg-slate-100 px-2 py-1">Delivery note</button>
+                      </>
+                    ) : null}
+                    <button onClick={() => runDraftAction(draft.id, "postLabel")} className="rounded bg-slate-900 px-2 py-1 text-white">Swiss Post + DELR</button>
+                    {!isDirect ? (
+                      <button onClick={() => runDraftAction(draft.id, "delr")} className="rounded bg-slate-100 px-2 py-1">DELR only</button>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {drafts.length === 0 ? <div className="text-xs text-slate-500">No drafts.</div> : null}
           </div>
         </div>
