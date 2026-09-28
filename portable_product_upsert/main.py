@@ -19,6 +19,7 @@ from shopifyAPI_GQL import (
     create_variants_bulk,
     delete_product,
     add_images_to_product,
+    generate_image_alt_text,
     get_product_media_images,
     get_product_variants,
     calc_touch_price,
@@ -1277,6 +1278,15 @@ def process_single_url_enhanced(url, action_type, shopify_products, skip_creates
     
     return False
 
+def _image_alts(title, product_info, count):
+    brand = product_info.get("brand") if isinstance(product_info, dict) else None
+    product_type = product_info.get("productCategory") if isinstance(product_info, dict) else None
+    return [
+        generate_image_alt_text(title, brand, index, product_type)
+        for index in range(count)
+    ]
+
+
 def _sync_listing_enrichment(product_id, title, product_info, force_seo=False):
     """SEO meta + image alt text. Idempotent unless force_seo=True."""
     brand = product_info.get("brand") if isinstance(product_info, dict) else None
@@ -1347,7 +1357,7 @@ def create_product_enhanced(url, title, product_info):
         # INCLUDE_360_ON_CREATE is on (default). Update path handles later
         # rebuilds against this same slot count.
         if valid_images:
-            add_images_to_product(product_id, valid_images)
+            add_images_to_product(product_id, valid_images, _image_alts(title, product_info, len(valid_images)))
         
         # Set STANDARD product attributes (best for Google Merchant Center)
         stockx_raw_data = product_info.get("__raw_vendor__", {})
@@ -1626,7 +1636,9 @@ def update_product_enhanced(url, title, product_info, existing_product):
                     delete_result = delete_product_media(product_id, existing_media_ids)
                     if delete_result.get("errors"):
                         raise Exception(f"Image cleanup failed: {delete_result['errors']}")
-                    upload_result = add_images_to_product(product_id, valid_images)
+                    upload_result = add_images_to_product(
+                        product_id, valid_images, _image_alts(title, product_info, len(valid_images))
+                    )
                     print(
                         f"[INFO] Image rebuild for {title}: deleted={delete_result.get('deleted', 0)}, "
                         f"added={upload_result.get('added', 0)}, target={len(valid_images)}"
@@ -1638,7 +1650,9 @@ def update_product_enhanced(url, title, product_info, existing_product):
                         skip_first_slot_if_has_media=not FULL_360_MODE,
                     )
                     if missing_images:
-                        upload_result = add_images_to_product(product_id, missing_images)
+                        upload_result = add_images_to_product(
+                            product_id, missing_images, _image_alts(title, product_info, len(missing_images))
+                        )
                         print(
                             f"[INFO] Image sync for {title}: existing={len(existing_image_urls)}, "
                             f"extras_to_add={len(missing_images)}, added={upload_result.get('added', 0)}"

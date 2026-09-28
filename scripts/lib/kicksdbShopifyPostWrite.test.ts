@@ -47,6 +47,31 @@ describe("evaluatePostWriteVerification", () => {
     }
   });
 
+  it("staged_webp accepts a new Shopify filename when dims are valid", () => {
+    const featured = media(
+      "media-new",
+      "https://cdn.shopify.com/s/files/1/x/files/hero.webp?v=2",
+      800,
+      857
+    );
+    expect(
+      evaluatePostWriteVerification(
+        {
+          featuredMediaId: "media-new",
+          featuredUrl: featured.image!.url,
+          featuredWidth: 800,
+          featuredHeight: 857,
+          media: [featured],
+        },
+        {
+          expectedMediaId: "media-new",
+          expectedSourceUrl: stockx,
+          mode: "staged_webp",
+        }
+      )
+    ).toEqual({ ok: true, reason: "verified" });
+  });
+
   it("passes upload_reorder when Shopify basename matches StockX candidate", () => {
     const featured = media("media-new", shopifyMatching, 1200, 900);
     expect(

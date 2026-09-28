@@ -2816,9 +2816,10 @@ def delete_product_media(product_id, media_ids):
     return {"attempted": len(clean_ids), "deleted": deleted_count, "errors": all_errors}
 
 
-def add_images_to_product(product_id, images):
+def add_images_to_product(product_id, images, alt_texts=None):
     """
     Attach valid image URLs to product media in small batches.
+    alt_texts: optional list aligned with `images` (same index after URL filter is best-effort).
     Returns {"attempted": int, "added": int, "errors": list}.
     """
     if not images:
@@ -2826,8 +2827,9 @@ def add_images_to_product(product_id, images):
         return {"attempted": 0, "added": 0, "errors": []}
 
     valid_urls = []
+    valid_alts = []
     seen = set()
-    for url in images:
+    for index, url in enumerate(images):
         if not isinstance(url, str):
             continue
         cleaned = url.strip()
@@ -2838,6 +2840,12 @@ def add_images_to_product(product_id, images):
             continue
         seen.add(key)
         valid_urls.append(cleaned)
+        alt = None
+        if isinstance(alt_texts, (list, tuple)) and index < len(alt_texts):
+            raw_alt = alt_texts[index]
+            if isinstance(raw_alt, str) and raw_alt.strip():
+                alt = raw_alt.strip()[:125]
+        valid_alts.append(alt)
 
     if not valid_urls:
         print(f"[DEBUG] No valid http(s) image URL for product {product_id}.")
@@ -2862,7 +2870,13 @@ def add_images_to_product(product_id, images):
 
     for i in range(0, len(valid_urls), batch_size):
         batch = valid_urls[i:i + batch_size]
-        media_input = [{"originalSource": url, "mediaContentType": "IMAGE"} for url in batch]
+        batch_alts = valid_alts[i:i + batch_size]
+        media_input = []
+        for url, alt in zip(batch, batch_alts):
+            item = {"originalSource": url, "mediaContentType": "IMAGE"}
+            if alt:
+                item["alt"] = alt
+            media_input.append(item)
         variables = {"productId": product_id, "media": media_input}
 
         data = _run_query(mutation, variables)

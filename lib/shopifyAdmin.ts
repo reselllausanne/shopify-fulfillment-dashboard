@@ -22,7 +22,33 @@ export type ShopifyGraphQLResult<T> = {
   extensions?: ShopifyGraphQLExtensions;
 };
 
-let shopifyGraphQLChain: Promise<unknown> = Promise.resolve();
+let shopifyGraphQLSlots = 1;
+let shopifyGraphQLInUse = 0;
+const shopifyGraphQLWaiters: Array<() => void> = [];
+
+/** Default 1 keeps callers serial. Backfill raises this; throttle wait still applies. */
+export function setShopifyGraphQLConcurrency(slots: number): void {
+  shopifyGraphQLSlots = Math.max(1, Math.min(8, Math.floor(slots)));
+}
+
+function acquireShopifyGraphQLSlot(): Promise<void> {
+  if (shopifyGraphQLInUse < shopifyGraphQLSlots) {
+    shopifyGraphQLInUse += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    shopifyGraphQLWaiters.push(() => {
+      shopifyGraphQLInUse += 1;
+      resolve();
+    });
+  });
+}
+
+function releaseShopifyGraphQLSlot(): void {
+  shopifyGraphQLInUse = Math.max(0, shopifyGraphQLInUse - 1);
+  const next = shopifyGraphQLWaiters.shift();
+  if (next) next();
+}
 
 type ThrottleSnapshot = {
   available: number;
@@ -215,12 +241,12 @@ export async function shopifyGraphQL<T>(
     return lastResult as ShopifyGraphQLResult<T>;
   };
 
-  const resultPromise = shopifyGraphQLChain.then(run, run);
-  shopifyGraphQLChain = resultPromise.then(
-    () => undefined,
-    () => undefined
-  );
-  return resultPromise;
+  await acquireShopifyGraphQLSlot();
+  try {
+    return await run();
+  } finally {
+    releaseShopifyGraphQLSlot();
+  }
 }
 
 export function extractEUSize(input?: string | null): string | null {

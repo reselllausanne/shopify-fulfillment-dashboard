@@ -21,8 +21,12 @@ export type PostWriteVerifyParams = {
   expectedMediaId: string;
   /** Source URL uploaded (StockX/KicksDB). Null/undefined for gallery reorder. */
   expectedSourceUrl: string | null;
-  /** upload_reorder requires source↔Shopify CDN match; reorder only checks id+dims. */
-  mode: "upload_reorder" | "reorder";
+  /**
+   * upload_reorder — remote URL upload, Shopify CDN basename must match source.
+   * staged_webp — we re-encoded and staged-uploaded; Shopify assigns a new filename.
+   * reorder — gallery promote, id + dims only.
+   */
+  mode: "upload_reorder" | "staged_webp" | "reorder";
   minimumPx?: number;
 };
 
@@ -94,6 +98,12 @@ export function evaluatePostWriteVerification(
   const height = Number(featured.image.height ?? 0);
   if (width < minimumPx || height < minimumPx || !isGoogleReadyImage(featured, minimumPx)) {
     return fail("featured_below_500_after_write", params, view, featured);
+  }
+
+  if (params.mode === "staged_webp") {
+    // New Shopify filename is expected. Dims + featured id already checked.
+    // Caller must still HEAD the CDN and require Content-Type image/webp.
+    return { ok: true, reason: "verified" };
   }
 
   if (params.mode === "upload_reorder") {
