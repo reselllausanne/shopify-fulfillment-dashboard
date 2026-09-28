@@ -3,7 +3,7 @@
  * CH ships DE warehouse: flat CHF 16 / package (no free-ship AOV floor).
  * MOQ 1 pricing always bakes full package fee — cheap SKUs stay uncompetitive, expensive ones amortize.
  */
-import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+import { applyCheapItemSellFloor, scraperMarginPercent } from "@/app/lib/scraperCheapFloor";
 
 export type AlternateLandedCost = {
   buyChf: number;
@@ -20,7 +20,7 @@ export const ALTERNATE_PACKAGE_SHIP_CHF = 16;
 
 export function alternatePricingConfig() {
   return {
-    marginPercent: Math.max(0, Number(process.env.SCRAPER_ALT_MARGIN_PERCENT || "30")),
+    marginPercent: scraperMarginPercent(process.env.SCRAPER_ALT_MARGIN_PERCENT),
     shippingChf: Math.max(
       0,
       Number(process.env.SCRAPER_ALT_SHIPPING_CHF || ALTERNATE_PACKAGE_SHIP_CHF)

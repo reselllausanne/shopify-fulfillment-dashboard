@@ -1,5 +1,5 @@
 /** The Uncommon Shop CHF retail → Galaxus sell (ship + % margin). */
-import { applyCheapItemSellFloor } from "@/app/lib/scraperCheapFloor";
+import { applyCheapItemSellFloor, scraperMarginPercent } from "@/app/lib/scraperCheapFloor";
 
 export type UncommonLandedCost = {
   buyChf: number;
@@ -19,7 +19,7 @@ export const UNCOMMON_FLAT_SHIPPING_CHF = 7;
 
 export function uncommonPricingConfig() {
   return {
-    marginPercent: Math.max(0, Number(process.env.SCRAPER_TUS_MARGIN_PERCENT || "30")),
+    marginPercent: scraperMarginPercent(process.env.SCRAPER_TUS_MARGIN_PERCENT),
     shippingChf: Math.max(
       0,
       Number(process.env.SCRAPER_TUS_SHIPPING_CHF || UNCOMMON_FLAT_SHIPPING_CHF)
