@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
+import CatalogSearchBox from "@/app/components/CatalogSearchBox";
 import {
   computeDecathlonOfferListPriceFromBuyNowForSupplier,
   resolveDecathlonBuyNow,
@@ -166,12 +167,12 @@ export default function GalaxusCatalogPage() {
 
   const selectedIds = useMemo(() => Object.keys(selected).filter((id) => selected[id]), [selected]);
 
-  const loadItems = async (next: number) => {
+  const loadItems = async (next: number, queryOverride?: string) => {
     setLoading(true);
     setError(null);
     setLog(null);
     try {
-      const trimmedQ = query.trim();
+      const trimmedQ = (queryOverride ?? query).trim();
       const supplierKeyFromQ =
         (trimmedQ.endsWith("_") || trimmedQ.endsWith(":")) && trimmedQ.length >= 3
           ? trimmedQ.replace(/[:_]+$/g, "")
@@ -526,11 +527,11 @@ export default function GalaxusCatalogPage() {
             <div className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1">
                 <div className="text-xs text-gray-500">Search</div>
-                <input
-                  className="w-full border rounded px-2 py-1 text-sm"
-                  placeholder="Search by key, GTIN, SKU, name"
+                <CatalogSearchBox
+                  placeholder="Search by key, GTIN, SKU, name (e.g. 2gb ddr3 1333)"
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={setQuery}
+                  onSubmit={(text) => loadItems(0, text)}
                 />
               </div>
               <div className="space-y-1 md:col-span-2">

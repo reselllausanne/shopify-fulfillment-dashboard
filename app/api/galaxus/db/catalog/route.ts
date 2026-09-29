@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/app/lib/prisma";
+import { orderByIds, searchCatalogVariantIds } from "@/app/lib/catalogSearch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const CATALOG_INCLUDE = {
+  mappings: {
+    include: {
+      kickdbVariant: { include: { product: true } },
+    },
+  },
+};
 
 function parseSupplierKeyFilter(input: string): string | null {
   const trimmed = String(input ?? "").trim();
@@ -51,25 +60,25 @@ export async function GET(request: Request) {
         },
       ];
     } else {
-      where.OR = [
-        { supplierVariantId: { contains: q, mode: "insensitive" } },
-        { providerKey: { contains: q, mode: "insensitive" } },
-        { gtin: { contains: q, mode: "insensitive" } },
-        { supplierSku: { contains: q, mode: "insensitive" } },
-        { supplierProductName: { contains: q, mode: "insensitive" } },
-      ];
+      const ids = await searchCatalogVariantIds(prisma, q, {
+        limit,
+        offset,
+        supplierKey: supplierKeyParam ?? (supplier ? supplier.toLowerCase() : null),
+      });
+      const rows = ids.length
+        ? await (prisma as any).supplierVariant.findMany({
+            where: { id: { in: ids } },
+            include: CATALOG_INCLUDE,
+          })
+        : [];
+      const nextOffset = ids.length === limit ? offset + limit : null;
+      return NextResponse.json({ ok: true, items: orderByIds(rows, ids), nextOffset });
     }
   }
 
   const rows = await (prisma as any).supplierVariant.findMany({
     where,
-    include: {
-      mappings: {
-        include: {
-          kickdbVariant: { include: { product: true } },
-        },
-      },
-    },
+    include: CATALOG_INCLUDE,
     orderBy: { updatedAt: "desc" },
     take: limit,
     skip: offset,
