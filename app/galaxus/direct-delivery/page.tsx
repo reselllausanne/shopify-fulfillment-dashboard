@@ -293,7 +293,7 @@ export default function GalaxusDirectDeliveryPage() {
           deliveryType: "direct_delivery",
           includeInvoice: "0",
           includeWarehouse: "0",
-          includeLinked: "0",
+          // Keep linked counts. includeLinked=0 forces every hit to 0/N and paints the list red.
           q: query,
         });
         const res = await fetch(`/api/galaxus/orders?${params.toString()}`, {
@@ -325,10 +325,17 @@ export default function GalaxusDirectDeliveryPage() {
   }, [debouncedOrderSearch]);
 
   const loadOrderDetail = useCallback(async (orderId: string, opts?: { force?: boolean }) => {
+    const patchListCounts = (id: string, order: any) => {
+      const counts = deriveListCountsFromOrderDetail(order);
+      const patch = (row: OrderListItem) => (row.id === id ? { ...row, ...counts } : row);
+      setOrders((prev) => prev.map(patch));
+      setSearchHits((prev) => (prev ? prev.map(patch) : prev));
+    };
     const force = Boolean(opts?.force);
     const cached = orderDetailCacheRef.current.get(orderId);
     if (!force && cached && Date.now() - cached.at < ORDER_DETAIL_CACHE_TTL_MS) {
       setSelectedOrder(cached.order);
+      patchListCounts(orderId, cached.order);
       setLoadingOrder(false);
       return;
     }
@@ -350,11 +357,7 @@ export default function GalaxusDirectDeliveryPage() {
       if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to load order");
       orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: data.order });
       setSelectedOrder(data.order);
-      setOrders((prev) =>
-        prev.map((row) =>
-          row.id === orderId ? { ...row, ...deriveListCountsFromOrderDetail(data.order) } : row
-        )
-      );
+      patchListCounts(orderId, data.order);
       setLoadingOrder(false);
 
       // Warehouse in-stock auto-link only — no StockX crawl on open.
@@ -367,13 +370,7 @@ export default function GalaxusDirectDeliveryPage() {
           if (!enriched?.ok || !enriched?.order) return;
           orderDetailCacheRef.current.set(orderId, { at: Date.now(), order: enriched.order });
           setSelectedOrder(enriched.order);
-          setOrders((prev) =>
-            prev.map((row) =>
-              row.id === orderId
-                ? { ...row, ...deriveListCountsFromOrderDetail(enriched.order) }
-                : row
-            )
-          );
+          patchListCounts(orderId, enriched.order);
         })
         .catch(() => {});
     } catch (err: any) {
