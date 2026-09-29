@@ -9,6 +9,11 @@ import GalaxusExternalBuyPanel, {
   isExternalBuyLine,
 } from "@/app/galaxus/_components/GalaxusExternalBuyPanel";
 import { runPurgeGalaxusOrderFromDbUi } from "@/galaxus/_lib/purgeGalaxusOrderClient";
+import {
+  orderListCardClass,
+  orderListFullyLinked,
+  orderListNeedsLink,
+} from "@/app/galaxus/direct-delivery/orderListTone";
 
 type OrderListItem = {
   id: string;
@@ -18,7 +23,6 @@ type OrderListItem = {
   shippedCount?: number;
   fulfilledCount?: number;
   linkedCount?: number;
-  /** STX/external lines still missing a buy — drives red card (not total line count). */
   needsBuyCount?: number;
   fulfillmentState?: "to_process" | "shipped" | "fulfilled";
   hasPhysicalStock?: boolean;
@@ -553,37 +557,8 @@ export default function GalaxusDirectDeliveryPage() {
     }
   };
 
-  const needsLinking = (order: OrderListItem) => {
-    if (typeof order.needsBuyCount === "number") return order.needsBuyCount > 0;
-    const lines = order._count?.lines ?? 0;
-    const linked = order.linkedCount ?? 0;
-    return lines > 0 && linked < lines;
-  };
-
-  const isFullyLinked = (order: OrderListItem) => {
-    if (typeof order.needsBuyCount === "number") {
-      return order.needsBuyCount === 0 && (order.linkedCount ?? 0) > 0;
-    }
-    const lines = order._count?.lines ?? 0;
-    const linked = order.linkedCount ?? 0;
-    return lines > 0 && linked >= lines;
-  };
-
-  const orderListCardClass = (order: OrderListItem, selected: boolean) => {
-    const linkTone = needsLinking(order)
-      ? "border-red-500 bg-red-50"
-      : isFullyLinked(order)
-        ? "border-green-500 bg-green-50"
-        : "border-gray-200 bg-white";
-    if (selected) return `${linkTone} ring-2 ring-black`;
-    if (order.hasPhysicalStock && isFullyLinked(order)) {
-      return "border-green-600 bg-green-50";
-    }
-    if (newOrderIds.has(order.id) && !needsLinking(order) && !isFullyLinked(order)) {
-      return "border-emerald-400 bg-emerald-50";
-    }
-    return linkTone;
-  };
+  const needsLinking = (order: OrderListItem) => orderListNeedsLink(order);
+  const isFullyLinked = (order: OrderListItem) => orderListFullyLinked(order);
 
   const resendOrdr = async () => {
     if (!selectedOrderId) return;
@@ -1179,9 +1154,9 @@ export default function GalaxusDirectDeliveryPage() {
                     <span
                       className={
                         needsLinking(order)
-                          ? "font-semibold text-red-700"
+                          ? "font-semibold text-red-900"
                           : isFullyLinked(order)
-                            ? "font-semibold text-green-700"
+                            ? "font-semibold text-green-900"
                             : "text-gray-500"
                       }
                     >
