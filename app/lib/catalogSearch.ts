@@ -107,7 +107,11 @@ export function buildCatalogSearchSql(q: string, opts: CatalogSearchOptions): Pr
   if (gtins.length) exactConds.push(Prisma.sql`gtin IN (${Prisma.join(gtins)})`);
   const exact = Prisma.sql`(${Prisma.join(exactConds, " OR ")})`;
 
-  const matchConds: Prisma.Sql[] = [exact];
+  const filters = filterSql(opts);
+  const cols = Prisma.sql`id, stock, "supplierProductName", "updatedAt"`;
+  const branches: Prisma.Sql[] = [
+    Prisma.sql`SELECT ${cols}, 1 AS exact_hit FROM "SupplierVariant" WHERE ${exact} ${filters}`,
+  ];
   if (tokens.length && canUseNameSearch(tokens)) {
     const nameAll = Prisma.join(
       tokens.map((t) =>
@@ -117,14 +121,18 @@ export function buildCatalogSearchSql(q: string, opts: CatalogSearchOptions): Pr
       ),
       " AND "
     );
-    matchConds.push(Prisma.sql`(${nameAll})`);
+    // Common words ("air force 1") hit 100k+ StockX size rows; rank a bounded sample.
+    branches.push(
+      Prisma.sql`(SELECT ${cols}, 0 AS exact_hit FROM "SupplierVariant" WHERE ${nameAll} ${filters} LIMIT ${NAME_MATCH_CAP})`
+    );
   }
 
   return Prisma.sql`
-    SELECT id
-    FROM "SupplierVariant"
-    WHERE (${Prisma.join(matchConds, " OR ")}) ${filterSql(opts)}
-    ORDER BY ${exact} DESC,
+    SELECT id FROM (
+      SELECT DISTINCT ON (id) * FROM (${Prisma.join(branches, " UNION ALL ")}) u
+      ORDER BY id, exact_hit DESC
+    ) m
+    ORDER BY exact_hit DESC,
              (coalesce(stock, 0) > 0) DESC,
              length(coalesce("supplierProductName", '')) ASC,
              "updatedAt" DESC
@@ -132,6 +140,8 @@ export function buildCatalogSearchSql(q: string, opts: CatalogSearchOptions): Pr
     OFFSET ${opts.offset ?? 0}
   `;
 }
+
+const NAME_MATCH_CAP = 3000;
 
 type RawQueryClient = {
   $queryRaw<T = unknown>(query: Prisma.Sql): Promise<T>;
