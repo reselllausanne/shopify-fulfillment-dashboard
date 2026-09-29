@@ -7,6 +7,7 @@ import { PARTNER_KEY_SELECT, partnerKeysLowerSet } from "@/galaxus/exports/partn
 import { requestFeedPush } from "@/galaxus/ops/feedPipeline";
 import { attachGtinReferenceMinPrices } from "@/galaxus/supplier/gtinReferenceMinPrice";
 import { mergeMoqIntoManualNote } from "@/galaxus/exports/stockMoq";
+import { orderByIds, searchCatalogVariantIds } from "@/app/lib/catalogSearch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,6 +80,7 @@ export async function GET(request: Request) {
   if (providerKeys.length > 0) {
     where.providerKey = { in: providerKeys };
   }
+  let searchIds: string[] | null = null;
   if (q) {
     const qAsSupplierKey = q.endsWith("_") || q.endsWith(":") ? parseSupplierKeyFilter(q) : null;
     if (qAsSupplierKey) {
@@ -94,22 +96,27 @@ export async function GET(request: Request) {
         },
       ];
     } else {
-      where.OR = [
-      { supplierVariantId: { contains: q, mode: "insensitive" } },
-      { providerKey: { contains: q, mode: "insensitive" } },
-      { gtin: { contains: q, mode: "insensitive" } },
-      { supplierSku: { contains: q, mode: "insensitive" } },
-      { supplierProductName: { contains: q, mode: "insensitive" } },
-      ];
+      searchIds = await searchCatalogVariantIds(prisma, q, {
+        limit,
+        offset,
+        supplierKey: supplierKeyParam,
+        lockedOnly,
+        providerKeys,
+      });
     }
   }
 
-  const items = await prisma.supplierVariant.findMany({
-    where,
-    orderBy: { updatedAt: "desc" },
-    take: limit,
-    skip: offset,
-  });
+  const items = searchIds
+    ? orderByIds(
+        searchIds.length ? await prisma.supplierVariant.findMany({ where: { id: { in: searchIds } } }) : [],
+        searchIds
+      )
+    : await prisma.supplierVariant.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        take: limit,
+        skip: offset,
+      });
   const partners = await (prisma as any).partner.findMany({ select: PARTNER_KEY_SELECT });
   const galaxusPartnerKeysLower = partnerKeysLowerSet(partners ?? []);
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import CatalogSearchBox from "@/app/components/CatalogSearchBox";
 
 type CatalogRow = any;
 
@@ -39,12 +40,12 @@ export default function GalaxusDbPage() {
     return [...baseFirst.filter((k) => keys.has(k)), ...rest];
   }, [items]);
 
-  const load = async (offset: number) => {
+  const load = async (offset: number, queryOverride?: string) => {
     setLoading(true);
     setError(null);
     setLog(null);
     try {
-      const trimmedQ = q.trim();
+      const trimmedQ = (queryOverride ?? q).trim();
       const supplierKeyFromQ =
         (trimmedQ.endsWith("_") || trimmedQ.endsWith(":")) && trimmedQ.length >= 3
           ? trimmedQ.replace(/[:_]+$/g, "")
@@ -95,11 +96,12 @@ export default function GalaxusDbPage() {
       <div className="rounded border bg-white p-3 flex flex-wrap items-end gap-2">
         <div className="space-y-1">
           <div className="text-xs text-gray-500">Search</div>
-          <input
+          <CatalogSearchBox
             className="border rounded px-2 py-1 text-sm w-80"
             placeholder="supplierVariantId / providerKey / gtin / sku / name"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={setQ}
+            onSubmit={(text) => load(0, text)}
           />
         </div>
         <label className="flex items-center gap-2 text-xs text-gray-600">
