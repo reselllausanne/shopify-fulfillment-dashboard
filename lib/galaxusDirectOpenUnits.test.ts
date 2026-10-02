@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
+import { latestStockxStep } from "./galaxusDirectOpenUnits";
 import { decideFulfillUnitSelection } from "@/lib/shopifyFulfillUnitSelection";
+
+describe("latestStockxStep", () => {
+  it("returns the last completed StockX milestone", () => {
+    expect(
+      latestStockxStep(
+        [
+          { title: "Order Confirmed", status: "SUCCESS", progress: "COMPLETED" },
+          { title: "Order Picked Up By Carrier", status: "SUCCESS", progress: "COMPLETED" },
+          { title: "Order Delivered!", status: "PENDING", progress: "PENDING" },
+        ],
+        "SELLER_SHIPPED"
+      )
+    ).toBe("Order Picked Up By Carrier");
+  });
+
+  it("uses the latest available step when none is completed", () => {
+    expect(
+      latestStockxStep([
+        { title: "Order Confirmed", progress: "PENDING" },
+        { title: "Waiting for carrier", progress: "PENDING" },
+      ])
+    ).toBe("Waiting for carrier");
+  });
+
+  it("falls back to the stored StockX status", () => {
+    expect(latestStockxStep(null, "SELLER_SHIPPED")).toBe("SELLER_SHIPPED");
+  });
+});
 
 describe("galaxus direct GTIN popup decision", () => {
   it("single product qty1 → no popup (auto ship)", () => {

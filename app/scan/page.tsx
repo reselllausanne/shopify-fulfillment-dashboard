@@ -182,6 +182,7 @@ type ScanResult = {
       remainingQuantity: number;
       isScannedLine?: boolean;
       size?: string | null;
+      procurement?: DirectProcurementInfo[];
     }>;
     autoDirectUnitSelection?: {
       requiresPopup: boolean;
@@ -382,6 +383,19 @@ type DirectOpenUnit = {
   remainingQuantity: number;
   isScannedLine?: boolean;
   size?: string | null;
+  procurement?: DirectProcurementInfo[];
+};
+
+type DirectProcurementInfo = {
+  source: "stockx" | "external" | "local";
+  supplier: string;
+  unitIndex: number;
+  reference: string | null;
+  status: string | null;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  etaMin: string | null;
+  etaMax: string | null;
 };
 
 type DirectShipPromptState = {
@@ -402,6 +416,17 @@ type DirectRescanHint = {
   orderLabel: string;
   shippedNow: number;
   remaining: number;
+};
+
+const formatProcurementDate = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("fr-CH", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
 };
 
 type PackingSessionEntry = {
@@ -2154,6 +2179,7 @@ export default function ScanPage() {
                   Boolean(u.isScannedLine) ||
                   String(u.lineId || u.lineItemId) === lineId,
                 size: u.size ?? null,
+                procurement: u.procurement ?? [],
               }));
               // Fallback: if API didn't return openUnits, at least show scanned line.
               if (mappedUnits.length === 0) {
@@ -3872,13 +3898,24 @@ export default function ScanPage() {
                   directShipPrompt.selectedQtyByLineId
                 ).reduce((n, q) => n + Math.max(0, Number(q) || 0), 0);
                 return (
-                  <p className="mt-1 text-sm text-gray-600">
-                    <span className="font-semibold text-emerald-800">{selectedCount}</span>{" "}
-                    sélectionnée(s) / {totalOpen} ouverte(s)
-                  </p>
+                  <>
+                    <p className="mt-1 text-sm text-gray-600">
+                      <span className="font-semibold text-emerald-800">{selectedCount}</span>{" "}
+                      sélectionnée(s) / {totalOpen} ouverte(s)
+                    </p>
+                    {totalOpen > 1 ? (
+                      <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                        <strong>
+                          Cette commande contient {totalOpen} paires encore ouvertes.
+                        </strong>{" "}
+                        Vérifie ci-dessous si les autres paires sont déjà livrées ou en route avant
+                        de fermer ce colis.
+                      </div>
+                    ) : null}
+                  </>
                 );
               })()}
-              <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+              <ul className="mt-3 max-h-[55vh] space-y-2 overflow-y-auto">
                 {directShipPrompt.openUnits.map((u) => {
                   const maxQty = Math.max(1, u.remainingQuantity);
                   const selectedQty = directShipPrompt.selectedQtyByLineId[u.lineId];
@@ -3942,6 +3979,57 @@ export default function ScanPage() {
                           </div>
                         </span>
                       </label>
+                      <div className="ml-6 mt-2 space-y-1.5">
+                        {(u.procurement ?? []).length > 0 ? (
+                          (u.procurement ?? []).map((proc, index) => {
+                            const status = String(proc.status ?? "").trim();
+                            const statusTone = /deliver|livr|received|complete/i.test(status)
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                              : /ship|carrier|transit|route|pick.?up/i.test(status)
+                                ? "border-blue-200 bg-blue-50 text-blue-950"
+                                : "border-gray-200 bg-gray-50 text-gray-800";
+                            const eta =
+                              formatProcurementDate(proc.etaMax) ??
+                              formatProcurementDate(proc.etaMin);
+                            return (
+                              <div
+                                key={`${proc.source}-${proc.reference ?? index}-${proc.unitIndex}`}
+                                className={`rounded border px-2.5 py-2 text-xs ${statusTone}`}
+                              >
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                  <span className="font-semibold">{proc.supplier}</span>
+                                  {proc.reference ? (
+                                    <span className="font-mono text-[11px] opacity-75">
+                                      {proc.reference}
+                                    </span>
+                                  ) : null}
+                                  {status ? <span>· {status}</span> : null}
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  {proc.trackingUrl ? (
+                                    <a
+                                      href={proc.trackingUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={(event) => event.stopPropagation()}
+                                      className="font-semibold underline"
+                                    >
+                                      Tracking {proc.trackingNumber ?? "fournisseur"}
+                                    </a>
+                                  ) : proc.trackingNumber ? (
+                                    <span>Tracking {proc.trackingNumber}</span>
+                                  ) : null}
+                                  {eta ? <span>ETA {eta}</span> : null}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+                            Aucun achat fournisseur lié — contrôle manuel nécessaire.
+                          </div>
+                        )}
+                      </div>
                     </li>
                   );
                 })}
