@@ -11,6 +11,7 @@ import type { OpsJobKey } from "./types";
 import { runInventoryReconciliation, runMultiChannelStockSync } from "@/inventory/sync";
 import { runShopifyOrdersSync } from "@/shopify/orders/sync";
 import { recoverPhysicalStockForGalaxus } from "@/galaxus/jobs/physicalStockRecovery";
+import { retryStuckDirectDelrs } from "@/galaxus/warehouse/delrRetry";
 import {
   gatePartnerSyncForTheSupplier,
 } from "@/galaxus/supplier/theSupplierPolicy";
@@ -148,6 +149,9 @@ async function executeJob(jobKey: OpsJobKey, origin: string, tickOptions?: OpsTi
         limit: 3000,
       })
     );
+  }
+  if (jobKey === "delr-retry") {
+    return runOpsJob(jobKey, async () => retryStuckDirectDelrs());
   }
   throw new Error(`Unknown jobKey ${jobKey}`);
 }

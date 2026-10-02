@@ -6,7 +6,8 @@ export type OpsJobKey =
   | "image-sync"
   | "shopify-order-sync"
   | "multichannel-stock-sync"
-  | "inventory-reconcile";
+  | "inventory-reconcile"
+  | "delr-retry";
 
 export type FeedScope = "stock-price" | "full" | "master-specs" | "stock" | "price";
 

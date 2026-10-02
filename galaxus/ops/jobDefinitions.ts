@@ -19,6 +19,8 @@ export const DEFAULT_JOBS: Array<{
   { jobKey: "shopify-order-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
   { jobKey: "multichannel-stock-sync", intervalMs: 15 * MINUTE_MS, enabled: true },
   { jobKey: "inventory-reconcile", intervalMs: 1 * HOUR_MS, enabled: true },
+  /** Direct-delivery shipments with tracking but DELR never sent (background send lost). */
+  { jobKey: "delr-retry", intervalMs: 30 * MINUTE_MS, enabled: true },
 ];
 
 export async function ensureJobDefinitions() {

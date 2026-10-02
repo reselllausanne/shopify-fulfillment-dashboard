@@ -409,6 +409,18 @@ async function finalizeShipmentEdiAfterLabel(
       };
     }
   );
+  if ((delrResult as any)?.status === "error") {
+    // uploadDelrForShipment returns soft errors (gates) without throwing; keep them visible.
+    await prismaAny.shipment
+      .updateMany({
+        where: { id: shipmentId, delrSentAt: null },
+        data: {
+          delrStatus: "ERROR",
+          delrError: String((delrResult as any)?.message ?? "DELR upload failed"),
+        },
+      })
+      .catch(() => undefined);
+  }
   console.log("[POST-LABEL] DELR done", {
     shipmentId,
     ms: Date.now() - delrStartedAt,
