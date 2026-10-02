@@ -29,8 +29,11 @@ function numericId(idish: string | null | undefined): string {
 function keyParts(line: PaidLineKeyInput): { orderId: string; lineItemId: string } {
   return {
     orderId: numericId(line.orderId) || String(line.orderId ?? "").trim(),
-    // Fall back to GTIN when Shopify gives no line id, so the key is still stable.
-    lineItemId: numericId(line.lineItemId) || `gtin:${line.gtin ?? "unknown"}`,
+    // Fall back to GTIN / variant when Shopify gives no line id, so the key is still stable.
+    lineItemId:
+      numericId(line.lineItemId) ||
+      (line.gtin ? `gtin:${line.gtin}` : "") ||
+      (line.variantId ? `variant:${numericId(line.variantId) || line.variantId}` : "unknown"),
   };
 }
 

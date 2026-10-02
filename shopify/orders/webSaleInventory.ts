@@ -76,6 +76,63 @@ export async function syncMirrorForGtinFromShopify(
   return { gtin: cleanGtin, synced: levels.length, levels };
 }
 
+/**
+ * Same as {@link syncMirrorForGtinFromShopify} but keyed on Shopify variant id.
+ * Used when the sold line has no barcode/GTIN (bags, soft goods).
+ */
+export async function syncMirrorForVariantFromShopify(
+  variantId: string
+): Promise<SyncMirrorForGtinResult> {
+  const preferred = String(variantId ?? "").trim();
+  const empty: SyncMirrorForGtinResult = { gtin: "", synced: 0, levels: [] };
+  if (!preferred) return empty;
+
+  let match: Awaited<ReturnType<typeof getShopifyVariantDetail>> | null = null;
+  try {
+    match = await getShopifyVariantDetail(preferred);
+  } catch {
+    return empty;
+  }
+  if (!match?.inventoryItemId || !match.variantId) return empty;
+
+  const gtin = String(match.barcode ?? "").trim();
+  const now = new Date();
+  const levels: SyncMirrorForGtinResult["levels"] = [];
+
+  for (const loc of LOCATIONS) {
+    const available =
+      (await getInventoryAvailableAtLocation({
+        inventoryItemId: match.inventoryItemId,
+        locationId: loc.id,
+      })) ?? 0;
+
+    levels.push({ locationName: loc.name, available });
+
+    await upsertLocationStockRow(
+      loc,
+      {
+        shopifyVariantId: match.variantId,
+        inventoryItemId: match.inventoryItemId,
+        sku: match.sku,
+        gtin: gtin || null,
+        available: Math.max(0, available),
+      },
+      now
+    );
+
+    if (available <= 0) {
+      await prisma.$executeRaw`
+        UPDATE "public"."ShopifyVariantLocationStock"
+        SET "available" = 0, "updatedAt" = ${now}, "lastSeenAt" = ${now}
+        WHERE "shopifyVariantId" = ${match.variantId}
+          AND "locationId" = ${loc.id}
+      `;
+    }
+  }
+
+  return { gtin, synced: levels.length, levels };
+}
+
 async function resolveShopifyVariantForWebSale(
   gtin: string,
   preferredVariantId: string | null

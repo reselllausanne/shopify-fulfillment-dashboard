@@ -1,6 +1,5 @@
 import { shopifyGraphQL } from "@/lib/shopifyAdmin";
 import {
-  resolveGtinsForLineItems,
   resolveGtinSalesForLineItems,
   type OrderPaidLineItem,
   type OrdersPaidConvergenceResult,
@@ -115,7 +114,13 @@ export async function convergeRecentPaidShopifyOrders(options?: {
   const gtinSet = new Set<string>();
   const orderSales = new Map<
     string,
-    Array<{ gtin: string; quantity: number; lineItemId: string | null; variantId: string | null }>
+    Array<{
+      gtin: string | null;
+      quantity: number;
+      lineItemId: string | null;
+      variantId: string | null;
+      sku: string | null;
+    }>
   >();
 
   for (const edge of orders) {
@@ -124,7 +129,9 @@ export async function convergeRecentPaidShopifyOrders(options?: {
     if (items.length === 0) continue;
     const sales = await resolveGtinSalesForLineItems(items);
     orderSales.set(order.id, sales);
-    for (const sale of sales) gtinSet.add(sale.gtin);
+    for (const sale of sales) {
+      if (sale.gtin) gtinSet.add(sale.gtin);
+    }
   }
 
   const refreshByKey = new Map<
@@ -160,17 +167,18 @@ export async function convergeRecentPaidShopifyOrders(options?: {
         continue;
       }
 
-      const key = `${sale.gtin}:${sale.variantId ?? "novariant"}`;
+      const key = `${sale.gtin ?? "nogtin"}:${sale.variantId ?? "novariant"}`;
       if (refreshByKey.has(key)) {
         await markPaidLineProcessed(lineRef, { ok: true });
         continue;
       }
       try {
-        const refresh = await refreshAfterShopifySale(sale.gtin, {
+        const refresh = await refreshAfterShopifySale(sale.gtin ?? "", {
           soldQty: sale.quantity,
           orderId,
           lineItemId: sale.lineItemId,
           variantId: sale.variantId,
+          sku: sale.sku,
           forceMarketPrice: true,
         });
         refreshByKey.set(key, refresh);
@@ -181,7 +189,7 @@ export async function convergeRecentPaidShopifyOrders(options?: {
         });
       } catch (err: any) {
         refreshByKey.set(key, {
-          gtin: sale.gtin,
+          gtin: sale.gtin ?? "",
           warnings: [err?.message ?? String(err)],
         });
         await markPaidLineProcessed(lineRef, { ok: false, error: err?.message ?? String(err) });
@@ -197,7 +205,7 @@ export async function convergeRecentPaidShopifyOrders(options?: {
   for (const [orderId, salesForOrder] of orderSales) {
     const results: OrdersPaidConvergenceResult["results"] = [];
     for (const sale of salesForOrder) {
-      const refresh = refreshByKey.get(`${sale.gtin}:${sale.variantId ?? "novariant"}`);
+      const refresh = refreshByKey.get(`${sale.gtin ?? "nogtin"}:${sale.variantId ?? "novariant"}`);
       const conv = refresh?.convergence;
       const hasError = Boolean(refresh?.warnings.length && !refresh.shopifyRefresh?.ok);
       results.push({
@@ -211,7 +219,11 @@ export async function convergeRecentPaidShopifyOrders(options?: {
       if (hasError || conv?.error) errorsCount += 1;
       if (conv?.changed || refresh?.shopifyRefresh?.ok) changed += 1;
     }
-    out.push({ orderId, gtins: salesForOrder.map((s) => s.gtin), results });
+    out.push({
+      orderId,
+      gtins: salesForOrder.map((s) => s.gtin).filter((g): g is string => Boolean(g)),
+      results,
+    });
     gtins += salesForOrder.length;
   }
 

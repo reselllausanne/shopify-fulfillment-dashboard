@@ -55,7 +55,9 @@ import {
   JMONEY_PRICE_LOCK_NOTE,
   LIQUIDATION_LOCATION_IDS,
   ONLINE_LOCATION,
+  PHYSICAL_LOCATIONS,
 } from "@/shopify/inventory/locationConfig";
+import { resolveKickdbIdentityFromSku } from "@/shopify/orders/saleIdentity";
 
 const VARIANT_SALE_PRICE_MUTATION = /* GraphQL */ `
 mutation ConvergeVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -92,6 +94,50 @@ function toNumber(x: unknown): number | null {
   if (x == null) return null;
   const n = Number(x);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Mirror qtys for a Shopify variant when GTIN is missing (bags / soft goods).
+ * `liquidationLaneQty` matches getBussignyQtyForGtin semantics (Bussigny+Lab+COLD).
+ */
+async function mirrorQtysForVariant(variantId: string): Promise<{
+  physicalQty: number;
+  bussignyQty: number;
+  homeQty: number;
+  liquidationLaneQty: number;
+}> {
+  const id = String(variantId ?? "").trim();
+  if (!id) {
+    return { physicalQty: 0, bussignyQty: 0, homeQty: 0, liquidationLaneQty: 0 };
+  }
+  const rows = await prisma.$queryRaw<
+    Array<{ locationId: string; sourceType: string; available: number }>
+  >`
+    SELECT "locationId", "sourceType", "available"
+    FROM "public"."ShopifyVariantLocationStock"
+    WHERE "shopifyVariantId" = ${id}
+  `;
+  let physicalQty = 0;
+  let bussignyQty = 0;
+  let homeQty = 0;
+  let liquidationLaneQty = 0;
+  const bussignyLoc = PHYSICAL_LOCATIONS.find((l) => /bussigny/i.test(l.name));
+  for (const row of rows) {
+    const qty = Math.max(0, Number(row.available ?? 0));
+    if (row.sourceType === "physical") {
+      physicalQty += qty;
+      if (LIQUIDATION_LOCATION_IDS.includes(row.locationId)) {
+        liquidationLaneQty += qty;
+      }
+    }
+    if (ONLINE_LOCATION && row.locationId === ONLINE_LOCATION.id) {
+      homeQty += qty;
+    }
+    if (bussignyLoc && row.locationId === bussignyLoc.id) {
+      bussignyQty += qty;
+    }
+  }
+  return { physicalQty, bussignyQty, homeQty, liquidationLaneQty };
 }
 
 /**
@@ -138,7 +184,9 @@ async function syncBussignyDelivery48h(
 ): Promise<void> {
   if (!shopifyVariant?.variantId) return;
   try {
-    const liquidationQty = await getBussignyQtyForGtin(gtin);
+    const liquidationQty = gtin
+      ? await getBussignyQtyForGtin(gtin)
+      : (await mirrorQtysForVariant(shopifyVariant.variantId)).liquidationLaneQty;
     // Flag only when the liquidation lock is real: qty alone must not mark a
     // pair as 48h/soldes when its price was never actually changed.
     const want48h = liquidationQty > 0 && liquidationLockActive;
@@ -322,7 +370,10 @@ export async function convergeVariant(
   const changes: string[] = [];
   const warnings: string[] = [];
   const cleanGtin = String(gtin ?? "").trim();
-  if (!cleanGtin) {
+  const preferredVariantId = String(options.preferredVariantId ?? "").trim();
+
+  // GTIN optional when we already know the sold Shopify variant (no-barcode bags).
+  if (!cleanGtin && !preferredVariantId) {
     return {
       gtin: "",
       physicalQty: 0,
@@ -336,44 +387,91 @@ export async function convergeVariant(
     };
   }
 
-  const gtinLookup = gtinCandidates(cleanGtin);
-  const physicalMap = await loadPhysicalMirrorStockByGtin([cleanGtin]);
-  const physical = physicalMap.get(cleanGtin);
-  const physicalQty = physical?.qty ?? 0;
-  const bussignyQty = await getBussignyQtyForGtin(cleanGtin);
-  const homeQty = await getHomeQtyForGtin(cleanGtin);
-
-  const stxRow = await prisma.supplierVariant.findFirst({
-    where: {
-      gtin: { in: gtinLookup.length > 0 ? gtinLookup : [cleanGtin] },
-      supplierVariantId: { startsWith: "stx_" },
-    },
-    select: {
-      id: true,
-      supplierVariantId: true,
-      price: true,
-      manualLock: true,
-      manualPrice: true,
-      manualStock: true,
-      manualNote: true,
-    },
-  });
-
   let shopifyVariant: ShopifyVariantDetail | null = null;
-  const preferredVariantId = String(options.preferredVariantId ?? "").trim();
   try {
     if (preferredVariantId) {
       shopifyVariant = await getShopifyVariantDetail(preferredVariantId);
       if (!shopifyVariant) {
         warnings.push(`preferred variant not found: ${preferredVariantId}`);
       }
-    } else {
+    } else if (cleanGtin) {
       const { match, ambiguous } = await findShopifyVariantByGtin(cleanGtin);
       if (ambiguous) warnings.push("multiple Shopify variants share this GTIN — using first match");
       shopifyVariant = match;
     }
   } catch (err: any) {
     warnings.push(`Shopify variant lookup failed: ${err?.message ?? err}`);
+  }
+
+  const gtinLookup = cleanGtin ? gtinCandidates(cleanGtin) : [];
+  let physicalQty = 0;
+  let bussignyQty = 0;
+  let homeQty = 0;
+
+  if (cleanGtin) {
+    const physicalMap = await loadPhysicalMirrorStockByGtin([cleanGtin]);
+    const physical = physicalMap.get(cleanGtin);
+    physicalQty = physical?.qty ?? 0;
+    bussignyQty = await getBussignyQtyForGtin(cleanGtin);
+    homeQty = await getHomeQtyForGtin(cleanGtin);
+  } else if (shopifyVariant?.variantId) {
+    const mirror = await mirrorQtysForVariant(shopifyVariant.variantId);
+    physicalQty = mirror.physicalQty;
+    // Match getBussignyQtyForGtin: liquidation-lane sum, not Bussigny-only.
+    bussignyQty = mirror.liquidationLaneQty;
+    homeQty = mirror.homeQty;
+    warnings.push("convergence without GTIN — mirror keyed on shopifyVariantId");
+  }
+
+  let stxRow = cleanGtin
+    ? await prisma.supplierVariant.findFirst({
+        where: {
+          gtin: { in: gtinLookup.length > 0 ? gtinLookup : [cleanGtin] },
+          supplierVariantId: { startsWith: "stx_" },
+        },
+        select: {
+          id: true,
+          supplierVariantId: true,
+          price: true,
+          manualLock: true,
+          manualPrice: true,
+          manualStock: true,
+          manualNote: true,
+        },
+      })
+    : null;
+
+  // No GTIN: try STX row via KickDB style from Shopify SKU uuid.
+  if (!stxRow && shopifyVariant?.sku) {
+    const kick = await resolveKickdbIdentityFromSku(shopifyVariant.sku);
+    if (kick.styleId) {
+      stxRow = await prisma.supplierVariant.findFirst({
+        where: {
+          supplierSku: kick.styleId,
+          supplierVariantId: { startsWith: "stx_" },
+        },
+        select: {
+          id: true,
+          supplierVariantId: true,
+          price: true,
+          manualLock: true,
+          manualPrice: true,
+          manualStock: true,
+          manualNote: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      });
+    }
+  }
+
+  // Identifier for main.py upsert when barcode missing (urlKey / KickDB uuid).
+  let productUpsertId = cleanGtin;
+  if (!productUpsertId && shopifyVariant?.sku) {
+    const kick = await resolveKickdbIdentityFromSku(shopifyVariant.sku);
+    productUpsertId = kick.urlKey || kick.kickdbProductId || "";
+  }
+  if (!productUpsertId) {
+    productUpsertId = String(shopifyVariant?.productHandle ?? "").trim();
   }
 
   const isEssentials = isEssentialsShopifyVariant(shopifyVariant);
@@ -907,7 +1005,7 @@ export async function convergeVariant(
             );
           }
         } else if (needsPriceRevert) {
-          const refresh = await createProductFullFlow(cleanGtin);
+          const refresh = await createProductFullFlow(productUpsertId || cleanGtin);
           if (refresh.ok === false) {
             warnings.push(`createProductFullFlow failed: ${refresh.error ?? "unknown"}`);
           } else {

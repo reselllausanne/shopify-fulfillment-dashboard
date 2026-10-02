@@ -269,7 +269,8 @@ export async function resolveGtinsForLineItems(items: OrderPaidLineItem[]): Prom
 }
 
 export type GtinSaleLine = {
-  gtin: string;
+  /** Null when sold Shopify variant has no barcode (bags / soft goods). */
+  gtin: string | null;
   quantity: number;
   lineItemId: string | null;
   variantId: string | null;
@@ -277,7 +278,7 @@ export type GtinSaleLine = {
   revenue: number;
 };
 
-/** One GTIN + sold qty per line item (for post-sale inventory decrement). */
+/** One sale line per paid item — GTIN when known, else variantId/SKU still processed. */
 export async function resolveGtinSalesForLineItems(items: OrderPaidLineItem[]): Promise<GtinSaleLine[]> {
   const sales: GtinSaleLine[] = [];
 
@@ -289,8 +290,9 @@ export async function resolveGtinSalesForLineItems(items: OrderPaidLineItem[]): 
     const unitPrice = Number(item.price ?? 0);
     const revenue = Number.isFinite(unitPrice) ? unitPrice * qty : 0;
     const gtins = await resolveGtinsForLineItems([item]);
-    const gtin = gtins[0];
-    if (!gtin) continue;
+    const gtin = gtins[0] ?? null;
+    // Skip protection / junk lines with neither barcode nor variant.
+    if (!gtin && !variantId) continue;
     sales.push({ gtin, quantity: qty, lineItemId, variantId, sku, revenue });
   }
 
@@ -301,7 +303,7 @@ export type OrdersPaidConvergenceResult = {
   orderId: string;
   gtins: string[];
   results: Array<{
-    gtin: string;
+    gtin: string | null;
     changed: boolean;
     changes: string[];
     error?: string;
@@ -316,7 +318,7 @@ export async function processOrdersPaidPayload(
   const items = Array.isArray(payload.line_items) ? payload.line_items : [];
   const orderId = String(payload.admin_graphql_api_id ?? payload.id ?? "");
   const sales = await resolveGtinSalesForLineItems(items);
-  const gtins = sales.map((s) => s.gtin);
+  const gtins = sales.map((s) => s.gtin).filter((g): g is string => Boolean(g));
 
   const results: OrdersPaidConvergenceResult["results"] = [];
   for (const sale of sales) {
@@ -334,17 +336,19 @@ export async function processOrdersPaidPayload(
         console.warn("[shopify][orders-paid][physical-sale]", {
           orderId,
           gtin: sale.gtin,
+          variantId: sale.variantId,
           warnings: physical.warnings,
         });
       }
 
       const refresh = physical.refreshAlreadyRan
-        ? { gtin: sale.gtin, warnings: physical.warnings, convergence: undefined, shopifyRefresh: { ok: true } }
-        : await refreshAfterShopifySale(sale.gtin, {
+        ? { gtin: sale.gtin ?? "", warnings: physical.warnings, convergence: undefined, shopifyRefresh: { ok: true } }
+        : await refreshAfterShopifySale(sale.gtin ?? "", {
             soldQty: sale.quantity,
             orderId,
             lineItemId: sale.lineItemId,
             variantId: sale.variantId,
+            sku: sale.sku,
             forceMarketPrice: true,
             skipDropshipRelist: physical.isPhysicalStoreSale,
           });
