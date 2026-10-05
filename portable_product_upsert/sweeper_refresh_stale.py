@@ -5,10 +5,15 @@ SSE only reports price MOVEMENT. A product whose last ask expired or was
 delisted emits no event and would rot at its last known price/quantity on
 Shopify (overselling risk on the long tail). The sweeper closes that gap:
 
-  Every catalog product (= has a ShopifySyncState row) whose rawFetchedAt is
-  older than --max-age-days gets one KicksDB refresh by UUID (slug renames
-  can't break this). The refreshed rawJson bumps rawFetchedAt, which puts the
-  product back in the /api/kickdb/fresh queue for the consumer's next run.
+  Every catalog product (= has a ShopifySyncState row) or marketplace product
+  with STX stock > 0 (Galaxus/Decathlon feed) whose rawFetchedAt is older than
+  --max-age-days gets one KicksDB refresh by UUID (slug renames can't break
+  this). Live-stock products are served first. The refreshed rawJson bumps
+  rawFetchedAt, which puts the product back in the /api/kickdb/fresh queue for
+  the consumer's next run and zeroes sizes whose ask expired.
+
+  KicksDB 404 → POST notFound to /api/kickdb/upsert, which zeroes all linked
+  STX stock so the feed stops offering a delisted product.
 
 Dead products (404, or KicksDB 500 "cannot fetch product") are reported as
 notFound — which zeroes their DB stock and Shopify Website stock — only once
@@ -75,7 +80,7 @@ def fetch_stale(db_api, max_age_days, limit):
         f"{db_api}/api/kickdb/stale",
         params={"maxAgeDays": max_age_days, "limit": limit},
         headers=_auth_headers(),
-        timeout=60,
+        timeout=180,
     )
     r.raise_for_status()
     body = r.json()
@@ -93,7 +98,8 @@ def main():
     args = parser.parse_args()
 
     stale = fetch_stale(args.db_api, args.max_age_days, args.limit)
-    print(f"[INFO] {len(stale)} stale catalog products (older than {args.max_age_days}d)")
+    live = sum(1 for row in stale if row.get("hasLiveStock"))
+    print(f"[INFO] {len(stale)} stale products (older than {args.max_age_days}d), {live} with live STX stock")
 
     ok = fail = 0
     dead_now = set()
