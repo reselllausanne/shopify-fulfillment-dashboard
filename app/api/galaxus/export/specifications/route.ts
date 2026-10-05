@@ -300,6 +300,7 @@ export async function GET(request: Request) {
       alternatives,
       normalByGtin,
       normalByProviderKey,
+      galaxusAssortmentPolicy: true,
     });
     const altRows = buildGalaxusAlternativeSpecRows(exportable);
     finalRows = [...rows, ...altRows];

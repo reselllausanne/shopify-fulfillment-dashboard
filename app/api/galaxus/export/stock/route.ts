@@ -38,6 +38,11 @@ import {
 import { shouldForceDeadStockZero } from "@/galaxus/exports/deadSupplierKill";
 import { shouldForceBaeStockZero } from "@/galaxus/exports/baeKill";
 import {
+  createGalaxusAssortmentStats,
+  galaxusAssortmentBlockReasonForCandidate,
+  galaxusAssortmentStatsHeaderValue,
+} from "@/galaxus/exports/assortmentPolicy";
+import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
 } from "@/galaxus/exports/variantImagePresence";
@@ -81,6 +86,28 @@ function businessDaysBetween(start: Date, end: Date): number {
   return Math.max(0, count - 1);
 }
 
+/** QuantityOnStock=0 row so Galaxus removes a previously published offer. */
+function buildForceZeroStockRow(
+  providerKey: string,
+  supplierKey: string | null,
+  supplierVariantId: string | null,
+  manualNote: string | null = null
+): ExportRow {
+  return {
+    ProviderKey: providerKey,
+    QuantityOnStock: "0",
+    RestockTime: "",
+    RestockDate: "",
+    ...formatGalaxusStockMoqFields(
+      resolveGalaxusStockMoq({ supplierKey, supplierVariantId, providerKey, manualNote })
+    ),
+    TradeUnit: "",
+    LogisticUnit: "",
+    WarehouseCountry: "Poland",
+    DirectDeliverySupported: "0",
+  };
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -112,6 +139,7 @@ export async function GET(request: Request) {
   const rows: ExportRow[] = [];
   const skippedProviderKeys: string[] = [];
   const trmExclusionStats = createTrmFeedExclusionStats();
+  const assortmentStats = { ...createGalaxusAssortmentStats(), alternative: 0 };
   const bestByGtin = new Map<string, any>();
   const pageSize = all ? 5000 : limit;
   let currentOffset = all ? 0 : offset;
@@ -143,6 +171,13 @@ export async function GET(request: Request) {
         supplierVariantId: true,
         supplierVariant: {
           select: FEED_VARIANT_SELECT_GATE_NO_IMAGES,
+        },
+        kickdbVariant: {
+          select: {
+            product: {
+              select: { name: true, brand: true, retailPrice: true },
+            },
+          },
         },
       },
       orderBy: [{ id: "desc" }],
@@ -313,24 +348,17 @@ export async function GET(request: Request) {
         providerKey,
       })
     ) {
-      rows.push({
-        ProviderKey: providerKey,
-        QuantityOnStock: "0",
-        RestockTime: "",
-        RestockDate: "",
-        ...formatGalaxusStockMoqFields(
-          resolveGalaxusStockMoq({
-            supplierKey: mappingSupplierKey,
-            supplierVariantId: supplierVariantIdEarly,
-            providerKey,
-            manualNote: variant?.manualNote ?? null,
-          })
-        ),
-        TradeUnit: "",
-        LogisticUnit: "",
-        WarehouseCountry: "Poland",
-        DirectDeliverySupported: "0",
-      });
+      rows.push(
+        buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
+      );
+      return;
+    }
+    const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate);
+    if (assortmentBlock) {
+      assortmentStats[assortmentBlock] += 1;
+      rows.push(
+        buildForceZeroStockRow(providerKey, mappingSupplierKey, supplierVariantIdEarly, variant?.manualNote ?? null)
+      );
       return;
     }
     const sellPrice = Number(candidate.sellPriceExVat);
@@ -479,12 +507,18 @@ export async function GET(request: Request) {
       const alternatives = await loadAlternativeProductsForExport({
         providerKeys: providerKeys.length > 0 ? providerKeys : undefined,
       });
-      const { exportable } = filterAlternativeProducts({
+      const { exportable, excluded } = filterAlternativeProducts({
         alternatives,
         normalByGtin,
         normalByProviderKey,
+        galaxusAssortmentPolicy: true,
       });
       const altRows = buildGalaxusAlternativeStockRows(exportable);
+      for (const item of excluded) {
+        if (item.reason !== "ASSORTMENT_POLICY") continue;
+        assortmentStats.alternative += 1;
+        altRows.push(buildForceZeroStockRow(item.product.providerKey, null, null));
+      }
       finalRows = [...rows, ...altRows];
       if (finalRows.length < rows.length) {
         return NextResponse.json(
@@ -500,6 +534,7 @@ export async function GET(request: Request) {
     if (trmExcluded > 0) {
       console.info("[GALAXUS][EXPORT][STOCK][TRM] Excluded rows", trmExclusionStats);
     }
+    console.info("[GALAXUS][EXPORT][STOCK][ASSORTMENT] Delisted rows", assortmentStats);
     if (skippedProviderKeys.length > 0) {
       console.info("[GALAXUS][EXPORT][STOCK] Skipped invalid price", {
         count: skippedProviderKeys.length,
@@ -514,6 +549,7 @@ export async function GET(request: Request) {
       "X-Total-Rows": finalRows.length.toString(),
         "X-Offset": offset.toString(),
         "X-TRM-Excluded": trmFeedExclusionsHeaderValue(trmExclusionStats),
+        "X-Assortment-Delisted": `${galaxusAssortmentStatsHeaderValue(assortmentStats)};alternative=${assortmentStats.alternative}`,
       },
     });
   } catch (error: any) {
