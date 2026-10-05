@@ -264,44 +264,62 @@ async function fetchViaSystemChrome({
   }
 
   const start = Date.now();
-  let ready = false;
+  let browser: Browser | null = null;
+  let page: Page | null = null;
   let lastTarget: CdpTarget | null = null;
+  let lastProbeStatus: number | null = null;
   while (Date.now() - start < maxWaitMs) {
     const targets = await listCdpTargets();
-    const goatPage = targets?.find((t) => t.type === "page" && /goat\.com/i.test(t.url)) ?? null;
-    if (goatPage) lastTarget = goatPage;
+    const goatTarget = targets?.find((t) => t.type === "page" && /goat\.com/i.test(t.url)) ?? null;
+    if (goatTarget) lastTarget = goatTarget;
+    // Attaching CDP while Cloudflare is still challenging gets the browser flagged.
     if (
-      goatPage &&
-      /account\/orders/i.test(goatPage.url) &&
-      !isLoginPage(goatPage.url) &&
-      !isCloudflarePage(goatPage.url, goatPage.title) &&
-      !/^un instant/i.test(goatPage.title)
+      goatTarget &&
+      !isCloudflarePage(goatTarget.url, goatTarget.title) &&
+      !/^un instant/i.test(goatTarget.title)
     ) {
-      ready = true;
-      break;
+      const candidate = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
+      const candidatePage =
+        candidate.contexts()[0]?.pages().find((p) => /goat\.com/i.test(p.url())) ?? null;
+      lastProbeStatus = candidatePage
+        ? await candidatePage
+            .evaluate(async () => {
+              const res = await fetch("/web-api/v1/users/me", {
+                credentials: "include",
+                headers: { accept: "application/json" },
+              });
+              return res.status;
+            })
+            .catch(() => null)
+        : null;
+      if (lastProbeStatus === 200 && candidatePage) {
+        browser = candidate;
+        page = candidatePage;
+        break;
+      }
+      await candidate.close().catch(() => undefined);
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 
-  if (!ready) {
+  if (!browser || !page) {
     return NextResponse.json(
       {
         ok: false,
-        error:
-          "GOAT orders page not reached. In the Chrome window: pass Cloudflare, log in, open Account → Orders, then retry.",
-        debug: { lastUrl: lastTarget?.url, lastTitle: lastTarget?.title, cdpPort: CDP_PORT },
+        error: "GOAT not logged in. In the Chrome window: pass Cloudflare and log in, then retry.",
+        debug: {
+          lastUrl: lastTarget?.url,
+          lastTitle: lastTarget?.title,
+          lastProbeStatus,
+          cdpPort: CDP_PORT,
+        },
       },
       { status: 401 }
     );
   }
 
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
   try {
     const context = browser.contexts()[0];
-    const page =
-      context.pages().find((p) => /goat\.com\/.*account\/orders/i.test(p.url())) ??
-      context.pages().find((p) => /goat\.com/i.test(p.url()));
-    if (!page) throw new Error("GOAT tab disappeared");
 
     const allOrdersRaw: any[] = [];
     let discoveredPath: string | null = null;
