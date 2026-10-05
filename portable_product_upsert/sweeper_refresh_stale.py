@@ -5,10 +5,15 @@ SSE only reports price MOVEMENT. A product whose last ask expired or was
 delisted emits no event and would rot at its last known price/quantity on
 Shopify (overselling risk on the long tail). The sweeper closes that gap:
 
-  Every catalog product (= has a ShopifySyncState row) whose rawFetchedAt is
-  older than --max-age-days gets one KicksDB refresh by UUID (slug renames
-  can't break this). The refreshed rawJson bumps rawFetchedAt, which puts the
-  product back in the /api/kickdb/fresh queue for the consumer's next run.
+  Every catalog product (= has a ShopifySyncState row) or marketplace product
+  with STX stock > 0 (Galaxus/Decathlon feed) whose rawFetchedAt is older than
+  --max-age-days gets one KicksDB refresh by UUID (slug renames can't break
+  this). Live-stock products are served first. The refreshed rawJson bumps
+  rawFetchedAt, which puts the product back in the /api/kickdb/fresh queue for
+  the consumer's next run and zeroes sizes whose ask expired.
+
+  KicksDB 404 → POST notFound to /api/kickdb/upsert, which zeroes all linked
+  STX stock so the feed stops offering a delisted product.
 
 Sized for cron: --limit caps KicksDB calls per run. 20k catalog / 3-day cycle
 needs ~7k/day.
@@ -41,13 +46,27 @@ def fetch_stale(db_api, max_age_days, limit):
         f"{db_api}/api/kickdb/stale",
         params={"maxAgeDays": max_age_days, "limit": limit},
         headers=_auth_headers(),
-        timeout=60,
+        timeout=180,
     )
     r.raise_for_status()
     body = r.json()
     if not body.get("ok"):
         raise RuntimeError(f"stale API error: {body}")
     return body.get("products", [])
+
+
+def mark_delisted(db_api, uuid):
+    """KicksDB 404 → flag notFound + zero every linked STX SupplierVariant (feed drops it)."""
+    r = requests.post(
+        f"{db_api}/api/kickdb/upsert",
+        json={"data": {"id": uuid}, "notFound": True},
+        headers=_auth_headers(),
+        timeout=60,
+    )
+    body = r.json() if r.status_code == 200 else {}
+    if not body.get("ok"):
+        raise RuntimeError(f"delist upsert {r.status_code}")
+    return int(body.get("stockZeroed") or 0)
 
 
 def main():
@@ -59,9 +78,10 @@ def main():
     args = parser.parse_args()
 
     stale = fetch_stale(args.db_api, args.max_age_days, args.limit)
-    print(f"[INFO] {len(stale)} stale catalog products (older than {args.max_age_days}d)")
+    live = sum(1 for row in stale if row.get("hasLiveStock"))
+    print(f"[INFO] {len(stale)} stale products (older than {args.max_age_days}d), {live} with live STX stock")
 
-    ok = fail = gone = 0
+    ok = fail = gone = zeroed = 0
     for row in stale:
         uuid = row.get("kickdbProductId")
         out = stockXAPI.getOne(uuid)
@@ -69,7 +89,13 @@ def main():
             reason = stockXAPI.last_fetch_error or "no_data"
             if reason == "http_404":
                 gone += 1
-                print(f"[GONE] {row.get('urlKey') or uuid}: delisted on StockX")
+                try:
+                    n = mark_delisted(args.db_api, uuid)
+                    zeroed += n
+                    print(f"[GONE] {row.get('urlKey') or uuid}: delisted on StockX, stockZeroed={n}")
+                except Exception as e:
+                    fail += 1
+                    print(f"[FAIL] {row.get('urlKey') or uuid}: delisted but zero failed: {e}")
             else:
                 fail += 1
                 print(f"[FAIL] {row.get('urlKey') or uuid}: {reason}")
@@ -89,7 +115,7 @@ def main():
             print(f"[FAIL] {uuid}: {e}")
         time.sleep(args.delay)
 
-    print(f"[DONE] refreshed={ok} failed={fail} delisted={gone}")
+    print(f"[DONE] refreshed={ok} failed={fail} delisted={gone} delistedStockZeroed={zeroed}")
     return 0
 
 

@@ -194,6 +194,13 @@ export async function markKickdbProductSynced(body: Record<string, unknown>): Pr
   return { ok: true, kickdbProductId, syncStatus };
 }
 
+/**
+ * Products the sweeper must re-fetch: Shopify catalog products AND marketplace-only products
+ * that still carry STX stock > 0 (Galaxus/Decathlon feed). SSE never fires when the last ask
+ * expires, so without this those rows keep selling a sold-out size.
+ * Live-stock products come first so a capped daily budget hits oversell risk before catalog decay.
+ * `notFound` products are skipped (already zeroed; a real SSE payload resets the flag).
+ */
 export async function queryKickdbStaleProducts(params: {
   maxAgeDays: number;
   limit: number;
@@ -203,15 +210,30 @@ export async function queryKickdbStaleProducts(params: {
   const limit = Math.min(Math.max(params.limit, 1), 10000);
 
   const rows = await prisma.$queryRaw<
-    Array<{ kickdbProductId: string; urlKey: string | null; rawFetchedAt: Date | null }>
+    Array<{
+      kickdbProductId: string;
+      urlKey: string | null;
+      rawFetchedAt: Date | null;
+      hasLiveStock: boolean;
+    }>
   >`
-    SELECT p."kickdbProductId", p."urlKey", p."rawFetchedAt"
-    FROM "public"."ShopifySyncState" s
-    INNER JOIN "public"."KickDBProduct" p
-      ON p."kickdbProductId" = s."kickdbProductId"
-    WHERE p."rawFetchedAt" IS NULL
-       OR p."rawFetchedAt" < NOW() - (${maxAgeDays} * INTERVAL '1 day')
-    ORDER BY p."rawFetchedAt" ASC NULLS FIRST
+    WITH live AS (
+      SELECT DISTINCT kv."productId"
+      FROM "public"."SupplierVariant" sv
+      INNER JOIN "public"."VariantMapping" vm ON vm."supplierVariantId" = sv."supplierVariantId"
+      INNER JOIN "public"."KickDBVariant" kv ON kv.id = vm."kickdbVariantId"
+      WHERE sv."supplierVariantId" LIKE 'stx\\_%'
+        AND sv.stock > 0
+    )
+    SELECT p."kickdbProductId", p."urlKey", p."rawFetchedAt",
+           (l."productId" IS NOT NULL) AS "hasLiveStock"
+    FROM "public"."KickDBProduct" p
+    LEFT JOIN live l ON l."productId" = p.id
+    LEFT JOIN "public"."ShopifySyncState" s ON s."kickdbProductId" = p."kickdbProductId"
+    WHERE p."notFound" = false
+      AND (p."rawFetchedAt" IS NULL OR p."rawFetchedAt" < NOW() - (${maxAgeDays} * INTERVAL '1 day'))
+      AND (l."productId" IS NOT NULL OR s."kickdbProductId" IS NOT NULL)
+    ORDER BY (l."productId" IS NOT NULL) DESC, p."rawFetchedAt" ASC NULLS FIRST
     LIMIT ${limit}
   `;
 
