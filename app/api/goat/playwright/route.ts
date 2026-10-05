@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { chromium, firefox, type Browser, type BrowserContext, type Page } from "playwright";
 import { extractOrdersArray, normalizeGoatOrder } from "@/app/lib/goat/normalize";
 
@@ -197,6 +198,179 @@ const collectAuthFromContext = async (
   return { cookie, csrfToken };
 };
 
+const SYSTEM_CHROME_PATH =
+  process.env.GOAT_CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CDP_PORT = Number(process.env.GOAT_CDP_PORT || 9333);
+const CDP_PROFILE_DIR = path.join(process.cwd(), ".data", "goat-chrome-cdp");
+
+type CdpTarget = { type: string; url: string; title: string };
+
+const listCdpTargets = async (): Promise<CdpTarget[] | null> => {
+  try {
+    const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as CdpTarget[];
+  } catch {
+    return null;
+  }
+};
+
+const normalizeAndDedupe = (rawOrders: any[]) => {
+  const seen = new Set<string>();
+  return rawOrders
+    .map((raw) => normalizeGoatOrder(raw))
+    .filter((o: any) => {
+      const key = o?.orderId;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+/**
+ * Cloudflare Turnstile on goat.com rejects Playwright-launched browsers (checkbox loops forever).
+ * Real Chrome is started as a plain process; CDP attaches only after the user is past Cloudflare
+ * and logged in, so the challenge never sees an automated browser.
+ */
+async function fetchViaSystemChrome({
+  sessionFile,
+  maxWaitMs,
+  includeRaw,
+}: {
+  sessionFile: string;
+  maxWaitMs: number;
+  includeRaw: boolean;
+}): Promise<NextResponse> {
+  if (!(await listCdpTargets())) {
+    await fs.mkdir(CDP_PROFILE_DIR, { recursive: true });
+    await clearStaleChromeProfileLocks(CDP_PROFILE_DIR);
+    const child = spawn(
+      SYSTEM_CHROME_PATH,
+      [
+        `--remote-debugging-port=${CDP_PORT}`,
+        `--user-data-dir=${CDP_PROFILE_DIR}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+        ORDERS_URLS[0],
+      ],
+      { detached: true, stdio: "ignore" }
+    );
+    child.unref();
+    console.log("[GOAT-PW] Spawned system Chrome on CDP port", CDP_PORT);
+  } else {
+    console.log("[GOAT-PW] Reusing running system Chrome on CDP port", CDP_PORT);
+  }
+
+  const start = Date.now();
+  let ready = false;
+  let lastTarget: CdpTarget | null = null;
+  while (Date.now() - start < maxWaitMs) {
+    const targets = await listCdpTargets();
+    const goatPage = targets?.find((t) => t.type === "page" && /goat\.com/i.test(t.url)) ?? null;
+    if (goatPage) lastTarget = goatPage;
+    if (
+      goatPage &&
+      /account\/orders/i.test(goatPage.url) &&
+      !isLoginPage(goatPage.url) &&
+      !isCloudflarePage(goatPage.url, goatPage.title) &&
+      !/^un instant/i.test(goatPage.title)
+    ) {
+      ready = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  if (!ready) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "GOAT orders page not reached. In the Chrome window: pass Cloudflare, log in, open Account → Orders, then retry.",
+        debug: { lastUrl: lastTarget?.url, lastTitle: lastTarget?.title, cdpPort: CDP_PORT },
+      },
+      { status: 401 }
+    );
+  }
+
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`);
+  try {
+    const context = browser.contexts()[0];
+    const page =
+      context.pages().find((p) => /goat\.com\/.*account\/orders/i.test(p.url())) ??
+      context.pages().find((p) => /goat\.com/i.test(p.url()));
+    if (!page) throw new Error("GOAT tab disappeared");
+
+    const allOrdersRaw: any[] = [];
+    let discoveredPath: string | null = null;
+    for (const template of ORDER_FETCH_PATHS) {
+      const items = extractOrdersArray(await fetchOrdersFromPage(page, template, 1));
+      if (items.length) {
+        allOrdersRaw.push(...items);
+        discoveredPath = template;
+        break;
+      }
+    }
+
+    if (!discoveredPath) {
+      const onResponse = async (response: any) => {
+        try {
+          const url = response.url();
+          if (!isGoatOrdersApiUrl(url)) return;
+          const items = extractOrdersArray(await response.json());
+          if (!items.length) return;
+          allOrdersRaw.push(...items);
+          discoveredPath = pagePathFromUrl(url);
+        } catch {
+          // ignore non-JSON
+        }
+      };
+      page.on("response", onResponse);
+      await page.reload({ waitUntil: "networkidle", timeout: 45000 }).catch(() => undefined);
+      await page.waitForTimeout(3000);
+      page.off("response", onResponse);
+    }
+
+    if (!allOrdersRaw.length) {
+      return NextResponse.json(
+        { ok: false, error: "Logged in, but no GOAT orders API response found.", debug: { url: page.url() } },
+        { status: 502 }
+      );
+    }
+
+    if (discoveredPath?.includes("PAGE")) {
+      for (let pageNum = 2; pageNum <= 200; pageNum += 1) {
+        const items = extractOrdersArray(await fetchOrdersFromPage(page, discoveredPath, pageNum));
+        if (!items.length) break;
+        allOrdersRaw.push(...items);
+        await page.waitForTimeout(200);
+      }
+    }
+
+    await ensureSessionDir(sessionFile);
+    await context.storageState({ path: sessionFile }).catch(() => undefined);
+    const auth = await collectAuthFromContext(context, null, null);
+    const deduped = normalizeAndDedupe(allOrdersRaw);
+
+    return NextResponse.json({
+      ok: true,
+      count: deduped.length,
+      orders: deduped,
+      sessionFile,
+      viaSystemChrome: true,
+      cookie: auth.cookie,
+      csrfToken: auth.csrfToken,
+      discoveredPath,
+      rawOrders: includeRaw ? allOrdersRaw : undefined,
+    });
+  } finally {
+    // Disconnects only; the user's Chrome window stays open for the next run.
+    await browser.close().catch(() => undefined);
+  }
+}
+
 export async function POST(req: NextRequest) {
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
@@ -233,6 +407,9 @@ export async function POST(req: NextRequest) {
     );
 
     await ensureSessionDir(sessionFile);
+    if (useSystemChrome && process.platform === "darwin" && body?.mode !== "playwright") {
+      return await fetchViaSystemChrome({ sessionFile, maxWaitMs, includeRaw });
+    }
     if (!process.env.DISPLAY) {
       process.env.DISPLAY = ":99";
     }
