@@ -1,15 +1,15 @@
 /**
  * Galaxus assortment policy (requested by Galaxus category management, Oct 2026):
  *
- * - electronics: storage media + IT components (Galaxus, 2026-10-07) and, wider, any
- *   electronic item: REI supplier, IT/electrical category, or storage / PC-part
- *   keywords and brands from any supplier.
+ * - electronics: storage media + IT components only (Galaxus, 2026-10-07): PC component /
+ *   storage categories, storage / PC-part keywords, and storage / component brands, from
+ *   any supplier. Other electronics (phones, audio, TV, lamps, appliances, drones…) stay.
  * - shoe_over_cap: footwear with consumer price > 300 CHF. Scope defaults to Tali's
  *   focus brands (stxBrandBuckets) with no collab exemption; env switches to all
  *   brands (GALAXUS_SHOE_CAP_SCOPE=all) or re-enables the collab exemption
  *   (GALAXUS_SHOE_CAP_COLLAB_EXEMPT=1).
- * - price_outlier: absurd StockX resale prices (thin asks) — absolute cap or
- *   far above brand retail. Applies to every StockX category (LEGO / collectibles included).
+ * - price_outlier: absurd StockX resale prices (thin asks) — absolute cap or far above
+ *   brand retail. Off unless GALAXUS_PRICE_OUTLIER_FILTER=1 (not requested by Galaxus).
  *
  * Master + offer skip blocked rows; stock feed pushes QuantityOnStock=0 to delist.
  * Kill switch: GALAXUS_ASSORTMENT_POLICY=0.
@@ -36,11 +36,10 @@ export type GalaxusAssortmentInput = {
   brandRetailPrice?: number | null;
 };
 
-const ELECTRONICS_SUPPLIER_KEYS = new Set(["rei"]);
 const PRICE_OUTLIER_SUPPLIER_KEYS = new Set(["stx"]);
 
-const ELECTRONICS_PATH_RE =
-  /^IT \+ Multimedia|Elektr|Leuchtmittel|Lampen \+ Leuchten|Smart Home|Haushaltgeräte|Drohne|E-Scooter|Ladestation/i;
+const IT_COMPONENT_PATH_RE =
+  /^IT \+ Multimedia > (?:PC Komponenten|Peripherie > Speicher|Netzwerk > Netzwerkspeicher)\b/;
 
 /** Regex classifier mislabels bike / sport gear here (RockShox "Charger", "Massi IOS"). */
 const CLASSIFIER_ELECTRONICS_SKIP_SUPPLIERS = new Set(["ner"]);
@@ -83,13 +82,10 @@ const IT_COMPONENT_TEXT_RE = new RegExp(
     "carte m[eè]re",
     "netzteil",
     "\\bpsu\\b",
-    "docking ?station",
-    "usb[- ]?hub",
-    "raspberry pi",
-    "arduino",
-    "netzwerkkabel",
-    "ethernet",
-    "patchkabel",
+    "pc[- ]?geh[aä]use",
+    "festplattengeh[aä]use",
+    "cpu[- ]?k[uü]hler",
+    "wasserk[uü]hlung",
   ].join("|"),
   "i"
 );
@@ -109,17 +105,13 @@ const IT_COMPONENT_BRANDS = new Set([
   "intel",
   "amd",
   "nvidia",
-  "msi",
   "asrock",
-  "gigabyte",
   "be quiet!",
   "noctua",
-  "corsair",
   "g.skill",
   "adata",
   "pny",
   "verbatim",
-  "creality",
 ]);
 
 const FOOTWEAR_TEXT_RE =
@@ -214,6 +206,11 @@ export function galaxusShoeMaxRetailChf(): number {
   return readNumberEnv("GALAXUS_SHOE_MAX_RETAIL_CHF", 300);
 }
 
+export function isGalaxusPriceOutlierFilterEnabled(): boolean {
+  const raw = String(process.env.GALAXUS_PRICE_OUTLIER_FILTER ?? "0").trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(raw);
+}
+
 /** Absolute consumer price cap for any item. Env: GALAXUS_MAX_RETAIL_CHF. */
 export function galaxusMaxRetailChf(): number {
   return readNumberEnv("GALAXUS_MAX_RETAIL_CHF", 5000);
@@ -287,7 +284,6 @@ export function galaxusAssortmentBlockReason(
 ): GalaxusAssortmentBlockReason | null {
   if (!isGalaxusAssortmentPolicyEnabled()) return null;
   const supplierKey = resolveAssortmentSupplierKey(input);
-  if (ELECTRONICS_SUPPLIER_KEYS.has(supplierKey)) return "electronics";
 
   const kind = classifyGalaxusProductKind({
     title: input.title,
@@ -300,7 +296,7 @@ export function galaxusAssortmentBlockReason(
   if (
     !hasShoeSize &&
     !CLASSIFIER_ELECTRONICS_SKIP_SUPPLIERS.has(supplierKey) &&
-    ELECTRONICS_PATH_RE.test(galaxusCategoryPathForKind(kind, supplierKey))
+    IT_COMPONENT_PATH_RE.test(galaxusCategoryPathForKind(kind, supplierKey))
   ) {
     return "electronics";
   }
@@ -309,7 +305,7 @@ export function galaxusAssortmentBlockReason(
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
     // Bugged prices come from thin StockX asks; other suppliers' list prices are real.
-    if (PRICE_OUTLIER_SUPPLIER_KEYS.has(supplierKey)) {
+    if (isGalaxusPriceOutlierFilterEnabled() && PRICE_OUTLIER_SUPPLIER_KEYS.has(supplierKey)) {
       if (consumer > galaxusMaxRetailChf()) return "price_outlier";
       const retail = Number(input.brandRetailPrice);
       if (Number.isFinite(retail) && retail > 0 && consumer > retail * galaxusMaxRetailMultiple()) {

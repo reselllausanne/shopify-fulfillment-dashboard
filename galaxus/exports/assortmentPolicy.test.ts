@@ -10,27 +10,25 @@ describe("galaxusAssortmentBlockReason", () => {
     delete process.env.GALAXUS_SHOE_MAX_RETAIL_CHF;
     delete process.env.GALAXUS_SHOE_CAP_SCOPE;
     delete process.env.GALAXUS_SHOE_CAP_COLLAB_EXEMPT;
+    delete process.env.GALAXUS_PRICE_OUTLIER_FILTER;
   });
 
-  it("blocks every REI row as electronics", () => {
+  it("blocks REI storage / IT components but keeps other REI products", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "REI_123", title: "Corsair Vengeance DDR5" })).toBe(
       "electronics"
     );
-    expect(galaxusAssortmentBlockReason({ supplierVariantId: "rei_abc", title: "Anything" })).toBe("electronics");
+    expect(galaxusAssortmentBlockReason({ supplierVariantId: "rei_abc", title: "Lötstation 80 W" })).toBeNull();
   });
 
-  it("blocks STX electronics by category", () => {
-    expect(
-      galaxusAssortmentBlockReason({
-        providerKey: "STX_1",
-        title: "Sony PlayStation 5 Console Disc Edition",
-        brand: "Sony",
-        suggestedRetailInclVatChf: 600,
-      })
-    ).toBe("electronics");
-    expect(
-      galaxusAssortmentBlockReason({ providerKey: "STX_2", title: "Apple AirPods Pro 2", suggestedRetailInclVatChf: 250 })
-    ).toBe("electronics");
+  it("keeps electronics that are not storage or IT components", () => {
+    for (const input of [
+      { providerKey: "STX_1", title: "Sony PlayStation 5 Console Disc Edition", brand: "Sony", suggestedRetailInclVatChf: 600 },
+      { providerKey: "STX_2", title: "Apple AirPods Pro 2", suggestedRetailInclVatChf: 250 },
+      { providerKey: "HAW_9", title: "Philips Hue White E27 LED Lampe", purchasePriceExVatChf: 20 },
+      { providerKey: "ALT_9", title: "Logitech MX Keys Tastatur", purchasePriceExVatChf: 90 },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBeNull();
+    }
   });
 
   it("blocks general-release shoes above 300 CHF", () => {
@@ -187,7 +185,18 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("blocks absurd prices (absolute cap or far above brand retail)", () => {
+  it("keeps absurd StockX prices unless GALAXUS_PRICE_OUTLIER_FILTER=1", () => {
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "STX_9",
+        title: "2019 Pokemon Sun & Moon Team Up Booster Box",
+        suggestedRetailInclVatChf: 36179,
+      })
+    ).toBeNull();
+  });
+
+  it("blocks absurd prices when the outlier filter is on", () => {
+    process.env.GALAXUS_PRICE_OUTLIER_FILTER = "1";
     expect(
       galaxusAssortmentBlockReason({
         providerKey: "STX_9",
@@ -228,6 +237,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
   it("only applies the price-outlier rule to StockX", () => {
+    process.env.GALAXUS_PRICE_OUTLIER_FILTER = "1";
     expect(
       galaxusAssortmentBlockReason({ providerKey: "BWZ_2", title: "Ecksofa Leder Cognac", purchasePriceExVatChf: 6000 })
     ).toBeNull();
@@ -246,7 +256,7 @@ describe("galaxusAssortmentBlockReason", () => {
 
   it("respects the kill switch and cap env", () => {
     process.env.GALAXUS_ASSORTMENT_POLICY = "0";
-    expect(galaxusAssortmentBlockReason({ providerKey: "REI_1" })).toBeNull();
+    expect(galaxusAssortmentBlockReason({ providerKey: "REI_1", title: "Samsung 990 PRO SSD 2TB" })).toBeNull();
     delete process.env.GALAXUS_ASSORTMENT_POLICY;
     process.env.GALAXUS_SHOE_MAX_RETAIL_CHF = "400";
     expect(
