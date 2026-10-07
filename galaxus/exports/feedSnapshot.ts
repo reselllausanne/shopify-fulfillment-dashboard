@@ -155,7 +155,7 @@ export async function getFeedSnapshotMeta() {
  * Bump whenever export filtering rules change (assortment policy, gates): snapshots
  * rebuilt earlier still carry rows the new rules drop, so uploads fall back to live.
  */
-export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-10-07T13:00:00Z");
+export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-10-07T14:30:00Z");
 
 export async function isFeedSnapshotReady(scope: "stock" | "offer"): Promise<boolean> {
   const meta = await getFeedSnapshotMeta();
