@@ -7,6 +7,7 @@ import {
   extractReicheltCategorySlug,
   reicheltConfig,
   clearReicheltScrapeProgress,
+  isReicheltLimitedStockStatus,
   type ReicheltProduct,
 } from "@/app/lib/reicheltClient";
 import {
@@ -18,6 +19,7 @@ import {
   isPlausibleReicheltSellPrice,
   type ReicheltLandedCost,
 } from "@/app/lib/reicheltPricing";
+import { isReicheltHighValuePrice } from "@/inventory/reicheltFreshnessGate";
 import { startRun, hasRunningRun, recoverStaleRuns } from "@/app/lib/scraperRun";
 import { scraperQuery } from "@/app/lib/scraperDb";
 export { startRun, hasRunningRun, recoverStaleRuns };
@@ -58,6 +60,7 @@ type ReicheltNoteFields = {
   articleId?: string;
   productUrl?: string;
   type?: string;
+  stockStatus?: string | null;
 };
 
 function parseReicheltNoteFields(raw: string | null | undefined): ReicheltNoteFields {
@@ -362,12 +365,16 @@ export async function scrapeReicheltShop(
   let imageFailed = 0;
   const imageSyncQueue = new Set<string>();
 
-  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 3));
+  // Must stay below the full-scrape interval (2d) or rows get skipped every other run.
+  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 1.5));
   const freshCutoffMs = deltaDays > 0 ? Date.now() - deltaDays * 86_400_000 : 0;
   const freshArticleIds = new Set<string>();
   const staleSweepEnabled = String(process.env.SCRAPER_REI_STALE_SWEEP ?? "1") !== "0";
-  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 7));
+  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 3));
   const staleCutoffMs = Date.now() - staleDays * 86_400_000;
+  const priorityStaleHours = Math.max(1, Number(process.env.SCRAPER_REI_PRIORITY_STALE_HOURS ?? 6));
+  const priorityStaleCutoffMs = Date.now() - priorityStaleHours * 3_600_000;
+  const sweepOnly = String(process.env.SCRAPER_REI_SWEEP_ONLY ?? "0") === "1";
   const staleSweepMaxEnv = Math.max(0, Number(process.env.SCRAPER_REI_STALE_SWEEP_MAX || 0));
   const staleSweepMax = maxProducts
     ? maxProducts
@@ -385,6 +392,7 @@ export async function scrapeReicheltShop(
       lastSyncAt: true,
       manualNote: true,
       stock: true,
+      price: true,
     },
   })) as Array<
     ExistingVariantImage & {
@@ -392,8 +400,13 @@ export async function scrapeReicheltShop(
       lastSyncAt: Date | null;
       manualNote: string | null;
       stock: number | null;
+      price: unknown;
     }
   >;
+  /** In-stock rows that sell out fast or cost a lot: limited qty status or high price. */
+  const isPriorityRow = (row: (typeof existingRows)[number], note: ReicheltNoteFields) =>
+    (row.stock ?? 0) > 0 &&
+    (isReicheltLimitedStockStatus(note.stockStatus) || isReicheltHighValuePrice(row.price));
   const existingById = new Map(
     existingRows.map((row) => [
       row.supplierVariantId,
@@ -419,7 +432,9 @@ export async function scrapeReicheltShop(
   if (deltaDays > 0) {
     for (const row of existingRows) {
       if (!row.lastSyncAt || row.lastSyncAt.getTime() < freshCutoffMs) continue;
-      const id = String(parseReicheltNoteFields(row.manualNote).articleId || "").trim();
+      const note = parseReicheltNoteFields(row.manualNote);
+      if (isPriorityRow(row, note)) continue;
+      const id = String(note.articleId || "").trim();
       if (id) freshArticleIds.add(id);
     }
     console.log(
@@ -455,23 +470,31 @@ export async function scrapeReicheltShop(
   async function sweepStaleInStockRows(): Promise<void> {
     if (!staleSweepEnabled) return;
 
-    const targets: ArticleTarget[] = [];
+    const priorityList: ArticleTarget[] = [];
+    const otherList: ArticleTarget[] = [];
     for (const row of existingRows) {
       if ((row.stock ?? 0) <= 0) continue;
-      if (row.lastSyncAt && row.lastSyncAt.getTime() >= staleCutoffMs) continue;
-      const articleId = String(parseReicheltNoteFields(row.manualNote).articleId || "").trim();
+      const note = parseReicheltNoteFields(row.manualNote);
+      const priority = isPriorityRow(row, note);
+      const cutoff = priority ? priorityStaleCutoffMs : staleCutoffMs;
+      if (row.lastSyncAt && row.lastSyncAt.getTime() >= cutoff) continue;
+      const articleId = String(note.articleId || "").trim();
       if (!articleId) continue;
-      targets.push({
+      (priority ? priorityList : otherList).push({
         articleId,
         productUrl:
           articleProductUrl.get(articleId) ||
           `${shop.baseUrl.replace(/\/$/, "")}/shop/produit/-${articleId}`,
       });
-      if (targets.length >= staleSweepMax) break;
     }
+    const targets = [...priorityList, ...otherList].slice(
+      0,
+      Number.isFinite(staleSweepMax) ? staleSweepMax : undefined
+    );
+    const priorityTargets = Math.min(priorityList.length, targets.length);
 
     console.log(
-      `[SCRAPER] rei stale sweep: ${targets.length} in-stock rows older than ${staleDays}d`
+      `[SCRAPER] rei stale sweep: ${targets.length} in-stock rows (priority>${priorityStaleHours}h: ${priorityTargets}, other>${staleDays}d: ${targets.length - priorityTargets})`
     );
     if (!targets.length) return;
 
@@ -570,7 +593,9 @@ export async function scrapeReicheltShop(
     await sweepStaleInStockRows();
 
     let stop = false;
-    const source = iterArticleTargets(client, discovery, stats);
+    const source = sweepOnly
+      ? (async function* (): AsyncGenerator<ArticleTarget> {})()
+      : iterArticleTargets(client, discovery, stats);
 
     await runTargetPool(
       {
@@ -684,11 +709,27 @@ export async function scrapeReicheltShop(
         await scheduleScraperGalaxusFeedPush({
           shop,
           wrote: stats.wrote + stats.markedDelisted,
-          syncImages: true,
+          syncImages: !sweepOnly,
         });
       } catch (err) {
         console.warn(`[SCRAPER] rei feed push schedule failed:`, (err as Error)?.message || err);
       }
+    }
+
+    if (sweepOnly) {
+      const unreachable = stats.staleChecked > 0 && stats.requestErrors >= stats.staleChecked;
+      await updateRun(runId, {
+        status: unreachable ? "error" : "ok",
+        finished_at: new Date(),
+        products_listed: stats.staleChecked,
+        variants_upserted: stats.wrote,
+        with_gtin: stats.gtinMatched,
+        errors: stats.requestErrors,
+        message: `mode=sweep_only partial ${runMessage(stats, discovery, imageSynced, imageFailed)}${
+          unreachable ? " · reichelt_unreachable_or_503_retry_later" : ""
+        }`,
+      });
+      return;
     }
 
     await updateRun(runId, {

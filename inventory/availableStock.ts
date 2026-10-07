@@ -9,6 +9,7 @@ import {
   SCRAPER_SUPPLIER_KEYS,
   type SupplierStockPolicyStatus,
 } from "@/inventory/supplierStock";
+import { isReicheltSupplierVariantId, loadStaleHighValueReicheltIds } from "@/inventory/reicheltFreshnessGate";
 
 type SupplierVariantLike = {
   supplierVariantId?: string | null;
@@ -119,11 +120,31 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
     }
   }
 
+  let staleHighValueRei = new Set<string>();
+  const reiIds = variants
+    .filter((v) => !v?.manualLock && isReicheltSupplierVariantId(v?.supplierVariantId))
+    .map((v) => String(v?.supplierVariantId ?? "").trim());
+  if (reiIds.length) {
+    try {
+      staleHighValueRei = await loadStaleHighValueReicheltIds(reiIds);
+    } catch (err: any) {
+      console.warn(
+        "[inventory][availableStock] reichelt freshness gate skipped",
+        String(err?.message ?? err).slice(0, 200)
+      );
+    }
+  }
+
   for (const variant of variants) {
     const supplierVariantId = String(variant?.supplierVariantId ?? "").trim();
     if (!supplierVariantId) continue;
     const delta = deltas.get(supplierVariantId) ?? 0;
     let stock = resolveInventoryAvailableStock(variant, delta);
+
+    if (staleHighValueRei.has(supplierVariantId)) {
+      stockBySupplierVariantId.set(supplierVariantId, 0);
+      continue;
+    }
 
     // OBSERVATION_ONLY_NOT_ENFORCED: never alter marketplace qty until flag=1.
     if (publishEnforced && !variant?.manualLock) {

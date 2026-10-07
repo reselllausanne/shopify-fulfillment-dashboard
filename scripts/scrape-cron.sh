@@ -9,7 +9,8 @@
 #     0 3 */3 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
 #
 #   Detached heavy scrapers (own container, survive web restarts):
-#     0 3 */3 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#     0 3 */2 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#     0 13,22 * * * /opt/resell/scripts/run-reichelt-sweep-detached.sh >> /opt/resell/scrape-rei-sweep-cron.log 2>&1
 #     0 4 */7 * * /opt/resell/scripts/run-fantasywelt-detached.sh >> /opt/resell/scrape-fan-cron.log 2>&1
 #     0 5 */7 * * /opt/resell/scripts/run-exlibris-detached.sh >> /opt/resell/scrape-exl-cron.log 2>&1
 #

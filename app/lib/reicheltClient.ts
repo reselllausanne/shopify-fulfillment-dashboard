@@ -473,8 +473,17 @@ export function parseReicheltStockStatus(html: string): { status: string | null;
   const status = html.match(/class="availability status_(\d+)/i)?.[1] ?? null;
   const textMatch = html.match(/class="availability[^"]*"[^>]*>[\s\S]*?([^<]{5,160})/i);
   const text = textMatch ? decodeHtml(textMatch[1].replace(/\s+/g, " ").trim()) : null;
-  const inStock = status ? ["1", "4", "6", "16", "100"].includes(status) : /en stock|ex stock|lieferbar|disponible|in stock/i.test(text ?? "");
+  const inStock = status
+    ? ["1", "4", "6", "16", "100"].includes(status)
+    : !/indisponible|nicht\s+lieferbar|unavailable|not\s+available/i.test(text ?? "") &&
+      /en stock|ex stock|lieferbar|\bdisponible|in stock/i.test(text ?? "");
   return { status, text, inStock };
+}
+
+/** Low-qty statuses (Restposten / begrenzte Stückzahl) that sell out between full scrapes. */
+export function isReicheltLimitedStockStatus(status: string | null | undefined): boolean {
+  const s = String(status ?? "").trim();
+  return s !== "" && s !== "1";
 }
 
 /**
@@ -983,6 +992,7 @@ export class ReicheltClient {
       console.log(`[SCRAPER] rei resuming sitemap from shard ${startShard}`);
     }
     const shards = await this.resolveProductSitemapShards();
+    const failedShards: number[] = [];
     let consecutiveHardSkips = 0;
     const maxConsecutiveSkips = Math.max(
       5,
@@ -1021,11 +1031,12 @@ export class ReicheltClient {
           `[SCRAPER] rei sitemap shard ${shard} skipped${soft ? " (soft)" : ""}:`,
           (lastErr as Error)?.message || lastErr
         );
+        if (!soft) failedShards.push(shard);
         if (consecutiveHardSkips >= maxConsecutiveSkips) {
           console.warn(
             `[SCRAPER] rei sitemap aborting after ${consecutiveHardSkips} consecutive hard shard failures (site likely down)`
           );
-          break;
+          return;
         }
         continue;
       }
@@ -1033,6 +1044,35 @@ export class ReicheltClient {
       writeReicheltScrapeProgress({ lastShard: shard, updatedAt: new Date().toISOString() });
       const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim());
       yield { shard, urls };
+    }
+
+    if (!failedShards.length) return;
+    const retryRounds = Math.max(0, Number(process.env.SCRAPER_REI_SHARD_RETRY_ROUNDS ?? 2));
+    let pending = failedShards;
+    for (let round = 1; round <= retryRounds && pending.length; round++) {
+      console.log(`[SCRAPER] rei retrying ${pending.length} failed sitemap shards (round ${round}): ${pending.join(",")}`);
+      await sleep(cfg.sitemapShardRetryBaseMs * 4 * round + jitterMs(1000));
+      await this.warmSession();
+      const stillFailed: number[] = [];
+      for (const shard of pending) {
+        try {
+          const xml = await this.fetchTextWithRetry(
+            `${REICHELT_PRODUCT_SITEMAP_PREFIX}${shard}.xml`,
+            {},
+            cfg.sitemapShardMaxRetries,
+            cfg.sitemapShardRetryBaseMs
+          );
+          const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1].trim());
+          yield { shard, urls };
+        } catch (err) {
+          stillFailed.push(shard);
+          console.warn(`[SCRAPER] rei sitemap shard ${shard} retry ${round} failed:`, (err as Error)?.message || err);
+        }
+      }
+      pending = stillFailed;
+    }
+    if (pending.length) {
+      console.warn(`[SCRAPER] rei sitemap shards lost after retries: ${pending.join(",")}`);
     }
   }
 
