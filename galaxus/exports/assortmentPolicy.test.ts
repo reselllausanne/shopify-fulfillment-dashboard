@@ -8,6 +8,8 @@ describe("galaxusAssortmentBlockReason", () => {
   afterEach(() => {
     delete process.env.GALAXUS_ASSORTMENT_POLICY;
     delete process.env.GALAXUS_SHOE_MAX_RETAIL_CHF;
+    delete process.env.GALAXUS_SHOE_CAP_SCOPE;
+    delete process.env.GALAXUS_SHOE_CAP_COLLAB_EXEMPT;
   });
 
   it("blocks every REI row as electronics", () => {
@@ -63,19 +65,74 @@ describe("galaxusAssortmentBlockReason", () => {
     ).toBeNull();
   });
 
-  it("keeps collab / hype shoes above 300 CHF", () => {
-    for (const title of [
-      "Nike Air Jordan 1 Retro High Off-White Chicago",
-      "Jordan 1 Retro Low OG SP Travis Scott Reverse Mocha",
-      "Nike SB Dunk Low Ben & Jerry's Chunky Dunky",
-      "Nike Dunk Low Off-White Lot 50",
-      "Nike Air Force 1 Low Supreme White",
-      "Nike Dunk Low Union Passport Pack",
-    ]) {
+  const collabTitles = [
+    "Nike Air Jordan 1 Retro High Off-White Chicago",
+    "Jordan 1 Retro Low OG SP Travis Scott Reverse Mocha",
+    "Nike SB Dunk Low Ben & Jerry's Chunky Dunky",
+    "Nike Dunk Low Off-White Lot 50",
+  ];
+
+  it("blocks focus-brand collabs above 300 CHF by default (no collab exemption for now)", () => {
+    for (const title of collabTitles) {
+      expect(
+        galaxusAssortmentBlockReason({ providerKey: "STX_6", title, sizeRaw: "EU 43", suggestedRetailInclVatChf: 900 })
+      ).toBe("shoe_over_cap");
+    }
+  });
+
+  it("keeps focus-brand collabs when GALAXUS_SHOE_CAP_COLLAB_EXEMPT=1", () => {
+    process.env.GALAXUS_SHOE_CAP_COLLAB_EXEMPT = "1";
+    for (const title of collabTitles) {
       expect(
         galaxusAssortmentBlockReason({ providerKey: "STX_6", title, sizeRaw: "EU 43", suggestedRetailInclVatChf: 900 })
       ).toBeNull();
     }
+  });
+
+  it("keeps non-focus-brand shoes above 300 CHF unless scope=all", () => {
+    const input = {
+      providerKey: "STX_15",
+      title: "adidas Yeezy Boost 350 V2 Zebra",
+      brand: "adidas",
+      sizeRaw: "EU 42",
+      suggestedRetailInclVatChf: 420,
+    };
+    expect(galaxusAssortmentBlockReason(input)).toBeNull();
+    process.env.GALAXUS_SHOE_CAP_SCOPE = "all";
+    expect(galaxusAssortmentBlockReason(input)).toBe("shoe_over_cap");
+  });
+
+  it("treats focus brand from the brand field even when the title has no brand word", () => {
+    expect(
+      galaxusAssortmentBlockReason({
+        providerKey: "NER_3",
+        title: "Endorphin Pro 5 Vizired / Black",
+        brand: "Saucony",
+        sizeRaw: "46",
+        purchasePriceExVatChf: 305,
+      })
+    ).toBe("shoe_over_cap");
+  });
+
+  it("blocks storage media and IT components from any supplier", () => {
+    for (const input of [
+      { providerKey: "HAW_1", title: "Samsung 990 PRO NVMe M.2 SSD 2TB" },
+      { providerKey: "EXL_2", title: "SanDisk Extreme microSDXC 256 GB", brand: "SanDisk" },
+      { providerKey: "BWZ_3", title: "Kingston Fury Beast 32GB DDR5 RAM", brand: "Kingston" },
+      { providerKey: "VEN_4", title: "USB-Stick 64 GB" },
+      { providerKey: "HAW_5", title: "Seagate Expansion Desktop Festplatte 8TB", brand: "Seagate" },
+      { providerKey: "ALT_6", title: "MSI GeForce RTX 4070 Ventus Grafikkarte" },
+      { providerKey: "STX_7", title: "Nvidia Jetson Orin Nano Developer Kit", brand: "Nvidia" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("electronics");
+    }
+  });
+
+  it("does not flag ordinary products with IT-looking words", () => {
+    expect(galaxusAssortmentBlockReason({ providerKey: "STX_16", title: "Ram Trucks Hot Wheels 2021", suggestedRetailInclVatChf: 20 })).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "STX_17", title: "Nike Air Force 1 Low White", sizeRaw: "EU 42", suggestedRetailInclVatChf: 150 })
+    ).toBeNull();
   });
 
   it("estimates consumer price from purchase price when no SRP (NER)", () => {
