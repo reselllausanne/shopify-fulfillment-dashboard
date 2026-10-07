@@ -151,10 +151,18 @@ export async function getFeedSnapshotMeta() {
   });
 }
 
+/**
+ * Bump whenever export filtering rules change (assortment policy, gates): snapshots
+ * rebuilt earlier still carry rows the new rules drop, so uploads fall back to live.
+ */
+export const GALAXUS_FEED_RULES_CHANGED_AT = new Date("2026-10-07T13:00:00Z");
+
 export async function isFeedSnapshotReady(scope: "stock" | "offer"): Promise<boolean> {
   const meta = await getFeedSnapshotMeta();
   if (!meta?.rebuiltAt) return false;
-  const ageMs = Date.now() - new Date(meta.rebuiltAt).getTime();
+  const rebuiltAt = new Date(meta.rebuiltAt);
+  if (rebuiltAt < GALAXUS_FEED_RULES_CHANGED_AT) return false;
+  const ageMs = Date.now() - rebuiltAt.getTime();
   if (ageMs > snapshotMaxAgeMs()) return false;
   const count = scope === "stock" ? meta.stockRowCount : meta.offerRowCount;
   return Number(count) > 0;
@@ -316,6 +324,14 @@ export async function rebuildFeedSnapshotFromExports(origin: string): Promise<{
   };
 }
 
+export function missingProviderKeys(
+  requested: string[],
+  rows: Array<Record<string, string>>
+): string[] {
+  const present = new Set(rows.map((row) => String(row.ProviderKey ?? "").trim()).filter(Boolean));
+  return requested.filter((key) => !present.has(key));
+}
+
 export async function patchFeedSnapshotsForProviderKeys(params: {
   origin: string;
   providerKeys: string[];
@@ -356,6 +372,17 @@ export async function patchFeedSnapshotsForProviderKeys(params: {
       create: { providerKey, rowJson: row, updatedAt: now },
       update: { rowJson: row, updatedAt: now },
     });
+  }
+
+  // Keys the live export no longer emits (newly gated / blocked) must leave the snapshot,
+  // otherwise the stale row keeps the offer published until the next full rebuild.
+  const staleStock = missingProviderKeys(keys, stockParsed.rows);
+  const staleOffer = missingProviderKeys(keys, offerParsed.rows);
+  if (staleStock.length > 0) {
+    await prismaAny.galaxusFeedStockSnapshot.deleteMany({ where: { providerKey: { in: staleStock } } });
+  }
+  if (staleOffer.length > 0) {
+    await prismaAny.galaxusFeedOfferSnapshot.deleteMany({ where: { providerKey: { in: staleOffer } } });
   }
 
   return { patched: keys.length };

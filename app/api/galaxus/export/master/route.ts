@@ -21,6 +21,7 @@ import { publishStxStockFromAsks } from "@/galaxus/stx/stockPublish";
 import { isStxMarketplacePublishableDeliveryType } from "@/galaxus/stx/variantPriceLanes";
 import { isGalaxusSellableStock, isXntFeedBlockedBrand } from "@/galaxus/exports/feedEligibility";
 import { isDeadFeedBlocked } from "@/galaxus/exports/deadSupplierKill";
+import { galaxusAssortmentBlockReasonForCandidate } from "@/galaxus/exports/assortmentPolicy";
 import {
   isPhysicalMergeEnabled,
   loadPhysicalMirrorStockByGtin,
@@ -305,6 +306,7 @@ export async function GET(request: Request) {
                   description: true,
                   styleId: true,
                   rawJson: true,
+                  retailPrice: true,
                 },
               },
             },
@@ -394,6 +396,11 @@ export async function GET(request: Request) {
         providerKey,
       })
     ) {
+      if (providerKey) skippedProviderKeys.push(providerKey);
+      continue;
+    }
+    // Galaxus assortment policy — stock feed pushes 0 for the same rows.
+    if (galaxusAssortmentBlockReasonForCandidate(candidate)) {
       if (providerKey) skippedProviderKeys.push(providerKey);
       continue;
     }
@@ -570,6 +577,7 @@ export async function GET(request: Request) {
       alternatives,
       normalByGtin,
       normalByProviderKey,
+      galaxusAssortmentPolicy: true,
     });
     const altRows = buildGalaxusAlternativeMasterRows(exportable, { minimal, includeWeight });
     finalRows = [...rows, ...altRows];

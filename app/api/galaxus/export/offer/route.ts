@@ -31,6 +31,11 @@ import {
 } from "@/galaxus/exports/feedEligibility";
 import { isDeadFeedBlocked } from "@/galaxus/exports/deadSupplierKill";
 import {
+  createGalaxusAssortmentStats,
+  galaxusAssortmentBlockReasonForCandidate,
+  galaxusAssortmentStatsHeaderValue,
+} from "@/galaxus/exports/assortmentPolicy";
+import {
   attachHasImageSignalToMappings,
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
 } from "@/galaxus/exports/variantImagePresence";
@@ -82,6 +87,7 @@ export async function GET(request: Request) {
   const mappingsWhere = buildFeedMappingsWhere(supplier, all);
   const providerKeyFilter = providerKeys.length > 0 ? { providerKey: { in: providerKeys } } : null;
   const trmExclusionStats = createTrmFeedExclusionStats();
+  const assortmentStats = createGalaxusAssortmentStats();
 
   const rows: ExportRow[] = [];
   const skippedProviderKeys: string[] = [];
@@ -141,6 +147,8 @@ export async function GET(request: Request) {
               select: {
                 urlKey: true,
                 name: true,
+                brand: true,
+                retailPrice: true,
               },
             },
           },
@@ -227,6 +235,11 @@ export async function GET(request: Request) {
         providerKey,
       })
     ) {
+      continue;
+    }
+    const assortmentBlock = galaxusAssortmentBlockReasonForCandidate(candidate);
+    if (assortmentBlock) {
+      assortmentStats[assortmentBlock] += 1;
       continue;
     }
     const sellPrice = Number(candidate.sellPriceExVat);
@@ -399,6 +412,7 @@ export async function GET(request: Request) {
       alternatives,
       normalByGtin,
       normalByProviderKey,
+      galaxusAssortmentPolicy: true,
     });
     const altRows = buildGalaxusAlternativeOfferRows(exportable, { priceHeader, isMerchant });
     finalRows = [...rows, ...altRows];
@@ -416,6 +430,7 @@ export async function GET(request: Request) {
   if (trmExcluded > 0) {
     console.info("[GALAXUS][EXPORT][OFFER][TRM] Excluded rows", trmExclusionStats);
   }
+  console.info("[GALAXUS][EXPORT][OFFER][ASSORTMENT] Blocked rows", assortmentStats);
   if (skippedProviderKeys.length > 0) {
     console.info("[GALAXUS][EXPORT][OFFER] Skipped invalid price", {
       count: skippedProviderKeys.length,
@@ -430,6 +445,7 @@ export async function GET(request: Request) {
       "X-Total-Rows": finalRows.length.toString(),
       "X-Offset": offset.toString(),
       "X-TRM-Excluded": trmFeedExclusionsHeaderValue(trmExclusionStats),
+      "X-Assortment-Blocked": galaxusAssortmentStatsHeaderValue(assortmentStats),
       "X-Skipped-Invalid-Price": skippedInvalidPrice.toString(),
       "X-Skipped-Missing-ProviderKey": skippedMissingProviderKey.toString(),
     },

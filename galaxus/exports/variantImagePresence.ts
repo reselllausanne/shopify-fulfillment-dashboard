@@ -143,6 +143,8 @@ export const FEED_VARIANT_SELECT_GATE_NO_IMAGES = {
   supplierProductName: true,
   supplierBrand: true,
   supplierSku: true,
+  supplierProductType: true,
+  sizeRaw: true,
   hostedImageUrl: true,
   sourceImageUrl: true,
   imageSyncStatus: true,

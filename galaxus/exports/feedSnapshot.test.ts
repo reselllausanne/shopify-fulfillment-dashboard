@@ -3,6 +3,7 @@ import {
   parseCsvToRows,
   GALAXUS_STOCK_CSV_HEADERS,
   isFeedSnapshotRebuildRunning,
+  missingProviderKeys,
 } from "@/galaxus/exports/feedSnapshot";
 import { toCsv } from "@/galaxus/exports/csv";
 
@@ -43,5 +44,11 @@ describe("feedSnapshot", () => {
         success: true,
       })
     ).toBe(false);
+  });
+
+  it("lists requested provider keys the live export no longer emits", () => {
+    expect(
+      missingProviderKeys(["STX_A", "REI_B", "NER_C"], [{ ProviderKey: "STX_A" }, { ProviderKey: " NER_C " }])
+    ).toEqual(["REI_B"]);
   });
 });

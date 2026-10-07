@@ -10,6 +10,7 @@ import {
   resolveGalaxusProductCategoryPath,
 } from "@/galaxus/exports/productClassification";
 import { buildGalaxusSizeSpecRow } from "@/galaxus/exports/sizeSpecifications";
+import { galaxusAssortmentBlockReason } from "@/galaxus/exports/assortmentPolicy";
 import {
   formatGalaxusStockMoqFields,
   meetsGalaxusStockMoq,
@@ -210,20 +211,39 @@ export async function loadNormalExportCandidatePrices(params?: {
   return { byGtin, byProviderKey };
 }
 
+export function alternativeAssortmentBlockReason(product: AlternativeProductRecord) {
+  const vatRate = Number.isFinite(product.vatRate) ? product.vatRate : 0.081;
+  const priceExVat = Number(product.priceExVat);
+  return galaxusAssortmentBlockReason({
+    providerKey: product.providerKey,
+    title: product.title,
+    brand: product.brand,
+    sizeRaw: product.size,
+    supplierProductType: product.category,
+    suggestedRetailInclVatChf: Number.isFinite(priceExVat) ? priceExVat * (1 + vatRate) : null,
+  });
+}
+
 export function filterAlternativeProducts(params: {
   alternatives: AlternativeProductRecord[];
   normalByGtin: Map<string, number>;
   normalByProviderKey: Map<string, number>;
+  /** Galaxus feeds only — Decathlon must not inherit the Galaxus assortment rules. */
+  galaxusAssortmentPolicy?: boolean;
 }) {
   const exportable: AlternativeProductRecord[] = [];
   const excluded: Array<{
     product: AlternativeProductRecord;
-    reason: "MATCHING_PROVIDER_KEY" | "DUPLICATE_GTIN" | "PRICE_HIGHER";
+    reason: "MATCHING_PROVIDER_KEY" | "DUPLICATE_GTIN" | "PRICE_HIGHER" | "ASSORTMENT_POLICY";
     normalPrice?: number;
   }> = [];
 
   for (const product of params.alternatives) {
     if (!validateGtin(String(product.gtin ?? "").trim())) {
+      continue;
+    }
+    if (params.galaxusAssortmentPolicy && alternativeAssortmentBlockReason(product)) {
+      excluded.push({ product, reason: "ASSORTMENT_POLICY" });
       continue;
     }
     const providerKeyMatch = params.normalByProviderKey.get(product.providerKey);
