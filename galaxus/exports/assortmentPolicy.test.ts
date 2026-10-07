@@ -128,6 +128,20 @@ describe("galaxusAssortmentBlockReason", () => {
     }
   });
 
+  it("does not flag dry-run false positives as electronics", () => {
+    for (const input of [
+      { providerKey: "STX_18", title: "Nike Adapt BB 2.0 Tie Dye (US Charger)", brand: "Nike", sizeRaw: "EU 44", suggestedRetailInclVatChf: 280 },
+      { providerKey: "STX_19", title: "Nike Air Max 90 Xbox x EA Sports Madden 20", brand: "Nike", sizeRaw: "EU 43", suggestedRetailInclVatChf: 250 },
+      { providerKey: "NER_4", title: "Maillot Manches Longues Kenny Charger Blanc/Rose Femme", brand: "Kenny", sizeRaw: "M", purchasePriceExVatChf: 40 },
+      { providerKey: "NER_5", title: "Cartouche RockShox Charger 2.1 RCT3 Pike 29''", brand: "RockShox", purchasePriceExVatChf: 200 },
+      { providerKey: "NER_6", title: "Porte Bidon Massi IOS Noir / Blanc", brand: "Massi", purchasePriceExVatChf: 10 },
+      { providerKey: "EXL_3", title: "RAM 2500 Feuerwehreinsatzwagen mit L+S", brand: "Spielfahrzeuge", purchasePriceExVatChf: 30 },
+      { providerKey: "EXL_4", title: "Happy People 77712 - Wehncke, 3-Ring Pool, 157x28cm", purchasePriceExVatChf: 15 },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBe("electronics");
+    }
+  });
+
   it("does not flag ordinary products with IT-looking words", () => {
     expect(galaxusAssortmentBlockReason({ providerKey: "STX_16", title: "Ram Trucks Hot Wheels 2021", suggestedRetailInclVatChf: 20 })).toBeNull();
     expect(

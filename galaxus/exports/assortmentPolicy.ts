@@ -40,7 +40,10 @@ const ELECTRONICS_SUPPLIER_KEYS = new Set(["rei"]);
 const PRICE_OUTLIER_SUPPLIER_KEYS = new Set(["stx"]);
 
 const ELECTRONICS_PATH_RE =
-  /^IT \+ Multimedia|Elektr|Leuchtmittel|Lampen \+ Leuchten|Smart Home|Haushaltgeräte|Poolroboter|Drohne|E-Scooter|Ladestation/i;
+  /^IT \+ Multimedia|Elektr|Leuchtmittel|Lampen \+ Leuchten|Smart Home|Haushaltgeräte|Drohne|E-Scooter|Ladestation/i;
+
+/** Regex classifier mislabels bike / sport gear here (RockShox "Charger", "Massi IOS"). */
+const CLASSIFIER_ELECTRONICS_SKIP_SUPPLIERS = new Set(["ner"]);
 
 /** Storage media + PC components by title, for suppliers whose classifier does not know them. */
 const IT_COMPONENT_TEXT_RE = new RegExp(
@@ -90,7 +93,7 @@ const IT_COMPONENT_TEXT_RE = new RegExp(
   ].join("|"),
   "i"
 );
-const IT_COMPONENT_CASE_RE = /\bRAM\b|\bNAS\b/;
+const IT_COMPONENT_CASE_RE = /\b\d+\s?GB\b[^,]*\bRAM\b|\bRAM\b[^,]*\b\d+\s?GB\b|\bNAS\b/;
 
 const IT_COMPONENT_BRANDS = new Set([
   "sandisk",
@@ -293,8 +296,15 @@ export function galaxusAssortmentBlockReason(
     supplierKey,
     supplierProductType: input.supplierProductType,
   });
-  if (ELECTRONICS_PATH_RE.test(galaxusCategoryPathForKind(kind, supplierKey))) return "electronics";
-  if (isItComponent(input)) return "electronics";
+  const hasShoeSize = SHOE_SIZE_RE.test(String(input.sizeRaw ?? "").trim());
+  if (
+    !hasShoeSize &&
+    !CLASSIFIER_ELECTRONICS_SKIP_SUPPLIERS.has(supplierKey) &&
+    ELECTRONICS_PATH_RE.test(galaxusCategoryPathForKind(kind, supplierKey))
+  ) {
+    return "electronics";
+  }
+  if (!hasShoeSize && isItComponent(input)) return "electronics";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
