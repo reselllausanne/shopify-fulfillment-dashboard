@@ -22,6 +22,7 @@ const LEGO_INBOUND_MEDIUM = [
   "lego-technic-land-rover-defender-set-42110",
   "lego-creator-ferris-wheel-2015-set-10247",
   "lego-architecture-taj-mahal-set-21056",
+  "lego-icons-the-lord-of-the-rings-rivendell-set-10316",
 ];
 
 const LEGO_INBOUND_SMALL = [

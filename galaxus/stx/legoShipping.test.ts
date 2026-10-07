@@ -8,6 +8,9 @@ describe("resolveStxShippingCHF", () => {
 
   it("returns exact manual shipping for medium LEGO overrides", () => {
     expect(resolveStxShippingCHF({ slug: "lego-pet-shop-set-10218" })).toBe(45);
+    expect(
+      resolveStxShippingCHF({ slug: "lego-icons-the-lord-of-the-rings-rivendell-set-10316" })
+    ).toBe(45);
   });
 
   it("returns exact manual shipping for small LEGO overrides", () => {

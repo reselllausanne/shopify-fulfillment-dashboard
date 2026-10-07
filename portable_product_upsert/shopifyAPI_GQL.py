@@ -364,7 +364,8 @@ def get_lego_shipping_cost(product_handle):
     # Medium LEGO sets - 45 CHF shipping
     medium_sets = ['lego-creator-fairgrounds-mixer-set-10244', 'lego-stranger-things-the-upside-down-set-75810',
                    'lego-tower-bridge-set-10214', 'lego-technic-land-rover-defender-set-42110',
-                   'lego-creator-ferris-wheel-2015-set-10247', 'lego-architecture-taj-mahal-set-21056']
+                   'lego-creator-ferris-wheel-2015-set-10247', 'lego-architecture-taj-mahal-set-21056',
+                   'lego-icons-the-lord-of-the-rings-rivendell-set-10316']
     if any(set_name in handle_lower for set_name in medium_sets):
         return 45
     
