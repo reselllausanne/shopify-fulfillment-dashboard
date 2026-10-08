@@ -14,6 +14,8 @@ echo "[$(date -Is)] starting detached rei scrape -> $LOG" | tee -a "$LOG"
 nohup docker compose run --name resell-rei-scrape --rm \
   -e SCRAPER_STALE_RUN_MINUTES="${SCRAPER_STALE_RUN_MINUTES:-1440}" \
   -e SCRAPER_REI_RESUME="${SCRAPER_REI_RESUME:-1}" \
+  -e SCRAPER_REI_DELTA_DAYS="${SCRAPER_REI_DELTA_DAYS_FULL:-1.5}" \
+  -e SCRAPER_REI_STALE_DAYS="${SCRAPER_REI_STALE_DAYS_FULL:-3}" \
   -e SCRAPER_REI_FORCE_CURL=1 \
   -e SCRAPER_REI_PROXY_FILE=/app/.data/reichelt-proxies.txt \
   web npx tsx scripts/run-reichelt-scrape.ts \

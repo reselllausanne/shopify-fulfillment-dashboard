@@ -22,7 +22,38 @@ import {
   isHardReicheltFetchError,
   isReicheltDelistedHtml,
   isReicheltGoneHttpError,
+  isReicheltLimitedStockStatus,
+  parseReicheltStockStatus,
 } from "@/app/lib/reicheltClient";
+
+describe("parseReicheltStockStatus", () => {
+  it("status_2 (actuellement indisponible) is out of stock", () => {
+    const html = `<a class="availability status_2 triangle-right" href="#x"> actuellement indisponible </a>`;
+    expect(parseReicheltStockStatus(html)).toMatchObject({ status: "2", inStock: false });
+  });
+
+  it("text fallback: 'indisponible' is not 'disponible'", () => {
+    const html = `<div class="availability">actuellement indisponible</div>`;
+    expect(parseReicheltStockStatus(html).inStock).toBe(false);
+  });
+
+  it("text fallback: 'disponible' / 'ex stock' are in stock", () => {
+    expect(parseReicheltStockStatus(`<div class="availability">disponible immédiatement</div>`).inStock).toBe(true);
+    expect(parseReicheltStockStatus(`<div class="availability">ex stock, délai 3 jours</div>`).inStock).toBe(true);
+  });
+
+  it("text fallback: 'nicht lieferbar' is out of stock", () => {
+    expect(parseReicheltStockStatus(`<div class="availability">derzeit nicht lieferbar</div>`).inStock).toBe(false);
+  });
+});
+
+describe("isReicheltLimitedStockStatus", () => {
+  it("1 is regular stock; 4/6/16 are limited", () => {
+    expect(isReicheltLimitedStockStatus("1")).toBe(false);
+    expect(isReicheltLimitedStockStatus(null)).toBe(false);
+    for (const s of ["4", "6", "16"]) expect(isReicheltLimitedStockStatus(s)).toBe(true);
+  });
+});
 
 const SAMPLE_PRODUCT_HTML = `
 <html>

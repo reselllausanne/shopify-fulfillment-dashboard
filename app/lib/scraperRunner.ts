@@ -166,6 +166,7 @@ export const SCRAPER_STOCK_HOOK_CALL_SITES = [
   { path: "scripts/scrape-cron.sh", via: "POST /api/scraper/scrape", hooked: true },
   { path: "scripts/run-reichelt-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-reichelt-detached.sh", via: "run-reichelt-scrape.ts", hooked: true },
+  { path: "scripts/run-reichelt-sweep-detached.sh", via: "run-reichelt-scrape.ts --sweep-only", hooked: true },
   { path: "scripts/run-fantasywelt-scrape.ts", via: "runScraperJob", hooked: true },
   { path: "scripts/run-fantasywelt-detached.sh", via: "run-fantasywelt-scrape.ts", hooked: true },
   { path: "scripts/run-exlibris-scrape.ts", via: "runScraperJob", hooked: true },
