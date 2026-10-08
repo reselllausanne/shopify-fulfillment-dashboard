@@ -166,9 +166,10 @@ fi
 mig_block="$(awk '/if \[ "\$RUN_MIGRATE" = "1" \]/,/^  else$/' "$ROOT/scripts/vps-deploy-from-github.sh" | head -20)"
 if echo "$mig_block" | grep -q 'prisma migrate deploy' \
   && awk '
-    /docker compose build/ { b=NR }
-    /prisma migrate deploy/ { m=NR }
-    /docker compose up -d/ { u=NR }
+    /echo/ { next }
+    /docker compose build/ && !b { b=NR }
+    /prisma migrate deploy/ && !m { m=NR }
+    /docker compose up -d/ && !u { u=NR }
     END { exit !(b && m && u && b < m && m < u) }
   ' "$ROOT/scripts/vps-deploy-from-github.sh"; then
   pass "migrate: build < migrate < up order"
