@@ -68,14 +68,20 @@ export async function listUnlinkedGalaxusStockxBuys(): Promise<{
     if (num) claimed.add(num);
   }
 
+  const pendingPages = Math.max(1, Math.min(40, Number(process.env.STOCKX_UNLINKED_PENDING_PAGES ?? "20")));
+  const historicalPages = Math.max(
+    1,
+    Math.min(80, Number(process.env.STOCKX_UNLINKED_HISTORICAL_PAGES ?? "12"))
+  );
+  const allStatePages = Math.max(1, Math.min(20, Number(process.env.STOCKX_UNLINKED_ALL_PAGES ?? "8")));
   const [pending, historical, allState] = await Promise.all([
-    fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: 20, state: "PENDING" }).catch(
+    fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: pendingPages, state: "PENDING" }).catch(
       () => [] as StockxBuyingNode[]
     ),
-    fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: 12, state: "HISTORICAL" }).catch(
+    fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: historicalPages, state: "HISTORICAL" }).catch(
       () => [] as StockxBuyingNode[]
     ),
-    fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: 8, state: null }).catch(
+    fetchRecentStockxBuyingOrders(token, { first: 100, maxPages: allStatePages, state: null }).catch(
       () => [] as StockxBuyingNode[]
     ),
   ]);

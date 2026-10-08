@@ -39,6 +39,11 @@ const REFRESH_CONCURRENCY = 3;
 const MAX_ORDER_IDS = 200;
 const PENDING_MAX_PAGES = Math.max(2, Math.min(12, Number(process.env.STOCKX_GALAXUS_BULK_PENDING_PAGES ?? "6")));
 const ALL_STATE_MAX_PAGES = Math.max(0, Math.min(6, Number(process.env.STOCKX_GALAXUS_BULK_ALL_STATE_PAGES ?? "3")));
+/** 0 = off. Backfill sets this; fetch stops early when StockX has no next page. */
+const HISTORICAL_MAX_PAGES = Math.max(
+  0,
+  Math.min(80, Number(process.env.STOCKX_GALAXUS_BULK_HISTORICAL_PAGES ?? "0"))
+);
 
 function sleepMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -301,8 +306,17 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
 
   let pendingList: StockxBuyingNode[] = [];
   let allStateList: StockxBuyingNode[] = [];
+  let historicalList: StockxBuyingNode[] = [];
+  const emptyList = {
+    nodes: [] as StockxBuyingNode[],
+    fromCache: true,
+    durationMs: 0,
+    fetchedAt: Date.now(),
+    pageCount: 0,
+    cacheKey: "skipped",
+  };
   try {
-    const [pendingRes, allStateRes] = await Promise.all([
+    const [pendingRes, allStateRes, historicalRes] = await Promise.all([
       getCachedStockxBuyingOrders(token, {
         first: 100,
         maxPages: PENDING_MAX_PAGES,
@@ -314,24 +328,28 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
             maxPages: ALL_STATE_MAX_PAGES,
             state: null,
           })
-        : Promise.resolve({
-            nodes: [] as StockxBuyingNode[],
-            fromCache: true,
-            durationMs: 0,
-            fetchedAt: Date.now(),
-            pageCount: 0,
-            cacheKey: "skipped",
-          }),
+        : Promise.resolve(emptyList),
+      HISTORICAL_MAX_PAGES > 0
+        ? getCachedStockxBuyingOrders(token, {
+            first: 100,
+            maxPages: HISTORICAL_MAX_PAGES,
+            state: "HISTORICAL",
+          })
+        : Promise.resolve(emptyList),
     ]);
     pendingList = pendingRes.nodes;
     allStateList = allStateRes.nodes;
+    historicalList = historicalRes.nodes;
     console.log("[GALAXUS][STX][BULK] buying lists", {
       pending: pendingList.length,
       allState: allStateList.length,
+      historical: historicalList.length,
       pendingFromCache: pendingRes.fromCache,
       allStateFromCache: allStateRes.fromCache,
+      historicalFromCache: historicalRes.fromCache,
       pendingMs: pendingRes.durationMs,
       allStateMs: allStateRes.durationMs,
+      historicalMs: historicalRes.durationMs,
     });
   } catch (err: any) {
     return {
@@ -342,8 +360,8 @@ export async function runGalaxusBulkStxSync(orderIds: string[]): Promise<Galaxus
   }
 
   base.pendingListCount = pendingList.length;
-  base.allStateListCount = allStateList.length;
-  const buys = mergeBuyingLists([pendingList, allStateList]);
+  base.allStateListCount = allStateList.length + historicalList.length;
+  const buys = mergeBuyingLists([pendingList, allStateList, historicalList]);
   base.fetchedBuys = buys.length;
 
   type Details =
