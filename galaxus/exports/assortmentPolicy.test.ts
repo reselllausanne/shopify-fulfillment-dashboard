@@ -14,7 +14,7 @@ describe("galaxusAssortmentBlockReason", () => {
   });
 
   it("blocks REI storage / IT components but keeps other REI products", () => {
-    expect(galaxusAssortmentBlockReason({ providerKey: "REI_123", title: "Corsair Vengeance DDR5" })).toBe(
+    expect(galaxusAssortmentBlockReason({ providerKey: "REI_123", title: "Corsair Vengeance DDR4" })).toBe(
       "electronics"
     );
     expect(galaxusAssortmentBlockReason({ supplierVariantId: "rei_abc", title: "Lötstation 80 W" })).toBeNull();
@@ -116,13 +116,58 @@ describe("galaxusAssortmentBlockReason", () => {
     for (const input of [
       { providerKey: "HAW_1", title: "Samsung 990 PRO NVMe M.2 SSD 2TB" },
       { providerKey: "EXL_2", title: "SanDisk Extreme microSDXC 256 GB", brand: "SanDisk" },
-      { providerKey: "BWZ_3", title: "Kingston Fury Beast 32GB DDR5 RAM", brand: "Kingston" },
+      { providerKey: "BWZ_3", title: "Kingston Fury Beast 32GB DDR4 RAM", brand: "Kingston" },
       { providerKey: "VEN_4", title: "USB-Stick 64 GB" },
       { providerKey: "HAW_5", title: "Seagate Expansion Desktop Festplatte 8TB", brand: "Seagate" },
       { providerKey: "ALT_6", title: "MSI GeForce RTX 4070 Ventus Grafikkarte" },
-      { providerKey: "STX_7", title: "Nvidia Jetson Orin Nano Developer Kit", brand: "Nvidia" },
+      { providerKey: "REI_7", title: "INTEL Intel Core i3-14100F, 3.5 GHz, en boîte, 1700", brand: "INTEL" },
     ]) {
       expect(galaxusAssortmentBlockReason(input)).toBe("electronics");
+    }
+  });
+
+  it("keeps Nvidia, DDR5, SO-DIMM and Raspberry Pi items", () => {
+    for (const input of [
+      { providerKey: "STX_7", title: "Nvidia Jetson Orin Nano Developer Kit", brand: "Nvidia" },
+      { providerKey: "REI_8", title: "PNY NVIDIA RTX A2000 12GB", brand: "PNY" },
+      { providerKey: "REI_9", title: "CSX DIMM DDR5-5600MHZ 8 GO CSX, CL46", brand: "CSX" },
+      { providerKey: "REI_10", title: "Kingston Fury Beast 32GB DDR5 RAM", brand: "Kingston" },
+      { providerKey: "REI_11", title: "CSX SODIMM CSX 2 GO DDR3-1600MHZ", brand: "CSX" },
+      { providerKey: "REI_12", title: "RASPBERRY PI Raspberry Pi Compute Modul 5, 2GB RAM, sans eMMC", brand: "RASPBERRY PI" },
+      { providerKey: "REI_13", title: "KKSB Boîtier pour Raspberry Pi 5 & M.2 NVMe HAT", brand: "KKSB" },
+      { providerKey: "REI_14", title: "AKASA Gehäuse für Raspberry Pi 4, Alu, schwarz", brand: "AKASA" },
+      { providerKey: "REI_15", title: "RASPBERRY PI Netzteil USB-C 27 W für Raspberry Pi 5, weiss", brand: "RASPBERRY PI" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBeNull();
+    }
+  });
+
+  it("blocks long items that are expensive to ship", () => {
+    for (const input of [
+      { providerKey: "REI_20", title: "PHILIPS Tube LED, T8, 22,1 W, 4100 lm, 4000 K, 1500 mm" },
+      { providerKey: "REI_21", title: "LEDVANCE GMBH Tube LED 15 W 1800 lm, 6500 K, 1,2 M." },
+      { providerKey: "REI_22", title: "OSRAM Leuchtstoffröhre T5, 28 W, 1149 mm" },
+      { providerKey: "REI_23", title: "PAULMANN LED-Streifen MaxLED, 18 W, 630 lm, RGBW, 1500 mm, dimmbar" },
+      { providerKey: "REI_24", title: "PAULMANN Strip MaxLED 250 1m RGBW IP44 Protect Cover 7W 230/24V Argent" },
+      { providerKey: "REI_25", title: "Alu-Profil für LED-Streifen, 2 m, eloxiert" },
+      { providerKey: "REI_26", title: "PHOENIX CONTACT Tragschiene NS 35, 2000 mm" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).toBe("bulky_shipping");
+    }
+  });
+
+  it("does not treat short items, colours or coiled cables as bulky", () => {
+    for (const input of [
+      { providerKey: "REI_30", title: "NEUTRIK XLR-Codierring, Markierungsring, Neon-rot" },
+      { providerKey: "REI_31", title: "AVERY ZWECKFORM Warnetiketten, 7211, 100x50mm, neonrot" },
+      { providerKey: "REI_32", title: "HAMMOND MANUFACTURING Profilgehäuse, 1455 N, 120 x 103 x 53 mm, silber" },
+      { providerKey: "REI_33", title: "DELOCK Câble HDMI 2.1, 5 m, noir" },
+      { providerKey: "REI_34", title: "FREI Support pour la série Shelly Mini, rail DIN" },
+      { providerKey: "REI_35", title: "VERBATIM Clé USB 3.0 64 Go Verbatim PinStripe noire" },
+      { providerKey: "REI_36", title: "BRENNENSTUHL Premium-Line Steckdosenleiste, 6-fach, USB, 3 m Kabel, schwarz" },
+      { providerKey: "REI_37", title: "PANORAMA ANTENNAS Antenne tige 2x2 4G/5G/450 MHz 0,5 m, connecteur N" },
+    ]) {
+      expect(galaxusAssortmentBlockReason(input)).not.toBe("bulky_shipping");
     }
   });
 
