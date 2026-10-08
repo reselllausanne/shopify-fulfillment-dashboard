@@ -4,6 +4,9 @@
  * - electronics: storage media + IT components only (Galaxus, 2026-10-07): PC component /
  *   storage categories, storage / PC-part keywords, and storage / component brands, from
  *   any supplier. Other electronics (phones, audio, TV, lamps, appliances, drones…) stay.
+ *   Kept on purpose (strong sellers): Nvidia, DDR5 RAM, SO-DIMM, Raspberry Pi + accessories.
+ * - bulky_shipping: long items that are expensive to ship — fluorescent / LED tubes
+ *   ("néon"), and strips / profiles / rails / rods of 1 m or more.
  * - shoe_over_cap: footwear with consumer price > 300 CHF. Scope defaults to Tali's
  *   focus brands (stxBrandBuckets) with no collab exemption; env switches to all
  *   brands (GALAXUS_SHOE_CAP_SCOPE=all) or re-enables the collab exemption
@@ -18,7 +21,7 @@ import { classifyGalaxusProductKind, isFootwearKind } from "@/galaxus/exports/pr
 import { galaxusCategoryPathForKind } from "@/galaxus/exports/galaxusCategoryPaths";
 import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandBuckets";
 
-export type GalaxusAssortmentBlockReason = "electronics" | "shoe_over_cap" | "price_outlier";
+export type GalaxusAssortmentBlockReason = "electronics" | "shoe_over_cap" | "price_outlier" | "bulky_shipping";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -91,6 +94,14 @@ const IT_COMPONENT_TEXT_RE = new RegExp(
 );
 const IT_COMPONENT_CASE_RE = /\b\d+\s?GB\b[^,]*\bRAM\b|\bRAM\b[^,]*\b\d+\s?GB\b|\bNAS\b/;
 
+const IT_COMPONENT_KEEP_RE = /raspberry|\brpi\b|nvidia|\bddr5\b|so-?dimm/i;
+
+const TUBE_LAMP_RE =
+  /\btube led\b|\bled[- ]?tube\b|led[- ]?r[oö]hre|leuchtstoff(?:r[oö]hre|lampe)|\btube fluo|\bn[eé]on (?:tube|lamp|lampe|r[oö]hre)\b|\btube n[eé]on\b|\bT[58]\b[^,]*\b(?:led|tube|r[oö]hre)\b/i;
+const LONG_ITEM_RE =
+  /\b(?:strip|ruban|lichtband|rail|tige|barre|baguette)\b|profil|schiene|streifen|stange|rohr|(?<!steckdosen)leiste/i;
+const LENGTH_1M_PLUS_RE = /(?<![\d.,])(?:[1-9]\d?(?:[.,]\d+)?\s?m|[1-9]\d{3,}\s?mm)\b/i;
+
 const IT_COMPONENT_BRANDS = new Set([
   "sandisk",
   "kingston",
@@ -104,7 +115,6 @@ const IT_COMPONENT_BRANDS = new Set([
   "qnap",
   "intel",
   "amd",
-  "nvidia",
   "asrock",
   "be quiet!",
   "noctua",
@@ -253,9 +263,16 @@ function hasFootwearEvidence(input: GalaxusAssortmentInput): boolean {
 }
 
 export function isItComponent(input: { title?: string | null; brand?: string | null }): boolean {
+  if (IT_COMPONENT_KEEP_RE.test(`${input.title ?? ""} ${input.brand ?? ""}`)) return false;
   if (IT_COMPONENT_BRANDS.has(normalizeStxBrand(input.brand))) return true;
   const title = String(input.title ?? "");
   return IT_COMPONENT_TEXT_RE.test(title) || IT_COMPONENT_CASE_RE.test(title);
+}
+
+export function isBulkyShippingItem(input: { title?: string | null }): boolean {
+  const title = String(input.title ?? "");
+  if (TUBE_LAMP_RE.test(title)) return true;
+  return LONG_ITEM_RE.test(title) && LENGTH_1M_PLUS_RE.test(title);
 }
 
 /** Focus brand by brand field, or by footwear-brand name in the title (NER titles often lack brand). */
@@ -293,14 +310,17 @@ export function galaxusAssortmentBlockReason(
     supplierProductType: input.supplierProductType,
   });
   const hasShoeSize = SHOE_SIZE_RE.test(String(input.sizeRaw ?? "").trim());
+  const keptItItem = IT_COMPONENT_KEEP_RE.test(`${input.title ?? ""} ${input.brand ?? ""}`);
   if (
     !hasShoeSize &&
+    !keptItItem &&
     !CLASSIFIER_ELECTRONICS_SKIP_SUPPLIERS.has(supplierKey) &&
     IT_COMPONENT_PATH_RE.test(galaxusCategoryPathForKind(kind, supplierKey))
   ) {
     return "electronics";
   }
   if (!hasShoeSize && isItComponent(input)) return "electronics";
+  if (!hasShoeSize && isBulkyShippingItem(input)) return "bulky_shipping";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
@@ -327,11 +347,11 @@ export function galaxusAssortmentBlockReason(
 export type GalaxusAssortmentStats = Record<GalaxusAssortmentBlockReason, number>;
 
 export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
-  return { electronics: 0, shoe_over_cap: 0, price_outlier: 0 };
+  return { electronics: 0, shoe_over_cap: 0, price_outlier: 0, bulky_shipping: 0 };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
