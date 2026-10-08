@@ -156,6 +156,35 @@ describe("galaxusAssortmentBlockReason", () => {
     }
   });
 
+  it("blocks gift cards from any supplier", () => {
+    expect(galaxusAssortmentBlockReason({ providerKey: "BWZ_40", title: "baby-walz Geschenkkarte 50 CHF" })).toBe("gift_card");
+    expect(galaxusAssortmentBlockReason({ providerKey: "EXL_41", title: "Ex Libris Gutschein 20.-" })).toBe("gift_card");
+  });
+
+  it("blocks BWZ rows that are unshippable or expensive without a parcel class", () => {
+    const standard = JSON.stringify({ parcelClass: "standard", shipChf: 12 });
+    const unknown = JSON.stringify({ parcelClass: "unknown", shipChf: null });
+    const unshippable = JSON.stringify({ parcelClass: "unshippable" });
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "BWZ_42", title: "Kinderwagen Duo", purchasePriceExVatChf: 450, manualNote: standard })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "BWZ_43", title: "Kinderwagen Duo", purchasePriceExVatChf: 450, manualNote: unknown })
+    ).toBe("bulky_shipping");
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "BWZ_44", title: "Kinderwagen Duo", purchasePriceExVatChf: 450 })
+    ).toBe("bulky_shipping");
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "BWZ_45", title: "Schnuller 2er Pack", purchasePriceExVatChf: 12, manualNote: unknown })
+    ).toBeNull();
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "BWZ_46", title: "Gitterbett", purchasePriceExVatChf: 50, manualNote: unshippable })
+    ).toBe("bulky_shipping");
+    expect(
+      galaxusAssortmentBlockReason({ providerKey: "HAW_47", title: "Rasenmäher", purchasePriceExVatChf: 450 })
+    ).toBeNull();
+  });
+
   it("does not treat short items, colours or coiled cables as bulky", () => {
     for (const input of [
       { providerKey: "REI_30", title: "NEUTRIK XLR-Codierring, Markierungsring, Neon-rot" },
@@ -275,7 +304,7 @@ describe("galaxusAssortmentBlockReason", () => {
         title: "Kombikinderwagen Fame Travel-Set inkl. Babyschale Pebble Slide Pro",
         purchasePriceExVatChf: 1888,
       })
-    ).toBeNull();
+    ).not.toBe("shoe_over_cap");
     expect(
       galaxusAssortmentBlockReason({ providerKey: "EXL_1", title: "Kuh Spezial Red-Holstein", purchasePriceExVatChf: 315 })
     ).toBeNull();
@@ -284,7 +313,7 @@ describe("galaxusAssortmentBlockReason", () => {
   it("only applies the price-outlier rule to StockX", () => {
     process.env.GALAXUS_PRICE_OUTLIER_FILTER = "1";
     expect(
-      galaxusAssortmentBlockReason({ providerKey: "BWZ_2", title: "Ecksofa Leder Cognac", purchasePriceExVatChf: 6000 })
+      galaxusAssortmentBlockReason({ providerKey: "HAW_2", title: "Ecksofa Leder Cognac", purchasePriceExVatChf: 6000 })
     ).toBeNull();
   });
 
