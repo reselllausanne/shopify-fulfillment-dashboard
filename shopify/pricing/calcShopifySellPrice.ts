@@ -4,6 +4,7 @@ import {
   psychRoundUp,
   type SuggestedSellCategory,
 } from "@/galaxus/pricing/suggestedSellPrice";
+import { STX_CH_LIST_MULTIPLIER_BEFORE_SHIPPING } from "@/galaxus/stx/chfStockxBuyPrice";
 
 export type CalcShopifySellPriceInput = {
   /** StockX list/ask before their fees (CHF). */
@@ -25,28 +26,31 @@ export type ShopifyPricingRule = "half" | "lego" | "manual_override";
 export const SHOPIFY_CPA_CAP_HALF = 24.0;
 
 // ---------------------------------------------------------------------------
-// LOCKED Shopify sell formula (v2026-09-19) — manual constants only.
+// LOCKED Shopify sell formula (v2026-10-08) — manual constants only.
 // Do not silently update from Shopify plan data or payment-method mix.
 // shopifySellPrice =
-//   (sourceCostChf + fixedFulfillmentAndShippingChf)
-//   / (1 - blendedPaymentCostRate - VATFlatRate - paidAdsRate - targetCM2Rate)
+//   (sourceCostChf + fixedFulfillmentAndShippingChf + adsPerOrderChf)
+//   / (1 - blendedPaymentCostRate - VATFlatRate - targetCM2Rate)
 // then ceil to whole CHF (WeTheNew-style clean francs; never below floor).
-// No …9/…5 psych bump. No fixed costs after the denominator.
+// sourceCostChf = real StockX checkout cost: raw × 1.1065 + 20.
+// No …9/…5 psych bump.
 // ---------------------------------------------------------------------------
-export const SHOPIFY_PRICING_LOCK_VERSION = "2026-09-22-volume";
+export const SHOPIFY_PRICING_LOCK_VERSION = "2026-10-08-ads-per-order";
+/** Measured Sep 2026 per order: fulfilment 6.2 + postage 4.7 + apps 3.2 + fixed 0.4. */
 export const SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF = 14.5;
-/** Blended cards / invoice / TWINT / PayPal — already includes per-order fee mix. No +0.30. */
-export const SHOPIFY_BLENDED_PAYMENT_COST_RATE = 0.0275;
-export const SHOPIFY_VAT_FLAT_RATE = 0.023;
+/** Shopify payouts Jan–Sep 2026 = 97.1% of net sales (fees + refunds). No +0.30. */
+export const SHOPIFY_BLENDED_PAYMENT_COST_RATE = 0.029;
+/** Saldo VAT rate. */
+export const SHOPIFY_VAT_FLAT_RATE = 0.021;
 /**
- * Ads and CM2 were 15% + 12% under the 2026-09-19 lock. Charging 27% on every
- * item priced us a median 41% above the Swiss benchmark Google measures, and
- * volume collapsed from 434 orders in August to 236 over the first 21 days of
- * September. Measured reality over the period that worked: ads were 14.5% of
- * revenue in August (MER 6.91) and a pair bought at 179 CHF sold at ~245.
- * 11% + 5% reproduces that price point (179 → 246) at a ~14% cut.
+ * Ads are a per-order cost, not a share of price: 84% of 90-day spend goes to
+ * offers that never convert, and a 100 CHF pair needs the same ad spend as a
+ * 300 CHF pair. Real cost was 35/order (90 days) and 43.5 in Sep 2026; 30 is
+ * the target once non-converting spend is cut.
  */
-export const SHOPIFY_PAID_ADS_RATE = 0.11;
+export const SHOPIFY_ADS_PER_ORDER_CHF = 30;
+/** @deprecated Ads moved to SHOPIFY_ADS_PER_ORDER_CHF; kept at 0 for audit call sites. */
+export const SHOPIFY_PAID_ADS_RATE = 0;
 export const SHOPIFY_TARGET_CM2_RATE = 0.05;
 
 /** Exact floor before storefront publish (centime). */
@@ -74,6 +78,11 @@ export function shopifyLockedDenom(): number {
   );
 }
 
+/** Real StockX CH checkout cost (list + processing + 20 shipping). */
+export function stxSourceCostChfFromRaw(stockxRaw: number): number {
+  return stockxRaw * STX_CH_LIST_MULTIPLIER_BEFORE_SHIPPING + 20.0;
+}
+
 /**
  * Locked storefront sell from source cost (StockX after-fees buy).
  * Formula → ceil whole CHF.
@@ -83,12 +92,14 @@ export function calcShopifySellFromSourceCost(sourceCostChf: number): number | n
   if (!Number.isFinite(C) || C <= 0) return null;
   const denom = shopifyLockedDenom();
   if (!(denom > 0)) return null;
-  return ceilToWholeFranc((C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF) / denom);
+  return ceilToWholeFranc(
+    (C + SHOPIFY_FIXED_FULFILLMENT_AND_SHIPPING_CHF + SHOPIFY_ADS_PER_ORDER_CHF) / denom
+  );
 }
 
 /**
  * Locked Shopify sell from StockX raw ask.
- * sourceCost = raw×1.08+20 (sneakers) or raw×1.10+legoShip (LEGO markup path separate).
+ * sourceCost = raw×1.1065+20 (sneakers) or raw×1.10+legoShip (LEGO markup path separate).
  */
 export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number | null {
   const stockxRaw = Number(input.stockxRaw);
@@ -116,8 +127,7 @@ export function calcShopifySellPrice(input: CalcShopifySellPriceInput): number |
     return ceilToWholeFranc(finalPriceRaw);
   }
 
-  const sourceCostChf = stockxRaw * 1.08 + 20.0;
-  return calcShopifySellFromSourceCost(sourceCostChf);
+  return calcShopifySellFromSourceCost(stxSourceCostChfFromRaw(stockxRaw));
 }
 
 /** Which production rule `calcShopifySellPrice` would apply (never `full`). */
@@ -177,7 +187,7 @@ export function explainShopifySellPrice(
   if (rule === "lego") {
     costChf = stockxRaw * 1.1 + getLegoInboundShippingChf(productHandle);
   } else {
-    costChf = stockxRaw * 1.08 + 20.0;
+    costChf = stxSourceCostChfFromRaw(stockxRaw);
   }
 
   return {
