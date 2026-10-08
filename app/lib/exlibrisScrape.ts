@@ -98,11 +98,37 @@ async function flushImageSyncQueue(imageSyncQueue: Set<string>) {
   return { synced: result.synced, failed: result.failed };
 }
 
+function exlResumeMaxAgeHours(): number {
+  const n = Number(process.env.SCRAPER_EXL_RESUME_MAX_AGE_HOURS);
+  return Number.isFinite(n) && n > 0 ? n : 48;
+}
+
+/**
+ * Resume only an unfinished, recent pass. Checkpoint EANs are skipped on resume, so a
+ * finished or old checkpoint would stop every existing product from being refreshed.
+ */
+export function isExlProgressResumable(
+  progress: Pick<ExlibrisScrapeProgress, "pendingCategories" | "updatedAt">,
+  now: Date = new Date(),
+  maxAgeHours: number = exlResumeMaxAgeHours()
+): boolean {
+  if (!progress.pendingCategories?.length) return false;
+  const updatedAt = Date.parse(String(progress.updatedAt ?? ""));
+  if (!Number.isFinite(updatedAt)) return false;
+  return now.getTime() - updatedAt <= maxAgeHours * 3_600_000;
+}
+
 function loadProgress(filePath: string, catalog: string): ExlibrisScrapeProgress {
   if (exlibrisConfig().resume && fs.existsSync(filePath)) {
     try {
       const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as ExlibrisScrapeProgress;
-      if (raw.catalog === catalog) return raw;
+      if (raw.catalog === catalog) {
+        if (isExlProgressResumable(raw)) return raw;
+        console.log(
+          `[SCRAPER] exl checkpoint finished or older than ${exlResumeMaxAgeHours()}h (updatedAt=${raw.updatedAt}) — fresh pass`
+        );
+        return emptyProgress(catalog);
+      }
     } catch {
       /* try legacy checkpoint */
     }
