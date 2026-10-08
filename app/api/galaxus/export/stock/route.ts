@@ -47,6 +47,11 @@ import {
   FEED_VARIANT_SELECT_GATE_NO_IMAGES,
 } from "@/galaxus/exports/variantImagePresence";
 import { isGalaxusGldSupplierLine } from "@/galaxus/warehouse/lineInventorySource";
+import {
+  loadGalaxusStockEvidence,
+  resolveGalaxusEvidenceStock,
+  usesGalaxusEvidenceStock,
+} from "@/galaxus/exports/evidenceStock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -308,6 +313,11 @@ export async function GET(request: Request) {
       .map((candidate: any) => candidate?.variant)
       .filter((variant: any) => Boolean(variant))
   );
+  const evidenceBySupplierVariantId = await loadGalaxusStockEvidence(
+    exportCandidates.map((candidate: any) => String(candidate?.variant?.supplierVariantId ?? ""))
+  );
+  let evidenceStockRows = 0;
+  let evidenceStockPositive = 0;
 
   // Phase 2 — physical mirror merge (flag-gated). Preload physical qty per GTIN
   // once so the row loop stays O(1) per candidate. When the flag is off we
@@ -367,9 +377,14 @@ export async function GET(request: Request) {
       return;
     }
     const supplierVariantId = String(variant?.supplierVariantId ?? "");
-    const availableStock = supplierVariantId
+    let availableStock = supplierVariantId
       ? stockBySupplierVariantId.get(supplierVariantId)
       : undefined;
+    if (usesGalaxusEvidenceStock(supplierVariantId)) {
+      availableStock = resolveGalaxusEvidenceStock(evidenceBySupplierVariantId.get(supplierVariantId));
+      evidenceStockRows += 1;
+      if (availableStock > 0) evidenceStockPositive += 1;
+    }
     const manualLock = Boolean(variant?.manualLock);
     const manualStockRaw = variant?.manualStock;
     const manualStock =
@@ -535,6 +550,12 @@ export async function GET(request: Request) {
       console.info("[GALAXUS][EXPORT][STOCK][TRM] Excluded rows", trmExclusionStats);
     }
     console.info("[GALAXUS][EXPORT][STOCK][ASSORTMENT] Delisted rows", assortmentStats);
+    if (evidenceStockRows > 0) {
+      console.info("[GALAXUS][EXPORT][STOCK][EVIDENCE] Stock from scraper evidence", {
+        rows: evidenceStockRows,
+        positive: evidenceStockPositive,
+      });
+    }
     if (skippedProviderKeys.length > 0) {
       console.info("[GALAXUS][EXPORT][STOCK] Skipped invalid price", {
         count: skippedProviderKeys.length,

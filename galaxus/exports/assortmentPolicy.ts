@@ -20,8 +20,14 @@
 import { classifyGalaxusProductKind, isFootwearKind } from "@/galaxus/exports/productClassification";
 import { galaxusCategoryPathForKind } from "@/galaxus/exports/galaxusCategoryPaths";
 import { classifyStxBrand, normalizeStxBrand } from "@/galaxus/exports/stxBrandBuckets";
+import { bwzShipChfFromManualNote, isBwzUnshippableNote } from "@/app/lib/bwzParcel";
 
-export type GalaxusAssortmentBlockReason = "electronics" | "shoe_over_cap" | "price_outlier" | "bulky_shipping";
+export type GalaxusAssortmentBlockReason =
+  | "electronics"
+  | "shoe_over_cap"
+  | "price_outlier"
+  | "bulky_shipping"
+  | "gift_card";
 
 export type GalaxusAssortmentInput = {
   providerKey?: string | null;
@@ -37,6 +43,8 @@ export type GalaxusAssortmentInput = {
   purchasePriceExVatChf?: number | null;
   /** Brand retail price (KickDB, USD). */
   brandRetailPrice?: number | null;
+  /** SupplierVariant.manualNote — BWZ stores parcel class / ship CHF here. */
+  manualNote?: string | null;
 };
 
 const PRICE_OUTLIER_SUPPLIER_KEYS = new Set(["stx"]);
@@ -101,6 +109,8 @@ const TUBE_LAMP_RE =
 const LONG_ITEM_RE =
   /\b(?:strip|ruban|lichtband|rail|tige|barre|baguette)\b|profil|schiene|streifen|stange|rohr|(?<!steckdosen)leiste/i;
 const LENGTH_1M_PLUS_RE = /(?<![\d.,])(?:[1-9]\d?(?:[.,]\d+)?\s?m|[1-9]\d{3,}\s?mm)\b/i;
+
+const GIFT_CARD_RE = /gutschein|geschenkkarte|gift ?card|carte[- ]cadeau|bon[- ]cadeau|e-?voucher/i;
 
 const IT_COMPONENT_BRANDS = new Set([
   "sandisk",
@@ -221,6 +231,14 @@ export function isGalaxusPriceOutlierFilterEnabled(): boolean {
   return ["1", "true", "yes", "on"].includes(raw);
 }
 
+/**
+ * BWZ rows without a parcel class are priced with CHF 2 ship; above this feed price
+ * (ex VAT) they are likely big / heavy, so block. Env: GALAXUS_BWZ_UNKNOWN_PARCEL_MAX_CHF.
+ */
+export function galaxusBwzUnknownParcelMaxChf(): number {
+  return readNumberEnv("GALAXUS_BWZ_UNKNOWN_PARCEL_MAX_CHF", 100);
+}
+
 /** Absolute consumer price cap for any item. Env: GALAXUS_MAX_RETAIL_CHF. */
 export function galaxusMaxRetailChf(): number {
   return readNumberEnv("GALAXUS_MAX_RETAIL_CHF", 5000);
@@ -275,6 +293,13 @@ export function isBulkyShippingItem(input: { title?: string | null }): boolean {
   return LONG_ITEM_RE.test(title) && LENGTH_1M_PLUS_RE.test(title);
 }
 
+function isBwzShippingUnsafe(input: GalaxusAssortmentInput): boolean {
+  if (isBwzUnshippableNote(input.manualNote)) return true;
+  if (bwzShipChfFromManualNote(input.manualNote) != null) return false;
+  const price = Number(input.purchasePriceExVatChf);
+  return Number.isFinite(price) && price > galaxusBwzUnknownParcelMaxChf();
+}
+
 /** Focus brand by brand field, or by footwear-brand name in the title (NER titles often lack brand). */
 export function isFocusShoeBrand(input: { title?: string | null; brand?: string | null }): boolean {
   if (classifyStxBrand(input.brand) === "FOCUS") return true;
@@ -321,6 +346,8 @@ export function galaxusAssortmentBlockReason(
   }
   if (!hasShoeSize && isItComponent(input)) return "electronics";
   if (!hasShoeSize && isBulkyShippingItem(input)) return "bulky_shipping";
+  if (GIFT_CARD_RE.test(`${input.title ?? ""} ${input.supplierProductType ?? ""}`)) return "gift_card";
+  if (supplierKey === "bwz" && isBwzShippingUnsafe(input)) return "bulky_shipping";
 
   const consumer = estimateGalaxusConsumerPriceChf(input);
   if (consumer != null) {
@@ -347,11 +374,11 @@ export function galaxusAssortmentBlockReason(
 export type GalaxusAssortmentStats = Record<GalaxusAssortmentBlockReason, number>;
 
 export function createGalaxusAssortmentStats(): GalaxusAssortmentStats {
-  return { electronics: 0, shoe_over_cap: 0, price_outlier: 0, bulky_shipping: 0 };
+  return { electronics: 0, shoe_over_cap: 0, price_outlier: 0, bulky_shipping: 0, gift_card: 0 };
 }
 
 export function galaxusAssortmentStatsHeaderValue(stats: GalaxusAssortmentStats): string {
-  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping}`;
+  return `electronics=${stats.electronics};shoe_over_cap=${stats.shoe_over_cap};price_outlier=${stats.price_outlier};bulky_shipping=${stats.bulky_shipping};gift_card=${stats.gift_card}`;
 }
 
 /** Feed-candidate adapter shared by master / offer / stock routes. */
@@ -374,5 +401,6 @@ export function galaxusAssortmentBlockReasonForCandidate(candidate: any): Galaxu
     suggestedRetailInclVatChf: toNum(variant?.suggestedRetailPriceInclVat),
     purchasePriceExVatChf: toNum(variant?.manualLock ? variant?.manualPrice : null) ?? toNum(candidate?.sellPriceExVat),
     brandRetailPrice: toNum(product?.retailPrice),
+    manualNote: variant?.manualNote ?? null,
   });
 }
