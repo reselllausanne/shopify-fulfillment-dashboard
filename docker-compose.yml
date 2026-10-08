@@ -182,3 +182,16 @@ services:
     volumes:
       - ./.data:/app/.data
     restart: unless-stopped
+
+  worker-shopify-fast-reprice:
+    build: .
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=${SHOPIFY_FAST_REPRICE_NODE_OPTIONS:---max-old-space-size=2048}
+      - SHOPIFY_FAST_REPRICE_SHARDS=${SHOPIFY_FAST_REPRICE_SHARDS:-4}
+      - SHOPIFY_FAST_REPRICE_PAUSE_MS=${SHOPIFY_FAST_REPRICE_PAUSE_MS:-1800000}
+      - SHOPIFY_FAST_REPRICE_SKIP_FRESH_HOURS=${SHOPIFY_FAST_REPRICE_SKIP_FRESH_HOURS:-6}
+      - SHOPIFY_FAST_REPRICE_INITIAL_DELAY_MS=${SHOPIFY_FAST_REPRICE_INITIAL_DELAY_MS:-60000}
+    command: ["npx", "tsx", "scripts/workers/shopifyFastRepriceWorker.ts"]
+    restart: unless-stopped

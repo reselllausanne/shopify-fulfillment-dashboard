@@ -16,6 +16,9 @@ REPO="${REPO:-/opt/resell}"
 REMOTE="${REMOTE:-origin}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-resell}"
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-web}"
+# Workers that compute Shopify sell prices: they bake code into their own image,
+# so they must be rebuilt with web or they keep pushing the previous formula.
+DEPLOY_PRICE_WORKERS="${DEPLOY_PRICE_WORKERS-worker-shopify-stx-price-sync worker-shopify-fast-reprice}"
 EXPECTED_SHA="${EXPECTED_SHA:-}"
 DRY_RUN=0
 VALIDATE_CONFIG=0
@@ -415,6 +418,9 @@ main() {
       echo "   docker compose up -d --no-deps $DEPLOY_SERVICE"
     fi
     echo "   verify web running + labels (+ image when available)"
+    for svc in $DEPLOY_PRICE_WORKERS; do
+      echo "   docker compose build $svc && docker compose up -d --no-deps $svc"
+    done
     validate_deploy_config "$REPO"
     cleanup_stale_web_rename_containers
     echo "DRY_RUN_OK requested=$WANT pre_head=$PRE_HEAD"
@@ -452,6 +458,14 @@ main() {
   fi
 
   verify_web_deployment "$WANT"
+
+  for svc in $DEPLOY_PRICE_WORKERS; do
+    echo "== build + up price worker $svc"
+    if ! docker compose build "$svc" || ! docker compose up -d --no-deps "$svc"; then
+      echo "FATAL: price worker $svc not redeployed (web is live on $WANT)"
+      exit 16
+    fi
+  done
 
   # Cron Python (SSE consumer / create queue) runs from /opt/shopify-automation;
   # keep it on the same GitHub SHA. Non-fatal: web is already live.
