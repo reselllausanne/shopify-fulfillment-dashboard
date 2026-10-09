@@ -1,8 +1,10 @@
 import { FALLBACK_SIZE_CHARTS, type SizeChartEntry } from "@/galaxus/kickdb/sizeCharts";
 import {
   resolveInStockFixedPrice,
+  resolveInStockFixedPriceRule,
   isInStockFixedPriceProduct,
 } from "@/shopify/inventory/inStockFixedPrice";
+import { toNumberSafe } from "@/app/utils/numbers";
 import type { AvailableLocalStockLot } from "@/shopify/localStock/availableLocalStock";
 import {
   isValidStockxBuyAfterCustomerOrder,
@@ -109,7 +111,7 @@ export function isPackageProtectionShopifyLine(
   return false;
 }
 
-/** In-stock Essentials/Bape/AP lane (ESS-*) — owned warehouse, already expensed → full margin. */
+/** In-stock Essentials/Bape/AP lane (ESS-*) — owned warehouse, fixed per-unit cost. */
 export function isEssentialStockMatch(m: {
   stockxStatus?: string | null;
   stockxOrderNumber?: string | null;
@@ -143,7 +145,8 @@ export type OrderMatchCostInput = {
 
 /**
  * COGS for margin metrics.
- * - Package protection / ESSENTIAL_STOCK / ESS-* → 0 (full margin, already expensed)
+ * - Package protection → 0 (full margin)
+ * - ESSENTIAL_STOCK / ESS-* → manualCostOverride, else fixed per-unit cost (legacy rows stored 0)
  * - LOCAL ALREADY_EXPENSED → 0 (allow zero; do not treat as missing cost)
  * - LOCAL ACQUISITION / StockX → stored cost (manualCostOverride wins, including explicit 0)
  */
@@ -155,7 +158,15 @@ export function resolveOrderMatchCost(m: OrderMatchCostInput): {
     return { cost: 0, fullMargin: true };
   }
   if (isEssentialStockMatch(m)) {
-    return { cost: 0, fullMargin: true };
+    if (m.manualCostOverride != null && m.manualCostOverride !== "") {
+      return { cost: toNumberSafe(m.manualCostOverride, 0), fullMargin: false };
+    }
+    const rule = resolveInStockFixedPriceRule({
+      sku: m.shopifySku ?? null,
+      title: m.shopifyProductTitle ?? null,
+    });
+    const stored = toNumberSafe(m.supplierCost, 0);
+    return { cost: rule ? rule.costChf : stored, fullMargin: false };
   }
 
   // Physical fulfillment (Website stock / stores / warehouse) sans unitCost natif

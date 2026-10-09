@@ -4,7 +4,7 @@
  * Express 48h ship while physical > 0; price is manual — never StockX −30%.
  * Match by productId first (sizes share one product), then SKU base, then title.
  *
- * COGS: already-expensed owned stock → costChf 0 (full margin on dashboard).
+ * COGS: per-unit acquisition cost below (Essentials tee 26, hoodie 42, Bape 35, AP 40, boxers 20).
  * Sell prices stay fixed (Essentials tee/shorts 59/89, hoodies 129/169, Bape 69/99, AP×Travis 89/109, boxers 49/69).
  * Never StockX −30% soldes / never soldes-48h collection (`delivery_48h`).
  */
@@ -213,8 +213,7 @@ export function resolveInStockFixedPrice(input: {
   const rule = resolveInStockFixedPriceRule(input);
   if (!rule) return null;
   return {
-    // Owned warehouse stock already expensed — dashboard shows full margin.
-    costChf: 0,
+    costChf: rule.costChf,
     label: rule.label,
     matchReason: rule.matchReason,
     sellChf: rule.sellChf,
