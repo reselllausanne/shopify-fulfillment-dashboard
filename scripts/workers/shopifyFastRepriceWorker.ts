@@ -14,6 +14,7 @@
  *   SHOPIFY_FAST_REPRICE_PAUSE_MS          default 1800000 (rest between passes per shard)
  *   SHOPIFY_FAST_REPRICE_SKIP_FRESH_HOURS  default 6 (skip variants pushed within N h; 0 = all)
  *   SHOPIFY_FAST_REPRICE_INITIAL_DELAY_MS  default 60000
+ *   SHOPIFY_FAST_REPRICE_FAILURE_RETRY_MS  default 60000 (retry delay after a failed pass)
  */
 import { spawn } from "node:child_process";
 
@@ -21,6 +22,8 @@ const SHARDS = Math.max(1, Number(process.env.SHOPIFY_FAST_REPRICE_SHARDS ?? 4))
 const PAUSE_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_PAUSE_MS ?? 30 * 60 * 1000));
 const SKIP_FRESH_HOURS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_SKIP_FRESH_HOURS ?? 6));
 const INITIAL_DELAY_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_INITIAL_DELAY_MS ?? 60_000));
+/** Failed pass (e.g. DB statement timeout on the row load) retries soon, not after PAUSE_MS. */
+const FAILURE_RETRY_MS = Math.max(0, Number(process.env.SHOPIFY_FAST_REPRICE_FAILURE_RETRY_MS ?? 60_000));
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -71,7 +74,7 @@ async function shardLoop(shard: number): Promise<never> {
       exitCode: code,
       durationMs: Date.now() - startedAt,
     });
-    await sleep(PAUSE_MS);
+    await sleep(code === 0 ? PAUSE_MS : FAILURE_RETRY_MS);
   }
 }
 
