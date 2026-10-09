@@ -362,11 +362,11 @@ export async function scrapeReicheltShop(
   let imageFailed = 0;
   const imageSyncQueue = new Set<string>();
 
-  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 1));
+  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 0.5));
   const freshCutoffMs = deltaDays > 0 ? Date.now() - deltaDays * 86_400_000 : 0;
   const freshArticleIds = new Set<string>();
   const staleSweepEnabled = String(process.env.SCRAPER_REI_STALE_SWEEP ?? "1") !== "0";
-  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 2));
+  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 1));
   const staleCutoffMs = Date.now() - staleDays * 86_400_000;
   const staleSweepMaxEnv = Math.max(0, Number(process.env.SCRAPER_REI_STALE_SWEEP_MAX || 0));
   const staleSweepMax = maxProducts

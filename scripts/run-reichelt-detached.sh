@@ -7,6 +7,10 @@ cd "$REPO_DIR"
 mkdir -p logs .data
 LOG="${REPO_DIR}/logs/rei-full-$(date -u +%Y%m%dT%H%M%SZ).log"
 
+if [ "$(docker inspect -f '{{.State.Running}}' resell-rei-scrape 2>/dev/null)" = "true" ]; then
+  echo "[$(date -Is)] rei scrape still running — skip (daily cron must not kill an unfinished pass)" | tee -a "$LOG"
+  exit 0
+fi
 docker rm -f resell-rei-scrape 2>/dev/null || true
 
 echo "[$(date -Is)] starting detached rei scrape -> $LOG" | tee -a "$LOG"

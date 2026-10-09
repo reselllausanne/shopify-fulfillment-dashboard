@@ -5,7 +5,7 @@
  *
  * Env:
  *   GALAXUS_EVIDENCE_STOCK_SUPPLIERS  comma list, default "bwz"
- *   GALAXUS_EVIDENCE_MAX_AGE_DAYS     default 8 (BWZ full scrape is weekly)
+ *   GALAXUS_EVIDENCE_MAX_AGE_DAYS     default 2 (scrapers run daily)
  */
 import { prisma } from "@/app/lib/prisma";
 
@@ -25,7 +25,7 @@ export function galaxusEvidenceStockSuppliers(): Set<string> {
 
 export function galaxusEvidenceMaxAgeDays(): number {
   const n = Number.parseFloat(String(process.env.GALAXUS_EVIDENCE_MAX_AGE_DAYS ?? ""));
-  return Number.isFinite(n) && n > 0 ? n : 8;
+  return Number.isFinite(n) && n > 0 ? n : 2;
 }
 
 export function evidenceSupplierKey(supplierVariantId: string | null | undefined): string {

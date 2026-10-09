@@ -50,14 +50,14 @@ const INVENTORY_DELTA_CHUNK_SIZE = 5000;
 
 /**
  * Scraped stock older than this is dead stock → 0 on every channel.
- * Crons run every 2 days (runs take up to ~14h), so 3 days leaves one run of slack.
+ * Crons run daily, so 2 days tolerates one missed run.
  * SUPPLIER_STOCK_MAX_AGE_DAYS=0 disables.
  */
 export function supplierStockMaxAgeDays(): number {
   const raw = String(process.env.SUPPLIER_STOCK_MAX_AGE_DAYS ?? "").trim();
-  if (raw === "") return 3;
+  if (raw === "") return 2;
   const n = Number.parseFloat(raw);
-  return Number.isFinite(n) && n >= 0 ? n : 3;
+  return Number.isFinite(n) && n >= 0 ? n : 2;
 }
 
 export function isScrapedStockStale(
