@@ -5,18 +5,21 @@
 #
 # Cron schedule (configure on VPS crontab — not auto-installed by repo):
 #
-#   Shared batch (all SCRAPER_SHOPS except SCRAPER_CRON_SKIP), typically every 3 days:
-#     0 3 */3 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
+#   Every scraper must run at least every 2 days: availableStock zeroes scraped
+#   stock whose lastSyncAt is older than SUPPLIER_STOCK_MAX_AGE_DAYS (default 3).
+#
+#   Shared batch (all SCRAPER_SHOPS except SCRAPER_CRON_SKIP), every 2 days:
+#     0 3 */2 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
 #
 #   Detached heavy scrapers (own container, survive web restarts):
-#     0 3 */3 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
-#     0 4 */7 * * /opt/resell/scripts/run-fantasywelt-detached.sh >> /opt/resell/scrape-fan-cron.log 2>&1
-#     0 5 */7 * * /opt/resell/scripts/run-exlibris-detached.sh >> /opt/resell/scrape-exl-cron.log 2>&1
+#     0 3 */2 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#   EXL/BWZ/WRK run in the shared batch; run-*-detached.sh is for manual full passes.
 #
 #   Single-shop via API (examples from vps-patch scripts):
-#     0 4 */3 * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
+#     0 4 */2 * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
 #
-#   SCRAPER_CRON_SKIP default: rei — detached Reichelt script. VPS typical: bwz,hhv,rei,wrk.
+#   SCRAPER_CRON_SKIP is read from the cron shell env, NOT from .env (default: rei).
+#   So bwz/wrk run in the shared batch even when .env lists them.
 #   EXL/FAN run on shared cron (fire-and-forget API). Optional detached: run-*-detached.sh.
 #   Shops on shared cron (when in SCRAPER_SHOPS and not skipped): haw, alt, ven, bwz, wrk, wel, …
 #   Galaxus feed push after scrape is automatic when variants_upserted > 0.
