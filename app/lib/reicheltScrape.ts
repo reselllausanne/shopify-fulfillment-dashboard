@@ -362,11 +362,11 @@ export async function scrapeReicheltShop(
   let imageFailed = 0;
   const imageSyncQueue = new Set<string>();
 
-  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 3));
+  const deltaDays = Math.max(0, Number(process.env.SCRAPER_REI_DELTA_DAYS ?? 1));
   const freshCutoffMs = deltaDays > 0 ? Date.now() - deltaDays * 86_400_000 : 0;
   const freshArticleIds = new Set<string>();
   const staleSweepEnabled = String(process.env.SCRAPER_REI_STALE_SWEEP ?? "1") !== "0";
-  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 7));
+  const staleDays = Math.max(1, Number(process.env.SCRAPER_REI_STALE_DAYS ?? 2));
   const staleCutoffMs = Date.now() - staleDays * 86_400_000;
   const staleSweepMaxEnv = Math.max(0, Number(process.env.SCRAPER_REI_STALE_SWEEP_MAX || 0));
   const staleSweepMax = maxProducts
@@ -495,7 +495,7 @@ export async function scrapeReicheltShop(
           return;
         }
         const product = fetched.product;
-        if (!product.inStock) {
+        const zeroStale = async (type: string, reason: string) => {
           const svId = existingByArticleId.get(articleId);
           if (!svId) return;
           await prismaAny.supplierVariant.update({
@@ -504,19 +504,23 @@ export async function scrapeReicheltShop(
               stock: 0,
               lastSyncAt: new Date(),
               manualNote: JSON.stringify({
-                type: "reichelt_oos",
+                type,
                 articleId,
                 stockStatus: product.stockStatus,
                 stockText: product.stockText,
                 productUrl: product.productUrl,
                 detectedAt: new Date().toISOString(),
-                reason: "stale sweep: not in stock",
+                reason,
               }),
             },
           });
           stats.markedDelisted++;
           stats.staleZeroed++;
           freshArticleIds.add(articleId);
+        };
+
+        if (!product.inStock) {
+          await zeroStale("reichelt_oos", "stale sweep: not in stock");
           return;
         }
 
@@ -525,13 +529,19 @@ export async function scrapeReicheltShop(
           priceEur: product.priceEur,
           weightGrams: product.weightGrams,
         });
-        if (!cost || !isPlausibleReicheltSellPrice(cost)) return;
+        if (!cost || !isPlausibleReicheltSellPrice(cost)) {
+          await zeroStale("reichelt_unsellable", "stale sweep: price missing or implausible");
+          return;
+        }
         const galaxusKind = classifyReicheltGalaxusKind({
           breadcrumbs: product.breadcrumbs,
           title: product.name,
           supplierProductType: reicheltCategoryPathLabel(product.breadcrumbs),
         });
-        if (!galaxusKind) return;
+        if (!galaxusKind) {
+          await zeroStale("reichelt_unsellable", "stale sweep: category no longer mapped");
+          return;
+        }
         const ok = await upsertReicheltVariant(
           prismaAny,
           shop,
@@ -541,7 +551,10 @@ export async function scrapeReicheltShop(
           existingById,
           imageSyncQueue
         );
-        if (!ok) return;
+        if (!ok) {
+          await zeroStale("reichelt_unsellable", "stale sweep: upsert rejected");
+          return;
+        }
         stats.wrote++;
         stats.gtinMatched++;
         freshArticleIds.add(articleId);

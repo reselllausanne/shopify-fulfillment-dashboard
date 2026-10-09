@@ -48,6 +48,55 @@ export function resolveInventoryAvailableStock(variant: SupplierVariantLike, del
 /** Postgres prepared-statement bind limit is 32767 — chunk large IN lists. */
 const INVENTORY_DELTA_CHUNK_SIZE = 5000;
 
+/**
+ * Scraped stock older than this is dead stock → 0 on every channel.
+ * Crons run every 2 days (runs take up to ~14h), so 3 days leaves one run of slack.
+ * SUPPLIER_STOCK_MAX_AGE_DAYS=0 disables.
+ */
+export function supplierStockMaxAgeDays(): number {
+  const raw = String(process.env.SUPPLIER_STOCK_MAX_AGE_DAYS ?? "").trim();
+  if (raw === "") return 3;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 3;
+}
+
+export function isScrapedStockStale(
+  lastSyncAt: Date | null | undefined,
+  now: Date = new Date(),
+  maxAgeDays: number = supplierStockMaxAgeDays()
+): boolean {
+  if (maxAgeDays <= 0) return false;
+  if (!lastSyncAt) return true;
+  const ts = lastSyncAt instanceof Date ? lastSyncAt.getTime() : new Date(lastSyncAt).getTime();
+  if (!Number.isFinite(ts)) return true;
+  return now.getTime() - ts > maxAgeDays * 86_400_000;
+}
+
+function isScrapedSupplierVariantId(supplierVariantId: string): boolean {
+  const key = resolveSupplierKeyFromIds(supplierVariantId);
+  return Boolean(key && SCRAPER_SUPPLIER_KEYS.has(key));
+}
+
+export async function loadLastSyncAtBySupplierVariantId(
+  supplierVariantIds: string[]
+): Promise<Map<string, Date | null>> {
+  const ids = Array.from(new Set(supplierVariantIds.map((id) => String(id ?? "").trim()).filter(Boolean)));
+  const map = new Map<string, Date | null>();
+  const prismaAny = prisma as any;
+  if (ids.length === 0 || !prismaAny.supplierVariant?.findMany) return map;
+  for (let offset = 0; offset < ids.length; offset += INVENTORY_DELTA_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + INVENTORY_DELTA_CHUNK_SIZE);
+    const rows = await prismaAny.supplierVariant.findMany({
+      where: { supplierVariantId: { in: chunk } },
+      select: { supplierVariantId: true, lastSyncAt: true },
+    });
+    for (const row of rows ?? []) {
+      map.set(String(row.supplierVariantId), row.lastSyncAt ? new Date(row.lastSyncAt) : null);
+    }
+  }
+  return map;
+}
+
 export async function loadInventoryDeltasBySupplierVariantId(
   supplierVariantIds: string[]
 ): Promise<Map<string, number>> {
@@ -100,6 +149,19 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
   const deltas = await loadInventoryDeltasBySupplierVariantId(ids);
   const stockBySupplierVariantId = new Map<string, number>();
 
+  const maxAgeDays = supplierStockMaxAgeDays();
+  const now = new Date();
+  let lastSyncById = new Map<string, Date | null>();
+  if (maxAgeDays > 0) {
+    lastSyncById = await loadLastSyncAtBySupplierVariantId(
+      variants
+        .filter((variant) => !variant?.manualLock)
+        .map((variant) => String(variant?.supplierVariantId ?? "").trim())
+        .filter(isScrapedSupplierVariantId)
+    );
+  }
+  let staleZeroed = 0;
+
   const publishEnforced = isSupplierStockPublishEnforced();
   let policyMap = new Map<string, SupplierStockPolicyStatus>();
   let evidenceMap = new Map<string, { publishedQty: number; lastProofAt: Date | null }>();
@@ -144,7 +206,20 @@ export async function attachAvailableStock<T extends SupplierVariantLike>(
       }
     }
 
+    if (
+      stock > 0 &&
+      lastSyncById.has(supplierVariantId) &&
+      isScrapedStockStale(lastSyncById.get(supplierVariantId), now, maxAgeDays)
+    ) {
+      stock = 0;
+      staleZeroed += 1;
+    }
+
     stockBySupplierVariantId.set(supplierVariantId, stock);
+  }
+
+  if (staleZeroed > 0) {
+    console.info("[inventory][availableStock] stale scraped stock zeroed", { staleZeroed, maxAgeDays });
   }
 
   return stockBySupplierVariantId;
