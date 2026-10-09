@@ -33,6 +33,7 @@ import {
 } from "@/app/lib/stockxInboundPackages";
 import { resolveVerifiedShopifyAwbFallback } from "@/app/lib/shopifyOpenLineCandidates";
 import type { OpenShopifyLineCandidate } from "@/app/lib/shopifyAwbFallback";
+import { resolveScannedAwbViaStockxLive } from "@/galaxus/stx/scanLiveAwbResolve";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -154,6 +155,19 @@ async function enrichOrderMatchFromShopify(match: {
 
 const normalizeCode = (code?: string | null) => normalizeInboundHomeAwb(code);
 
+/** Carrier tracking shapes worth a live StockX lookup; excludes EAN/UPC lengths and typed SKUs. */
+function looksLikeCarrierTracking(raw: string): boolean {
+  const compact = String(raw ?? "").replace(/\s+/g, "").toUpperCase();
+  if (/^\d+$/.test(compact)) {
+    return compact.length >= 9 && ![12, 13, 14].includes(compact.length);
+  }
+  return (
+    /^1Z[0-9A-Z]{16}$/.test(compact) ||
+    /^JJD\d{10,}$/.test(compact) ||
+    /^[A-Z]{2}\d{9}[A-Z]{2}$/.test(compact)
+  );
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -247,7 +261,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   let rawCleanForLog = "";
   let scanSessionKeyForLog: string | null = null;
   const userAgent = req.headers.get("user-agent");
@@ -659,6 +673,28 @@ export async function POST(req: NextRequest) {
         stxInboundBuy ||
         (shopifyAwbFallback && shopifyAwbFallback.status !== "none")
     );
+
+    if (!hasShipmentMatch && body?._skipStockxLive !== true && looksLikeCarrierTracking(rawClean)) {
+      const live = await resolveScannedAwbViaStockxLive(awbCandidates).catch((err: any) => {
+        console.error("[SCAN-AWB] live StockX fallback crashed:", err?.message ?? err);
+        return null;
+      });
+      console.log("[SCAN-AWB] live StockX fallback", { awb, ...live });
+      if (live?.found) {
+        const retry: NextResponse = await POST(
+          new NextRequest(req.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              ...(userAgent ? { "user-agent": userAgent } : {}),
+            },
+            body: JSON.stringify({ ...body, _skipStockxLive: true }),
+          })
+        );
+        const retryJson: Record<string, unknown> = await retry.json().catch(() => ({}));
+        return NextResponse.json({ ...retryJson, stockxLive: live }, { status: retry.status });
+      }
+    }
 
     // GTIN fallback: product barcode on the box (8–14 digit EAN/UPC/ITF14)
     // instead of shipping AWB. Also resolve catalog style SKUs (MW 3A03GS)
