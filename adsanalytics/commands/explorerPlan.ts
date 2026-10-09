@@ -7,6 +7,7 @@ import {
   createBatchRecord,
   filterModelsBySourceCampaignName,
   filterModelsWithEmptyPrimaryCustomLabel3,
+  invalidateBaseCandidatesCache,
   loadBaseCandidates,
   loadCandidateOffersForModels,
   loadExplorerCampaignsAndListingNodes,
@@ -33,6 +34,10 @@ type ExplorerPlanOptions = {
   requireEmptyCustomLabel3?: boolean;
   abortForbiddenBrands?: boolean;
   brand?: string;
+  batchDays?: number;
+  maxCpcMicros?: number;
+  /** Extra stats merged into the batch record (e.g. cycle marker). */
+  extraStats?: Record<string, unknown>;
 };
 
 type ExplorerPlanPoolOptions = Pick<
@@ -202,15 +207,18 @@ export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Pr
       },
     };
     const planHash = planHashFromPayload(planPayload);
+    const batchDays =
+      options.batchDays && options.batchDays > 0 ? options.batchDays : EXPLORER_DEFAULT_BATCH_DAYS;
+    const maxCpcMicros = options.maxCpcMicros ?? EXPLORER_DEFAULT_MAX_CPC_MICROS;
     const endsAt = new Date();
-    endsAt.setUTCDate(endsAt.getUTCDate() + EXPLORER_DEFAULT_BATCH_DAYS);
+    endsAt.setUTCDate(endsAt.getUTCDate() + batchDays);
 
     const batchId = await createBatchRecord({
       status: "planned",
       modelCount: selected.length,
       offerCount,
       dailyBudgetMicros: BigInt(EXPLORER_DEFAULT_BUDGET_MICROS),
-      maxCpcMicros: BigInt(EXPLORER_DEFAULT_MAX_CPC_MICROS),
+      maxCpcMicros: BigInt(maxCpcMicros),
       endsAt,
       planHash,
       statsJson: {
@@ -228,9 +236,12 @@ export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Pr
         seed,
         brand: brand || null,
         explorerLabel,
+        batchDays,
+        ...(options.extraStats ?? {}),
       },
     });
     await upsertBatchModels(batchId, selected);
+    invalidateBaseCandidatesCache();
     const listingBackup = await saveListingBackups(batchId, listingCtx.listingNodes);
 
     const modelsExport = selected.map((s) => ({
@@ -282,8 +293,8 @@ export async function explorerPlanCommand(options: ExplorerPlanOptions = {}): Pr
         requireEmptyCustomLabel3,
         requireRoutingClean,
         budgetChfDay: EXPLORER_DEFAULT_BUDGET_MICROS / 1e6,
-        maxCpcChf: EXPLORER_DEFAULT_MAX_CPC_MICROS / 1e6,
-        batchDays: EXPLORER_DEFAULT_BATCH_DAYS,
+        maxCpcChf: maxCpcMicros / 1e6,
+        batchDays,
       },
     };
     const outPath = await writeExplorerReport(`explorer-plan-${batchId}.json`, report);

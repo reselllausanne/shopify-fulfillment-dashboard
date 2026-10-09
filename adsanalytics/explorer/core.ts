@@ -152,11 +152,21 @@ export async function loadExplorerCampaignsAndListingNodes(): Promise<{
   return { campaigns, listingNodes };
 }
 
+const BASE_CANDIDATES_TTL_MS = 15 * 60_000;
+const baseCandidatesCache = new Map<number, { at: number; rows: CandidateModel[] }>();
+
+/** Batch creation changes in_active_batch for its models; callers must invalidate after it. */
+export function invalidateBaseCandidatesCache(): void {
+  baseCandidatesCache.clear();
+}
+
 export async function loadBaseCandidates(
   lookbackDays: number
 ): Promise<CandidateModel[]> {
+  const cached = baseCandidatesCache.get(lookbackDays);
+  if (cached && Date.now() - cached.at < BASE_CANDIDATES_TTL_MS) return cached.rows;
   const debug = await computeExplorerEligibilityDebug(lookbackDays);
-  return debug.finalCandidates.map((r) => ({
+  const rows = debug.finalCandidates.map((r) => ({
     shopifyProductId: r.shopifyProductId,
     brand: r.brand,
     eligibleOfferCount: r.offerCount,
@@ -165,6 +175,8 @@ export async function loadBaseCandidates(
     shopifySales365: r.shopifySales365,
     productCreatedAtProxy: r.shopifyCreatedAt ?? "",
   }));
+  baseCandidatesCache.set(lookbackDays, { at: Date.now(), rows });
+  return rows;
 }
 
 type EligibilityModelRow = {
@@ -252,112 +264,112 @@ function sanitizeEligibilityExample(row: EligibilityModelRow): Record<string, un
   };
 }
 
+const ELIGIBILITY_STATEMENT_TIMEOUT = "10min";
+const ELIGIBILITY_TRANSACTION_TIMEOUT_MS = 30 * 60_000;
+
 export async function computeExplorerEligibilityDebug(
   lookbackDays: number
 ): Promise<ExplorerEligibilityDebug> {
   const end = defaultEndDate();
   const start = addDays(end, -(lookbackDays - 1));
 
-  const inventoryOfferCounts = await prisma.$queryRaw<
-    Array<{ total_offers: number; offers_with_model: number; models_with_id: number }>
-  >(Prisma.sql`
-    SELECT
-      COUNT(*)::int AS total_offers,
-      COUNT(*) FILTER (WHERE "shopify_product_id" IS NOT NULL)::int AS offers_with_model,
-      COUNT(DISTINCT "shopify_product_id") FILTER (WHERE "shopify_product_id" IS NOT NULL)::int AS models_with_id
-    FROM "public"."ads_shopping_product_current"
-    WHERE "is_current" = true
-      AND "merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
-  `);
+  // These scans over multi-million-row tables exceed the pooled 2min statement_timeout
+  // when the database is busy; run them sequentially with a session-local ceiling.
+  const { baseRows, ads30Rows, adsAllRows, ageRows, salesRows, blockedRows } = await prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${ELIGIBILITY_STATEMENT_TIMEOUT}'`);
+      const baseRows = await tx.$queryRaw<
+        Array<{
+          shopify_product_id: string;
+          brand: string;
+          offer_count: number;
+          has_valid_offer_id: boolean;
+          has_valid_language: boolean;
+          has_valid_feed_label: boolean;
+          approved: boolean;
+          in_stock: boolean;
+        }>
+      >(Prisma.sql`
+        SELECT
+          "shopify_product_id"::text AS shopify_product_id,
+          COALESCE(MAX(NULLIF("brand", '')), '(empty)') AS brand,
+          COUNT(*)::int AS offer_count,
+          BOOL_OR(COALESCE(NULLIF("offer_id", ''), '') <> '') AS has_valid_offer_id,
+          BOOL_OR(LOWER(COALESCE("language_code", '')) IN (${Prisma.join(EXPLORER_ALLOWED_LANGUAGES)})) AS has_valid_language,
+          BOOL_OR(UPPER(COALESCE("feed_label", '')) = ${EXPLORER_DEFAULT_FEED_LABEL}) AS has_valid_feed_label,
+          BOOL_OR(UPPER(COALESCE("status", '')) = 'ELIGIBLE') AS approved,
+          BOOL_OR(UPPER(COALESCE("availability", '')) = 'IN_STOCK') AS in_stock
+        FROM "public"."ads_shopping_product_current"
+        WHERE "is_current" = true
+          AND "merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
+          AND "shopify_product_id" IS NOT NULL
+        GROUP BY "shopify_product_id"
+      `);
 
-  const baseRows = await prisma.$queryRaw<
-    Array<{
-      shopify_product_id: string;
-      brand: string;
-      offer_count: number;
-      has_valid_offer_id: boolean;
-      has_valid_language: boolean;
-      has_valid_feed_label: boolean;
-      approved: boolean;
-      in_stock: boolean;
-    }>
-  >(Prisma.sql`
-    SELECT
-      "shopify_product_id"::text AS shopify_product_id,
-      COALESCE(MAX(NULLIF("brand", '')), '(empty)') AS brand,
-      COUNT(*)::int AS offer_count,
-      BOOL_OR(COALESCE(NULLIF("offer_id", ''), '') <> '') AS has_valid_offer_id,
-      BOOL_OR(LOWER(COALESCE("language_code", '')) IN (${Prisma.join(EXPLORER_ALLOWED_LANGUAGES)})) AS has_valid_language,
-      BOOL_OR(UPPER(COALESCE("feed_label", '')) = ${EXPLORER_DEFAULT_FEED_LABEL}) AS has_valid_feed_label,
-      BOOL_OR(UPPER(COALESCE("status", '')) = 'ELIGIBLE') AS approved,
-      BOOL_OR(UPPER(COALESCE("availability", '')) = 'IN_STOCK') AS in_stock
-    FROM "public"."ads_shopping_product_current"
-    WHERE "is_current" = true
-      AND "merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
-      AND "shopify_product_id" IS NOT NULL
-    GROUP BY "shopify_product_id"
-  `);
-
-  const ads30Rows = await prisma.$queryRaw<Array<{ shopify_product_id: string; impressions_30d: number }>>(
-    Prisma.sql`
-      SELECT
-        "shopify_product_id"::text AS shopify_product_id,
-        COALESCE(SUM("impressions"), 0)::float8 AS impressions_30d
-      FROM "public"."ads_product_daily"
-      WHERE "shopify_product_id" IS NOT NULL
-        AND "date" BETWEEN ${start}::date AND ${end}::date
-      GROUP BY "shopify_product_id"
-    `
+      const ads30Rows = await tx.$queryRaw<Array<{ shopify_product_id: string; impressions_30d: number }>>(
+        Prisma.sql`
+          SELECT
+            "shopify_product_id"::text AS shopify_product_id,
+            COALESCE(SUM("impressions"), 0)::float8 AS impressions_30d
+          FROM "public"."ads_product_daily"
+          WHERE "shopify_product_id" IS NOT NULL
+            AND "date" BETWEEN ${start}::date AND ${end}::date
+          GROUP BY "shopify_product_id"
+        `
+      );
+      const adsAllRows = await tx.$queryRaw<Array<{ shopify_product_id: string; conversions_all_time: number }>>(
+        Prisma.sql`
+          SELECT
+            "shopify_product_id"::text AS shopify_product_id,
+            COALESCE(SUM("conversions"), 0)::float8 AS conversions_all_time
+          FROM "public"."ads_product_daily"
+          WHERE "shopify_product_id" IS NOT NULL
+          GROUP BY "shopify_product_id"
+        `
+      );
+      const ageRows = await tx.$queryRaw<Array<{ shopify_product_id: string; created_at: string }>>(Prisma.sql`
+        SELECT
+          "shopify_product_id"::text AS shopify_product_id,
+          "shopify_product_created_at"::text AS created_at
+        FROM "public"."ads_explorer_product_age"
+        WHERE "shopify_product_created_at" IS NOT NULL
+      `);
+      const salesRows = await tx.$queryRaw<Array<{ shopify_product_id: string; sales_365: number }>>(Prisma.sql`
+        SELECT
+          src."shopify_product_id"::text AS shopify_product_id,
+          COUNT(*)::int AS sales_365
+        FROM "public"."ads_shopping_product_current" src
+        JOIN "public"."ChannelListingState" cls
+          ON cls."channel" = 'SHOPIFY'
+         AND cls."externalVariantId" = src."shopify_variant_id"::text
+         AND cls."supplierVariantId" IS NOT NULL
+        JOIN "public"."InventoryEvent" ie
+          ON ie."supplierVariantId" = cls."supplierVariantId"
+         AND ie."channel" = 'SHOPIFY'
+         AND ie."eventType" = 'SALE'
+         AND ie."occurredAt" >= (CURRENT_TIMESTAMP - INTERVAL '365 day')
+        WHERE src."is_current" = true
+          AND src."merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
+          AND src."shopify_product_id" IS NOT NULL
+        GROUP BY src."shopify_product_id"
+      `);
+      const blockedRows = await tx.$queryRaw<
+        Array<{ shopify_product_id: string; in_active_batch: boolean; in_cooldown: boolean }>
+      >(Prisma.sql`
+        SELECT
+          "shopify_product_id"::text AS shopify_product_id,
+          BOOL_OR("lifecycle_status" IN ('selected','labeling','active')) AS in_active_batch,
+          BOOL_OR(
+            "exit_reason" IN ('exposed_no_click', 'zombie_no_click')
+            AND "exited_at" >= (CURRENT_TIMESTAMP - INTERVAL '60 day')
+          ) AS in_cooldown
+        FROM "public"."ads_explorer_batch_models"
+        GROUP BY "shopify_product_id"
+      `);
+      return { baseRows, ads30Rows, adsAllRows, ageRows, salesRows, blockedRows };
+    },
+    { maxWait: 60_000, timeout: ELIGIBILITY_TRANSACTION_TIMEOUT_MS }
   );
-  const adsAllRows = await prisma.$queryRaw<Array<{ shopify_product_id: string; conversions_all_time: number }>>(
-    Prisma.sql`
-      SELECT
-        "shopify_product_id"::text AS shopify_product_id,
-        COALESCE(SUM("conversions"), 0)::float8 AS conversions_all_time
-      FROM "public"."ads_product_daily"
-      WHERE "shopify_product_id" IS NOT NULL
-      GROUP BY "shopify_product_id"
-    `
-  );
-  const ageRows = await prisma.$queryRaw<Array<{ shopify_product_id: string; created_at: string }>>(Prisma.sql`
-    SELECT
-      "shopify_product_id"::text AS shopify_product_id,
-      "shopify_product_created_at"::text AS created_at
-    FROM "public"."ads_explorer_product_age"
-    WHERE "shopify_product_created_at" IS NOT NULL
-  `);
-  const salesRows = await prisma.$queryRaw<Array<{ shopify_product_id: string; sales_365: number }>>(Prisma.sql`
-    SELECT
-      src."shopify_product_id"::text AS shopify_product_id,
-      COUNT(*)::int AS sales_365
-    FROM "public"."ads_shopping_product_current" src
-    JOIN "public"."ChannelListingState" cls
-      ON cls."channel" = 'SHOPIFY'
-     AND cls."externalVariantId" = src."shopify_variant_id"::text
-     AND cls."supplierVariantId" IS NOT NULL
-    JOIN "public"."InventoryEvent" ie
-      ON ie."supplierVariantId" = cls."supplierVariantId"
-     AND ie."channel" = 'SHOPIFY'
-     AND ie."eventType" = 'SALE'
-     AND ie."occurredAt" >= (CURRENT_TIMESTAMP - INTERVAL '365 day')
-    WHERE src."is_current" = true
-      AND src."merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
-      AND src."shopify_product_id" IS NOT NULL
-    GROUP BY src."shopify_product_id"
-  `);
-  const blockedRows = await prisma.$queryRaw<
-    Array<{ shopify_product_id: string; in_active_batch: boolean; in_cooldown: boolean }>
-  >(Prisma.sql`
-    SELECT
-      "shopify_product_id"::text AS shopify_product_id,
-      BOOL_OR("lifecycle_status" IN ('selected','labeling','active')) AS in_active_batch,
-      BOOL_OR(
-        "exit_reason" = 'exposed_no_click'
-        AND "exited_at" >= (CURRENT_TIMESTAMP - INTERVAL '60 day')
-      ) AS in_cooldown
-    FROM "public"."ads_explorer_batch_models"
-    GROUP BY "shopify_product_id"
-  `);
 
   const ads30Map = new Map(ads30Rows.map((r) => [r.shopify_product_id, r.impressions_30d]));
   const adsAllMap = new Map(adsAllRows.map((r) => [r.shopify_product_id, r.conversions_all_time]));
@@ -405,8 +417,9 @@ export async function computeExplorerEligibilityDebug(
   const campaignNodeMap = new Map(
     listingCtx.campaigns.map((c) => [c.campaignId, campaignListingNodes(listingCtx.listingNodes, c.campaignId)])
   );
+  const modelsById = new Map(models.map((m) => [m.shopifyProductId, m]));
   for (const modelId of sourceInputModelIds) {
-    const row = models.find((m) => m.shopifyProductId === modelId);
+    const row = modelsById.get(modelId);
     if (!row) continue;
     const offers = offersByModel.get(modelId) ?? [];
     const hits = new Set<string>();
@@ -459,7 +472,7 @@ export async function computeExplorerEligibilityDebug(
 
   waterfall.push({
     step: "models_inventory_current",
-    before: inventoryOfferCounts[0]?.models_with_id ?? models.length,
+    before: models.length,
     after: models.length,
     rejected: 0,
     lossPct: 0,
@@ -621,7 +634,7 @@ export async function loadCandidateOffersForModels(
         "shopify_variant_id"::text
       FROM "public"."ads_shopping_product_current"
       WHERE "is_current" = true
-        AND "shopify_product_id"::text IN (${Prisma.join(batch)})
+        AND "shopify_product_id" = ANY(${batch}::bigint[])
         AND "merchant_id" = ${EXPLORER_DEFAULT_MERCHANT_ID}::bigint
         AND UPPER("feed_label") = ${EXPLORER_DEFAULT_FEED_LABEL}
         AND LOWER("language_code") IN (${Prisma.join(EXPLORER_ALLOWED_LANGUAGES)})
@@ -672,6 +685,9 @@ export function mapModelToSingleSourceCampaign(
     campaignCount: number;
     campaigns: string[];
   }> = [];
+  const nodesByCampaign = new Map(
+    campaigns.map((c) => [c.campaignId, campaignListingNodes(listingNodes, c.campaignId)])
+  );
 
   for (const model of models) {
     const offers = offersByModel.get(model.shopifyProductId) ?? [];
@@ -687,7 +703,7 @@ export function mapModelToSingleSourceCampaign(
     const campaignHits = new Set<string>();
     for (const offer of offers) {
       for (const campaign of campaigns) {
-        const nodes = campaignListingNodes(listingNodes, campaign.campaignId);
+        const nodes = nodesByCampaign.get(campaign.campaignId) ?? [];
         const match = offerMatchesListingRules(offer, nodes);
         if (match.included) campaignHits.add(campaign.campaignId);
       }

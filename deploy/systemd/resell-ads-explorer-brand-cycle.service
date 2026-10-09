@@ -1,0 +1,15 @@
+[Unit]
+Description=Resell Ads rolling brand Explorer cycle (nike, jordan, adidas)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/resell
+EnvironmentFile=-/etc/default/resell-ads
+TimeoutStartSec=2h
+TimeoutStopSec=15min
+KillMode=mixed
+OOMPolicy=continue
+ExecStart=/usr/bin/env bash -lc 'docker rm -f resell-ads-explorer-brand-cycle >/dev/null 2>&1 || true; docker compose run --no-deps --rm -T --name resell-ads-explorer-brand-cycle web npm run ads -- explorer:brand:cycle'
+StandardOutput=journal
+StandardError=journal

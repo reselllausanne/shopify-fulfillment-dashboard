@@ -1,0 +1,10 @@
+[Unit]
+Description=Start the next brand Explorer round every 6h when the previous one has closed
+
+[Timer]
+OnCalendar=*-*-* 00/6:40:00
+Persistent=true
+Unit=resell-ads-explorer-brand-cycle.service
+
+[Install]
+WantedBy=timers.target

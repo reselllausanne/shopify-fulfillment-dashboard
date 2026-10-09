@@ -31,6 +31,7 @@ import { explorerActivateCommand } from "../adsanalytics/commands/explorerActiva
 import { explorerApprovalAuditCommand } from "../adsanalytics/commands/explorerApprovalAudit";
 import { explorerAgeBackfillCommand } from "../adsanalytics/commands/explorerAgeBackfill";
 import { explorerBatchSupersedeCommand } from "../adsanalytics/commands/explorerBatchSupersede";
+import { explorerBrandCycleCommand } from "../adsanalytics/commands/explorerBrandCycle";
 import { explorerCampaignCreateCommand } from "../adsanalytics/commands/explorerCampaignCreate";
 import { explorerCampaignDiscoverCommand } from "../adsanalytics/commands/explorerCampaignDiscover";
 import { explorerCampaignRegisterCommand } from "../adsanalytics/commands/explorerCampaignRegister";
@@ -163,6 +164,11 @@ Commands:
                              → core-exclusions validate → merchant prepare/apply
                              → activate. Idempotent per ISO week. Reuses the
                              registered EXPLORER_ALL campaign; never creates one.
+  explorer:brand:cycle [--brands=nike,jordan,adidas] [--models=300] [--batch-days=5]
+                             [--max-cpc-micros=700000] [--dry-run]
+                             Rolling brand Explorer: for each brand with no open batch,
+                             plan from its PMax source → merchant apply → enforce max CPC
+                             → activate on the brand Explorer campaign.
   explorer:batch:supersede --old-batch=<id> --new-batch=<id>
                              Mark old batch superseded after new plan success
 
@@ -423,6 +429,16 @@ async function main(): Promise<number> {
       });
     case "explorer:weekly:plan":
       return explorerWeeklyPlanCommand();
+    case "explorer:brand:cycle":
+      return explorerBrandCycleCommand({
+        brands: stringFlag(args, "brands"),
+        models: stringFlag(args, "models") ? intFlag(args, "models", 0) : undefined,
+        batchDays: stringFlag(args, "batch-days") ? intFlag(args, "batch-days", 0) : undefined,
+        maxCpcMicros: stringFlag(args, "max-cpc-micros")
+          ? intFlag(args, "max-cpc-micros", 0)
+          : undefined,
+        dryRun: flag(args, "dry-run") ? true : undefined,
+      });
     case "explorer:batch:supersede":
       return explorerBatchSupersedeCommand({
         oldBatch: stringFlag(args, "old-batch"),

@@ -225,7 +225,7 @@ async function attachCampaignToBatch(
   `);
 }
 
-async function computeWritePlanHash(batchId: string): Promise<string> {
+export async function computeWritePlanHash(batchId: string): Promise<string> {
   const offers = await loadOffersForBatchModels(batchId);
   if (offers.length === 0) throw new Error(`No offers found for batch ${batchId}`);
   const writes = offers.map((o) => ({
@@ -246,7 +246,7 @@ async function computeWritePlanHash(batchId: string): Promise<string> {
   });
 }
 
-async function outboxCounts(batchId: string): Promise<{
+export async function outboxCounts(batchId: string): Promise<{
   total: number;
   pending: number;
   succeeded: number;
@@ -265,7 +265,7 @@ async function outboxCounts(batchId: string): Promise<{
   return { total: pending + succeeded + failed, pending, succeeded, failed };
 }
 
-async function runOrThrow(
+export async function runOrThrow(
   name: string,
   fn: () => Promise<number>
 ): Promise<void> {

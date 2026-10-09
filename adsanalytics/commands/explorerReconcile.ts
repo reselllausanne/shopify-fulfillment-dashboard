@@ -17,6 +17,7 @@ import {
   type DestinationContext,
   type SetModelDestinationResult,
 } from "@/adsanalytics/explorer/destinations";
+import { EXPLORER_LABELS } from "@/adsanalytics/explorer/labels";
 import { ensureExplorerSupplementalSource } from "@/adsanalytics/explorer/supplementalSource";
 import {
   decideBatchClosure,
@@ -70,6 +71,17 @@ async function loadModelsForDecision(batchId: string): Promise<ModelRow[]> {
     WHERE "batch_id" = ${batchId}
     ORDER BY "shopify_product_id"
   `);
+}
+
+/** Brand cycles store a shorter window on the batch; it wins over the env/default. */
+export function batchRuleOverrides(stats: Record<string, unknown>): Partial<ExplorerRuleConfig> {
+  const days = Number(stats.batchDays);
+  return Number.isFinite(days) && days > 0 ? { batchDays: days } : {};
+}
+
+function batchExplorerLabel(stats: Record<string, unknown>): string | null {
+  const raw = typeof stats.explorerLabel === "string" ? stats.explorerLabel.trim() : "";
+  return (EXPLORER_LABELS as readonly string[]).includes(raw) ? raw : null;
 }
 
 function elapsedDaysSince(activatedAt: string | null, now: Date): number {
@@ -145,7 +157,8 @@ export async function explorerReconcileCommand(
       throw new Error(`Metric gate failed: ${gate.blockers.join(" | ")}`);
     }
 
-    const config = loadExplorerRuleConfig();
+    const batchStats = (batch.statsJson ?? {}) as Record<string, unknown>;
+    const config = loadExplorerRuleConfig(batchRuleOverrides(batchStats));
     const elapsedDays = elapsedDaysSince(batch.activatedAt, now);
 
     const ctx: DestinationContext = {
@@ -153,6 +166,7 @@ export async function explorerReconcileCommand(
       merchantId: EXPLORER_DEFAULT_MERCHANT_ID,
       dataSource: "",
       dryRun,
+      explorerLabel: batchExplorerLabel(batchStats),
     };
 
     // 2. Resume: models mutated in an earlier run whose readback had not propagated.

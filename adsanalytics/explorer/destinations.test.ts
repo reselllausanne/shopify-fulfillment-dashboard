@@ -8,6 +8,7 @@ import {
   isDestination,
   labelForDestination,
   EXPLORER_ACTIVE_LABEL,
+  EXPLORER_LABELS,
   LONG_TAIL_ALL_LABEL,
   ROUTED_LABELS,
   type Destination,
@@ -33,10 +34,14 @@ describe("destination label mapping", () => {
     expect(destinationForLabel("some_other_feed_label")).toBe("CORE_ALL");
   });
 
-  it("owns exactly the two routed labels", () => {
-    expect([...ROUTED_LABELS].sort()).toEqual([EXPLORER_ACTIVE_LABEL, LONG_TAIL_ALL_LABEL].sort());
+  it("owns every explorer label plus long tail", () => {
+    expect([...ROUTED_LABELS].sort()).toEqual([...EXPLORER_LABELS, LONG_TAIL_ALL_LABEL].sort());
     const labels = DESTINATIONS.map((d) => DESTINATION_LABEL[d]).filter((l): l is string => l != null);
-    expect(labels.sort()).toEqual([...ROUTED_LABELS].sort());
+    for (const label of labels) expect(ROUTED_LABELS).toContain(label);
+  });
+
+  it("maps every brand explorer label back to EXPLORER_ALL", () => {
+    for (const label of EXPLORER_LABELS) expect(destinationForLabel(label)).toBe("EXPLORER_ALL");
   });
 
   it("validates destination strings", () => {

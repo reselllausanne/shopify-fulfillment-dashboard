@@ -56,7 +56,14 @@ export type DestinationContext = {
   dataSource: string;
   concurrency?: number;
   dryRun?: boolean;
+  /** Batch-specific explorer label (e.g. explorer_active_nike) used when routing to EXPLORER_ALL. */
+  explorerLabel?: string | null;
 };
+
+function targetLabelFor(destination: Destination, ctx: DestinationContext): string | null {
+  if (destination === "EXPLORER_ALL" && ctx.explorerLabel) return ctx.explorerLabel;
+  return labelForDestination(destination);
+}
 
 export type OfferReadback = {
   offer: ModelOffer;
@@ -224,7 +231,7 @@ export async function readbackOffers(
   offers: ModelOffer[],
   destination: Destination
 ): Promise<OfferReadback[]> {
-  const targetLabel = labelForDestination(destination);
+  const targetLabel = targetLabelFor(destination, ctx);
   const limit = createLimiter(ctx.concurrency ?? DEFAULT_CONCURRENCY);
   return Promise.all(
     offers.map((offer) =>
@@ -269,7 +276,7 @@ async function mutateOffers(
   offers: ModelOffer[],
   destination: Destination
 ): Promise<{ mutated: number; errors: string[] }> {
-  const targetLabel = labelForDestination(destination);
+  const targetLabel = targetLabelFor(destination, ctx);
   const limit = createLimiter(ctx.concurrency ?? DEFAULT_CONCURRENCY);
   const errors: string[] = [];
   let mutated = 0;
@@ -367,7 +374,7 @@ export async function setModelDestination(
   } = {}
 ): Promise<SetModelDestinationResult> {
   const offers = options.offers ?? (await loadOffersForModel(ctx.batchId, shopifyProductId));
-  const targetLabel = labelForDestination(destination);
+  const targetLabel = targetLabelFor(destination, ctx);
   const dryRun = ctx.dryRun === true;
   const base: SetModelDestinationResult = {
     modelId: shopifyProductId,
