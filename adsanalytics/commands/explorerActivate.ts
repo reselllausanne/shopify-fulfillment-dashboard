@@ -127,7 +127,10 @@ export async function explorerActivateCommand(options: ExplorerActivateOptions =
     const enableAdGroupResult = await enableExplorerAdGroup(config, adGroupResourceName);
     const enableAdGroupAdResult = await enableExplorerAdGroupAd(config, adGroupAdResourceName);
     const activatedAt = new Date();
-    const endsAt = expectedBatchEndFromNow(EXPLORER_DEFAULT_BATCH_DAYS);
+    const batchDays = Number(stats.batchDays);
+    const endsAt = expectedBatchEndFromNow(
+      Number.isFinite(batchDays) && batchDays > 0 ? batchDays : EXPLORER_DEFAULT_BATCH_DAYS
+    );
 
     await prisma.$executeRaw(Prisma.sql`
       UPDATE "public"."ads_explorer_batches"

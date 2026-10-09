@@ -200,3 +200,12 @@ describe("rule configuration", () => {
     expect(decideExplorerDestination(model({ clicks: 3 }), loose, NOW)?.reason).toBe("discovered");
   });
 });
+
+describe("per-batch window override", () => {
+  it("closes a 5-day brand batch on day 5 regardless of the 10-day default", () => {
+    const config = loadExplorerRuleConfig({ batchDays: 5 }, {});
+    const input = model({ elapsedDays: 5.1, impressions: 20 });
+    expect(decideBatchClosure(input, DEFAULT_EXPLORER_RULES, NOW)).toBeNull();
+    expect(decideBatchClosure(input, config, NOW)?.destination).toBe("LONG_TAIL_ALL");
+  });
+});
