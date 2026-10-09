@@ -39,6 +39,7 @@ from shopifyAPI_GQL import (
     set_variant_express_price_metafields,
     delete_variant_express_price_metafields,
     apply_stx_express_floor,
+    dual_lane_express_sell,
     read_stx_express_surcharge_chf,
     get_taxonomy_category_id,
     get_category_attributes,
@@ -2969,7 +2970,7 @@ def process_url(url, thread_id=0, prefetched=None):
                 )
 
             # Express sell:
-            # - Distinct STX express+standard asks → each locked calc (no +20)
+            # - Distinct STX express+standard asks → max(calc(express), standard) + 20
             # - Single offer only → standard=calc; express=standard+20
             express_sell_price = None
             if express_prices and standard_prices:
@@ -2978,12 +2979,15 @@ def process_url(url, thread_id=0, prefetched=None):
                 express_raw_price = lowest_express_entry["price"]
                 standard_raw_price = lowest_standard_entry["price"]
                 if abs(float(express_raw_price) - float(standard_raw_price)) >= 0.5:
-                    express_sell_price = calc_sell_price(
-                        express_raw_price,
-                        pc,
-                        is_express=True,
-                        product_handle=product_handle,
-                        brand=brand,
+                    express_sell_price = dual_lane_express_sell(
+                        sell_price,
+                        calc_sell_price(
+                            express_raw_price,
+                            pc,
+                            is_express=True,
+                            product_handle=product_handle,
+                            brand=brand,
+                        ),
                     )
                     print(
                         f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "

@@ -240,7 +240,7 @@ export type StxWebsiteSellPrices = {
    * single_plus20 = one StockX offer (or identical buys):
    *   standard = calc(that buy); express = standard + 20
    * dual_lane = distinct standard + express buys:
-   *   each lane = locked calc only (no +20)
+   *   standard = calc(standard buy); express = max(calc(express buy), standard) + 20
    */
   mode: "single_plus20" | "dual_lane" | "none";
 };
@@ -252,7 +252,8 @@ export type StxWebsiteSellPrices = {
  *   standard = locked(calc); express = standard + 20 (ceil).
  *   (Express-only: standard still = calc(express buy); express metafield = +20.)
  * - Distinct standard + express StockX asks:
- *   standard = locked(standard buy); express = locked(express buy). No +20.
+ *   standard = locked(standard buy); express = max(locked(express buy), standard) + 20,
+ *   so the express premium is earned on every lane and express never undercuts standard.
  */
 export function resolveStxWebsiteSellPrices(input: {
   standardBuyPrice: number | null;
@@ -293,10 +294,11 @@ export function resolveStxWebsiteSellPrices(input: {
 
   const normalSell = input.calcFromBuy(standardBuy!, false);
   if (normalSell == null) return { normalSell: null, expressSell: null, mode: "none" };
-  const expressSell = input.calcFromBuy(expressBuy!, true);
+  const expressCalc = input.calcFromBuy(expressBuy!, true);
+  const expressBase = Math.max(expressCalc ?? normalSell, normalSell);
   return {
     normalSell,
-    expressSell,
+    expressSell: ceilToWholeFranc(expressBase + readStxExpressSurchargeChf()),
     mode: "dual_lane",
   };
 }
