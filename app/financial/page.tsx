@@ -108,7 +108,7 @@ type MarketplaceMetricsResponse = {
   };
 };
 
-const VAT_RATE = 0.021; // 2.1% TVA on all sales
+const VAT_RATE = 0.021; // Saldo 2.1% of VAT-inclusive Shopify sales
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#ff7c7c'];
 
 export default function FinancialOverviewPage() {
@@ -630,7 +630,7 @@ export default function FinancialOverviewPage() {
           </div>
           
           <div className="bg-white p-6 rounded-lg shadow">
-            <div className="text-sm font-medium text-gray-500">VAT (2.3%)</div>
+            <div className="text-sm font-medium text-gray-500">VAT (2.1%)</div>
             <div className="text-2xl font-bold text-purple-600">-CHF {totalVAT.toFixed(2)}</div>
             <div className="text-xs text-gray-500 mt-1">Tax on sales</div>
           </div>
@@ -775,7 +775,7 @@ export default function FinancialOverviewPage() {
                   </div>
 
               <div className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                <span className="font-medium text-gray-700">🏛️ VAT (2.3%)</span>
+                <span className="font-medium text-gray-700">🏛️ VAT (2.1%)</span>
                 <span className="text-lg font-bold text-purple-600">- CHF {totalVAT.toFixed(2)}</span>
               </div>
 
