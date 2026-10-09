@@ -35,6 +35,8 @@ import {
   type ShopifyLineItem,
 } from "@/app/utils/matching";
 import { resolveShopifyAdminEnv } from "@/lib/shopifyEnv";
+import { toShopifyOrderGid } from "@/app/lib/swissPostCustomerTracking";
+import { toShopifyCreatedAtStorage } from "@/app/utils/shopifySellDate";
 import {
   fetchRecentStockxBuyingOrders,
   fetchStockxBuyOrderDetailsFull,
@@ -76,23 +78,40 @@ function gidToId(gid: string): string {
   return m ? m[1] : s;
 }
 
+/** OrderMatch stores line items as GIDs (UI, webhook auto-match, protection rows). */
+function toLineItemGid(idOrGid: string): string {
+  const raw = String(idOrGid || "").trim();
+  if (!raw || raw.startsWith("gid://")) return raw;
+  return `gid://shopify/LineItem/${raw.replace(/\D/g, "")}`;
+}
+
 async function shopifyGql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   if (!SHOP || !SHOPIFY_TOKEN) {
     throw new Error("Missing SHOPIFY_SHOP_DOMAIN / SHOPIFY_ADMIN_API_ACCESS_TOKEN");
   }
   const shop = SHOP.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const res = await fetch(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": SHOPIFY_TOKEN,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  if (!res.ok) throw new Error(`Shopify HTTP ${res.status}: ${await res.text()}`);
-  const json = (await res.json()) as { data?: T; errors?: unknown[] };
-  if (json.errors?.length) throw new Error(`Shopify GQL: ${JSON.stringify(json.errors)}`);
-  return json.data as T;
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+    if (!res.ok) throw new Error(`Shopify HTTP ${res.status}: ${await res.text()}`);
+    const json = (await res.json()) as {
+      data?: T;
+      errors?: Array<{ extensions?: { code?: string } }>;
+    };
+    const throttled = json.errors?.some((e) => e?.extensions?.code === "THROTTLED");
+    if (throttled && attempt < 8) {
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      continue;
+    }
+    if (json.errors?.length) throw new Error(`Shopify GQL: ${JSON.stringify(json.errors)}`);
+    return json.data as T;
+  }
 }
 
 type UnmatchedLine = ShopifyLineItem & {
@@ -113,16 +132,19 @@ async function fetchUnmatchedShopifyLines(days: number): Promise<{
   since.setUTCDate(since.getUTCDate() - (days - 1));
   since.setUTCHours(0, 0, 0, 0);
 
+  // Rows hold GID or legacy numeric ids, and shopifyCreatedAt is Zurich wall-clock: compare on
+  // numeric id with a 2-day margin so an already-matched line is never re-created.
+  const matchedSince = new Date(since.getTime() - 2 * 86_400_000);
   const matches = await prisma.orderMatch.findMany({
-    where: { shopifyCreatedAt: { gte: since } },
+    where: { OR: [{ shopifyCreatedAt: { gte: matchedSince } }, { shopifyCreatedAt: null }] },
     select: { shopifyLineItemId: true },
   });
-  const matchedIds = new Set(matches.map((m) => String(m.shopifyLineItemId)));
+  const matchedIds = new Set(matches.map((m) => gidToId(String(m.shopifyLineItemId))));
 
   const query = `
     query UnmatchedScan($cursor: String) {
       orders(
-        first: 50
+        first: 20
         after: $cursor
         sortKey: CREATED_AT
         reverse: true
@@ -514,19 +536,20 @@ async function main() {
         ? `ESS-${c.line.orderName || c.line.lineItemId}`
         : c.supplier?.supplierOrderNumber || `SAVED-${c.line.lineItemId}`;
 
+      const lineItemGid = toLineItemGid(c.line.lineItemId);
       try {
         await prisma.orderMatch.upsert({
-          where: { shopifyLineItemId: c.line.lineItemId },
+          where: { shopifyLineItemId: lineItemGid },
           create: {
-            shopifyOrderId: c.line.shopifyOrderId,
+            shopifyOrderId: toShopifyOrderGid(c.line.shopifyOrderId),
             shopifyOrderName: c.line.orderName,
-            shopifyLineItemId: c.line.lineItemId,
+            shopifyLineItemId: lineItemGid,
             shopifyProductTitle: c.line.title,
             shopifySku: c.line.sku ?? null,
             shopifySizeEU: c.line.sizeEU ?? null,
             shopifyTotalPrice: revenue,
             shopifyCurrencyCode: c.line.currencyCode || "CHF",
-            shopifyCreatedAt: new Date(c.line.createdAt),
+            shopifyCreatedAt: toShopifyCreatedAtStorage(new Date(c.line.createdAt)),
             shopifyCustomerEmail: c.line.customerEmail ?? null,
             shopifyCustomerFirstName: c.line.customerFirstName ?? null,
             shopifyCustomerLastName: c.line.customerLastName ?? null,

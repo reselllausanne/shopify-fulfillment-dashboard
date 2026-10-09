@@ -2,14 +2,26 @@ import { describe, expect, it } from "vitest";
 import { resolveOrderMatchCost } from "@/app/utils/matching";
 
 describe("resolveOrderMatchCost", () => {
-  it("forces ESSENTIAL_STOCK / ESS-* to full margin (cost 0) even if DB has old COGS", () => {
+  it("uses fixed per-unit cost for ESS-* rows even when DB stored 0", () => {
     expect(
       resolveOrderMatchCost({
+        shopifyProductTitle: "Essentials Shorts Stretch Limo (SS22)",
         stockxStatus: "ESSENTIAL_STOCK",
         stockxOrderNumber: "ESS-6573",
-        supplierCost: 26,
+        supplierCost: 0,
       })
-    ).toEqual({ cost: 0, fullMargin: true });
+    ).toEqual({ cost: 26, fullMargin: false });
+  });
+
+  it("keeps manualCostOverride on ESS-* rows", () => {
+    expect(
+      resolveOrderMatchCost({
+        shopifyProductTitle: "Essentials Shorts Stretch Limo (SS22)",
+        stockxOrderNumber: "ESS-6573",
+        supplierCost: 0,
+        manualCostOverride: 10,
+      })
+    ).toEqual({ cost: 10, fullMargin: false });
   });
 
   it("treats LOCAL ALREADY_EXPENSED (cost 0) as full margin", () => {

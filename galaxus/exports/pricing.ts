@@ -33,6 +33,7 @@ const DEFAULT_VAT_RATE = 0.081;
 export const GALAXUS_STX_PRICING_LOCK_VERSION = "2026-09-19";
 export const GALAXUS_STX_FIXED_BOX_AND_SHIPPING_CHF = 1.6;
 export const GALAXUS_STX_MARKETPLACE_COMMISSION_RATE = 0;
+/** Saldo 2.1% is due on VAT-inclusive turnover; Galaxus price is ex VAT → 2.1% × 1.081 ≈ 2.3%. */
 export const GALAXUS_STX_VAT_FLAT_RATE = 0.023;
 export const GALAXUS_STX_PAID_ADS_RATE = 0;
 export const GALAXUS_STX_TARGET_CM2_RATE = 0.1;
