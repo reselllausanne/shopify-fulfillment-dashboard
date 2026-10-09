@@ -117,6 +117,49 @@ function toProductGid(id: string): string {
   return id.startsWith("gid://") ? id : `gid://shopify/Product/${id}`;
 }
 
+type StampRow = {
+  providerKey: string;
+  supplierVariantId: string;
+  gtin: string;
+  variantId: string;
+  price: number;
+};
+
+async function stampListingState(rows: StampRow[], productGid: string): Promise<void> {
+  const cls = (prisma as any).channelListingState;
+  if (!cls?.upsert || rows.length === 0) return;
+  const now = new Date();
+  for (const s of rows) {
+    try {
+      await cls.upsert({
+        where: { channel_providerKey: { channel: "SHOPIFY", providerKey: s.providerKey } },
+        create: {
+          channel: "SHOPIFY",
+          providerKey: s.providerKey,
+          supplierVariantId: s.supplierVariantId,
+          gtin: s.gtin,
+          externalVariantId: s.variantId,
+          externalProductId: productGid,
+          lastPushedPrice: s.price,
+          lastSyncedAt: now,
+          lastError: null,
+        },
+        update: {
+          supplierVariantId: s.supplierVariantId,
+          gtin: s.gtin,
+          externalVariantId: s.variantId,
+          externalProductId: productGid,
+          lastPushedPrice: s.price,
+          lastSyncedAt: now,
+          lastError: null,
+        },
+      });
+    } catch {
+      /* best-effort bookkeeping */
+    }
+  }
+}
+
 function truthy(v: string | null | undefined): boolean {
   return String(v ?? "").trim().toLowerCase() === "true";
 }
@@ -256,13 +299,10 @@ async function main() {
       type: string;
       value: string;
     }> = [];
-    const stamped: Array<{
-      providerKey: string;
-      supplierVariantId: string;
-      gtin: string;
-      variantId: string;
-      price: number;
-    }> = [];
+    const stamped: StampRow[] = [];
+    // Live price already correct: stamp too, so a restarted pass (deploy) skips
+    // them via --skip-fresh-hours instead of re-walking from zero.
+    const verified: StampRow[] = [];
     const matchedSv = new Set<string>();
     const claimedVariantIds = new Set<string>();
 
@@ -333,6 +373,15 @@ async function main() {
         expressCurrent
       ) {
         variantsUnchanged += 1;
+        if (row.providerKey) {
+          verified.push({
+            providerKey: row.providerKey,
+            supplierVariantId: row.supplierVariantId,
+            gtin: String(row.gtin ?? ""),
+            variantId: node.id,
+            price: normalSell,
+          });
+        }
         continue;
       }
 
@@ -374,6 +423,8 @@ async function main() {
     }
 
     for (const r of bucket.rows) if (!matchedSv.has(r.supplierVariantId)) variantsNoMatch += 1;
+
+    if (APPLY) await stampListingState(verified, productGid);
 
     if (bulkVariants.length === 0) {
       productsDone += 1;
@@ -418,39 +469,7 @@ async function main() {
       }
     }
 
-    const cls = (prisma as any).channelListingState;
-    if (cls?.upsert) {
-      const now = new Date();
-      for (const s of stamped) {
-        try {
-          await cls.upsert({
-            where: { channel_providerKey: { channel: "SHOPIFY", providerKey: s.providerKey } },
-            create: {
-              channel: "SHOPIFY",
-              providerKey: s.providerKey,
-              supplierVariantId: s.supplierVariantId,
-              gtin: s.gtin,
-              externalVariantId: s.variantId,
-              externalProductId: productGid,
-              lastPushedPrice: s.price,
-              lastSyncedAt: now,
-              lastError: null,
-            },
-            update: {
-              supplierVariantId: s.supplierVariantId,
-              gtin: s.gtin,
-              externalVariantId: s.variantId,
-              externalProductId: productGid,
-              lastPushedPrice: s.price,
-              lastSyncedAt: now,
-              lastError: null,
-            },
-          });
-        } catch {
-          /* best-effort bookkeeping */
-        }
-      }
-    }
+    await stampListingState(stamped, productGid);
 
     variantsPushed += bulkVariants.length;
     productsDone += 1;
