@@ -5,18 +5,19 @@
 #
 # Cron schedule (configure on VPS crontab — not auto-installed by repo):
 #
-#   Every scraper must run at least every 2 days: availableStock zeroes scraped
-#   stock whose lastSyncAt is older than SUPPLIER_STOCK_MAX_AGE_DAYS (default 3).
+#   Every scraper runs daily: availableStock and Galaxus evidence stock zero any
+#   scraped stock older than 2 days (SUPPLIER_STOCK_MAX_AGE_DAYS /
+#   GALAXUS_EVIDENCE_MAX_AGE_DAYS), so one missed run is tolerated.
 #
-#   Shared batch (all SCRAPER_SHOPS except SCRAPER_CRON_SKIP), every 2 days:
-#     0 3 */2 * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
+#   Shared batch (all SCRAPER_SHOPS except SCRAPER_CRON_SKIP), daily:
+#     0 3 * * * /opt/resell/scripts/scrape-cron.sh >> /opt/resell/scrape-cron.log 2>&1
 #
-#   Detached heavy scrapers (own container, survive web restarts):
-#     0 3 */2 * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
+#   Detached heavy scrapers (own container, survive web restarts; skip if still running):
+#     0 3 * * * /opt/resell/scripts/run-reichelt-detached.sh >> /opt/resell/scrape-rei-cron.log 2>&1
 #   EXL/BWZ/WRK run in the shared batch; run-*-detached.sh is for manual full passes.
 #
 #   Single-shop via API (examples from vps-patch scripts):
-#     0 4 */2 * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
+#     0 4 * * * /opt/resell/scripts/scrape-cron.sh tus >> /opt/resell/scrape-tus-cron.log 2>&1
 #
 #   SCRAPER_CRON_SKIP is read from the cron shell env, NOT from .env (default: rei).
 #   So bwz/wrk run in the shared batch even when .env lists them.

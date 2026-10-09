@@ -43,9 +43,9 @@ describe("supplierStockMaxAgeDays", () => {
     else process.env.SUPPLIER_STOCK_MAX_AGE_DAYS = prev;
   });
 
-  it("defaults to 3 and accepts 0", () => {
+  it("defaults to 2 and accepts 0", () => {
     delete process.env.SUPPLIER_STOCK_MAX_AGE_DAYS;
-    expect(supplierStockMaxAgeDays()).toBe(3);
+    expect(supplierStockMaxAgeDays()).toBe(2);
     process.env.SUPPLIER_STOCK_MAX_AGE_DAYS = "0";
     expect(supplierStockMaxAgeDays()).toBe(0);
   });
