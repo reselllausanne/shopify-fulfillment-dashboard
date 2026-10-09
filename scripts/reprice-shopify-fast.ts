@@ -64,10 +64,21 @@ query FastRepriceProduct($id: ID!, $first: Int!) {
         price
         priceLocked: metafield(namespace: "custom", key: "price_locked") { value }
         usSize: metafield(namespace: "custom", key: "us_size") { value }
+        expressPrice: metafield(namespace: "custom", key: "express_price") { value }
       }
     }
   }
 }`;
+
+function liveExpressAmount(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  try {
+    const n = Number((JSON.parse(raw) as { amount?: string }).amount);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
 
 const BULK_UPDATE = /* GraphQL */ `
 mutation FastRepriceBulk($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -209,6 +220,7 @@ async function main() {
             price: string | null;
             priceLocked: { value: string | null } | null;
             usSize: { value: string | null } | null;
+            expressPrice: { value: string | null } | null;
           }>;
         };
       } | null;
@@ -311,7 +323,15 @@ async function main() {
       // Compare against the live Shopify price, not our last push: another writer
       // (legacy SSE consumer) may have overwritten it since.
       const livePrice = node.price != null ? Number(node.price) : null;
-      if (livePrice != null && Number.isFinite(livePrice) && Math.abs(livePrice - normalSell) < 0.005) {
+      const liveExpress = liveExpressAmount(node.expressPrice?.value);
+      const expressCurrent =
+        expressSell == null || (liveExpress != null && Math.abs(liveExpress - expressSell) < 0.005);
+      if (
+        livePrice != null &&
+        Number.isFinite(livePrice) &&
+        Math.abs(livePrice - normalSell) < 0.005 &&
+        expressCurrent
+      ) {
         variantsUnchanged += 1;
         continue;
       }

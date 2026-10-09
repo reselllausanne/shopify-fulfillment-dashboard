@@ -532,6 +532,26 @@ def apply_stx_express_floor(standard_sell, express_calc=None):
     return max(exp, floor)
 
 
+def dual_lane_express_sell(standard_sell, express_calc):
+    """
+    Distinct standard + express StockX asks:
+    express = max(calc(express buy), standard) + surcharge (ceil whole franc).
+    Mirrors TS resolveStxWebsiteSellPrices dual_lane.
+    """
+    try:
+        std = float(standard_sell or 0)
+    except (TypeError, ValueError):
+        std = 0.0
+    try:
+        exp = float(express_calc or 0)
+    except (TypeError, ValueError):
+        exp = 0.0
+    base = max(exp, std)
+    if base <= 0:
+        return None
+    return _ceil_to_whole_franc(base + read_stx_express_surcharge_chf())
+
+
 def calc_liquidation_sell_price(cost_chf) -> int:
     """
     Physical warehouse liquidation sell: cost minus LIQUIDATION_DISCOUNT_PCT (default 30%).

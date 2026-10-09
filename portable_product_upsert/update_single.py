@@ -33,6 +33,7 @@ from shopifyAPI_GQL import (
     delete_variants_bulk,
     set_variant_express_price_metafields,
     apply_stx_express_floor,
+    dual_lane_express_sell,
     calc_touch_price,
     calc_sell_price,
     RateLimitException,
@@ -366,7 +367,7 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
         sell_price = calc_sell_price(raw_stockx_price, product_category, is_express=False, product_handle=product_handle, brand=brand)
 
         # Express sell:
-        # - Distinct STX express+standard → each locked calc (no +20)
+        # - Distinct STX express+standard → max(calc(express), standard) + 20
         # - Single offer → standard=calc; express=standard+20
         express_sell_price = None
         if express_prices and standard_prices:
@@ -375,12 +376,15 @@ def update_single_product(url_slug, allow_new_variants=True, images_only=False, 
             express_raw_price = lowest_express_entry['price']
             standard_raw_price = lowest_standard_entry['price']
             if abs(float(express_raw_price) - float(standard_raw_price)) >= 0.5:
-                express_sell_price = calc_sell_price(
-                    express_raw_price,
-                    product_category,
-                    is_express=True,
-                    product_handle=product_handle,
-                    brand=brand,
+                express_sell_price = dual_lane_express_sell(
+                    sell_price,
+                    calc_sell_price(
+                        express_raw_price,
+                        product_category,
+                        is_express=True,
+                        product_handle=product_handle,
+                        brand=brand,
+                    ),
                 )
                 print(
                     f"[CALCULATED EXPRESS] {title} - Size {eu_size}: RAW={express_raw_price} CHF "
